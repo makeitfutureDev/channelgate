@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/makeitfutureDev/channelgate/blob/main/SECURITY.md
+    about: Never report a vulnerability in a public issue. SECURITY.md has the private process; reports go to contact@makeitfuture.com.
+  - name: Questions, ideas, and usage help
+    url: https://github.com/makeitfutureDev/channelgate/discussions
+    about: Best-effort community support. Read SUPPORT.md first; open an issue only for a reproducible defect.
+  - name: Commercial licensing, reseller, and white-label
+    url: mailto:contact@makeitfuture.com
+    about: Paid hosting, resale, white-labeling, enterprise keys, and priority support are arranged by email.

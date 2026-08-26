@@ -1,0 +1,673 @@
+// Daemon settings managed from the admin UI, persisted to ~/.channelgate/config/settings.json
+// (gitignored runtime dir). These override .env: at boot and after every save we copy them into
+// process.env so the existing env-based readers (Slack tokens, keepalive, Composio URL) pick
+// them up. Tokens are write-only via the API (masked on read), never logged.
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import { settingsFile } from "./paths.js";
+import { writeSecretFile } from "./harden.js";
+import { getDb } from "../db/index.js";
+import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
+import { normalizeNetworkDomains } from "../util/network-domains.js";
+import { GIT_TOOLING_HOME_PATHS, cliCredentialHomePaths, cliNetworkDomains, normalizeCliIntegrations, publicCliCatalog } from "./cli-catalog.js";
+
+// settings.json key → environment variable it feeds.
+const ENV_MAP = {
+  slackBotToken: "SLACK_BOT_TOKEN",
+  slackAppToken: "SLACK_APP_TOKEN",
+  slackSigningSecret: "SLACK_SIGNING_SECRET",
+  sessionKeepalive: "SESSION_KEEPALIVE",
+  composioMcpUrl: "COMPOSIO_MCP_URL",
+  skillsMcpUrl: "SKILLS_MCP_URL",
+  toolboxMcpUrl: "TOOLBOX_MCP_URL",
+  publicUrl: "GATEWAY_PUBLIC_URL",
+  platformUrl: "CHANNELGATE_PLATFORM_URL",
+};
+
+export function getSettings() {
+  try {
+    return JSON.parse(readFileSync(settingsFile(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+// Merge a partial patch into settings.json (only supplied, non-undefined keys change). The file's
+// read-modify-write is serialized across BOTH processes (daemon + spawned MCP server) by holding
+// the shared SQLite write lock (BEGIN IMMEDIATE) for its duration — two concurrent saves would
+// otherwise each read the same base and silently drop the other's keys.
+export function saveSettings(patch) {
+  const db = getDb();
+  mkdirSync(path.dirname(settingsFile()), { recursive: true }); // doesn't need the lock
+  // The BEGIN IMMEDIATE lock intentionally spans the read-merge-write of settings.json: it is the
+  // only cross-process mutex we have (daemon + MCP server), and the held work is a tiny sync
+  // read+write (~ms, far under busy_timeout) on rare admin saves — bounded by design.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const current = getSettings();
+    const next = { ...current };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue;
+      next[k] = v;
+    }
+    // 0600: this file holds the Slack tokens, the org Composio/Skills/Toolbox tokens, the run-API
+    // key and the admin password.
+    writeSecretFile(settingsFile(), JSON.stringify(next, null, 2) + "\n");
+    db.exec("COMMIT");
+    return next;
+  } catch (e) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* transaction already gone */
+    }
+    throw e;
+  }
+}
+
+// Ambient (pre-override) value of each managed env var, captured the first time we touch it.
+// Without this, clearing a UI setting would leave the previously-applied value live in
+// process.env until the next restart (the old code only ever assigned, never removed).
+const ambientEnv = new Map(); // envName → original process.env value (undefined = was unset)
+
+// Push stored settings into process.env (UI-managed values win over .env). Cleared settings
+// restore the ambient value from boot — or delete the variable if it never had one.
+export function applySettingsToEnv() {
+  const s = getSettings();
+  for (const [key, envName] of Object.entries(ENV_MAP)) {
+    if (!ambientEnv.has(envName)) ambientEnv.set(envName, process.env[envName]);
+    if (typeof s[key] === "string" && s[key] !== "") {
+      process.env[envName] = s[key];
+    } else {
+      const original = ambientEnv.get(envName);
+      if (original === undefined) delete process.env[envName];
+      else process.env[envName] = original;
+    }
+  }
+}
+
+// Effective Slack config from settings.json, falling back to the ambient environment.
+export function resolveSlackConfig() {
+  const s = getSettings();
+  return {
+    botToken: s.slackBotToken || process.env.SLACK_BOT_TOKEN || "",
+    appToken: s.slackAppToken || process.env.SLACK_APP_TOKEN || "",
+    signingSecret: s.slackSigningSecret || process.env.SLACK_SIGNING_SECRET || "",
+  };
+}
+
+export function hasSlackConfig() {
+  const c = resolveSlackConfig();
+  return Boolean(c.botToken && c.appToken && c.signingSecret);
+}
+
+// Public base URL the daemon is reachable at (e.g. https://gateway.makeitfuture.com). General
+// daemon setting (not Slack-specific).
+export function getPublicUrl() {
+  const s = getSettings();
+  return (s.publicUrl || process.env.GATEWAY_PUBLIC_URL || "").replace(/\/+$/, "");
+}
+
+// Native Slack text streaming is the only in-progress display mode. Keep the exported shape for
+// admin/API compatibility, but ignore legacy stored values from older installs.
+export const PROGRESS_VIEWS = ["stream"];
+export function getProgressView() {
+  return "stream";
+}
+
+// Which CLI engine to drive: "claude" (default, full features) or "codex" (OpenAI Codex CLI;
+// cold-resume only, no warm sessions / skills / exact-$ cost).
+// Re-exported from the engine registry so there is ONE list of engines, not a copy per module.
+export const ENGINES = ENGINE_IDS;
+
+// Per-harness on/off switch. An admin turns off an engine they don't have set up (or don't want
+// used) and it disappears from every selector AND from the failover graph. Stored as a sparse map
+// keyed by engine id; a MISSING key means enabled, so an existing install (and any engine added
+// later) keeps working without a migration.
+// Fails OPEN: a stored map that disables everything would brick the gateway, so the getter treats
+// "all engines off" as "all engines on" (the API route also refuses to save that state).
+export function isEngineEnabled(engine) {
+  const id = String(engine || "");
+  if (!ENGINES.includes(id)) return false;
+  const map = getSettings().engineEnabled;
+  if (!map || typeof map !== "object") return true;
+  if (!ENGINES.some((e) => map[e] !== false)) return true; // never lock every harness out
+  return map[id] !== false;
+}
+export function getEnabledEngines() {
+  return ENGINES.filter(isEngineEnabled);
+}
+// The stored map, normalized to an explicit boolean per known engine (what the admin UI renders).
+export function getEngineEnabledMap() {
+  return Object.fromEntries(ENGINES.map((id) => [id, isEngineEnabled(id)]));
+}
+
+export function getEngine() {
+  const v = getSettings().engine;
+  const configured = ENGINES.includes(v) ? v : "claude";
+  // A disabled harness must not stay the gateway default just because it's the stored value —
+  // resolve to the first enabled one instead of spawning a CLI the admin turned off.
+  return isEngineEnabled(configured) ? configured : getEnabledEngines()[0] || configured;
+}
+
+// Gateway-wide default model, per engine. Used when a channel/DM/thread sets no model of its own,
+// so every spawn gets an explicit --model / -m and NEVER inherits the admin's terminal-level model
+// (what `/model` in an interactive Claude Code session writes to ~/.claude/settings.json). Empty =
+// no flag, i.e. the CLI's own default — the pre-existing (leaky) behavior, kept as the fallback.
+export function getDefaultModel(engine) {
+  const s = getSettings();
+  // Per-engine default model, looked up by the adapter's settings key rather than a binary
+  // ternary that would silently hand a third engine Claude's default.
+  const v = s[adapterOr(engine).defaultModelKey];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+// Who may use Slack's /model wizard in a CHANNEL (both channel-wide and thread-scoped picks).
+// Everyone reaching this gate has already passed the channel's normal authorization policy, so
+// "users" means every authorized channel user (approved members plus explicit guest grants).
+// DMs deliberately stay outside this policy: approved users can customize their own DM runtime.
+export const MODEL_CHANGE_ACCESS_MODES = ["admins", "users"];
+export function getModelChangeAccess() {
+  const v = getSettings().modelChangeAccess;
+  return MODEL_CHANGE_ACCESS_MODES.includes(v) ? v : "admins";
+}
+export function canChangeChannelRuntime(isAdminUser = false) {
+  return Boolean(isAdminUser) || getModelChangeAccess() === "users";
+}
+
+// Cross-engine failover: when the engine driving a turn fails with an authentication or
+// usage/spend-limit error BEFORE doing any work, transparently answer with the other enabled
+// harness (a fresh turn on that engine) until the failed one recovers. Direction-agnostic —
+// Claude→Codex and Codex→Claude are the same mechanism.
+// `codexFallback` is the pre-rename key: honored when the generic one was never written, so an
+// existing install keeps whatever the admin chose. Default on.
+export function getEngineFallback() {
+  const s = getSettings();
+  const v = s.engineFallback === undefined ? s.codexFallback : s.engineFallback;
+  return v === undefined ? true : Boolean(v);
+}
+// Deprecated alias — kept so nothing outside this module has to know about the rename.
+export const getCodexFallback = getEngineFallback;
+
+// Dollar cost is still recorded in the usage ledger and exposed through reporting APIs when this
+// display preference is off. Missing stays enabled so existing installations keep today's footer.
+export function getShowMessageCost() {
+  const v = getSettings().showMessageCost;
+  return v === undefined ? true : Boolean(v);
+}
+
+// Local voice transcription is optional for lightweight/server installs. Missing stays enabled so
+// every existing gateway keeps its pre-setting behavior until an admin explicitly turns it off.
+export function getWhisperEnabled() {
+  const v = getSettings().whisperEnabled;
+  return v === undefined ? true : Boolean(v);
+}
+
+// Agent instruction files: when on, each channel folder gets a CLAUDE.md (the editable
+// instructions, read by Claude) + an AGENTS.md symlink → CLAUDE.md (read by Codex), so the same
+// instructions reach both engines and you can edit CLAUDE.md directly.
+export function getAgentsFile() {
+  const v = getSettings().agentsFile;
+  return v === undefined ? true : Boolean(v);
+}
+export function getAgentsInstructions() {
+  const v = getSettings().agentsInstructions;
+  return typeof v === "string" ? v : "";
+}
+
+// Folder-scoped agent memory: when on, each channel folder gets a MEMORY.md the agent reads at
+// the start of a task and updates as it learns durable facts about the channel. It lives INSIDE
+// the channel folder (no cross-channel bleed) and is the confinement-safe substitute for Claude's
+// global autoMemory (which stays off). Default on. Per-channel meta.memory can override.
+export function getAgentMemory() {
+  const v = getSettings().agentMemory;
+  return v === undefined ? true : Boolean(v);
+}
+
+// Background memory review (gateway/memory-review.js): after a delivered foreground turn, a small
+// reviewer run reads the thread and saves what the model itself did not. `memoryReviewEvery` is
+// the per-channel turn interval between reviews (0 = off; a turn that looks like a correction or
+// decision reviews regardless); `memoryReviewModel` is the Claude model/alias the reviewer runs
+// on (a cheap one — it only extracts facts); `memoryReviewNotify` posts "🧠 Memory updated" in
+// the thread when the review saved something, so a wrong save is visible and correctable.
+export const DEFAULT_MEMORY_REVIEW_EVERY = 5;
+export const DEFAULT_MEMORY_REVIEW_MODEL = "haiku";
+export function getMemoryReviewEvery() {
+  const v = getSettings().memoryReviewEvery;
+  if (v === undefined || v === null || v === "") return DEFAULT_MEMORY_REVIEW_EVERY;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_MEMORY_REVIEW_EVERY;
+}
+export function getMemoryReviewModel() {
+  const v = getSettings().memoryReviewModel;
+  return typeof v === "string" && v.trim() ? v.trim() : DEFAULT_MEMORY_REVIEW_MODEL;
+}
+export function getMemoryReviewNotify() {
+  const v = getSettings().memoryReviewNotify;
+  return v === undefined ? true : Boolean(v);
+}
+
+// Scheduled two-way Google Drive sync (see gateway/drivesync.js). Dormant unless enabled AND a
+// service-account key file is set AND rclone is installed. Auth is a Workspace service account; the
+// key file is a PATH (not a secret) and the subject is an email — neither is masked.
+export const DRIVE_SYNC_CONFLICTS = ["newer", "older", "larger", "path1", "path2"];
+export function getDriveSyncEnabled() {
+  return Boolean(getSettings().driveSyncEnabled);
+}
+export function getDriveSyncKeyFile() {
+  const v = getSettings().driveSyncKeyFile;
+  return typeof v === "string" ? v.trim() : "";
+}
+// The service-account key pasted into the UI (raw JSON). A write-only secret: stored here but never
+// returned to the client (see settingsForApi, which exposes only hasKey + the client_email). The
+// engine materializes it to a chmod-600 file (drivesync.resolveDriveSyncKeyFile).
+export function getDriveSyncKeyJson() {
+  const v = getSettings().driveSyncKeyJson;
+  return typeof v === "string" ? v : "";
+}
+// The service account's email, parsed from the pasted key — surfaced to the UI so the admin knows
+// which address to share Drive folders with. Empty when no JSON key is stored / it can't be parsed.
+export function getDriveSyncKeyEmail() {
+  const raw = getDriveSyncKeyJson();
+  if (!raw) return "";
+  try {
+    return String(JSON.parse(raw).client_email || "");
+  } catch {
+    return "";
+  }
+}
+export function getDriveSyncSubject() {
+  const v = getSettings().driveSyncSubject; // optional domain-wide-delegation impersonation subject
+  return typeof v === "string" ? v.trim() : "";
+}
+export function getDriveSyncIntervalMinutes() {
+  const v = Number(getSettings().driveSyncIntervalMinutes);
+  return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 15;
+}
+export function getDriveSyncConflict() {
+  const v = getSettings().driveSyncConflict;
+  return DRIVE_SYNC_CONFLICTS.includes(v) ? v : "newer";
+}
+export function getDriveSyncRclonePath() {
+  const v = getSettings().driveSyncRclonePath; // absolute path sidesteps launchd's minimal PATH
+  return typeof v === "string" && v.trim() ? v.trim() : "rclone";
+}
+
+// Codex blended $/1M-token rate used to ESTIMATE Codex run cost in the usage ledger (Codex reports
+// no dollar cost). 0/unset → no estimate (cost left null, tokens still recorded). LEGACY fallback —
+// the per-model rates below take precedence when a model matches.
+export function getCodexRatePer1MTokens() {
+  const v = Number(getSettings().codexRatePer1MTokens);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+// Per-model Codex $/1M-token rates for the cost ESTIMATE (input / cached-input / output).
+// Defaults verified against OpenAI's STANDARD API pricing table on 2026-08-16; admins can adjust
+// them in Settings → Integrations. `cachedInput` prices the cached_input_tokens subset of input.
+// Editable values are merged OVER these defaults, so a pricing change only needs the changed cell;
+// the model list itself is fixed and intentionally small.
+export const DEFAULT_CODEX_RATES = {
+  "gpt-5.6-sol": { input: 5, cachedInput: 0.5, output: 30 },
+  "gpt-5.6": { input: 5, cachedInput: 0.5, output: 30 }, // alias for gpt-5.6-sol
+  "gpt-5.6-terra": { input: 2, cachedInput: 0.2, output: 12 },
+  "gpt-5.6-luna": { input: 0.2, cachedInput: 0.02, output: 1.2 },
+  "gpt-5.5": { input: 5, cachedInput: 0.5, output: 30 },
+  "gpt-5.4": { input: 2.5, cachedInput: 0.25, output: 15 },
+  "gpt-5.4-mini": { input: 0.75, cachedInput: 0.075, output: 4.5 },
+  "gpt-5.4-nano": { input: 0.2, cachedInput: 0.02, output: 1.25 },
+  "gpt-5.3-codex": { input: 1.75, cachedInput: 0.175, output: 14 }, // the Codex CLI's own family
+};
+
+// The admin UI historically saved the complete displayed table, including untouched defaults.
+// When OpenAI changes a default, an old full snapshot would therefore shadow the corrected code
+// forever. Treat only the two exact retired defaults as inherited values; genuinely customized
+// cells (anything else) remain authoritative. A subsequent Settings save persists the new table.
+const RETIRED_CODEX_DEFAULTS = {
+  "gpt-5.6-terra": { input: 2.5, cachedInput: 0.25, output: 15 },
+  "gpt-5.6-luna": { input: 1, cachedInput: 0.1, output: 6 },
+};
+
+function isExactRate(value, expected) {
+  return value && expected && ["input", "cachedInput", "output"].every((key) => Number(value[key]) === expected[key]);
+}
+
+export function getCodexModelRates() {
+  const stored = getSettings().codexModelRates || {};
+  const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : d);
+  const out = {};
+  for (const [model, d] of Object.entries(DEFAULT_CODEX_RATES)) {
+    const candidate = stored[model] || {};
+    const s = isExactRate(candidate, RETIRED_CODEX_DEFAULTS[model]) ? {} : candidate;
+    out[model] = { input: num(s.input, d.input), cachedInput: num(s.cachedInput, d.cachedInput), output: num(s.output, d.output) };
+  }
+  return out;
+}
+
+// Emoji reactions that act as an @mention: reacting with one on any message makes the bot
+// respond to that message. Stored as Slack emoji names without colons (e.g. "robot_face").
+// Default: robot_face (🤖). Admins can add others from Settings.
+export function getMentionReactions() {
+  const v = getSettings().mentionReactions;
+  if (Array.isArray(v)) {
+    const clean = v.map((s) => String(s).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
+    if (clean.length) return clean;
+  }
+  return ["robot_face"];
+}
+
+// Org-level default access policy applied to each channel when the bot first joins/registers it.
+// Captured onto the channel's meta at that moment (so changing this later only affects channels
+// joined afterward; existing channels keep their stored value, missing = "approved"):
+//   - "approved" → admins + all org-approved members (today's behavior)
+//   - "admins"   → gateway admins only
+//   - "none"     → nobody auto-granted; the channel is dormant until a user is explicitly added
+//                  to that channel's allowedUsers (the manual override).
+export const CHANNEL_ACCESS_MODES = ["approved", "admins", "none"];
+export function getDefaultChannelAccess() {
+  const v = getSettings().defaultChannelAccess;
+  return CHANNEL_ACCESS_MODES.includes(v) ? v : "approved";
+}
+
+// Composio can operate in the existing independently supplied personal/shared-token mode, or in
+// organization SDK mode. Missing defaults to personal so upgrades never change an installation's
+// credential resolution. Switching this enum NEVER mutates either mode's stored credentials.
+export const COMPOSIO_MODES = ["personal", "sdk"];
+export function getComposioMode() {
+  const v = getSettings().composioMode;
+  return COMPOSIO_MODES.includes(v) ? v : "personal";
+}
+export function getComposioSdkApiKey() {
+  const v = getSettings().composioSdkApiKey;
+  return typeof v === "string" ? v.trim() : "";
+}
+
+// Org-level (gateway) default tokens. For shared Composio this follows the channel token; Skills
+// Manager and Toolbox use the full channel → user → org chain (see src/gateway/run.js). Write-only
+// via the admin API (masked on read), never logged.
+export function getDefaultComposioToken() {
+  const v = getSettings().defaultComposioToken;
+  return typeof v === "string" ? v : "";
+}
+export function getDefaultSkillsToken() {
+  const v = getSettings().defaultSkillsToken;
+  return typeof v === "string" ? v : "";
+}
+export function getDefaultToolboxToken() {
+  const v = getSettings().defaultToolboxToken;
+  return typeof v === "string" ? v : "";
+}
+
+// Organization-wide skill/connector grants. Unlike tokens these are not a fallback: they are the
+// first tier of a live org + channel + user union resolved on every run (access-grants.js).
+export function getOrgAccessGrants() {
+  const value = getSettings().accessGrants;
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+// Optional Slack ADMIN USER token (xoxp-…) for /delete. A bot token can only delete the bot's own
+// messages; chat.delete with a workspace admin's user token can also delete other people's
+// (workspace preferences permitting). Only ever used by the org-admin-gated /delete command —
+// never handed to a run or an MCP config. Write-only via the admin API (masked on read).
+export function getSlackAdminUserToken() {
+  const v = getSettings().slackAdminUserToken;
+  return typeof v === "string" ? v : "";
+}
+
+// Apps/integrations allowed to drive runs even though their messages carry a bot_id. Normally
+// every bot message is ignored (reply-loop prevention); a message whose Slack app_id OR bot_id is
+// on this list is let through — it must STILL contain a real @mention and come from an approved
+// `user`, so there's no loop risk (the gateway's own posts use a different app_id). Stored as
+// Slack app/bot IDs (e.g. "A07FPU6DA9E" for a Make.com scenario). Default: none.
+export function getTrustedBotApps() {
+  const v = getSettings().trustedBotApps;
+  if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter(Boolean);
+  return [];
+}
+
+// Slug of the channel that receives an automatic self-diagnosis thread when a run errors
+// ("" = feature off). Point it at the dev channel whose work folder is the gateway repo itself
+// (e.g. "gateway-slack") so the diagnosis run can read the source it is diagnosing.
+export function getErrorDiagnosisChannel() {
+  const s = getSettings();
+  return String(s.errorDiagnosisChannel || process.env.ERROR_DIAGNOSIS_CHANNEL || "").trim();
+}
+
+// Network egress allow-list for channels that have "Allow network" on. The same normalized list is
+// compiled into both Claude and Codex; invalid legacy/hand-edited values fail safely back to the
+// narrow defaults instead of acquiring engine-specific meanings. Default: GitHub, so `git push`/
+// `gh` work. Admins can add other public DNS names (e.g. registry.npmjs.org) in Settings.
+const NETWORK_DOMAINS_DEFAULT = ["github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"];
+export function getNetworkDomains() {
+  const v = getSettings().networkDomains;
+  if (Array.isArray(v)) {
+    try {
+      const clean = normalizeNetworkDomains(v, { allowEmpty: true });
+      if (clean.length) return clean;
+    } catch {
+      // A malformed hand edit must not partly broaden the effective list. Use reviewed defaults.
+    }
+  }
+  return [...NETWORK_DOMAINS_DEFAULT];
+}
+
+// Enabled CLI integrations (Settings → Network): catalog ids from cli-catalog.js. Unknown/legacy
+// ids are dropped on read, so a stale settings.json can never grant an unreviewed carve-out.
+export function getCliIntegrations() {
+  return normalizeCliIntegrations(getSettings().cliIntegrations);
+}
+
+// What the engines actually receive as the egress allow-list: the admin-managed base list plus
+// the domains of every enabled CLI integration. The base `networkDomains` value stays untouched
+// so the Settings UI round-trips exactly what the admin typed.
+export function getEffectiveNetworkDomains() {
+  return [...new Set([...getNetworkDomains(), ...cliNetworkDomains(getCliIntegrations())])];
+}
+
+// HOME-relative paths write-capable approved-network runs may READ (never write): the git/gh
+// baseline plus each enabled CLI integration's saved-login files. One list feeds the Claude
+// sandbox read re-allows, both synthetic-HOME link sets, and the Codex read grants — keep them
+// from diverging by always going through here.
+export function getCredentialHomePaths() {
+  return [...new Set([...GIT_TOOLING_HOME_PATHS, ...cliCredentialHomePaths(getCliIntegrations())])];
+}
+
+export { publicCliCatalog };
+
+// Scheduler guardrails. The minimum interval (minutes) a recurring cron may fire at — schedules
+// that would fire more often are rejected (default 60, i.e. at most hourly). Plus a ceiling on how
+// many enabled schedules one channel may have. Both adjustable from Settings.
+export function getScheduleMinIntervalMinutes() {
+  const v = Number(getSettings().scheduleMinIntervalMinutes);
+  return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 60;
+}
+export function getScheduleMaxPerChannel() {
+  const v = Number(getSettings().scheduleMaxPerChannel);
+  return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 20;
+}
+
+// Hours of silence before an opt-in channel's thread gets a single "no-response" nudge. Default 24.
+export function getNoResponseReminderHours() {
+  const v = Number(getSettings().noResponseReminderHours);
+  return Number.isFinite(v) && v >= 1 ? v : 24;
+}
+
+// Org-level default for the no-response nudge, captured onto a channel's/DM's meta.nudges when the
+// bot first registers it (so changing this later only affects conversations added afterward; the
+// "reset all" button pushes it onto existing ones). Default off — nudges stay opt-in unless an
+// admin turns this on.
+export function getDefaultNudges() {
+  return Boolean(getSettings().defaultNudges);
+}
+
+// Personal "pending-response" follow-up digests. When on (default), each approved user gets a DM
+// at the configured hours listing the threads (in channels the bot is in) that are awaiting their
+// reply — a thread they took part in where someone else spoke last and they haven't ✅'d it.
+export function getFollowupRemindersEnabled() {
+  const v = getSettings().followupRemindersEnabled;
+  return v === undefined ? true : Boolean(v);
+}
+// Local hours (in the configured timezone) at which the digest fires. Default 08:00 and 14:00.
+export function getFollowupDigestHours() {
+  const v = getSettings().followupDigestHours;
+  if (Array.isArray(v)) {
+    const clean = [...new Set(v.map((h) => Math.floor(Number(h))).filter((h) => Number.isInteger(h) && h >= 0 && h <= 23))];
+    if (clean.length) return clean;
+  }
+  return [8, 14];
+}
+// IANA timezone the digest hours are interpreted in. Default Europe/Bucharest.
+export function getFollowupTimeZone() {
+  const v = getSettings().followupTimeZone;
+  return typeof v === "string" && v.trim() ? v.trim() : "Europe/Bucharest";
+}
+// Reactions that mark a thread "done" (clears it from your follow-ups). Default ✅ and ✔️.
+export function getFollowupDoneReactions() {
+  const v = getSettings().followupDoneReactions;
+  if (Array.isArray(v)) {
+    const clean = v.map((s) => String(s).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
+    if (clean.length) return clean;
+  }
+  return ["white_check_mark", "heavy_check_mark"];
+}
+
+// Model context window (tokens) used to show "ctx N%" in replies. Default 200k.
+export function getContextWindow() {
+  const v = Number(getSettings().contextWindow);
+  return Number.isFinite(v) && v > 0 ? v : 200_000;
+}
+
+// Org-level DM templates (defined once, applied to DMs that select them). Each template carries
+// the per-conversation knobs a DM can use. "custom" DMs use their own meta instead.
+const DM_TEMPLATE_DEFAULT = { skills: [], allowedMcps: [], allowedCodexMcps: [], model: "", effort: "", adminMode: false, allowBash: false, allowNetwork: false, autoMode: false, cleanMode: false, engine: "" };
+export function getDmTemplates() {
+  const t = getSettings().dmTemplates || {};
+  return {
+    user: { ...DM_TEMPLATE_DEFAULT, ...(t.user || {}) },
+    admin: { ...DM_TEMPLATE_DEFAULT, ...(t.admin || {}) },
+  };
+}
+export function getDmTemplate(name) {
+  return getDmTemplates()[name] || DM_TEMPLATE_DEFAULT;
+}
+
+// Admin UI password: a UI-managed value (settings.json) takes precedence over ADMIN_PASSWORD
+// from the environment, so it can be changed from Settings without editing .env. Empty = open.
+export function getAdminPassword() {
+  const s = getSettings();
+  if (typeof s.adminPassword === "string" && s.adminPassword) return s.adminPassword;
+  return process.env.ADMIN_PASSWORD || "";
+}
+
+// HTTP run API key: a bearer credential for POST /api/runs + GET /api/runs/:id, so an automation
+// (Make.com, a cron, …) can fire runs without an admin session cookie. UI-managed (settings.json)
+// wins over CG_API_KEY in the environment. Empty = the run API accepts only an admin session (and,
+// on a loopback bind with no admin password, the usual local-open default).
+export function getApiKey() {
+  const s = getSettings();
+  if (typeof s.apiKey === "string" && s.apiKey) return s.apiKey;
+  return process.env.CG_API_KEY || "";
+}
+
+// License key (src/ee/license.js). Stored here rather than in src/ee/ so that settingsForApi and
+// the secrets allowlist can read it without importing the proprietary directory — the RULE, though,
+// has exactly one home: UI-managed settings.json wins, CHANNELGATE_LICENSE_KEY is the bootstrap
+// source for a container that has never had an admin session. Never returned by a listing (only
+// hasLicenseKey/licenseKeyLast4 below) and revealable one at a time via /api/secrets/reveal.
+export function getLicenseKey() {
+  const s = getSettings();
+  if (typeof s.licenseKey === "string" && s.licenseKey.trim()) return s.licenseKey.trim();
+  return String(process.env.CHANNELGATE_LICENSE_KEY || "").trim();
+}
+
+function last4(v) {
+  return v ? String(v).slice(-4) : "";
+}
+
+// Admin view for the UI. Deliberately carries NO secret values — only has*/last4 for display.
+// Returning every token here made the blast radius of any admin-surface weakness the whole
+// workspace's credentials at once. The UI fetches one value at a time from POST
+// /api/secrets/reveal, which re-prompts for the admin password (see src/web/secrets.js).
+export function settingsForApi() {
+  const c = resolveSlackConfig();
+  const s = getSettings();
+  return {
+    tokens: {
+      hasBotToken: Boolean(c.botToken),
+      botTokenLast4: last4(c.botToken),
+      hasAppToken: Boolean(c.appToken),
+      appTokenLast4: last4(c.appToken),
+      hasSigningSecret: Boolean(c.signingSecret),
+      hasAdminUserToken: Boolean(getSlackAdminUserToken()),
+      adminUserTokenLast4: last4(getSlackAdminUserToken()),
+    },
+    sessionKeepalive: s.sessionKeepalive ?? process.env.SESSION_KEEPALIVE ?? "10m",
+    composioMode: getComposioMode(),
+    hasComposioSdkApiKey: Boolean(getComposioSdkApiKey()),
+    composioSdkApiKeyLast4: last4(getComposioSdkApiKey()),
+    composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
+    skillsMcpUrl: s.skillsMcpUrl ?? process.env.SKILLS_MCP_URL ?? "https://www.skillsmanager.uk/mcp",
+    toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
+    publicUrl: getPublicUrl(),
+    progressView: getProgressView(),
+    mentionReactions: getMentionReactions(),
+    networkDomains: getNetworkDomains(),
+    cliIntegrations: getCliIntegrations(),
+    cliIntegrationCatalog: publicCliCatalog(),
+    trustedBotApps: getTrustedBotApps(),
+    defaultChannelAccess: getDefaultChannelAccess(),
+    hasDefaultComposioToken: Boolean(getDefaultComposioToken()),
+    defaultComposioTokenLast4: last4(getDefaultComposioToken()),
+    defaultComposioTokenLabel: s.defaultComposioTokenLabel || "",
+    hasDefaultSkillsToken: Boolean(getDefaultSkillsToken()),
+    defaultSkillsTokenLast4: last4(getDefaultSkillsToken()),
+    defaultSkillsTokenLabel: s.defaultSkillsTokenLabel || "",
+    hasDefaultToolboxToken: Boolean(getDefaultToolboxToken()),
+    defaultToolboxTokenLast4: last4(getDefaultToolboxToken()),
+    defaultToolboxTokenLabel: s.defaultToolboxTokenLabel || "",
+    accessGrants: getOrgAccessGrants(),
+    engine: getEngine(),
+    defaultClaudeModel: getDefaultModel("claude"),
+    defaultCodexModel: getDefaultModel("codex"),
+    modelChangeAccess: getModelChangeAccess(),
+    engineEnabled: getEngineEnabledMap(),
+    engineFallback: getEngineFallback(),
+    codexFallback: getEngineFallback(), // legacy key — same value, kept for older API clients
+
+    showMessageCost: getShowMessageCost(),
+    whisperEnabled: getWhisperEnabled(),
+    agentsFile: getAgentsFile(),
+    agentsInstructions: getAgentsInstructions(),
+    agentMemory: getAgentMemory(),
+    memoryReviewEvery: getMemoryReviewEvery(),
+    memoryReviewModel: getMemoryReviewModel(),
+    memoryReviewNotify: getMemoryReviewNotify(),
+    driveSyncEnabled: getDriveSyncEnabled(),
+    driveSyncKeyFile: getDriveSyncKeyFile(),
+    hasDriveSyncKeyJson: Boolean(getDriveSyncKeyJson()), // the raw key is NEVER returned to the client
+    driveSyncKeyEmail: getDriveSyncKeyEmail(),
+    driveSyncSubject: getDriveSyncSubject(),
+    driveSyncIntervalMinutes: getDriveSyncIntervalMinutes(),
+    driveSyncConflict: getDriveSyncConflict(),
+    driveSyncRclonePath: getDriveSyncRclonePath(),
+    codexRatePer1MTokens: getCodexRatePer1MTokens(),
+    codexModelRates: getCodexModelRates(),
+    scheduleMinIntervalMinutes: getScheduleMinIntervalMinutes(),
+    scheduleMaxPerChannel: getScheduleMaxPerChannel(),
+    noResponseReminderHours: getNoResponseReminderHours(),
+    defaultNudges: getDefaultNudges(),
+    followupRemindersEnabled: getFollowupRemindersEnabled(),
+    followupDigestHours: getFollowupDigestHours(),
+    followupTimeZone: getFollowupTimeZone(),
+    followupDoneReactions: getFollowupDoneReactions(),
+    contextWindow: getContextWindow(),
+    dmTemplates: getDmTemplates(),
+    hasAdminPassword: Boolean(getAdminPassword()),
+    hasApiKey: Boolean(getApiKey()),
+    apiKeyLast4: last4(getApiKey()),
+    // License: the KEY itself never rides this response (src/web/secrets.js reveals it one at a
+    // time, behind a fresh password). The card's live status comes from GET /api/license.
+    hasLicenseKey: Boolean(getLicenseKey()),
+    licenseKeyLast4: last4(getLicenseKey()),
+    platformUrl: s.platformUrl ?? process.env.CHANNELGATE_PLATFORM_URL ?? "",
+  };
+}

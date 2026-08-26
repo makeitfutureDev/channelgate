@@ -1,0 +1,760 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   ChannelGate — Admin UI design system  (#makeitfuture. brand world)
+   Single dark-teal theme. Orange is BUDGETED: primary buttons, active nav,
+   focus rings, page-title underline — never decoration. Teal/data for info.
+   Vanilla CSS, no build step. Poppins is self-hosted from /fonts.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Self-hosted Poppins (inlined from the generated @font-face rules) ─────── */
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/poppins-400-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/poppins-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/poppins-500-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/poppins-500-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/poppins-600-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/poppins-600-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/poppins-700-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/poppins-700-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── Tokens ────────────────────────────────────────────────────────────────── */
+:root {
+  --orange: #fe3a02; --orange-dim: #e8542a; --orange-soft: rgba(254, 58, 2, .14);
+  --ground-edge: #1c2e2e; --ground-center: #2d5457;
+  --panel: #1e3535; --panel-2: #243f3f; --panel-dark: #182d2d;
+  --ink: #fff; --muted: #91c9ce; --faint: rgba(145, 201, 206, .6);
+  --line: rgba(145, 201, 206, .18); --line-soft: rgba(145, 201, 206, .09);
+  --teal: #317b80; --light: #91c9ce;
+  --ok: #4ec77a; --warn: #e8b04b; --danger: #e5604d;
+  --cap-read: #91c9ce; --cap-worker: #4ea3a9; --cap-auto: #e8b04b; --cap-full: #e5604d; --cap-lean: #7a9294;
+  --font: Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Back-compat aliases — inline styles in index.html/app.js reference these names. */
+  --accent: var(--orange);
+  --accent-2: var(--light);
+  --border: var(--line);
+  --text: var(--ink);
+  --bad: var(--danger);
+  --bg: #122424;
+
+  --radius: 10px;
+  --sidebar-w: 220px;
+  --list-w: 290px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font: 13.5px/1.55 var(--font);
+  background: #122424;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--light); }
+::selection { background: var(--orange-soft); }
+:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+
+code {
+  font-family: var(--mono); font-size: 11px; color: var(--light);
+  background: rgba(0, 0, 0, .28); padding: 2px 6px; border-radius: 5px;
+}
+
+/* Numeric-column utility — tabular figures line up in tables/ledgers. */
+.tabnum, .num { font-variant-numeric: tabular-nums; }
+
+/* ── App shell ─────────────────────────────────────────────────────────────── */
+.app { display: flex; height: 100vh; overflow: hidden; }
+
+.sidebar {
+  width: var(--sidebar-w); flex: none; background: #152929; border-right: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; padding: 18px 12px 14px;
+}
+
+/* Brand: #makeitfuture. wordmark + small uppercase product label. */
+.brand { display: flex; flex-direction: column; gap: 2px; padding: 4px 10px 18px; }
+.brand .wm { font-weight: 700; font-size: 15px; letter-spacing: .01em; color: var(--ink); line-height: 1.2; }
+.brand .wm .o { color: var(--orange); }
+.brand .prod { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  position: relative; display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: none; border: none; color: var(--muted); padding: 9px 12px; border-radius: 8px;
+  cursor: pointer; font: 500 13.5px var(--font); text-decoration: none;
+}
+.nav-item svg, .nav-item .ico { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; opacity: .9; }
+.nav-item:hover { background: var(--panel); color: var(--ink); }
+.nav-item.active { background: var(--panel-2); color: var(--ink); }
+.nav-item.active::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--orange);
+}
+
+.sidebar-foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 6px; }
+.sidebar-foot button { margin-top: 6px; width: 100%; }
+
+/* Status chips (sidebar health) ------------------------------------------------ */
+.health { display: flex; flex-direction: column; gap: 2px; }
+.statuschip { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); padding: 3px 2px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 6px rgba(78, 199, 122, .5); }
+.dot.off { background: var(--faint); }
+.dot.warn { background: var(--warn); box-shadow: 0 0 6px rgba(232, 176, 75, .45); }
+
+/* ── Content + views ───────────────────────────────────────────────────────── */
+.content { flex: 1; min-width: 0; display: flex; }
+.view { display: none; flex: 1; min-width: 0; }
+.view.active { display: flex; }
+.view.full.active { display: block; overflow-y: auto; padding: 26px 32px; }
+.view.full { max-width: none; }
+
+/* Page-title pattern: heading + short orange underline bar. */
+.view-head { margin-bottom: 20px; }
+.view-head h2 { position: relative; margin: 0 0 12px; font-size: 19px; font-weight: 600; }
+.view-head h2::after { content: ""; display: block; width: 36px; height: 3px; border-radius: 2px; background: var(--orange); margin-top: 8px; }
+.hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; line-height: 1.55; }
+
+/* Small orange-tinted uppercase section label. */
+.fldlab { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--orange-dim); font-weight: 600; margin: 0 0 10px; }
+
+/* ── Master–detail (Channels / DMs) ────────────────────────────────────────── */
+.master-detail { height: 100vh; }
+.list-pane {
+  width: var(--list-w); flex: none; border-right: 1px solid var(--line-soft);
+  background: #182e2e; display: flex; flex-direction: column; overflow: hidden;
+}
+.list-search { padding: 12px; border-bottom: 1px solid var(--line-soft); }
+.list-search input {
+  width: 100%; background: var(--panel); border: 1px solid var(--line-soft); color: var(--ink);
+  padding: 8px 12px; border-radius: 8px; font: inherit;
+}
+.list { overflow-y: auto; flex: 1 1 auto; padding: 6px; }
+.list.compact { flex: 0 0 auto; }
+.list-group { font-size: 9.5px; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); padding: 12px 12px 4px; }
+.list-item {
+  position: relative; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  display: flex; flex-direction: column; gap: 2px; color: var(--ink); text-decoration: none;
+}
+.list-item:hover { background: var(--panel); }
+.list-item.active { background: var(--panel-2); }
+.list-item.active::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--orange); }
+.list-item .li-sub { font-size: 11px; color: var(--faint); }
+.list-item.hidden { display: none; }
+.list .empty { color: var(--faint); font-size: 12px; font-style: italic; padding: 12px; }
+
+.detail-pane { flex: 1; min-width: 0; overflow-y: auto; padding: 26px 30px; }
+.empty-detail { color: var(--muted); margin-top: 40px; text-align: center; }
+.detail-card { background: transparent; border: none; padding: 0; }
+
+/* Content column fills the window width — the master-detail panes, tables, and the settings
+   view then use the whole screen instead of stranding a scrollbar mid-screen with dead space to
+   its right. Individual views keep their own readable inner caps (e.g. .setbody stays 640px). */
+.cards { max-width: 1000px; }
+
+/* ── Detail sub-tabs (General / Users / MCP / Skills / …) ───────────────────── */
+.subtabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line-soft); margin-bottom: 18px; flex-wrap: wrap; }
+.subtab { background: none; border: none; color: var(--muted); padding: 9px 15px; cursor: pointer; border-bottom: 2px solid transparent; font: 500 13.5px var(--font); border-radius: 0; }
+.subtab:hover { color: var(--ink); filter: none; }
+.subtab.active { color: var(--ink); border-bottom-color: var(--orange); }
+.subpane { display: none; }
+.subpane.active { display: block; }
+.subpane > h4 { margin: 0 0 10px; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
+.subpane .checks { max-height: 56vh; }
+
+/* Channel capability badge colors */
+.ch-mode[data-mode="admin"] { color: var(--cap-full); border-color: rgba(229, 96, 77, .45); }
+.ch-mode[data-mode="auto"] { color: var(--cap-auto); border-color: rgba(232, 176, 75, .45); }
+.ch-mode[data-mode="bash"] { color: var(--cap-worker); border-color: rgba(78, 163, 169, .45); }
+
+/* ── Cards / fields (shared) ───────────────────────────────────────────────── */
+.cards { display: flex; flex-direction: column; gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 16px 18px; }
+.card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.card-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.badge { font-size: 10.5px; padding: 2.5px 9px; border-radius: 999px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 12px; }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.col h4 { margin: 0 0 8px; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
+.checks { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.checks.empty { color: var(--faint); font-size: 12px; font-style: italic; }
+.checks label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
+/* MCP "offline" badge — replaces the old ⚠️ emoji. */
+.off-badge { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--warn); border: 1px solid rgba(232, 176, 75, .4); border-radius: 4px; padding: 1px 5px; }
+.on-badge { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--ok); border: 1px solid rgba(78, 199, 122, .4); border-radius: 4px; padding: 1px 5px; }
+
+/* Block flow (not flex) so inline <code>/<strong> badges + text wrap as one
+   paragraph; the checkbox sits in a left gutter for a clean hanging indent. */
+.toggle { display: block; position: relative; padding-left: 24px; font-size: 13px; color: var(--muted); margin: 6px 0; line-height: 1.5; }
+.toggle.inline { margin: 0; }
+.toggle > input { position: absolute; left: 0; top: 3px; margin: 0; accent-color: var(--orange); }
+/* Harness on/off switches: short labels, so they sit side by side and wrap as a group. These use
+   normal flow (not .toggle's absolutely-positioned gutter, which is built for wrapping paragraphs
+   and would overlap a one-line label). */
+.engine-toggles { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 4px 0 6px; }
+.engine-toggle { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; white-space: nowrap; font-size: 13px; color: var(--ink); }
+.engine-toggle > input { margin: 0; accent-color: var(--orange); }
+.engine-toggle:has(> input:disabled) { color: var(--muted); cursor: not-allowed; }
+.engine-toggle > input:disabled { opacity: 0.55; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.card-foot { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+button {
+  background: var(--orange); color: #fff; border: none; padding: 8px 16px;
+  border-radius: 8px; cursor: pointer; font: 600 13px var(--font);
+}
+button:hover { filter: brightness(1.08); }
+button.ghost { background: var(--panel); color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+button.ghost:hover { filter: none; background: var(--panel-2); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.saved { font-size: 12px; color: var(--ok); }
+
+/* ── Fields ────────────────────────────────────────────────────────────────── */
+.field { display: block; margin-bottom: 14px; }
+.field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.field input, .field select, .field textarea { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
+.field textarea { resize: vertical; }
+.field select { cursor: pointer; }
+.field .state { display: block; font-size: 11px; color: var(--faint); margin-top: 4px; font-style: normal; line-height: 1.5; }
+.field .state code { font-size: 10.5px; }
+.row { display: flex; gap: 8px; }
+.row input { flex: 1; }
+
+/* ── Users cards ───────────────────────────────────────────────────────────── */
+.user-card .card-head { gap: 12px; }
+.u-name { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 7px 10px; border-radius: 8px; min-width: 180px; font: inherit; }
+.token-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.u-token, .u-skillstoken, .u-toolboxtoken { flex: 1; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 10px; border-radius: 8px; font: inherit; }
+.token-state, .skills-state, .toolbox-state, .slack-state { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.add-user { display: flex; gap: 8px; margin-bottom: 16px; }
+.add-user[hidden] { display: none; }
+.add-user input { flex: 1; max-width: 360px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 10px; border-radius: 8px; font: inherit; }
+
+/* ── Status banner (Slack connection) ──────────────────────────────────────── */
+.status-banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+.status-banner.ok { color: var(--ok); border-color: rgba(78, 199, 122, .4); }
+.status-banner.bad { color: var(--danger); border-color: rgba(229, 96, 77, .4); }
+
+/* ── Settings card ─────────────────────────────────────────────────────────── */
+.settings-card { max-width: 640px; }
+.settings-card h4 { margin: 0 0 12px; font-size: 13.5px; font-weight: 600; }
+
+/* ── Token reveal (eye) toggle ─────────────────────────────────────────────── */
+.reveal-wrap { position: relative; display: block; }
+.token-row .reveal-wrap { flex: 1; }
+.reveal-wrap > input {
+  width: 100%; box-sizing: border-box; padding: 9px 40px 9px 12px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+  border-radius: 8px; font: inherit;
+}
+.reveal-btn {
+  position: absolute; top: 0; right: 0; height: 100%; width: 36px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 0 8px 8px 0;
+  color: var(--muted); cursor: pointer; opacity: .7;
+}
+.reveal-btn:hover { opacity: 1; filter: none; background: transparent; }
+.reveal-btn svg { width: 16px; height: 16px; }
+
+/* Optional owner note that sits directly above a token box — subtler than the token field itself. */
+.tok-label { margin-bottom: 6px; font-size: 12.5px; }
+.tok-label::placeholder { font-style: italic; opacity: .8; }
+
+/* Footer under a token box: a "clear" button pinned to the right edge. */
+.tok-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+button.clear-tok { flex: none; background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 4px 12px; border-radius: 6px; font: 500 12px var(--font); }
+button.clear-tok:hover { filter: none; background: var(--panel-2); color: var(--ink); }
+button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(229, 96, 77, .5); color: var(--danger); }
+
+/* ── Modal / folder picker ─────────────────────────────────────────────────── */
+.modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: grid; place-items: center; z-index: 50; }
+.modal[hidden] { display: none; }
+.modal-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; width: min(640px, 92vw); max-height: 80vh; display: flex; flex-direction: column; }
+.modal-card h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+.fs-path { margin-bottom: 8px; font-size: 12px; color: var(--faint); word-break: break-all; }
+.fs-list { flex: 1; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-dark); min-height: 200px; }
+.fs-item { display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.fs-item:hover { background: var(--panel-2); }
+.fs-item svg { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; color: var(--muted); }
+.modal-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+
+/* Session detail — a compact key/value list of one run's ledger record. */
+.session-card { width: min(480px, 92vw); }
+.session-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.session-head h3 { margin: 0; flex: 1; }
+.session-head .icon-btn { flex: none; width: 26px; height: 26px; padding: 0; font-size: 15px; line-height: 1; }
+.sess-detail { overflow: auto; }
+.sd-row { display: flex; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.sd-row:last-child { border-bottom: 0; }
+.sd-k { flex: none; width: 96px; color: var(--faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; padding-top: 2px; }
+.sd-v { flex: 1; min-width: 0; color: var(--ink); font-variant-numeric: tabular-nums; word-break: break-word; }
+
+/* Active-sessions modal — conversation/author + resolved engine/model (left), elapsed (right). */
+.active-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.active-item:last-child { border-bottom: 0; }
+.active-item .active-main { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.active-item .conv { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.active-item .active-runtime { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.active-item .since { flex: none; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ── Schedules ─────────────────────────────────────────────────────────────── */
+.sched-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line-soft); font-size: 13px; }
+.sched-row code { white-space: nowrap; }
+.sched-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sched-meta { color: var(--faint); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sched-notify, .sched-notify-user { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 4px 7px; font: inherit; font-size: 12px; }
+.sched-notify-user { width: 120px; }
+.bad { color: var(--danger); font-size: 11px; }
+
+/* ── Reusable config editor (Access Templates / custom DM) ─────────────────── */
+/* The full-width box styling is for the text/select fields only. Checkboxes are excluded (the mode
+   toggles are absolutely positioned — see .toggle — so width:100% would stretch them across the
+   column and overlap their labels); search inputs are excluded so the .checks-filter styling wins. */
+.cfg-editor input:not([type="checkbox"]):not([type="search"]), .cfg-editor select { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 7px 9px; border-radius: 8px; margin-bottom: 6px; font: inherit; }
+/* The capability picker uses the channel Access cards; in the narrower Access Templates card they
+   wrap to ~3 across (auto-fill) instead of the channel's 5, keeping each card readable. Two-class
+   selector so it beats the later single-class `.cap-cards` grid + its media-query overrides. */
+.cfg-editor .cfg-capcards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.dm-template { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 6px 9px; border-radius: 8px; font: inherit; }
+.dm-custom { margin-top: 12px; }
+
+/* ── Dashboard ─────────────────────────────────────────────────────────────── */
+.dash-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.dash-range { flex: none; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 11px; border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; }
+
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.kpi { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 15px 18px; }
+.kpi-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); }
+.kpi-value { font-size: 26px; font-weight: 700; margin-top: 6px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: 11px; color: var(--faint); margin-top: 4px; }
+/* Clickable KPIs drill into their view — subtle lift + orange edge on hover/focus. */
+.kpi-link { cursor: pointer; transition: border-color .12s, transform .12s, background .12s; }
+.kpi-link:hover { border-color: var(--orange); background: var(--panel-2); transform: translateY(-1px); }
+.kpi-link:focus-visible { outline: none; border-color: var(--orange); }
+
+/* Cost is the hero chart (2fr); sessions + tokens ride at 1fr each. */
+.dash-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.dash-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+.chart-card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 16px 18px; min-width: 0; }
+.chart-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.chart-title h3 { margin: 0; font-size: 12.5px; font-weight: 600; }
+.chart-peak { font-size: 11px; color: var(--faint); white-space: nowrap; }
+.spark { width: 100%; height: 56px; display: block; }
+.spark-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--faint); margin-top: 6px; }
+
+.legend { display: flex; gap: 12px; font-size: 10.5px; color: var(--faint); }
+.legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; box-shadow: none; }
+
+.bar-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 10px; padding: 6px 0; font-size: 12.5px; }
+.bar-row-dual { align-items: center; }
+.bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.bar-track { display: block; background: rgba(0, 0, 0, .3); border-radius: 5px; height: 9px; overflow: hidden; }
+/* FIX: .bar-fill is an inline <span> in app.js, so width/height were ignored and every
+   dashboard bar rendered empty. display:block makes the fills actually paint. */
+.bar-fill { display: block; height: 100%; border-radius: 5px; }
+.bar-dual { display: flex; flex-direction: column; gap: 3px; }
+.bar-dual .bar-track { height: 6px; }
+.bar-val { color: var(--muted); font-size: 11px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+/* Stacked value: when a bar's value is split into <span> lines (e.g. sessions/tokens/cost per user),
+   render one metric per line. Plain-text values (channel rows) are unaffected. */
+.bar-val > span { display: block; line-height: 1.45; }
+
+/* ── Overview (slice 2): orange cost KPI + taller hero cost chart ───────────── */
+.kpi-value.cost { color: var(--orange); }
+.spark.spark-tall { height: 104px; }
+
+/* Header tools cluster (range select + refresh icon button) — Overview + Activity. */
+.dash-tools { display: flex; align-items: center; gap: 8px; flex: none; }
+.icon-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; }
+.icon-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; }
+
+/* ── Activity (slice 2): totals strip + filters + runs table ────────────────── */
+.audit-totals { display: inline-block; font-size: 12.5px; color: var(--muted); background: var(--panel); border: 1px solid var(--line-soft); border-radius: 8px; padding: 9px 14px; margin-bottom: 14px; font-variant-numeric: tabular-nums; }
+.audit-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.audit-search { flex: 1 1 220px; min-width: 180px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 12px; border-radius: 8px; font: inherit; }
+.audit-filter { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 11px; border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; }
+/* Rows open a session-detail modal — clickable + hover/keyboard-focus highlight. */
+#audit-runs .utable tbody tr.audit-row { cursor: pointer; }
+#audit-runs .utable tbody tr.audit-row:hover,
+#audit-runs .utable tbody tr.audit-row:focus-visible { background: var(--panel-2); outline: none; }
+.audit-time { white-space: nowrap; color: var(--muted); }
+.audit-empty { color: var(--faint); font-style: italic; text-align: center; padding: 22px 16px; }
+.audit-foot { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.audit-count { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   NEW design-system components. Defined now for the shell + later slices
+   (Overview/Activity, Conversations, Users, Settings). Some are not yet
+   consumed by app.js — slices 2-4 will wire them in.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Status pill — capability / type tag. Color is set by the consumer inline so one
+   class serves every capability (read/worker/auto/full) + neutral tags. */
+.pill { display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line-soft); color: var(--muted); }
+
+/* Capability color dot — the security posture, legible before you read a word. */
+.capdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--cap-read); }
+
+/* Capability radio cards (picker). Full access reads visibly dangerous. */
+.cap-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 24px; }
+.cap-card { position: relative; background: var(--panel); border: 1.5px solid var(--line-soft); border-radius: 10px; padding: 13px 14px; cursor: pointer; }
+.cap-card h5 { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.cap-card h5 i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.cap-card p { margin: 0; font-size: 11px; color: var(--muted); line-height: 1.45; }
+.cap-card.sel { border-color: var(--orange); background: linear-gradient(rgba(254, 58, 2, .07), rgba(254, 58, 2, .03)) var(--panel); }
+.cap-card.sel::after { content: "\2713"; position: absolute; top: 9px; right: 11px; color: var(--orange); font-weight: 700; font-size: 12px; }
+.cap-card.danger { border-color: rgba(229, 96, 77, .4); }
+.cap-card .tag { position: absolute; top: 9px; right: 11px; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: var(--danger); font-weight: 600; }
+.cap-card.danger h5 { padding-right: 36px; }
+
+/* Sticky dirty-state save bar (one save model, app-wide). */
+.savebar { display: flex; align-items: center; gap: 14px; background: #152929; border-top: 1px solid var(--line); padding: 13px 24px; }
+.savebar .msg { font-size: 12.5px; color: var(--warn); }
+.savebar .msg.clean { color: var(--faint); }
+.savebar .spacer { flex: 1; }
+.savebar .discard { font: 500 12.5px var(--font); color: var(--muted); background: none; border: none; padding: 0; cursor: pointer; }
+
+/* Token chip — read-only masked token with inline Reveal / Replace / Clear. */
+.tokchip { display: flex; align-items: center; gap: 8px; background: var(--panel-dark); border: 1px solid var(--line-soft); border-radius: 8px; padding: 8px 12px; }
+.tokchip code { background: none; padding: 0; font-size: 11px; color: var(--ink); }
+.tokchip .spacer { flex: 1; }
+.tokchip button { font: 500 10.5px var(--font); color: var(--light); background: none; border: none; padding: 0; cursor: pointer; }
+.tokchip button.danger { color: var(--danger); }
+.tokchip .empty { color: var(--faint); font-size: 11.5px; }
+
+/* Role chip (Users table). */
+.rolechip { font-size: 10px; font-weight: 600; padding: 2.5px 9px; border-radius: 999px; }
+.rolechip.admin { color: var(--orange); border: 1px solid rgba(254, 58, 2, .45); background: var(--orange-soft); }
+.rolechip.appr { color: var(--light); border: 1px solid rgba(145, 201, 206, .35); }
+.rolechip.none { color: var(--faint); border: 1px solid var(--line-soft); }
+
+/* Chip editor (list-of-strings fields → chips). */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; background: var(--panel-dark); border: 1px solid var(--line-soft); border-radius: 8px; padding: 8px 10px; }
+.chips .c { font-family: var(--mono); font-size: 10.5px; background: rgba(49, 123, 128, .3); border: 1px solid rgba(145, 201, 206, .25); color: #cfeef0; border-radius: 6px; padding: 3px 8px; }
+.chips .c.add { background: none; border-style: dashed; color: var(--faint); cursor: pointer; }
+
+/* Settings section card (+ danger-zone variant). */
+.setcard { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 18px 22px; }
+.setcard h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
+.setcard .desc { font-size: 11.5px; color: var(--faint); margin: 0 0 14px; line-height: 1.5; }
+.setcard.danger { border-color: rgba(229, 96, 77, .4); }
+.setcard.danger h4 { color: var(--danger); }
+.dz-row { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid var(--line-soft); font-size: 12.5px; }
+.dz-row:first-of-type { border-top: 0; }
+.dz-row .t { flex: 1; }
+.dz-row .t small { display: block; color: var(--faint); font-size: 11px; }
+.dz-btn { font: 600 11.5px var(--font); color: var(--danger); background: none; border: 1px solid rgba(229, 96, 77, .5); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+
+/* Data table (Users list, Activity runs). */
+.utable { background: var(--panel-dark); border: 1px solid var(--line-soft); border-radius: 10px; overflow: hidden; }
+.utable table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.utable th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); font-weight: 600; padding: 11px 16px; border-bottom: 1px solid var(--line-soft); }
+.utable td { padding: 11px 16px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; color: var(--ink); }
+.utable tr:last-child td { border-bottom: 0; }
+.utable tbody tr { cursor: pointer; }
+.utable tr.sel td { background: var(--panel-2); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Conversations (slice 3): one merged list (templates + channels + DMs) with a
+   segmented filter, capability radio cards, switch rows, editor cards, savebar.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Segmented filter under the list search. */
+.seg { display: flex; gap: 2px; margin: 10px 12px 4px; background: rgba(0, 0, 0, .25); border-radius: 8px; padding: 3px; }
+.seg button { flex: 1; background: none; border: none; color: var(--faint); font: 600 11px var(--font); padding: 5px 0; border-radius: 6px; cursor: pointer; }
+.seg button:hover { color: var(--ink); filter: none; }
+.seg button.on { background: var(--panel-2); color: var(--ink); }
+
+/* Conversation list row: capdot · name/sub · optional 30-day cost. */
+.list-item.conv-item { flex-direction: row; align-items: center; gap: 9px; }
+.conv-item .conv-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.conv-item .conv-nm b { font-weight: 500; font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-item .conv-nm small { font-size: 10.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-item .conv-cost { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; flex: none; }
+
+/* Conversation detail header. */
+.dhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.dhead h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.dhead .stats { margin-left: auto; font-size: 12px; color: var(--muted); }
+.dhead .stats code { font-size: 11px; }
+
+/* Capability picker: 6 radio cards in three columns. */
+.ch-capcards { grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; }
+
+/* Switch-style toggle row (network egress). Hidden checkbox drives the visual switch. */
+.togglerow { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 13px 16px; margin-bottom: 8px; cursor: pointer; }
+.togglerow > input { position: absolute; opacity: 0; width: 0; height: 0; }
+.togglerow .switch { width: 34px; height: 20px; border-radius: 999px; background: rgba(0, 0, 0, .4); position: relative; flex: none; transition: background .15s; }
+.togglerow .switch::after { content: ""; position: absolute; left: 2.5px; top: 2.5px; width: 15px; height: 15px; border-radius: 50%; background: var(--faint); transition: .15s; }
+.togglerow > input:checked + .switch { background: var(--orange); }
+.togglerow > input:checked + .switch::after { left: auto; right: 2.5px; background: #fff; }
+.togglerow > input:focus-visible + .switch { outline: 2px solid var(--orange); outline-offset: 2px; }
+.togglerow .t b { display: block; font-size: 12.5px; font-weight: 500; color: var(--ink); }
+.togglerow .t small { color: var(--faint); font-size: 11px; }
+
+/* Tools tab: checklist header (title + count) + a filter box above each list. */
+.tools-col .checks-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.tools-col .checks-head h4 { margin: 0; }
+.checks-count { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.checks-filter { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 6px 10px; border-radius: 8px; font: inherit; font-size: 12px; margin-bottom: 8px; }
+.tok-fields { margin-top: 8px; }
+.make-toolbox-card { margin-top: 18px; }
+
+/* Editor cards (Instructions / Memory) — a mono editor with a slim toolbar; own Save. */
+.editor-card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; overflow: hidden; }
+.editor-toolbar { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--panel-dark); border-bottom: 1px solid var(--line-soft); }
+.editor-toolbar .editor-file code { background: none; padding: 0; color: var(--muted); font-size: 11.5px; }
+.editor-toolbar .spacer { flex: 1; }
+.editor-text { width: 100%; box-sizing: border-box; border: 0; background: transparent; color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: 1.6; padding: 12px 14px; min-height: 340px; resize: vertical; }
+
+/* One sticky save bar per detail; the hidden attribute must beat .savebar's display:flex. */
+.savebar[hidden] { display: none; }
+.detail-savebar { position: sticky; bottom: 0; margin: 18px -30px 0; z-index: 5; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Users (slice 4): scannable table + right-side edit drawer.
+   ══════════════════════════════════════════════════════════════════════════ */
+.mono { font-family: var(--mono); }
+.utable td.mono { font-size: 11.5px; color: var(--muted); }
+
+/* Token letter chips (C/S/T) — filled when the token is set, hollow otherwise. */
+.tokdots { display: flex; gap: 5px; }
+.tokdots i { width: 20px; height: 20px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; font-style: normal; border: 1px solid var(--line-soft); color: var(--faint); }
+.tokdots i.set { background: rgba(49, 123, 128, .35); color: #cfeef0; border-color: rgba(145, 201, 206, .35); }
+
+/* Slack-identity cell: inline green dot + "connected". */
+.utable td .conn-dot { display: inline-block; margin-right: 6px; }
+
+.userlayout { display: flex; gap: 18px; align-items: flex-start; }
+.userlayout > .utable { flex: 1; min-width: 0; }
+.drawer { width: 340px; flex: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; position: sticky; top: 26px; }
+.drawer[hidden] { display: none; }
+.drawer-head { display: flex; align-items: flex-start; gap: 10px; }
+.drawer-head h3 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; min-width: 0; }
+.drawer .ud-id { display: block; margin: 2px 0 14px; font-size: 11px; color: var(--faint); }
+.drawer .ud-close { width: 26px; height: 26px; padding: 0; font-size: 18px; line-height: 1; flex: none; }
+.drawer .ud-row { margin-bottom: 12px; }
+.drawer .fldlab { margin: 0 0 5px; }
+.drawer .ud-toggles { display: flex; gap: 18px; margin: 4px 0 16px; }
+.drawer .ud-toggles .toggle { margin: 0; color: var(--ink); }
+/* Only the plain name input needs base styling — the token fields get theirs from .reveal-wrap. */
+.drawer .ud-name { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
+.drawer .ud-row .state { display: block; font-size: 11px; color: var(--faint); margin-top: 4px; }
+.drawer-foot { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+.drawer .tokchip .empty { color: var(--faint); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Settings (slice 4): vertical section nav + panes; sticky global savebar.
+   ══════════════════════════════════════════════════════════════════════════ */
+.setlayout { display: flex; gap: 26px; align-items: flex-start; }
+.setnav { width: 196px; flex: none; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 26px; }
+.setnav a { position: relative; padding: 8px 13px; border-radius: 8px; font-size: 13px; color: var(--muted); text-decoration: none; }
+.setnav a:hover { background: var(--panel); color: var(--ink); }
+.setnav a.on { background: var(--panel-2); color: var(--ink); }
+.setnav a.on::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: 2px; background: var(--orange); }
+.setnav a.dz { color: var(--danger); }
+.setbody { flex: 1; min-width: 0; max-width: 640px; display: flex; flex-direction: column; gap: 16px; }
+.setsec { display: none; flex-direction: column; gap: 16px; }
+.setsec.active { display: flex; }
+.setcard .field:last-child { margin-bottom: 0; }
+.setcard .toggle:last-child { margin-bottom: 0; }
+.setcard h4 .state { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.dz-foot { margin-top: 8px; min-height: 16px; }
+.dz-row .saved { margin-left: 8px; }
+
+/* Sticky global settings savebar — pinned to the bottom of the scrolling view. */
+.settings-savebar { position: sticky; bottom: -26px; margin: 20px -32px 0; z-index: 5; }
+
+/* ── Chip editor (trusted apps / network domains) ──────────────────────────── */
+.chips { align-items: center; }
+.chips .c { display: inline-flex; align-items: center; gap: 5px; }
+.chips .c .chip-x { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; font-size: 13px; line-height: 1; cursor: pointer; opacity: .7; }
+.chips .c .chip-x:hover { opacity: 1; filter: none; }
+.chips .chip-input { flex: 1; min-width: 90px; background: none; border: none; color: var(--ink); font: inherit; font-size: 12px; padding: 2px 2px; outline: none; }
+.chips .chip-input::placeholder { color: var(--faint); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Shared in-app confirm / info dialog (built on .modal).
+   ══════════════════════════════════════════════════════════════════════════ */
+.confirm-card { width: min(440px, 92vw); }
+.confirm-card h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.confirm-card p { margin: 0 0 4px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+#confirm-ok.danger-btn { background: var(--danger); }
+
+/* ── Automations (slice 4): restyled schedule rows ─────────────────────────── */
+.sched-row { border-radius: 8px; padding: 8px 6px; transition: background .15s; }
+.sched-row:hover { background: rgba(145, 201, 206, .035); }
+.sched-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px;
+  color: inherit; background: transparent; border: 0; border-radius: 7px; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.sched-open:hover { background: rgba(145, 201, 206, .07); filter: none; }
+.sched-open:focus-visible { background: rgba(145, 201, 206, .07); }
+.sched-row .sched-cron { white-space: nowrap; }
+.sched-badge { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--warn); border: 1px solid rgba(232, 176, 75, .4); border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+.sched-run { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sched-saved { font-size: 11px; color: var(--ok); white-space: nowrap; min-width: 0; opacity: 0; transition: opacity .15s; }
+.sched-saved.show { opacity: 1; }
+.sched-row .sched-del { font: 600 11.5px var(--font); color: var(--danger); background: none; border: 1px solid rgba(229, 96, 77, .5); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+.sched-row .sched-del:hover { filter: none; background: rgba(229, 96, 77, .1); }
+
+/* Automation detail modal — compact metadata above a roomy prompt editor. */
+.schedule-card { width: min(760px, 92vw); max-height: 88vh; overflow: hidden; }
+.schedule-details {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px;
+  margin: 2px 0 16px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 8px;
+  background: var(--line-soft);
+}
+.schedule-detail { min-width: 0; padding: 9px 11px; background: var(--panel-dark); }
+.schedule-detail span { display: block; margin-bottom: 2px; color: var(--faint); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.schedule-detail strong { display: block; overflow-wrap: anywhere; color: var(--ink); font-size: 12px; font-weight: 500; }
+.schedule-prompt-field { min-height: 0; display: flex; flex: 1; flex-direction: column; }
+.schedule-prompt-field > span { margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.schedule-prompt-field textarea { min-height: 220px; max-height: 44vh; resize: vertical; font: 12.5px/1.55 var(--mono); }
+.schedule-modal-error { margin: 8px 0 0; color: var(--danger); font-size: 12px; }
+#schedule-modal-save:disabled { cursor: wait; opacity: .65; }
+
+/* ── Responsive: stack sidebar + panes like today ──────────────────────────── */
+@media (max-width: 900px) {
+  .dash-grid, .dash-two { grid-template-columns: 1fr; }
+  .cap-cards { grid-template-columns: repeat(2, 1fr); }
+  .userlayout { flex-direction: column; }
+  .userlayout .drawer { width: 100%; position: static; }
+  .setlayout { flex-direction: column; }
+  .setnav { width: 100%; flex-direction: row; flex-wrap: wrap; position: static; }
+  .setbody { max-width: none; }
+}
+
+@media (max-width: 760px) {
+  .app { flex-direction: column; height: auto; }
+  .sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .brand { padding-bottom: 8px; }
+  .nav { flex-direction: row; flex-wrap: wrap; }
+  .nav-item.active::before { display: none; }
+  .sidebar-foot { margin: 0 0 0 auto; border: none; padding-top: 0; }
+  .content { flex-direction: column; }
+  .master-detail, .list-pane, .detail-pane { height: auto; width: 100%; }
+  .master-detail { flex-direction: column; }
+  .cap-cards { grid-template-columns: 1fr; }
+  .sched-row { align-items: flex-start; flex-wrap: wrap; }
+  .sched-open { order: -1; flex-basis: calc(100% - 34px); align-items: flex-start; flex-wrap: wrap; }
+  .sched-open .sched-desc { flex-basis: 100%; white-space: normal; }
+  .schedule-card { width: calc(100vw - 24px); max-height: 92vh; }
+  .schedule-details { grid-template-columns: 1fr; }
+}
+
+/* Gateway version chip + one-click update (rail footer) */
+#update { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
+#update .statuschip { padding: 3px 10px; }
+.update-btn { font-size: 11.5px; padding: 6px 10px; margin: 2px 10px 0; }
+
+/* Per-model Codex rates table (Settings → Behavior) */
+.rates-table { border-collapse: collapse; margin-top: 6px; width: 100%; max-width: 460px; }
+.rates-table th, .rates-table td { text-align: left; padding: 4px 8px 4px 0; font-size: 12.5px; }
+.rates-table th { color: var(--muted, #9aa3b2); font-weight: 600; }
+.rates-table input[type="number"] { width: 84px; }
+
+/* ── API docs page (nav "API"): static reference for the HTTP run API ── */
+.apidoc { display: flex; flex-direction: column; gap: 16px; max-width: 880px; }
+.apidoc .setcard h4 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.apidoc .setcard h4 code { font-size: 12px; }
+.apidoc-kv { display: flex; flex-direction: column; gap: 9px; }
+.apidoc-kv > div { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.apidoc-k { flex: 0 0 92px; color: var(--muted); font-weight: 600; }
+.apidoc-note { font-size: 12px; color: var(--muted); }
+.apidoc-note-warn { color: var(--warn); }
+.apidoc-verb { font: 600 10.5px/1 var(--mono); letter-spacing: .04em; padding: 3px 6px; border-radius: 5px; text-transform: uppercase; }
+.apidoc-verb.get { color: #0e2a2a; background: var(--light); }
+.apidoc-verb.post { color: #2a1c00; background: var(--warn); }
+.apidoc-table { width: 100%; border-collapse: collapse; }
+.apidoc-table thead th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 4px 12px 6px 0; border-bottom: 1px solid var(--line); }
+.apidoc-table tbody tr { cursor: default; }
+.apidoc-table td { vertical-align: top; padding: 7px 12px 7px 0; font-size: 12.5px; line-height: 1.5; border-bottom: 1px solid var(--line-soft); }
+.apidoc-table td:first-child { white-space: nowrap; }
+.apidoc-pre { margin: 12px 0 0; padding: 12px 14px; background: var(--panel-dark); border: 1px solid var(--line-soft); border-radius: 8px; overflow-x: auto; }
+.apidoc-pre code { display: block; background: none; padding: 0; font-size: 11.5px; line-height: 1.55; color: var(--light); white-space: pre; }
+
+/* Boot failure. Covers the shell because a half-painted admin UI behind it would imply the page
+   is still working; the operator needs one unambiguous thing to read and act on. */
+.fatal { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(18, 36, 36, .92); backdrop-filter: blur(2px); }
+.fatal-card { max-width: 620px; background: var(--panel); border: 1px solid rgba(229, 96, 77, .4); border-radius: var(--radius); padding: 22px 24px; }
+.fatal-card h2 { margin: 0 0 12px; font-size: 17px; font-weight: 600; color: var(--danger); }
+.fatal-card p { margin: 0 0 12px; font-size: 13.5px; line-height: 1.6; color: var(--muted); }
+.fatal-card code { font-family: var(--mono); font-size: 12.5px; color: var(--ink); background: var(--panel-dark); border-radius: 4px; padding: 1px 5px; }
+.fatal-card .mono { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+.fatal-card button { margin-top: 4px; }
+
+/* License card (Settings → License) ---------------------------------------------
+   The banner is the visible half of the licensing state machine: grace, expired
+   grace, invalid and revoked are all HEALTHY daemon states, so they get a strip
+   that explains itself rather than an error page. `valid` and `no_key` are quiet. */
+.license-banner { border-radius: 8px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; margin: 4px 0 14px; border: 1px solid transparent; }
+.license-banner.warn { background: rgba(224, 160, 40, .12); border-color: rgba(224, 160, 40, .45); color: var(--warn); }
+.license-banner.error { background: rgba(220, 80, 70, .12); border-color: rgba(220, 80, 70, .45); color: var(--danger); }
+.license-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0 0 16px; font-size: 12.5px; }
+.license-facts dt { color: var(--muted); }
+.license-facts dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.license-facts dd code { font-size: 11.5px; }
+.license-usage-limit { color: var(--muted); font-size: 11.5px; margin: 2px 0 10px; }
+.license-usage-empty { color: var(--faint); font-size: 12.5px; }
+.bar-fill.over { background: var(--danger); }
+.bar-fill.near { background: var(--warn); }

@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" = "--version" ]; then
+  printf '%s\n' 'opencode 1.0.0-stub'
+  exit 0
+fi
+
+session='ses_stub_new'
+previous=''
+prompt=''
+for argument in "$@"; do
+  if [ "$previous" = '--session' ]; then session="$argument"; fi
+  previous="$argument"
+  prompt="$argument"
+done
+
+if [ "$prompt" = 'WAIT_FOR_ABORT' ]; then
+  trap 'exit 143' TERM INT
+  while :; do sleep 1; done
+fi
+
+if [ "$prompt" = 'FAIL_GENERIC' ]; then
+  printf '%s\n' 'stub failure detail' >&2
+  exit 1
+fi
+
+printf '{"type":"step_start","sessionID":"%s"}\n' "$session"
+printf '{"type":"text","sessionID":"%s","part":{"type":"text","text":"stub reply"}}\n' "$session"
+printf '{"type":"step_finish","sessionID":"%s","part":{"cost":0.002,"tokens":{"input":11,"output":7,"reasoning":2,"cache":{"read":0,"write":0}}}}\n' "$session"

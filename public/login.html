@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ChannelGate — Sign in</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      @font-face {
+        font-family: "Poppins"; font-style: normal; font-weight: 400; font-display: swap;
+        src: url("/fonts/poppins-400-latin.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Poppins"; font-style: normal; font-weight: 600; font-display: swap;
+        src: url("/fonts/poppins-600-latin.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Poppins"; font-style: normal; font-weight: 700; font-display: swap;
+        src: url("/fonts/poppins-700-latin.woff2") format("woff2");
+      }
+      :root {
+        --orange: #fe3a02; --panel: #1e3535; --panel-2: #243f3f;
+        --line: rgba(145, 201, 206, .18); --ink: #fff; --muted: #91c9ce; --faint: rgba(145, 201, 206, .6);
+        --danger: #e5604d;
+        --font: Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+        background: #122424; color: var(--ink); font: 13.5px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 30px 28px; width: min(360px, 90vw); }
+      .wm { font-weight: 700; font-size: 18px; letter-spacing: .01em; }
+      .wm .o { color: var(--orange); }
+      .prod { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 2px 0 20px; }
+      p { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+      input { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 10px 12px; border-radius: 8px; font: inherit; }
+      input:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+      button { width: 100%; margin-top: 12px; background: var(--orange); color: #fff; border: none; padding: 11px; border-radius: 8px; font: 600 14px var(--font); cursor: pointer; }
+      button:hover { filter: brightness(1.08); }
+      .err { color: var(--danger); font-size: 13px; margin-top: 10px; min-height: 16px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="wm"><span class="o">#makeit</span>future<span class="o">.</span></div>
+      <div class="prod">Gateway</div>
+      <p>Enter the admin password.</p>
+      <form id="f">
+        <input id="pw" type="password" placeholder="Password" autofocus autocomplete="current-password" />
+        <button type="submit">Sign in</button>
+        <div class="err" id="err"></div>
+      </form>
+    </div>
+    <script>
+      document.getElementById("f").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const err = document.getElementById("err");
+        err.textContent = "";
+        const res = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: document.getElementById("pw").value }),
+        });
+        if (res.ok) return void (location.href = "/");
+        // A 403 here means no admin password is configured at all — show what the server says to
+        // do about it rather than the misleading "Wrong password."
+        const body = await res.json().catch(() => ({}));
+        err.textContent = body.error || "Wrong password.";
+      });
+    </script>
+  </body>
+</html>
