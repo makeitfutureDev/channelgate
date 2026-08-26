@@ -47,11 +47,11 @@
     "node": ">=22.13"
   },
   "dependencies": {
-    "@composio/core": "0.14.0",
+    "@composio/core": "0.17.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@slack/bolt": "^5.0.0",
     "express": "^5.1.0",
-    "mcp-remote": "0.1.38",
+    "mcp-remote": "0.1.46",
     "zod": "^4.4.3"
   },
   "devDependencies": {
