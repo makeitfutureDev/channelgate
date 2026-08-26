@@ -1,0 +1,98 @@
+name: Bug report
+description: A reproducible defect in the gateway
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Not for security vulnerabilities.** Report those privately per `SECURITY.md`
+        (contact@makeitfuture.com), never in a public issue.
+
+        Redact everything you paste: no tokens, license keys, customer data, workspace or user
+        identifiers, or message content you would not publish. `SUPPORT.md` lists what a
+        reproducible report needs.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem.
+      placeholder: |
+        1. Mention the bot in a channel with ...
+        2. ...
+        3. Observed: ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Gateway version
+      description: The release tag, or `git rev-parse --short HEAD` in the checkout.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux (systemd service)
+        - Linux (other)
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`. The supported minimum is 22.13.
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options:
+        - Claude Code
+        - Codex
+        - Both
+        - Not engine-specific
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Chat platform
+      options:
+        - Slack
+        - Google Chat
+        - Microsoft Teams
+        - Admin UI only
+        - Not platform-specific
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: The smallest excerpt that shows the failure. Automatically rendered as code.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed tokens, license keys, and customer data from everything above.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+        - label: I am running a supported Node version (>= 22.13) on macOS or Linux.
+          required: true

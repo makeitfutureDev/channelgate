@@ -1,0 +1,61 @@
+{
+  "name": "channelgate",
+  "version": "1.0.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "author": "Tiberiu Socaci (MAKEITFUTURE S.R.L.)",
+  "type": "module",
+  "description": "ChannelGate — a self-hosted daemon that runs coding agents (Claude Code, Codex) inside your team chat (Slack, Microsoft Teams, Google Chat) in per-conversation sandboxed folders, with per-user Composio tokens and an admin UI.",
+  "keywords": [
+    "channelgate",
+    "ai-agent",
+    "self-hosted",
+    "slack-bot",
+    "microsoft-teams",
+    "google-chat",
+    "claude-code",
+    "codex",
+    "mcp",
+    "sandbox"
+  ],
+  "scripts": {
+    "start": "node src/start.js",
+    "test": "node scripts/run-tests.mjs",
+    "test:coverage": "node scripts/run-tests.mjs --coverage",
+    "test:security-coverage": "node scripts/security-coverage.mjs",
+    "check:static": "node scripts/static-check.mjs",
+    "check:dco": "node scripts/check-dco.mjs",
+    "secret-scan": "node scripts/secret-scan.mjs",
+    "dev": "node --watch src/start.js",
+    "setup": "bash scripts/install.sh",
+    "update": "bash scripts/update.sh",
+    "service:install": "bash scripts/install-launchd.sh",
+    "service:install:boot": "sudo bash scripts/install-launchd.sh --boot",
+    "service:uninstall": "bash scripts/uninstall-launchd.sh",
+    "service:uninstall:boot": "sudo bash scripts/uninstall-launchd.sh --boot",
+    "backup": "bash scripts/backup-config.sh",
+    "restore": "bash scripts/restore-config.sh",
+    "restore:drill": "bash scripts/restore-drill.sh",
+    "maintenance": "node scripts/runtime-maintenance.mjs",
+    "usage:repair": "node scripts/repair-codex-usage-history.mjs",
+    "release:artifacts": "node scripts/release-artifacts.mjs",
+    "with-landing-lock": "node scripts/with-landing-lock.mjs --",
+    "service:install:linux": "bash scripts/install-systemd.sh",
+    "whisper:install": "node scripts/install-whisper.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@composio/core": "0.14.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@slack/bolt": "^5.0.0",
+    "express": "^5.1.0",
+    "mcp-remote": "0.1.38",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "acorn": "8.18.0",
+    "acorn-globals": "7.0.1"
+  }
+}

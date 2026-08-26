@@ -1,0 +1,97 @@
+{
+  "display_information": {
+    "name": "ChannelGate",
+    "description": "ChannelGate — run Claude Code or Codex in your Slack, sandboxed per channel.",
+    "background_color": "#171a23",
+    "long_description": "ChannelGate brings Claude Code into Slack. Mention the bot in a channel (or just DM it) and it runs a headless Claude session inside a per-conversation sandboxed folder, with each user's own Composio token injected only into their own messages. Admins configure per-channel access, MCP servers, and skills from a local admin UI. Runs over Socket Mode against a self-hosted gateway daemon."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "channelgate",
+      "always_online": true
+    },
+    "agent_view": {
+      "agent_description": "Chat with Claude Code in threads and DMs — sandboxed per channel."
+    },
+    "slash_commands": [
+      {
+        "command": "/stop",
+        "description": "Stop the bot's in-progress answer in this conversation",
+        "should_escape": false
+      },
+      {
+        "command": "/status",
+        "description": "Show what this channel is working on (jobs, schedules, sessions)",
+        "should_escape": false
+      },
+      {
+        "command": "/files",
+        "description": "Browse this channel's files and share a selected file",
+        "should_escape": false
+      }
+    ],
+    "shortcuts": [
+      {
+        "name": "Browse channel files",
+        "type": "message",
+        "callback_id": "cg_browse_channel_files",
+        "description": "Browse files and share one in this message's thread"
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "assistant:write",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "commands",
+        "files:read",
+        "files:write",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "lists:read",
+        "lists:write",
+        "mpim:history",
+        "mpim:read",
+        "reactions:read",
+        "remote_files:read",
+        "search:read.files",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_context_changed",
+        "app_home_opened",
+        "app_mention",
+        "member_joined_channel",
+        "member_left_channel",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim",
+        "reaction_added",
+        "reaction_removed"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

@@ -1,0 +1,106 @@
+name: Nightly engine compatibility
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # A silently red nightly is the failure mode this workflow exists to prevent: GitHub emails go
+  # to whoever last touched the cron line and scheduled workflows auto-disable after 60 idle
+  # days. On any job failure, keep ONE pinned issue alive so the breakage has a visible home.
+  claude-cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install pinned compatibility target
+        run: npm install --global --ignore-scripts @anthropic-ai/claude-code@2.1.220
+      - name: Probe real Claude Code CLI surface (provider-free)
+        run: node scripts/claude-cli-canary.mjs
+      - name: Run Claude adapter + stub transport regression
+        run: node --test test/claude-args.test.js test/message-to-reply-e2e.test.js
+
+  codex-cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install pinned compatibility target
+        run: npm install --global --ignore-scripts @openai/codex@0.144.1
+      - name: Probe real Codex CLI surface (provider-free)
+        run: node scripts/codex-cli-canary.mjs
+      - name: Run Codex adapter + stub transport regression
+        run: node --test test/codex-args.test.js test/codex-message-to-reply-e2e.test.js
+
+  # Non-blocking drift probes: the pinned jobs above prove OUR environment still works against a
+  # frozen CLI; these show when a NEW upstream release breaks the adapters, without making the
+  # nightly flaky. Job-level continue-on-error keeps them out of failure().
+  claude-cli-latest:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install LATEST Claude Code CLI (drift probe)
+        run: npm install --global --ignore-scripts @anthropic-ai/claude-code@latest
+      - name: Probe latest Claude Code CLI surface (provider-free)
+        run: node scripts/claude-cli-canary.mjs
+
+  codex-cli-latest:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install LATEST Codex CLI (drift probe)
+        run: npm install --global --ignore-scripts @openai/codex@latest
+      - name: Probe latest Codex CLI surface (provider-free)
+        run: node scripts/codex-cli-canary.mjs
+
+  report-failure:
+    needs: [claude-cli, codex-cli]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Keep one pinned canary-failure issue alive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Nightly engine canary is failing"
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          body="Failed run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID ($(date -u +%Y-%m-%dT%H:%MZ))"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

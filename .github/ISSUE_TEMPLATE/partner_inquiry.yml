@@ -1,0 +1,60 @@
+name: Partner inquiry
+description: Agency, reseller, white-label, or enterprise deployment
+title: "partner: "
+labels: ["partner"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read `docs/LICENSING-FAQ.md` first — operating any number of **separate single-customer
+        deployments** is permitted service work and needs no agreement. Reselling, white-labeling,
+        hosting the gateway as a paid service, or pooling one license key across customers does
+        need one.
+
+        This form is a first contact in public. Anything commercial in detail — pricing, contract
+        terms, customer names — goes to **contact@makeitfuture.com** instead.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What are you asking about
+      options:
+        - Agency / MSP operating deployments for customers
+        - Reseller Agreement
+        - White-Label Agreement
+        - Enterprise license key
+        - Guided install or paid support
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: organization
+    attributes:
+      label: Organization
+      description: Company name and website.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What you want to do
+      description: |
+        The shape of the deployment: how many customers, who operates it, who holds the license
+        key, and whether the gateway is presented under its own name.
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Contact email
+      description: Where we should reply. Leave empty to be answered on this issue.
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have read `docs/LICENSING-FAQ.md`.
+          required: true
+        - label: This issue contains no confidential or customer-identifying information.
+          required: true
