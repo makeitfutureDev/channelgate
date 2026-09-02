@@ -2701,11 +2701,17 @@ the suite runs as an enterprise deployment because it holds a license it actuall
 - [x] Unit: the landing-lock helper's ref is `refs/channelgate/landing-lock`, a held lock shows up
       under `refs/channelgate/` and nothing is written under the pre-rename name
       (`test/landing-lock.test.js`).
-- [ ] Live: the production checkout renamed `~/Code/claude-gateway` → `~/Code/channelgate` and
-      repathed with `--repath --from … --to …` while the daemon was stopped: `--verify` with the
-      same pair reports **0** state occurrences, both channels whose `workDir` is the checkout
-      resume their threads, `channelgate.service` starts from the new `WorkingDirectory`, and
-      `/api/health` reports the fresh-start root commit as the running revision.
+- [x] Live (2026-09-03, Linux host, daemon stopped for two minutes): the production checkout
+      renamed `~/Code/claude-gateway` → `~/Code/channelgate` and repathed with
+      `--repath --from … --to …`: 2 channel records, 1 Claude project directory renamed with
+      40 113 `cwd` fields in 211 transcripts, 1 727 Codex paths in 379 files, 3 work-folder paths,
+      the user unit's `WorkingDirectory`, 40 sandboxes regenerated; `--verify` with the same pair
+      reports **0** state occurrences (113 931 historical, 66 still on disk by design);
+      `channelgate.service` started from the new `WorkingDirectory`, `/api/health` reports the
+      fresh-start root commit as the running revision with Slack connected, and the updater's
+      isolated engine smoke turn passed (2.9 s). A second deployment on the same host (another
+      user, checkout not renamed) was repointed with the three `INSTALL.md` commands and restarted
+      onto the same revision.
 - [x] Live: `node scripts/migrate-channelgate.mjs --verify` against the production install
       (read-only), after the real migration: **0** occurrences the migration is responsible for,
       with 56 609 in historical content (19 `events` rows, 5 379 Claude message/tool occurrences in
