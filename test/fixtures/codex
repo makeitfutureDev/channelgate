@@ -1,0 +1,112 @@
+#!/bin/sh
+if [ "$1" = "features" ] && [ "$2" = "list" ]; then
+  printf '%s\n' 'network_proxy experimental false'
+  exit 0
+fi
+if [ "$1" = "app-server" ]; then
+  while IFS= read -r request; do
+    case "$request" in
+      *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}' ;;
+      *'"method":"mcpServerStatus/list"'*) printf '%s\n' '{"id":2,"result":{"data":[]}}' ;;
+    esac
+  done
+  exit 0
+fi
+out=""
+previous=""
+resume="no"
+mcp="no"
+cancel="no"
+fail="no"
+reject_model="no"
+reject_all_models="no"
+reject_after_tool="no"
+limit_fail="no"
+limit_stderr="no"
+limit_after_tool="no"
+auth_hang="no"
+auth_after_tool="no"
+stall_401="no"
+model=""
+network_proxy="no"
+network_domain="no"
+for arg in "$@"; do
+  if [ "$previous" = "-o" ]; then out="$arg"; fi
+  if [ "$previous" = "-m" ]; then model="$arg"; fi
+  if [ "$arg" = "resume" ]; then resume="yes"; fi
+  case "$arg" in
+    mcp_servers.gateway.command=*) mcp="yes" ;;
+    features.network_proxy.enabled=true) network_proxy="yes" ;;
+    *'domains = { "api.github.com" = "allow" }'*) network_domain="yes" ;;
+    *CODEX_STUB_WAIT_FOR_CANCEL*) cancel="yes" ;;
+    *CODEX_STUB_FAIL_GENERIC*) fail="yes" ;;
+    *CODEX_STUB_REJECT_MODEL*) reject_model="yes" ;;
+    *CODEX_STUB_REJECT_ALL_MODELS*) reject_all_models="yes" ;;
+    *CODEX_STUB_REJECT_AFTER_TOOL*) reject_after_tool="yes" ;;
+    *CODEX_STUB_LIMIT_FAIL_SAFE*) limit_fail="yes" ;;
+    *CODEX_STUB_LIMIT_STDERR*) limit_stderr="yes" ;;
+    *CODEX_STUB_LIMIT_AFTER_TOOL*) limit_after_tool="yes" ;;
+    *CODEX_STUB_AUTH_HANG*) auth_hang="yes" ;;
+    *CODEX_STUB_AUTH_AFTER_TOOL*) auth_after_tool="yes" ;;
+    *CODEX_STUB_STALL_401*) stall_401="yes" ;;
+  esac
+  previous="$arg"
+done
+if [ "$cancel" = "yes" ]; then
+  exec sleep 30
+fi
+# Credential lost mid-flight: Codex says so on stderr and then keeps waiting instead of exiting.
+# This is the shape that used to heartbeat until a human pressed stop.
+if [ "$auth_hang" = "yes" ]; then
+  printf '%s\n' 'ERROR: not logged in. Run `codex login` to authenticate.' >&2
+  exec sleep 30
+fi
+# The same stderr line, but only AFTER a tool ran: the turn may have mutated something, so it must
+# never be replayed on the other harness.
+if [ "$auth_after_tool" = "yes" ]; then
+  printf '%s\n' '{"type":"item.started","item":{"id":"tool-before-auth","type":"command_execution","command":"already-ran"}}'
+  printf '%s\n' 'ERROR: not logged in. Run `codex login` to authenticate.' >&2
+  exec sleep 30
+fi
+# A wedged turn that never says anything unambiguous: provider 401s retried forever on stderr with
+# no stdout at all. Chatter must not extend the silence budget, and the buffered stderr must still
+# be classified when it runs out.
+if [ "$stall_401" = "yes" ]; then
+  while true; do
+    printf '%s\n' 'stream error: unexpected status 401 Unauthorized; retrying 1/5 in 200ms' >&2
+    sleep 0.1
+  done
+fi
+if [ "$fail" = "yes" ]; then
+  printf '%s\n' 'stub failure detail' >&2
+  exit 1
+fi
+# Plan/credit exhaustion as Codex reports it: a JSON error event, no tokens, no tool call.
+if [ "$limit_fail" = "yes" ]; then
+  printf '%s\n' '{"type":"error","error":{"type":"usage_limit_reached","message":"You'"'"'ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 20th, 2026 6:35 AM."}}'
+  exit 1
+fi
+# Same failure, but printed on stderr with a nonzero exit and no JSON event at all.
+if [ "$limit_stderr" = "yes" ]; then
+  printf '%s\n' "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 20th, 2026 6:35 AM." >&2
+  exit 1
+fi
+# A limit that lands AFTER a tool ran: the turn may have mutated something, so it must NOT replay.
+if [ "$limit_after_tool" = "yes" ]; then
+  printf '%s\n' '{"type":"item.started","item":{"id":"tool-before-limit","type":"command_execution","command":"already-ran"}}'
+  printf '%s\n' '{"type":"error","error":{"type":"usage_limit_reached","message":"You'"'"'ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits."}}'
+  exit 1
+fi
+if [ "$reject_after_tool" = "yes" ]; then
+  printf '%s\n' '{"type":"item.started","item":{"id":"tool-before-error","type":"command_execution","command":"already-ran"}}'
+  printf '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The '\''%s'\'' model is not supported for this account."}}\n' "$model"
+  exit 1
+fi
+if [ "$reject_all_models" = "yes" ] || { [ "$reject_model" = "yes" ] && [ "$model" = "gpt-5.6" ]; }; then
+  printf '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The '\''%s'\'' model is not supported for this account."}}\n' "$model"
+  exit 1
+fi
+printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-session"}'
+printf '%s\n' '{"type":"item.started","item":{"type":"mcp_tool_call","server":"gateway","tool":"slack_channel_history"}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":9,"output_tokens":3}}'
+printf 'Codex stub reply; resume=%s; gateway_mcp=%s; model=%s; network_proxy=%s; approved_domain=%s\n' "$resume" "$mcp" "$model" "$network_proxy" "$network_domain" > "$out"

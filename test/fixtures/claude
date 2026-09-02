@@ -1,0 +1,67 @@
+#!/bin/sh
+# Echo harness-relevant argv facts through the reply so the E2E can assert the spawned process
+# actually RECEIVED them (mirrors test/fixtures/codex): a resume turn must carry -r, and MCP
+# injection must ride --mcp-config. Unit tests on buildClaudeArgs can't prove the spawn.
+resume=no; mcp=no; cancel=no; fail=no; auth_fail=no; limit_fail=no; limit_answer=no; memory_save=no; answerless=no; mcp_path=""; prev=""
+for arg in "$@"; do
+  case "$arg" in
+    -r) resume=yes ;;
+    --mcp-config) mcp=yes ;;
+    *CLAUDE_STUB_WAIT_FOR_CANCEL*) cancel=yes ;;
+    *CLAUDE_STUB_FAIL_GENERIC*) fail=yes ;;
+    *CLAUDE_STUB_AUTH_FAIL_SAFE*) auth_fail=yes ;;
+    *CLAUDE_STUB_LIMIT_FAIL_SAFE*) limit_fail=yes ;;
+    *CLAUDE_STUB_LIMIT_ANSWER*) limit_answer=yes ;;
+    *CLAUDE_STUB_MEMORY_SAVE*) memory_save=yes ;;
+    *CLAUDE_STUB_ANSWERLESS*) answerless=yes ;;
+  esac
+  if [ "$prev" = "--mcp-config" ]; then mcp_path="$arg"; fi
+  prev="$arg"
+done
+if [ "$cancel" = "yes" ]; then
+  exec sleep 30
+fi
+# Keep a copy of the per-run MCP config: it carries the signed gateway capability, which is the
+# only way an E2E can observe WHEN that capability was minted (the real file is deleted as soon as
+# the run settles). Named after the run's own folder so test files running in parallel can never
+# overwrite each other's copy.
+if [ -n "$mcp_path" ] && [ -f "$mcp_path" ]; then
+  cp "$mcp_path" "${TMPDIR:-/tmp}/cg-stub-mcp-$(basename "$PWD").json" 2>/dev/null || true
+fi
+if [ "$auth_fail" = "yes" ]; then
+  printf '%s\n' '{"type":"assistant","error":"authentication_failed","message":{"role":"assistant","content":[{"type":"text","text":"OAuth session expired and could not be refreshed"}]}}'
+  exit 1
+fi
+if [ "$limit_fail" = "yes" ]; then
+  printf '%s\n' '{"type":"assistant","error":"rate_limit","message":{"role":"assistant","content":[{"type":"text","text":"Session limit reached; resets at 6am"}]}}'
+  exit 1
+fi
+# A limit that arrives as the ANSWER: the CLI exits 0 and its "reply" is the notice, with no
+# tokens spent. The orchestrator detects that shape separately from a thrown provider failure.
+if [ "$limit_answer" = "yes" ]; then
+  printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"You have hit your usage limit. Try again at 6am.\",\"session_id\":\"stub-session\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}"
+  exit 0
+fi
+# A memory reviewer that SAVES: one streamed tool_use for the gateway save tool (the shape the
+# stream consumer turns into a tool_use event), then a one-line "Saved: …" reply. Lets the
+# memory-review E2E observe "saved something" → notice posted, without a real MCP round-trip.
+if [ "$memory_save" = "yes" ]; then
+  printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_mem","name":"mcp__gateway__update_channel_memory","input":{}}}}'
+  printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_stop","index":0}}'
+  printf '%s\n' '{"type":"result","subtype":"success","result":"Saved: Alex prefers short replies.","session_id":"stub-session","usage":{"input_tokens":30,"output_tokens":8},"total_cost_usd":0.0004}'
+  exit 0
+fi
+# A turn that DID work and then ended with no answer: a tool call ran, tokens were spent, and the
+# CLI's terminal line is an error subtype carrying no `result` text — the real shape behind the
+# "(empty response)" incidents. Exit 0, exactly like the CLI does.
+if [ "$answerless" = "yes" ]; then
+  printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_ans","name":"Bash","input":{}}}}'
+  printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_stop","index":0}}'
+  printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"stub-session","usage":{"input_tokens":900,"output_tokens":120},"total_cost_usd":0.02}'
+  exit 0
+fi
+if [ "$fail" = "yes" ]; then
+  printf '%s\n' 'stub failure detail' >&2
+  exit 1
+fi
+printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Stub engine reply (resume=$resume; mcp=$mcp)\",\"session_id\":\"stub-session\",\"usage\":{\"input_tokens\":12,\"output_tokens\":4},\"total_cost_usd\":0.001}"

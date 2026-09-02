@@ -1,0 +1,14 @@
+#!/bin/sh
+# cg-signal <runId> <SIG> — deliver a signal to the run's WHOLE process group (engine + its MCP
+# stdio children + mcp-remote bridges), the container-side equivalent of the host backend's
+# negative-pid killTree. Falls back to the leader alone if the group form is refused.
+id="$1"
+sig="${2:-TERM}"
+sig="${sig#SIG}"
+[ -n "$id" ] || exit 2
+pid=$(cat "/run/cg/$id.pid" 2>/dev/null) || exit 1
+[ -n "$pid" ] || exit 1
+kill -s "$sig" -- "-$pid" 2>/dev/null && exit 0
+kill -s "$sig" "-$pid" 2>/dev/null && exit 0
+kill -s "$sig" "$pid" 2>/dev/null && exit 0
+exit 1

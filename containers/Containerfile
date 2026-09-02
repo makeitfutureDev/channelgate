@@ -1,0 +1,117 @@
+# The ChannelGate channel image: one long-lived container per conversation, engine processes
+# exec'd into it. Built by `npm run build:image` (scripts/build-image.mjs), which passes the
+# daemon user's real uid/gid and the pins from containers/versions.json.
+#
+# Two rules shape this file:
+#   1. Everything the ENGINE needs is baked in and root-owned, so a channel cannot modify its own
+#      toolchain. Everything the channel ACCUMULATES (logins, npm prefix, pip/pipx installs, engine
+#      state, caches) lives under /home/agent, which is a per-channel named volume — so it survives
+#      a stop, a restart and a recreate. /tmp and /var/tmp are bind mounts of the channel's artifact
+#      dir for the same reason (src/runtimes/container/lifecycle.js); nothing here is a tmpfs the
+#      idle reaper could empty.
+#   2. /home/agent's subdirectories are created HERE, owned by agent. A brand-new named volume is
+#      seeded from the image, and the Codex auth file is bind-mounted at
+#      /home/agent/.codex/auth.json — if that directory did not already exist in the volume, the
+#      container runtime would create it root-owned and Codex could not write its sessions.
+FROM node:22-bookworm-slim
+
+ARG UID=1000
+ARG GID=1000
+ARG CLAUDE_VERSION
+ARG CODEX_VERSION
+ARG MCP_REMOTE_VERSION
+ARG VERCEL_VERSION
+ARG SUPABASE_VERSION
+ARG IMAGE_SPEC_VERSION=0.0.0
+
+LABEL channelgate="1"
+LABEL cg.image.version="${IMAGE_SPEC_VERSION}"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Base tooling. Deliberately short: git/gh for the dev channels, ripgrep+jq for the agents' own
+# search paths, procps because the container-side helpers and the engines both use it, tini as
+# PID 1, postgresql-client for the Supabase workflows, and python3 WITH pip/venv/pipx — after npm,
+# python packaging is the most common "install a CLI" path, and everything it installs lands in
+# ~/.local, which is inside the per-channel HOME volume and therefore permanent.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq less openssh-client pipx postgresql-client procps python3 python3-pip python3-venv ripgrep tini unzip \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends gh \
+ && rm -rf /var/lib/apt/lists/*
+
+# The agent user, at the DAEMON's uid/gid so bind-mounted files stay owned by the daemon user on
+# both sides (rootless podman's --userns=keep-id maps them 1:1; docker gets --user <uid>:<gid>).
+# The base image already ships a `node` user at 1000, so an id collision is renamed out of the way
+# rather than left to fail the build.
+RUN set -eux; \
+    if getent group "${GID}" >/dev/null; then groupmod -n agent "$(getent group "${GID}" | cut -d: -f1)"; \
+    else groupadd -g "${GID}" agent; fi; \
+    if getent passwd "${UID}" >/dev/null; then \
+      old="$(getent passwd "${UID}" | cut -d: -f1)"; \
+      usermod -l agent -g "${GID}" -d /home/agent -m -s /bin/bash "$old"; \
+    else useradd -u "${UID}" -g "${GID}" -m -d /home/agent -s /bin/bash agent; fi; \
+    install -d -o agent -g agent -m 0755 /home/agent; \
+    install -d -o agent -g agent -m 0700 /home/agent/.claude /home/agent/.codex /home/agent/.npm-global /home/agent/.cache /home/agent/.config /home/agent/.local/bin /home/agent/bin
+
+# The pinned engine + provider CLIs, installed into the ROOT-owned global prefix so a channel
+# cannot silently downgrade or replace them (the per-channel prefix below is for what the agent
+# installs itself, and takes precedence on PATH).
+RUN npm install -g --no-fund --no-audit \
+      "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
+      "@openai/codex@${CODEX_VERSION}" \
+      "mcp-remote@${MCP_REMOTE_VERSION}" \
+      "vercel@${VERCEL_VERSION}" \
+      "supabase@${SUPABASE_VERSION}" \
+ && npm cache clean --force
+
+# The gateway's own in-container bundle: the process helpers plus the minimal set of daemon modules
+# an ENGINE spawns during a run (the MCP bridges and the Stop hook), resolved as an import closure
+# by the build script — never the whole checkout, which is never mounted either.
+COPY --chown=root:root bin/ /opt/channelgate/bin/
+COPY --chown=root:root bundle/ /opt/channelgate/
+# The bundle's package.json declares only what those modules import; `type: module` in it is what
+# makes /opt/channelgate/**/*.js (including bin/cg-mcp-bridge.js) load as ES modules.
+RUN chmod 0755 /opt/channelgate/bin/* \
+ && cd /opt/channelgate && npm install --omit=dev --no-fund --no-audit && npm cache clean --force \
+ && printf '%s\n' "${IMAGE_SPEC_VERSION}" > /opt/channelgate/VERSION
+
+# Every writable location here is under /home/agent — the per-channel named volume — so a CLI the
+# agent installs is still installed after a stop, a restart or a recreate. PIP_USER +
+# PIP_BREAK_SYSTEM_PACKAGES make a plain `pip install <cli>` land in ~/.local instead of failing on
+# Debian's externally-managed-environment marker; pipx puts its venvs and shims there too.
+# (Inside a hand-made venv, `pip install` needs PIP_USER=0 — see docs/OPERATIONS.md.)
+ENV CG_RUNTIME=container \
+    HOME=/home/agent \
+    NPM_CONFIG_PREFIX=/home/agent/.npm-global \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    CLAUDE_CONFIG_DIR=/home/agent/.claude \
+    CODEX_HOME=/home/agent/.codex \
+    PIP_USER=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIPX_HOME=/home/agent/.local/pipx \
+    PIPX_BIN_DIR=/home/agent/.local/bin \
+    PATH=/home/agent/.npm-global/bin:/home/agent/.local/bin:/home/agent/bin:/opt/channelgate/bin:/usr/local/bin:/usr/bin:/bin:/home/agent/.cargo/bin:/home/agent/.bun/bin:/home/agent/.deno/bin:/home/agent/go/bin
+
+# Codex runs every shell command through a LOGIN shell (`bash -lc`), and Debian's /etc/profile
+# resets PATH to the distro default on the way in — which silently dropped the per-channel npm
+# prefix, the gateway helpers and every other entry above. /etc/profile.d runs AFTER that reset, so
+# the image PATH is re-asserted there for login shells; non-login shells (Claude's Bash tool, a
+# plain `podman exec`) inherit the ENV PATH directly. Bash then sources ~/.profile, whose Debian
+# skeleton prepends ~/bin and ~/.local/bin once more — harmless duplicates.
+RUN printf 'export PATH="%s"\n' "$PATH" > /etc/profile.d/channelgate-path.sh \
+ && chmod 0644 /etc/profile.d/channelgate-path.sh
+
+USER agent
+WORKDIR /home/agent
+
+# tini reaps the orphans a long-lived agent container inevitably produces; cg-init prepares the
+# HOME volume on EVERY start (not just at build time) and then execs the real command.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/opt/channelgate/bin/cg-init", "sleep", "infinity"]

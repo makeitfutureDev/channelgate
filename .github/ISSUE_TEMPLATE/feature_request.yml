@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a capability or a change in behaviour
+title: "feat: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals that touch the security model, license tiers and limits, `src/ee/`, or the
+        licensing and trademark texts are discussed here **before** any code is written — see
+        `CONTRIBUTING.md`. Commercial and partner questions go to contact@makeitfuture.com.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does the gateway get in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should happen instead. Be concrete about the user-visible result.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, and why they are not enough.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Chat platform adapter (Slack / Google Chat / Teams)
+        - Engine or harness (Claude Code / Codex)
+        - Sandboxing, permissions, or authorization
+        - Admin UI or API
+        - Scheduling, background jobs, or memory
+        - Operations, packaging, or release
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to open a pull request for this if the design is agreed.
+          required: false

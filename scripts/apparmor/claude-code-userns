@@ -1,0 +1,53 @@
+abi <abi/5.0>,
+include <tunables/global>
+
+# Allow Claude Code's Bash sandbox (userns + setgroups/uid_map/gid_map + a NESTED
+# userns for its apply-seccomp stage) on Ubuntu 23.10+ hosts that enforce
+#   kernel.apparmor_restrict_unprivileged_userns = 1        (23.10+, incl. 24.04 LTS)
+#   kernel.apparmor_restrict_unprivileged_unconfined = 1    (25.04+ / AppArmor 5.0)
+# Without this profile EVERY sandboxed Bash call in every channel fails with
+#   apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted;
+#   caller must provide CAP_SYS_ADMIN): Permission denied
+#
+# This is the pattern Ubuntu itself uses for /usr/bin/bwrap: a MEDIATING profile that
+# explicitly allows everything, so the process counts as "confined" (the unprivileged
+# restrictions no longer apply) yet loses nothing. Children (bash, tools) inherit it via
+# ix, so the nested apply-seccomp userns keeps its capabilities too. Claude Code's own
+# seccomp/landlock sandbox remains the real confinement for those children — nothing
+# else on the host is weakened (unlike flipping the sysctls, which reopens unprivileged
+# user namespaces for every process on the machine).
+#
+# The classic Chrome-style `flags=(unconfined) { userns, }` recipe is unproven on
+# AppArmor 5.0 with apparmor_restrict_unprivileged_unconfined=1 — don't assume it works.
+#
+# Attachment: the native installer lays versions out as FILES —
+#   ~/.local/share/claude/versions/2.1.246   (the executable itself, no versions/<v>/claude)
+# so the glob must match the version file directly. It covers user homes under /home and
+# the install-systemd.sh service home under /var/lib. claude-userns-fix.sh replaces the
+# attachment line when CG_CLAUDE_ATTACH is set (see scripts/apparmor/README.md).
+profile claude-code-userns /{home,var/lib}/*/.local/share/claude/versions/* flags=(attach_disconnected,mediate_deleted) {
+  allow all,
+  allow userns,
+  allow capability,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/claude-code-userns>
+}
+
+# Codex needs the same exemption: its sandbox is the same userns architecture, and its
+# approved-domain network_proxy runs inside it. Unattached, the capability strip does NOT
+# break the filesystem sandbox (runs look healthy), but it starves the proxy, which then
+# RESETS every tunnel — allowed domains included — so approved-network channels fail with
+#   curl: (56) Recv failure: Connection reset by peer
+# on both allowed and denied hosts, indistinguishably. The standalone installer lays
+# releases out as .../releases/<version>/bin/codex; the `current` symlink and
+# ~/.local/bin/codex both resolve there, so this one glob covers every entry point.
+# claude-userns-fix.sh replaces the attachment line when CG_CODEX_ATTACH is set.
+profile codex-userns /{home,var/lib}/*/.codex/packages/standalone/releases/*/bin/codex flags=(attach_disconnected,mediate_deleted) {
+  allow all,
+  allow userns,
+  allow capability,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/codex-userns>
+}

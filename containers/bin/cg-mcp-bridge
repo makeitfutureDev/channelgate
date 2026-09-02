@@ -1,0 +1,6 @@
+#!/bin/sh
+# cg-mcp-bridge — human-facing shim for the container-side half of the gateway control MCP. The
+# ENGINES are handed `node /opt/channelgate/bin/cg-mcp-bridge.mjs` instead (Codex reaches it through
+# secret-env-bridge, which re-execs process.execPath with a script path); this exists so a person
+# who exec'd into a container can run the bridge by name.
+exec node /opt/channelgate/bin/cg-mcp-bridge.mjs "$@"

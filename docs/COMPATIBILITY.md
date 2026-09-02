@@ -1,0 +1,13 @@
+# Compatibility matrix
+
+| Component | Supported | Release gate |
+| --- | --- | --- |
+| Operating system | Current macOS; maintained Linux with systemd | CI on macOS + Ubuntu |
+| Node.js | 22.13 minimum; 24 LTS | Full matrix CI |
+| Claude Code | Pinned nightly target `2.1.220` | Real CLI surface + stub transport |
+| Codex CLI | Pinned nightly target `0.144.1` | Real CLI surface + stub transport |
+| SQLite | Built-in `node:sqlite` | Migrations + backup/restore quick-check |
+| Slack | Socket Mode Slack app manifest in repository | Real workspace canary before promotion |
+
+Compatibility is versioned with each Git tag. A CLI version outside the tested target is
+best-effort until the nightly canary and full release checklist pass.

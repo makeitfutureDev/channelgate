@@ -1,0 +1,23 @@
+#!/bin/sh
+# cg-exec <runId> <cmd> [args…] — run one gateway command as the leader of its OWN session and
+# process group, and record that leader's pid so a LATER, SEPARATE exec (cg-probe / cg-signal) can
+# address the whole tree. The daemon's host-side client is a `<cli> exec` process in another pid
+# namespace: its pid names the client, never the engine, so liveness and signals have to be asked
+# for from inside. `setsid -w` keeps the run in the foreground of the exec session, so the client's
+# exit code and stdio stay the engine's — the runners see no difference from a host spawn.
+#
+# The exit status is also RECORDED (<runId>.rc), because a detached run (`exec -d`) has no client
+# to report it: cg-probe hands it back once the run is over.
+set -u
+id="$1"
+[ -n "$id" ] || { echo "cg-exec: missing run id" >&2; exit 64; }
+shift
+[ $# -gt 0 ] || { echo "cg-exec: missing command" >&2; exit 64; }
+mkdir -p /run/cg 2>/dev/null || true
+rm -f "/run/cg/$id.rc" 2>/dev/null || true
+# $0 inside `sh -c` is the run id; $@ is the command. $$ is that shell — setsid made it the session
+# and group leader, and `exec` keeps its pid, so the recorded pid IS the group leader (-pid works).
+setsid -w /bin/sh -c 'echo $$ > "/run/cg/$0.pid"; exec "$@"' "$id" "$@"
+rc=$?
+printf '%s\n' "$rc" > "/run/cg/$id.rc" 2>/dev/null || true
+exit "$rc"
