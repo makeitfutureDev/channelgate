@@ -13,7 +13,7 @@
 import path from "node:path";
 import { attachRuntime, validateRuntimeBackend } from "../src/runtimes/contract.js";
 import { copyCarryEntries } from "../src/runtimes/copy.js";
-import { hostBackend } from "../src/runtimes/host.js";
+import { localRuntime } from "../src/runtimes/local.js";
 import { resolveRuntime } from "../src/runtimes/resolve.js";
 
 export const FAKE_IMAGE = "channelgate/runtime:test";
@@ -29,6 +29,11 @@ export function createFakeRuntimeBackend({
 } = {}) {
   // One shared counter so "did ensureUp happen before the spawn?" is answerable, not inferable.
   let seq = 0;
+  // Delegated children that have exited, by runId: a background job inside a container is watched
+  // by PROBE (the daemon-side client exits as soon as the exec is started), so the fake's probe
+  // must say "gone" once the process it really spawned has finished — otherwise a job could never
+  // complete. `alive = false` still overrides it (a vanished container).
+  const exited = new Set();
   const calls = {
     ensureUp: [],
     spawn: [],
@@ -93,17 +98,23 @@ export function createFakeRuntimeBackend({
       const env = spec.env && isolated
         ? { ...spec.env, PATH: process.env.PATH || "", HOME: process.env.HOME || spec.env.HOME, TMPDIR: process.env.TMPDIR || "/tmp" }
         : spec.env;
-      const child = hostBackend.spawn(target, { ...spec, env });
+      const child = localRuntime.spawn(target, { ...spec, env });
+      child.once?.("exit", () => { if (spec.runId) exited.add(spec.runId); });
       return attachRuntime(child, { backend, runId: spec.runId, target, kind: spec.kind });
     },
 
     async probe(child) {
-      calls.probe.push(child?.runtime?.runId || "");
-      return backend.alive;
+      const runId = child?.runtime?.runId || "";
+      calls.probe.push(runId);
+      return backend.alive && !(runId && exited.has(runId));
     },
 
     async signal(child, signal) {
       calls.signal.push({ runId: child?.runtime?.runId || "", signal });
+      // The delegated process is a real child of this host: deliver the signal to its group exactly
+      // as the real backend would inside the container. Recording alone would let a stub that waits
+      // forever (a cancelled turn, a wedged 401 retry loop) outlive the test that spawned it.
+      await localRuntime.signal(child, signal);
       return true;
     },
 
@@ -184,17 +195,18 @@ export function fakeContainerPath(target, abs) {
 // A RuntimeTarget whose PATHS come from the real resolver (so the artifact/clean dirs are exactly
 // the ones production would use) but whose backend is the fake.
 export function fakeTarget(backend, slug, meta = {}) {
-  // adminMode is stripped only for the PATH resolution: an admin channel pins the host backend, so
-  // the real resolver would hand back a target with no artifact dir, and this helper's whole job is
-  // to produce the container-shaped paths a test wants to assert on.
-  const real = resolveRuntime(slug, { ...meta, runtime: "container", adminMode: false }, { settings: { enabled: true, defaultBackend: "host" } });
+  const real = resolveRuntime(slug, meta);
   return backend.prepareTarget({ ...real, meta, runtime: backend });
 }
 
-// The matching host target, resolved for real — used wherever a test has to prove that host
-// behaviour did not move.
-export function hostTarget(slug, meta = {}) {
-  return resolveRuntime(slug, { ...meta, runtime: "host" }, { settings: { enabled: true, defaultBackend: "host" } });
+// Route every channel turn of the calling test file through a fake backend: the orchestration
+// (src/gateway/run.js) resolves targets through its test seam, so a suite with no container CLI
+// still runs every stub-engine turn "inside" a container-shaped target. Returns the backend so a
+// test can assert on its recorded calls. Undo with `await useFakeRuntime(null)`.
+export async function useFakeRuntime(backend = createFakeRuntimeBackend()) {
+  const { setRuntimeResolver } = await import("../src/gateway/run.js");
+  setRuntimeResolver(backend ? (slug, meta) => fakeTarget(backend, slug, meta) : null);
+  return backend;
 }
 
-export { hostBackend };
+export { localRuntime };

@@ -1,180 +1,98 @@
+// `codex exec` argv and child env, as built for the ONLY place Codex runs any more: a channel
+// container. The container is the confinement boundary, so there is no permission profile compiled
+// against host paths, no network proxy allow-list and no host state dir in the argv — Codex's own
+// sandbox is reduced to a MODE (read-only as defence in depth, full access otherwise), and every
+// helper it launches is the image's baked bundle.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { ensureTestEnv } from "./helpers.js";
+import { createFakeRuntime } from "./fixtures/fake-runtime-backend.js";
 
 const scratch = ensureTestEnv();
-const { assertCodexNetworkProxySupported, buildCodexArgs, buildCodexEnv, codexFeatureListHasNetworkProxy, progressFromCodexEvent } = await import("../src/engines/codex.js");
+const { buildCodexArgs, buildCodexEnv, progressFromCodexEvent } = await import("../src/engines/codex.js");
+const { CONTAINER_HOME, CONTAINER_PATH, localRuntimeTarget } = await import("../src/engines/runtime-target.js");
 const { workspaceRoot } = await import("../src/config/paths.js");
 const { allowedFsRoot } = await import("../src/web/security.js");
-const { HOST_IDENTITY_PATHS } = await import("../src/gateway/host-sensitive-paths.js");
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// One isolated target for the whole file: the real resolver's shape (cwd, artifact dir) with the
+// image's helper table behind it (test/fixtures/fake-runtime-backend.js).
+const target = createFakeRuntime().target();
 
 function argsFor(overrides = {}) {
   return buildCodexArgs({
     prompt: "check schedules",
     sessionId: "thread-1",
     isNewSession: true,
-    cwd: "/tmp/channel",
-    outFile: "/tmp/out.txt",
+    cwd: target.cwd,
+    outFile: `${target.artifactDir}/tmp/out.txt`,
     gatewayFsRoot: allowedFsRoot(),
     gatewayWorkspaceRoot: workspaceRoot(),
+    target,
     ...overrides,
   });
 }
 
-// Read-only toolchain/config grants both profiles carry so git/node/python still launch on a
-// stock macOS + Homebrew host (":minimal" excludes developer toolchains); credential stores
-// (~/.ssh, ~/.config/gh, ~/.npmrc) stay denied.
-const TOOLCHAIN_READS = `"/Library/Developer" = "read", "/opt/homebrew" = "read", "/usr/local" = "read"`;
-const HOST_IDENTITY_DENIES = HOST_IDENTITY_PATHS.map((entry) => `, "${entry}" = "deny"`).join("");
+const cfgValues = (args) => args.filter((value, i) => args[i - 1] === "-c");
 
-// Non-Full confinement contract: permission profiles only, never the legacy sandbox flags
-// (a legacy key anywhere in the config stack silently wins over profiles), and never a
-// filesystem grant on the gateway runtime root.
+// Non-Full confinement contract inside a container: Codex's own sandbox is stated as a MODE only.
+// Never a permission profile (those were compiled against host paths that do not exist in the
+// image), never a network-proxy rule (egress is the container's), never a host state dir, and
+// never the daemon's runtime root anywhere in the argv — a container is deliberately denied it.
 function assertConfined(args) {
-  assert.ok(args.includes("--ignore-user-config"), "host user config must not broaden the run");
-  assert.ok(!args.includes("-s"), "legacy --sandbox flag must never combine with profiles");
-  assert.ok(!args.some((arg) => arg.startsWith("sandbox_mode=")), "legacy sandbox_mode must never combine with profiles");
-  assert.ok(!args.some((arg) => arg.startsWith("sandbox_workspace_write.")), "legacy workspace-write keys must never combine with profiles");
+  assert.ok(args.includes("--ignore-user-config"), "a personal config in the container HOME must not broaden the run");
   assert.ok(!args.includes("--dangerously-bypass-approvals-and-sandbox"));
-  // The gateway root may ride in MCP env (CHANNELGATE_DIR) — it must never appear in a
-  // sandbox/permission grant.
-  assert.ok(!args.some((arg) => arg.startsWith("permissions.") && arg.includes(scratch)), "gateway runtime root must not appear in any filesystem grant");
+  assert.ok(!cfgValues(args).some((value) => value.startsWith("default_permissions=")), "no permission profile inside a container");
+  assert.ok(!cfgValues(args).some((value) => value.startsWith("permissions.")), "no filesystem or network rules compiled against host paths");
+  assert.ok(!cfgValues(args).some((value) => value.startsWith("features.network_proxy")), "egress is the container's network, not a Codex proxy");
+  assert.ok(!cfgValues(args).some((value) => value.startsWith("sqlite_home=")), "the host state dir does not exist in the image");
+  assert.ok(!args.some((arg) => arg.includes(scratch)), "the daemon runtime root must never be named to a containerized engine");
 }
 
-test("writable Codex runs use the gateway-workspace permission profile with no runtime-root grant", () => {
+test("writable Codex runs state the full-access sandbox mode, with no host permission profile", () => {
   const args = argsFor({ writable: true, clean: false });
 
   assert.ok(args.includes(`approval_policy="never"`));
   assertConfined(args);
-  assert.ok(args.includes(`default_permissions="gateway-workspace"`));
-  assert.ok(args.includes(`permissions.gateway-workspace.extends=":read-only"`));
-  assert.ok(args.includes(`permissions.gateway-workspace.filesystem={ ":root" = "deny", ":minimal" = "read"${HOST_IDENTITY_DENIES}, ${TOOLCHAIN_READS}, ":tmpdir" = "write", ":slash_tmp" = "deny", ":workspace_roots" = { "." = "write", ".git" = "read", ".codex" = "read" } }`));
-  assert.ok(args.includes(`features.network_proxy.enabled=false`));
-  assert.ok(args.includes(`permissions.gateway-workspace.network={ enabled = false }`));
+  assert.equal(args[args.indexOf("--sandbox") + 1], "danger-full-access");
+  assert.ok(!args.some((arg) => arg.startsWith("sandbox_mode=")), "a fresh run states the mode with the flag, not its config twin");
 });
 
-test("read-only Codex runs use the gateway-readonly permission profile with no temp write grant", () => {
+test("read-only Codex runs keep Codex's own read-only sandbox as defence in depth inside the container", () => {
   const args = argsFor({ writable: false, clean: false });
 
   assertConfined(args);
-  assert.ok(args.includes(`default_permissions="gateway-readonly"`));
-  assert.ok(args.includes(`permissions.gateway-readonly.extends=":read-only"`));
-  assert.ok(args.includes(`permissions.gateway-readonly.filesystem={ ":root" = "deny", ":minimal" = "read"${HOST_IDENTITY_DENIES}, ${TOOLCHAIN_READS}, ":tmpdir" = "deny", ":slash_tmp" = "deny", ":workspace_roots" = { "." = "read" } }`));
-  assert.ok(args.includes(`features.network_proxy.enabled=false`));
-  assert.ok(args.includes(`permissions.gateway-readonly.network={ enabled = false }`));
+  assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");
 });
 
-test("confined Codex profiles deny host identity while explicit admin bypass omits the profile", () => {
-  for (const writable of [false, true]) {
-    const args = argsFor({ writable });
-    const profile = writable ? "gateway-workspace" : "gateway-readonly";
-    const filesystem = args.find((arg) => arg.startsWith(`permissions.${profile}.filesystem=`));
-    for (const hostPath of HOST_IDENTITY_PATHS) {
-      assert.ok(filesystem.includes(`"${hostPath}" = "deny"`), `${hostPath} must be denied`);
-    }
-  }
-
-  const adminArgs = argsFor({ dangerouslySkip: true, networkMode: "unrestricted" });
+test("explicit admin bypass drops Codex's own sandbox entirely — the container is still the boundary", () => {
+  const adminArgs = argsFor({ dangerouslySkip: true, writable: true });
   assert.ok(adminArgs.includes("--dangerously-bypass-approvals-and-sandbox"));
-  assert.ok(!adminArgs.some((arg) => arg.startsWith("permissions.gateway-")));
+  assert.ok(!adminArgs.includes("--sandbox"));
+  assert.ok(!adminArgs.includes("--ignore-user-config"));
+  assert.ok(!adminArgs.some((arg) => arg.startsWith("sandbox_mode=")));
+  assert.ok(!adminArgs.some((arg) => arg.startsWith("permissions.")));
 });
 
-test("restricted Codex runs can read only their standalone runtime under home", () => {
-  const release = path.join(scratch, "host-home", ".codex", "packages", "standalone", "releases", "0.150.1-linux");
-  const executable = path.join(release, "bin", "codex");
-  const link = path.join(scratch, "host-home", ".local", "bin", "codex");
-  mkdirSync(path.dirname(executable), { recursive: true });
-  mkdirSync(path.dirname(link), { recursive: true });
-  writeFileSync(executable, "binary");
-  symlinkSync(executable, link);
-
-  const args = argsFor({ codexExecutablePath: link });
-  const filesystem = args.find((arg) => arg.startsWith("permissions.gateway-readonly.filesystem="));
-  assert.ok(filesystem.includes(`"${link}" = "read"`));
-  assert.ok(filesystem.includes(`"${release}" = "read"`));
-  assert.ok(!filesystem.includes(`${path.join(scratch, "host-home", ".codex")} = "read"`));
-});
-
-test("restricted Codex runs can read reviewed Linux per-user toolchains", () => {
-  const paths = [
-    "/home/tby/.local/node",
-    "/home/tby/.local/bin/vercel",
-    "/home/tby/.local/lib/node_modules/vercel",
-  ];
-
-  for (const writable of [false, true]) {
-    const args = argsFor({ writable, toolchainPaths: paths });
-    const profile = writable ? "gateway-workspace" : "gateway-readonly";
-    const filesystem = args.find((arg) => arg.startsWith(`permissions.${profile}.filesystem=`));
-    for (const toolchainPath of paths) {
-      assert.match(filesystem, new RegExp(`${toolchainPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*= \\"read\\"`));
+test("the network switch is validated but compiles to nothing in argv — egress is the container's", () => {
+  for (const networkMode of ["off", "on"]) {
+    for (const options of [{ writable: false }, { writable: true }, { writable: true, isNewSession: false }, { writable: true, clean: true }]) {
+      const args = argsFor({ ...options, networkMode });
+      if (!options.clean) assertConfined(args);
+      assert.ok(!cfgValues(args).some((value) => value.startsWith("features.network_proxy")), `${networkMode}: no proxy feature`);
+      assert.ok(!args.some((arg) => /domains|allow_local_binding|network_proxy/.test(arg)), `${networkMode}: no allow-list of any kind`);
     }
   }
+  // The host-sandbox tiers are gone with the host sandbox: an old caller that still names one is
+  // refused rather than silently mapped to "on".
+  assert.throws(() => argsFor({ networkMode: "approved" }), /Unknown Codex network mode/);
+  assert.throws(() => argsFor({ networkMode: "unrestricted" }), /Unknown Codex network mode/);
 });
 
-test("Codex puts the run-private reviewed launcher directory first on PATH", () => {
-  const env = buildCodexEnv({ toolchainBinDir: "/run/private/bin" }, { PATH: "/usr/bin", LANG: "C" });
-  assert.equal(env.PATH, `/run/private/bin${path.delimiter}/usr/bin`);
-});
-
-test("restricted Codex runs enforce approved domains with the network proxy", () => {
-  const domains = ["github.com", "*.githubusercontent.com"];
-  const args = argsFor({ writable: true, networkMode: "approved", networkDomains: domains, clean: false });
-
-  assertConfined(args);
-  assert.ok(args.includes(`features.network_proxy.enabled=true`));
-  assert.ok(args.includes(`permissions.gateway-workspace.network={ enabled = true, domains = { "github.com" = "allow", "*.githubusercontent.com" = "allow" }, allow_local_binding = false, dangerously_allow_non_loopback_proxy = false, dangerously_allow_all_unix_sockets = false }`));
-  assert.ok(!args.some((arg) => arg.includes('"*" = "allow"')));
-});
-
-test("approved domains apply equally to read-only, resumed, and clean Codex runs", () => {
-  for (const options of [
-    { writable: false },
-    { writable: true, isNewSession: false },
-    { writable: true, clean: true },
-  ]) {
-    const args = argsFor({ ...options, networkMode: "approved", networkDomains: ["api.github.com"] });
-    const profile = options.writable ? "gateway-workspace" : "gateway-readonly";
-    assertConfined(args);
-    assert.ok(args.includes(`features.network_proxy.enabled=true`));
-    assert.ok(args.includes(`permissions.${profile}.network={ enabled = true, domains = { "api.github.com" = "allow" }, allow_local_binding = false, dangerously_allow_non_loopback_proxy = false, dangerously_allow_all_unix_sockets = false }`));
-  }
-});
-
-test("approved Codex networking fails closed on an empty or unsafe allowlist", () => {
-  assert.throws(() => argsFor({ networkMode: "approved", networkDomains: [] }), /at least one approved/i);
-  assert.throws(() => argsFor({ networkMode: "approved", networkDomains: ["*"] }), /unsafe network domain/i);
-  assert.throws(() => argsFor({ networkMode: "unrestricted" }), /foreground-admin/i);
-});
-
-test("Codex feature inventory detects network_proxy compatibility", () => {
-  assert.equal(codexFeatureListHasNetworkProxy("network_proxy experimental false\n"), true);
-  assert.equal(codexFeatureListHasNetworkProxy("network_proxy stable true\n"), true);
-  assert.equal(codexFeatureListHasNetworkProxy("other_feature stable true\n"), false);
-  assert.doesNotThrow(() => assertCodexNetworkProxySupported({ execImpl: () => "network_proxy experimental false\n", useCache: false }));
-  assert.throws(
-    () => assertCodexNetworkProxySupported({ execImpl: () => "other_feature stable true\n", useCache: false }),
-    /requires a CLI with the network_proxy feature; refusing to broaden egress/i,
-  );
-  assert.throws(
-    () => assertCodexNetworkProxySupported({ execImpl: () => { throw new Error("old CLI"); }, useCache: false }),
-    /requires a CLI with the network_proxy feature/i,
-  );
-});
-
-test("approved networking grants only explicit Git/GitHub credential paths", () => {
-  const paths = ["/gateway/home/.gitconfig", "/gateway/home/.config/git", "/gateway/home/.config/gh"];
-  const approved = argsFor({ writable: true, networkMode: "approved", networkDomains: ["github.com"], credentialPaths: paths });
-  const approvedFs = approved.find((arg) => arg.startsWith("permissions.gateway-workspace.filesystem="));
-  for (const credentialPath of paths) assert.match(approvedFs, new RegExp(`${credentialPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*read`));
-
-  const off = argsFor({ writable: true, credentialPaths: paths });
-  const offFs = off.find((arg) => arg.startsWith("permissions.gateway-workspace.filesystem="));
-  for (const credentialPath of paths) assert.doesNotMatch(offFs, new RegExp(credentialPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+test("Codex has no host path any more: no target, or the daemon's own local spawner, is refused before any argv exists", () => {
+  assert.throws(() => argsFor({ target: null }), /Codex runs only inside a channel container/);
+  assert.throws(() => argsFor({ target: localRuntimeTarget(target.cwd) }), /Codex runs only inside a channel container/);
+  assert.throws(() => buildCodexEnv({}, { PATH: "/usr/bin" }), /Codex runs only inside a channel container/);
+  assert.throws(() => buildCodexEnv({ target: localRuntimeTarget("/work") }, { PATH: "/usr/bin" }), /Codex runs only inside a channel container/);
 });
 
 test("autonomous Codex runs use auto-review instead of invisible approval cancellation", () => {
@@ -185,15 +103,18 @@ test("autonomous Codex runs use auto-review instead of invisible approval cancel
   assert.ok(!args.includes(`approval_policy="never"`));
 });
 
-test("Codex resume carries the same permission profile as a fresh run", () => {
+test("Codex resume states the same sandbox mode through its config twin", () => {
   const args = argsFor({ isNewSession: false, writable: true, clean: false });
 
   assert.deepEqual(args.slice(0, 3), ["exec", "resume", "thread-1"]);
-  assert.ok(!args.includes("-C"));
+  assert.ok(!args.includes("-C"), "`exec resume` dropped -C; the spawn cwd stands in for it");
   assert.ok(args.includes(`approval_policy="never"`));
   assertConfined(args);
-  assert.ok(args.includes(`default_permissions="gateway-workspace"`));
-  assert.ok(args.some((arg) => arg.startsWith("permissions.gateway-workspace.filesystem=")));
+  // `exec resume` has no -s/--sandbox: a flag it rejects would exit 2 before the turn starts.
+  assert.ok(!args.includes("--sandbox"));
+  assert.ok(args.includes(`sandbox_mode="danger-full-access"`));
+  const readResume = argsFor({ isNewSession: false, writable: false, clean: false });
+  assert.ok(readResume.includes(`sandbox_mode="read-only"`));
 });
 
 test("Codex runs pass reasoning effort as a config override", () => {
@@ -209,40 +130,37 @@ test("Codex resume passes reasoning effort as a config override", () => {
   assert.ok(args.includes(`model_reasoning_effort="xhigh"`));
 });
 
-test("fresh, resumed, and fallback Codex launches preserve shared state under an isolated CODEX_HOME", () => {
-  const codexStateDir = "/Users/gateway/.codex";
+test("Codex state lives in the container's own HOME: no host state dir or skills override is ever named", () => {
+  // The daemon still knows the channel's host-side rollout dir for USAGE accounting, and passes it
+  // through as codexStateDir — it must never reach the argv, where it would name a host path the
+  // image does not have.
+  const codexStateDir = "/var/lib/containers/storage/volumes/cg-home/_data/.codex";
   for (const args of [
     argsFor({ codexStateDir }),
     argsFor({ isNewSession: false, codexStateDir }),
   ]) {
-    assert.ok(args.includes(`sqlite_home=${JSON.stringify(codexStateDir)}`));
+    assert.ok(!args.some((arg) => arg.startsWith("sqlite_home=")));
     assert.ok(!args.some((arg) => arg.startsWith("skills.config=")));
+    assert.ok(!args.some((arg) => arg.includes(codexStateDir)));
   }
-  const env = buildCodexEnv({ home: "/gateway/run-tmp/grants-a/user-home", codexHome: "/gateway/run-tmp/grants-a/user-home/.codex" }, { HOME: "/host-home" });
-  assert.equal(env.HOME, "/gateway/run-tmp/grants-a/user-home");
-  assert.equal(env.CODEX_HOME, "/gateway/run-tmp/grants-a/user-home/.codex");
+  const env = buildCodexEnv({ target }, { HOME: "/host-home", PATH: "/usr/bin" });
+  assert.equal(env.HOME, CONTAINER_HOME);
+  assert.equal(env.CODEX_HOME, `${CONTAINER_HOME}/.codex`);
+  assert.equal(env.PATH, CONTAINER_PATH);
   assert.equal(env.NODE_USE_ENV_PROXY, "1");
 });
 
-test("Codex grants read access to skill support assets but not the sibling auth/session state", () => {
-  const skills = "/gateway-private/grants-a/user-home/.codex/skills";
-  const args = argsFor({ writable: false, skillSupportDir: skills });
-  const profile = args.find((arg) => arg.startsWith("permissions.gateway-readonly.filesystem="));
-  assert.match(profile, new RegExp(`${skills.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*= \\"read\\"`));
-  assert.doesNotMatch(profile, /auth\.json|sessions/);
-});
-
-test("clean Codex runs keep the restricted profile while dropping every MCP injection", () => {
+test("clean Codex runs keep the sandbox mode while dropping every MCP injection", () => {
   const args = argsFor({ writable: true, clean: true, progressReport: true });
 
   assertConfined(args);
-  assert.ok(args.includes(`default_permissions="gateway-workspace"`));
+  assert.equal(args[args.indexOf("--sandbox") + 1], "danger-full-access");
   assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.gateway.")));
   assert.ok(args.includes(`apps._default.enabled=false`));
 
   const cleanRead = argsFor({ writable: false, clean: true });
   assertConfined(cleanRead);
-  assert.ok(cleanRead.includes(`default_permissions="gateway-readonly"`));
+  assert.equal(cleanRead[cleanRead.indexOf("--sandbox") + 1], "read-only");
 });
 
 test("Codex runs allow only selected runtime app families and servers", () => {
@@ -331,13 +249,16 @@ test("clean Codex runs override selected optional MCP policy", () => {
   assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.local-docs.")));
 });
 
-test("Codex gateway MCP tools are always approved by Codex when gateway MCP is injected", () => {
+test("Codex gateway MCP tools are always approved by Codex, and the entry names no host path", () => {
   const args = argsFor({ clean: false });
 
   assert.ok(args.includes(`mcp_servers.gateway.default_tools_approval_mode="approve"`));
   assert.ok(args.includes(`mcp_servers.gateway.env.CG_ENGINE="codex"`));
-  assert.ok(args.includes(`mcp_servers.gateway.env.CG_FS_ROOT=${JSON.stringify(allowedFsRoot())}`));
-  assert.ok(args.includes(`mcp_servers.gateway.env.CG_WORKSPACE_DIR=${JSON.stringify(workspaceRoot())}`));
+  // The gateway control plane is reached over the daemon socket from inside the container; the
+  // daemon's filesystem and workspace roots are host facts that must never cross into it.
+  for (const key of ["CG_FS_ROOT", "CG_WORKSPACE_DIR", "CHANNELGATE_DIR", "PATH"]) {
+    assert.ok(!args.some((arg) => arg.startsWith(`mcp_servers.gateway.env.${key}=`)), `${key} must not reach a container`);
+  }
 });
 
 test("Codex gateway MCP exposes progress report only for opted-in foreground runs", () => {
@@ -353,7 +274,7 @@ test("Codex gateway MCP exposes progress report only for opted-in foreground run
 test("Codex runs inject personal and shared Composio MCPs outside clean mode", () => {
   const userToken = "ck_user_secret";
   const sharedToken = "ck_shared_secret";
-  const args = argsFor({ composioUserToken: userToken, composioToken: sharedToken, secretBundlePath: "/gateway/run/codex-secrets.json" });
+  const args = argsFor({ composioUserToken: userToken, composioToken: sharedToken, secretBundlePath: `${target.artifactDir}/run/codex-secrets.json` });
   const joined = args.join("\n");
 
   assert.match(joined, /mcp_servers\.composio-user\.command=/);
@@ -397,10 +318,10 @@ test("Codex injects a Make toolbox through a bearer environment variable hidden 
   const args = argsFor({
     makeToolboxUrl: "https://eu1.make.celonis.com/mcp/server/abc-123",
     makeToolboxKey: key,
-    secretBundlePath: "/gateway/run/codex-secrets.json",
+    secretBundlePath: `${target.artifactDir}/run/codex-secrets.json`,
   });
   const joined = args.join("\n");
-  const env = buildCodexEnv({}, {});
+  const env = buildCodexEnv({ target }, {});
 
   assert.match(joined, /remote-secret-bridge\.js/);
   assert.match(joined, /makeToolboxKey/);
@@ -416,7 +337,7 @@ test("Codex injects a Make toolbox through a bearer environment variable hidden 
   });
   assert.ok(!incomplete.some((arg) => arg.startsWith("mcp_servers.make-toolbox.")));
   assert.ok(!clean.some((arg) => arg.startsWith("mcp_servers.make-toolbox.")));
-  assert.equal(buildCodexEnv({}, {}).CG_MAKE_TOOLBOX_KEY, undefined);
+  assert.equal(buildCodexEnv({ target }, {}).CG_MAKE_TOOLBOX_KEY, undefined);
 });
 
 test("every connector secret stays out of Codex argv and child env", () => {
@@ -431,10 +352,10 @@ test("every connector secret stays out of Codex argv and child env", () => {
   const args = argsFor({
     ...secrets,
     makeToolboxUrl: "https://eu1.make.com/mcp/server/abc",
-    secretBundlePath: "/gateway/run/codex-secrets.json",
+    secretBundlePath: `${target.artifactDir}/run/codex-secrets.json`,
   });
   const argv = args.join("\n");
-  const env = buildCodexEnv({}, {
+  const env = buildCodexEnv({ target }, {
     PATH: "/usr/bin",
     OPENAI_API_KEY: "engine-auth-only",
     CG_MAKE_TOOLBOX_KEY: secrets.makeToolboxKey,
@@ -450,24 +371,27 @@ test("every connector secret stays out of Codex argv and child env", () => {
   assert.match(argv, /gatewayCapability/);
 });
 
-test("full-access Codex runs keep the deliberate bypass and no restricted profile", () => {
+test("full-access Codex runs keep the deliberate bypass and no sandbox mode", () => {
   const args = argsFor({ dangerouslySkip: true, writable: true, clean: false, autoApprove: true });
 
   assert.ok(args.includes(`approval_policy="never"`));
   assert.ok(!args.includes(`approvals_reviewer="auto_review"`));
   assert.ok(args.includes("--dangerously-bypass-approvals-and-sandbox"));
   assert.ok(!args.includes("--ignore-user-config"));
+  assert.ok(!args.includes("--sandbox"));
   assert.ok(!args.some((arg) => arg.startsWith("default_permissions=")));
   assert.ok(!args.some((arg) => arg.startsWith("permissions.")));
 });
 
-test("Codex child env points TMPDIR at the private scratch dir for sandboxed runs only", () => {
-  const source = { PATH: "/usr/bin", HOME: "/Users/x", TMPDIR: "/var/folders/host" };
-  const sandboxed = buildCodexEnv({ tmpDir: "/gw/tmp/run-abc" }, source);
-  const full = buildCodexEnv({ tmpDir: "" }, source);
+test("Codex child env points TMPDIR, HOME and PATH at the image, never at the host's layout", () => {
+  const source = { PATH: "/usr/bin", HOME: "/Users/x", TMPDIR: "/var/folders/host", XDG_RUNTIME_DIR: "/run/user/1001", LANG: "C" };
+  const env = buildCodexEnv({ target }, source);
 
-  assert.equal(sandboxed.TMPDIR, "/gw/tmp/run-abc");
-  assert.equal(full.TMPDIR, "/var/folders/host");
+  assert.equal(env.TMPDIR, "/tmp", "the container's tmpfs, never the host's per-user temp");
+  assert.equal(env.HOME, CONTAINER_HOME);
+  assert.equal(env.PATH, CONTAINER_PATH);
+  assert.equal(env.XDG_RUNTIME_DIR, undefined, "host locations are dropped, not carried into the image");
+  assert.equal(env.LANG, "C", "locale still crosses");
 });
 
 test("Codex image attachments do not consume the prompt positional", () => {
@@ -558,158 +482,4 @@ test("Codex JSONL suppresses invalid recognized progress report", () => {
   });
 
   assert.equal(progress, null);
-});
-
-test("Codex JSONL command and message item events map to progress callbacks", () => {
-  assert.deepEqual(
-    progressFromCodexEvent({ type: "item.started", item: { id: "cmd_1", type: "command_execution", command: "npm test" } }),
-    { event: { kind: "tool_use", id: "cmd_1", name: "npm test" } },
-  );
-  assert.deepEqual(
-    progressFromCodexEvent({
-      type: "item.completed",
-      item: { id: "cmd_1", type: "command_execution", command: "npm test", status: "completed", error: { message: "exit 1" } },
-    }),
-    { event: { kind: "tool_result", id: "cmd_1", name: "npm test", status: "failed" } },
-  );
-  assert.deepEqual(
-    progressFromCodexEvent({ type: "item.completed", item: { type: "agent_message", text: "stream probe" } }),
-    { delta: "stream probe" },
-  );
-});
-
-test("Codex collab spawn events create a running agent without treating tool completion as child completion", () => {
-  const started = progressFromCodexEvent({
-    type: "item.started",
-    item: {
-      id: "call_spawn_1",
-      type: "collab_tool_call",
-      tool: "spawn_agent",
-      prompt: "Inspect Slack progress rendering",
-      sender_thread_id: "thread-root",
-      receiver_thread_ids: [],
-      agents_states: {},
-      status: "in_progress",
-    },
-  });
-  const spawned = progressFromCodexEvent({
-    type: "item.completed",
-    item: {
-      id: "call_spawn_1",
-      type: "collab_tool_call",
-      tool: "spawn_agent",
-      prompt: "Inspect Slack progress rendering",
-      sender_thread_id: "thread-root",
-      receiver_thread_ids: ["thread-child-1"],
-      agents_states: {
-        "thread-child-1": { status: "running", message: null },
-      },
-      status: "completed",
-    },
-  });
-
-  assert.deepEqual(started, {
-    event: {
-      kind: "agent_activity",
-      id: "call_spawn_1",
-      engine: "codex",
-      description: "Inspect Slack progress rendering",
-      status: "running",
-    },
-  });
-  assert.equal(spawned.event.status, "running", "spawn completion only means the child was created");
-  assert.equal(spawned.event.id, "call_spawn_1");
-  assert.deepEqual(spawned.event.aliasIds, ["thread-child-1"]);
-});
-
-test("Codex raw sub-agent activity normalizes camelCase and snake_case terminal states", () => {
-  assert.deepEqual(progressFromCodexEvent({
-    type: "event_msg",
-    payload: {
-      type: "sub_agent_activity",
-      event_id: "call_spawn_1",
-      agent_thread_id: "thread-child-1",
-      agent_path: "/root/slack_reviewer",
-      kind: "started",
-    },
-  }), {
-    event: {
-      kind: "agent_activity",
-      id: "call_spawn_1",
-      engine: "codex",
-      name: "slack_reviewer",
-      status: "running",
-    },
-  });
-
-  assert.deepEqual(progressFromCodexEvent({
-    type: "eventMsg",
-    payload: {
-      type: "subAgentActivity",
-      eventId: "call_spawn_1",
-      agentThreadId: "thread-child-1",
-      agentPath: "/root/slack_reviewer",
-      kind: "failed",
-      message: "review crashed",
-    },
-  }), {
-    event: {
-      kind: "agent_activity",
-      id: "call_spawn_1",
-      engine: "codex",
-      name: "slack_reviewer",
-      description: "review crashed",
-      status: "failed",
-    },
-  });
-});
-
-test("Codex wait items emit current states for multiple child threads", () => {
-  const progress = progressFromCodexEvent({
-    type: "item.updated",
-    item: {
-      id: "call_wait_1",
-      type: "collab_tool_call",
-      tool: "wait",
-      sender_thread_id: "thread-root",
-      receiver_thread_ids: ["thread-child-1", "thread-child-2"],
-      agents_states: {
-        "thread-child-1": { status: "completed", message: "done" },
-        "thread-child-2": { status: "errored", message: "review crashed" },
-      },
-      status: "completed",
-    },
-  });
-
-  assert.deepEqual(progress.events, [
-    {
-      kind: "agent_activity",
-      id: "thread-child-1",
-      engine: "codex",
-      status: "completed",
-    },
-    {
-      kind: "agent_activity",
-      id: "thread-child-2",
-      engine: "codex",
-      description: "review crashed",
-      status: "failed",
-    },
-  ]);
-});
-
-test("Codex MCP servers carry a generous startup window (cold bridge spawns must not be dropped)", () => {
-  const args = argsFor({ composioUserToken: "ck_u", composioToken: "ck_s", skillsToken: "sk", secretBundlePath: "/gateway/run/codex-secrets.json" });
-  for (const name of ["composio-user", "composio-agent", "makeitfuture-skills"]) {
-    assert.ok(args.includes(`mcp_servers.${name}.startup_timeout_sec=120`), `${name} startup timeout`);
-  }
-  assert.ok(args.includes("mcp_servers.gateway.startup_timeout_sec=60"), "gateway startup timeout");
-});
-
-test("a flag-shaped Slack message can never be parsed as a CLI option", async () => {
-  const { argvSafePrompt } = await import("../src/engines/contract.js");
-  assert.equal(argvSafePrompt("--file=/etc/passwd"), " --file=/etc/passwd");
-  assert.equal(argvSafePrompt("  -x  "), " -x");
-  assert.equal(argvSafePrompt("normal prompt"), "normal prompt");
-  assert.equal(argvSafePrompt(""), "");
 });

@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import os from "node:os";
-import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
@@ -10,30 +9,29 @@ ensureTestEnv();
 const [
   { buildSettings, ensureChannelFolder },
   { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs },
-  { channelSettingsFile, channelAdminSettingsFile, claudeEngineHome },
-  { getCredentialHomePaths },
+  { channelSettingsFile, channelAdminSettingsFile, gatewayRoot },
 ] = await Promise.all([
   import("../src/gateway/folders.js"),
   import("../src/gateway/mcp-catalog.js"),
   import("../src/config/paths.js"),
-  import("../src/config/settings.js"),
 ]);
 
 // Claude Code accepts only "disable"/absent for disableBypassPermissionsMode. ANY other value
 // (including "allow") makes the CLI silently discard the ENTIRE settings file — no Stop hook, no
-// deny list, no memory-off, no sandbox. So the shared variant must pin "disable" and the admin
-// bypass variant must OMIT the key rather than set a permissive value.
+// deny list, no memory-off. So the shared variant must pin "disable" and the admin bypass variant
+// must OMIT the key rather than set a permissive value.
 test("bypass key is 'disable' in shared settings and absent in the bypass variant", async () => {
   const shared = await buildSettings({ _slug: "bypass-probe", allowedMcps: [] });
   assert.equal(shared.permissions.disableBypassPermissionsMode, "disable");
 
   const bypass = await buildSettings({ _slug: "bypass-probe", allowedMcps: [] }, { allowBypass: true });
   assert.equal("disableBypassPermissionsMode" in bypass.permissions, false);
-  // The sandbox-off delta must live in buildSettings itself: the per-run artifact every Claude
-  // spawn loads is derived from THIS call, not from the settings-admin.json clone.
-  assert.equal(bypass.sandbox.enabled, false);
-  assert.ok(Array.isArray(bypass.sandbox.filesystem.allowRead));
-  assert.equal(shared.sandbox.enabled, true);
+  // The bypass key is the ONLY delta. Confinement is the channel container, so neither variant
+  // carries an engine sandbox block: an admin turn is "full tools" inside the same boundary, not a
+  // boundary switched off.
+  assert.equal("sandbox" in bypass, false);
+  assert.equal("sandbox" in shared, false);
+  assert.deepEqual({ ...bypass, permissions: { ...bypass.permissions, disableBypassPermissionsMode: "disable" } }, shared);
 });
 
 test("admin-mode channels get an admin settings file the CLI will honour", async () => {
@@ -44,16 +42,13 @@ test("admin-mode channels get an admin settings file the CLI will honour", async
   assert.equal(shared.permissions.disableBypassPermissionsMode, "disable");
 
   const admin = JSON.parse(readFileSync(channelAdminSettingsFile(slug), "utf8"));
-  // Key must be ABSENT (that is what permits --dangerously-skip-permissions) and the OS sandbox
-  // must be OFF — the admin contract is "full tools, sandbox off", and the bypass flag alone
-  // never lifts the sandbox (Claude Code applies settings.sandbox regardless of the flag; with
-  // it left enabled, a Linux escalated turn saw a tmpfs home hiding every real file outside the
-  // allowRead binds). Every non-sandbox lockdown protection still survives in the same file.
+  // Key must be ABSENT (that is what permits --dangerously-skip-permissions). Every other lockdown
+  // protection survives in the same file: memory off, the deny list, the Stop hook. Neither file
+  // carries an engine sandbox block — the container is the confinement for admin turns too.
   assert.equal("disableBypassPermissionsMode" in admin.permissions, false);
   assert.equal(admin.autoMemoryEnabled, false);
-  assert.equal(admin.sandbox.enabled, false);
-  // The shared variant is untouched: every non-escalated run keeps the full OS sandbox.
-  assert.equal(shared.sandbox.enabled, true);
+  assert.equal("sandbox" in admin, false);
+  assert.equal("sandbox" in shared, false);
   assert.ok(Array.isArray(admin.permissions.deny) && admin.permissions.deny.length > 0);
   assert.ok(admin.hooks && Object.keys(admin.hooks).length > 0);
 });
@@ -99,53 +94,37 @@ test("Claude settings allow the stable Make toolbox namespace only outside clean
   assert.equal(cleanSettings.allowedMcpServers.some((match) => match.serverName === "make-toolbox"), false);
 });
 
-test("Claude approved-network Bash mode grants classic and XDG Git config narrowly", async () => {
-  for (const mode of [{ allowBash: true }, { autoMode: true }]) {
-    const settings = await buildSettings({ _slug: "claude-network-git", ...mode, allowNetwork: true, allowedMcps: [] });
-    const allowRead = settings.sandbox.filesystem.allowRead;
-    for (const suffix of ["/.gitconfig", "/.git-credentials", "/.config/git", "/.config/gh", "/.ssh/known_hosts"]) {
-      assert.ok(allowRead.some((entry) => entry.endsWith(suffix)), `${JSON.stringify(mode)} ${suffix}`);
-    }
-    // known_hosts is the ONLY .ssh path — keys and ssh config must stay denied. Both the real
-    // target and its synthetic-HOME link are granted, so match on the suffix, not the count.
-    for (const entry of allowRead.filter((e) => e.includes("/.ssh"))) {
-      assert.ok(entry.endsWith("/.ssh/known_hosts"), `${JSON.stringify(mode)} ${entry}`);
-    }
+// The "Allow network" switch is the container's business (the engine network policy and, next,
+// the egress proxy), never the settings file's: there is no sandbox to punch git/gh credential
+// holes into, and the channel's own logins live in its HOME volume inside the container.
+test("the Allow network switch never reaches the settings file", async () => {
+  for (const mode of [{ allowBash: true }, { autoMode: true }, {}]) {
+    const on = await buildSettings({ _slug: "claude-network", ...mode, allowNetwork: true, allowedMcps: [] });
+    const off = await buildSettings({ _slug: "claude-network", ...mode, allowNetwork: false, allowedMcps: [] });
+    assert.deepEqual(on, off, JSON.stringify(mode));
   }
 });
 
-test("credential grants cover the synthetic engine HOME, not just the real target", async () => {
-  // The engine runs with HOME=claudeEngineHome(), inside the read-denied gateway root. git/gh
-  // reach their config through THAT path (a symlink to the host's), and the sandbox refuses at
-  // the link before the allowed real target is reached — so both stages must be granted or
-  // `git push` dies with EPERM on ~/.gitconfig in a fully network-enabled channel.
-  const settings = await buildSettings({ _slug: "claude-synthetic-home-git", allowBash: true, allowNetwork: true, allowedMcps: [] });
-  const allowRead = settings.sandbox.filesystem.allowRead;
-  const engineHome = claudeEngineHome();
-  for (const rel of getCredentialHomePaths()) {
-    assert.ok(
-      allowRead.some((entry) => entry === path.join(engineHome, rel)),
-      `synthetic HOME grant missing for ${rel}`,
-    );
-    assert.ok(
-      allowRead.some((entry) => entry === path.join(os.homedir(), rel)),
-      `real-target grant missing for ${rel}`,
-    );
-  }
-});
-
-test("credential grants are withheld from read-only and network-off channels", async () => {
-  const engineHome = claudeEngineHome();
+// What the file carries is POLICY (tool permissions, MCP allowlist, memory off, the Stop hook);
+// confinement is the channel container. So no variant may name a host path — the engine never
+// sees the daemon's filesystem, and a path into it would be a file the engine cannot open.
+test("no settings variant carries a sandbox block or a host path", async () => {
   const cases = [
+    { label: "read-only", meta: {} },
     { label: "network on, read-only", meta: { allowNetwork: true } },
     { label: "bash on, network off", meta: { allowBash: true } },
+    { label: "bash + network", meta: { allowBash: true, allowNetwork: true } },
+    { label: "auto", meta: { autoMode: true, allowNetwork: true } },
+    { label: "admin", meta: { adminMode: true, allowBash: true, allowNetwork: true } },
+    { label: "clean", meta: { cleanMode: true } },
   ];
   for (const { label, meta } of cases) {
-    const settings = await buildSettings({ _slug: "claude-no-git-grants", ...meta, allowedMcps: [] });
-    const allowRead = settings.sandbox.filesystem.allowRead;
-    for (const rel of getCredentialHomePaths()) {
-      assert.ok(!allowRead.includes(path.join(engineHome, rel)), `${label}: leaked synthetic ${rel}`);
-      assert.ok(!allowRead.includes(path.join(os.homedir(), rel)), `${label}: leaked real ${rel}`);
+    for (const allowBypass of [false, true]) {
+      const settings = await buildSettings({ _slug: "claude-no-host-paths", ...meta, allowedMcps: [] }, { allowBypass });
+      assert.equal("sandbox" in settings, false, `${label}: sandbox block`);
+      const rendered = JSON.stringify(settings);
+      assert.equal(rendered.includes(os.homedir()), false, `${label}: leaked the operator's home`);
+      assert.equal(rendered.includes(gatewayRoot()), false, `${label}: leaked the gateway root`);
     }
   }
 });

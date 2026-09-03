@@ -25,11 +25,9 @@ test("smoke settings confine Claude to a temporary folder with no MCPs or bypass
     assert.deepEqual(settings.permissions.allow, []);
     assert.equal(settings.autoMemoryEnabled, false);
     assert.equal(settings.autoDreamEnabled, false);
-    assert.equal(settings.sandbox.enabled, true);
-    assert.equal(settings.sandbox.allowUnsandboxedCommands, false);
+    assert.equal("sandbox" in settings, false, "host sandboxing is retired — the tool deny list is the probe's confinement");
+    assert.ok(["Bash", "Write", "Edit", "WebFetch"].every((tool) => settings.permissions.deny.includes(tool)));
     assert.deepEqual(settings.allowedMcpServers, []);
-    assert.deepEqual(settings.sandbox.filesystem.allowRead, [`/${probe.folder.replace(/^\/+/, "")}`]);
-    assert.deepEqual(settings.sandbox.filesystem.allowWrite, [`/${probe.folder.replace(/^\/+/, "")}`]);
     assert.equal(statSync(probe.settingsFile).mode & 0o777, 0o600);
     assert.equal(statSync(probe.mcpFile).mode & 0o777, 0o600);
     await probe.cleanup();

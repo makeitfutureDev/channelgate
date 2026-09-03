@@ -1,7 +1,8 @@
-// Session carry-over: a thread's ENGINE-NATIVE history follows it when its channel changes runtime
-// backend. Three layers are covered here — the per-engine facts that say where a session's files
-// live, the host-side copy/expansion those facts feed, and the orchestrator that decides whether a
-// carry happens at all. The container half is test/container-carry.test.js; the turn-level ordering
+// Session carry-over: a thread that last ran on the host (a row from before every channel ran in a
+// container) has its ENGINE-NATIVE history copied into the container about to resume it. Three
+// layers are covered here — the per-engine facts that say where a session's files live, the
+// host-side copy/expansion those facts feed, and the orchestrator that decides whether a carry
+// happens at all. The container half is test/container-carry.test.js; the turn-level ordering
 // is test/runtime-integration-run.test.js.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -130,11 +131,10 @@ test("stored runtime: an empty, malformed or pre-migration stamp is a HOST row",
   assert.equal(storedRuntimeBackend({ backend: "container" }), "container");
 });
 
-// A pair of targets whose "state dirs" are real scratch directories, so a carry actually moves
+// A container target whose "state dir" is a real scratch directory, so a carry actually moves
 // files and the assertions can look at what arrived.
 function carryHarness(name) {
   const root = scratch(name);
-  const hostDir = path.join(root, "host-state");
   const ctrDir = path.join(root, "container-state");
   const calls = { copyIn: [], copyOut: [], leases: [] };
   const runtime = {
@@ -153,16 +153,13 @@ function carryHarness(name) {
       return { copied: copyCarryEntries(entries) };
     },
   };
-  const hostRuntime = { id: "host", acquireLease: () => ({ release() {} }) };
   const meta = { platform: "slack", channelId: "C1" };
   const containerTarget = {
     backend: "container", slug: name, meta, runtime,
     container: { name: `cg-${name}`, claudeConfigDir: path.join(ctrDir, ".claude"), codexHome: path.join(ctrDir, ".codex") },
   };
-  const hostTarget = { backend: "host", slug: name, meta, runtime: hostRuntime, container: null };
   const logs = [];
-  const resolveFor = (slug, m, { backend } = {}) => (backend === "container" ? containerTarget : hostTarget);
-  return { root, hostDir, ctrDir, calls, containerTarget, hostTarget, logs, log: (m) => logs.push(m), resolveFor };
+  return { root, ctrDir, calls, containerTarget, logs, log: (m) => logs.push(m) };
 }
 
 // The claude host state dir is claudeEngineHome()/.claude, which the scratch env pins; a test that
@@ -177,7 +174,7 @@ test("carry: same backend on both sides is a no-op — a recreated container sti
   const result = await carrySession({
     engine: "claude", sessionId: SESSION, cwd: "/w/same",
     storedRuntime: JSON.stringify({ backend: "container", fingerprint: "c1-old" }),
-    target: h.containerTarget, slug: "same", threadKey: "1.0", resolveFor: h.resolveFor, log: h.log,
+    target: h.containerTarget, slug: "same", threadKey: "1.0", log: h.log,
   });
   assert.equal(result, null);
   assert.equal(h.calls.copyIn.length, 0);
@@ -193,7 +190,7 @@ test("carry: host→container copies the session in, leases the runtime, and rep
 
   const result = await carrySession({
     engine: "claude", sessionId: SESSION, cwd, storedRuntime: "",
-    target: h.containerTarget, slug: "in", threadKey: "1.1", resolveFor: h.resolveFor, log: h.log,
+    target: h.containerTarget, slug: "in", threadKey: "1.1", log: h.log,
   });
 
   assert.deepEqual(result, { direction: CARRY_DIRECTIONS.IN, files: 2 });
@@ -211,7 +208,12 @@ test("carry: host→container copies the session in, leases the runtime, and rep
   assert.equal(existsSync(claudeHostFile(SESSION, cwd)), true);
 });
 
-test("carry: container→host copies the session out of the environment the channel just left", async () => {
+// There is no container→host direction any more: every channel runs in a container, so a row
+// that already names one has nothing to move and nowhere else to go.
+test("carry: the only direction is host→container, and a container row is never copied anywhere", async () => {
+  assert.deepEqual(Object.keys(CARRY_DIRECTIONS), ["IN"]);
+  assert.equal(CARRY_DIRECTIONS.IN, "host→container");
+
   const h = carryHarness("out");
   const cwd = "/w/out";
   const sessionId = "aaaa1111-2222-4000-8000-bbbbccccdddd";
@@ -221,24 +223,22 @@ test("carry: container→host copies the session out of the environment the chan
   const result = await carrySession({
     engine: "claude", sessionId, cwd,
     storedRuntime: JSON.stringify({ backend: "container", image: "channelgate/runtime:test" }),
-    target: h.hostTarget, slug: "out", threadKey: "1.2", resolveFor: h.resolveFor, log: h.log,
+    target: h.containerTarget, slug: "out", threadKey: "1.2", log: h.log,
   });
 
-  assert.deepEqual(result, { direction: CARRY_DIRECTIONS.OUT, files: 1 });
-  assert.equal(h.calls.copyOut.length, 1);
+  assert.equal(result, null);
+  assert.equal(h.calls.copyOut.length, 0);
   assert.equal(h.calls.copyIn.length, 0);
-  assert.equal(readFileSync(claudeHostFile(sessionId, cwd), "utf8"), "in-container\n");
-  // The lease is taken on the CONTAINER — the side that has to stay up for the copy — even though
-  // this turn runs on the host.
-  assert.equal(h.calls.leases.length, 1);
-  assert.equal(h.calls.leases[0].released, true);
+  assert.equal(h.calls.leases.length, 0, "nothing to copy, so nothing to hold the container up for");
+  assert.equal(existsSync(claudeHostFile(sessionId, cwd)), false, "the host state dir is never written to");
+  assert.deepEqual(h.logs, []);
 });
 
 test("carry: no files to carry is silent, and the resume simply falls back to the heal", async () => {
   const h = carryHarness("none");
   const result = await carrySession({
     engine: "claude", sessionId: "0000ffff-0000-4000-8000-000000000000", cwd: "/w/none", storedRuntime: "",
-    target: h.containerTarget, slug: "none", threadKey: "1.3", resolveFor: h.resolveFor, log: h.log,
+    target: h.containerTarget, slug: "none", threadKey: "1.3", log: h.log,
   });
   assert.equal(result, null);
   assert.equal(h.calls.copyIn.length, 1, "the copy is still attempted — only the engine knows if a file exists");
@@ -254,7 +254,7 @@ test("carry: a backend that throws never fails the turn — it logs and hands ba
   };
   const result = await carrySession({
     engine: "claude", sessionId: SESSION, cwd, storedRuntime: "",
-    target: h.containerTarget, slug: "boom", threadKey: "1.4", resolveFor: h.resolveFor, log: h.log,
+    target: h.containerTarget, slug: "boom", threadKey: "1.4", log: h.log,
   });
   assert.equal(result, null);
   assert.match(h.logs.join("\n"), /session carry-over failed \(no container CLI on PATH\) — the resume falls back to the existing heal/);
@@ -266,7 +266,7 @@ test("carry: an engine with no session-state fact, and a backend that cannot car
   const noFact = carryHarness("nofact");
   const skipped = await carrySession({
     engine: "opencode", sessionId: SESSION, cwd: "/w/nofact", storedRuntime: "",
-    target: noFact.containerTarget, slug: "nofact", threadKey: "1.5", resolveFor: noFact.resolveFor, log: noFact.log,
+    target: noFact.containerTarget, slug: "nofact", threadKey: "1.5", log: noFact.log,
   });
   assert.equal(skipped, null);
   assert.equal(noFact.calls.copyIn.length, 0);
@@ -278,7 +278,7 @@ test("carry: an engine with no session-state fact, and a backend that cannot car
   delete noCarry.containerTarget.runtime.copyOut;
   const result = await carrySession({
     engine: "claude", sessionId: SESSION, cwd: "/w/nocarry", storedRuntime: "",
-    target: noCarry.containerTarget, slug: "nocarry", threadKey: "1.6", resolveFor: noCarry.resolveFor, log: noCarry.log,
+    target: noCarry.containerTarget, slug: "nocarry", threadKey: "1.6", log: noCarry.log,
   });
   assert.equal(result, null);
   assert.match(noCarry.logs.join("\n"), /cannot move session state/);

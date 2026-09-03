@@ -16,7 +16,7 @@ const { BackgroundJobs, containerJobScript, parseContainerJobExit, stripContaine
 const { upsertChannelEntry, saveChannelMeta, setUser } = await import("../src/config/store.js");
 const { getDb, fromJson } = await import("../src/db/index.js");
 const { effectiveWorkDir } = await import("../src/gateway/folders.js");
-const { createFakeRuntimeBackend, fakeTarget, hostTarget, FAKE_CONTAINER, FAKE_IMAGE } = await import("./runtime-fake.js");
+const { createFakeRuntimeBackend, fakeTarget, FAKE_CONTAINER, FAKE_IMAGE } = await import("./runtime-fake.js");
 
 async function autoChannel(id, slug) {
   await setUser("U_JOB", { name: "Job User", approved: true, isAdmin: true });
@@ -130,40 +130,17 @@ test("a recovered container job the backend says is gone is finished, not signal
   assert.deepEqual(backend.calls.signal, []);
 });
 
-test("a host job keeps today's spawn, log location and pid identity", async () => {
-  const { entry } = await autoChannel("C_JOB_HOST", "job-host");
-  const jobs = new BackgroundJobs({ requestShellApproval: async () => ({ allow: true, decidedBy: "U_JOB" }), resolveTarget: (slug, meta) => hostTarget(slug, meta) });
-
-  const started = await jobs.start({ channelId: "C_JOB_HOST", authorId: "U_JOB", threadKey: "t-host", command: "echo hi", label: "echo" });
-  assert.equal(started.ok, true, started.error);
-  const row = persistedRow(started.id);
-  assert.equal(row.runtime.backend, "host");
-  assert.equal(row.runtime.container, "");
-  // The log still lives in the gateway's own bg log dir, named as it always was, and the pid is a
-  // real host pid whose kernel start time is its identity.
-  assert.match(row.logFile, new RegExp(`logs[\\\\/]bg[\\\\/]${entry.slug}__${started.id}\\.log$`));
-  assert.ok(row.pid > 0);
-});
-
 test("the approval card describes the environment the job will actually run in", async () => {
-  // The second click exists because a HOST shell job is plain bash on the daemon account. In a
-  // container channel that claim is false — and the approver's real question ("which image?") went
-  // unanswered. Both wordings are pinned here: the host one must not drift, and the isolated one
-  // must be capability-driven, not a backend-id branch.
+  // The second click used to exist because a shell job was plain bash on the daemon account. In a
+  // container channel that claim is false — and the approver's real question ("which image?")
+  // went unanswered. The wording is capability-driven, not a backend-id branch, and it names the
+  // image.
   await autoChannel("C_JOB_CARD", "job-card");
   const asked = [];
   const deny = async (request) => {
     asked.push(request);
     return { allow: false, reason: "not approved in this test" };
   };
-
-  const onHost = new BackgroundJobs({ requestShellApproval: deny, resolveTarget: (slug, meta) => hostTarget(slug, meta) });
-  const hostRefusal = await onHost.start({ channelId: "C_JOB_CARD", authorId: "U_JOB", threadKey: "t-card-host", command: "rm -rf build", label: "clean" });
-  assert.equal(hostRefusal.ok, false);
-  const hostCard = asked.at(-1);
-  assert.equal(hostCard.toolName, "Background shell job (unsandboxed)");
-  assert.match(hostCard.toolInput.details, /^\$ rm -rf build\n\nRuns OUTSIDE the engine sandbox as the daemon user\.\nWorking folder: /);
-  assert.match(hostRefusal.error, /run unsandboxed on the daemon/);
 
   const backend = createFakeRuntimeBackend();
   const inContainer = new BackgroundJobs({ requestShellApproval: deny, resolveTarget: (slug, meta) => fakeTarget(backend, slug, meta) });

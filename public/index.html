@@ -756,16 +756,8 @@
                   </label>
                 </div>
                 <div class="setcard">
-                  <h4>Container runtime <em class="state" id="container-runtime-state"></em></h4>
+                  <h4>Container runtime</h4>
                   <p class="desc">Run a channel's engine processes inside <strong>its own long-lived Linux container</strong> instead of the daemon's host sandbox — separate HOME, separate CLI logins, its own process namespace, and none of the host's files reachable. Needs <code>podman</code> or <code>docker</code> on this machine plus a built image (<code>npm run build:image</code>). Admin-mode channels always stay on the host.</p>
-                  <label class="toggle"><input type="checkbox" id="set-container-enabled" /> <strong>Enable the container runtime</strong> — the gateway-wide switch. While it is off every channel runs on the host, whatever it is pinned to.</label>
-                  <label class="field">
-                    <span>Default for channels that don't pin a runtime</span>
-                    <select id="set-container-default">
-                      <option value="host">Host (default)</option>
-                      <option value="container">Container</option>
-                    </select>
-                  </label>
                   <label class="field">
                     <span>Container CLI</span>
                     <select id="set-container-cli">
@@ -812,13 +804,7 @@
                   <div class="chips" data-chip-for="set-trusted-apps"><input class="chip-input" type="text" placeholder="add app ID…" aria-label="Add trusted bot app ID" /></div>
                   <input id="set-trusted-apps" type="hidden" />
                 </div>
-                <div class="setcard">
-                  <h4>Network egress allow-list</h4>
-                  <p class="desc">Channels with “Allow network” on can only reach these domains — there is no allow-all. Default: GitHub. Add e.g. <code>registry.npmjs.org</code> if needed.</p>
-                  <div class="chips" data-chip-for="set-network-domains"><input class="chip-input" type="text" placeholder="add domain…" aria-label="Add network domain" /></div>
-                  <input id="set-network-domains" type="hidden" />
-                </div>
-              </section>
+                </section>
 
               <!-- ── System ──────────────────────────────────────────────── -->
               <section class="setsec" id="set-system" data-sec="system" aria-labelledby="set-system-h">
@@ -1033,12 +1019,8 @@
           <label class="togglerow ch-network-wrap">
             <input type="checkbox" class="ch-network" />
             <span class="switch"></span>
-            <span class="t"><b>Network egress</b><small><code>git push</code> / <code>gh</code> to the allowed domains — needs Bash, admin-only</small></span>
+            <span class="t"><b>Network</b><small>tells the engine whether this channel is meant to use the network; the container itself stays on the bridge network until the egress proxy ships — needs Bash, admin-only</small></span>
           </label>
-          <label class="field ch-extra-domains-wrap" style="margin-top:8px">
-            <span>Extra network domains — this channel only</span>
-            <input class="ch-extra-domains" type="text" placeholder="api.example.com, *.example.dev" />
-            <em class="state">Added in-thread via <code>request_network_domain</code> approvals (or edited here, comma-separated). Delete one to revoke it.</em>
           </label>
 
           <p class="fldlab" style="margin-top:20px">Guest access — named users</p>
@@ -1134,14 +1116,6 @@
             <label class="field">
               <span>Model</span>
               <select class="ch-model"></select>
-            </label>
-            <label class="field">
-              <span>Runtime (where this channel's engine runs) <em class="state ch-runtime-effective"></em></span>
-              <select class="ch-runtime">
-                <option value="">Gateway default</option>
-                <option value="host">Host — the daemon's own sandbox</option>
-                <option value="container">Container — this channel's own isolated container</option>
-              </select>
             </label>
             <label class="field">
               <span class="ch-effort-label">Effort</span>

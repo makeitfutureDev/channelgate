@@ -21,11 +21,11 @@ import path from "node:path";
 import { runClaude } from "../engines/claude.js";
 import { buildMcpConfig } from "./mcp.js";
 import { effectiveWorkDir } from "./folders.js";
-import { createRunGrantArtifacts, stableClaudeState } from "./run-grant-artifacts.js";
+import { createRunGrantArtifacts } from "./run-grant-artifacts.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { resolveContainerClaudeToken } from "./claude-token-relay.js";
-import { newRunId, runtimeSupports } from "../runtimes/contract.js";
-import { channelSettingsFile, runTmpDir, workspaceRoot } from "../config/paths.js";
+import { newRunId } from "../runtimes/contract.js";
+import { channelSettingsFile, workspaceRoot } from "../config/paths.js";
 import { getMemoryReviewEvery, getMemoryReviewModel, getMemoryReviewNotify } from "../config/settings.js";
 import { memoryEnabled, readMemorySnapshot, isMemorySaveTool, MEM_DIR, MEMORY_SECTIONS } from "./channel-memory.js";
 import { recordUsage } from "./usage.js";
@@ -148,12 +148,9 @@ export async function runMemoryReview({
   const model = getMemoryReviewModel();
 
   const target = resolveTarget(slug, meta);
-  const isolated = runtimeSupports(target, "isolated");
-  // A review is a Claude run in the channel's runtime, and it authenticates exactly like any other
-  // one: a relay of the login the gateway resolved (src/gateway/claude-login.js). On the host that
-  // matters as much as in a container now — the synthetic engine home holds no credentials file, so
-  // without the relayed token the reviewer would run unauthenticated.
-  if (isolated && typeof target.runtime.credentialError === "function") {
+  // A review is a Claude run in the channel's container, and it authenticates exactly like any
+  // other one: a relay of the login the gateway resolved (src/gateway/claude-login.js).
+  if (typeof target.runtime.credentialError === "function") {
     const blocked = await target.runtime.credentialError(target, "claude");
     if (blocked) {
       console.warn(`[memory] review skipped in ${slug}: ${String(blocked?.message || blocked)}`);
@@ -162,36 +159,32 @@ export async function runMemoryReview({
   }
   const relay = await resolveContainerClaudeToken();
   // In a container there is no other way in, so skip with the reason rather than let every review
-  // end in "Not logged in" (seen live on a Codex container channel, 2026-09-02). On the host the
-  // engine still has its own config dir and its own error, so the review is attempted regardless.
-  if (isolated && !relay.token && relay.source !== "api-key") {
+  // end in "Not logged in" (seen live on a Codex container channel, 2026-09-02).
+  if (!relay.token && relay.source !== "api-key") {
     console.warn(`[memory] review skipped in ${slug}: ${relay.error}`);
     return { skipped: "no-container-claude-credential", saved: 0 };
   }
   const claudeOauthToken = relay.token || "";
 
   // The reviewer's MCP config: the gateway control server ONLY, narrowed to the save tool. No
-  // Composio/Skills/Toolbox identities — it has no business acting as anyone. Same 0600 file under
-  // the gateway root as a normal run (never the shared tmpdir: see run.js) — or, for an isolated
-  // runtime, under the channel's bind-mounted artifact dir, because the gateway root is not
-  // mounted into a container and the engine there could not open it.
+  // Composio/Skills/Toolbox identities — it has no business acting as anyone. A 0600 file under
+  // the channel's bind-mounted artifact dir, because the gateway root is not mounted into a
+  // container and the engine there could not open it.
   const mcpConfigJson = await buildMcpConfig({
     channelId, slug, authorId, threadKey, origin: REVIEW_ORIGIN, engine: "claude", principalTrusted: true,
     gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(), toolset: REVIEW_TOOLSET, target,
   });
-  const mcpConfigFile = path.join(target.artifactDir || runTmpDir(), `cg-mcp-review-${randomUUID()}.json`);
+  const mcpConfigFile = path.join(target.artifactDir, `cg-mcp-review-${randomUUID()}.json`);
   await mkdir(path.dirname(mcpConfigFile), { recursive: true, mode: 0o700 });
   await writeFile(mcpConfigFile, mcpConfigJson, { mode: 0o600 });
-  // Host: the daemon's stable Claude state, and the channel's own lockdown file straight from the
-  // metadata folder — exactly as before. Isolated: the container's own HOME plus a settings copy
-  // under the artifact dir, because neither the daemon's engine state nor the metadata folder is
-  // reachable from inside. createRunGrantArtifacts already resolves both, so there is one rule.
-  const artifacts = isolated ? await createRunGrantArtifacts({ slug, meta, needsClaudeSettings: true, target }) : null;
-  const { claudeHome, claudeConfigDir } = artifacts || (await stableClaudeState());
+  // The container's own HOME plus a settings copy under the artifact dir, because neither the
+  // daemon's engine state nor the metadata folder is reachable from inside.
+  const artifacts = await createRunGrantArtifacts({ slug, meta, needsClaudeSettings: true, target });
+  const { claudeHome, claudeConfigDir } = artifacts;
 
   // A review is a real engine run in the channel's environment: it must keep that environment up
   // for its whole life (the idle reaper counts leases, not processes) and must not start before
-  // the environment is ready. Both are no-ops on the host backend.
+  // the environment is ready.
   // One id for both: the lease the reaper counts and the process group the backend spawns are the
   // same piece of work, and a shared handle is what lets a stuck review be found from either side.
   const reviewRunId = newRunId("review");

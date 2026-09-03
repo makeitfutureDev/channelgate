@@ -329,10 +329,10 @@ test("Linux systemd detection covers the user scope, not just the system unit", 
 // `containers/` or bumped the image spec left every container channel on the old toolchain until
 // an operator happened to read the boot warning and run `npm run build:image` by hand.
 
-function containerRoot({ enabled = true, image = "channelgate/runtime:latest" } = {}) {
+function containerRoot({ image = "channelgate/runtime:latest" } = {}) {
   const root = tempDir("cg-update-image-");
   mkdirSync(path.join(root, "config"), { recursive: true });
-  writeFileSync(path.join(root, "config", "settings.json"), JSON.stringify({ containerRuntimeEnabled: enabled, containerImage: image, containerCli: "podman" }));
+  writeFileSync(path.join(root, "config", "settings.json"), JSON.stringify({ containerImage: image, containerCli: "podman" }));
   return root;
 }
 
@@ -385,7 +385,7 @@ test("the update rebuilds the channel image when this revision's image spec move
   assert.equal(expectedImageSpecVersion(repoRoot), "1.2.0");
 });
 
-test("a change under containers/ rebuilds, an unrelated change does not, and the switch gates both", async () => {
+test("a change under containers/ rebuilds and an unrelated change does not", async () => {
   const root = containerRoot();
   const repoRoot = candidateCheckout("1.1.1");
   const context = { oldRevision: "old", targetRevision: "new" };
@@ -397,12 +397,6 @@ test("a change under containers/ rebuilds, an unrelated change does not, and the
 
   const sources = fakeRun({ changed: ["containers/Containerfile"] });
   assert.equal((await defaultImageBuild({ root, repoRoot, context, run: sources.run, log: () => {} })).built, true);
-
-  // Host-only install: nothing runs, and no CLI is probed.
-  const off = fakeRun({ changed: ["containers/Containerfile"] });
-  const hostOnly = await defaultImageBuild({ root: containerRoot({ enabled: false }), repoRoot, context, run: off.run, log: () => {} });
-  assert.equal(hostOnly.needed, false);
-  assert.deepEqual(off.calls, [], "a host-only install must not even probe the container CLI");
 });
 
 test("a failed image build reports the remedy and never blocks the update", async () => {
@@ -457,11 +451,11 @@ test("the image step runs after provisioning and before the restart, and a throw
 });
 
 test("container settings and the built image label come from the running install, not the checkout", async () => {
-  const root = containerRoot({ enabled: true, image: "registry.example/cg:pinned" });
-  assert.deepEqual(containerSettings(root), { enabled: true, image: "registry.example/cg:pinned", cli: "podman" });
-  // No settings file at all is a host-only install, not a crash.
-  assert.equal(containerSettings(tempDir("cg-no-settings-")).enabled, false);
-  assert.equal(containerSettings(tempDir("cg-no-settings-")).image, "channelgate/runtime:latest");
+  const root = containerRoot({ image: "registry.example/cg:pinned" });
+  assert.deepEqual(containerSettings(root), { image: "registry.example/cg:pinned", cli: "podman" });
+  // No settings file at all (a first install) is the defaults, not a crash — and every install
+  // runs containers, so there is no "off" reading of a missing file.
+  assert.deepEqual(containerSettings(tempDir("cg-no-settings-")), { image: "channelgate/runtime:latest", cli: "auto" });
 
   const labelled = fakeRun({ builtVersion: "1.1.0" });
   assert.equal(await builtImageSpecVersion({ cli: "podman", image: "cg:1", run: labelled.run }), "1.1.0");

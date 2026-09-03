@@ -9,11 +9,11 @@
 //
 // Import-graph rule (brief §14): runners never import src/runtimes/registry.js or resolve.js —
 // those reach settings.js, and settings.js → engines/registry.js → adapters → the runners would be
-// a cycle. Only `contract.js` (pure) and `host.js` (util/proc + watchdog only) are importable, and
-// host.js is here solely to build the DEFAULT target for callers that pass none: memory review,
-// the update smoke test, direct-runner tests. run.js resolves the real target once per turn and
-// hands it down as ctx.target.
-import { hostBackend } from "../runtimes/host.js";
+// a cycle. Only `contract.js` (pure) and `local.js` (util/proc + watchdog only) are importable, and
+// local.js is here solely to build the DEFAULT target for the daemon's OWN turns that pass none:
+// the update smoke probe and direct-runner tests. Every channel turn resolves a container target
+// once per turn in run.js and hands it down as ctx.target.
+import { localRuntime } from "../runtimes/local.js";
 import { isRuntimeChild, runtimeSupports } from "../runtimes/contract.js";
 import { killTree } from "../util/proc.js";
 import { pidAlive } from "./watchdog.js";
@@ -70,13 +70,12 @@ export function containerPaths(target) {
   };
 }
 
-// A plain host target for a caller that supplied none. Deliberately minimal and allocation-cheap:
-// the host backend's spawn/probe/signal are today's exact behaviour, so a runner that falls back
-// to this behaves byte-for-byte as it did before the seam existed.
-export function hostRuntimeTarget(cwd = process.cwd()) {
+// A daemon-local target for a caller that supplied none: a plain child_process.spawn on the
+// daemon's own host, with no container around it. Only the daemon's own probes use it.
+export function localRuntimeTarget(cwd = process.cwd()) {
   return {
-    backend: "host",
-    runtime: hostBackend,
+    backend: "local",
+    runtime: localRuntime,
     reason: "default",
     cwd,
     workDir: cwd,
@@ -88,7 +87,7 @@ export function hostRuntimeTarget(cwd = process.cwd()) {
 }
 
 export function runtimeTargetOr(target, cwd) {
-  return target && target.runtime && typeof target.runtime.spawn === "function" ? target : hostRuntimeTarget(cwd);
+  return target && target.runtime && typeof target.runtime.spawn === "function" ? target : localRuntimeTarget(cwd);
 }
 
 // The engine's OWN sandbox is switched off inside an isolated runtime — the OS boundary the daemon

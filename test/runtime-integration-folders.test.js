@@ -1,12 +1,14 @@
-// The provisioning half of the container runtime (v0.8 P1): what a channel folder and a run's
-// engine-facing artifacts look like once the turn runs behind an OS boundary the daemon owns.
+// The provisioning half of the container runtime: what a channel folder and a run's engine-facing
+// artifacts look like now that every turn runs behind an OS boundary the daemon owns.
 //
 // Two rules are under test, and both cut both ways:
-//   1. an ISOLATED target gets no sandbox block, no host-path carve-outs and no host plumbing —
-//      the boundary is the confinement, and every path in that block names a host that does not
-//      exist on the other side of it;
-//   2. a HOST target is byte-identical to what it was before any of this existed. Everything here
-//      is opt-in through a target; passing none must change nothing.
+//   1. the settings file carries POLICY only — no sandbox block, no host-path carve-outs and no host
+//      plumbing — because the boundary is the confinement, and every path a sandbox block would
+//      name is on a host that does not exist on the other side of it;
+//   2. everything the engine has to open lives under the channel's artifact dir, which the backend
+//      bind-mounts at the identical absolute path. A caller that cannot name one is refused rather
+//      than served files from a tree the container never sees.
+import os from "node:os";
 import path from "node:path";
 import { stat } from "node:fs/promises";
 import test from "node:test";
@@ -18,42 +20,50 @@ process.env.CG_WORKSPACE_DIR ||= path.join(scratch, "workspace");
 
 const { buildSettings, ensureChannelFolder, subagentStopHooks, STOP_SUBAGENTS_HOOK } = await import("../src/gateway/folders.js");
 const { createRunGrantArtifacts, engineHomesFor, CONTAINER_AGENT_HOME } = await import("../src/gateway/run-grant-artifacts.js");
-const { channelFolder, runTmpDir } = await import("../src/config/paths.js");
-const { createFakeRuntimeBackend, fakeTarget, hostTarget } = await import("./runtime-fake.js");
+const { channelFolder, gatewayRoot } = await import("../src/config/paths.js");
+const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
+const { IMAGE_HELPERS } = await import("../src/runtimes/container/image-paths.js");
+const { createFakeRuntimeBackend, fakeTarget } = await import("./runtime-fake.js");
 
 const backend = createFakeRuntimeBackend();
 
-test("an isolated target's settings carry policy but no sandbox, and the host's are unchanged", async () => {
+test("a channel's settings carry policy but no sandbox — the container is the confinement", async () => {
   const meta = { _slug: "rt-folders", allowedMcps: [], allowBash: true, allowNetwork: true, platform: "slack" };
-  const host = await buildSettings(meta);
-  const isolated = await buildSettings(meta, { target: fakeTarget(backend, "rt-folders", meta) });
+  const settings = await buildSettings(meta);
+  const target = fakeTarget(backend, "rt-folders", meta);
 
-  // The whole block is gone — not disabled, not emptied. An `enabled:false` sandbox would still
+  // The whole block is absent — not disabled, not emptied. An `enabled:false` sandbox would still
   // ship a filesystem section full of host paths for the CLI to interpret.
-  assert.ok(host.sandbox, "a host run still gets the OS sandbox");
-  assert.equal("sandbox" in isolated, false, "an isolated run gets no sandbox block at all");
+  assert.equal("sandbox" in settings, false, "no sandbox block at all");
 
-  // Policy is not confinement: everything that decides what the model may DO is identical.
-  assert.deepEqual(isolated.permissions.allow, host.permissions.allow);
-  assert.equal(isolated.permissions.disableBypassPermissionsMode, "disable");
-  assert.equal(isolated.autoMemoryEnabled, false);
-  assert.equal(isolated.autoDreamEnabled, false);
-  assert.deepEqual(isolated.allowedMcpServers, host.allowedMcpServers);
+  // Policy is what decides what the model may DO, and all of it is here.
+  assert.ok(settings.permissions.allow.includes("Bash"), "Allow Bash unlocks the shell tool");
+  assert.equal(settings.permissions.disableBypassPermissionsMode, "disable");
+  assert.equal(settings.autoMemoryEnabled, false);
+  assert.equal(settings.autoDreamEnabled, false);
+  assert.ok(Array.isArray(settings.allowedMcpServers));
+
+  // Nothing in the file names the daemon's filesystem: not the mounted work dir, not the gateway
+  // root, not the operator's home. A path into any of them is a file the engine cannot open.
+  const rendered = JSON.stringify(settings);
+  for (const host of [target.cwd, target.artifactDir, gatewayRoot(), os.homedir()]) {
+    assert.equal(rendered.includes(host), false, `settings name a host path: ${host}`);
+  }
 });
 
-test("the Stop hook comes from the backend for an isolated target and stays verbatim on the host", async () => {
+test("the Stop hook names the copy baked into the image, never this checkout's script", async () => {
   const meta = { _slug: "rt-hook", allowedMcps: [], platform: "slack" };
-  const host = await buildSettings(meta);
-  const isolated = await buildSettings(meta, { target: fakeTarget(backend, "rt-hook", meta) });
+  const settings = await buildSettings(meta);
 
-  // Host: the exact string it has always written. The settings digest (and every warm-process
-  // fingerprint derived from it) must not move because containers exist.
-  assert.equal(host.hooks.Stop[0].hooks[0].command, `node "${STOP_SUBAGENTS_HOOK}"`);
-  assert.deepEqual(subagentStopHooks(), host.hooks);
-
-  // Isolated: the script lives in the image, at a path only the backend knows.
-  assert.equal(isolated.hooks.Stop[0].hooks[0].command, "/opt/channelgate/bin/cg-stop-subagents");
-  assert.doesNotMatch(isolated.hooks.Stop[0].hooks[0].command, /stop-subagents\.mjs/);
+  // The hook runs inside the container, so the command is the image's fixed location
+  // (src/runtimes/container/image-paths.js) — the one string every settings digest (and every warm
+  // fingerprint derived from it) is built on.
+  const { command, args } = IMAGE_HELPERS["stop-subagents-hook"];
+  assert.equal(settings.hooks.Stop[0].hooks[0].command, [command, ...args].join(" "));
+  assert.match(settings.hooks.Stop[0].hooks[0].command, /^node \/opt\/channelgate\//);
+  assert.deepEqual(subagentStopHooks(), settings.hooks);
+  // The checkout copy is the SOURCE of that script, not something a run ever invokes.
+  assert.equal(settings.hooks.Stop[0].hooks[0].command.includes(STOP_SUBAGENTS_HOOK), false);
 });
 
 test("ensureChannelFolder creates the two directories the backend has to bind-mount", async () => {
@@ -70,7 +80,7 @@ test("ensureChannelFolder creates the two directories the backend has to bind-mo
   }
 });
 
-test("an isolated run's engine-facing artifacts all live under the mounted artifact dir", async () => {
+test("a run's engine-facing artifacts all live under the mounted artifact dir", async () => {
   const meta = { platform: "slack", allowedMcps: [], allowBash: true };
   const target = fakeTarget(backend, "rt-artifacts", meta);
   await ensureChannelFolder("rt-artifacts", meta, { target });
@@ -81,6 +91,7 @@ test("an isolated run's engine-facing artifacts all live under the mounted artif
     // never mounted, so a path into it is a file the engine cannot open.
     assert.ok(artifacts.settingsFile.startsWith(`${target.artifactDir}${path.sep}`), artifacts.settingsFile);
     assert.doesNotMatch(artifacts.settingsFile, new RegExp(channelFolder("rt-artifacts", "slack").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.equal(artifacts.artifactRoot, target.artifactDir);
     for (const dir of artifacts.claudePluginDirs) assert.ok(dir.startsWith(`${target.artifactDir}${path.sep}`), dir);
 
     // The engine homes are the IMAGE's, not the daemon's: mounting the daemon's synthetic Claude
@@ -91,36 +102,34 @@ test("an isolated run's engine-facing artifacts all live under the mounted artif
     assert.equal(artifacts.codexHome, `${CONTAINER_AGENT_HOME}/.codex`);
     assert.equal(artifacts.codexUserHome, CONTAINER_AGENT_HOME);
 
-    // Host-only plumbing is not merely unused, it is not built: launcher dirs shim the host's own
-    // toolchain, and credential symlinks point at the operator's home.
-    assert.equal(artifacts.toolchainBinDir, "");
-    assert.equal(artifacts.codexToolchainBinDir, "");
-    assert.deepEqual(artifacts.codexCredentialPaths, []);
+    // Host-only plumbing is not merely unused, it is not built — the keys are gone, not empty:
+    // launcher dirs shimmed the host's own toolchain, and credential symlinks pointed at the
+    // operator's home. The Codex skill overlay has no host-side delivery path either.
+    for (const key of ["toolchainBinDir", "codexToolchainBinDir", "codexCredentialPaths"]) {
+      assert.equal(key in artifacts, false, `${key} is host plumbing`);
+    }
     assert.equal(artifacts.codexSkillSupportDir, "");
   } finally {
     await artifacts.cleanup();
   }
 });
 
-test("a host run's artifacts stay exactly where they always were", async () => {
+test("a caller with no artifact dir is refused instead of being served files from the gateway root", async () => {
   const meta = { platform: "slack", allowedMcps: [] };
-  await ensureChannelFolder("rt-host-artifacts", meta);
-  const artifacts = await createRunGrantArtifacts({ slug: "rt-host-artifacts", meta, needsClaudeSettings: true, target: hostTarget("rt-host-artifacts", meta) });
-  try {
-    const runtimeRoot = path.join(channelFolder("rt-host-artifacts", "slack"), "runtime");
-    assert.ok(artifacts.settingsFile.startsWith(`${runtimeRoot}${path.sep}claude-settings${path.sep}`), artifacts.settingsFile);
-    assert.equal(artifacts.artifactRoot, runTmpDir());
-    assert.notEqual(artifacts.claudeHome, CONTAINER_AGENT_HOME);
-    assert.ok(artifacts.codexUserHome.startsWith(runTmpDir()), artifacts.codexUserHome);
-    assert.ok(artifacts.codexSkillSupportDir.endsWith(path.join(".agents", "skills")), artifacts.codexSkillSupportDir);
-  } finally {
-    await artifacts.cleanup();
+  await ensureChannelFolder("rt-no-artifacts", meta);
+  // No target at all, and the daemon's own local target (which mounts nothing and so names no
+  // artifact dir): a containerized engine would silently find neither settings nor MCP config.
+  for (const target of [undefined, null, localRuntimeTarget(process.cwd())]) {
+    await assert.rejects(
+      createRunGrantArtifacts({ slug: "rt-no-artifacts", meta, needsClaudeSettings: true, target }),
+      /runtime target must carry an artifactDir/,
+    );
   }
 });
 
-test("engineHomesFor answers only for an isolated target, and prefers what the backend declares", () => {
+test("engineHomesFor answers null for no target, and prefers what the backend declares", () => {
   assert.equal(engineHomesFor(null), null);
-  assert.equal(engineHomesFor(hostTarget("rt-homes", {})), null);
+  assert.equal(engineHomesFor(undefined), null);
 
   const target = fakeTarget(backend, "rt-homes", { platform: "slack" });
   assert.deepEqual(engineHomesFor(target), {

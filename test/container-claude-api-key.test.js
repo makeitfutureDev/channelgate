@@ -2,9 +2,14 @@
 // documented Linux service-install path (docs/OPERATIONS.md) has no login to relay at all.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
+// ensureTestEnv() seeds a stub OPERATOR login into the scratch CLAUDE_CONFIG_DIR so every relayed
+// run in the suite has something to relay. These cases are about the world WITHOUT a login, so they
+// point the operator config dir at an empty directory of their own (the login resolver reads the
+// variable at call time; the gateway's own engine home under the scratch root is empty already).
+process.env.CLAUDE_CONFIG_DIR = tempDir("cg-no-claude-login-");
 
 const credentials = await import("../src/runtimes/container/credentials.js");
 const { resolveContainerClaudeToken } = await import("../src/gateway/claude-token-relay.js");
@@ -15,7 +20,7 @@ const TOKENED = { ANTHROPIC_AUTH_TOKEN: "bearer-test" };
 const BARE = {};
 
 test("api-key: with no gateway login, an API key in the daemon env settles Claude to the api-key mode", () => {
-  // The test env has no daemon credentials file, so without a key this is "missing".
+  // Neither the operator config dir nor the engine home holds a login, so without a key this is "missing".
   assert.equal(credentials.settleCredentialModes(NO_LOGIN_SETTINGS, BARE).modes.claude, "missing");
   assert.equal(credentials.settleCredentialModes(NO_LOGIN_SETTINGS, KEYED).modes.claude, "api-key");
   assert.equal(credentials.settleCredentialModes(NO_LOGIN_SETTINGS, TOKENED).modes.claude, "api-key");

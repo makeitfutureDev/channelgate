@@ -10,6 +10,8 @@ const {
 const { createSecretRedactor, redactSecretValues } = await import("../src/util/redact.js");
 const { buildClaudeEnv } = await import("../src/engines/claude.js");
 const { buildCodexEnv } = await import("../src/engines/codex.js");
+const { CONTAINER_HOME } = await import("../src/engines/runtime-target.js");
+const { createFakeRuntime } = await import("./fixtures/fake-runtime-backend.js");
 const { buildSecretFormView, buildSecretsView, readSecretForm } = await import("../src/slack/secret-explorer.js");
 
 const metaWith = (vars) => ({ env: vars });
@@ -154,9 +156,11 @@ test("resolved variables reach the child environment, and cannot displace the ga
   assert.equal(claude.HOME, "/gateway/home", "the engine's own home always wins");
   assert.equal(claude.PATH, "/usr/bin", "and so does its PATH");
 
-  const codex = buildCodexEnv({ home: "/gateway/codex", codexHome: "/gateway/codex/.codex", extraEnv: { ...resolved, HOME: "/tmp/hijack" } }, { PATH: "/usr/bin" });
+  // Codex only ever runs inside a channel container: its HOME is the image's, and a channel
+  // variable cannot move it any more than it can move Claude's.
+  const codex = buildCodexEnv({ extraEnv: { ...resolved, HOME: "/tmp/hijack" }, target: createFakeRuntime().target() }, { PATH: "/usr/bin" });
   assert.equal(codex.SUPABASE_ACCESS_TOKEN, "sbp_injected_value");
-  assert.equal(codex.HOME, "/gateway/codex");
+  assert.equal(codex.HOME, CONTAINER_HOME, "the container's own home always wins");
 });
 
 test("safeSpawnEnv is the merge-site half of the name rule", () => {

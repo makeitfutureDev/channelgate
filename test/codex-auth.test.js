@@ -5,7 +5,7 @@
 // that says nothing is, correctly, never killed for being quiet.
 //
 // Three layers are covered here:
-//   1. the pre-spawn credential probe (a signed-out host never burns a turn at all),
+//   1. the pre-spawn credential gate (a container with no Codex sign-in never burns a turn at all),
 //   2. live stderr classification (a credential lost mid-flight ends the turn in seconds),
 //   3. the wedged path (chatter must not extend the silence budget, and the buffered stderr must
 //      still be classified when it runs out).
@@ -26,6 +26,13 @@ process.env.PATH = `${fixtureBin}${path.delimiter}${process.env.PATH || ""}`;
 
 const { readCodexAuthState, codexAuthCandidates, describeCodexAuth, CODEX_LOGIN_HINT } = await import("../src/engines/codex-auth.js");
 const { runCodex, classifyCodexLiveStderr, classifyCodexFailure, codexDiagnosticLine } = await import("../src/engines/codex.js");
+const { createFakeRuntimeBackend, fakeTarget } = await import("./runtime-fake.js");
+const { credentialError: containerCredentialError } = await import("../src/runtimes/container/credentials.js");
+
+// Every Codex turn runs in a channel container, so a direct runner call needs a container-shaped
+// target. The fake backend delegates the spawn to this host (the stub `codex` on PATH really
+// runs) and records whether a spawn happened at all.
+const containerTarget = (backend = createFakeRuntimeBackend(), slug = "codex-auth") => fakeTarget(backend, slug, { platform: "slack", channelId: `C_${slug.toUpperCase().replace(/-/g, "_")}` });
 
 const scratch = () => mkdtemp(path.join(os.tmpdir(), "cg-codex-auth-"));
 const writeAuth = async (dir, contents) => {
@@ -112,26 +119,26 @@ test("the engine home is consulted first, the host state dir second", async () =
 
 // ── 2. The runner ───────────────────────────────────────────────────────────────
 
-test("a signed-out host never spawns the turn — it fails over before any work exists", async () => {
+test("a container with no Codex sign-in never spawns the turn — it fails over before any work exists", async () => {
+  // The BACKEND answers the sign-in question: it is what mounts the gateway's auth file into the
+  // container. The container backend's real gate is wired to the fake spawner and pointed at a
+  // CODEX_HOME with no auth.json, so the sentence the user gets is the real one.
   const empty = path.join(await scratch(), ".codex");
-  const key = process.env.OPENAI_API_KEY;
-  delete process.env.OPENAI_API_KEY;
-  try {
-    await assert.rejects(
-      runCodex({ cwd: fixtureBin, prompt: "hello", sessionId: "", isNewSession: true, codexHome: empty, codexStateDir: empty, timeoutMs: 5_000 }),
-      (error) => {
-        assert.match(error.message, /not signed in/i);
-        assert.match(error.message, /codex login/);
-        assert.equal(error.details?.engine, "codex");
-        assert.equal(error.details?.providerKind, "authentication");
-        assert.equal(error.details?.replaySafe, true);
-        assert.equal(error.details?.toolUseCount, 0);
-        return true;
-      },
-    );
-  } finally {
-    if (key === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = key;
-  }
+  const backend = createFakeRuntimeBackend({ credentialError: (target, engine) => containerCredentialError(target, engine, { CODEX_HOME: empty }) });
+  const target = containerTarget(backend, "codex-auth-out");
+  await assert.rejects(
+    runCodex({ cwd: fixtureBin, prompt: "hello", sessionId: "", isNewSession: true, target, artifactDir: target.artifactDir, timeoutMs: 5_000 }),
+    (error) => {
+      assert.match(error.message, /not signed in/i);
+      assert.match(error.message, /codex login/);
+      assert.equal(error.details?.engine, "codex");
+      assert.equal(error.details?.providerKind, "authentication");
+      assert.equal(error.details?.replaySafe, true);
+      assert.equal(error.details?.toolUseCount, 0);
+      return true;
+    },
+  );
+  assert.equal(backend.calls.spawn.length, 0, "the gate is pre-spawn: no process, no turn");
 });
 
 test("a credential lost MID-FLIGHT ends the turn in seconds instead of heartbeating", async () => {
@@ -140,6 +147,7 @@ test("a credential lost MID-FLIGHT ends the turn in seconds instead of heartbeat
   // because of the watchdog, this test would take one.
   const startedAt = Date.now();
   const notes = [];
+  const target = containerTarget();
   await assert.rejects(
     runCodex({
       cwd: fixtureBin,
@@ -149,6 +157,8 @@ test("a credential lost MID-FLIGHT ends the turn in seconds instead of heartbeat
       timeoutMs: 60_000,
       maxSilenceMs: 60_000,
       onEvent: (e) => notes.push(e),
+      target,
+      artifactDir: target.artifactDir,
     }),
     (error) => {
       assert.match(error.message, /Codex authentication failed/i);
@@ -167,6 +177,7 @@ test("a credential lost MID-FLIGHT ends the turn in seconds instead of heartbeat
 test("the same line AFTER a tool ran neither ends the turn early nor makes it replayable", async () => {
   // A turn that already touched a tool may have mutated something. It still fails — via the
   // silence budget — but it must never be replayed on the other harness.
+  const target = containerTarget();
   await assert.rejects(
     runCodex({
       cwd: fixtureBin,
@@ -175,6 +186,8 @@ test("the same line AFTER a tool ran neither ends the turn early nor makes it re
       isNewSession: true,
       timeoutMs: 400,
       maxSilenceMs: 800,
+      target,
+      artifactDir: target.artifactDir,
     }),
     (error) => {
       assert.equal(error.details?.providerKind, "authentication", "the reason is still named");
@@ -192,6 +205,7 @@ test("stderr chatter does not extend the silence budget, and the wedge is classi
   // exhaust its budget: an immortal turn that produced nothing. Now progress means stdout, and
   // when the budget does run out the buffered stderr still names the cause.
   const startedAt = Date.now();
+  const target = containerTarget();
   await assert.rejects(
     runCodex({
       cwd: fixtureBin,
@@ -200,6 +214,8 @@ test("stderr chatter does not extend the silence budget, and the wedge is classi
       isNewSession: true,
       timeoutMs: 300,
       maxSilenceMs: 900,
+      target,
+      artifactDir: target.artifactDir,
     }),
     (error) => {
       assert.equal(error.details?.providerKind, "authentication", "a wedged turn is not an opaque one");

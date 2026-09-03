@@ -17,7 +17,6 @@ if (major < 22 || (major === 22 && minor < 13)) {
 import { ensureRoot } from "./config/store.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
-import { assessLinuxUserns } from "./engines/linux-userns.js";
 import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, saveSettings, getContainerRuntime } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
@@ -77,11 +76,8 @@ process.on("uncaughtException", (err) => {
   console.error("[gateway] uncaughtException:", err?.message || err);
 });
 
-// The container backend is loaded LAZILY and never allowed to break the boot: on a host without a
-// container CLI (or a build where the backend is still the placeholder) the daemon must come up
-// exactly as before and container channels fail closed with their own message. `import()` rather
-// than a static import for the same reason — this file is the boot path for every deployment,
-// including the many that will never enable the feature.
+// The container backend is loaded lazily so a load failure is reported with its cause instead of
+// exploding the import graph at boot; the boot then stops, because there is no other runtime.
 async function containerRuntimeModule() {
   try {
     return await import("./runtimes/container/index.js");
@@ -89,16 +85,23 @@ async function containerRuntimeModule() {
     return { __loadError: e?.message || String(e) };
   }
 }
-async function bootContainerRuntimeSafely() {
+const CONTAINER_REMEDY = "install rootless Podman (docs/OPERATIONS.md → Container runtime) and restart the gateway";
+async function bootContainerRuntimeOrDie() {
   const mod = await containerRuntimeModule();
   if (typeof mod.bootContainerRuntime !== "function") {
-    if (getContainerRuntime().enabled) console.warn(`[gateway] WARNING: the container runtime is switched on but the backend did not load — ${mod.__loadError || "not available in this build"}`);
-    return;
+    console.error(`[gateway] FATAL: the container runtime backend did not load — ${mod.__loadError || "not available in this build"}; ${CONTAINER_REMEDY}`);
+    process.exit(1);
   }
+  let status;
   try {
-    await mod.bootContainerRuntime({ settings: getContainerRuntime(), log: (m) => console.log(m) });
+    status = await mod.bootContainerRuntime({ settings: getContainerRuntime(), log: (m) => console.log(m) });
   } catch (e) {
-    console.warn(`[gateway] WARNING: container runtime boot failed — ${e?.message || e}`);
+    console.error(`[gateway] FATAL: container runtime boot failed — ${e?.message || e}; ${CONTAINER_REMEDY}`);
+    process.exit(1);
+  }
+  if (!status?.cli?.ok) {
+    console.error(`[gateway] FATAL: no usable container CLI — ${status?.cli?.reason || "unknown"}; ${CONTAINER_REMEDY}`);
+    process.exit(1);
   }
 }
 // What /api/health reports. Always answers, even when the backend never loaded, so the admin UI can
@@ -106,7 +109,7 @@ async function bootContainerRuntimeSafely() {
 // gateway control socket: a container without it would run with no gateway tools at all.
 async function containerRuntimeHealth() {
   const settings = getContainerRuntime();
-  const base = { enabled: settings.enabled, defaultBackend: settings.defaultBackend, socket: mcpSocketStatus() };
+  const base = { socket: mcpSocketStatus() };
   const unavailable = (reason) => ({ ...base, cli: { ok: false, reason }, image: { ref: settings.image, present: false, reason: "" }, running: 0, containers: [] });
   const mod = await containerRuntimeModule();
   if (typeof mod.containerRuntimeStatus !== "function") return unavailable(mod.__loadError || "container runtime backend is not available in this build");
@@ -193,14 +196,11 @@ async function main() {
     if (check.auth?.login?.summary) console.log(`[gateway] ${id} login: ${check.auth.login.summary}`);
     if (check.auth?.expiring) console.warn(`[gateway] WARNING: ${check.auth.expiring}`);
   }
-  // Ubuntu's AppArmor userns restriction kills every sandboxed Bash call while Read/MCP keep
-  // working, and the only symptom is inside the model's turn. Name it here, next to the engine
-  // warnings, with the remedy (scripts/apparmor/) — see src/engines/linux-userns.js.
-  const userns = assessLinuxUserns();
-  if (userns.applies && userns.broken) console.warn(`[gateway] WARNING: ${userns.reason} — ${userns.hint}`);
-  // Container backend: probe the CLI, reconcile containers left by the previous daemon, start the
-  // idle reaper. A no-op (and a single warning) when the kill switch is off or nothing is installed.
-  await bootContainerRuntimeSafely();
+  // Container backend — the only runtime: probe the CLI, reconcile containers left by the previous
+  // daemon, start the idle reaper. A host with no usable container CLI cannot run a single turn,
+  // so the boot stops here with the remedy instead of coming up as a daemon that answers every
+  // message with an error.
+  await bootContainerRuntimeOrDie();
 
   const PORT = Number(process.env.PORT ?? 4747);
   // Bind loopback by default — the admin surface can flip users to admin and point channel
@@ -234,8 +234,9 @@ async function main() {
 
   // Daemon-owned background jobs: the run_in_background MCP tool hands long shell work here; on
   // completion we re-inject a turn into the originating thread so the agent continues on its own.
-  // Shell jobs run unsandboxed on the daemon. Auto mode requires an independent admin click;
-  // Admin mode may start them directly only for the admin author who already has sandbox-off.
+  // Shell jobs run inside the channel's container with no engine permission gate in front of the
+  // command. Auto mode requires an independent admin click; Admin mode may start them directly
+  // only for the admin author who already holds the permission bypass.
   const backgroundJobs = new BackgroundJobs({ slack, requestShellApproval: (req) => requestApproval(slack, req) });
   // The HTTP listener below opens long before recover() runs. Hold new starts until the persisted
   // job rows have been re-tracked, or the first API/approval-triggered job would rewrite bg_jobs

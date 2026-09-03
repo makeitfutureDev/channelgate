@@ -36,20 +36,16 @@ export function imageNotBuiltMessage(ref) {
  * are the ones where the running image is provably not what this checkout expects.
  *
  * @param {object}   input
- * @param {boolean}  input.containerRuntimeEnabled  the gateway-wide switch; off = no channel uses an image
  * @param {string[]} input.changedPaths             `git diff --name-only <old>..<new>`, repo-relative
  * @param {string}   input.builtSpecVersion         the built image's `cg.image.version` label ("" = none built)
  * @param {string}   input.expectedSpecVersion      `containers/versions.json` in the CANDIDATE checkout
  * @returns {boolean}
  */
 export function needsImageBuild({
-  containerRuntimeEnabled = false,
   changedPaths = [],
   builtSpecVersion = "",
   expectedSpecVersion = "",
 } = {}) {
-  // A host-only install has no image to keep current, and must never pay for a build it cannot use.
-  if (!containerRuntimeEnabled) return false;
   const built = String(builtSpecVersion || "").trim();
   const expected = String(expectedSpecVersion || "").trim();
   if (!built) return true; // nothing built (or the label is unreadable) — build it

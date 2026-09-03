@@ -6,6 +6,10 @@ import { ensureTestEnv } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 ensureTestEnv();
+// Every channel turn runs in a container-shaped target: the orchestrated turns resolve one through
+// run.js's test seam, and the one direct runner call below is handed the same fake backend.
+const { useFakeRuntime, fakeTarget } = await import("./runtime-fake.js");
+const fakeBackend = await useFakeRuntime();
 process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
 
@@ -79,6 +83,7 @@ test("a generic Codex failure is never replayed with the gateway default", async
 });
 
 test("a model rejection after a tool attempt is marked non-replayable", async () => {
+  const target = fakeTarget(fakeBackend, "model-default-direct", { platform: "slack", channelId: "D_MODEL_DIRECT" });
   await assert.rejects(
     runCodex({
       cwd: projectRoot,
@@ -88,6 +93,8 @@ test("a model rejection after a tool attempt is marked non-replayable", async ()
       clean: true,
       model: "gpt-5.6",
       timeoutMs: 1_000,
+      target,
+      artifactDir: target.artifactDir,
     }),
     (error) => {
       assert.equal(error.details?.providerKind, "model_rejected");

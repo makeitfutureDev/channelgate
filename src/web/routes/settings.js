@@ -48,7 +48,6 @@ import { invalidateAllSessions, authEnabled } from "../auth.js";
 import { readSecret } from "../secrets.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
 import { engineUiManifest } from "../../engines/registry.js";
-import { normalizeNetworkDomains } from "../../util/network-domains.js";
 
 // The month the license ledger is keyed on — UTC, never the daemon's local zone (a deployment in
 // UTC+13 would otherwise roll its allowance a day early).
@@ -177,15 +176,6 @@ export function createSettingsRouter({
         const arr = Array.isArray(body.mentionReactions) ? body.mentionReactions : String(body.mentionReactions).split(/[\s,]+/);
         patch.mentionReactions = arr.map((s) => String(s).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
       }
-      // Network egress allow-list for Bash channels. Array or comma/space string; bare domains.
-      if (body.networkDomains !== undefined) {
-        const arr = Array.isArray(body.networkDomains) ? body.networkDomains : String(body.networkDomains).split(/[\s,]+/);
-        try {
-          patch.networkDomains = normalizeNetworkDomains(arr, { allowEmpty: true });
-        } catch (error) {
-          return res.status(400).json({ error: error.message });
-        }
-      }
       // Trusted bot apps: Slack app/bot IDs allowed to drive runs despite carrying a bot_id.
       if (body.trustedBotApps !== undefined) {
         const arr = Array.isArray(body.trustedBotApps) ? body.trustedBotApps : String(body.trustedBotApps).split(/[\s,]+/);
@@ -240,17 +230,10 @@ export function createSettingsRouter({
       else if (typeof body.codexFallback === "boolean") patch.engineFallback = body.codexFallback;
       if (typeof body.showMessageCost === "boolean") patch.showMessageCost = body.showMessageCost;
       if (typeof body.whisperEnabled === "boolean") patch.whisperEnabled = body.whisperEnabled;
-      // ── Container runtime (v0.8) ───────────────────────────────────────────────────────────
-      // `containerRuntimeEnabled` is the gateway-wide kill switch: off returns EVERY channel to the
-      // host backend regardless of its own pin, which is the rollback lever for this whole feature.
+      // ── Container runtime ───────────────────────────────────────────────────
       // The three free-text values (image, memory, cpus) are argv tokens for the container CLI, so
       // they are pattern-checked here rather than sanitized later — a rejected save is the only
       // honest answer for a value that would otherwise reach a command line.
-      if (typeof body.containerRuntimeEnabled === "boolean") patch.containerRuntimeEnabled = body.containerRuntimeEnabled;
-      if (body.containerDefaultBackend !== undefined) {
-        if (!["host", "container"].includes(body.containerDefaultBackend)) return res.status(400).json({ error: 'containerDefaultBackend must be "host" or "container"' });
-        patch.containerDefaultBackend = body.containerDefaultBackend;
-      }
       if (body.containerCli !== undefined) {
         if (!CONTAINER_CLIS.includes(body.containerCli)) return res.status(400).json({ error: `containerCli must be one of ${CONTAINER_CLIS.join(", ")}` });
         patch.containerCli = body.containerCli;

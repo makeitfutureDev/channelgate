@@ -1,15 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ensureTestEnv } from "./helpers.js";
 
 const gatewayRoot = ensureTestEnv();
-const { assertUserSkillOverlaySupported, createRunGrantArtifacts, materializeCodexToolchainLaunchers } = await import("../src/gateway/run-grant-artifacts.js");
+const { assertUserSkillOverlaySupported, createRunGrantArtifacts, CONTAINER_AGENT_HOME } = await import("../src/gateway/run-grant-artifacts.js");
 const { ensureChannelFolder } = await import("../src/gateway/folders.js");
 const { channelSettingsFile, runTmpDir, workspaceFolder } = await import("../src/config/paths.js");
-const { HOST_IDENTITY_PATHS } = await import("../src/gateway/host-sensitive-paths.js");
+const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
+const { createFakeRuntimeBackend, fakeTarget } = await import("./runtime-fake.js");
+
+// Every run's engine-facing files live under the channel's artifact dir, which the container
+// backend bind-mounts at the identical absolute path — and the RuntimeTarget is what names it.
+// The fake backend supplies exactly the target production would, minus the container.
+const backend = createFakeRuntimeBackend();
+const targetFor = (slug, meta = {}) => fakeTarget(backend, slug, meta);
+const grants = (options) => createRunGrantArtifacts({ ...options, target: options.target ?? targetFor(options.slug, options.meta || {}) });
 
 const absent = async (file) => {
   try { await access(file); return false; } catch { return true; }
@@ -23,16 +31,19 @@ test("engines without a native isolated skill mechanism fail closed", () => {
   assert.doesNotThrow(() => assertUserSkillOverlaySupported({ supports: { userSkillOverlay: false } }, []));
 });
 
-test("every engine run uses isolated homes instead of host-global config or skills", async () => {
+test("every engine run uses the run's own engine homes instead of host-global config or state", async () => {
   const source = await readFile(new URL("../src/gateway/run.js", import.meta.url), "utf8");
+  // The homes the runners receive are the ones the grant artifacts named (the image's, inside the
+  // channel's HOME volume) — never the daemon's synthetic engine home or the operator's own.
   assert.match(source, /claudeHome:\s*grantArtifacts\.claudeHome/);
-  assert.match(source, /codexUserHome:\s*grantArtifacts\.codexUserHome/);
+  assert.match(source, /claudeConfigDir:\s*grantArtifacts\.claudeConfigDir/);
+  assert.match(source, /codexStateDir:\s*grantArtifacts\.codexStateDir/);
 });
 
 test("clean run artifacts expose no optional MCP or user skill tier", async (t) => {
   const slug = `clean-grants-${Date.now()}`;
   const cleanWorkspace = await ensureChannelFolder(slug, {}, { runMeta: { cleanMode: true } });
-  const artifacts = await createRunGrantArtifacts({
+  const artifacts = await grants({
     slug,
     meta: {
       cleanMode: true,
@@ -48,17 +59,19 @@ test("clean run artifacts expose no optional MCP or user skill tier", async (t) 
   assert.equal(artifacts.claudePluginDirs.length, 1);
   assert.ok(!(await absent(path.join(artifacts.claudePluginDirs[0], "skills", "gateway-usage", "SKILL.md"))));
   assert.ok(await absent(path.join(artifacts.claudePluginDirs[0], "skills", "private")));
-  assert.deepEqual(await readdir(artifacts.codexSkillSupportDir), []);
+  // Codex reads personal skills from its HOME volume inside the container; there is no host-side
+  // overlay directory a per-user grant could be delivered through, so none is ever built.
+  assert.equal(artifacts.codexSkillSupportDir, "");
   const settings = JSON.parse(await readFile(artifacts.settingsFile, "utf8"));
   assert.ok(!settings.permissions.allow.includes("mcp__private"));
   assert.ok(!settings.allowedMcpServers.some((entry) => entry?.serverName === "private"));
 });
 
 // The per-run settings artifact is what a Claude spawn ACTUALLY loads (it overrides the
-// settings-admin.json fallback for every Claude run), so the admin sandbox-off contract must
-// hold HERE. Regression: the first admin-sandbox-off fix patched only the fallback file, and
-// escalated admin turns kept seeing the sandbox tmpfs home in production.
-test("escalated run artifact settings lift the sandbox; ordinary artifacts keep it", async (t) => {
+// settings-admin.json fallback for every Claude run), so the admin bypass contract must hold HERE.
+// Regression: the first admin fix patched only the fallback file, and escalated admin turns kept
+// running under the shared file's restrictions in production.
+test("escalated run artifact settings omit the bypass key; ordinary artifacts pin it — neither carries a sandbox", async (t) => {
   const slug = `bypass-artifact-${Date.now()}`;
   const workspace = await ensureChannelFolder(slug, { adminMode: true });
   const base = {
@@ -70,21 +83,27 @@ test("escalated run artifact settings lift the sandbox; ordinary artifacts keep 
     needsClaudeSettings: true,
   };
 
-  const escalated = await createRunGrantArtifacts({ ...base, allowBypass: true });
+  const escalated = await grants({ ...base, allowBypass: true });
   t.after(() => escalated.cleanup());
   const adminSettings = JSON.parse(await readFile(escalated.settingsFile, "utf8"));
-  assert.equal(adminSettings.sandbox.enabled, false);
   assert.equal("disableBypassPermissionsMode" in adminSettings.permissions, false);
-  // The filesystem block must survive: plugin allowRead grants are appended to it.
-  assert.ok(Array.isArray(adminSettings.sandbox.filesystem.allowRead));
 
-  const ordinary = await createRunGrantArtifacts({ ...base, allowBypass: false });
+  const ordinary = await grants({ ...base, allowBypass: false });
   t.after(() => ordinary.cleanup());
   const sharedSettings = JSON.parse(await readFile(ordinary.settingsFile, "utf8"));
-  assert.equal(sharedSettings.sandbox.enabled, true);
   assert.equal(sharedSettings.permissions.disableBypassPermissionsMode, "disable");
-  for (const hostPath of HOST_IDENTITY_PATHS) {
-    assert.ok(sharedSettings.sandbox.filesystem.denyRead.includes(hostPath));
+
+  // The bypass key is the ONLY difference between the two, and the two are different files.
+  assert.notEqual(escalated.settingsFile, ordinary.settingsFile);
+  assert.deepEqual({ ...adminSettings, permissions: { ...adminSettings.permissions, disableBypassPermissionsMode: "disable" } }, sharedSettings);
+  // Confinement is the container, so an escalated turn is "full tools" inside the same boundary —
+  // there is no sandbox to lift, and no host path (the operator's home, the gateway root) for a
+  // sandbox block to name. Both files are policy only.
+  for (const settings of [adminSettings, sharedSettings]) {
+    assert.equal("sandbox" in settings, false);
+    const rendered = JSON.stringify(settings);
+    assert.equal(rendered.includes(os.homedir()), false);
+    assert.equal(rendered.includes(gatewayRoot), false);
   }
 });
 
@@ -100,15 +119,25 @@ test("personal library favorites are isolated per run instead of written to shar
   t.after(() => { globalThis.fetch = originalFetch; });
 
   const [a, b] = await Promise.all([
-    createRunGrantArtifacts({ slug: "library-a", librarySkillsToken: "isolation-token-a" }),
-    createRunGrantArtifacts({ slug: "library-b", librarySkillsToken: "isolation-token-b" }),
+    grants({ slug: "library-a", librarySkillsToken: "isolation-token-a" }),
+    grants({ slug: "library-b", librarySkillsToken: "isolation-token-b" }),
   ]);
   t.after(() => Promise.all([a.cleanup(), b.cleanup()]));
 
   assert.ok(!(await absent(path.join(a.claudePluginDirs[0], "skills", "favorite-a", "SKILL.md"))));
   assert.ok(await absent(path.join(a.claudePluginDirs[0], "skills", "favorite-b")));
-  assert.ok(!(await absent(path.join(b.codexSkillSupportDir, "favorite-b", "SKILL.md"))));
-  assert.ok(await absent(path.join(b.codexSkillSupportDir, "favorite-a")));
+  assert.ok(!(await absent(path.join(b.claudePluginDirs[0], "skills", "favorite-b", "SKILL.md"))));
+  assert.ok(await absent(path.join(b.claudePluginDirs[0], "skills", "favorite-a")));
+  // Both plugins are per-run (cold Claude turns), each under its own channel's artifact dir, and
+  // nothing was written into either channel's shared skills tree.
+  assert.equal(a.claudePluginEphemeral, true);
+  assert.equal(b.claudePluginEphemeral, true);
+  assert.ok(a.claudePluginDirs[0].startsWith(`${targetFor("library-a").artifactDir}${path.sep}`), a.claudePluginDirs[0]);
+  assert.ok(b.claudePluginDirs[0].startsWith(`${targetFor("library-b").artifactDir}${path.sep}`), b.claudePluginDirs[0]);
+  for (const slug of ["library-a", "library-b"]) {
+    assert.ok(await absent(path.join(workspaceFolder(slug), ".claude", "skills", "favorite-a")));
+    assert.ok(await absent(path.join(workspaceFolder(slug), ".claude", "skills", "favorite-b")));
+  }
 });
 
 test("concurrent users get private settings/plugins without mutating the shared channel tree", async (t) => {
@@ -141,27 +170,31 @@ test("concurrent users get private settings/plugins without mutating the shared 
   assert.ok(await absent(path.join(cleanRun.cwd, ".claude", "skills", "shared")));
 
   const userMcp = (name) => ({ name, namespace: `mcp__${name}`, match: { serverName: name } });
+  const target = targetFor(slug, durableMeta);
   const [a, b] = await Promise.all([
-    createRunGrantArtifacts({ slug, meta: { allowedMcps: [sharedMcp, userMcp("user-a")] }, userSkills: ["user-a"], needsClaudeSettings: true }),
-    createRunGrantArtifacts({ slug, meta: { allowedMcps: [sharedMcp, userMcp("user-b")] }, userSkills: ["user-b"], needsClaudeSettings: true }),
+    createRunGrantArtifacts({ slug, meta: { allowedMcps: [sharedMcp, userMcp("user-a")] }, userSkills: ["user-a"], needsClaudeSettings: true, target }),
+    createRunGrantArtifacts({ slug, meta: { allowedMcps: [sharedMcp, userMcp("user-b")] }, userSkills: ["user-b"], needsClaudeSettings: true, target }),
   ]);
   t.after(() => Promise.all([a.cleanup(), b.cleanup()]));
 
   assert.notEqual(a.settingsFile, b.settingsFile);
-  assert.ok(path.resolve(a.settingsFile).startsWith(path.resolve(gatewayRoot) + path.sep));
+  // Both land under the channel's artifact dir — the one tree the container mounts — never in the
+  // shared run-tmp dir, and never inside the channel's visible work folder.
+  assert.ok(path.resolve(a.settingsFile).startsWith(path.resolve(target.artifactDir) + path.sep), a.settingsFile);
   assert.ok(!path.resolve(a.settingsFile).startsWith(path.resolve(runTmpDir()) + path.sep));
+  assert.ok(!path.resolve(a.settingsFile).startsWith(path.resolve(workspaceFolder(slug)) + path.sep));
   assert.equal((await stat(path.dirname(a.settingsFile))).mode & 0o777, 0o700);
   assert.equal((await stat(a.settingsFile)).mode & 0o777, 0o600);
 
   for (const [artifact, own, other] of [[a, "user-a", "user-b"], [b, "user-b", "user-a"]]) {
     const plugin = artifact.claudePluginDirs[0];
+    assert.ok(path.resolve(plugin).startsWith(path.resolve(target.artifactDir) + path.sep), plugin);
     const manifest = JSON.parse(await readFile(path.join(plugin, ".claude-plugin", "plugin.json"), "utf8"));
     assert.equal(manifest.name, "gateway-user-grants");
     assert.equal((await stat(path.join(plugin, ".claude-plugin", "plugin.json"))).mode & 0o777, 0o600);
     assert.equal(await readFile(path.join(plugin, "skills", own, "SKILL.md"), "utf8"), `# ${own}\n`);
     assert.ok(await absent(path.join(plugin, "skills", other)));
-    assert.equal(await readFile(path.join(artifact.codexSkillSupportDir, own, "SKILL.md"), "utf8"), `# ${own}\n`);
-    assert.ok(await absent(path.join(artifact.codexSkillSupportDir, other)));
+    assert.equal(artifact.codexSkillSupportDir, "");
   }
 
   const sharedSkills = path.join(workspaceFolder(slug), ".claude", "skills");
@@ -181,7 +214,7 @@ test("concurrent users get private settings/plugins without mutating the shared 
   assert.equal(path.resolve(gatewayRoot), path.resolve(process.env.CHANNELGATE_DIR));
 });
 
-test("engine state overlays preserve auth/session only and omit host-global customizations", async (t) => {
+test("the engine homes are the image's — the operator's own engine state is never read, linked or written", async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "cg-engine-state-"));
   t.after(() => rm(temp, { recursive: true, force: true }));
   const claudeState = path.join(temp, "host-claude");
@@ -195,70 +228,43 @@ test("engine state overlays preserve auth/session only and omit host-global cust
   await writeFile(path.join(claudeState, "settings.json"), "{}\n");
   await writeFile(path.join(codexState, "auth.json"), "{}\n");
   await writeFile(path.join(codexState, "config.toml"), "model = 'host'\n");
+  const listing = async (dir) => (await readdir(dir, { recursive: true })).sort();
+  const [claudeBefore, codexBefore] = [await listing(claudeState), await listing(codexState)];
 
-  const oldGateway = process.env.CHANNELGATE_DIR;
   const oldClaude = process.env.CLAUDE_CONFIG_DIR;
   const oldCodex = process.env.CODEX_HOME;
-  process.env.CHANNELGATE_DIR = path.join(temp, "gateway-runtime");
   process.env.CLAUDE_CONFIG_DIR = claudeState;
   process.env.CODEX_HOME = codexState;
   t.after(() => {
-    if (oldGateway == null) delete process.env.CHANNELGATE_DIR; else process.env.CHANNELGATE_DIR = oldGateway;
     if (oldClaude == null) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = oldClaude;
     if (oldCodex == null) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldCodex;
   });
 
-  const artifacts = await createRunGrantArtifacts({ slug: "state-isolation" });
+  const artifacts = await grants({ slug: "state-isolation", needsClaudeSettings: true });
   t.after(() => artifacts.cleanup());
-  // The credentials file is deliberately NOT linked any more. Claude Code writes it by rename, so
-  // the link became an independent copy on the first refresh a gateway run performed — which then
-  // expired on its own while the operator's real login stayed current. The gateway reads the
-  // operator's login where it lives and relays its access token instead (src/gateway/claude-login.js).
-  await assert.rejects(() => readlink(path.join(artifacts.claudeConfigDir, ".credentials.json")), /ENOENT/);
-  assert.equal(await readlink(path.join(artifacts.claudeConfigDir, "projects")), path.join(claudeState, "projects"));
-  assert.equal(await readlink(path.join(artifacts.codexHome, "auth.json")), path.join(codexState, "auth.json"));
-  assert.equal(await readlink(path.join(artifacts.codexHome, "sessions")), path.join(codexState, "sessions"));
-  assert.ok(!artifacts.codexHome.startsWith(artifacts.codexUserHome), "CODEX_HOME must survive per-run cleanup for resume");
-  assert.equal(artifacts.codexSkillSupportDir, path.join(artifacts.codexUserHome, ".agents", "skills"));
-  for (const forbidden of [
-    path.join(artifacts.claudeConfigDir, "settings.json"),
-    path.join(artifacts.claudeConfigDir, "plugins"),
-    path.join(artifacts.claudeConfigDir, "skills", "host-skill"),
-    path.join(artifacts.claudeHome, ".claude.json"),
-    path.join(artifacts.codexHome, "config.toml"),
-    path.join(artifacts.codexHome, "skills", "host-skill"),
-  ]) assert.equal(await absent(forbidden), true, forbidden);
-  assert.equal((await lstat(artifacts.claudeHome)).isDirectory(), true);
-  assert.equal((await lstat(artifacts.codexUserHome)).isDirectory(), true);
-
-  const stableCodexHome = artifacts.codexHome;
-  await artifacts.cleanup();
-  assert.equal((await lstat(stableCodexHome)).isDirectory(), true, "stable Codex state survives grant cleanup");
-  assert.equal(await absent(artifacts.codexUserHome), true, "private skill grants are removed after the run");
+  // The homes are IN-CONTAINER paths inside the channel's own HOME volume: the daemon only names
+  // them in the child's environment. The login rides in as a relay of the operator's access token
+  // (src/gateway/claude-login.js) — the credentials file itself is never copied or linked, since a
+  // linked copy became an independent, self-expiring one the first time Claude Code rewrote it.
+  assert.equal(artifacts.claudeHome, CONTAINER_AGENT_HOME);
+  assert.equal(artifacts.claudeConfigDir, `${CONTAINER_AGENT_HOME}/.claude`);
+  assert.equal(artifacts.codexUserHome, CONTAINER_AGENT_HOME);
+  assert.equal(artifacts.codexHome, `${CONTAINER_AGENT_HOME}/.codex`);
+  assert.equal(artifacts.claudeStateDir, "", "no host-side Claude state dir stands in for the container's");
+  assert.equal(artifacts.codexStateDir, "", "…and none for Codex until the backend can name the home volume");
+  // Nothing the run produced points into, or was created inside, the operator's state dirs.
+  for (const value of [artifacts.settingsFile, ...artifacts.claudePluginDirs, artifacts.artifactRoot]) {
+    assert.ok(!path.resolve(value).startsWith(temp + path.sep), value);
+  }
+  assert.deepEqual(await listing(claudeState), claudeBefore, "the operator's ~/.claude is untouched");
+  assert.deepEqual(await listing(codexState), codexBefore, "the operator's ~/.codex is untouched");
+  // And the settings file the run loads names none of it.
+  const rendered = await readFile(artifacts.settingsFile, "utf8");
+  assert.equal(rendered.includes(claudeState), false);
+  assert.equal(rendered.includes(codexState), false);
 });
 
-test("Codex toolchain launchers remain symlinks inside the run-private granted directory", async (t) => {
-  const temp = await mkdtemp(path.join(os.tmpdir(), "cg-codex-launchers-"));
-  t.after(() => rm(temp, { recursive: true, force: true }));
-  const home = path.join(temp, "home");
-  const hostBin = path.join(home, ".local", "bin");
-  const npmTarget = path.join(home, ".local", "node", "lib", "node_modules", "npm", "bin", "npm-cli.js");
-  await mkdir(hostBin, { recursive: true });
-  await mkdir(path.dirname(npmTarget), { recursive: true });
-  await writeFile(npmTarget, "#!/usr/bin/env node\nrequire('../lib/cli.js')(process)\n");
-  await chmod(npmTarget, 0o755);
-  await symlink(npmTarget, path.join(hostBin, "npm"));
-
-  const binDir = await materializeCodexToolchainLaunchers(path.join(temp, "run"), {
-    home,
-    dirs: [hostBin],
-  });
-  const launcher = path.join(binDir, "npm");
-  assert.equal((await lstat(launcher)).isSymbolicLink(), true, "npm must not be flattened to a regular file");
-  assert.equal(await readlink(launcher), npmTarget, "the launcher must resolve from npm's real package location");
-});
-
-test("private granted skill support assets are copied and narrowly readable", async (t) => {
+test("private granted skill support assets are copied into the run's plugin under the mounted artifact dir", async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "cg-skill-assets-"));
   t.after(() => rm(temp, { recursive: true, force: true }));
   const sources = path.join(temp, "sources");
@@ -272,27 +278,26 @@ test("private granted skill support assets are copied and narrowly readable", as
   process.env.GATEWAY_SKILL_SOURCES = sources;
   t.after(() => { if (oldSources == null) delete process.env.GATEWAY_SKILL_SOURCES; else process.env.GATEWAY_SKILL_SOURCES = oldSources; });
 
+  const target = targetFor("asset-skill-run");
   const artifacts = await createRunGrantArtifacts({
     slug: "asset-skill-run",
     meta: {},
     userSkills: ["asset-skill"],
     sharedSkills: [],
     needsClaudeSettings: true,
+    target,
   });
   t.after(() => artifacts.cleanup());
   const plugin = artifacts.claudePluginDirs[0];
   assert.equal(await readFile(path.join(plugin, "skills", "asset-skill", "references", "details.md"), "utf8"), "private reference\n");
   assert.match(await readFile(path.join(plugin, "skills", "asset-skill", "scripts", "check.sh"), "utf8"), /private-script/);
-  assert.equal(await readFile(path.join(artifacts.codexSkillSupportDir, "asset-skill", "references", "details.md"), "utf8"), "private reference\n");
+  // The plugin is readable inside the container because it sits under the artifact dir the
+  // backend mounts at the same path — not because a sandbox rule re-allowed it: there is none.
+  assert.ok(path.resolve(plugin).startsWith(path.resolve(target.artifactDir) + path.sep), plugin);
   const settings = JSON.parse(await readFile(artifacts.settingsFile, "utf8"));
-  const sandboxPlugin = `/${path.resolve(plugin).replace(/^\/+/, "")}`;
-  assert.ok(settings.sandbox.filesystem.allowRead.includes(sandboxPlugin));
-  // The outer test harness itself may run from a synthetic HOME whose pathname contains
-  // "codex-user-home". Assert against this run's concrete private roots, not a name substring.
-  for (const privateHome of [artifacts.claudeHome, artifacts.codexUserHome]) {
-    const sandboxHome = `/${path.resolve(privateHome).replace(/^\/+/, "")}`;
-    assert.ok(!settings.sandbox.filesystem.allowRead.some((entry) => entry === sandboxHome || entry.startsWith(`${sandboxHome}/`)));
-  }
+  assert.equal("sandbox" in settings, false);
+  // Codex has no host-side overlay for a per-user grant (its skills live in the HOME volume).
+  assert.equal(artifacts.codexSkillSupportDir, "");
 });
 
 test("unchanged shared gateway skills reuse an immutable warm-safe plugin path", async (t) => {
@@ -304,8 +309,8 @@ test("unchanged shared gateway skills reuse an immutable warm-safe plugin path",
   await writeFile(path.join(workspaceSkillsDir, "gateway-usage", "references", "slack.md"), "stable support\n");
 
   const [a, b] = await Promise.all([
-    createRunGrantArtifacts({ slug: "stable-plugin", workspaceSkillsDir, needsClaudeSettings: true }),
-    createRunGrantArtifacts({ slug: "stable-plugin", workspaceSkillsDir, needsClaudeSettings: true }),
+    grants({ slug: "stable-plugin", workspaceSkillsDir, needsClaudeSettings: true }),
+    grants({ slug: "stable-plugin", workspaceSkillsDir, needsClaudeSettings: true }),
   ]);
   t.after(() => Promise.all([a.cleanup(), b.cleanup()]));
   assert.deepEqual(a.claudePluginDirs, b.claudePluginDirs);
@@ -329,7 +334,8 @@ test("a channel's custom agents ride the plugin, since --setting-sources \"\" hi
   await writeFile(path.join(workspaceAgentsDir, "notes.txt"), "not an agent\n");
   await writeFile(path.join(workspaceAgentsDir, ".hidden.md"), "not an agent\n");
 
-  const artifacts = await createRunGrantArtifacts({ slug: "agent-grants", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
+  const target = targetFor("agent-grants");
+  const artifacts = await createRunGrantArtifacts({ slug: "agent-grants", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true, target });
   t.after(() => artifacts.cleanup());
   const plugin = artifacts.claudePluginDirs[0];
   assert.equal(await readFile(path.join(plugin, "agents", "reviewer.md"), "utf8"), "---\nname: reviewer\n---\nReview it.\n");
@@ -339,13 +345,12 @@ test("a channel's custom agents ride the plugin, since --setting-sources \"\" hi
   assert.equal(await absent(path.join(plugin, "agents", "nested")), true);
   const manifest = JSON.parse(await readFile(path.join(plugin, ".claude-plugin", "plugin.json"), "utf8"));
   assert.equal(manifest.agents, "./agents");
-  // The plugin root is the one path re-allowed for reading, so the agents arrive readable.
-  const settings = JSON.parse(await readFile(artifacts.settingsFile, "utf8"));
-  assert.ok(settings.sandbox.filesystem.allowRead.includes(`/${path.resolve(plugin).replace(/^\/+/, "")}`));
+  // The plugin root is under the one tree the container mounts, so the agents arrive readable.
+  assert.ok(path.resolve(plugin).startsWith(path.resolve(target.artifactDir) + path.sep), plugin);
 });
 
-// The workspace is AGENT-writable and the plugin directory is re-allowed for READING inside the
-// sandbox, so anything copied out of `.claude/agents` becomes readable to the run. A symlinked
+// The workspace is AGENT-writable and the plugin directory is mounted readable inside the
+// container, so anything copied out of `.claude/agents` becomes readable to the run. A symlinked
 // agents directory therefore made readdir enumerate somewhere else entirely (~/.ssh, the gateway
 // config dir) and every `*.md` under it was handed to the model — a read escape. Both the
 // directory and each entry must be real.
@@ -362,7 +367,7 @@ test("a symlinked .claude/agents directory is refused instead of followed out of
   const workspaceAgentsDir = path.join(temp, "workspace", ".claude", "agents");
   await symlink(elsewhere, workspaceAgentsDir);
 
-  const artifacts = await createRunGrantArtifacts({ slug: "agent-grants-link", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
+  const artifacts = await grants({ slug: "agent-grants-link", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
   t.after(() => artifacts.cleanup());
   const plugin = artifacts.claudePluginDirs[0];
   assert.equal(await absent(path.join(plugin, "agents")), true, "nothing is copied through the link");
@@ -386,7 +391,7 @@ test("a symlinked agent ENTRY is skipped even when the directory itself is real"
   await writeFile(path.join(workspaceAgentsDir, "real.md"), "---\nname: real\n---\nFine.\n");
   await symlink(secret, path.join(workspaceAgentsDir, "linked.md"));
 
-  const artifacts = await createRunGrantArtifacts({ slug: "agent-grants-entry-link", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
+  const artifacts = await grants({ slug: "agent-grants-entry-link", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
   t.after(() => artifacts.cleanup());
   const plugin = artifacts.claudePluginDirs[0];
   assert.equal(await readFile(path.join(plugin, "agents", "real.md"), "utf8"), "---\nname: real\n---\nFine.\n");
@@ -400,7 +405,7 @@ test("a channel with no custom agents ships a plugin with no agents directory an
   await mkdir(path.join(workspaceSkillsDir, "gateway-usage"), { recursive: true });
   await writeFile(path.join(workspaceSkillsDir, "gateway-usage", "SKILL.md"), "# Gateway usage\n");
 
-  const artifacts = await createRunGrantArtifacts({
+  const artifacts = await grants({
     slug: "agent-grants-empty",
     workspaceSkillsDir,
     workspaceAgentsDir: path.join(temp, "workspace", ".claude", "agents"), // never created
@@ -420,7 +425,7 @@ test("a channel whose ONLY grant is a custom agent still gets a plugin", async (
   await mkdir(workspaceAgentsDir, { recursive: true });
   await writeFile(path.join(workspaceAgentsDir, "triage.md"), "# triage\n");
 
-  const artifacts = await createRunGrantArtifacts({ slug: "agent-only", workspaceAgentsDir });
+  const artifacts = await grants({ slug: "agent-only", workspaceAgentsDir });
   t.after(() => artifacts.cleanup());
   assert.equal(artifacts.claudePluginDirs.length, 1);
   assert.equal(await readFile(path.join(artifacts.claudePluginDirs[0], "agents", "triage.md"), "utf8"), "# triage\n");
@@ -442,37 +447,18 @@ test("clean cwd escapes a git project ancestor and cannot discover its skills", 
   assert.equal(await absent(path.join(clean.cwd, ".agents", "skills", "ancestor-leak")), true);
 });
 
-// The stable launcher dir is exercised here with an explicit fixture toolchain, so the coverage
-// gate does not depend on whether the machine running the suite has ~/.local/node.
-test("the stable toolchain launcher dir is content-addressed, idempotent, and empty for an empty toolchain", async (t) => {
-  const { materializeStableToolchainLaunchers } = await import("../src/gateway/run-grant-artifacts.js");
-  const temp = await mkdtemp(path.join(os.tmpdir(), "cg-stable-launchers-"));
-  t.after(() => rm(temp, { recursive: true, force: true }));
-  const home = path.join(temp, "home");
-  const bin = path.join(home, ".local", "bin");
-  const npmTarget = path.join(home, ".local", "node", "lib", "node_modules", "npm", "bin", "npm-cli.js");
-  await mkdir(bin, { recursive: true });
-  await mkdir(path.dirname(npmTarget), { recursive: true });
-  await writeFile(npmTarget, "#!/usr/bin/env node\n");
-  await chmod(npmTarget, 0o755);
-  await symlink(npmTarget, path.join(bin, "npm"));
-
-  const dir = await materializeStableToolchainLaunchers({ home, dirs: [bin] });
-  assert.ok(dir.startsWith(path.join(gatewayRoot, "runtime", "toolchain-bin")), "lives under the gateway runtime");
-  assert.equal((await lstat(path.join(dir, "npm"))).isSymbolicLink(), true);
-  assert.equal(await readlink(path.join(dir, "npm")), npmTarget);
-  assert.equal(await materializeStableToolchainLaunchers({ home, dirs: [bin] }), dir, "same toolchain, same directory");
-  const nothing = path.join(temp, "nothing");
-  await mkdir(path.join(nothing, "bin"), { recursive: true });
-  assert.equal(await materializeStableToolchainLaunchers({ home: nothing, dirs: [path.join(nothing, "bin")] }), "");
-});
-
-test("an isolated runtime target without an artifactDir is refused instead of writing under the gateway root", async () => {
-  const target = { runtime: { id: "test-isolated", capabilities: { isolated: true } }, artifactDir: "" };
-  await assert.rejects(
-    createRunGrantArtifacts({ slug: "iso-no-artifact-dir", target }),
-    /isolated runtime target must carry an artifactDir/,
-  );
+test("a target without an artifactDir — or no target at all — is refused instead of writing under the gateway root", async () => {
+  // A containerized engine cannot open a path under the gateway root (that tree is never mounted),
+  // so quietly falling back there would produce a run whose settings and MCP config do not exist on
+  // the side that has to read them. The daemon's own local target mounts nothing and names none.
+  const isolatedWithoutDir = { runtime: { id: "test-isolated", capabilities: { isolated: true } }, artifactDir: "" };
+  for (const target of [isolatedWithoutDir, localRuntimeTarget(process.cwd()), null, undefined]) {
+    await assert.rejects(
+      createRunGrantArtifacts({ slug: "iso-no-artifact-dir", target }),
+      /runtime target must carry an artifactDir/,
+    );
+  }
+  assert.equal(await absent(path.join(runTmpDir(), "runs")), true, "nothing was written to the shared run-tmp dir");
 });
 
 test("an unreadable .claude/agents directory delivers the plugin without agents instead of failing the run", async (t) => {
@@ -490,7 +476,7 @@ test("an unreadable .claude/agents directory delivers the plugin without agents 
     await rm(temp, { recursive: true, force: true });
   });
 
-  const artifacts = await createRunGrantArtifacts({ slug: "agent-grants-unreadable", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
+  const artifacts = await grants({ slug: "agent-grants-unreadable", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
   t.after(() => artifacts.cleanup());
   const plugin = artifacts.claudePluginDirs[0];
   assert.equal(await absent(path.join(plugin, "agents")), true, "nothing could be listed, so nothing is copied");

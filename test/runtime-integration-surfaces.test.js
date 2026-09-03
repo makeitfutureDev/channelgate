@@ -26,29 +26,32 @@ const { getDb } = await import("../src/db/index.js");
 const { saveSession, resolveSession, getSessionRuntime, clearSession } = await import("../src/gateway/sessions.js");
 const { upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const adopt = await import("../src/gateway/session-adopt.js");
-const { createFakeRuntimeBackend, fakeTarget, hostTarget, FAKE_CONTAINER, FAKE_IMAGE } = await import("./runtime-fake.js");
+const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
+const { createFakeRuntimeBackend, fakeTarget, FAKE_CONTAINER, FAKE_IMAGE } = await import("./runtime-fake.js");
 const { runMemoryReview } = await import("../src/gateway/memory-review.js");
 const { readMemorySnapshot } = await import("../src/gateway/channel-memory.js");
 
 const backend = createFakeRuntimeBackend();
 
-test("/status names the runtime — one word on the host, the whole environment in a container", async () => {
-  assert.equal(formatRuntimeLine({ backend: "host", state: "host" }), "*🏠 Runtime*: host");
-
+test("/status names the whole environment: the container, its image, state and uptime", async () => {
   const line = formatRuntimeLine(await backend.describe(fakeTarget(backend, "rt-status", { platform: "slack" })));
-  assert.match(line, /container/);
+  assert.match(line, /^\*📦 Runtime\*: container — /);
   assert.match(line, new RegExp(FAKE_CONTAINER));
   assert.match(line, new RegExp(`image ${FAKE_IMAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   assert.match(line, /running/);
   assert.match(line, /up 1m|up 2m|up 9\ds/);
 });
 
-test("a quiet host channel's /status still says where its turns run", async () => {
+test("a quiet channel's /status still says where its turns run", async () => {
   const entry = await upsertChannelEntry("C_RT_STATUS", { name: "rt-status-line", type: "channel" });
   await saveChannelMeta(entry.slug, { channelId: "C_RT_STATUS", platform: "slack", name: "rt-status-line" });
   const report = await buildStatusReport(entry.slug, "C_RT_STATUS");
   assert.match(report, /Nothing is running or scheduled/);
-  assert.match(report, /Runtime\*: host/);
+  // Through the REAL resolver: a channel that has never run still resolves to its container, and
+  // the line names it even when the container CLI is missing on this machine (the state then says
+  // so — an unavailable backend is exactly when someone types /status).
+  assert.match(report, /Runtime\*: container — /);
+  assert.match(report, new RegExp(`\`cg-[^\`]*${entry.slug}[^\`]*\``), "the channel's own container is named");
 });
 
 test("the reply footer names the image for a container turn and is unchanged for a host turn", () => {
@@ -64,8 +67,8 @@ test("/resume prints the command that actually reopens the session where it live
   const cwd = "/home/agent/work/acme";
   const plain = buildResumeCommand(cwd, "sess-1", "claude");
   assert.equal(plain, `cd ${JSON.stringify(cwd)} && claude --resume sess-1`);
-  // A host target must not change that line by a byte.
-  assert.equal(buildResumeCommand(cwd, "sess-1", "claude", hostTarget("rt-resume", { platform: "slack" })), plain);
+  // A target that adds nothing — the daemon's own local one — must not change that line by a byte.
+  assert.equal(buildResumeCommand(cwd, "sess-1", "claude", localRuntimeTarget(cwd)), plain);
 
   // A session minted inside a container does not exist on the host, so the backend supplies the
   // form that reopens it — and the redundant `cd` is gone with it.

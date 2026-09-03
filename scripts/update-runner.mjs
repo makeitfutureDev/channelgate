@@ -451,7 +451,7 @@ export function containerSettings(root) {
   }
   const image = typeof settings.containerImage === "string" && settings.containerImage.trim() ? settings.containerImage.trim() : CONTAINER_DEFAULT_IMAGE;
   const cli = settings.containerCli === "podman" || settings.containerCli === "docker" ? settings.containerCli : "auto";
-  return { enabled: settings.containerRuntimeEnabled === true, image, cli };
+  return { image, cli };
 }
 
 // The spec version of the image the daemon would actually run, from the image's own
@@ -494,8 +494,6 @@ export async function defaultImageBuild({
   log = logStep,
 } = {}) {
   const settings = containerSettings(root);
-  if (!settings.enabled) return { built: false, needed: false, reason: "the container runtime is off" };
-
   const changedPaths = (await run("git", ["diff", "--name-only", `${context.oldRevision}..${context.targetRevision}`], {
     cwd: repoRoot,
     allowFailure: true,
@@ -504,7 +502,7 @@ export async function defaultImageBuild({
   })).stdout.split("\n").map((line) => line.trim()).filter(Boolean);
   const builtSpecVersion = await builtImageSpecVersion({ cli: settings.cli, image: settings.image, run });
   const expectedSpecVersion = expectedImageSpecVersion(repoRoot);
-  if (!needsImageBuild({ containerRuntimeEnabled: true, changedPaths, builtSpecVersion, expectedSpecVersion })) {
+  if (!needsImageBuild({ changedPaths, builtSpecVersion, expectedSpecVersion })) {
     log(`→ Channel image ${settings.image} is current (spec ${builtSpecVersion || "unknown"}) — no rebuild needed.`);
     return { built: false, needed: false, reason: "the built image already matches this revision" };
   }

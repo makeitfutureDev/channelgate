@@ -185,7 +185,8 @@ test("real settings text is searchable: representative queries land in the right
   assert.ok(sectionsFor("xoxb").includes("connection"));
   assert.ok(sectionsFor("composio").includes("integrations"));
   assert.ok(sectionsFor("danger zone").includes("system"));
-  assert.ok(sectionsFor("network egress").includes("access"));
+  assert.ok(sectionsFor("container runtime").includes("access"));
+  assert.ok(sectionsFor("trusted bot apps").includes("access"));
   assert.ok(sectionsFor("license").includes("license"));
   assert.ok(sectionsFor("admin password").includes("system"));
 

@@ -16,13 +16,14 @@
 // capability key does not load, and readers must never assume a capability that is not declared.
 import { randomBytes } from "node:crypto";
 
-export const RUNTIME_BACKEND_IDS = Object.freeze(["host", "container"]);
-export const DEFAULT_RUNTIME_BACKEND = "host";
+export const RUNTIME_BACKEND_IDS = Object.freeze(["container"]);
+export const DEFAULT_RUNTIME_BACKEND = "container";
 
 // Capability keys every backend MUST declare. The default is the least capable value.
 export const RUNTIME_CAPABILITY_SPEC = Object.freeze({
-  // The engine runs behind an OS boundary the daemon owns. When true the engine's OWN sandbox is
-  // switched off inside it (plan §6) and folders.js generates no sandbox block for the run.
+  // The engine runs behind an OS boundary the daemon owns, with its own sandbox switched off
+  // inside it (plan §6). The container backend is the only registered backend; the daemon-internal
+  // local runtime (update smoke, direct probes) declares false and never runs a channel turn.
   isolated: { default: false },
   // signal() reaches the run's whole process tree, not just the direct child.
   processGroups: { default: false },
@@ -53,7 +54,7 @@ export const REQUIRED_METHODS = Object.freeze([
 // A caller must always check for presence before calling one; see runtimeCanCarry().
 export const OPTIONAL_METHODS = Object.freeze([
   // credentialError(target, engineId) → string|Error|null — the pre-spawn "can this engine
-  // authenticate in this runtime?" gate. The host backend has none: the daemon's own logins are
+  // authenticate in this runtime?" gate. The local runtime has none: the daemon's own logins are
   // right there.
   "credentialError",
   // copyIn(target, entries) / copyOut(target, entries) → Promise<{ copied: number }> — move
@@ -75,9 +76,9 @@ export function runtimeCanCarry(backendOrTarget) {
 }
 
 // The daemon-side helpers an ENGINE spawns during a run (not the daemon): the gateway control MCP
-// server, the Codex secret-env bridge, the Composio SDK bridge, the Stop hook. On the host they are
-// scripts in this checkout run by process.execPath; inside a container they are the baked runtime
-// bundle in the image. Callers ask the backend for the command instead of composing a repo path.
+// server, the Codex secret-env bridge, the Composio SDK bridge, the Stop hook. Inside a container they are
+// the baked runtime bundle in the image; the local runtime has none (daemon-internal turns spawn
+// no helpers). Callers ask the backend for the command instead of composing a repo path.
 export const HELPER_COMMANDS = Object.freeze([
   "gateway-mcp", // the gateway control MCP server (stdio)
   "secret-env-bridge", // src/mcp/secret-env-bridge.js — Codex: bundle → env → exec target

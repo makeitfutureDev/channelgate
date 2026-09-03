@@ -13,6 +13,8 @@ import { ensureTestEnv } from "./helpers.js";
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const fixtureBin = path.join(projectRoot, "test", "fixtures");
 ensureTestEnv();
+const { useFakeRuntime: __useFakeRuntime } = await import("./runtime-fake.js");
+await __useFakeRuntime();
 process.env.PATH = `${fixtureBin}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
 

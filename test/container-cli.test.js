@@ -156,14 +156,18 @@ test("create argv: podman keep-id vs docker --user, with the hardening flags and
   assert.equal(dockerArgs[dockerArgs.indexOf("--user") + 1], `${t.container.uid}:${t.container.gid}`);
 });
 
-test("create argv: network off maps to --network none, and cgroup limits are dropped when the probe failed", async () => {
-  const off = target("net-off", { networkMode: "off" });
+test("create argv: every container sits on the bridge network regardless of the channel switch, and cgroup limits are dropped when the probe failed", async () => {
+  // The per-channel "Allow network" switch is not enforced by the container's network mode (an
+  // egress proxy is the planned enforcement point), so a network-off channel is created on the
+  // bridge exactly like a network-on one — never `--network none`.
+  const off = target("net-off", { allowNetwork: false });
   off.container.appliedLimits = null;
   const caps = await createContainerCli({ exec: createFakeCli({ kind: "podman", cgroupLimits: false }).exec }).probe(SETTINGS, { image: SETTINGS.image });
   assert.equal(caps.cgroupLimits, false);
   assert.match(caps.reason, /cgroup cpu\/memory limits are not delegated/);
   const args = buildCreateArgs(off, caps, { fingerprint: "c1-x" });
-  assert.equal(args[args.indexOf("--network") + 1], "none");
+  assert.equal(args[args.indexOf("--network") + 1], "bridge");
+  assert.ok(!args.includes("none"));
   assert.ok(!args.includes("--memory"));
   assert.ok(!args.includes("--cpus"));
   assert.ok(!args.includes("--pids-limit"));

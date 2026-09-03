@@ -27,9 +27,12 @@ const areas = [
       "test/run-grant-isolation.test.js",
     ],
   },
-  { name: "sandbox", floor: [90, 90, 80], include: ["src/gateway/modes.js", "src/engines/child-env.js"], tests: ["test/modes.test.js", "test/folders-settings.test.js", "test/sandbox-escape-paths.test.js", "test/child-env.test.js"] },
-  // folders.js GENERATES the per-channel lockdown (.claude/settings.json + SENSITIVE_HOME).
-  // Ratchet floors set just under measured reality (80/67/82 on 2026-08-26).
+  { name: "modes", floor: [90, 90, 80], include: ["src/gateway/modes.js", "src/engines/child-env.js"], tests: ["test/modes.test.js", "test/folders-settings.test.js", "test/child-env.test.js"] },
+  // folders.js GENERATES the per-channel settings file (.claude/settings.json: permissions, MCP
+  // allowlist, memory-off, the Stop hook).
+  // Ratchet floors set just under measured reality (73/58/77 on 2026-09-03, after the host sandbox
+  // block and its credential carve-outs left the generator — less code, and the remaining
+  // uncovered lines are the skill-copy and instruction-file paths; 80/67/82 on 2026-08-26 before).
   //
   // The previous floors (50/85/35) came from a 2026-08-08 measurement of 55/93/40, taken when
   // 59% of this file's functions were never called by these tests at all. `23ce670` added tests
@@ -39,10 +42,8 @@ const areas = [
   // branch RATIO dropped. Read this area's three numbers together: a branch % that falls while
   // lines and functions climb is new code being reached, not a regression. Raise as tests appear.
   //
-  // toolchain-paths.js belongs here for the same reason: it COMPUTES sandbox read grants, so a
-  // bug in it is a confinement bug, not a convenience one.
-  { name: "sandbox-generator", floor: [75, 65, 80], include: ["src/gateway/folders.js", "src/gateway/toolchain-paths.js"], tests: ["test/folders-settings.test.js", "test/sandbox-escape-paths.test.js", "test/sandbox-toolchain.test.js"] },
-  // channel-env.js belongs here on the same reasoning as toolchain-paths.js above: its name rules
+  { name: "settings-generator", floor: [72, 57, 75], include: ["src/gateway/folders.js"], tests: ["test/folders-settings.test.js", "test/subagent-completion.test.js", "test/runtime-integration-folders.test.js"] },
+  // channel-env.js belongs here because its name rules
   // are what stop a "secret" from being LD_PRELOAD or ANTHROPIC_BASE_URL, so a bug in it is a
   // confinement bug. Floor set just under measured reality when it was added (2026-08-26).
   //

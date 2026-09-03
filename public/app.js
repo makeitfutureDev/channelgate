@@ -1251,7 +1251,6 @@ function renderChannelDetail(ch) {
   flagEls.cleanMode.checked = !!meta.cleanMode;
   const networkBox = card.querySelector(".ch-network");
   networkBox.checked = !!meta.allowNetwork;
-  card.querySelector(".ch-extra-domains").value = (meta.extraNetworkDomains || []).join(", ");
 
   // Capability radio cards drive the hidden <select class="ch-profile"> (what the save reads).
   // Picking a preset flips the hidden flag checkboxes; "Custom" reveals them for hand-editing.
@@ -1332,23 +1331,6 @@ function renderChannelDetail(ch) {
   } else {
     approvedBox.textContent = "";
   }
-  // Runtime: the stored PIN in the select, the EFFECTIVE decision beside it. They differ whenever
-  // the gateway kill switch or admin mode outranks the pin (src/runtimes/resolve.js decides; the
-  // API hands us the answer so this never re-implements the precedence table).
-  const runtimeSelect = card.querySelector(".ch-runtime");
-  const runtimeState = card.querySelector(".ch-runtime-effective");
-  runtimeSelect.value = ["host", "container"].includes(meta.runtime) ? meta.runtime : "";
-  const RUNTIME_REASON = {
-    disabled: "gateway kill switch",
-    "admin-mode": "admin mode",
-    channel: "pinned here",
-    default: "gateway default",
-  };
-  const eff = meta.runtimeEffective;
-  runtimeState.textContent = eff?.backend
-    ? `· runs on ${eff.backend}${RUNTIME_REASON[eff.reason] ? ` (${RUNTIME_REASON[eff.reason]})` : ""}`
-    : "";
-
   const engineSelect = card.querySelector(".ch-engine");
   engineSelect.value = meta.engine || "";
   renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
@@ -1539,14 +1521,12 @@ function renderChannelDetail(ch) {
           adminMode: card.querySelector(".ch-admin").checked,
           allowBash: card.querySelector(".ch-bash").checked,
           allowNetwork: card.querySelector(".ch-network").checked,
-          extraNetworkDomains: card.querySelector(".ch-extra-domains").value.split(",").map((s) => s.trim()).filter(Boolean),
           autoMode: card.querySelector(".ch-auto").checked,
           cleanMode: card.querySelector(".ch-clean").checked,
           memory: card.querySelector(".ch-memory").checked,
           nudges: card.querySelector(".ch-nudges").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
-          runtime: card.querySelector(".ch-runtime").value,
           workDir: card.querySelector(".ch-workdir").value,
           syncDriveFolder: card.querySelector(".ch-syncdrive").value,
           model: card.querySelector(".ch-model").value,
@@ -2623,7 +2603,6 @@ function paintSettings(s) {
   attachReveal(document.getElementById("set-admin-user"), { has: s.tokens.hasAdminUserToken, last4: s.tokens.adminUserTokenLast4, fetch: revealSecret("settings", "slackAdminUserToken") });
   document.getElementById("set-keepalive").value = s.sessionKeepalive || "";
   document.getElementById("set-mention-reactions").value = (s.mentionReactions || []).join(", ");
-  document.getElementById("set-network-domains").value = (s.networkDomains || []).join(", ");
   document.getElementById("set-trusted-apps").value = (s.trustedBotApps || []).join(", ");
   if (s.defaultChannelAccess) document.getElementById("set-channel-access").value = s.defaultChannelAccess;
   document.getElementById("set-composio-mode").value = s.composioMode === "sdk" ? "sdk" : "personal";
@@ -2675,8 +2654,6 @@ function paintSettings(s) {
   document.getElementById("set-show-message-cost").checked = s.showMessageCost !== false;
   document.getElementById("set-whisper-enabled").checked = s.whisperEnabled !== false;
   // Container runtime. The token follows the write-only rule: has*/last4 here, value on demand.
-  document.getElementById("set-container-enabled").checked = s.containerRuntimeEnabled === true;
-  document.getElementById("set-container-default").value = s.containerDefaultBackend || "host";
   document.getElementById("set-container-cli").value = s.containerCli || "auto";
   document.getElementById("set-container-image").value = s.containerImage || "";
   document.getElementById("set-container-idle").value = s.containerIdleMinutes ?? 10;
@@ -2684,7 +2661,6 @@ function paintSettings(s) {
   document.getElementById("set-container-pids").value = s.containerPidsLimit ?? 1024;
   document.getElementById("set-container-memory").value = s.containerMemory || "";
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
-  document.getElementById("container-runtime-state").textContent = s.containerRuntimeEnabled ? "· on" : "· off (every channel runs on the host)";
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
   attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
   document.getElementById("adminpw-state").textContent = s.hasAdminPassword ? "· set" : "· not set (UI open)";
@@ -3007,7 +2983,6 @@ function bindSettings() {
           ...(document.getElementById("clear-admin-user").classList.contains("armed") ? { clearSlackAdminUserToken: true } : {}),
           sessionKeepalive: document.getElementById("set-keepalive").value,
           mentionReactions: document.getElementById("set-mention-reactions").value,
-          networkDomains: document.getElementById("set-network-domains").value,
           trustedBotApps: document.getElementById("set-trusted-apps").value,
           defaultChannelAccess: document.getElementById("set-channel-access").value,
           composioMode: document.getElementById("set-composio-mode").value,
@@ -3048,8 +3023,6 @@ function bindSettings() {
           engineFallback: document.getElementById("set-engine-fallback").checked,
           showMessageCost: document.getElementById("set-show-message-cost").checked,
           whisperEnabled: document.getElementById("set-whisper-enabled").checked,
-          containerRuntimeEnabled: document.getElementById("set-container-enabled").checked,
-          containerDefaultBackend: document.getElementById("set-container-default").value,
           containerCli: document.getElementById("set-container-cli").value,
           containerImage: document.getElementById("set-container-image").value,
           containerIdleMinutes: Number(document.getElementById("set-container-idle").value) || undefined,
@@ -3271,7 +3244,6 @@ function paintContainerRuntimeHealth(state) {
     bits.push(`${who} · ${state.running || 0} channel container${state.running === 1 ? "" : "s"} running.`);
     bits.push(image.present ? `Image ${image.ref} ready.` : `Image ${image.ref || "(unset)"} is not built — ${image.reason || "run npm run build:image on the gateway host"}.`);
   }
-  if (!state.enabled) bits.push("Switched off, so every channel runs on the host regardless.");
   if (state.socket && state.socket.listening === false) bits.push("The gateway control socket is not listening — container runs would have no gateway tools.");
   el.textContent = bits.join(" ");
 }

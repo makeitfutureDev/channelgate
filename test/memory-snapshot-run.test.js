@@ -12,6 +12,8 @@ const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 process.env.PATH = `${path.join(projectRoot, "test", "fixtures", "prompt-echo")}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
 const scratch = ensureTestEnv();
+const { useFakeRuntime: __useFakeRuntime } = await import("./runtime-fake.js");
+await __useFakeRuntime();
 process.env.CG_WORKSPACE_DIR = path.join(scratch, "snapshot-workspaces");
 
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");

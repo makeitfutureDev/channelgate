@@ -12,19 +12,12 @@ import { memoryEnabled, applyMemoryOperations, MEMORY_SECTIONS } from "../../gat
 import { logEvent } from "../../util/logger.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../../gateway/mcp-discovery.js";
 import { engineLabel, requireAdapter } from "../../engines/registry.js";
-import { getDriveSyncEnabled, getDriveSyncKeyJson, getDriveSyncKeyFile, getDriveSyncKeyEmail, getEffectiveNetworkDomains } from "../../config/settings.js";
-import { normalizeRequestedDomain, normalizeStoredDomains } from "../../util/network-domains.js";
+import { getDriveSyncEnabled, getDriveSyncKeyJson, getDriveSyncKeyFile, getDriveSyncKeyEmail } from "../../config/settings.js";
 import { parseDriveFolderId, testChannelSync } from "../../gateway/drivesync.js";
 import { allowedFsRoot, resolveWithinRoot } from "../../web/security.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
 import { updateGatewayGuide, resetGatewayGuide, readGatewayGuide } from "../../gateway/guide.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
-import { decideRuntimeBackend } from "../../runtimes/resolve.js";
-import { RUNTIME_BACKEND_IDS } from "../../runtimes/contract.js";
-
-// "" = follow the gateway default; the two real backends come from the runtime contract, so a new
-// backend never needs a second list here.
-const RUNTIME_CHOICES = ["", ...RUNTIME_BACKEND_IDS];
 
 export function register(server, ctx) {
   const { channelId, slug, createdBy, threadKey, activeEngine, text, daemon, requireAdmin, requireManage, loadMeta } = ctx;
@@ -180,44 +173,9 @@ export function register(server, ctx) {
       }
       return text(
         enabled
-          ? "✅ Network ON for this channel — egress allowed to the configured domains (GitHub by default); git/gh can authenticate. Make sure Bash is also on. Effective on the next message."
-          : "✅ Network OFF — sandbox egress blocked again (effective on the next message)."
+          ? "✅ Network ON for this channel. Make sure Bash is also on. Effective on the next message."
+          : "✅ Network OFF for this channel (effective on the next message)."
       );
-    }
-  );
-
-  server.registerTool(
-    "request_network_domain",
-    {
-      description:
-        "ANY AUTHORIZED USER. Ask to open network access to ONE extra domain for this channel — use it when a " +
-        "sandboxed command fails on a blocked domain (a deploy target, package registry, API host). Posts an " +
-        "Approve/Deny card in the thread; any authorized user's Approve adds the domain to THIS channel's " +
-        "allow-list durably (an admin can remove it later). Accepts a bare domain, `*.sub.example` wildcard, " +
-        "or a full URL (only the hostname is used). Needs the channel's network toggle ON. Takes effect on " +
-        "the NEXT message — the current turn's sandbox is already sealed.",
-      inputSchema: { domain: z.string(), reason: z.string().optional() },
-    },
-    async ({ domain }) => {
-      let d;
-      try {
-        d = normalizeRequestedDomain(domain);
-      } catch (e) {
-        return text(`🚫 ${e.message}. Pass a public DNS name like \`api.example.com\` (or a URL — the hostname is used).`);
-      }
-      const meta = await getChannelMeta(slug);
-      if (!meta) return text("Channel isn't set up yet — send a normal message first.");
-      if (!meta.allowNetwork) {
-        return text("🚫 This channel's network toggle is OFF, so there is no allow-list to add to. An admin must run `set_channel_network` first — then request the domain again.");
-      }
-      const allowed = new Set([...getEffectiveNetworkDomains(), ...normalizeStoredDomains(meta.extraNetworkDomains)]);
-      if (allowed.has(d)) {
-        return text(`✅ \`${d}\` is already on this channel's allow-list. If a command still fails, remember network changes apply on the NEXT message, not the current turn.`);
-      }
-      if (!(await patchChannelMeta(slug, (m) => (m ? { extraNetworkDomains: [...new Set([...normalizeStoredDomains(m.extraNetworkDomains), d])] } : null)))) {
-        return text("Channel isn't set up yet — send a normal message first.");
-      }
-      return text(`✅ Approved — \`${d}\` added to THIS channel's network allow-list (effective on the next message; this turn's sandbox is already sealed, so finish up and retry in a new message).`);
     }
   );
 
@@ -241,40 +199,6 @@ export function register(server, ctx) {
           ? "✅ Auto mode ON — the agent runs autonomously here (prompts auto-approved, folder writable), still sandboxed. Effective on the next message."
           : "✅ Auto mode OFF — back to asking for approval on tool permissions (effective on the next message)."
       );
-    }
-  );
-
-  // ── Where this channel RUNS: host or its own container (admins only) ────────────
-  // The isolation boundary, not a mode: "container" gives the channel its own long-lived Linux
-  // container (own HOME, own logins, own process namespace) instead of the daemon's host sandbox.
-  // Two things outrank the setting and the reply says so rather than pretending: the gateway-wide
-  // kill switch (rollback lever) and admin mode (an admin channel is deliberately unconfined on
-  // the host). See src/runtimes/resolve.js — the ONE place that decides.
-  server.registerTool(
-    "set_channel_runtime",
-    {
-      description:
-        "ADMIN ONLY. Choose where this channel's engine processes RUN: \"container\" (its own isolated " +
-        "Linux container — separate HOME, separate CLI logins, nothing of the host reachable), \"host\" " +
-        "(the daemon's own sandbox, today's default), or \"\" to follow the gateway default. Takes effect " +
-        "on the next message. The gateway-wide container kill switch and admin mode both override this " +
-        "to host; the reply says which runtime the next turn will actually use.",
-      inputSchema: { runtime: z.enum(["", "host", "container"]) },
-    },
-    async ({ runtime }) => {
-      if (!(await requireAdmin())) return text("Only admins can change this channel's runtime.");
-      const wanted = String(runtime ?? "").trim();
-      if (!RUNTIME_CHOICES.includes(wanted)) return text('Pass runtime as "host", "container", or "" (follow the gateway default).');
-      const next = await patchChannelMeta(slug, (meta) => (meta ? { runtime: wanted } : null));
-      if (!next) return text("Channel isn't set up yet — send a normal message first.");
-      const decided = decideRuntimeBackend(next);
-      const chose = wanted === "" ? "the gateway default" : `\`${wanted}\``;
-      const note = decided.reason === "disabled"
-        ? " — but the gateway-wide container runtime is switched OFF, so runs stay on the host until an admin enables it in Settings → Container runtime."
-        : decided.reason === "admin-mode"
-          ? " — but this channel is in ADMIN MODE, which always runs on the host (an admin channel is deliberately unconfined). Turn admin mode off to containerize it."
-          : "";
-      return text(`✅ Runtime set to ${chose}. Next turn runs on: \`${decided.backend}\`${note} (effective on the next message).`);
     }
   );
 

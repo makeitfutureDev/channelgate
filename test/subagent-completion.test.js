@@ -15,9 +15,10 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
 
-const [{ decide }, { buildSettings, STOP_SUBAGENTS_HOOK }] = await Promise.all([
+const [{ decide }, { buildSettings, STOP_SUBAGENTS_HOOK }, { IMAGE_HELPERS }] = await Promise.all([
   import("../src/gateway/hooks/stop-subagents.mjs"),
   import("../src/gateway/folders.js"),
+  import("../src/runtimes/container/image-paths.js"),
 ]);
 
 const runningTask = { id: "t1", type: "subagent", status: "running", description: "research X" };
@@ -109,15 +110,25 @@ test("stop hook is malformed-input safe", () => {
 });
 
 test("every generated channel settings variant installs the Stop hook", async () => {
+  // The hook runs INSIDE the channel container, so the command names the copy baked into the
+  // image (src/runtimes/container/image-paths.js) — never this checkout's script, which is a
+  // path the engine cannot open from the other side of the boundary.
+  const { command, args } = IMAGE_HELPERS["stop-subagents-hook"];
+  const expected = [command, ...args].join(" ");
+  assert.match(expected, /^node \/opt\/channelgate\//);
   for (const meta of [
     { _slug: "hook-default", allowedMcps: [] },
     { _slug: "hook-clean", cleanMode: true, allowedMcps: [] },
     { _slug: "hook-auto", autoMode: true, allowBash: true, allowedMcps: [] },
+    { _slug: "hook-admin", adminMode: true, allowBash: true, allowedMcps: [] },
   ]) {
-    const settings = await buildSettings(meta);
-    const stop = settings.hooks?.Stop?.[0]?.hooks?.[0];
-    assert.equal(stop?.type, "command", `${meta._slug} missing Stop hook`);
-    assert.ok(stop.command.includes(STOP_SUBAGENTS_HOOK), `${meta._slug} hook path wrong`);
+    for (const allowBypass of [false, true]) {
+      const settings = await buildSettings(meta, { allowBypass });
+      const stop = settings.hooks?.Stop?.[0]?.hooks?.[0];
+      assert.equal(stop?.type, "command", `${meta._slug} missing Stop hook`);
+      assert.equal(stop.command, expected, `${meta._slug} hook command wrong`);
+      assert.equal(stop.command.includes(STOP_SUBAGENTS_HOOK), false, `${meta._slug} names the checkout script`);
+    }
   }
 });
 

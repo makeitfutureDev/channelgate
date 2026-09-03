@@ -144,10 +144,10 @@ test("channel, workspace and clean-mode folders all carry the platform component
   });
 });
 
-// ── the generated sandbox ────────────────────────────────────────────────────────────────────
+// ── the generated settings file ──────────────────────────────────────────────────────────────
 
-test("a channel's lockdown embeds the NEW absolute paths and still read-denies the runtime root", async () => {
-  const slug = `rename-sandbox-${Date.now()}`;
+test("a channel's settings file lives at the NEW platform-namespaced paths and names no host path", async () => {
+  const slug = `rename-settings-${Date.now()}`;
   const meta = { name: "Rename probe", platform: "msteams", allowedMcps: [], bash: true };
   const { cwd, settingsFile } = await ensureChannelFolder(slug, meta);
 
@@ -159,14 +159,16 @@ test("a channel's lockdown embeds the NEW absolute paths and still read-denies t
   assert.ok(settingsFile.includes(path.join("channels", "teams", slug)), settingsFile);
 
   const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  const fs = settings.sandbox.filesystem;
-  assert.ok(fs.allowWrite.some((p) => p.includes(cwd)), `allowWrite must name the new cwd: ${JSON.stringify(fs.allowWrite)}`);
-  // The runtime root stays read-denied wholesale — it holds every other channel plus the tokens.
-  const root = paths.gatewayRoot();
-  assert.ok(fs.denyRead.some((p) => p.replace(/^\/\//, "/") === root || p.includes(root)), JSON.stringify(fs.denyRead));
+  // The file is policy, not confinement: the channel container is the boundary, so there is no
+  // sandbox block and the generated contract names NO host path at all — not the new cwd, not the
+  // runtime root (which holds every other channel plus the tokens and is never mounted).
+  assert.equal("sandbox" in settings, false);
+  assert.ok(Array.isArray(settings.permissions?.allow) && settings.hooks?.Stop, "the policy surface is intact");
+  const rendered = JSON.stringify(settings);
+  assert.equal(rendered.includes(cwd), false, rendered);
+  assert.equal(rendered.includes(paths.gatewayRoot()), false, rendered);
   // No stale pre-rename ROOT anywhere in the generated contract. (Compared against the actual
   // legacy default paths, not the bare strings — the test HOME contains the old name itself.)
-  const rendered = JSON.stringify(settings);
   assert.equal(rendered.includes(path.join(os.homedir(), "Slack Agent")), false);
   assert.equal(rendered.includes(path.join(os.homedir(), ".claude-gateway")), false);
 });

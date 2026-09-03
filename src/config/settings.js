@@ -8,8 +8,6 @@ import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
-import { normalizeNetworkDomains } from "../util/network-domains.js";
-import { GIT_TOOLING_HOME_PATHS } from "./cli-catalog.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
@@ -290,8 +288,6 @@ function settingInt(v, { min, max, fallback }) {
 export function getContainerRuntime() {
   const s = getSettings();
   return {
-    enabled: s.containerRuntimeEnabled === true, // the gateway-wide kill switch: false = every channel on host
-    defaultBackend: s.containerDefaultBackend === "container" ? "container" : "host",
     cli: CONTAINER_CLIS.includes(s.containerCli) ? s.containerCli : "auto",
     image: typeof s.containerImage === "string" && s.containerImage.trim() ? s.containerImage.trim() : CONTAINER_DEFAULT_IMAGE,
     idleMinutes: settingInt(s.containerIdleMinutes, { min: 1, max: 1440, fallback: 10 }),
@@ -544,39 +540,6 @@ export function getErrorDiagnosisChannel() {
   return String(s.errorDiagnosisChannel || process.env.ERROR_DIAGNOSIS_CHANNEL || "").trim();
 }
 
-// Network egress allow-list for channels that have "Allow network" on. The same normalized list is
-// compiled into both Claude and Codex; invalid legacy/hand-edited values fail safely back to the
-// narrow defaults instead of acquiring engine-specific meanings. Default: GitHub, so `git push`/
-// `gh` work. Admins can add other public DNS names (e.g. registry.npmjs.org) in Settings.
-const NETWORK_DOMAINS_DEFAULT = ["github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"];
-export function getNetworkDomains() {
-  const v = getSettings().networkDomains;
-  if (Array.isArray(v)) {
-    try {
-      const clean = normalizeNetworkDomains(v, { allowEmpty: true });
-      if (clean.length) return clean;
-    } catch {
-      // A malformed hand edit must not partly broaden the effective list. Use reviewed defaults.
-    }
-  }
-  return [...NETWORK_DOMAINS_DEFAULT];
-}
-
-// What the host-sandbox engines receive as the egress allow-list. The "CLI integrations" setting
-// that used to merge Vercel/Supabase domains in here was retired on 2026-09-03 (the product runs
-// Linux + containers only; a container has no domain allow-list, and its image ships the CLIs).
-export function getEffectiveNetworkDomains() {
-  return [...getNetworkDomains()];
-}
-
-// HOME-relative paths write-capable approved-network HOST runs may READ (never write): the git/gh
-// baseline only. The per-integration saved-login links (one shared ~/.supabase for every channel)
-// went with the CLI-integrations setting: a channel's own provider login is a `/secrets` variable
-// (config/channel-env.js), never the daemon's host-wide file. Goes away with the host runtime.
-export function getCredentialHomePaths() {
-  return [...GIT_TOOLING_HOME_PATHS];
-}
-
 // Scheduler guardrails. The minimum interval (minutes) a recurring cron may fire at — schedules
 // that would fire more often are rejected (default 60, i.e. at most hourly). Plus a ceiling on how
 // many enabled schedules one channel may have. Both adjustable from Settings.
@@ -725,7 +688,6 @@ export function settingsForApi() {
     publicUrl: getPublicUrl(),
     progressView: getProgressView(),
     mentionReactions: getMentionReactions(),
-    networkDomains: getNetworkDomains(),
     trustedBotApps: getTrustedBotApps(),
     defaultChannelAccess: getDefaultChannelAccess(),
     hasDefaultComposioToken: Boolean(getDefaultComposioToken()),
@@ -775,8 +737,6 @@ export function settingsForApi() {
     ...(() => {
       const c = getContainerRuntime();
       return {
-        containerRuntimeEnabled: c.enabled,
-        containerDefaultBackend: c.defaultBackend,
         containerCli: c.cli,
         containerImage: c.image,
         containerIdleMinutes: c.idleMinutes,

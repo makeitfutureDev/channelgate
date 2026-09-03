@@ -37,7 +37,6 @@ import { PROFILE_FLAGS } from "../../gateway/modes.js";
 // hand-edited config must degrade to "no extras", never break run startup). An admin SAVE is the
 // opposite: silently dropping the whole list because one entry has a typo destroyed every
 // previously approved domain with an "ok". Writes use the strict form and 400 instead.
-import { normalizeNetworkDomains } from "../../util/network-domains.js";
 import { effectiveMeta } from "../../gateway/run.js";
 import { logEvent } from "../../util/logger.js";
 import {
@@ -54,22 +53,6 @@ import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
 import { listChannelEnv, patchChannelEnv } from "../../config/channel-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../../config/cli-catalog.js";
-import { decideRuntimeBackend } from "../../runtimes/resolve.js";
-import { RUNTIME_BACKEND_IDS } from "../../runtimes/contract.js";
-
-// meta.runtime is a per-conversation PIN: "" follows the gateway default. Two things outrank it
-// (the gateway kill switch and admin mode), so every listing carries the EFFECTIVE decision beside
-// the stored value — the UI shows "container (pinned)" vs "host (kill switch)" without duplicating
-// the precedence table from src/runtimes/resolve.js.
-const RUNTIME_CHOICES = ["", ...RUNTIME_BACKEND_IDS];
-export function runtimeEffectiveFor(meta = {}) {
-  try {
-    const { backend, reason } = decideRuntimeBackend(meta);
-    return { backend, reason };
-  } catch {
-    return { backend: "host", reason: "default" };
-  }
-}
 
 const WEB_ADMIN_ACTOR = "admin UI";
 
@@ -87,7 +70,6 @@ export function maskChannelMeta(meta = {}) {
     // `...meta` would otherwise spread the env bag — VALUES included — into every save response.
     env: undefined,
     envVars: listChannelEnv(meta),
-    runtimeEffective: runtimeEffectiveFor(meta),
     composioToken: undefined,
     hasComposioToken: tok.has,
     composioTokenLast4: tok.last4,
@@ -174,7 +156,6 @@ export function createChannelsRouter({
               // A DM is a channel too: the spread above would otherwise carry its env VALUES.
               env: undefined,
               envVars: listChannelEnv(meta),
-              runtimeEffective: runtimeEffectiveFor(meta),
               composioToken: undefined,
               hasComposioToken: Boolean(tok),
               composioTokenLast4: tok ? tok.slice(-4) : "",
@@ -212,24 +193,9 @@ export function createChannelsRouter({
       if (typeof body.adminMode === "boolean") next_.adminMode = body.adminMode;
       if (typeof body.allowBash === "boolean") next_.allowBash = body.allowBash;
       if (typeof body.allowNetwork === "boolean") next_.allowNetwork = body.allowNetwork;
-      if (Array.isArray(body.extraNetworkDomains)) {
-        try {
-          next_.extraNetworkDomains = normalizeNetworkDomains(body.extraNetworkDomains, { allowEmpty: true });
-        } catch (e) {
-          return res.status(400).json({ error: e.message });
-        }
-      }
       if (typeof body.autoMode === "boolean") next_.autoMode = body.autoMode;
       if (typeof body.cleanMode === "boolean") next_.cleanMode = body.cleanMode;
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
-      // Where this DM's runs execute. A bad value 400s rather than silently falling back — this is
-      // the isolation boundary, and "I set it to container" must never be quietly untrue.
-      if (body.runtime !== undefined) {
-        if (typeof body.runtime !== "string" || !RUNTIME_CHOICES.includes(body.runtime)) {
-          return res.status(400).json({ error: 'runtime must be "", "host", or "container"' });
-        }
-        next_.runtime = body.runtime;
-      }
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
       if (typeof body.skillsToken === "string" && body.skillsToken) next_.skillsToken = body.skillsToken.trim();
@@ -266,7 +232,6 @@ export function createChannelsRouter({
           ...ch.meta,
           env: undefined,
           envVars: listChannelEnv(ch.meta),
-          runtimeEffective: runtimeEffectiveFor(ch.meta),
           composioToken: undefined,
           hasComposioToken: Boolean(tok),
           composioTokenLast4: tok ? tok.slice(-4) : "",
@@ -344,21 +309,6 @@ export function createChannelsRouter({
       // Validated HERE for the same reason as workDir: the merge callback below runs synchronously
       // inside the store transaction and cannot answer the request. A malformed entry rejects the
       // whole save (400) instead of quietly wiping the channel's approved egress list.
-      // Where this channel's runs execute (host | container | "" = gateway default). Validated up
-      // front like workDir: the merge callback below runs inside the store transaction and cannot
-      // answer the request. A bad value 400s rather than silently falling back to the default —
-      // this is the isolation boundary, and a save that quietly ignored it would lie about it.
-      if (body.runtime !== undefined && (typeof body.runtime !== "string" || !RUNTIME_CHOICES.includes(body.runtime))) {
-        return res.status(400).json({ error: 'runtime must be "", "host", or "container"' });
-      }
-      let domainsPatch; // undefined = leave unchanged
-      if (Array.isArray(body.extraNetworkDomains)) {
-        try {
-          domainsPatch = normalizeNetworkDomains(body.extraNetworkDomains, { allowEmpty: true });
-        } catch (e) {
-          return res.status(400).json({ error: e.message });
-        }
-      }
       // Atomic read-modify-write: the merge callback runs inside the store's BEGIN IMMEDIATE
       // transaction, so a concurrent writer (Slack /mode, an MCP channel-admin tool) can't be
       // clobbered by this save reading stale meta.
@@ -382,12 +332,8 @@ export function createChannelsRouter({
             adminMode: typeof body.adminMode === "boolean" ? body.adminMode : current.adminMode,
             allowBash: typeof body.allowBash === "boolean" ? body.allowBash : current.allowBash,
             allowNetwork: typeof body.allowNetwork === "boolean" ? body.allowNetwork : current.allowNetwork,
-            // Thread-approved extra egress domains (request_network_domain). Editable here so an
-            // admin can prune them; invalid entries are dropped, never partially kept.
-            extraNetworkDomains: domainsPatch ?? current.extraNetworkDomains ?? [],
             autoMode: typeof body.autoMode === "boolean" ? body.autoMode : current.autoMode,
             cleanMode: typeof body.cleanMode === "boolean" ? body.cleanMode : current.cleanMode,
-            runtime: typeof body.runtime === "string" ? body.runtime : current.runtime ?? "",
             noDefaultTokens: typeof body.noDefaultTokens === "boolean" ? body.noDefaultTokens : current.noDefaultTokens,
             nudges: typeof body.nudges === "boolean" ? body.nudges : current.nudges,
             memory: typeof body.memory === "boolean" ? body.memory : current.memory,

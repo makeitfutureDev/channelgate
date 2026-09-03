@@ -5,9 +5,10 @@ import { adapterFor } from "../engines/registry.js";
 // (shown alongside, set with its own toggle), so /mode doesn't touch it.
 //
 //   read  — read-only tools; anything else asks for approval (buttons)
-//   bash  — Bash + file writes, sandboxed to the folder
-//   auto  — autonomous: prompts auto-approved, sandboxed
-//   admin — full tools, sandbox off (admin authors only)
+//   bash  — Bash + file writes inside the channel's container
+//   auto  — autonomous: prompts auto-approved
+//   admin — full tools, permission prompts bypassed (admin authors only); the container is still
+//           the boundary, and the work folder is what it sees of the host
 
 export const MODE_FLAGS = {
   read: { adminMode: false, allowBash: false, autoMode: false },
@@ -30,10 +31,9 @@ export function channelMode(meta = {}) {
 export function modeLabel(meta = {}) {
   const base = LABELS[channelMode(meta)];
   const engine = String(meta.engine || "claude");
-  if (meta.adminMode) return `${base} · unrestricted network`;
   if (!meta.allowNetwork) return base;
-  const approved = (adapterFor(engine)?.supports?.networkModes || []).includes("approved");
-  return `${base} · ${approved ? "approved-domain network" : "network unsupported"}`;
+  const on = (adapterFor(engine)?.supports?.networkModes || []).includes("on");
+  return `${base} · ${on ? "network on" : "network unsupported"}`;
 }
 
 // ── Capability profiles ───────────────────────────────────────────────────────
@@ -43,9 +43,9 @@ export function modeLabel(meta = {}) {
 // sets the four capability flags (adminMode/allowBash/autoMode/cleanMode); network is separate.
 //
 //   read   — read-only tools; anything riskier asks for approval (safest, default)
-//   worker — Bash + file writes, sandboxed to the folder; still asks before unusual actions
-//   auto   — autonomous: like worker but auto-approves and keeps going; still sandboxed
-//   full   — no sandbox, full machine access (only honored for an admin author; else falls back)
+//   worker — Bash + file writes in the channel's container; still asks before unusual actions
+//   auto   — autonomous: like worker but auto-approves and keeps going
+//   full   — every tool, no permission prompts (only honored for an admin author; else falls back)
 //   lean   — bare model: no MCP servers, no skills, no favorites block (cheapest/fastest)
 export const PROFILE_FLAGS = {
   read: { adminMode: false, allowBash: false, autoMode: false, cleanMode: false },
@@ -68,9 +68,9 @@ export const PROFILE_LABELS = {
 // Example/help text shown under the dropdown, one line per profile (UI + /mode help).
 export const PROFILE_HELP = {
   read: "Answers and reads files in this channel's folder. Can't edit or run commands; anything riskier asks you to approve. Safest.",
-  worker: "Runs commands and edits files, locked to this channel's folder. Still asks before unusual actions. For channels that build things.",
-  auto: "Like Worker but doesn't stop to ask — auto-approves and keeps going. Still sandboxed. For trusted, multi-step tasks.",
-  full: "No sandbox — full machine access. Only works when an org admin sends the message; otherwise falls back to sandboxed. Use only for trusted ops channels.",
+  worker: "Runs commands and edits files inside this channel's container. Still asks before unusual actions. For channels that build things.",
+  auto: "Like Worker but doesn't stop to ask — auto-approves and keeps going. For trusted, multi-step tasks.",
+  full: "Every tool, no permission prompts. Only works when an org admin sends the message; otherwise falls back to Worker behaviour. The channel container is still the boundary. Use only for trusted ops channels.",
   lean: "Bare model — no skills or connectors. Cheapest and fastest, but can't use HubSpot/Gmail/etc.",
   custom: "Set every capability yourself (mode, network, clean).",
 };

@@ -8,6 +8,12 @@ import { BROWSER_NAMESPACE_ENV, browserNamespaceFor, browserSpawnEnv } from "../
 import { buildClaudeEnv } from "../src/engines/claude.js";
 import { buildCodexEnv } from "../src/engines/codex.js";
 import { isReservedEnvName, safeSpawnEnv } from "../src/config/channel-env.js";
+import { createFakeRuntime } from "./fixtures/fake-runtime-backend.js";
+
+// Codex only ever runs inside a channel container, so its env builder needs a container-shaped
+// target (the fixture is pure: no CLI, no settings). Claude's builder also serves the daemon's own
+// local turns and takes none.
+const container = createFakeRuntime().target();
 
 const SOURCE = { PATH: "/usr/bin", HOME: "/home/x" };
 
@@ -53,13 +59,13 @@ test("no namespace asked for, none invented", () => {
   // Non-channel spawn sites (smoke runs, memory review) run strict-MCP with no browser at all.
   assert.deepEqual(browserSpawnEnv(""), {});
   assert.equal(buildClaudeEnv({ home: "/h" }, SOURCE)[BROWSER_NAMESPACE_ENV], undefined);
-  assert.equal(buildCodexEnv({ home: "/h" }, SOURCE)[BROWSER_NAMESPACE_ENV], undefined);
+  assert.equal(buildCodexEnv({ target: container }, SOURCE)[BROWSER_NAMESPACE_ENV], undefined);
 });
 
 test("both engine env builders carry the namespace into the child", () => {
   const ns = browserNamespaceFor({ platform: "slack", slug: "gateway-slack" });
   assert.equal(buildClaudeEnv({ home: "/h", configDir: "/c", browserNamespace: ns }, SOURCE)[BROWSER_NAMESPACE_ENV], ns);
-  assert.equal(buildCodexEnv({ home: "/h", codexHome: "/c", browserNamespace: ns }, SOURCE)[BROWSER_NAMESPACE_ENV], ns);
+  assert.equal(buildCodexEnv({ browserNamespace: ns, target: container }, SOURCE)[BROWSER_NAMESPACE_ENV], ns);
 });
 
 test("a channel secret cannot name the browser namespace — stripped on write AND at the spawn", () => {
@@ -73,5 +79,5 @@ test("a channel secret cannot name the browser namespace — stripped on write A
   const mine = browserNamespaceFor({ platform: "slack", slug: "mine" });
   const hostile = { AGENT_BROWSER_NAMESPACE: browserNamespaceFor({ platform: "slack", slug: "theirs" }) };
   assert.equal(buildClaudeEnv({ extraEnv: hostile, browserNamespace: mine }, SOURCE)[BROWSER_NAMESPACE_ENV], mine);
-  assert.equal(buildCodexEnv({ extraEnv: hostile, browserNamespace: mine }, SOURCE)[BROWSER_NAMESPACE_ENV], mine);
+  assert.equal(buildCodexEnv({ extraEnv: hostile, browserNamespace: mine, target: container }, SOURCE)[BROWSER_NAMESPACE_ENV], mine);
 });

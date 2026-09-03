@@ -20,7 +20,7 @@ const { codexEngineHome } = await import("../src/config/paths.js");
 const { currentInstallId } = await import("../src/runtimes/container/names.js");
 
 const BASE = {
-  enabled: true, defaultBackend: "container", cli: "auto", image: "channelgate/runtime:latest",
+  cli: "auto", image: "channelgate/runtime:latest",
   idleMinutes: 10, maxRunning: 8, pidsLimit: 1024, memory: "", cpus: "", hasClaudeOauthToken: false,
 };
 const NO_CODEX_ENV = { CODEX_HOME: path.join(os.tmpdir(), "cg-no-such-codex-home") };
@@ -375,11 +375,13 @@ test("boot and health: an unusable CLI is legible, a usable one lists our contai
   try {
     const { bootContainerRuntime, containerRuntimeStatus, stopContainerRuntime } = await import("../src/runtimes/container/index.js");
     const logs = [];
-    const status = await bootContainerRuntime({ settings: { ...BASE, enabled: true }, log: (m) => logs.push(m) });
+    const status = await bootContainerRuntime({ settings: BASE, log: (m) => logs.push(m) });
     assert.equal(status.cli.ok, false);
-    assert.ok(logs.some((m) => /enabled but unusable/.test(m)));
-    const health = await containerRuntimeStatus({ ...BASE, enabled: true });
+    assert.deepEqual(Object.keys(status), ["cli", "image", "reconciled"], "boot status is the CLI, the image and the reconcile — there is no on/off switch");
+    assert.ok(logs.some((m) => /no usable container CLI/.test(m)));
+    const health = await containerRuntimeStatus(BASE);
     assert.equal(health.cli.ok, false);
+    assert.equal("enabled" in health, false, "health does not report a switch that no longer exists");
     assert.equal(health.running, 0);
     stopContainerRuntime();
   } finally {
@@ -400,13 +402,12 @@ test("boot and health: an unusable CLI is legible, a usable one lists our contai
   try {
     const { bootContainerRuntime, containerRuntimeStatus, stopContainerRuntime } = await import("../src/runtimes/container/index.js");
     const logs = [];
-    const status = await bootContainerRuntime({ settings: { ...BASE, enabled: true }, log: (m) => logs.push(m) });
+    const status = await bootContainerRuntime({ settings: BASE, log: (m) => logs.push(m) });
     assert.equal(status.cli.ok, true);
     assert.equal(status.image.present, true);
     assert.deepEqual(status.reconciled.running, ["cg-mine"]);
     assert.ok(logs.some((m) => /podman 5\.7\.0 \(rootless\)/.test(m)));
-    const health = await containerRuntimeStatus({ ...BASE, enabled: true });
-    assert.equal(health.enabled, true);
+    const health = await containerRuntimeStatus(BASE);
     assert.equal(health.cli.kind, "podman");
     assert.equal(health.image.id, "sha256:img");
     assert.equal(health.running, 1);

@@ -10,6 +10,7 @@ const { verifyGatewayCapability } = await import("../src/gateway/mcp-capability.
 const { workspaceRoot } = await import("../src/config/paths.js");
 const { allowedFsRoot } = await import("../src/web/security.js");
 const { createFakeRuntime } = await import("./fixtures/fake-runtime-backend.js");
+const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
 const buildMcpConfig = (options = {}) => buildRawMcpConfig({
   channelId: "C_CONFIG",
   slug: "mcp-config-test",
@@ -161,20 +162,23 @@ test("an isolated target swaps the gateway entry for the image bridge and strips
   assert.equal(claims.progressReport, true);
 });
 
-test("a host target (or none) produces byte-identical config to today", async () => {
-  const fake = createFakeRuntime({ id: "host", isolated: false, fingerprint: "host" });
+test("the daemon's own local target (or none) produces the checkout-script config, byte for byte", async () => {
+  // The daemon's OWN turns (the update smoke probe, memory review's direct path) have no container
+  // and reach the control plane through this checkout's script run by this node. Passing the
+  // local spawner as the target must change nothing against passing no target at all.
   const stable = (json) => {
     const parsed = JSON.parse(json);
     parsed.mcpServers.gateway.env.CG_GATEWAY_CAPABILITY = "<signed>"; // iat/exp/jti move every call
     return JSON.stringify(parsed);
   };
   const none = stable(await buildMcpConfig());
-  const hostTarget = stable(await buildMcpConfig({ target: fake.target() }));
-  assert.equal(hostTarget, none);
+  const local = stable(await buildMcpConfig({ target: localRuntimeTarget("/work") }));
+  assert.equal(local, none);
   assert.match(none, /gateway-server\.js/);
+  assert.doesNotMatch(none, /cg-mcp-bridge/, "the socket bridge is the image's, never a local child's");
 });
 
-test("SDK-mode Composio rides the same socket bridge in a container, and the plain script on the host", async () => {
+test("SDK-mode Composio rides the same socket bridge in a container, and the plain script when there is no target", async () => {
   const endpoint = { mode: "sdk", url: "https://backend.composio.dev/api/v3/tool_router/session-1/mcp" };
   const host = JSON.parse(await buildMcpConfig({ composioUserEndpoint: endpoint }));
   assert.equal(host.mcpServers["composio-user"].command, process.execPath);

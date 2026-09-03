@@ -6,7 +6,7 @@ import { runPooled, abortPooled } from "./session-pool.js";
 import { compileNetworkPolicy } from "./network-policy.js";
 import { listEngineMcps, codexMcpPolicyFor } from "../gateway/mcp-discovery.js";
 import { commandHealth, validateEngineAdapter } from "./contract.js";
-import { isIsolatedTarget, runtimeTargetOr } from "./runtime-target.js";
+import { runtimeTargetOr } from "./runtime-target.js";
 import { readCodexAuthState } from "./codex-auth.js";
 import { claudeEngineHome, codexEngineHome } from "../config/paths.js";
 
@@ -39,12 +39,12 @@ function claudeProjectKey(cwd) {
   return String(cwd || "").replace(/[^a-zA-Z0-9]/g, "-");
 }
 
-// Full network capability, shared by the two OS-sandboxed engines. Each adapter passes ITS OWN
+// Full network capability, shared by the two container-run engines. Each adapter passes ITS OWN
 // declared modes into the compiler, so supports.networkModes is the single source of truth.
-const FULL_NETWORK_MODES = Object.freeze(["off", "approved", "unrestricted"]);
+const FULL_NETWORK_MODES = Object.freeze(["off", "on"]);
 
 const baseCompile = (engine, request = {}, supportedModes = ["off"]) => {
-  const network = compileNetworkPolicy({ engine, allowNetwork: Boolean(request.allowNetwork), dangerouslySkip: Boolean(request.dangerouslySkip), allowedDomains: request.allowedDomains || [], supportedModes });
+  const network = compileNetworkPolicy({ engine, allowNetwork: Boolean(request.allowNetwork), supportedModes });
   return { supported: network.supported, reason: network.reason || "", network, writable: Boolean(request.writable), bypass: Boolean(request.dangerouslySkip) };
 };
 
@@ -80,15 +80,11 @@ const claude = validateEngineAdapter({
   compileConfinement: (request) => baseCompile("claude", request, FULL_NETWORK_MODES),
   async run(ctx) {
     const r = ctx.runtime;
-    // WHERE this turn runs (src/runtimes/). run.js resolves it once per turn and puts it on the
-    // context; every other caller (memory review, the update smoke test, direct-runner tests) gets
-    // the host backend — today's direct spawn — from the fallback.
+    // WHERE this turn runs (src/runtimes/): the channel's container, resolved once per turn by
+    // run.js and put on the context.
     const target = runtimeTargetOr(ctx.target, ctx.cwd);
-    const isolated = isIsolatedTarget(target);
-    // Both backends use it now: the gateway relays the ACCESS token of whichever login it resolved
-    // (src/gateway/claude-login.js — the operator's own ~/.claude first), because a container has
-    // no login of its own and a host child no longer has a credentials file in its synthetic config
-    // dir. Empty = nothing to relay, which leaves the child reading its own config dir as before.
+    // The gateway relays the ACCESS token of whichever login it resolved (src/gateway/claude-login.js
+    // — the operator's own ~/.claude first), because a container has no login of its own.
     const claudeOauthToken = ctx.claudeOauthToken ?? r.claudeOauthToken ?? "";
     const idleMs = canUseClaudeWarmPool(r) ? r.keepAliveMs : 0;
     if (idleMs > 0) {
@@ -102,13 +98,8 @@ const claude = validateEngineAdapter({
         // Same reason, no digest needed: this one is not a secret, and a pooled process that
         // kept an older namespace would drive another channel's browser daemon.
         browserNamespace: r.browserNamespace || "",
-        // PATH is part of the process environment, so a toolchain change must retire warm processes.
-        // Host-only: the launcher dir, the run-grant synthetic homes and the grant set all describe
-        // the DAEMON's filesystem. An isolated run has the image's HOME and PATH and no grant
-        // artifacts at all, so folding them in would make every warm process look stale for a
-        // reason that cannot apply to it. WHERE the process runs is fingerprinted instead, by the
-        // pool itself (session-pool.js), from the backend's own create-time digest.
-        ...(isolated ? {} : { toolchainBinDir: r.toolchainBinDir || "" }),
+        // WHERE the process runs is fingerprinted by the pool itself (session-pool.js), from the
+        // backend's own create-time digest.
         instructionFile: r.instructionFile,
         pluginDirs: r.claudePluginDirs || [],
         // The relayed login, as its SOURCE + the expiry of the token this turn was handed (never
@@ -116,11 +107,10 @@ const claude = validateEngineAdapter({
         // holds the environment it launched with and an env token has no refresh half, so a
         // refreshed token must retire it or the pool keeps presenting one that is about to die.
         claudeToken: r.claudeTokenFingerprint || "",
-        ...(isolated ? {} : { home: r.claudeHome, configDir: r.claudeConfigDir, grants: r.grantFingerprint || "" }),
       });
-      return runPooled({ key: r.poolKey, cwd: ctx.cwd, args, env: buildClaudeEnv({ home: r.claudeHome, configDir: r.claudeConfigDir, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, toolchainBinDir: r.toolchainBinDir, target, oauthToken: claudeOauthToken }), idleMs, target, mcpConfigJson: r.mcpConfigFingerprint || r.mcpConfigJson, dangerouslySkip: r.dangerouslySkip, fingerprintExtra: `${r.model}|${r.effort}|${r.permissionPromptTool}|${isolationFingerprint}`, text: ctx.prompt, turnTimeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent });
+      return runPooled({ key: r.poolKey, cwd: ctx.cwd, args, env: buildClaudeEnv({ extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, oauthToken: claudeOauthToken }), idleMs, target, mcpConfigJson: r.mcpConfigFingerprint || r.mcpConfigJson, dangerouslySkip: r.dangerouslySkip, fingerprintExtra: `${r.model}|${r.effort}|${r.permissionPromptTool}|${isolationFingerprint}`, text: ctx.prompt, turnTimeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent });
     }
-    return runClaude({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip, settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent, permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs, instructionFile: r.instructionFile, home: r.claudeHome, configDir: r.claudeConfigDir, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, toolchainBinDir: r.toolchainBinDir, target, claudeOauthToken });
+    return runClaude({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip, settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent, permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs, instructionFile: r.instructionFile, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, claudeOauthToken });
   },
   interrupt: ({ poolKey }) => abortPooled(poolKey),
   discoverMcps: () => listEngineMcps("claude"),
@@ -194,7 +184,7 @@ const codex = validateEngineAdapter({
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
     const unsafe = codexMcpPolicy.servers.find((server) => server.enabled && !server.definition);
     if (unsafe) throw new Error(`Optional MCP ${unsafe.name} has no complete credential-safe definition; refusing Codex run`);
-    return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, networkDomains: ctx.policy.network.domains || [], clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, skillsToken: r.skillsToken, toolboxToken: r.toolboxToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexUserHome: r.codexUserHome, codexHome: r.codexHome, codexStateDir: r.codexStateDir, codexSkillSupportDir: r.codexSkillSupportDir, codexCredentialPaths: r.codexCredentialPaths, codexToolchainPaths: r.codexToolchainPaths, codexToolchainBinDir: r.codexToolchainBinDir, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent });
+    return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, skillsToken: r.skillsToken, toolboxToken: r.toolboxToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexStateDir: r.codexStateDir, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent });
   },
   interrupt: () => false,
   discoverMcps: () => listEngineMcps("codex"),
@@ -231,7 +221,7 @@ const opencode = validateEngineAdapter({
       return {
         supported: false,
         reason: "OpenCode is admitted only for read-only, network-off runs because its permission rules are not an OS sandbox",
-        network: { mode: request.dangerouslySkip ? "unrestricted" : request.allowNetwork ? "approved" : "off", supported: false },
+        network: { mode: request.allowNetwork ? "on" : "off", supported: false },
         writable: false,
         bypass: false,
       };

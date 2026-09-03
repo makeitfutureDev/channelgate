@@ -103,9 +103,13 @@ test("fingerprint: create-time config only — the image id moves it, a per-exec
   c.meta = { ...c.meta, someRuntimeThing: "changed" };
   assert.equal(containerFingerprint(c), first, "per-exec inputs are not part of the fingerprint");
 
-  const off = target("fp-chan", { networkMode: "off" });
+  // Every container is created on the bridge network, so the channel's "Allow network" switch
+  // is no longer a create-time input: flipping it must NOT retire the container (its enforcement
+  // point is the planned egress proxy, not the container's network mode).
+  const off = target("fp-chan", { allowNetwork: false });
   off.container.imageId = "sha256:one";
-  assert.notEqual(containerFingerprint(off), first, "network posture is create-time-immutable");
+  assert.equal(off.container.network, "bridge");
+  assert.equal(containerFingerprint(off), first, "the network switch does not move the fingerprint");
 });
 
 test("state machine: missing → create+start, and the artifact dir is prepared 0700 first", async () => {

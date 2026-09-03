@@ -148,7 +148,7 @@ const { needsImageBuild, isImageSourcePath, CONTAINER_DEFAULT_IMAGE, IMAGE_SOURC
   await import("../src/runtimes/container/image.js");
 
 test("needsImageBuild builds when the image spec moved, the sources changed, or nothing is built", () => {
-  const current = { containerRuntimeEnabled: true, changedPaths: ["src/gateway/run.js"], builtSpecVersion: "1.1.1", expectedSpecVersion: "1.1.1" };
+  const current = { changedPaths: ["src/gateway/run.js"], builtSpecVersion: "1.1.1", expectedSpecVersion: "1.1.1" };
 
   assert.equal(needsImageBuild(current), false, "an update that touches neither the image sources nor the spec builds nothing");
   assert.equal(needsImageBuild({ ...current, expectedSpecVersion: "1.2.0" }), true, "a bumped spec version must rebuild");
@@ -161,10 +161,9 @@ test("needsImageBuild builds when the image spec moved, the sources changed, or 
   );
   assert.equal(needsImageBuild({ ...current, changedPaths: ["containers/versions.json"] }), true, "a pin bump must rebuild");
 
-  // The switch is the gate: a host-only install must never pay for a build it cannot use, however
-  // stale the image on disk is.
-  assert.equal(needsImageBuild({ ...current, containerRuntimeEnabled: false, builtSpecVersion: "" }), false);
-  assert.equal(needsImageBuild({}), false, "no inputs at all is not a reason to build");
+  // Every install runs containers, so there is no switch that could excuse a missing image: no
+  // inputs at all reads as "nothing built" and builds.
+  assert.equal(needsImageBuild({}), true, "no inputs at all means no image, which must be built");
   // A candidate whose versions.json could not be read must not trigger a build on every update.
   assert.equal(needsImageBuild({ ...current, expectedSpecVersion: "" }), false);
 

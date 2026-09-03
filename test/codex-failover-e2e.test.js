@@ -12,6 +12,10 @@ import { ensureTestEnv } from "./helpers.js";
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const fixtureBin = path.join(projectRoot, "test", "fixtures");
 ensureTestEnv();
+const { useFakeRuntime: __useFakeRuntime, fakeTarget: __fakeTarget } = await import("./runtime-fake.js");
+const __fakeBackend = await __useFakeRuntime();
+// A direct runner call (no run.js in front of it) needs the container-shaped target the runner requires.
+const __directTarget = () => __fakeTarget(__fakeBackend, "codex-failover-direct", { platform: "slack", channelId: "D_CODEX_FAILOVER" });
 process.env.PATH = `${fixtureBin}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
 
@@ -305,6 +309,7 @@ test("the Codex runner types the plan-limit rejection as a replay-safe provider 
       isNewSession: true,
       timeoutMs: 5_000,
       maxSilenceMs: 5_000,
+      ...(() => { const target = __directTarget(); return { target, artifactDir: target.artifactDir }; })(),
     }),
     (error) => {
       assert.match(error.message, /purchase more credits/);

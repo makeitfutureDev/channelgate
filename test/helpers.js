@@ -92,6 +92,14 @@ export function ensureTestEnv() {
     const claudeConfigDir = path.join(dir, "claude-home", ".claude");
     mkdirSync(claudeConfigDir, { recursive: true });
     process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+    // A stub OPERATOR login in that scratch dir. Every channel turn runs in a container and is
+    // fail-closed on the relayed Claude login (src/gateway/run.js), so a suite with no login at
+    // all could not spawn a single stub turn. Far expiry: no refresh turn is ever attempted. A
+    // test about the login itself removes or rewrites this file first (the relay and container
+    // credential tests do).
+    writeFileSync(path.join(claudeConfigDir, ".credentials.json"), JSON.stringify({
+      claudeAiOauth: { accessToken: "sk-ant-oat01-test-suite", refreshToken: "never-relayed", expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000, refreshTokenExpiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000, subscriptionType: "test" },
+    }), { mode: 0o600 });
     // The stub engines (test/fixtures) drop their hand-off files in $TMPDIR. The shared system
     // tmp is not per-run and not per-user: a file left there by ANOTHER user's test run (two
     // gateways share this host) blocks ours with EACCES. Pin it to the scratch dir like the roots.

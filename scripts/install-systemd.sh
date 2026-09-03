@@ -139,12 +139,3 @@ EOF
 systemctl daemon-reload
 systemctl enable --now "$UNIT_NAME"
 echo "✅ Installed $UNIT_NAME as $SERVICE_USER (runtime $SERVICE_HOME)"
-
-# Ubuntu 23.10+ restricts unprivileged user namespaces via AppArmor, which kills every sandboxed
-# Bash call in every channel (Read/MCP keep working, so nothing else looks wrong). The daemon also
-# warns at boot; say it here, where the operator already has root — see scripts/apparmor/README.md.
-if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = "1" ] \
-   && [ ! -f /etc/apparmor.d/claude-code-userns ]; then
-  echo "⚠️  AppArmor restricts unprivileged user namespaces on this host and the claude-code-userns profile is not installed —"
-  echo "    sandboxed Bash will fail in every channel. Run: sudo sh $APP_DIR/scripts/apparmor/claude-userns-fix.sh --apply"
-fi

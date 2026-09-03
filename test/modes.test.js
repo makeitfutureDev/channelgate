@@ -28,9 +28,15 @@ test("every mode round-trips through its own flags", () => {
 
 test("modeLabel reports the engine's real network capability", () => {
   assert.equal(modeLabel({}), "Read-only");
-  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "claude" }), "Bash · approved-domain network");
-  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "codex" }), "Bash · approved-domain network");
-  assert.equal(modeLabel({ adminMode: true, engine: "codex" }), "Admin · unrestricted network");
+  // The network is a switch on the channel's container; both container engines support "on".
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "claude" }), "Bash · network on");
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "codex" }), "Bash · network on");
+  // An engine that only declares "off" is told so rather than promised a network it will not get.
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }), "Bash · network unsupported");
+  // Admin mode lifts the engine's own sandbox, not the network switch: with the switch off the
+  // label says nothing about the network — there is no "unrestricted" tier any more.
+  assert.equal(modeLabel({ adminMode: true, engine: "codex" }), "Admin");
+  assert.equal(modeLabel({ adminMode: true, allowNetwork: true, engine: "codex" }), "Admin · network on");
 });
 
 test("channelProfile: explicit stored profile wins; invalid ones fall back to flag derivation", () => {

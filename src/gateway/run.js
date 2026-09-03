@@ -23,9 +23,8 @@ import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getComposioMode, getDefaultComposioToken, getDefaultSkillsToken, getDefaultToolboxToken, getOrgAccessGrants, getEffectiveNetworkDomains } from "../config/settings.js";
+import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getComposioMode, getDefaultComposioToken, getDefaultSkillsToken, getDefaultToolboxToken, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
-import { warnClaudeLoginMissing } from "./claude-login.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort } from "./thread-engine.js";
@@ -39,7 +38,6 @@ import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
 import { randomUUID } from "node:crypto";
 import { createSemaphore } from "../util/semaphore.js";
-import { normalizeStoredDomains } from "../util/network-domains.js";
 import { logEvent } from "../util/logger.js";
 import { resolveRunAccessGrants, resolveRunUserIdentity, userOnlySkillGrants } from "./access-grants.js";
 import { assertUserSkillOverlaySupported, createRunGrantArtifacts } from "./run-grant-artifacts.js";
@@ -48,7 +46,6 @@ import { allowedFsRoot } from "../web/security.js";
 import { licenseAdmission } from "../ee/limits.js";
 import { channelEnvFingerprint, resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
 import { browserNamespaceFor } from "./browser-env.js";
-import { toolchainReadPaths } from "./toolchain-paths.js";
 import { createSecretRedactor, redactSecretValues } from "../util/redact.js";
 
 // For a DM that selected an org template (user/admin), overlay the template's knobs onto its
@@ -115,9 +112,8 @@ export function setRuntimeResolver(resolver = null) {
 }
 
 // The directory this turn's per-run, ENGINE-FACING files go in (the --mcp-config file today; the
-// grant artifacts resolve the same way in run-grant-artifacts.js). A host target keeps the gateway
-// run-tmp dir it has always used; an isolated target gets its channel's artifact dir, which the
-// backend bind-mounts at the identical absolute path — nothing under gatewayRoot() may be handed
+// grant artifacts resolve the same way in run-grant-artifacts.js). Every channel turn gets its
+// channel's artifact dir, which the backend bind-mounts at the identical absolute path — nothing under gatewayRoot() may be handed
 // to a containerized engine, because that tree is never mounted.
 export function runArtifactRoot(target = null) {
   return target?.artifactDir || runTmpDir();
@@ -619,8 +615,8 @@ export function mayEscalate({ meta = {}, isAdminAuthor = false, untrustedPrincip
 
 // Admin outranks auto. A run that may NOT escalate (any daemon origin, or a foreground turn that
 // failed mayEscalate) but whose stored author is an admin in an adminMode channel is upgraded to
-// the AUTO tier: writable folder sandbox + auto-approved permission prompts. It is a tier, not an
-// escalation — the bypass and sandbox-off remain foreground-only (A2), untrusted principals never
+// the AUTO tier: writable work folder + auto-approved permission prompts. It is a tier, not an
+// escalation — the permission bypass remains foreground-only (A2), untrusted principals never
 // qualify, and a non-admin author in the same channel stays at the read floor.
 export function adminUnattendedTier({ meta = {}, isAdminAuthor = false, untrustedPrincipal = false, dangerouslySkip = false } = {}) {
   return !dangerouslySkip && Boolean(meta.adminMode) && Boolean(isAdminAuthor) && !untrustedPrincipal;
@@ -764,22 +760,17 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const provisionMeta = { ...channelMeta, ...runGrants.shared };
 
   // ── Where this turn runs (src/runtimes/) ──────────────────────────────────────────────────
-  // Resolved ONCE, here, and handed to everything downstream: the folder generator (an isolated
-  // runtime writes no sandbox block), the MCP config builder (bridge vs stdio server), the engine
+  // Resolved ONCE, here, and handed to everything downstream: the folder generator (policy only —
+  // the container is the confinement), the MCP config builder (bridge vs stdio server), the engine
   // runner (spawn/probe/signal), the artifact paths, and the session/status stamps. Nothing below
   // asks "is this a container?" — it asks the target's declared capabilities.
   //
-  // The backend decision reads the CHANNEL's own adminMode and runtime pin, not the per-run view:
-  // an API override may reduce capability (mode:"read" clears adminMode for the run) and must not
-  // thereby move the turn from the host backend onto a container. cleanMode is taken from the RUN
-  // meta on purpose — it changes the cwd, not the backend.
-  const target = runtimeResolver(entry.slug, { ...meta, adminMode: channelMeta.adminMode, runtime: channelMeta.runtime });
+  // cleanMode is taken from the RUN meta on purpose — it changes the cwd the container mounts.
+  const target = runtimeResolver(entry.slug, meta);
   const isolatedRuntime = runtimeSupports(target, "isolated");
   // The engine's own credential inside an isolated runtime: the container has no access to the
   // daemon's Claude state dir, so a setup-token — or a relay of the resolved login's current access
   // token, refreshed first — is what authenticates it (src/gateway/claude-token-relay.js).
-  // A HOST turn relays the very same token: the synthetic engine home no longer holds a credentials
-  // file, and the login the gateway uses is the operator's own (src/gateway/claude-login.js).
   // A third outcome carries no token at all: the daemon authenticates with its own ANTHROPIC_API_KEY,
   // which already rides into the child through child-env.js's passthrough list.
   //
@@ -787,21 +778,15 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // token and must not pay for (or race) a second refresh.
   let claudeRelayPromise = null;
   const claudeRelayOnce = () => (claudeRelayPromise ||= resolveContainerClaudeToken());
-  // Fail-closed is CONTAINER-only. Inside a container there is no other way in, so no token is a
-  // configuration error the operator must see. On the host the engine still has its own config dir
-  // to fall back on and its own error to raise (which the runner classifies into the usual auth
-  // failover), so we log the remedy — throttled — and let the turn proceed.
+  // Fail closed: inside a container there is no other way in, so no token is a configuration
+  // error the operator must see.
   const claudeCredentialFor = async (forEngine) => {
     if (forEngine !== "claude") return null;
     const relay = await claudeRelayOnce();
     if (relay.token || relay.source === "api-key") return relay;
-    if (isolatedRuntime) {
-      throw Object.assign(new Error(`This channel runs in a container, but ${relay.error}.`), {
-        details: { runtimeCredential: true, runtime: target.backend, engine: forEngine },
-      });
-    }
-    warnClaudeLoginMissing(relay.error || "the gateway has no usable Claude login");
-    return relay;
+    throw Object.assign(new Error(`This channel runs in a container, but ${relay.error}.`), {
+      details: { runtimeCredential: true, runtime: target.backend, engine: forEngine },
+    });
   };
   // Resolved AFTER the session decides which harness actually runs this turn (below): the engine
   // here is still the channel's, and a thread that stays on Claude while its channel moved to Codex
@@ -902,9 +887,6 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     try {
       carried = await carrySession({
         engine, sessionId, cwd, storedRuntime: sessionRuntime, target, slug: entry.slug, threadKey,
-        // The channel's OTHER environment resolves through the same seam this turn's target did, so
-        // a test that swapped the resolver is asked about both sides rather than only one.
-        resolveFor: runtimeResolver,
       });
     } finally {
       clearTimeout(carryTimer);
@@ -1059,10 +1041,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
 
   const dangerouslySkip = mayEscalate({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal, origin });
   // Admin outranks auto: a non-escalated run whose STORED author is an admin in an adminMode
-  // channel runs at the AUTO tier (writable folder sandbox, auto-approved permission prompts)
+  // channel runs at the AUTO tier (writable work folder, auto-approved permission prompts)
   // instead of the read floor. This covers every daemon origin — background agents, their
   // continuations, schedules, recovery — which used to complete read-only in admin channels and
-  // silently do nothing. A2 stands: these runs still NEVER get the bypass or sandbox-off; the
+  // silently do nothing. A2 stands: these runs still NEVER get the permission bypass; the
   // unattended ceiling is auto, and only for the admin who authored the persisted prompt.
   const adminUnattended = adminUnattendedTier({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal, dangerouslySkip });
   if (adminUnattended) meta = { ...meta, autoMode: true };
@@ -1102,13 +1084,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // tools are simply denied headless (only the lockdown's allow-list + admin bypass apply).
   const permissionPromptTool = dangerouslySkip || clean ? "" : "mcp__gateway__permission_prompt";
   // Compile intent into the selected engine's real confinement. Both Claude and Codex receive the
-  // exact same normalized admin allowlist; each adapter must either enforce it at the OS sandbox
-  // boundary or fail closed before spawning.
+  // exact same normalized admin allowlist; each adapter must either enforce it inside the
+  // container or fail closed before spawning.
   const adapter = requireAdapter(engine);
   assertUserSkillOverlaySupported(adapter, userSkills);
   const codexWritable = Boolean(meta.allowBash || meta.autoMode);
-  const allowedDomains = [...new Set([...getEffectiveNetworkDomains(), ...normalizeStoredDomains(meta.extraNetworkDomains)])];
-  const confinement = adapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip, writable: codexWritable, allowedDomains });
+  const confinement = adapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), writable: codexWritable });
   const networkPolicy = confinement.network;
   if (!confinement.supported) {
     throw new Error(`${confinement.reason}. Turn network off or switch this thread to an engine that supports this policy.`);
@@ -1139,7 +1120,6 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     allowBash: Boolean(meta.allowBash),
     allowNetwork: Boolean(meta.allowNetwork),
     networkPolicy: networkPolicy.mode,
-    approvedDomainCount: networkPolicy.mode === "approved" ? networkPolicy.domains.length : 0,
     dangerouslySkip,
     adminUnattended,
     codexWritable,
@@ -1160,15 +1140,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // 0600 file and --mcp-config gets the PATH; the CLI reads it once at spawn, so deleting the
   // file when the run settles (the finally below) never affects a live process, warm or cold.
   //
-  // It lives under the gateway root, NOT the OS tmpdir: 0600 only keeps out other OS users, and
-  // the agent runs as the same user. Every channel's sandbox read-denies the gateway root, while
-  // the shared tmpdir sits outside every deny entry — so a tmpdir path let any channel (even a
-  // read-only one, where Read is auto-approved) read a concurrent run's tokens.
-  // Codex gets its MCP config via -c overrides and never uses this file. Written LAZILY below —
-  // after the run slot is acquired and the cooldown reroute is decided — so a token file never
-  // sits on disk during a semaphore queue wait or for a turn that ends up on Codex.
-  // …and for an ISOLATED runtime it must additionally be a path the ENGINE can open, which the
-  // gateway root is not (never mounted into a container). runArtifactRoot resolves both cases.
+  // It lives under the channel's own artifact dir — the one path both the daemon and THAT
+  // channel's container can open — never the OS tmpdir or the gateway root: the daemon's tmpdir
+  // and the gateway root are not mounted into any container, and a path shared between channels
+  // would let one channel read a concurrent run's tokens. Codex gets its MCP config via -c
+  // overrides and never uses this file. Written LAZILY below — after the run slot is acquired and
+  // the cooldown reroute is decided — so a token file never sits on disk during a semaphore queue
+  // wait or for a turn that ends up on Codex. runArtifactRoot(target) resolves the dir for every
+  // target (the daemon-internal local runtime gets the gateway run-tmp dir).
   const mcpConfigFile = usesMcpConfigFile(engine) ? path.join(runArtifactRoot(target), `cg-mcp-${randomUUID()}.json`) : "";
 
   // Every Claude run gets a private settings copy because its explicit skill plugin lives under
@@ -1190,7 +1169,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     needsClaudeSettings,
     allowBypass: dangerouslySkip,
     // Decides both WHERE the artifacts land and WHICH of them exist: an isolated runtime gets no
-    // toolchain launchers, no host credential symlinks and no synthetic Codex HOME.
+    // host plumbing of any kind — everything lands under the channel's mounted artifact dir.
     target,
   });
   const runSettingsFile = grantArtifacts.settingsFile || sharedRunSettingsFile;
@@ -1229,14 +1208,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         instructionFile: path.join(cwd, requireAdapter(engine).instructionFile),
         claudeHome: grantArtifacts.claudeHome,
         claudeConfigDir: grantArtifacts.claudeConfigDir,
-        codexUserHome: grantArtifacts.codexUserHome,
-        codexHome: grantArtifacts.codexHome,
         codexStateDir: grantArtifacts.codexStateDir,
-        codexSkillSupportDir: grantArtifacts.codexSkillSupportDir,
-        codexCredentialPaths: meta.allowNetwork && codexWritable ? grantArtifacts.codexCredentialPaths : [],
-        codexToolchainPaths: dangerouslySkip ? [] : [...toolchainReadPaths({ root: gatewayRoot() }), grantArtifacts.codexToolchainBinDir].filter(Boolean),
-        codexToolchainBinDir: dangerouslySkip ? "" : grantArtifacts.codexToolchainBinDir,
-        toolchainBinDir: dangerouslySkip ? "" : grantArtifacts.toolchainBinDir,
         grantFingerprint,
         attachments,
       },
@@ -1334,7 +1306,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     let fallbackModel = meta.model && modelBelongsToEngine(meta.model, fallbackEngine) ? meta.model : fallbackGatewayDefaultModel;
     let fallbackModelNote = "";
     try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, ...runtimeSignal }); } catch { /* non-fatal */ }
-    const fallbackConfinement = fallbackAdapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip, writable: codexWritable, allowedDomains });
+    const fallbackConfinement = fallbackAdapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), writable: codexWritable });
     if (!fallbackConfinement.supported) throw new Error(`${fallbackConfinement.reason}. ${fallbackAdapter.label} fallback was refused.`);
     // Failing over TO Claude needs Claude's credential, which the primary turn never resolved when
     // the primary engine was the other harness. Same memoized resolver, same container fail-closed.
@@ -1362,14 +1334,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           instructionFile: path.join(cwd, fallbackAdapter.instructionFile),
           claudeHome: grantArtifacts.claudeHome,
           claudeConfigDir: grantArtifacts.claudeConfigDir,
-          codexUserHome: grantArtifacts.codexUserHome,
-          codexHome: grantArtifacts.codexHome,
           codexStateDir: grantArtifacts.codexStateDir,
-          codexSkillSupportDir: grantArtifacts.codexSkillSupportDir,
-          codexCredentialPaths: meta.allowNetwork && codexWritable ? grantArtifacts.codexCredentialPaths : [],
-          codexToolchainPaths: dangerouslySkip ? [] : [...toolchainReadPaths({ root: gatewayRoot() }), grantArtifacts.codexToolchainBinDir].filter(Boolean),
-          codexToolchainBinDir: dangerouslySkip ? "" : grantArtifacts.codexToolchainBinDir,
-        toolchainBinDir: dangerouslySkip ? "" : grantArtifacts.toolchainBinDir,
           grantFingerprint },
       }));
     };
@@ -1448,8 +1413,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Credentials first: a container with no engine token can never answer, and warming one up to
     // discover that wastes seconds and leaves the operator reading an engine error instead of the
     // configuration message. Then the LEASE (so the idle reaper cannot stop the environment out
-    // from under a turn that is about to spawn in it), then ensureUp. Both are no-ops on the host
-    // backend, which is why there is no branch here.
+    // from under a turn that is about to spawn in it), then ensureUp. Daemon-internal turns never come
+    // through here (they spawn on the local runtime directly), which is why there is no branch.
     assertRuntimeCredentials(target, engine);
     runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
     // A cold start is the one wait in a turn that looks like nothing is happening: the engine has

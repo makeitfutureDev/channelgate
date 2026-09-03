@@ -2,7 +2,9 @@
 // container the OS boundary belongs to the daemon, so each engine's own sandbox is off and every
 // host-shaped fact — the daemon's HOME and PATH, the toolchain launcher dir, the permission
 // profiles compiled against host paths, the gateway root — is either replaced by the image's
-// equivalent or left out entirely. The host path must be untouched, so each case asserts both.
+// equivalent or left out entirely. The only non-container spawn left is the daemon's OWN local
+// turn (the update smoke probe): Claude still serves it with the host layout, unchanged, and Codex
+// — which has no daemon-own turn — refuses it outright.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -14,7 +16,7 @@ ensureTestEnv();
 
 const { buildClaudeArgs, buildClaudeEnv, runClaude } = await import("../src/engines/claude.js");
 const { buildCodexArgs, buildCodexEnv, runCodex } = await import("../src/engines/codex.js");
-const { hostRuntimeTarget, CONTAINER_HOME, CONTAINER_PATH } = await import("../src/engines/runtime-target.js");
+const { localRuntimeTarget, CONTAINER_HOME, CONTAINER_PATH } = await import("../src/engines/runtime-target.js");
 const { gatewayRoot } = await import("../src/config/paths.js");
 
 const SOURCE = {
@@ -46,7 +48,6 @@ test("Claude env inside a container is the IMAGE's, and a channel secret still c
   const env = buildClaudeEnv({
     home: "/gw/run-tmp/grants-a/user-home",
     configDir: "/gw/run-tmp/grants-a/user-home/.claude",
-    toolchainBinDir: "/gw/run-tmp/toolchain/bin",
     extraEnv: { SUPABASE_ACCESS_TOKEN: "sbp_live", HOME: "/tmp/hijack", PATH: "/tmp/evil", CLAUDE_CODE_OAUTH_TOKEN: "attacker" },
     target,
     oauthToken: "sk-ant-oat-gateway",
@@ -54,9 +55,8 @@ test("Claude env inside a container is the IMAGE's, and a channel secret still c
 
   assert.equal(env.HOME, CONTAINER_HOME);
   assert.equal(env.CLAUDE_CONFIG_DIR, `${CONTAINER_HOME}/.claude`);
-  assert.equal(env.PATH, CONTAINER_PATH, "the daemon's PATH and launcher dir do not exist in the image");
+  assert.equal(env.PATH, CONTAINER_PATH, "the daemon's PATH does not exist in the image");
   assert.ok(env.PATH.includes("/opt/channelgate/bin"), "…and the image's own run helpers stay resolvable by name");
-  assert.ok(!env.PATH.includes("/gw/run-tmp/toolchain/bin"));
   assert.equal(env.TMPDIR, "/tmp", "the container's tmpfs, never the host's per-user temp");
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-gateway", "the gateway's token, not the channel's");
   assert.equal(env.SUPABASE_ACCESS_TOKEN, "sbp_live", "the channel's own secrets still ride in");
@@ -69,25 +69,28 @@ test("Claude env inside a container is the IMAGE's, and a channel secret still c
   assert.equal(buildClaudeEnv({ target }, SOURCE).CLAUDE_CODE_OAUTH_TOKEN, undefined);
 });
 
-test("Claude env on the host is byte-for-byte what it was before the seam existed", () => {
-  const withTarget = buildClaudeEnv({ home: "/gw/home", configDir: "/gw/home/.claude", toolchainBinDir: "/gw/bin", target: hostRuntimeTarget("/work") }, SOURCE);
-  const without = buildClaudeEnv({ home: "/gw/home", configDir: "/gw/home/.claude", toolchainBinDir: "/gw/bin" }, SOURCE);
+test("Claude env for the daemon's OWN local turn is the host layout, with or without the local target", () => {
+  // The update smoke probe is the one Claude spawn left outside a container. It passes no target
+  // (runtimeTargetOr falls back to the local spawner) and must see exactly the daemon's layout —
+  // with no launcher dir prepended any more, since there is no host toolchain left to review.
+  const withTarget = buildClaudeEnv({ home: "/gw/home", configDir: "/gw/home/.claude", target: localRuntimeTarget("/work") }, SOURCE);
+  const without = buildClaudeEnv({ home: "/gw/home", configDir: "/gw/home/.claude" }, SOURCE);
   assert.deepEqual(withTarget, without);
   assert.equal(without.HOME, "/gw/home");
-  assert.equal(without.PATH, "/gw/bin:/usr/local/bin:/usr/bin");
+  assert.equal(without.PATH, "/usr/local/bin:/usr/bin");
   assert.equal(without.TMPDIR, "/var/folders/xy/T");
+  assert.equal(without.XDG_RUNTIME_DIR, "/run/user/1001", "host locations are right for a host child and stay");
   assert.equal(without.CLAUDE_CODE_OAUTH_TOKEN, undefined, "no relayed token = no variable, so the CLI reads its own config dir as before");
 });
 
-test("a HOST run relays the gateway's login too, and a channel secret cannot displace it", () => {
-  // The synthetic engine home no longer holds a credentials file (run-grant-artifacts stopped
-  // planting one), so the relayed access token is what authenticates a host child
-  // (src/gateway/claude-login.js). Gateway-owned, therefore applied LAST — same rule as HOME.
+test("a LOCAL (daemon-own) run relays the gateway's login too, and a channel secret cannot displace it", () => {
+  // The daemon's own turns carry no credentials file of their own, so the relayed access token is
+  // what authenticates a local child (src/gateway/claude-login.js). Gateway-owned, therefore
+  // applied LAST — same rule as HOME.
   const env = buildClaudeEnv({
     home: "/gw/home",
     configDir: "/gw/home/.claude",
-    toolchainBinDir: "/gw/bin",
-    target: hostRuntimeTarget("/work"),
+    target: localRuntimeTarget("/work"),
     extraEnv: { CLAUDE_CODE_OAUTH_TOKEN: "attacker", HOME: "/tmp/hijack" },
     oauthToken: "sk-ant-oat-operator",
   }, SOURCE);
@@ -139,11 +142,7 @@ test("Codex env inside a container points at the image's HOME, CODEX_HOME and tm
   const rt = createFakeRuntime();
   const target = rt.target();
   const env = buildCodexEnv({
-    tmpDir: "/gw/tmp/run-abc",
-    home: "/gw/run-tmp/grants-a/user-home",
-    codexHome: "/gw/engine-state/codex/home",
-    toolchainBinDir: "/gw/run-tmp/toolchain/bin",
-    extraEnv: { VERCEL_TOKEN: "vt_live", CODEX_HOME: "/tmp/hijack" },
+    extraEnv: { VERCEL_TOKEN: "vt_live", CODEX_HOME: "/tmp/hijack", HOME: "/tmp/hijack" },
     target,
   }, SOURCE);
 
@@ -153,11 +152,12 @@ test("Codex env inside a container points at the image's HOME, CODEX_HOME and tm
   assert.equal(env.PATH, CONTAINER_PATH);
   assert.equal(env.VERCEL_TOKEN, "vt_live");
   assert.equal(env.NODE_USE_ENV_PROXY, "1");
+  assert.equal(env.XDG_RUNTIME_DIR, undefined, "host locations are dropped, not carried into the image");
 
-  const host = buildCodexEnv({ tmpDir: "/gw/tmp/run-abc", home: "/gw/home", codexHome: "/gw/home/.codex" }, SOURCE);
-  assert.equal(host.HOME, "/gw/home");
-  assert.equal(host.CODEX_HOME, "/gw/home/.codex");
-  assert.equal(host.TMPDIR, "/gw/tmp/run-abc", "the host path is untouched by the seam");
+  // There is no host layout for Codex any more: the builder refuses to produce one rather than
+  // hand a container-less child the daemon's HOME and CODEX_HOME.
+  assert.throws(() => buildCodexEnv({ extraEnv: { VERCEL_TOKEN: "vt_live" } }, SOURCE), /Codex runs only inside a channel container/);
+  assert.throws(() => buildCodexEnv({ target: localRuntimeTarget("/work") }, SOURCE), /Codex runs only inside a channel container/);
 });
 
 test("Codex in a container states a sandbox MODE and compiles no host permission profile", () => {
@@ -247,25 +247,22 @@ test("Codex MCP entries in a container are composed from the runtime's helper co
   assert.ok(!args.some((arg) => arg.includes(gatewayRoot())), "no daemon-root path anywhere in the argv");
 });
 
-test("Codex MCP entries on the host still resolve to this checkout, run by this node", () => {
-  const args = buildCodexArgs({
-    prompt: "go",
-    sessionId: "t-1",
-    isNewSession: true,
-    cwd: "/work",
-    outFile: "/gw/out.txt",
-    secretBundlePath: "/gw/run-tmp/bundle.json",
-    gatewayCapability: "signed-cap",
-    gatewayFsRoot: "/gw",
-    gatewayWorkspaceRoot: "/work",
-  });
-  assert.equal(cfg(args, "mcp_servers.gateway.command="), `mcp_servers.gateway.command=${JSON.stringify(process.execPath)}`);
-  const gatewayArgs = cfgJson(args, "mcp_servers.gateway.args=");
-  assert.match(gatewayArgs[0], /src[/\\]mcp[/\\]secret-env-bridge\.js$/);
-  assert.equal(gatewayArgs[1], "/gw/run-tmp/bundle.json");
-  assert.deepEqual(gatewayArgs.slice(2, 4), ["gatewayCapability", "CG_GATEWAY_CAPABILITY"]);
-  assert.match(gatewayArgs[4], /src[/\\]mcp[/\\]gateway-server\.js$/);
-  assert.equal(cfg(args, "mcp_servers.gateway.env.CG_FS_ROOT="), `mcp_servers.gateway.env.CG_FS_ROOT="/gw"`);
+test("Codex has no local path: the daemon's own spawner is refused before any argv names a checkout script", async () => {
+  // Before 2026-09-03 a host run composed its MCP entries from this checkout, run by this node.
+  // That path is gone with the host backend, and the refusal is the same for the args builder,
+  // the env builder and the runner — nothing partial is ever produced.
+  const base = { prompt: "go", sessionId: "t-1", isNewSession: true, cwd: "/work", outFile: "/gw/out.txt", secretBundlePath: "/gw/run-tmp/bundle.json", gatewayCapability: "signed-cap", gatewayFsRoot: "/gw", gatewayWorkspaceRoot: "/work" };
+  assert.throws(() => buildCodexArgs({ ...base, target: localRuntimeTarget("/work") }), /Codex runs only inside a channel container/);
+  assert.throws(() => buildCodexArgs(base), /Codex runs only inside a channel container/);
+  await assert.rejects(
+    runCodex({ cwd: "/work", prompt: "go", sessionId: "", isNewSession: true, target: localRuntimeTarget("/work"), timeoutMs: 5_000 }),
+    (error) => {
+      assert.match(error.message, /Codex runs only inside a channel container/);
+      assert.equal(error.details?.engine, "codex");
+      assert.equal(error.details?.providerError, false, "a runtime refusal, not a provider failure");
+      return true;
+    },
+  );
 });
 
 test("a containerized Codex turn writes its answer file and secret bundle into the mounted artifact dir", async (t) => {

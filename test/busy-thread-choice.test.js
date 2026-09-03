@@ -10,6 +10,8 @@ process.env.PATH = `${path.join(projectRoot, "test", "fixtures", "prompt-echo")}
 process.env.SESSION_KEEPALIVE = "0";
 process.env.PROGRESS_VIEW = "shimmer";
 ensureTestEnv();
+const { useFakeRuntime: __useFakeRuntime } = await import("./runtime-fake.js");
+await __useFakeRuntime();
 
 const { setUser } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");

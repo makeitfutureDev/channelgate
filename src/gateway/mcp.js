@@ -1,7 +1,7 @@
 // Builds the per-run --mcp-config payload. The gateway control plane is always present; optional
 // token-backed servers are added when their independently resolved credentials exist:
 //   - gateway: the gateway's own control MCP server (schedules + channel admin), scoped to this
-//     channel/author via env — runs outside the sandbox so it can read/write gateway config.
+//     channel/author via env — runs on the daemon, outside the container, so it can read/write gateway config.
 //   - composio-user: injected only when the active author has a personal token.
 //   - composio-agent: the agent's OWN account — injected independently with the channel token, or
 //     the org token as fallback (the model never learns which; to it this is simply its account).
@@ -18,8 +18,8 @@
 // checkout, and their env carries the signed capability and nothing else. A container must never
 // receive CG_PORT / CG_APPROVAL_SECRET (there is no /internal/* route it could reach), nor
 // CHANNELGATE_DIR / CG_FS_ROOT / CG_WORKSPACE_DIR / PATH (host paths that do not exist inside it).
-// Remote http entries are identical on both backends — the engine dials those itself. A host target
-// (or no target at all) produces byte-identical output to before.
+// Remote http entries are the same with or without a target — the engine dials those itself. The
+// local runtime (daemon-internal turns) or no target at all produces the plain stdio form.
 import { fileURLToPath } from "node:url";
 import { composioUrl, skillsUrl, toolboxUrl } from "./mcp-catalog.js";
 import { gatewayRoot } from "../config/paths.js";

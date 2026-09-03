@@ -1,26 +1,22 @@
-// resolveRuntime(): the ONE place that decides which backend a channel's runs use, and builds the
-// RuntimeTarget every backend call receives. Precedence (plan §4 of the P1 brief):
+// resolveRuntime(): the ONE place that builds the RuntimeTarget every backend call receives.
 //
-//   containerRuntimeEnabled === false → host    the gateway-wide kill switch (v0.8 rollback lever)
-//   channel in admin mode             → host    admin channels are honestly unconfined (plan §5/§9)
-//   meta.runtime = "host"|"container" → that    the per-channel setting
-//   otherwise                         → the gateway default backend (host until rollout flips it)
-//
-// Clean mode keeps the channel's backend: the bare clean workspace is mounted next to the workdir.
+// Since 2026-09-03 there is exactly one channel runtime — the container backend — so there is no
+// precedence table any more: no gateway kill switch, no per-channel pin, and admin-mode channels
+// run in containers like every other channel (their work folder is bind-mounted read-write, which
+// is the trust the admin mode carries; the container is still the boundary around everything else).
+// Clean mode keeps the same backend: the bare clean workspace is mounted next to the workdir.
 // Background jobs, memory-review runs and scheduled runs resolve through here at THEIR OWN spawn
-// time — they outlive the turn that created them (plan §5).
+// time — they outlive the turn that created them.
 import { effectiveWorkDir } from "../gateway/folders.js";
 import { channelArtifactDir, cleanWorkspaceFolder } from "../config/paths.js";
 import { getContainerRuntime } from "../config/settings.js";
 import { platformOr } from "../platforms/registry.js";
-import { isRuntimeBackendId, runtimeBackend } from "./registry.js";
+import { DEFAULT_RUNTIME_BACKEND, runtimeBackend } from "./registry.js";
 
-export function decideRuntimeBackend(meta = {}, settings = getContainerRuntime()) {
-  if (!settings?.enabled) return { backend: "host", reason: "disabled" };
-  if (meta?.adminMode) return { backend: "host", reason: "admin-mode" };
-  const pinned = String(meta?.runtime || "").trim();
-  if (isRuntimeBackendId(pinned)) return { backend: pinned, reason: "channel" };
-  return { backend: settings.defaultBackend === "container" ? "container" : "host", reason: "default" };
+// Kept as a function so the admin API and the MCP tools can keep asking "where does this channel
+// run?" through one door; the answer is always the container backend now.
+export function decideRuntimeBackend() {
+  return { backend: DEFAULT_RUNTIME_BACKEND, reason: "only-runtime" };
 }
 
 /**
@@ -28,17 +24,10 @@ export function decideRuntimeBackend(meta = {}, settings = getContainerRuntime()
  * @param {object} meta                 the effective channel meta
  * @param {object} [options]
  * @param {object} [options.settings]   the container-runtime settings snapshot
- * @param {string} [options.backend]    FORCE a backend, bypassing the precedence above. The one
- *   caller is the session carry-over (src/gateway/session-carry.js), which has to address the
- *   channel's OTHER environment — the container a thread's history is still sitting in, after the
- *   channel itself has moved back to the host. It is deliberately not reachable from a channel
- *   setting, an API override or a chat directive: this is "look at the environment that is not
- *   running this turn", never "run this turn somewhere else".
  */
-export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime(), backend: forced = "" } = {}) {
+export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime() } = {}) {
   const platform = platformOr(meta?.platform).id;
-  const decided = decideRuntimeBackend(meta, settings);
-  const { backend: id, reason } = isRuntimeBackendId(forced) ? { backend: forced, reason: "override" } : decided;
+  const { backend: id, reason } = decideRuntimeBackend();
   const backend = runtimeBackend(id);
   const cwd = effectiveWorkDir(slug, meta);
   const workDir = meta?.cleanMode ? effectiveWorkDir(slug, { ...meta, cleanMode: false }) : cwd;
@@ -52,7 +41,7 @@ export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime
     cwd,
     workDir,
     cleanWorkDir: cleanWorkspaceFolder(slug, platform),
-    artifactDir: id === "container" ? channelArtifactDir(slug, platform) : null,
+    artifactDir: channelArtifactDir(slug, platform),
     settings,
     container: null,
   };

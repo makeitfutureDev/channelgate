@@ -99,7 +99,10 @@ export const containerBackend = Object.freeze({
       // accounting at the channel's rollouts. "" until the CLI has been probed — ensureUp fills it.
       homeVolumeHostPath: volumeHostPath(runtime().cli.peek(), homeVolumeName(base)),
       image: String(settings.image || ""),
-      network: base.meta?.networkMode === "off" ? "none" : "bridge",
+      // Always the bridge network for now: the per-channel "Allow network" switch is enforced by the
+      // egress proxy planned as the next slice, not by the container's network mode. Only that
+      // proxy can keep the daemon-socket bridges and remote MCPs reachable while cutting egress.
+      network: "bridge",
       uid,
       gid,
       uidStrategy: "user", // settled from the CLI probe
@@ -252,15 +255,14 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
   if (logger) logFn = logger;
   bootSettings = settings || null;
   const r = runtime();
-  const status = { enabled: Boolean(settings?.enabled), cli: null, image: null, reconciled: null };
+  const status = { cli: null, image: null, reconciled: null };
   try {
     status.cli = await r.cli.probe(settings || {}, { image: settings?.image, force: true });
   } catch (error) {
     status.cli = { ok: false, reason: String(error?.message || error) };
   }
   if (!status.cli.ok) {
-    if (settings?.enabled) log(`[container] WARNING: the container runtime is enabled but unusable — ${status.cli.reason}`);
-    else log(`[container] no container CLI available (${status.cli.reason}); the container backend is off anyway`);
+    log(`[container] no usable container CLI — ${status.cli.reason}`);
     return status;
   }
   log(`[container] ${status.cli.kind} ${status.cli.version}${status.cli.rootless ? " (rootless)" : ""} via ${status.cli.bin}, uid strategy ${status.cli.uidStrategy}${status.cli.cgroupLimits ? "" : ", cgroup limits unavailable"}`);
@@ -276,16 +278,6 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
     }
   } catch (error) {
     status.image = { present: false, reason: String(error?.message || error) };
-  }
-  // The idle reaper starts even with the gateway switch OFF. A session carry-over may still bring
-  // one channel's container up to read history out of its HOME volume — that is exactly what makes
-  // the kill switch a safe lever rather than one that strands a thread's engine history — and with
-  // no reaper nothing would ever stop it again. It only ever acts on containers THIS process
-  // started (its entry map is populated by ensureUp), so with the runtime disabled it stays inert
-  // until precisely that happens.
-  if (!settings?.enabled) {
-    r.reaper.startTimer();
-    return status;
   }
   try {
     status.reconciled = await r.lifecycle.bootReconcile(settings);
@@ -309,7 +301,6 @@ export async function containerRuntimeStatus(settings = bootSettings) {
   const r = runtime();
   const effective = settings || bootSettings || {};
   const out = {
-    enabled: Boolean(effective?.enabled),
     cli: { bin: "", kind: "", rootless: false, version: "", ok: false, reason: "not probed" },
     image: { ref: String(effective?.image || ""), id: "", present: false, reason: "" },
     running: 0,

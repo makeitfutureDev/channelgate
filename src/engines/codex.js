@@ -15,13 +15,10 @@
 //     message is read from the `-o` file. Token usage comes from turn.completed; no dollar cost.
 //   - timeoutMs is an inactivity watchdog, not a wall-clock runtime cap: a busy Codex turn may run
 //     as long as it keeps producing JSONL/progress output.
-import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { composioUrl, skillsUrl, toolboxUrl } from "../gateway/mcp-catalog.js";
-import { gatewayRoot, runTmpDir } from "../config/paths.js";
 import { argvSafePrompt } from "./contract.js";
 import { buildChildEnv } from "./child-env.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
@@ -33,12 +30,8 @@ import { newRunId } from "../runtimes/contract.js";
 import { isProgressReportTool, normalizeProgressReport } from "./progress-report.js";
 import { thinkingSummary } from "./stream.js";
 import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
-import { readCodexAuthState } from "./codex-auth.js";
 import { redactLogValue } from "../util/redact.js";
-import { normalizeNetworkDomains } from "../util/network-domains.js";
-import { resolveBinPath } from "../gateway/cli-detect.js";
 import { processFailureMessage } from "../util/process-outcome.js";
-import { HOST_IDENTITY_PATHS } from "../gateway/host-sensitive-paths.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { collectCodexChildAccounting, readCodexRootAccounting, snapshotCodexUsage, subtractCodexTokenUsage } from "./codex-usage.js";
 
@@ -71,46 +64,6 @@ const BARE_TOML_KEY = /^[A-Za-z0-9_-]{1,120}$/;
 
 function tomlString(value) {
   return JSON.stringify(String(value));
-}
-
-export function codexFeatureListHasNetworkProxy(output) {
-  return /^network_proxy\s+\S+\s+(?:true|false)\s*$/m.test(String(output || ""));
-}
-
-let networkProxySupported;
-let networkProxyProbeAt = 0;
-// Negative results are cached too (with a TTL so a CLI upgrade is noticed): the probe is a
-// synchronous execFileSync with a 5s timeout, and an incompatible host retrying approved-network
-// runs (scheduler, follow-ups) used to freeze the whole event loop for up to 5s per attempt.
-const NEGATIVE_PROBE_TTL_MS = 60_000;
-export function assertCodexNetworkProxySupported({ execImpl = execFileSync, useCache = execImpl === execFileSync } = {}) {
-  if (useCache && networkProxySupported === true) return;
-  if (useCache && networkProxySupported === false && Date.now() - networkProxyProbeAt < NEGATIVE_PROBE_TTL_MS) {
-    throw new Error("Codex approved-domain networking requires a CLI with the network_proxy feature; refusing to broaden egress. Update Codex or turn network off");
-  }
-  let supported = false;
-  try {
-    const output = execImpl("codex", ["features", "list"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      env: buildChildEnv({}, process.env),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    supported = codexFeatureListHasNetworkProxy(output);
-  } catch {
-    supported = false;
-  }
-  if (useCache) {
-    networkProxySupported = supported;
-    networkProxyProbeAt = Date.now();
-  }
-  if (!supported) {
-    throw new Error("Codex approved-domain networking requires a CLI with the network_proxy feature; refusing to broaden egress. Update Codex or turn network off");
-  }
-}
-
-function tomlDomainRules(domains) {
-  return `{ ${domains.map((domain) => `${tomlString(domain)} = "allow"`).join(", ")} }`;
 }
 
 function parseJsonLine(line) {
@@ -385,18 +338,13 @@ export function progressFromCodexEvent(p) {
 }
 
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", networkDomains = [], clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", skillsToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", codexStateDir = "", skillSupportDir = "", credentialPaths = [], toolchainPaths = [], codexExecutablePath = "", attachments = [], target = null, outFile }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", skillsToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", attachments = [], target = null, outFile }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
-  // Inside an isolated runtime the CONTAINER is the confinement boundary, so Codex's own sandbox
-  // is switched off (plan §6): no permission profiles compiled against host paths that do not
-  // exist in the image, and no network_proxy — egress is the container's network mode.
-  const isolated = isIsolatedTarget(runtimeTarget);
+  // The CONTAINER is the confinement boundary, so Codex's own sandbox is switched off: no
+  // permission profiles, no network_proxy — egress is the container's network mode.
+  if (!isIsolatedTarget(runtimeTarget)) throw new Error("Codex runs only inside a channel container");
   const helper = (name) => runtimeTarget.runtime.helperCommand(runtimeTarget, name);
-  if (!["off", "approved", "unrestricted"].includes(networkMode)) throw new Error(`Unknown Codex network mode: ${networkMode}`);
-  if (networkMode === "unrestricted" && !dangerouslySkip) {
-    throw new Error("Codex unrestricted network requires the foreground-admin sandbox bypass");
-  }
-  const approvedDomains = networkMode === "approved" ? normalizeNetworkDomains(networkDomains) : [];
+  if (!["off", "on"].includes(networkMode)) throw new Error(`Unknown Codex network mode: ${networkMode}`);
   const resuming = !isNewSession;
   const base = isNewSession ? ["exec"] : ["exec", "resume", sessionId];
   const args = [...base, "--json", "--skip-git-repo-check", "-o", outFile];
@@ -416,37 +364,15 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
   if (!resuming) args.push("-C", cwd);
   if (model) args.push("-m", model);
   if (effort) args.push("-c", `model_reasoning_effort=${tomlString(effort)}`);
-  // A host path — meaningless inside the image, where CODEX_HOME (the bind-mounted container
-  // codex home) is where Codex keeps its sessions.
-  if (codexStateDir && !isolated) args.push("-c", `sqlite_home=${tomlString(codexStateDir)}`);
 
-  // Confinement mirrors the channel's mode: admin → full bypass · bash/auto → workspace write ·
-  // read → read-only. Non-Full runs use Codex permission profiles (0.138+), NEVER the legacy
-  // -s/--sandbox or sandbox_mode/sandbox_workspace_write keys — a legacy key anywhere in the
-  // loaded config stack silently switches Codex back to the broad-read legacy sandbox, which is
-  // exactly the bug this replaces. --ignore-user-config keeps a host user's personal config
-  // (their own sandbox_mode, approvals, MCPs, hooks, writable roots) from broadening a Slack
-  // channel's run; auth still resolves via CODEX_HOME. Profile facts proven by live
-  // `codex sandbox` probes (macOS, codex-cli 0.144.1):
-  //   - quoted segments in `-c` dotted paths are treated literally, so symbol keys (":root")
-  //     must ride inside an inline-table VALUE, never in the key path;
-  //   - a profile without `extends` loses the baseline write denial (writes fall open), so both
-  //     profiles extend ":read-only" and re-grant access explicitly;
-  //   - ":minimal" bakes in /tmp read+write regardless of the requested access level and wins
-  //     over explicit "/tmp" denies (platform runtime carve-out) — nothing sensitive may live
-  //     in shared temp, which is why the per-run scratch dir sits under the sandbox-denied
-  //     gateway root and reaches commands only through the child TMPDIR + the ":tmpdir" grant;
-  //   - ".git" mirrors Codex's built-in workspace safeguard: readable, never writable;
-  //   - ":minimal" does NOT cover developer toolchains: without the extra read grants below,
-  //     git (the /usr/bin xcrun shim needs /Library/Developer), node, and python3 (Homebrew)
-  //     all fail to launch, and git hard-fails ("fatal") on an EPERM read of ~/.gitconfig.
-  //     The grants are read-only tool/config roots — credential stores (~/.ssh, ~/.config/gh,
-  //     ~/.npmrc, ~/.git-credentials) stay denied.
-  // The gateway MCP server is a separate stdio subprocess outside the command sandbox, so the
-  // daemon runtime root is no longer writable (or even readable) from model-generated commands.
+  // Confinement mirrors the channel's mode: admin → full bypass · everything else runs inside
+  // the container with Codex's own sandbox reduced to read-only for read mode. --ignore-user-config
+  // keeps a personal config in the container's HOME from broadening a channel's run.
+  // The gateway MCP server is the in-image bridge to the daemon's unix socket, outside the
+  // command sandbox, so the daemon runtime root is never reachable from model-generated commands.
   if (dangerouslySkip) {
     args.push("--dangerously-bypass-approvals-and-sandbox");
-  } else if (isolated) {
+  } else {
     // Read mode still asks Codex for a read-only sandbox — defence in depth inside the container,
     // and the one mode where a stray write would be a real surprise. Everything else runs
     // unconfined INSIDE the container, whose mounts, caps and network are the actual boundary.
@@ -456,56 +382,6 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     const sandbox = writable ? "danger-full-access" : "read-only";
     if (resuming) args.push("-c", `sandbox_mode=${tomlString(sandbox)}`);
     else args.push("--sandbox", sandbox);
-  } else {
-    args.push("--ignore-user-config");
-    const profile = writable ? "gateway-workspace" : "gateway-readonly";
-    // Personal skill support lives in the run-private synthetic HOME. Grant only that subtree so
-    // references/scripts/assets remain usable; the stable CODEX_HOME's auth/session state stays
-    // unreadable to model-generated commands.
-    const skillRead = skillSupportDir ? `, ${tomlString(path.resolve(skillSupportDir))} = "read"` : "";
-    // Git/gh credentials in the synthetic HOME are absent from network-off profiles. Approved
-    // mode grants only the same exact files/directories as Claude; they cannot be sent anywhere
-    // except the compiled destination allowlist.
-    const credentialReads = networkMode === "approved"
-      ? [...new Set(credentialPaths.map((entry) => path.resolve(String(entry))))].map((entry) => `, ${tomlString(entry)} = "read"`).join("")
-      : "";
-    // The CLI launches its command host through an absolute path inside its own standalone
-    // release. When that release lives under $HOME, :root=deny masks it and every shell tool
-    // fails with ENOENT before the requested command starts. Re-allow only the symlink and the
-    // self-contained release directory, never the surrounding ~/.codex auth/session tree.
-    let codexRuntimeRead = "";
-    if (codexExecutablePath) {
-      const lexical = path.resolve(codexExecutablePath);
-      let real = lexical;
-      try { real = realpathSync(lexical); } catch { /* keep the lexical path */ }
-      const releaseRoot = path.basename(path.dirname(real)) === "bin" ? path.dirname(path.dirname(real)) : path.dirname(real);
-      codexRuntimeRead = `, ${tomlString(lexical)} = "read", ${tomlString(releaseRoot)} = "read"`;
-    }
-    // Keep Codex aligned with Claude's generated lockdown on Linux: reviewed per-user Node/CLI
-    // paths (including split npm-global package roots) must survive :root=deny. These paths carry
-    // binaries only; saved logins remain independently network-gated through credentialReads.
-    const hostToolchainReads = [...new Set(toolchainPaths.map((entry) => path.resolve(String(entry))))]
-      .map((entry) => `, ${tomlString(entry)} = "read"`).join("");
-    const toolchainReads = `"/Library/Developer" = "read", "/opt/homebrew" = "read", "/usr/local" = "read"${hostToolchainReads}${skillRead}${credentialReads}${codexRuntimeRead}`;
-    // `:minimal` re-opens enough of the host OS for normal binaries to launch, including host
-    // identity files on Linux. Explicit path rules close those exceptions for every confined run.
-    // A qualifying foreground admin takes the bypass branch above and receives no profile.
-    const hostIdentityDenies = HOST_IDENTITY_PATHS.map((entry) => `, ${tomlString(entry)} = "deny"`).join("");
-    const filesystem = writable
-      ? `{ ":root" = "deny", ":minimal" = "read"${hostIdentityDenies}, ${toolchainReads}, ":tmpdir" = "write", ":slash_tmp" = "deny", ":workspace_roots" = { "." = "write", ".git" = "read", ".codex" = "read" } }`
-      : `{ ":root" = "deny", ":minimal" = "read"${hostIdentityDenies}, ${toolchainReads}, ":tmpdir" = "deny", ":slash_tmp" = "deny", ":workspace_roots" = { "." = "read" } }`;
-    args.push("-c", `default_permissions=${tomlString(profile)}`);
-    args.push("-c", `permissions.${profile}.extends=":read-only"`);
-    args.push("-c", `permissions.${profile}.filesystem=${filesystem}`);
-    if (networkMode === "approved") {
-      // The permission profile grants command networking; network_proxy makes that grant an OS-
-      // enforced allowlist. Keep every local/private and listener escape hatch explicitly closed.
-      args.push("-c", `features.network_proxy.enabled=true`);
-      args.push("-c", `permissions.${profile}.network={ enabled = true, domains = ${tomlDomainRules(approvedDomains)}, allow_local_binding = false, dangerously_allow_non_loopback_proxy = false, dangerously_allow_all_unix_sockets = false }`);
-    } else {
-      args.push("-c", `features.network_proxy.enabled=false`);
-      args.push("-c", `permissions.${profile}.network={ enabled = false }`);
-    }
   }
 
   // Optional host/runtime MCP policy. OpenAI injects `codex_apps` AFTER config parsing, so treating
@@ -560,23 +436,6 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     args.push("-c", `mcp_servers.gateway.command=${JSON.stringify(bridge.command)}`);
     args.push("-c", `mcp_servers.gateway.args=${JSON.stringify([...(bridge.args || []), secretBundlePath, "gatewayCapability", "CG_GATEWAY_CAPABILITY", ...helperScriptArgv(helper("gateway-mcp"))])}`);
     args.push("-c", `mcp_servers.gateway.env.CG_ENGINE="codex"`);
-    // Non-secret context only — these `-c` overrides are argv-visible (`ps`), so CG_APPROVAL_SECRET
-    // must NEVER ride here; the gateway MCP server falls back to the daemon's 0600
-    // internal-auth.json for the secret + port instead. The MCP server inherits Codex's isolated
-    // HOME, so pass daemon-resolved path roots explicitly rather than letting it derive disposable
-    // defaults under that HOME.
-    //
-    // None of that crosses into a container: an isolated run's gateway "server" is the in-image
-    // bridge to the daemon's unix socket, which needs only the signed capability (plus who is
-    // asking). Handing it CG_FS_ROOT / CG_WORKSPACE_DIR / CHANNELGATE_DIR / the host PATH would
-    // name host paths that do not exist in the image — and CHANNELGATE_DIR is the daemon root the
-    // container is deliberately denied.
-    if (!isolated) {
-      args.push("-c", `mcp_servers.gateway.env.CG_FS_ROOT=${JSON.stringify(gatewayFsRoot)}`);
-      args.push("-c", `mcp_servers.gateway.env.CG_WORKSPACE_DIR=${JSON.stringify(gatewayWorkspaceRoot)}`);
-      args.push("-c", `mcp_servers.gateway.env.CHANNELGATE_DIR=${JSON.stringify(gatewayRoot())}`);
-      args.push("-c", `mcp_servers.gateway.env.PATH=${JSON.stringify(process.env.PATH || "")}`);
-    }
     if (progressReport) args.push("-c", `mcp_servers.gateway.env.CG_PROGRESS_REPORT="1"`);
     // This server is the gateway's own control plane (schedules/reminders/background/channel admin).
     // It already enforces channel/admin policy inside the tool handlers, so Codex should not add an
@@ -603,9 +462,6 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
       const sdk = helper("composio-sdk-bridge");
       args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(sdk.command)}`);
       args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(sdk.args || []), endpoint.url])}`);
-      // The daemon root is never named to a containerized child (it is not mounted); the in-image
-      // bridge reads what it needs over the daemon socket instead.
-      if (!isolated) args.push("-c", `mcp_servers.${name}.env.CHANNELGATE_DIR=${JSON.stringify(gatewayRoot())}`);
       args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
       args.push("-c", `mcp_servers.${name}.startup_timeout_sec=120`);
       return;
@@ -647,7 +503,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
 // See buildClaudeEnv: the channel's own secrets are re-filtered at this boundary and go in first,
 // so the gateway's TMPDIR / HOME / CODEX_HOME — and the browser namespace, which is a
 // confinement boundary, not a preference (gateway/browser-env.js) — always win.
-export function buildCodexEnv({ tmpDir = "", home = "", codexHome = "", toolchainBinDir = "", extraEnv = {}, browserNamespace = "", target = null } = {}, source = process.env) {
+export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = null } = {}, source = process.env) {
   // An ISOLATED runtime has the image's layout, not the host's: HOME and CODEX_HOME are the
   // container's (CODEX_HOME is the bind-mounted per-install codex home that carries auth.json),
   // TMPDIR is the container's tmpfs, and PATH is the image's — the daemon's toolchain launcher dir
@@ -668,21 +524,7 @@ export function buildCodexEnv({ tmpDir = "", home = "", codexHome = "", toolchai
       PATH: image.path,
     };
   }
-  const extra = {
-    ...safeSpawnEnv(extraEnv),
-    ...browserSpawnEnv(browserNamespace),
-    // Node-based CLIs (Vercel included) do not honor HTTP(S)_PROXY unless this is enabled.
-    // Codex's network proxy remains the enforcement boundary and still limits destinations.
-    NODE_USE_ENV_PROXY: "1",
-    // Sandboxed runs get the private per-run scratch dir as TMPDIR: the ":tmpdir" symbol in the
-    // permission profile resolves through this variable, making it the run's only non-workspace
-    // writable path. Full-access runs keep the host TMPDIR untouched.
-    ...(tmpDir ? { TMPDIR: tmpDir } : {}),
-    ...(home ? { HOME: home } : {}),
-    ...(codexHome ? { CODEX_HOME: codexHome } : {}),
-    ...(toolchainBinDir ? { PATH: `${toolchainBinDir}${path.delimiter}${source.PATH || ""}` } : {}),
-  };
-  return buildChildEnv(extra, source);
+  throw new Error("Codex runs only inside a channel container");
 }
 
 function commandError(message, details = {}) {
@@ -702,7 +544,6 @@ export async function runCodex({
   dangerouslySkip = false,
   writable = false,
   networkMode = "off",
-  networkDomains = [],
   clean = false,
   autoApprove = false,
   composioUserEndpoint = null,
@@ -720,15 +561,9 @@ export async function runCodex({
   progressReport = false,
   model = "",
   effort = "",
-  codexUserHome = "",
-  codexHome = "",
   codexStateDir = "",
-  codexSkillSupportDir = "",
-  codexCredentialPaths = [],
-  codexToolchainPaths = [],
-  codexToolchainBinDir = "",
   attachments = [],
-  // Where this turn runs (src/runtimes/). Absent = the host backend, i.e. today's direct spawn.
+  // Where this turn runs (src/runtimes/): the channel's container.
   target = null,
   // Per-run ENGINE-FACING files (the -o answer file, the secret bundle) for an isolated target:
   // a host directory bind-mounted at the IDENTICAL absolute path, so both sides name it the same
@@ -748,17 +583,12 @@ export async function runCodex({
   // before any work exists to lose, so the orchestrator diverts it to the other harness with a
   // visible reason. The probe fails OPEN: only a positively absent/empty credential lands here.
   const runtime = runtimeTargetOr(target, cwd);
-  const isolated = isIsolatedTarget(runtime);
-  // Same gate, different credential store: an isolated run does not authenticate against the host
-  // auth file the daemon reads, so the BACKEND answers "is this runtime's Codex signed in?" (it
-  // owns the container's codex home). An optional hook — a backend that cannot tell says nothing
-  // and the turn proceeds, exactly as the host probe fails open.
-  const credentialFailure = isolated
-    ? (typeof runtime.runtime.credentialError === "function" ? await runtime.runtime.credentialError(runtime, "codex") : null)
-    : await (async () => {
-      const authState = await readCodexAuthState({ codexHome, hostCodexHome: codexStateDir });
-      return authState.known && !authState.authenticated ? `Codex is not signed in: ${authState.detail}` : "";
-    })();
+  if (!isIsolatedTarget(runtime) || !artifactDir) {
+    throw commandError("Codex runs only inside a channel container", { engine: "codex", providerError: false });
+  }
+  // The BACKEND answers "is this runtime's Codex signed in?" (it owns the container's codex home).
+  // An optional hook — a backend that cannot tell says nothing and the turn proceeds.
+  const credentialFailure = typeof runtime.runtime.credentialError === "function" ? await runtime.runtime.credentialError(runtime, "codex") : null;
   // A backend may answer with an Error or with the sentence itself; both mean the same thing here.
   const authDetail = typeof credentialFailure === "string" ? credentialFailure : String(credentialFailure?.message || "");
   if (authDetail) {
@@ -783,23 +613,15 @@ export async function runCodex({
     ? { file: "", offset: 0, total: {}, model: "" }
     : await snapshotCodexUsage(codexStateDir, sessionId).catch(() => ({ file: "", offset: 0, total: {}, model: "" }));
   try {
-  // A probe of the HOST CLI's features. An isolated run compiles no network_proxy at all (the
-  // container's network mode is the boundary), so the host binary's capabilities are irrelevant.
-  if (!dangerouslySkip && !isolated && networkMode === "approved") assertCodexNetworkProxySupported();
-  // Per-run scratch dir (mkdtemp → mode 0700) under the gateway root, NOT the shared system temp:
-  // the permission profiles leave /tmp readable+writable (Codex ":minimal" platform carve-out), so
-  // a scratch file there would be exposed to every concurrent sandboxed run. Under ~/.channelgate
-  // the profiles deny everything except this exact dir, which rides in as the child TMPDIR. The
-  // codex CLI itself runs outside the command sandbox and writes the -o file here regardless of mode.
-  // Both files are ENGINE-FACING: the CLI writes the answer to the -o file and the secret bridges
-  // read the bundle. On an isolated target they must therefore live in the run's artifact dir —
-  // bind-mounted at the identical absolute path — and never under the gateway root, which a
-  // container is deliberately denied. Host targets keep today's exact locations.
-  const scratchBase = artifactDir ? path.join(artifactDir, "tmp") : path.join(gatewayRoot(), "tmp");
+  // Per-run scratch dir (mkdtemp → mode 0700) and the secret bundle are ENGINE-FACING: the CLI
+  // writes the answer to the -o file and the secret bridges read the bundle, so both live in the
+  // run's artifact dir — bind-mounted at the identical absolute path — never under the gateway
+  // root, which a container is deliberately denied.
+  const scratchBase = path.join(artifactDir, "tmp");
   await mkdir(scratchBase, { recursive: true, mode: 0o700 });
   const scratchDir = await mkdtemp(path.join(scratchBase, "run-"));
   const outFile = path.join(scratchDir, `cg-codex-${randomUUID()}.txt`);
-  const secretDir = artifactDir ? path.join(artifactDir, "run") : runTmpDir();
+  const secretDir = path.join(artifactDir, "run");
   const secretBundlePath = !clean && [gatewayCapability, composioUserToken, composioToken, skillsToken, toolboxToken, makeToolboxKey].some(Boolean)
     ? path.join(secretDir, `cg-codex-secrets-${randomUUID()}.json`)
     : "";
@@ -807,7 +629,7 @@ export async function runCodex({
     await mkdir(secretDir, { recursive: true, mode: 0o700 });
     await writeFile(secretBundlePath, JSON.stringify({ gatewayCapability, composioUserToken, composioToken, skillsToken, toolboxToken, makeToolboxKey }), { mode: 0o600 });
   }
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, networkDomains, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, skillsToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, skillSupportDir: codexSkillSupportDir, credentialPaths: codexCredentialPaths, toolchainPaths: codexToolchainPaths, codexExecutablePath: isolated ? "" : (resolveBinPath("codex") || ""), attachments, target: runtime, outFile });
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, skillsToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, attachments, target: runtime, outFile });
 
   return await new Promise((resolve, reject) => {
     // Minimal allowlisted env — the sandbox can't hide the child's own environment (see child-env.js).
@@ -816,7 +638,7 @@ export async function runCodex({
       cmd: "codex",
       args,
       cwd,
-      env: buildCodexEnv({ tmpDir: dangerouslySkip ? "" : scratchDir, home: codexUserHome, codexHome, toolchainBinDir: dangerouslySkip ? "" : codexToolchainBinDir, extraEnv, browserNamespace, target: runtime }),
+      env: buildCodexEnv({ extraEnv, browserNamespace, target: runtime }),
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
       runId: runId || newRunId("run"),

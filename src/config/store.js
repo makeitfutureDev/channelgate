@@ -198,7 +198,6 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     nudges: false, // opt-in: stall + 24h no-response thread reminders
     memory: undefined, // folder-scoped MEMORY.md: undefined = use the gateway default; true/false to override
     engine: "", // per-channel engine: "" = use the global default, or "claude" / "codex"
-    runtime: "", // per-channel runtime backend: "" = gateway default, or "host" / "container" (admin channels always host)
     approvedTools: [], // tool names "approved forever" here — auto-approved without a prompt
     workDir: "", // custom absolute path to run Claude in (empty = the default gateway folder)
     syncDriveFolder: "", // Google Drive folder link to 2-way sync (scheduled) with this channel's working folder (empty = off)

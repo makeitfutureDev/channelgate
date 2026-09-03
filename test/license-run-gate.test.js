@@ -14,6 +14,8 @@ import { ensureTestEnv, clearTestLicense, testLicenseEnv, testLicensePublicKeyPe
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 ensureTestEnv();
+const { useFakeRuntime: __useFakeRuntime } = await import("./runtime-fake.js");
+await __useFakeRuntime();
 process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
 

@@ -1,19 +1,16 @@
 // Channel folder provisioning. For each conversation we create a gated folder and write a
-// `.claude/settings.json` straight from the `channelgate` skill template: filesystem
-// sandbox confined to the folder, persistent memory off, and a permission allowlist limited
-// to the channel's granted MCP namespaces (+ Composio, per author). Skills the channel is
-// granted are copied into the folder. Everything here is idempotent — safe to re-run on
+// `.claude/settings.json` straight from the `channelgate` skill template: the tool permissions
+// its mode grants, persistent memory off, and a permission allowlist limited to the channel's
+// granted MCP namespaces (+ Composio, per author). The file is POLICY — confinement is the channel
+// container the folder is mounted into. Skills the channel is granted are copied into the folder. Everything here is idempotent — safe to re-run on
 // every message so config changes in the admin UI take effect on the next turn.
 import { mkdir, writeFile, cp, access, readdir, readlink, rename, symlink, lstat, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { channelFolder, channelSettingsFile, channelAdminSettingsFile, claudeEngineHome, cleanWorkspaceFolder, gatewayRoot, workspaceFolder, workspaceRoot } from "../config/paths.js";
-import { listChannels } from "../config/store.js";
+import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder } from "../config/paths.js";
 import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
-import { toolchainReadPaths } from "./toolchain-paths.js";
-import { HOST_IDENTITY_PATHS } from "./host-sensitive-paths.js";
 
 const MANAGED_SKILL_MARKER = ".gateway-managed-skill";
 
@@ -36,7 +33,7 @@ export function effectiveWorkDir(slug, meta = {}) {
   if (w && path.isAbsolute(w)) {
     // Read-time containment: the write entry points (admin UI, MCP tool) already validate, but a
     // workDir stored BEFORE the allowlist existed (or before an admin tightened the root) would
-    // otherwise be honored as run cwd + sandbox root forever. Re-check here — one chokepoint
+    // otherwise be honored as run cwd + mounted work folder forever. Re-check here — one chokepoint
     // covers runs, background jobs, lockdown generation, and the memory routes.
     const real = resolveWithinRoot(allowedFsRoot(), w);
     if (real) {
@@ -53,10 +50,8 @@ export function effectiveWorkDir(slug, meta = {}) {
 }
 import { allowMatchesFor, gatewayToolRefs, namespacesFor } from "./mcp-catalog.js";
 import { applyGatewayGuide } from "./guide.js";
-import { DEFAULT_PLATFORM, platformFolderNames } from "../platforms/registry.js";
-import { getAgentsFile, getAgentsInstructions, getCredentialHomePaths, getEffectiveNetworkDomains } from "../config/settings.js";
-import { allCliCredentialHomePaths } from "../config/cli-catalog.js";
-import { normalizeStoredDomains } from "../util/network-domains.js";
+import { DEFAULT_PLATFORM } from "../platforms/registry.js";
+import { getAgentsFile, getAgentsInstructions } from "../config/settings.js";
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
 import { isLibraryStub, splitFavorites, ensureCodexSkillsLink } from "./library-skills.js";
 import { sanitizeSkillGrantNames } from "./access-grants.js";
@@ -64,7 +59,7 @@ import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 // Capability reads only — never the registry or the resolver (resolve.js imports THIS module for
 // effectiveWorkDir, so the dependency has to stay one-way). contract.js imports nothing but
 // node:crypto, which is what makes that safe.
-import { runtimeSupports } from "../runtimes/contract.js";
+import { IMAGE_HELPERS } from "../runtimes/container/image-paths.js";
 
 // Legacy markers — the old standalone memory block in CLAUDE.md; only stripped on migration now.
 // The memory system lives OUTSIDE the instruction file: a `channel-memory` skill (protocol) + the
@@ -279,7 +274,7 @@ async function ensureMirrorSymlink(linkPath, target, targetPath) {
 
 // Append to (or replace) the channel-owned section of the channel's CLAUDE.md. Used by the
 // `update_channel_instructions` gateway MCP tool so "add a rule that X" works in every mode —
-// the daemon-side MCP process writes outside the run's sandbox. The existing managed block is
+// the daemon-side MCP process writes the file on the daemon host, outside the run's container. The existing managed block is
 // kept verbatim (default folders); a block-less file (custom project folder) is appended to
 // as-is. Returns { path }.
 export async function updateChannelInstructions(slug, meta, { text, replace = false }) {
@@ -325,16 +320,10 @@ export async function updateChannelInstructions(slug, meta, { text, replace = fa
 const SAFE_BUILTIN_TOOLS = ["Read", "Glob", "Grep"];
 
 // Unlocked per-channel by `allowBash` ("Allow shell"). Bash can write via redirection anyway, so
-// the file-write tools are unlocked alongside it. Still inside the OS sandbox: READS are confined
-// to the folder, and writes deny secrets + the gateway config + other channels (see buildSettings)
-// — but writes are NOT confined to the folder alone (the folder lives under home). This is a
-// capability grant, NOT the full escalation of admin mode. Network stays blocked by the sandbox.
+// the file-write tools are unlocked alongside it. Confinement is the channel container: the shell
+// sees the container's own HOME volume and the mounted work folder, never the daemon's filesystem
+// or another channel's. This is a capability grant, NOT the full escalation of admin mode.
 const SHELL_TOOLS = ["Bash", "Write", "Edit", "MultiEdit"];
-
-// Claude Code's sandbox uses a leading-slash-prefixed absolute path form ("//Users/…").
-function sandboxPath(absPath) {
-  return `/${absPath.replace(/^\/+/, "")}`;
-}
 
 // Where to look for a skill by name when a channel grants it. First match wins; copy is
 // skipped if the destination already exists (preserves per-folder customization).
@@ -357,236 +346,53 @@ async function exists(p) {
   }
 }
 
-// Other channels' working folders, so a Bash-enabled channel can be write-denied from them.
-// Two sources: the default sibling folders under the workspace root, AND every channel's stored
-// CUSTOM workDir. The second matters because a custom project lives elsewhere under the allowed
-// root (usually plain $HOME), where the enumerated deny list is the only thing between one
-// writable channel and another channel's project — readdir'ing the workspace root alone left
-// those wide open to any channel that knew the path. Stored workDirs are resolved exactly the
-// way effectiveWorkDir resolves them (absolute + realpath containment in the allowed root), so
-// the denied path is the one a run would actually get. Excludes this run's own folder — and any
-// stored dir that CONTAINS it, since sandbox write-denies beat allows and an ancestor entry
-// (two channels sharing a project, or one nested in another) would brick the run's own writes.
-async function siblingChannelDirs(folder) {
-  const dirs = new Set();
-  // The workspace root is now one level of PLATFORM folders (slack/, teams/, google-chat/) with
-  // the channel folders beneath them, so the sweep descends one level. Anything else sitting at
-  // the top level is not a gateway-owned channel folder and is left alone; a pre-rename layout
-  // (channel folders directly under the root) has already been moved by the boot migration.
-  const platformDirs = new Set(platformFolderNames());
-  try {
-    for (const d of await readdir(workspaceRoot(), { withFileTypes: true })) {
-      if (!d.isDirectory() || !platformDirs.has(d.name)) continue;
-      const platformRoot = path.join(workspaceRoot(), d.name);
-      try {
-        for (const c of await readdir(platformRoot, { withFileTypes: true })) {
-          if (c.isDirectory()) dirs.add(path.join(platformRoot, c.name));
-        }
-      } catch {
-        /* platform folder vanished — nothing to deny under it */
-      }
-    }
-  } catch {
-    /* workspace root absent — no default siblings to deny */
-  }
-  try {
-    const root = allowedFsRoot();
-    for (const { meta } of await listChannels()) {
-      const w = (meta?.workDir || "").trim();
-      if (!w || !path.isAbsolute(w)) continue;
-      const real = resolveWithinRoot(root, w);
-      if (real) dirs.add(real);
-    }
-  } catch {
-    /* config store unavailable — keep the default-sibling denies */
-  }
-  return [...dirs].filter((p) => !pathWithin(folder, p));
-}
-
-// Sensitive home subpaths a Bash-enabled channel must never write (creds, cloud configs, the
-// user's own Claude state). The gateway root is added separately.
-//
-// The second group is about ESCAPE, not secrets: anything the host executes later is as good as
-// code execution outside the sandbox. Shell rc files run on the operator's next shell; macOS
-// LaunchAgents/LaunchDaemons run on next login; ~/bin and ~/.local/bin shadow commands on PATH;
-// the systemd user units are the Linux equivalent. Writing any of them would let a Bash channel
-// break confinement on a delay, which is exactly what the folder sandbox exists to prevent.
-const SENSITIVE_HOME = [
-  ".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube", ".gcloud", ".azure", ".claude", ".claude.json", ".npmrc", ".gitconfig", "Library/Keychains",
-  ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".bashrc", ".bash_profile", ".bash_login", ".profile", ".inputrc",
-  "Library/LaunchAgents", "Library/LaunchDaemons", ".config/systemd", ".config/autostart",
-  "bin", ".local",
-];
-
-// The daemon's own checkout. `main` is the served branch (see AGENTS.md), so a write here is
-// executed on the next restart — which the update tooling can itself trigger. Derived from this
-// module's location so it follows the install, wherever it lives.
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-
-// Is `child` the same path as `parent`, or inside it? Path-only (no realpath): these are the
-// daemon's own known-good locations, and buildSettings must stay synchronous-cheap.
-function pathWithin(child, parent) {
-  const rel = path.relative(path.resolve(parent), path.resolve(child));
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-}
-
 // Mechanical subagent-completion enforcement: a Stop hook the Claude CLI runs on every attempted
 // turn end. It blocks the stop while background Agent/Task subagents or Workflows are still
 // running, so their results can't be silently orphaned by the turn ending (process exit / idle-kill
-// would take them down). Absolute path into the repo — hook commands run daemon-side of the sandbox
-// boundary (spawned by the CLI, not the Bash tool), so the script needs no copy into the folder.
+// would take them down). The script is baked into the channel image at a fixed path
+// (src/runtimes/container/image-paths.js); the checkout copy below is its source, and the daemon's
+// own probes do not run it.
 export const STOP_SUBAGENTS_HOOK = fileURLToPath(new URL("./hooks/stop-subagents.mjs", import.meta.url));
 
-// An ISOLATED runtime has no daemon checkout to run the script from — the hook ships inside the
-// image, at a path only that backend knows. Ask the backend for the command instead of composing a
-// repo path (the same reason mcp.js asks it for the gateway MCP entry). A host target keeps the
-// exact string it has always written: its helper command is `<process.execPath> <abs script>`,
-// which is not byte-identical to today's `node "<abs script>"`, and the settings digest (and with
-// it every warm-process fingerprint) must not move for a change that is about containers.
-function stopHookCommand(target = null) {
-  if (!target?.runtime || !runtimeSupports(target, "isolated")) return `node "${STOP_SUBAGENTS_HOOK}"`;
-  const { command, args = [] } = target.runtime.helperCommand(target, "stop-subagents-hook");
+function stopHookCommand() {
+  const { command, args = [] } = IMAGE_HELPERS["stop-subagents-hook"];
   return [command, ...args].map((part) => (/[\s"'\\$]/.test(String(part)) ? JSON.stringify(String(part)) : String(part))).join(" ");
 }
 
-export function subagentStopHooks(target = null) {
-  return { Stop: [{ hooks: [{ type: "command", command: stopHookCommand(target) }] }] };
+export function subagentStopHooks() {
+  return { Stop: [{ hooks: [{ type: "command", command: stopHookCommand() }] }] };
 }
 
-// Build the lockdown settings object for a channel from its meta. `allowBypass` is set ONLY for
-// the admin-run settings variant (see ensureChannelFolder): the shared channel settings file
-// always hard-disables the --dangerously-skip-permissions bypass.
-export async function buildSettings(meta, { allowBypass = false, target = null } = {}) {
-  // Where this run's engine lives. An ISOLATED runtime (the container backend) already puts the
-  // engine behind an OS boundary the daemon owns: the container sees the work dir, the clean
-  // workspace and this run's artifact dir, and nothing else — no host home, no gateway root, no
-  // other channel. Claude's own sandbox inside it would be confinement layered on confinement,
-  // and every path it names (home, the gateway root, sibling channel folders, host toolchain
-  // binaries, credential homes) is a HOST path that does not exist on that side of the boundary,
-  // so the block would deny and allow the wrong things. The whole sandbox section is therefore
-  // omitted for an isolated target — and with it the workspace scan, the listChannels() pass and
-  // the toolchain/credential carve-outs that only exist to build it. Permissions, the MCP
-  // allowlist, memory-off and the Stop hook are unchanged: those are policy, not confinement.
-  const isolated = runtimeSupports(target, "isolated");
-  // Sandbox confines to the effective work dir (custom folder or the default channel folder).
-  const folder = effectiveWorkDir(metaSlug(meta), meta);
-  const home = os.homedir();
-  const root = gatewayRoot();
-
+// Build the settings object for a channel from its meta. `allowBypass` is set ONLY for the
+// admin-run settings variant (see ensureChannelFolder): the shared channel settings file always
+// hard-disables the --dangerously-skip-permissions bypass.
+//
+// What this file carries is POLICY, not confinement: the tool permissions a mode grants, the MCP
+// allowlist, memory-off and the Stop hook. Confinement is the channel container — its per-channel
+// HOME volume, the mounted work folder, and its network mode — so there is no sandbox block here
+// and no host path of any kind (the engine never sees the daemon's filesystem).
+export async function buildSettings(meta, { allowBypass = false } = {}) {
   // Clean mode: run bare — no MCP servers reachable at all (the per-run --mcp-config is empty +
-  // strict, and the lockdown's allowlist is empty too), and no MCP tool namespaces pre-approved.
+  // strict, and the allowlist is empty too), and no MCP tool namespaces pre-approved.
   const clean = Boolean(meta.cleanMode);
   const namespaces = clean ? [] : await namespacesFor(meta.allowedMcps);
   const gatewayTools = clean ? [] : gatewayToolRefs();
   const allowMatches = clean ? [] : await allowMatchesFor(meta.allowedMcps);
 
   // Auto mode (autonomous: permission prompts auto-approved — see requestApproval) gets the same
-  // sandboxed writability as Allow Bash, so the agent can actually do file work without prompts.
+  // file-writing tools as Allow Bash, so the agent can actually do file work without prompts.
   const bashy = Boolean(meta.allowBash || meta.autoMode);
 
   // Folder-scoped memory: when on (and the channel isn't already bash-enabled, which grants Write/
   // Edit broadly), grant a NARROW Write/Edit limited to MEMORY.md so the agent can persist memory
-  // without unlocking general file writes. The sandbox write rules below must then also leave the
-  // folder writable, or this grant fails closed and memory silently never persists.
+  // without unlocking general file writes.
   const memTools = memoryEnabled(meta) && !bashy ? [`Write(${MEM_FILE})`, `Edit(${MEM_FILE})`] : [];
-
-  // Reads are always confined to the folder: home + gateway root are denied and the folder is
-  // re-allowed (read-allows override read-denies), so home/secrets/other channels are unreadable.
-  // Writes default to the same confinement. When the folder must be WRITABLE (allowBash/autoMode,
-  // or just the MEMORY.md grant above) there's a wrinkle: Claude's sandbox write model is
-  // deny-wins (an allowWrite can't be carved out of a denied parent), and the folder lives under
-  // home, so we can't deny all of home for writes without also blocking the folder — a blanket
-  // home deny is what used to silently break memory writes in read-only channels. Instead we
-  // default-allow writes and explicitly deny the sensitive targets: the gateway config (all
-  // tokens/other-channel data), known secret/cred dirs, and every OTHER channel's working folder.
-  // NOTE: this does NOT restrict writes to the folder alone — writes elsewhere in home stay
-  // possible at the SANDBOX level. What the agent may do un-prompted is still governed by
-  // permissions.allow: a read-only+memory channel only auto-allows Write/Edit on MEMORY.md, and
-  // everything else keeps prompting for human approval. Strict folder-only writes would require
-  // the working folder to live outside home.
-  const folderWritable = bashy || memTools.length > 0;
-  // Everything from here to the network block builds the sandbox, and every path in it is a HOST
-  // path. An isolated target skips all of it — including the workspace readdir + listChannels()
-  // pass inside siblingChannelDirs, which exists only to enumerate sandbox write-denies.
-  const filesystem = isolated ? null : {
-    // A channel being Admin-mode must never expose host identity to a non-admin author. Claude's
-    // OS baseline keeps selected system files readable for normal process startup, so close these
-    // identity-bearing exceptions explicitly. The admin-run variant disables this sandbox only
-    // after run.js proves the foreground author is an admin.
-    denyRead: [sandboxPath(home), sandboxPath(root), ...HOST_IDENTITY_PATHS.map(sandboxPath)],
-    allowRead: [sandboxPath(folder)],
-    denyWrite: [sandboxPath(home), sandboxPath(root)],
-    allowWrite: [sandboxPath(folder)],
-  };
-  if (filesystem && folderWritable) {
-    // EVERY catalog CLI credential path joins the deny list, enabled or not: read access is what
-    // an enabled integration grants — write must stay denied so a run can't tamper with a token.
-    const sensitive = [...SENSITIVE_HOME, ...allCliCredentialHomePaths()].map((p) => sandboxPath(path.join(home, p)));
-    const siblings = (await siblingChannelDirs(folder)).map(sandboxPath);
-    // The repo is only denied when it isn't itself the work dir — a channel deliberately pointed
-    // at the checkout (the gateway develops itself from Slack) must still be able to edit it.
-    const repo = pathWithin(folder, REPO_ROOT) ? [] : [sandboxPath(REPO_ROOT)];
-    filesystem.denyWrite = [...new Set([sandboxPath(root), ...sensitive, ...siblings, ...repo])];
-    filesystem.allowWrite = [sandboxPath(folder)];
-  }
-
-  // Toolchain reachability. The blanket read-deny on home also masks a per-user install of the
-  // agent's OWN runtime — on Linux node/npm/npx/vercel/gh commonly live in ~/.local/bin, and the
-  // sandbox makes them cease to exist rather than merely be unreadable (see toolchain-paths.js).
-  // Re-allow READING just those binaries for the runs that can actually execute something. Not
-  // gated on network: `node build.js` is useful with egress off, and the grant carries no
-  // credential — the saved logins stay behind the network-gated carve-out below.
-  if (filesystem && (bashy || allowBypass)) {
-    const toolchain = toolchainReadPaths({ home, root }).map(sandboxPath);
-    // Per-file grants materialize as binds, and a SYMLINK entry cannot be bound — a host whose
-    // shims are symlinks (node -> ../node/bin/node) loses them inside the sandbox while plain
-    // binaries survive. The stable launcher directory (run-grant-artifacts.js) holds direct
-    // symlinks to the resolved targets and is granted as a DIRECTORY, which keeps symlink
-    // semantics; the runner prepends it to the child PATH. Re-allowing the container below the
-    // otherwise-denied gateway root mirrors the runtime/claude-plugins carve-out.
-    const launcherRoot = sandboxPath(path.join(root, "runtime", "toolchain-bin"));
-    filesystem.allowRead = [...new Set([...filesystem.allowRead, ...toolchain, launcherRoot])];
-  }
-
-  // Network egress is blocked by default. With allowNetwork, permit the configured domains
-  // (GitHub by default). For write-capable Bash/Auto channels we also re-allow READING just
-  // the tooling credential files (home is otherwise read-denied): the git/gh baseline so
-  // `git push`/`gh` can authenticate — and nothing else: a channel's provider login is a
-  // `/secrets` variable (config/channel-env.js), never the daemon's host-wide saved login.
-  // The admin-run variant (allowBypass) gets the same read re-allows even without Bash/Auto:
-  // an admin author in an admin-mode channel is the most privileged run, and without this an
-  // admin channel with Bash off was the only network-on mode that could never authenticate git.
-  // Channel-approved extras (request_network_domain: a human clicked Approve on each one) join
-  // the gateway-wide list for THIS channel only; malformed stored values degrade to no extras.
-  let network;
-  if (filesystem && meta.allowNetwork) {
-    network = { allowedDomains: [...new Set([...getEffectiveNetworkDomains(), ...normalizeStoredDomains(meta.extraNetworkDomains)])] };
-    if (bashy || allowBypass) {
-      // Path list lives in config/settings.js + cli-catalog.js. known_hosts ONLY — never keys or
-      // ssh config. Host-key verification is what breaks ssh-remote git under the synthetic
-      // engine HOME; auth stays agent-based (SSH_AUTH_SOCK).
-      // Grant BOTH the real target and the synthetic-HOME symlink that points at it. The engine
-      // runs with HOME set to claudeEngineHome(), which sits inside the read-denied gateway root:
-      // git/gh resolve their config through THAT path, and macOS Seatbelt refuses at the link
-      // itself, long before the allowed real target is ever reached. Granting only the target is
-      // what made `git push`/`gh` fail with EPERM on ~/.gitconfig in a fully network-enabled
-      // channel. Codex already grants both stages (see engines/codex.js) — this is Claude's half.
-      const engineHome = claudeEngineHome();
-      filesystem.allowRead = [
-        ...filesystem.allowRead,
-        ...getCredentialHomePaths().flatMap((rel) => [
-          sandboxPath(path.join(home, rel)),
-          sandboxPath(path.join(engineHome, rel)),
-        ]),
-      ];
-    }
-  }
 
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
 
     // MCP allowlist: only these servers are reachable when running interactively in the
-    // folder. (The headless runner additionally passes --strict-mcp-config — Slice 3.)
+    // folder. (The headless runner additionally passes --strict-mcp-config.)
     allowedMcpServers: allowMatches,
 
     // Persistent memory fully disabled for gateway folders.
@@ -604,7 +410,7 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
       // passed per-spawn to admin authors only — see ensureChannelFolder + run.js) allows it, by
       // OMITTING this key: "disable"/absent are the only values Claude Code accepts here — any
       // other value (including "allow") makes the CLI silently discard the ENTIRE settings file,
-      // which would strip the Stop hook, deny list, memory-off, and sandbox from the run.
+      // which would strip the Stop hook, deny list and memory-off from the run.
       ...(allowBypass ? {} : { disableBypassPermissionsMode: "disable" }),
       disableAutoMode: "disable",
       additionalDirectories: [],
@@ -614,31 +420,7 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
 
     // Refuse to end a turn while background subagents are still running (all modes, clean
     // included — the orphaned-subagent hazard is mode-independent). See hooks/stop-subagents.mjs.
-    hooks: subagentStopHooks(target),
-
-    // Confine the filesystem (Bash) to this folder only. Deny the home dir (covers ~/.ssh,
-    // ~/.claude credentials, etc.) and the gateway root (covers other channels + the config
-    // dir that holds user tokens), then re-allow just this channel's folder.
-    //
-    // Omitted entirely for an isolated runtime: the OS boundary IS the confinement there, and a
-    // block full of host paths would be both redundant and wrong (see the top of this function).
-    ...(filesystem
-      ? {
-        sandbox: {
-          // OFF for the admin-run variant: "full tools, sandbox off" is the admin contract, and the
-          // bypass flag alone never lifts settings.sandbox. This must live HERE, not only in the
-          // ensureChannelFolder clone: every Claude run loads a PER-RUN settings file that
-          // run-grant-artifacts derives from buildSettings({allowBypass}) — the first fix patched
-          // only settings-admin.json, which Claude spawns never read, so escalated turns still saw
-          // the tmpfs home. The filesystem block stays (harmless when disabled) because the grant
-          // artifact appends plugin allowRead entries to it unconditionally.
-          enabled: !allowBypass,
-          allowUnsandboxedCommands: false,
-          filesystem,
-          ...(network ? { network } : {}),
-        },
-      }
-      : {}),
+    hooks: subagentStopHooks(),
   };
 }
 
@@ -674,35 +456,25 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   // bind mount of a missing source is either an error or a root-owned directory conjured by the
   // container daemon, so they are created HERE, 0700, before any backend is asked to start.
   // Host targets carry neither, so this is a no-op for them.
-  if (target?.cleanWorkDir && runtimeSupports(target, "isolated")) {
-    await mkdir(target.cleanWorkDir, { recursive: true, mode: 0o700 });
-  }
+  if (target?.cleanWorkDir) await mkdir(target.cleanWorkDir, { recursive: true, mode: 0o700 });
   if (target?.artifactDir) await mkdir(target.artifactDir, { recursive: true, mode: 0o700 });
 
-  // Build ONCE per message (buildSettings readdirs the whole workspace root and takes one
-  // listChannels pass for the sandbox sibling-deny list); skip the write when on-disk content is
-  // already identical.
-  const settings = await buildSettings({ ...meta, _slug: slug }, { target });
+  // Build ONCE per message; skip the write when on-disk content is already identical.
+  const settings = await buildSettings({ ...meta, _slug: slug });
   await writeIfChanged(channelSettingsFile(slug, platform), JSON.stringify(settings, null, 2) + "\n");
 
-  // Admin-run settings variant: same lockdown with exactly TWO deltas — the bypass allowance
-  // and the OS sandbox switched off — derived by cloning instead of a second buildSettings pass.
+  // Admin-run settings variant: the same file with exactly ONE delta — the bypass allowance —
+  // derived by cloning instead of a second buildSettings pass.
   // It exists ONLY while the channel is in admin mode (removed the moment adminMode goes off, so
   // no stale allowance lingers) and is passed via --settings solely for admin-author runs —
   // run.js requires an admin author AND adminMode before selecting it, so a non-admin run never
-  // sees a file that would honor --dangerously-skip-permissions or lift the sandbox.
+  // sees a file that would honor --dangerously-skip-permissions.
   const adminSettingsFile = channelAdminSettingsFile(slug, platform);
   if (meta.adminMode) {
     const adminSettings = structuredClone(settings);
     // Omit (never set) the bypass key: absence is what permits --dangerously-skip-permissions.
     // Writing any non-"disable" value would void the whole file — see buildSettings.
     delete adminSettings.permissions.disableBypassPermissionsMode;
-    // Sandbox OFF, same shape as buildSettings({allowBypass:true}) produces for the per-run
-    // artifact (see the sandbox block there for the full story) — kept in the clone so the
-    // fallback file used when no per-run artifact exists agrees with the artifact path.
-    // An isolated target writes no sandbox block at all (and admin-mode channels pin the host
-    // backend anyway, per resolveRuntime) — so only switch off a block that exists.
-    if (adminSettings.sandbox) adminSettings.sandbox.enabled = false;
     await writeIfChanged(adminSettingsFile, JSON.stringify(adminSettings, null, 2) + "\n");
   } else {
     await rm(adminSettingsFile, { force: true });

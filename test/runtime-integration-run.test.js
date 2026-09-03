@@ -1,7 +1,7 @@
-// The turn half of the container runtime (v0.8 P1): what runMessage does with the RuntimeTarget it
-// resolves once per turn. Driven end-to-end through a FAKE backend (test/runtime-fake.js) so the
-// ordering guarantees are observed rather than inferred — the real backend needs docker, an image
-// and a permissive kernel, none of which a test suite may require.
+// The turn half of the container runtime: what runMessage does with the RuntimeTarget it resolves
+// once per turn. Driven end-to-end through a FAKE backend (test/runtime-fake.js) so the ordering
+// guarantees are observed rather than inferred — the real backend needs docker, an image and a
+// permissive kernel, none of which a test suite may require.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -36,11 +36,12 @@ process.env.CG_WORKSPACE_DIR = path.join(scratch, "runtime-run-workspaces");
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { runMessage, setRuntimeResolver, runArtifactRoot } = await import("../src/gateway/run.js");
-const { getSessionRuntime } = await import("../src/gateway/sessions.js");
+const { getSessionRuntime, saveSession } = await import("../src/gateway/sessions.js");
 const { readEvents } = await import("../src/util/logger.js");
 const { runTmpDir, claudeEngineHome } = await import("../src/config/paths.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
-const { createFakeRuntimeBackend, fakeContainerPath, fakeTarget, hostTarget, FAKE_IMAGE } = await import("./runtime-fake.js");
+const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
+const { createFakeRuntimeBackend, fakeContainerPath, fakeTarget, FAKE_IMAGE } = await import("./runtime-fake.js");
 
 async function channel(id, name, meta = {}) {
   await setUser("U_RT", { name: "Runtime User", approved: true, isAdmin: false });
@@ -51,17 +52,31 @@ async function channel(id, name, meta = {}) {
   return { entry, meta: full };
 }
 
-// Route every turn in a test through `backend`, with the real resolver supplying the paths. The
-// third argument is resolveRuntime's own options object: the session carry-over asks this same seam
-// for the channel's OTHER environment with an explicit `{ backend }`, so both sides of a carry come
-// from the fake rather than only the one this turn runs on.
+// Route every turn in a test through `backend`, with the real resolver supplying the paths.
 function useBackend(backend, { record = null } = {}) {
-  setRuntimeResolver((slug, meta, { backend: forced = "" } = {}) => {
-    if (!forced) record?.push(meta);
-    if (forced === "host") return hostTarget(slug, meta);
-    if (forced === "container") return fakeTarget(backend || createFakeRuntimeBackend(), slug, meta);
-    return backend ? fakeTarget(backend, slug, meta) : hostTarget(slug, meta);
+  setRuntimeResolver((slug, meta) => {
+    record?.push(meta);
+    return fakeTarget(backend, slug, meta);
   });
+}
+
+// A thread that last ran on the HOST — what every session row from before the container runtime
+// looks like, and the one case the carry-over exists for. There is no host backend to run the
+// first turn on any more, so the row is put into that state directly: the first turn runs through
+// a fake container (the only backend there is), its row is then re-stamped the way the host
+// backend used to write it, and the transcript is planted where a host turn's engine wrote it —
+// the daemon's own engine state dir.
+async function hostThread(channelId, threadKey, { entry, meta }) {
+  useBackend(createFakeRuntimeBackend());
+  const first = await runMessage({ channelId, authorId: "U_RT", text: "one", threadKey, origin: "slack_foreground", preferCold: true });
+  await saveSession(entry.slug, threadKey, first.sessionId, "claude", null, JSON.stringify({ backend: "host", fingerprint: "host", image: "" }));
+  assert.equal((await getSessionRuntime(entry.slug, threadKey)).backend, "host");
+  const key = resolveRuntime(entry.slug, meta).cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const projects = path.join(claudeEngineHome(), ".claude", "projects", key);
+  await mkdir(path.join(projects, first.sessionId), { recursive: true });
+  await writeFile(path.join(projects, `${first.sessionId}.jsonl`), "host transcript\n");
+  await writeFile(path.join(projects, first.sessionId, "sub.jsonl"), "subagent\n");
+  return { sessionId: first.sessionId, key };
 }
 
 test.afterEach(() => setRuntimeResolver(null));
@@ -89,15 +104,13 @@ test("an isolated turn warms the runtime up, holds a run lease, and releases it"
   void entry;
 });
 
-test("a HOST Claude turn relays the OPERATOR's login — the engine home no longer carries one", async () => {
+test("a Claude turn relays the OPERATOR's login into the container — never a stale engine-home copy", async () => {
   saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal", engineFallback: false });
-  // A fake backend that declares itself NOT isolated: run.js treats it as a host turn (no container
-  // fail-closed, host paths, the stable engine home) while the spawn is still recorded.
-  const backend = createFakeRuntimeBackend({ isolated: false });
+  const backend = createFakeRuntimeBackend();
   useBackend(backend);
-  await channel("C_RT_HOSTLOGIN", "rt-hostlogin");
+  await channel("C_RT_RELAYLOGIN", "rt-relay-login");
 
-  await runMessage({ channelId: "C_RT_HOSTLOGIN", authorId: "U_RT", text: "hello", threadKey: "9100.010", origin: "slack_foreground", preferCold: true });
+  await runMessage({ channelId: "C_RT_RELAYLOGIN", authorId: "U_RT", text: "hello", threadKey: "9100.010", origin: "slack_foreground", preferCold: true });
 
   const spawned = backend.calls.spawn.at(-1);
   assert.equal(spawned.cmd, "claude");
@@ -105,8 +118,10 @@ test("a HOST Claude turn relays the OPERATOR's login — the engine home no long
   // and the child is handed the OPERATOR's access token rather than being left to read a dead copy.
   assert.equal(spawned.env.CLAUDE_CODE_OAUTH_TOKEN, OPERATOR_RELAY_TOKEN);
   assert.ok(!spawned.env.CLAUDE_CODE_OAUTH_TOKEN.includes("stale-engine-home"));
-  // …while the child still runs under the gateway's own synthetic config dir, as it always has.
-  assert.equal(spawned.env.CLAUDE_CONFIG_DIR, path.join(claudeEngineHome(), ".claude"));
+  // …and the child's config dir is the IMAGE's, never the daemon's synthetic engine home (which
+  // is not mounted, and whose credentials copy is exactly the dead one above).
+  assert.equal(spawned.env.CLAUDE_CONFIG_DIR, "/home/agent/.claude");
+  assert.ok(!spawned.env.CLAUDE_CONFIG_DIR.startsWith(claudeEngineHome()));
 });
 
 test("a runtime that cannot start ends the turn with its own error, before the engine runs", async () => {
@@ -148,13 +163,15 @@ test("a missing engine credential fails the turn closed before anything starts, 
   assert.equal(backend.calls.spawn.length, 0);
 });
 
-test("the per-run MCP config lands under the artifact dir for an isolated target and in run-tmp on the host", () => {
+test("the per-run MCP config lands under the artifact dir; only the daemon's own turns keep run-tmp", () => {
   const backend = createFakeRuntimeBackend();
   const isolated = fakeTarget(backend, "rt-mcp", { platform: "slack" });
   assert.equal(runArtifactRoot(isolated), isolated.artifactDir);
   assert.notEqual(runArtifactRoot(isolated), runTmpDir());
-  assert.equal(runArtifactRoot(hostTarget("rt-mcp", { platform: "slack" })), runTmpDir());
+  // The daemon's own probes (the updater's smoke test) pass no target, or its local one, and mount
+  // nothing — they keep today's location under the gateway root.
   assert.equal(runArtifactRoot(null), runTmpDir(), "a caller with no target keeps today's location");
+  assert.equal(runArtifactRoot(localRuntimeTarget(process.cwd())), runTmpDir());
 });
 
 test("the session row and the run_config event both record where the turn ran", async () => {
@@ -172,42 +189,8 @@ test("the session row and the run_config event both record where the turn ran", 
 
   const config = readEvents({ limit: 50 }).find((e) => e.event === "run_config" && e.slug === entry.slug);
   assert.equal(config.runtime, "container");
-  assert.equal(config.runtimeReason, "channel");
-});
-
-test("a host turn keeps a host session stamp and today's artifact locations", async () => {
-  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
-  useBackend(null);
-  const { entry } = await channel("C_RT_HOST", "rt-host-turn");
-
-  const result = await runMessage({ channelId: "C_RT_HOST", authorId: "U_RT", text: "hello", threadKey: "9100.005", origin: "slack_foreground", preferCold: true });
-  assert.match(result.content, /Stub engine reply/);
-  assert.equal(result.runtime.backend, "host");
-  assert.equal(result.runtime.isolated, false);
-  assert.equal(result.runtime.image, "");
-
-  const stamp = await getSessionRuntime(entry.slug, "9100.005");
-  assert.deepEqual(stamp, { backend: "host", fingerprint: "host", image: "" });
-});
-
-test("a per-run mode override cannot move a turn between runtime backends", async () => {
-  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
-  const backend = createFakeRuntimeBackend();
-  const seen = [];
-  useBackend(backend, { record: seen });
-  // An admin-mode channel pins the host backend (resolveRuntime §4). `mode:"read"` clears adminMode
-  // for the run — it must not thereby become a container turn, or an API caller would be choosing
-  // its own confinement by naming a lower capability tier.
-  await channel("C_RT_OVERRIDE", "rt-override", { adminMode: true, runtime: "container" });
-
-  await runMessage({
-    channelId: "C_RT_OVERRIDE", authorId: "U_RT", text: "hello", threadKey: "9100.006",
-    origin: "api_foreground", untrustedPrincipal: true, overrides: { mode: "read" }, preferCold: true,
-  });
-
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].adminMode, true, "the backend decision reads the CHANNEL's adminMode, not the overridden view");
-  assert.equal(seen[0].runtime, "container", "…and the channel's own runtime pin");
+  // There is exactly one backend, and the record says so rather than pretending a choice was made.
+  assert.equal(config.runtimeReason, "only-runtime");
 });
 
 test("a slow cold start announces itself once; a fast one stays silent", async () => {
@@ -229,39 +212,31 @@ test("a slow cold start announces itself once; a fast one stays silent", async (
   assert.equal(notices[0].scope, "gateway");
 });
 
-test("a thread's engine history is carried across before the resume, in both directions", async () => {
+test("a thread that last ran on the host has its engine history carried in before the resume", async () => {
   saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
-  const { entry, meta } = await channel("C_RT_CARRY", "rt-carry");
-  const cwd = resolveRuntime(entry.slug, meta).cwd;
-  const key = cwd.replace(/[^a-zA-Z0-9]/g, "-");
-  const claudeProjects = path.join(claudeEngineHome(), ".claude", "projects", key);
+  const ch = await channel("C_RT_CARRY", "rt-carry");
+  const { entry, meta } = ch;
 
-  // ── First message: the host. The row is stamped host, and the engine writes its transcript in
-  // the daemon's own state dir (the stub engine does not, so it is planted here).
-  useBackend(null);
-  const first = await runMessage({ channelId: "C_RT_CARRY", authorId: "U_RT", text: "one", threadKey: "9100.010", origin: "slack_foreground", preferCold: true });
-  assert.equal((await getSessionRuntime(entry.slug, "9100.010")).backend, "host");
-  await mkdir(path.join(claudeProjects, first.sessionId), { recursive: true });
-  await writeFile(path.join(claudeProjects, `${first.sessionId}.jsonl`), "host transcript\n");
-  await writeFile(path.join(claudeProjects, first.sessionId, "sub.jsonl"), "subagent\n");
+  // ── First message: a host row, with the engine's transcript in the daemon's own state dir.
+  const { sessionId, key } = await hostThread("C_RT_CARRY", "9100.010", ch);
 
-  // ── Second message: the channel is now containerized. The session files must reach the container
-  // BEFORE the engine is asked to resume, or the turn is healed and the history is gone.
+  // ── Second message: the channel's container. The session files must reach it BEFORE the engine
+  // is asked to resume, or the turn is healed and the history is gone.
   const backend = createFakeRuntimeBackend();
   useBackend(backend);
   await runMessage({ channelId: "C_RT_CARRY", authorId: "U_RT", text: "two", threadKey: "9100.010", origin: "slack_foreground", preferCold: true });
 
   assert.equal(backend.calls.copyIn.length, 1, "exactly one carry, for the one thread that moved");
-  assert.equal(backend.calls.copyOut.length, 0);
+  assert.equal(backend.calls.copyOut.length, 0, "there is no host to carry anything OUT to");
   assert.ok(backend.calls.copyIn[0].seq < backend.calls.spawn[0].seq, "the carry happens BEFORE the resume");
   const carried = backend.calls.copyIn[0].entries;
-  assert.deepEqual(carried.map((e) => e.rel), [`projects/${key}/${first.sessionId}.jsonl`, `projects/${key}/${first.sessionId}`]);
+  assert.deepEqual(carried.map((e) => e.rel), [`projects/${key}/${sessionId}.jsonl`, `projects/${key}/${sessionId}`]);
   // It really arrived in the runtime's state dir, subagent transcripts included (the fake mirrors
   // the container's /home/agent tree under the artifact dir — see fakeContainerPath).
   const ctrTarget = fakeTarget(backend, entry.slug, meta);
   const ctrProjects = path.join(fakeContainerPath(ctrTarget, ctrTarget.container.claudeConfigDir), "projects", key);
-  assert.equal(readFileSync(path.join(ctrProjects, `${first.sessionId}.jsonl`), "utf8"), "host transcript\n");
-  assert.equal(readFileSync(path.join(ctrProjects, first.sessionId, "sub.jsonl"), "utf8"), "subagent\n");
+  assert.equal(readFileSync(path.join(ctrProjects, `${sessionId}.jsonl`), "utf8"), "host transcript\n");
+  assert.equal(readFileSync(path.join(ctrProjects, sessionId, "sub.jsonl"), "utf8"), "subagent\n");
   // The row now names the side holding the NEWEST copy. Without this a third container turn would
   // carry the stale host copy back over everything the second turn added.
   assert.equal((await getSessionRuntime(entry.slug, "9100.010")).backend, "container");
@@ -271,27 +246,18 @@ test("a thread's engine history is carried across before the resume, in both dir
   assert.equal(configs[0].sessionCarried, "host→container");
   assert.equal(configs[1].sessionCarried, undefined, "a turn that carried nothing records nothing");
 
-  // ── Third message: back on the host (admin mode, a pin, the kill switch). The same thread's
-  // history has to come back OUT of the container it was just written into.
-  useBackend(null, {});
-  setRuntimeResolver((slug, m, { backend: forced = "" } = {}) => (forced === "container" ? fakeTarget(backend, slug, m) : hostTarget(slug, m)));
+  // ── Third message: still the container. The row says so, so nothing is copied again — the
+  // stale host copy must never be carried back over what the second turn added.
   await runMessage({ channelId: "C_RT_CARRY", authorId: "U_RT", text: "three", threadKey: "9100.010", origin: "slack_foreground", preferCold: true });
-  assert.equal(backend.calls.copyOut.length, 1);
-  assert.equal((await getSessionRuntime(entry.slug, "9100.010")).backend, "host");
-  const back = readEvents({ limit: 200 }).filter((e) => e.event === "run_config" && e.slug === entry.slug)[0];
-  assert.equal(back.sessionCarried, "container→host");
+  assert.equal(backend.calls.copyIn.length, 1);
+  assert.equal(backend.calls.copyOut.length, 0);
+  assert.equal(readEvents({ limit: 200 }).filter((e) => e.event === "run_config" && e.slug === entry.slug)[0].sessionCarried, undefined);
 });
 
 test("a carry that fails never fails the turn — the resume falls back to the existing heal", async () => {
   saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
-  const { entry, meta } = await channel("C_RT_CARRY_FAIL", "rt-carry-fail");
-  const cwd = resolveRuntime(entry.slug, meta).cwd;
-  const key = cwd.replace(/[^a-zA-Z0-9]/g, "-");
-
-  useBackend(null);
-  const first = await runMessage({ channelId: "C_RT_CARRY_FAIL", authorId: "U_RT", text: "one", threadKey: "9100.011", origin: "slack_foreground", preferCold: true });
-  await mkdir(path.join(claudeEngineHome(), ".claude", "projects", key), { recursive: true });
-  await writeFile(path.join(claudeEngineHome(), ".claude", "projects", key, `${first.sessionId}.jsonl`), "host transcript\n");
+  const ch = await channel("C_RT_CARRY_FAIL", "rt-carry-fail");
+  await hostThread("C_RT_CARRY_FAIL", "9100.011", ch);
 
   const backend = createFakeRuntimeBackend();
   backend.copyIn = async () => {
@@ -301,19 +267,14 @@ test("a carry that fails never fails the turn — the resume falls back to the e
   const result = await runMessage({ channelId: "C_RT_CARRY_FAIL", authorId: "U_RT", text: "two", threadKey: "9100.011", origin: "slack_foreground", preferCold: true });
 
   assert.match(result.content, /Stub engine reply/, "the turn still answers");
-  const config = readEvents({ limit: 200 }).filter((e) => e.event === "run_config" && e.slug === entry.slug)[0];
+  const config = readEvents({ limit: 200 }).filter((e) => e.event === "run_config" && e.slug === ch.entry.slug)[0];
   assert.equal(config.sessionCarried, undefined);
 });
 
 test("a slow carry announces itself before the turn's own warm-up notice is armed", async () => {
   saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
-  const { entry, meta } = await channel("C_RT_CARRY_SLOW", "rt-carry-slow");
-  const key = resolveRuntime(entry.slug, meta).cwd.replace(/[^a-zA-Z0-9]/g, "-");
-
-  useBackend(null);
-  const first = await runMessage({ channelId: "C_RT_CARRY_SLOW", authorId: "U_RT", text: "one", threadKey: "9100.012", origin: "slack_foreground", preferCold: true });
-  await mkdir(path.join(claudeEngineHome(), ".claude", "projects", key), { recursive: true });
-  await writeFile(path.join(claudeEngineHome(), ".claude", "projects", key, `${first.sessionId}.jsonl`), "host transcript\n");
+  const ch = await channel("C_RT_CARRY_SLOW", "rt-carry-slow");
+  await hostThread("C_RT_CARRY_SLOW", "9100.012", ch);
 
   const backend = createFakeRuntimeBackend();
   const realCopyIn = backend.copyIn;

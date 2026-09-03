@@ -32,7 +32,7 @@ export function canUseClaudeWarmPool(runtime = {}) {
 // so they win outright. `browserNamespace` is gateway-owned for the same reason and sits in the
 // same last group: it decides which channel's browser daemon a browser MCP child attaches to
 // (gateway/browser-env.js), so a channel secret must not be able to name it.
-export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, browserNamespace = "", toolchainBinDir = "", target = null, oauthToken = "" } = {}, source = process.env) {
+export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, browserNamespace = "", target = null, oauthToken = "" } = {}, source = process.env) {
   // An ISOLATED runtime (a channel container) has none of the host's layout: HOME, the config dir
   // and PATH are the image's, the daemon's toolchain launcher dir does not exist there, and the
   // engine authenticates with the gateway-held OAuth token rather than the operator's own login
@@ -54,18 +54,11 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
   return buildChildEnv({
     ...safeSpawnEnv(extraEnv),
     ...browserSpawnEnv(browserNamespace),
-    // The stable launcher dir (run-grant-artifacts.js) goes FIRST on PATH so the toolchain shims
-    // resolve even when the sandbox cannot materialize the host's own symlink shims. Gateway-owned
-    // and listed after the channel secrets for the same reason HOME is: a secret named PATH is
-    // already stripped by safeSpawnEnv, and ordering makes the gateway's value win outright.
-    ...(toolchainBinDir ? { PATH: `${toolchainBinDir}:${source.PATH || ""}` } : {}),
     ...(home ? { HOME: home } : {}),
     ...(configDir ? { CLAUDE_CONFIG_DIR: configDir } : {}),
-    // A HOST run relays the gateway's resolved login too (src/gateway/claude-login.js): the
-    // synthetic engine home deliberately holds no credentials file any more, and the operator's own
-    // ~/.claude is read rather than linked, so the token in the environment is what authenticates
-    // this child. Same last group as HOME — gateway-owned, so a channel secret can never displace
-    // it — and absent when there is nothing to relay, which leaves today's behaviour untouched.
+    // The daemon's OWN turns (the update smoke probe — the only non-container spawn left) relay
+    // the resolved login the same way. Same last group as HOME — gateway-owned, so a channel
+    // secret can never displace it — and absent when there is nothing to relay.
     ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
   }, source);
 }
@@ -193,7 +186,6 @@ export async function runClaude({
   configDir = "",
   extraEnv = {},
   browserNamespace = "",
-  toolchainBinDir = "",
   // Where this turn runs (src/runtimes/). Absent = the host backend, i.e. today's direct spawn.
   target = null,
   // The gateway's resolved Claude login, relayed as an ACCESS token (src/gateway/claude-login.js →
@@ -217,7 +209,7 @@ export async function runClaude({
       cmd: "claude",
       args,
       cwd,
-      env: buildClaudeEnv({ home, configDir, extraEnv, browserNamespace, toolchainBinDir, target: runtime, oauthToken: claudeOauthToken }),
+      env: buildClaudeEnv({ home, configDir, extraEnv, browserNamespace, target: runtime, oauthToken: claudeOauthToken }),
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
       runId: runId || newRunId("run"),

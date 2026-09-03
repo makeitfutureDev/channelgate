@@ -21,8 +21,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getChannelMeta, isAdmin, isApproved } from "../config/store.js";
 import { canManage } from "../gateway/modes.js";
-import { getEngine as getDefaultEngine, getEffectiveNetworkDomains } from "../config/settings.js";
-import { normalizeRequestedDomain, normalizeStoredDomains } from "../util/network-domains.js";
+import { getEngine as getDefaultEngine } from "../config/settings.js";
 import { gatewayRoot } from "../config/paths.js";
 import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
 import { register as registerSchedules } from "./tools/schedules.js";
@@ -197,28 +196,8 @@ export function buildControlPlane({ loadMeta }) {
   return new Map([
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
     ["set_channel_network", { authz: "admin", details: ({ enabled }) => `Turn network access ${onOff(enabled)} for this channel.` }],
-    // Human-in-the-loop egress widening: any authorized user's click may approve ONE named domain
-    // for THIS channel. authz "any" + tier "" is deliberate (an admin click is not required — the
-    // human factor is the point, since injected content can request but never click). details()
-    // returns null (skip the card) when the domain is invalid or already allowed — the handler then
-    // refuses/no-ops without approval spam.
-    ["request_network_domain", {
-      authz: "any",
-      details: async ({ domain }) => {
-        let d;
-        try { d = normalizeRequestedDomain(domain); } catch { return null; }
-        const meta = (await loadMeta()) || {};
-        const allowed = new Set([...getEffectiveNetworkDomains(), ...normalizeStoredDomains(meta.extraNetworkDomains)]);
-        if (!meta.allowNetwork || allowed.has(d)) return null;
-        return `Allow this channel's sandboxed commands NETWORK access to: ${d}\nStays on this channel's allow-list until removed. Any file in this folder could then be sent to that domain — approve only if you trust it.`;
-      },
-    }],
     ["set_channel_bash", { authz: "manage", details: ({ enabled }) => `Turn shell access (Bash + file edits) ${onOff(enabled)} for this channel.` }],
     ["set_channel_auto_mode", { authz: "manage", details: ({ enabled }) => `Turn AUTO MODE (tools auto-approved) ${onOff(enabled)} for this channel.` }],
-    // Where this channel's engine processes RUN: the gateway default, the host, or the channel's
-    // own container. Admin-tier and gated for the same reason as the mode switches — it changes
-    // the isolation every future turn gets, and it survives the turn that asked for it.
-    ["set_channel_runtime", { authz: "admin", details: ({ runtime }) => `Run this channel's future turns on: ${runtime === "container" ? "its own CONTAINER (isolated runtime)" : runtime === "host" ? "the HOST (no container isolation)" : "the gateway default runtime"}.` }],
     ["set_channel_workdir", { authz: "admin", details: ({ path: p }) => `Point this channel's working folder at: ${summarize(p)}` }],
     ["clear_channel_workdir", { authz: "admin", details: () => "Revert this channel to its default gateway working folder." }],
     ["set_channel_drive_folder", { authz: "admin", details: ({ link }) => `Link a Google Drive folder for two-way sync: ${summarize(link)}` }],

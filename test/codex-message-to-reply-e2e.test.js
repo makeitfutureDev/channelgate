@@ -9,6 +9,12 @@ process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimite
 process.env.SESSION_KEEPALIVE = "0";
 process.env.PROGRESS_VIEW = "shimmer";
 ensureTestEnv();
+// Every Codex turn runs in a container-shaped target: the orchestrated turns resolve one through
+// run.js's test seam, and the direct runner calls below are handed the same fake backend, which
+// delegates the spawn to this host so the stub `codex` on PATH really runs.
+const { useFakeRuntime, fakeTarget } = await import("./runtime-fake.js");
+const fakeBackend = await useFakeRuntime();
+const directTarget = () => fakeTarget(fakeBackend, "codex-e2e-direct", { platform: "slack", channelId: "D_CODEX_DIRECT" });
 
 const { saveSettings } = await import("../src/config/settings.js");
 saveSettings({ engine: "codex", composioMode: "personal" });
@@ -50,7 +56,8 @@ test("Codex stub covers Slack message→reply, persisted resume, and gateway MCP
 
 test("Codex stub process is terminated when the run is cancelled", async () => {
   const controller = new AbortController();
-  const pending = runCodex({ cwd: projectRoot, prompt: "CODEX_STUB_WAIT_FOR_CANCEL", sessionId: "", isNewSession: true, clean: true, timeoutMs: 10_000, signal: controller.signal });
+  const target = directTarget();
+  const pending = runCodex({ cwd: projectRoot, prompt: "CODEX_STUB_WAIT_FOR_CANCEL", sessionId: "", isNewSession: true, clean: true, timeoutMs: 10_000, signal: controller.signal, target, artifactDir: target.artifactDir });
   setTimeout(() => controller.abort(), 100).unref();
   await assert.rejects(pending, (error) => {
     assert.equal(error.name, "AbortError");
@@ -61,8 +68,9 @@ test("Codex stub process is terminated when the run is cancelled", async () => {
 });
 
 test("Codex generic process failures are semantic while the raw code stays structured", async () => {
+  const target = directTarget();
   await assert.rejects(
-    runCodex({ cwd: projectRoot, prompt: "CODEX_STUB_FAIL_GENERIC", sessionId: "", isNewSession: true, clean: true, timeoutMs: 1_000 }),
+    runCodex({ cwd: projectRoot, prompt: "CODEX_STUB_FAIL_GENERIC", sessionId: "", isNewSession: true, clean: true, timeoutMs: 1_000, target, artifactDir: target.artifactDir }),
     (error) => {
       assert.equal(error.message, "Codex failed because it reported a general error: stub failure detail");
       assert.equal(error.details?.exitCode, 1);
@@ -72,17 +80,24 @@ test("Codex generic process failures are semantic while the raw code stays struc
   );
 });
 
-test("Codex runner checks compatibility and carries approved-domain confinement to the process", async () => {
-  const result = await runCodex({
+test("the Codex runner takes the network switch as on/off and hands the process no proxy or domain list — the container is the boundary", async () => {
+  const target = directTarget();
+  const turn = (networkMode) => runCodex({
     cwd: projectRoot,
-    prompt: "approved network turn",
+    prompt: `${networkMode} network turn`,
     sessionId: "",
     isNewSession: true,
     clean: true,
     writable: true,
-    networkMode: "approved",
-    networkDomains: ["api.github.com"],
+    networkMode,
     timeoutMs: 10_000,
+    target,
+    artifactDir: target.artifactDir,
   });
-  assert.match(result.content, /network_proxy=yes; approved_domain=yes/);
+  for (const networkMode of ["on", "off"]) {
+    const result = await turn(networkMode);
+    assert.match(result.content, /network_proxy=no; approved_domain=no/, `${networkMode}: nothing about egress reaches Codex's own config`);
+  }
+  // The host-sandbox tiers no longer exist: a caller that still names one is refused before spawn.
+  await assert.rejects(turn("approved"), /Unknown Codex network mode/);
 });

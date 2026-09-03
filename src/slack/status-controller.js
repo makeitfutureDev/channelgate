@@ -19,8 +19,7 @@ function fmtAgo(ms) {
 // has been up. Everything comes from the backend's own describe(); this only renders it, so a
 // backend that reports less simply says less.
 export function formatRuntimeLine(info) {
-  const backend = String(info?.backend || "host");
-  if (backend === "host" && !info?.containerName) return "*🏠 Runtime*: host";
+  const backend = String(info?.backend || "container");
   const parts = [];
   if (info.containerName) parts.push(`\`${info.containerName}\``);
   if (info.image) parts.push(`image ${info.image}`);

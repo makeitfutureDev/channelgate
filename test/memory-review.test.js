@@ -11,6 +11,11 @@ import { ensureTestEnv } from "./helpers.js";
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimiter}${process.env.PATH || ""}`;
 const scratch = ensureTestEnv();
+const { useFakeRuntime: __useFakeRuntime, fakeTarget } = await import("./runtime-fake.js");
+const fakeBackend = await __useFakeRuntime();
+// The reviewer resolves WHERE it runs at its own spawn (it outlives the turn), through its own
+// injectable resolver rather than the run orchestration's — so it gets the same fake backend.
+const resolveTarget = (slug, meta) => fakeTarget(fakeBackend, slug, meta);
 process.env.CG_WORKSPACE_DIR = path.join(scratch, "review-workspaces");
 
 const { upsertChannelEntry, saveChannelMeta, setUser } = await import("../src/config/store.js");
@@ -90,7 +95,7 @@ test("E2E: a review that saves posts the notice, banks usage as memory_review, a
   const { entry, meta } = await channel("C_MEM_REVIEW_SAVE", "mem-review-save");
   const client = fakeClient();
   const job = review.maybeQueueMemoryReview({
-    client, channelId: "C_MEM_REVIEW_SAVE", slug: entry.slug, threadKey: "7000.001", authorId: "U_MEM_REVIEW", meta,
+    client, channelId: "C_MEM_REVIEW_SAVE", slug: entry.slug, threadKey: "7000.001", authorId: "U_MEM_REVIEW", meta, resolveTarget,
     userText: "please keep replies short from now on",
     savedInTurn: false,
     fetchTranscript: async () => "Alex: please keep replies short from now on CLAUDE_STUB_MEMORY_SAVE\nRobin: Understood.",
@@ -125,7 +130,7 @@ test("E2E: a 'nothing to save' review stays silent and a second review for the s
   const { entry, meta } = await channel("C_MEM_REVIEW_QUIET", "mem-review-quiet");
   const client = fakeClient();
   const args = {
-    client, channelId: "C_MEM_REVIEW_QUIET", slug: entry.slug, threadKey: "7000.002", authorId: "U_MEM_REVIEW", meta,
+    client, channelId: "C_MEM_REVIEW_QUIET", slug: entry.slug, threadKey: "7000.002", authorId: "U_MEM_REVIEW", meta, resolveTarget,
     userText: "what changed in the deploy pipeline this week",
     fetchTranscript: async () => "Alex: what changed in the deploy pipeline this week\nRobin: nothing notable",
   };

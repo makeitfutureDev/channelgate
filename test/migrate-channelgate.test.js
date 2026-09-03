@@ -186,7 +186,7 @@ test("stored absolute paths under the moved roots are rewritten; a custom workDi
   assert.equal(state.logFile, path.join(fx.newRoot, "logs", "update.log"));
 });
 
-test("every channel's sandbox settings file is regenerated with the new absolute paths", async (t) => {
+test("every channel's settings file is regenerated, replacing the pre-rename one", async (t) => {
   const fx = await buildLegacyFixture(t);
   await registerChannels(fx);
 
@@ -195,10 +195,10 @@ test("every channel's sandbox settings file is regenerated with the new absolute
 
   const teams = JSON.parse(await readFile(path.join(fx.newRoot, "channels", "teams", "engineering", ".claude", "settings.json"), "utf8"));
   assert.equal(teams.stale, undefined, "the pre-rename settings file must be replaced, not merged");
-  assert.ok(
-    teams.sandbox.filesystem.allowWrite.some((p) => p.includes(path.join(fx.newWorkspace, "teams", "engineering"))),
-    JSON.stringify(teams.sandbox.filesystem.allowWrite),
-  );
+  // The regenerated file is today's policy contract — permissions and the Stop hook, no sandbox
+  // block (confinement is the channel container) — and so carries no path into the legacy tree.
+  assert.ok(Array.isArray(teams.permissions?.allow) && teams.hooks?.Stop, JSON.stringify(teams));
+  assert.equal("sandbox" in teams, false);
   assert.equal(JSON.stringify(teams).includes(fx.legacyWorkspace), false);
 });
 
@@ -1132,8 +1132,11 @@ test("--repath --from/--to repaths a custom workDir the operator moved by hand, 
   assert.match(await readFile(codexConfig, "utf8"), new RegExp(`\\[projects\\."${reEscape(newCustom)}"\\]`));
   assert.equal(await readFile(path.join(newCustom, "MEMORY.md"), "utf8"), `Specs live in ${newCustom}/specs\n`);
   assert.deepEqual(first.purgedCaches, [staleCache]);
+  // The settings file is regenerated rather than rewritten: it is policy only (no sandbox block
+  // naming the work dir any more), so the one thing to prove is that nothing stale survived in it.
   const settings = await readFile(path.join(fx.newRoot, "channels", "slack", "acme", ".claude", "settings.json"), "utf8");
-  assert.ok(settings.includes(newCustom) && !settings.includes(oldCustom), "the regenerated sandbox names the new folder");
+  assert.equal("sandbox" in JSON.parse(settings), false);
+  assert.equal(settings.includes(oldCustom), false, "the regenerated settings file must not name the old folder");
   assert.equal(first.audit.total, 0, "the post-repath audit counts the pair too");
   assert.equal((await auditLegacyPaths({ ...auditOptions, extraRules })).total, 0);
 

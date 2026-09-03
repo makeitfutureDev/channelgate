@@ -261,7 +261,6 @@ test("every registered gateway tool is consciously classified as gated or open (
   // unclassified tool fails here until it is added to exactly one of these lists.
   const GATED = new Set([
     "set_channel_admin_mode", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
-    "set_channel_runtime", // where the channel's engine RUNS (host vs its own container)
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
     "add_channel_mcps", "remove_channel_mcps", "update_channel_instructions",
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
@@ -281,7 +280,6 @@ test("every registered gateway tool is consciously classified as gated or open (
     "slack_channel_history", "slack_thread_replies",
     "run_in_background", "run_agent_in_background", // shell kind has its own admin-click gate in background.js
     "request_approval", "permission_prompt", "report_progress",
-    "request_network_domain", // carries its own any-authorized-user approval gate
     "update_channel_memory", // operator decision 2026-08-07: memory is agent-owned, never approval-gated
     // operator decision 2026-08-19: reminders/scheduled tasks are an ordinary channel request and
     // are never approval-gated. A schedule fires with origin "schedule" (cannot escalate — A2), in
@@ -300,69 +298,3 @@ test("every registered gateway tool is consciously classified as gated or open (
   });
 });
 
-// ── set_channel_runtime (v0.8) ────────────────────────────────────────────────────────────────
-// Where a channel's engine processes RUN is an isolation decision, so it is admin-tier and gated
-// like the mode switches — and the reply must state the runtime the NEXT turn actually gets, not
-// the one that was asked for, because two things outrank the pin.
-test("set_channel_runtime pins the channel and names the runtime the next turn will really use", async () => {
-  approvalResponse = { allow: true, reason: "Approved by <@U_CTRL_ADMIN>" };
-  await saveSettings({ containerRuntimeEnabled: true, containerDefaultBackend: "host" });
-  await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), adminMode: false, runtime: "" });
-
-  await withGateway({}, async (client) => {
-    const pinned = await client.callTool({ name: "set_channel_runtime", arguments: { runtime: "container" } });
-    assert.match(resultText(pinned), /Next turn runs on: `container`/);
-  });
-  assert.equal((await getChannelMeta(SLUG))?.runtime, "container");
-
-  // The gateway-wide kill switch outranks the pin — the tool says so instead of quietly lying.
-  await saveSettings({ containerRuntimeEnabled: false });
-  await withGateway({}, async (client) => {
-    const killed = await client.callTool({ name: "set_channel_runtime", arguments: { runtime: "container" } });
-    assert.match(resultText(killed), /Next turn runs on: `host`/);
-    assert.match(resultText(killed), /container runtime is switched OFF/);
-  });
-  assert.equal((await getChannelMeta(SLUG))?.runtime, "container", "the pin survives the kill switch");
-
-  // Admin mode does too: an admin channel is deliberately unconfined on the host.
-  await saveSettings({ containerRuntimeEnabled: true });
-  await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), adminMode: true });
-  await withGateway({}, async (client) => {
-    const adminPinned = await client.callTool({ name: "set_channel_runtime", arguments: { runtime: "container" } });
-    assert.match(resultText(adminPinned), /ADMIN MODE/);
-    assert.match(resultText(adminPinned), /Next turn runs on: `host`/);
-  });
-  await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), adminMode: false });
-
-  // Clearing it returns the channel to the gateway default.
-  await withGateway({}, async (client) => {
-    const cleared = await client.callTool({ name: "set_channel_runtime", arguments: { runtime: "" } });
-    assert.match(resultText(cleared), /the gateway default/);
-  });
-  assert.equal((await getChannelMeta(SLUG))?.runtime, "");
-  await saveSettings({ containerRuntimeEnabled: false });
-});
-
-test("set_channel_runtime is admin-only and needs the human click like every other isolation change", async () => {
-  approvalRequests.length = 0;
-  approvalResponse = { allow: true, reason: "Approved" };
-  await saveSettings({ containerRuntimeEnabled: true });
-  await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), runtime: "" });
-
-  await withGateway({ author: "U_CTRL_MEMBER" }, async (client) => {
-    const refused = await client.callTool({ name: "set_channel_runtime", arguments: { runtime: "container" } });
-    assert.match(resultText(refused), /Only admins/i);
-  });
-  assert.equal(approvalRequests.length, 0, "an unauthorized caller must not spam an approval card");
-  assert.equal((await getChannelMeta(SLUG))?.runtime, "");
-
-  approvalResponse = { allow: false, reason: "Denied by <@U_CTRL_ADMIN>" };
-  await withGateway({}, async (client) => {
-    const denied = await client.callTool({ name: "set_channel_runtime", arguments: { runtime: "container" } });
-    assert.match(resultText(denied), /not approved/i);
-  });
-  assert.equal((await getChannelMeta(SLUG))?.runtime, "", "a denied change must not persist");
-  assert.equal(approvalRequests.at(-1).body.requiredTier, "admin");
-  assert.match(approvalRequests.at(-1).body.toolInput.details, /CONTAINER/);
-  await saveSettings({ containerRuntimeEnabled: false });
-});

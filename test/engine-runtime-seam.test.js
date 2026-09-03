@@ -16,8 +16,8 @@ const { PersistentClaudeSession } = await import("../src/engines/persistent-sess
 const { createSessionPool } = await import("../src/engines/session-pool.js");
 const { trackEngineChild, shutdownEngineChildren, engineProcessStats } = await import("../src/engines/process-registry.js");
 const { resumeCommandFor } = await import("../src/engines/registry.js");
-const { hostRuntimeTarget } = await import("../src/engines/runtime-target.js");
-const { hostBackend } = await import("../src/runtimes/host.js");
+const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
+const { localRuntime } = await import("../src/runtimes/local.js");
 const { isRuntimeChild, runIdKind } = await import("../src/runtimes/contract.js");
 
 // Wait for the thing itself, not for a wall-clock guess: the suite runs files in parallel, and a
@@ -228,11 +228,11 @@ test("the warm pool treats WHERE a process runs as part of its launch identity",
   await pool.runPooled({ ...base, target: rtB.target() });
   assert.equal(created.length, 2);
 
-  // And a host turn never reuses a container's warm process.
-  await pool.runPooled({ ...base, target: hostRuntimeTarget("/work/rt-channel") });
+  // And the daemon's OWN local turn (no container) never reuses a container's warm process.
+  await pool.runPooled({ ...base, target: localRuntimeTarget("/work/rt-channel") });
   assert.equal(created.length, 3);
-  await pool.runPooled({ ...base, target: hostRuntimeTarget("/work/rt-channel") });
-  assert.equal(created.length, 3, "…and the host fingerprint is itself stable");
+  await pool.runPooled({ ...base, target: localRuntimeTarget("/work/rt-channel") });
+  assert.equal(created.length, 3, "…and the local fingerprint is itself stable");
   pool.shutdownPool();
 });
 
@@ -255,7 +255,7 @@ test("the daemon's shutdown sweep signals container children through their backe
 test("resumeCommandFor wraps the engine's own command in the runtime's", () => {
   const rt = createFakeRuntime();
   const target = rt.target();
-  assert.equal(resumeCommandFor("claude", "abc"), "claude --resume abc", "the 2-arg host form is untouched");
+  assert.equal(resumeCommandFor("claude", "abc"), "claude --resume abc", "the 2-arg form is untouched");
   assert.equal(resumeCommandFor("claude", "abc", {}), "claude --resume abc");
   assert.equal(
     resumeCommandFor("claude", "abc", { target }),
@@ -265,13 +265,16 @@ test("resumeCommandFor wraps the engine's own command in the runtime's", () => {
     resumeCommandFor("codex", "xyz", { target }),
     "podman exec -it -w /work/rt-channel cg-test-channel codex exec resume xyz",
   );
-  assert.equal(resumeCommandFor("codex", "xyz", { target: hostRuntimeTarget("/work") }), "codex exec resume xyz");
+  assert.equal(resumeCommandFor("codex", "xyz", { target: localRuntimeTarget("/work") }), "codex exec resume xyz", "the local spawner wraps nothing");
 });
 
-test("no target = the host backend, i.e. exactly today's behaviour", () => {
-  const target = hostRuntimeTarget("/work/rt-channel");
-  assert.equal(target.backend, "host");
-  assert.equal(target.runtime, hostBackend);
-  assert.equal(target.artifactDir, null, "host runs keep every per-run file where it is today");
-  assert.equal(target.runtime.fingerprint(target), "host");
+test("no target = the daemon's own local spawner, which is not a channel runtime", () => {
+  // Only the daemon's own turns (the update smoke probe, direct-runner tests) pass no target; a
+  // channel turn always resolves a container target in run.js before it reaches a runner.
+  const target = localRuntimeTarget("/work/rt-channel");
+  assert.equal(target.backend, "local");
+  assert.equal(target.runtime, localRuntime);
+  assert.equal(target.artifactDir, null, "nothing is mounted: a local child sees the daemon's filesystem as it is");
+  assert.equal(target.runtime.fingerprint(target), "local");
+  assert.equal(target.runtime.capabilities.isolated, false, "no container boundary — a runner that needs one refuses it");
 });
