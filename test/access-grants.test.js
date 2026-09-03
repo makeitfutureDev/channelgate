@@ -7,6 +7,7 @@ import {
   resolveRunUserIdentity,
   sanitizeSkillGrantNames,
   unionGrantEntries,
+  userOnlySkillGrants,
 } from "../src/gateway/access-grants.js";
 import { cleanAccessGrants } from "../src/web/routes/helpers.js";
 import {
@@ -178,4 +179,14 @@ test("admin UI exposes organization, channel, and user grant tiers", () => {
   assert.match(client, /accessGrantSkillOptions\(SKILLS,/, "all grant editors must preserve saved-only skills");
   assert.match(client, /accessGrants:\s*orgGrantsEditor\?\.getValues\(\)/);
   assert.match(client, /accessGrants:\s*userGrantsEditor\.getValues\(\)/);
+});
+
+test("userOnlySkillGrants keeps only the skills the shared channel grant does not already carry", () => {
+  assert.deepEqual(
+    userOnlySkillGrants({ shared: { skills: ["deploy-notes", "sales-brief"] }, effective: { skills: ["sales-brief", "private-playbook", "deploy-notes", "my-drafts"] } }),
+    ["private-playbook", "my-drafts"],
+  );
+  assert.deepEqual(userOnlySkillGrants({ shared: {}, effective: { skills: ["my-drafts"] } }), ["my-drafts"]);
+  assert.deepEqual(userOnlySkillGrants({ shared: { skills: "not-a-list" }, effective: { skills: ["my-drafts", "../escape"] } }), ["my-drafts"]);
+  assert.deepEqual(userOnlySkillGrants(), []);
 });

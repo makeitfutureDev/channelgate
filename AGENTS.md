@@ -296,8 +296,7 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
 
 ## Git workflow (isolated worktree per development thread → serialized landing → push)
 
-The canonical checkout is `~/Code/channelgate` (the service unit's `WorkingDirectory`; the
-pre-rename path `~/Code/claude-gateway` is a compatibility symlink on hosts that migrated). Its
+The canonical checkout is `~/Code/channelgate` (the service unit's `WorkingDirectory`). Its
 `origin` is `https://github.com/makeitfutureDev/channelgate.git` — the public repository (private
 until the launch gates clear), whose history begins at the 2026-09-03 fresh-start commit of the
 scrubbed tree. The pre-rename repository `makeitfutureDev/claude-gateway-slack` is the read-only

@@ -154,6 +154,19 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       regressions in authorization (95/95/95), access grants and engine-scope isolation
       (95/75/70), sandbox policy (90/90/80), secrets (90/80/65), and transactional updater state
       (75/65/75). Values are lines/branches/functions and may only ratchet upward.
+- [x] The test scratch root is canonical (`realpathSync`), so fixtures string-match the REAL paths
+      the code resolves: on macOS `os.tmpdir()` is `/var/folders/…` → `/private/var/…`, which failed
+      13 tests (container credentials, Codex args, run-grant isolation, sandbox toolchain) on the
+      macOS CI runners only; Linux reproduces the failure, and now passes the same files, with a
+      symlinked `TMPDIR` (`test/helpers.js`).
+- [x] Unit (access-grants coverage area, deterministic on any runner): the stable toolchain
+      launcher dir is content-addressed, idempotent and empty for an empty FIXTURE toolchain; an
+      isolated runtime target without an `artifactDir` is refused; an unreadable `.claude/agents`
+      directory delivers the plugin without agents; a genuinely signed capability is refused for a
+      non-JSON payload, a wrong version/audience/scope, incomplete identity claims, mistyped
+      optional claims and an invalid lifetime; `userOnlySkillGrants` keeps only the skills the
+      shared grant lacks (`test/run-grant-isolation.test.js`, `test/mcp-capability.test.js`,
+      `test/access-grants.test.js`).
 - [x] `test/codex-message-to-reply-e2e.test.js`: a stub Codex binary drives an authorized Slack DM
       through message→reply, persists the returned session, uses `exec resume` on the follow-up,
       receives the gateway MCP registration, and terminates on cancellation.

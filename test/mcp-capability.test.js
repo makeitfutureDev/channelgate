@@ -86,3 +86,31 @@ test("a tampered toolset/progress claim of the wrong TYPE is refused, not coerce
   assert.match(verifyGatewayCapability(forge({ toolset: { evil: true } }), { secret, now: 2_000 }).reason, /invalid capability toolset/);
   assert.match(verifyGatewayCapability(forge({ progressReport: "yes" }), { secret, now: 2_000 }).reason, /invalid capability progress/);
 });
+
+// Every refusal AFTER the signature check: a token whose signature is genuine but whose claims are
+// not a grant. Each branch is reached with a correctly signed payload, so a regression that let
+// one of them through would be caught here rather than masked by "invalid signature".
+function signedWith(claims) {
+  const payload = Buffer.from(typeof claims === "string" ? claims : JSON.stringify(claims)).toString("base64url");
+  return `${payload}.${createHmac("sha256", secret).update(payload).digest("base64url")}`;
+}
+
+test("a genuinely signed token is still refused when its claims are not a grant", () => {
+  const good = verifyGatewayCapability(mintGatewayCapability(identity), { secret });
+  assert.equal(good.ok, true);
+  const base = good.claims;
+  assert.equal(verifyGatewayCapability(signedWith(base), { secret }).ok, true, "re-signing the same claims is the same grant");
+  assert.equal(verifyGatewayCapability(signedWith("not json"), { secret }).reason, "invalid capability payload");
+  assert.equal(verifyGatewayCapability(signedWith({ ...base, v: 1 }), { secret }).reason, "unsupported capability");
+  assert.equal(verifyGatewayCapability(signedWith({ ...base, aud: "elsewhere" }), { secret }).reason, "unsupported capability");
+  assert.equal(verifyGatewayCapability(signedWith({ ...base, scope: "admin" }), { secret }).reason, "unsupported capability");
+  for (const broken of [{ channelId: "" }, { slug: "" }, { authorId: "" }, { threadKey: "" }, { origin: "made-up" }, { principalTrusted: "yes" }]) {
+    assert.equal(verifyGatewayCapability(signedWith({ ...base, ...broken }), { secret }).reason, "incomplete capability claims", JSON.stringify(broken));
+  }
+  assert.equal(verifyGatewayCapability(signedWith({ ...base, toolset: 5 }), { secret }).reason, "invalid capability toolset");
+  assert.equal(verifyGatewayCapability(signedWith({ ...base, progressReport: "yes" }), { secret }).reason, "invalid capability progress claim");
+  assert.equal(verifyGatewayCapability(signedWith({ ...base, iat: "now" }), { secret }).reason, "expired or invalid capability lifetime");
+  assert.equal(verifyGatewayCapability(signedWith({ ...base, exp: base.iat + 48 * 60 * 60 * 1000 }), { secret }).reason, "expired or invalid capability lifetime");
+  assert.equal(verifyGatewayCapability(`${signedWith(base)}.extra`, { secret }).reason, "malformed capability");
+  assert.equal(verifyGatewayCapability(signedWith(base), {}).reason, "missing capability or signing secret");
+});

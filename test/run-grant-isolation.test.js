@@ -441,3 +441,60 @@ test("clean cwd escapes a git project ancestor and cannot discover its skills", 
   assert.ok(!path.resolve(clean.cwd).startsWith(path.resolve(process.env.CG_WORKSPACE_DIR) + path.sep));
   assert.equal(await absent(path.join(clean.cwd, ".agents", "skills", "ancestor-leak")), true);
 });
+
+// The stable launcher dir is exercised here with an explicit fixture toolchain, so the coverage
+// gate does not depend on whether the machine running the suite has ~/.local/node.
+test("the stable toolchain launcher dir is content-addressed, idempotent, and empty for an empty toolchain", async (t) => {
+  const { materializeStableToolchainLaunchers } = await import("../src/gateway/run-grant-artifacts.js");
+  const temp = await mkdtemp(path.join(os.tmpdir(), "cg-stable-launchers-"));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const home = path.join(temp, "home");
+  const bin = path.join(home, ".local", "bin");
+  const npmTarget = path.join(home, ".local", "node", "lib", "node_modules", "npm", "bin", "npm-cli.js");
+  await mkdir(bin, { recursive: true });
+  await mkdir(path.dirname(npmTarget), { recursive: true });
+  await writeFile(npmTarget, "#!/usr/bin/env node\n");
+  await chmod(npmTarget, 0o755);
+  await symlink(npmTarget, path.join(bin, "npm"));
+
+  const dir = await materializeStableToolchainLaunchers({ home, dirs: [bin] });
+  assert.ok(dir.startsWith(path.join(gatewayRoot, "runtime", "toolchain-bin")), "lives under the gateway runtime");
+  assert.equal((await lstat(path.join(dir, "npm"))).isSymbolicLink(), true);
+  assert.equal(await readlink(path.join(dir, "npm")), npmTarget);
+  assert.equal(await materializeStableToolchainLaunchers({ home, dirs: [bin] }), dir, "same toolchain, same directory");
+  const nothing = path.join(temp, "nothing");
+  await mkdir(path.join(nothing, "bin"), { recursive: true });
+  assert.equal(await materializeStableToolchainLaunchers({ home: nothing, dirs: [path.join(nothing, "bin")] }), "");
+});
+
+test("an isolated runtime target without an artifactDir is refused instead of writing under the gateway root", async () => {
+  const target = { runtime: { id: "test-isolated", capabilities: { isolated: true } }, artifactDir: "" };
+  await assert.rejects(
+    createRunGrantArtifacts({ slug: "iso-no-artifact-dir", target }),
+    /isolated runtime target must carry an artifactDir/,
+  );
+});
+
+test("an unreadable .claude/agents directory delivers the plugin without agents instead of failing the run", async (t) => {
+  if (typeof process.getuid === "function" && process.getuid() === 0) return t.skip("root reads everything");
+  const temp = await mkdtemp(path.join(os.tmpdir(), "cg-plugin-agents-unreadable-"));
+  const workspaceSkillsDir = path.join(temp, "workspace", ".claude", "skills");
+  const workspaceAgentsDir = path.join(temp, "workspace", ".claude", "agents");
+  await mkdir(path.join(workspaceSkillsDir, "gateway-usage"), { recursive: true });
+  await writeFile(path.join(workspaceSkillsDir, "gateway-usage", "SKILL.md"), "# Gateway usage\n");
+  await mkdir(workspaceAgentsDir, { recursive: true });
+  await writeFile(path.join(workspaceAgentsDir, "reviewer.md"), "---\nname: reviewer\n---\nReview it.\n");
+  await chmod(workspaceAgentsDir, 0o000);
+  t.after(async () => {
+    await chmod(workspaceAgentsDir, 0o700);
+    await rm(temp, { recursive: true, force: true });
+  });
+
+  const artifacts = await createRunGrantArtifacts({ slug: "agent-grants-unreadable", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
+  t.after(() => artifacts.cleanup());
+  const plugin = artifacts.claudePluginDirs[0];
+  assert.equal(await absent(path.join(plugin, "agents")), true, "nothing could be listed, so nothing is copied");
+  const manifest = JSON.parse(await readFile(path.join(plugin, ".claude-plugin", "plugin.json"), "utf8"));
+  assert.equal("agents" in manifest, false);
+  assert.ok(!(await absent(path.join(plugin, "skills", "gateway-usage", "SKILL.md"))), "the rest of the plugin is delivered");
+});
