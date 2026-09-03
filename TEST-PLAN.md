@@ -170,8 +170,9 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 - [x] `test/codex-message-to-reply-e2e.test.js`: a stub Codex binary drives an authorized Slack DM
       through message→reply, persists the returned session, uses `exec resume` on the follow-up,
       receives the gateway MCP registration, and terminates on cancellation.
-- [x] Nightly compatibility: macOS + Linux install pinned `@anthropic-ai/claude-code@2.1.220`
-      and `@openai/codex@0.144.1` targets, probe every provider-free CLI flag the adapters depend
+- [x] Nightly compatibility: macOS + Linux install pinned Claude Code `2.1.258` (the official
+      installer — the npm package's postinstall fetches the native binary, so `--ignore-scripts`
+      left nothing runnable) and `@openai/codex@0.152.0` targets, probe every provider-free CLI flag the adapters depend
       on, then run each engine's adapter/stub message-to-reply regression. Action revisions and CLI
       versions are immutable in the workflow.
 - [ ] Nightly authenticated turn: message→reply against the live Claude and Codex providers is
