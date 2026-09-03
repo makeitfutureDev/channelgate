@@ -803,12 +803,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     warnClaudeLoginMissing(relay.error || "the gateway has no usable Claude login");
     return relay;
   };
-  const claudeRelay = await claudeCredentialFor(engine);
-  const claudeOauthToken = claudeRelay?.token || "";
-  // What the warm pool keys on: the login's SOURCE and the expiry of the token this turn was
-  // handed, never the token text. A refresh moves the expiry, which retires a warm process still
-  // holding the old token — it cannot refresh one itself, an env token has no refresh half.
-  const claudeTokenFp = claudeTokenFingerprint(claudeRelay);
+  // Resolved AFTER the session decides which harness actually runs this turn (below): the engine
+  // here is still the channel's, and a thread that stays on Claude while its channel moved to Codex
+  // would otherwise spawn Claude with no token at all — inside a container that is "Not logged in"
+  // (live, 2026-09-03: a Codex channel on Atlas whose thread had started on Claude).
   // The stamp a session row carries so /status and /resume can name the environment it was minted
   // in. Host rows read "host"; a container row remembers the image and the create-time
   // fingerprint, so a recreated container is visibly a different environment.
@@ -872,6 +870,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       engine = picked.engine;
     }
   }
+
+  // The Claude credential for the harness that will actually run — settled only now (see above).
+  const claudeRelay = await claudeCredentialFor(engine);
+  const claudeOauthToken = claudeRelay?.token || "";
+  // What the warm pool keys on: the login's SOURCE and the expiry of the token this turn was
+  // handed, never the token text. A refresh moves the expiry, which retires a warm process still
+  // holding the old token — it cannot refresh one itself, an env token has no refresh half.
+  const claudeTokenFp = claudeTokenFingerprint(claudeRelay);
 
   // ── The thread's engine history follows it across runtime backends ────────────────────────────
   // The session row names WHERE the newest copy of this thread's engine-native history lives. When

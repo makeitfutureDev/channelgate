@@ -3,6 +3,10 @@
 # actually RECEIVED them (mirrors test/fixtures/codex): a resume turn must carry -r, and MCP
 # injection must ride --mcp-config. Unit tests on buildClaudeArgs can't prove the spawn.
 resume=no; mcp=no; cancel=no; fail=no; auth_fail=no; limit_fail=no; limit_answer=no; memory_save=no; answerless=no; mcp_path=""; prev=""
+# Whether the gateway handed this process a relayed login (CLAUDE_CODE_OAUTH_TOKEN). The value
+# itself is never echoed — only that it was there — so the E2E can prove the spawn was
+# authenticated the way a real turn would be.
+oauth=no; [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && oauth=yes
 for arg in "$@"; do
   case "$arg" in
     -r) resume=yes ;;
@@ -64,4 +68,4 @@ if [ "$fail" = "yes" ]; then
   printf '%s\n' 'stub failure detail' >&2
   exit 1
 fi
-printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Stub engine reply (resume=$resume; mcp=$mcp)\",\"session_id\":\"stub-session\",\"usage\":{\"input_tokens\":12,\"output_tokens\":4},\"total_cost_usd\":0.001}"
+printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Stub engine reply (resume=$resume; mcp=$mcp; oauth=$oauth)\",\"session_id\":\"stub-session\",\"usage\":{\"input_tokens\":12,\"output_tokens\":4},\"total_cost_usd\":0.001}"
