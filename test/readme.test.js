@@ -19,7 +19,7 @@ const readReadme = () => readFile(path.join(repoRoot, "README.md"), "utf8");
 const REPO_URL = "https://github.com/makeitfutureDev/channelgate";
 const TAGLINE =
   "The governed AI agent gateway for your Slack, Microsoft Teams and Google Chat channels — " +
-  "Claude Code and Codex, sandboxed per conversation, self-hosted.";
+  "Claude Code and Codex, a container per conversation, self-hosted.";
 const UTM = "utm_source=github&utm_medium=readme&utm_campaign=channelgate";
 // The pre-rename display name, allowed exactly once in the README (test/channelgate-rename.test.js
 // caps how many files may still carry it at all — this one is on that allowlist).

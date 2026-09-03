@@ -94,6 +94,18 @@ product overview.
   never the daemon's host-wide file, which is the identity mix-up the switch invited. `/secrets`
   now suggests every catalog name; a stored `cliIntegrations` value is inert. First slice of
   retiring the host sandbox runtime and macOS.
+- **The host sandbox runtime and the network allow-list.** Claude Code `sandbox.*` settings
+  generation, the Codex host permission profiles and `network_proxy` compilation, the toolchain
+  launcher grants, the host credential links, the `SENSITIVE_HOME` deny lists, the AppArmor/userns
+  fix, the per-domain egress allow-list (`networkDomains`, per-channel `extraNetworkDomains`, the
+  `request_network_domain` tool and its card), the container kill switch and the per-channel
+  runtime pin are gone. The container is the boundary: every turn — admin channels included — runs
+  in the channel's own rootless Podman container with a per-channel HOME volume and only the work
+  folder, clean workspace and artifact dir mounted, and the daemon refuses to boot without a
+  container CLI. Modes stay as tool-permission presets; `.claude/settings.json` keeps permissions,
+  the MCP allowlist, memory-off and the Stop hook, with no `sandbox` block. *Allow network* stays as
+  a per-channel switch the engines are told about — it filters nothing and does not yet cut a
+  container's egress (every container is on the bridge network); the egress proxy is a later slice.
 - **macOS support.** ChannelGate runs on Linux only — systemd for the service, rootless Podman for
   every channel. Gone: the launchd installers (`scripts/install-launchd.sh`,
   `scripts/uninstall-launchd.sh`, the `service:*:boot` npm scripts), the darwin branches of the

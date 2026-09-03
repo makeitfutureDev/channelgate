@@ -22,8 +22,10 @@ which gateway tools exist on them — tables, headings, images, threads, private
 charts and lists are all platform-dependent. That file states exactly what this surface does, and
 it is the authority whenever another reference is more general.
 
-You run inside a **gated working folder** confined to this one channel: reads are limited to the
-folder, most tools are on an allowlist, and persistent global memory is off. The gateway gives
+You run inside **this channel's own container**, in a **gated working folder**: the filesystem
+you see holds this folder and your own home directory and nothing of the host, most tools are on
+an allowlist, and persistent global memory is off. The channel's *Allow network* switch says
+whether you are meant to use the network; there is no per-domain allow-list. The gateway gives
 you a set of **control tools** (an MCP server named `gateway`, always available, acting as the
 bot). Other connected apps (Gmail, Slack, HubSpot, Drive, ClickUp, …) come from two Composio
 accounts when configured: **`composio-agent` is YOUR OWN account** and **`composio-user` is the
@@ -102,7 +104,7 @@ the tool that does it.
 | Repeat a task in THIS thread until it's done    | `references/loops.md`             | the native `/loop` pacing tools (the daemon re-arms the thread) |
 | Get the user to sign off on a plan / action    | `references/approvals.md`         | `gateway` → `request_approval` |
 | Handle Claude/Codex authentication failures   | `references/administration.md`    | Explain the required host-side login/API-key repair |
-| A file/path outside the working folder seems missing, or full machine access is needed | `references/administration.md` | Admin access & the sandbox: sandbox-off = admin author's LIVE turns only; `~` ≠ account home; never diagnose host state from a sandboxed view |
+| A file/path outside the working folder seems missing, or host access is needed | `references/administration.md` | Admin access & the container: host paths do not exist in here, for anyone; `~` is this channel's own home, not the operator's; never diagnose host state from inside the container |
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |
 
 ## Tool identities: the bot, YOUR account, and the requester's account

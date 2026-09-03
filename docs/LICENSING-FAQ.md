@@ -152,11 +152,11 @@ with Anthropic, OpenAI, Composio, and anyone else. The SUL governs ChannelGate's
 The license splits by *use case* and by *usage volume* (the key). The enterprise edition in
 `src/ee/` splits by *feature*. These lines commit that split in advance:
 
-**Never paid, in any tier:** the per-conversation sandbox and filesystem confinement, secret
-handling and storage, the authorization model, the MCP allowlist, the audit event record, and
-backup/restore. Confinement is the product; a free tier with weaker isolation would make the
-security claim meaningless and is off the table permanently. Usage limits cap *how much* you run,
-never *how safely*.
+**Never paid, in any tier:** the per-conversation sandbox (a container per channel) and filesystem
+confinement, secret handling and storage, the authorization model, the MCP allowlist, the audit
+event record, and backup/restore. Confinement is the product; a free tier with weaker isolation
+would make the security claim meaningless and is off the table permanently. Usage limits cap *how
+much* you run, never *how safely*.
 
 **Fair game for the enterprise edition:** SSO/SAML/OIDC/SCIM, multi-admin RBAC, audit-log *export*
 and SIEM streaming, org-wide identity provisioning, multi-workspace operation, budgets and

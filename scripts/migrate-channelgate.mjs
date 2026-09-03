@@ -1756,7 +1756,7 @@ export async function migrateChannelGate({
         }
       }
     }
-    log(`  • regenerated ${summary.regenerated} channel sandbox settings file(s)`);
+    log(`  • regenerated ${summary.regenerated} channel settings file(s)`);
 
     // Warm sessions hold the OLD cwd. They live only in this process's session pool, and this
     // migration runs before the daemon boots one — so "dropping" them is exactly the restart that

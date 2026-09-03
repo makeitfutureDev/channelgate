@@ -43,7 +43,7 @@ there is no other service packaging.
 with the `claude` sign-in of the user the daemon runs as (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) —
 the same one that user maintains in their own shell. Keep that signed in and there is nothing else
 to configure: the daemon reads the login where it lives, relays its current *access* token to each
-run (host and container alike), and refreshes it on the host when it gets close to expiry. The
+container run, and refreshes it on the host when it gets close to expiry. The
 credentials file is never copied, linked or mounted, because Claude Code rotates the refresh token
 on every refresh and a second copy that refreshes logs the first one out.
 
@@ -67,7 +67,7 @@ still counts, behind the host user's.
 `CLAUDE_CODE_OAUTH_TOKEN` (and `ANTHROPIC_API_KEY`) from the environment of every Bash tool
 subprocess — verified on 2026-09-02 on this host: a tool call running
 `sh -c 'echo ${#CLAUDE_CODE_OAUTH_TOKEN}'` printed 0 while `HOME` was visible — so an agent cannot
-`printenv` it, on the host or in a container. What still inherits the process environment is a
+`printenv` it from inside its container. What still inherits the process environment is a
 stdio MCP server Claude Code itself spawns; only the gateway's own bridges and admin-curated catalog
 servers are ever injected, and they run as the same user in any case. The token is the ACCESS half
 only (hours), never the refresh token.
@@ -80,9 +80,9 @@ The installer also resolves the `claude`/`codex` binaries at install time and ba
 directories into the unit's `PATH` — prefer system-wide CLI installs (e.g. npm prefix
 `/usr/local`); a CLI inside a user home is exposed to the service read-only with a warning.
 Without keys the daemon starts and serves the admin UI, but every engine turn fails
-authentication — this file is the fix, not `claude login`. Container channels honor the same key:
+authentication — this file is the fix, not `claude login`. The containers honor the same key:
 with no gateway login to relay, `ANTHROPIC_API_KEY` in the daemon's environment authenticates
-Claude inside the container too (it crosses through the reviewed passthrough list in
+Claude inside every container (it crosses through the reviewed passthrough list in
 `src/engines/child-env.js`), so a keyed install never sees "no Claude login to relay".
 
 ## The ChannelGate rename migration
@@ -226,7 +226,7 @@ directory — is invisible to them, so hand the pair over and it becomes one mor
 every pass above: the channel record, Claude project directories (renamed to the new cwd's encoding,
 which is what keeps `-r` resume working) and their transcripts, the engine home's `.claude.json`,
 Codex `config.toml`/index/rollouts, the moved folder's own `MEMORY.md`/`memory/*.md`, the installed
-service definition (`WorkingDirectory`), and the sandbox regeneration. Repeat the two flags for
+service definition (`WorkingDirectory`), and the per-channel settings regeneration. Repeat the two flags for
 several folders. Move the folder FIRST, then repath: the rule says where the folder *is*, and the
 prose is rewritten there. Both sides must be absolute and distinct, and the new path may not lie
 under the old one (that rule would rewrite its own output on every run). A malformed or misplaced
@@ -249,14 +249,14 @@ new root is created.
 
 **On refusal or failure the boot continues on the OLD paths.** The process pins `CHANNELGATE_DIR`
 and `CG_WORKSPACE_DIR` back to the pre-rename roots for its own lifetime — an env override, not a
-symlink, because a symlinked runtime root would defeat the channel sandbox's wholesale read-deny on
-that root. Clear the blocker and restart, or run the script by hand.
+symlink, so nothing on disk pretends the move happened. Clear the blocker and restart, or run the
+script by hand.
 
 Preview with `node scripts/migrate-channelgate.mjs --dry-run`, which prints the same plan and writes
 nothing. Channels with a custom `workDir` are never moved, an existing destination is never
 clobbered (it is skipped and reported), a cross-device move copies and verifies before removing the
 source, and each old location keeps a `MOVED.md` breadcrumb. Every channel's `.claude/settings.json`
-is regenerated afterwards because the sandbox allow/deny lists embed absolute paths.
+is regenerated afterwards so nothing in it names a pre-rename path.
 
 After migrating, re-run the service installer so the systemd unit matches the new name
 (`channelgate.service`); the installer removes the pre-rename one first so an upgraded host never
@@ -264,11 +264,13 @@ runs two daemons against one runtime root.
 
 ## Container runtime
 
-Optional, off by default, and Linux-only. When it is on, a channel's engine processes run inside a
-long-lived container of that channel's own instead of the daemon's host sandbox — separate HOME,
-separate CLI logins, its own process namespace, and none of the host's files reachable. The daemon
-itself is unaffected: it still runs on the host, and a machine with no container CLI boots exactly
-as before.
+**This is the runtime — required, Linux-only.** Every channel's engine processes run inside a
+long-lived container of that channel's own: its own HOME volume, its own CLI logins, its own
+process namespace, and none of the host's files reachable beyond the channel's work folder. There
+is no host fallback: the daemon refuses to boot without a usable container CLI, and a channel that
+cannot get its container (no built image, no engine login) fails the turn closed with the remedy
+named rather than running anywhere else. The daemon itself still runs on the host as an ordinary
+service; only the engines are containerized.
 
 **Prerequisites.** Rootless **Podman** is the supported runtime (Docker works and is probed as a
 fallback, but rootless podman is what the uid story is built on). On Debian/Ubuntu:
@@ -301,8 +303,8 @@ workdir, and building as root is refused outright. CLI versions come from
 `containers/versions.json`; bump a pin, rebuild, and each channel picks the new image up on its next
 turn (the container fingerprint follows the resolved image ID, not the moving tag).
 
-**A self-update rebuilds it for you.** With the container runtime switched on, the transactional
-updater runs the build itself, after dependencies and before the restart, whenever the candidate
+**A self-update rebuilds it for you.** The transactional updater runs the build itself, after
+dependencies and before the restart, whenever the candidate
 changed anything under `containers/`, bumped `imageSpecVersion`, or no image is built at all — so a
 `/update` no longer leaves every container channel on the previous toolchain. The build is the one
 step that never blocks: if it fails, the update reports `channel image build failed — run
@@ -318,8 +320,6 @@ runs too, and the next successful update settles it.
 
 | Setting | Meaning |
 | --- | --- |
-| Enable the container runtime | the gateway-wide switch. Off = every channel runs on the host, whatever it is pinned to |
-| Default for channels that don't pin | `host` or `container` for channels with no explicit choice |
 | Container CLI | `auto` (podman, then docker), or force one |
 | Image reference | default `channelgate/runtime:latest` |
 | Stop an idle channel container after | minutes, default 10 |
@@ -332,19 +332,26 @@ shell metacharacter in the image/memory/cpu fields is rejected with an error, no
 
 **Engine logins.** By default a container Claude run is handed a RELAY of the host user's own
 Claude login — its current access token, in `CLAUDE_CODE_OAUTH_TOKEN` — so keeping `claude` signed
-in on the host is all a container channel needs. Nothing is copied or mounted. Optionally run
+in on the host is all a channel needs. Nothing is copied or mounted. Optionally run
 `claude setup-token` on the gateway host and paste the value into *Claude token for container runs*:
 that token is then used instead and never needs refreshing. Codex is different — it rewrites
 `auth.json` in place, so every container shares a read-write mount of the gateway's real auth file;
 keep the host signed in with `codex login`. Codex *sessions* and history are still per channel.
 
-**Flip a channel.** Admin UI → the channel → **Runtime** → *Container* (or *Host*, or *Gateway
-default*), or in chat `set_channel_runtime` (admins only) — the reply says which backend the next
-turn will actually use. It takes effect on the next message; the thread's session resumes across the
-switch in both directions, because the workdir is bind-mounted at the same absolute path on both
-backends. Two things override the pin without changing it: the gateway kill switch, and **admin
-mode** (an admin channel is deliberately unconfined and always runs on the host). The channel
-listing shows the effective decision beside the stored pin.
+**Network.** Every channel container runs on the default bridge network. The per-channel *Allow
+network* switch (admin UI → the channel → Advanced, or `set_channel_network` in chat) is kept and
+shown: it tells the engines whether the channel is meant to have network access (Codex read mode
+refuses network on its own), and that is all it does in this release — there is no per-domain
+filtering and no egress cut-off in the container. The boundary today is the container's
+filesystem and process isolation, not its egress; a container-side egress proxy that enforces the
+switch is the planned follow-up.
+
+**Admin channels run in containers too.** An admin author's live turn adds the engine's bypass
+flag; the channel's work folder is bind-mounted read-write like any other's. An admin channel
+whose work folder is a host directory — the gateway's own checkout, say — hands that directory,
+and only that directory, to its container: everything in it is visible there (the checkout's
+`.env` included), nothing beside it is. That is the intended trust model for admin channels; put
+nothing in such a folder that the channel must not see.
 
 **Where things live.** Containers and the per-channel HOME volumes live in the rootless podman store
 under the daemon user's home — `~/.local/share/containers` by default; `podman info --format
@@ -353,25 +360,26 @@ is the same `~/ChannelGate/<platform>/<slug>` (or the channel's custom workdir) 
 identical absolute path, so host tooling and VS Code see the agent's files instantly. Per-run
 engine-facing files (the settings copy, the MCP config, plugin dirs, job logs) live in
 `~/ChannelGate/.runtime/<platform>/<slug>`, also bind-mounted at the identical path. Nothing under
-`~/.channelgate/` is mounted except the read-only control-socket directory.
+`~/.channelgate/` is mounted except the channel's clean workspace and the read-only control-socket
+directory.
 
 **What persists where.** The short version: everything a channel *accumulates* survives, and only
 running *processes* do not. A channel container is stopped routinely — after
 `containerIdleMinutes` of quiet, and to make room under `containerMaxRunning` — and recreated
-whenever its create-time configuration changes (an image rebuild, a limit change, a network-mode
-flip). Neither loses data.
+whenever its create-time configuration changes (an image rebuild, a limit change). Neither loses
+data.
 
-| Where | Holds | Survives a `stop`/`start` | Survives a `rm` + recreate | Follows a channel that changes backend |
-| --- | --- | --- | --- | --- |
-| Per-channel HOME **volume** (`/home/agent`) | engine sessions and transcripts, CLI logins (`gh`, `vercel`, `supabase`, MCP auth), `npm -g`, `pip --user`/`pipx`/`uv`/`cargo` installs, caches, dotfiles | yes | yes — the daemon removes a HOME volume only when the CHANNEL is deleted, never on a rollback, a reconfiguration or an image bump | **no** — a host run sees the daemon's own logins again |
-| `/tmp` and `/var/tmp` (bind mounts of `~/ChannelGate/.runtime/<platform>/<slug>/{tmp,var-tmp}`) | scratch files, Claude Code's per-session scratchpad, anything an agent parks between turns | yes | yes | no |
-| Channel work directory (`~/ChannelGate/<platform>/<slug>`, bind mount) | the project itself | yes — it is a host directory | yes | yes, it is the same directory on both backends |
-| Per-run artifacts (`~/ChannelGate/.runtime/<platform>/<slug>`, bind mount) | this run's settings copy, MCP config, job logs | yes | yes | n/a — rebuilt every run |
-| Engine session history (Claude transcripts, Codex rollouts, subagent transcripts) | inside the HOME volume | yes | yes | **yes**, carried automatically (below) |
-| `/run` (tmpfs, 64m, `noexec`) | run-helper pid files, the read-only control socket | **no** — fresh on every start, deliberately | no | no |
-| Image layers (`/usr`, `/opt/channelgate`, the pinned engines) | read-only and root-owned | yes | replaced by an image rebuild | n/a |
-| Foreground/warm engine processes | — | no — a stop kills them; the turn replays | no | no |
-| Detached background jobs | — | no — a stop kills them, and the next turn says so | no | no |
+| Where | Holds | Survives a `stop`/`start` | Survives a `rm` + recreate |
+| --- | --- | --- | --- |
+| Per-channel HOME **volume** (`/home/agent`) | engine sessions and transcripts, CLI logins (`gh`, `vercel`, `supabase`, MCP auth), `npm -g`, `pip --user`/`pipx`/`uv`/`cargo` installs, caches, dotfiles | yes | yes — the daemon removes a HOME volume only when the CHANNEL is deleted, never on a rollback, a reconfiguration or an image bump |
+| `/tmp` and `/var/tmp` (bind mounts of `~/ChannelGate/.runtime/<platform>/<slug>/{tmp,var-tmp}`) | scratch files, Claude Code's per-session scratchpad, anything an agent parks between turns | yes | yes |
+| Channel work directory (`~/ChannelGate/<platform>/<slug>`, bind mount) | the project itself | yes — it is a host directory | yes |
+| Per-run artifacts (`~/ChannelGate/.runtime/<platform>/<slug>`, bind mount) | this run's settings copy, MCP config, job logs | yes | yes |
+| Engine session history (Claude transcripts, Codex rollouts, subagent transcripts) | inside the HOME volume | yes | yes |
+| `/run` (tmpfs, 64m, `noexec`) | run-helper pid files, the read-only control socket | **no** — fresh on every start, deliberately | no |
+| Image layers (`/usr`, `/opt/channelgate`, the pinned engines) | read-only and root-owned | yes | replaced by an image rebuild |
+| Foreground/warm engine processes | — | no — a stop kills them; the turn replays | no |
+| Detached background jobs | — | no — a stop kills them, and the next turn says so | no |
 
 `/tmp` and `/var/tmp` were tmpfs until image spec 1.1.0, which meant the idle reaper's routine stop
 emptied them ten minutes after every turn. They are host directories now, so they keep their
@@ -403,20 +411,14 @@ in a venv); `pipx` handles this for itself. If a CLI installs but the shell cann
 container is running an image built before spec 1.1.0 widened the PATH — rebuild with
 `npm run build:image`; the daemon logs that mismatch at boot.
 
-**Engine history follows a thread across backends.** A thread that changes runtime backend between
-two messages — you flipped the channel to *Container*, or back to *Host*, or admin mode/the kill
-switch did it for you — used to lose its engine-native history and get healed instead (a fresh
-session with the chat transcript replayed). It is now carried across before the resume, lazily and
-per thread: Claude's `projects/<cwd-key>/<id>.jsonl` plus its `<id>/` subagent directory, Codex's
-`sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`. Nothing is deleted on either side — the older copy is
-overwritten, the source stays where it is — and the session row is re-stamped so the next turn knows
-which side is newest. The daemon cannot reach a HOME volume directly, so the container half stages
-through the bind-mounted artifact dir (`…/.runtime/<platform>/<slug>/carry/<id>/`, removed either
-way) and runs one `cp` inside. It is best-effort: a failure logs
-`session carry-over failed (…) — the resume falls back to the existing heal` and the turn answers
-as it did before. Grep for `carried <engine> session` to see one happen. Note this carries the
-CONVERSATION, not the HOME: CLI logins and npm-installed tools still do not follow a channel back
-to the host backend.
+**One runtime, one home for a thread's history.** A thread's engine-native history (Claude's
+`projects/<cwd-key>/<id>.jsonl` plus its `<id>/` subagent directory, Codex's
+`sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`) lives in the channel's HOME volume and is never moved:
+stopping, starting or recreating the container loses nothing, and there is no other backend for a
+thread to change to. A thread whose last turn ran on the host before the container-only switch has
+no session on the container side, so its next message falls back to the existing heal — a fresh
+engine session with the chat transcript replayed, which keeps the conversation readable but not the
+engine's own working state (compaction summaries, tool results, subagent transcripts).
 
 **Inspect and debug.**
 
@@ -433,21 +435,17 @@ rootlessness, whether the image is present, the control socket, and every runnin
 lease count and idle time. `/status` in a channel names its backend, container, image, state and
 uptime. An attached `podman exec` terminal inherits the channel's environment, not the daemon's.
 
-**Rollback.** Three levers, in increasing order of blast radius: set one channel's Runtime back to
-*Host*; switch **Enable the container runtime** off, which returns every channel to the host
-immediately; or roll the release back through the transactional updater. None of them deletes a
-thing — HOME volumes are removed only when a channel is deleted, never on a rollback or a
-reconfiguration, and the two temp trees are host directories the daemon never touches, so
-re-enabling the runtime finds every CLI login and every scratch file where it was left. Note the one
-asymmetry: in-container HOME state (CLI logins, npm-installed tools) does **not** follow a channel
-back to the host backend; the host run sees the daemon's own logins again. A thread's engine session
-history DOES follow it, in both directions — see "What persists, and what does not" above.
+**Rollback.** One lever: roll the release back through the transactional updater. It deletes
+nothing — HOME volumes are removed only when a channel is deleted, never on a rollback or a
+reconfiguration, and the two temp trees are host directories the daemon never touches, so the
+restored release finds every CLI login and every scratch file where it was left. There is no
+per-channel or gateway-wide "back to the host" switch: the container is the only place a turn runs.
 
 **Known caveats (v0.8 P1).**
 
 - **Per-user Codex skill grants are not delivered in containers.** The per-run Codex skill overlay
-  lives under a synthetic host HOME that a container does not have; a containerized Codex run gets
-  the channel's skills through the mounted workdir, but not that overlay.
+  was built for a synthetic host HOME that a container does not have; a Codex run gets the
+  channel's skills through the mounted workdir, but not that overlay.
 - **Codex sessions are per channel, but the sign-in is shared.** Every container mounts the same
   `auth.json` the gateway uses. A `codex login` on the host that *replaces* the file leaves a
   running container holding the old inode — `/status` and `/api/health` report the drift; restart
@@ -456,25 +454,23 @@ history DOES follow it, in both directions — see "What persists, and what does
   environment, so an agent in that channel can print it. It cannot rotate anything (an access token
   carries no refresh half) and it dies within hours, but it is a live credential for that window;
   the P3 egress proxy replaces it with an opaque token.
-- **Egress is not yet policed per channel** (P3). A container runs on the default bridge unless the
-  channel's network mode is *off*.
-- **A carry can start one container while the kill switch is off.** Reading a thread's history out
-  of a HOME volume needs a container, so the first message in each moved thread may start that
-  channel's container once even with **Enable the container runtime** off. It holds a lease only for
-  the copy; the idle reaper runs in that state precisely so those containers are stopped again after
-  `containerIdleMinutes`.
+- **Egress is not policed per channel.** Every container runs on the default bridge network, and
+  the per-channel *Allow network* switch does not cut it — it only tells the engines whether the
+  channel is meant to have network. The per-domain allow-list of the retired host sandbox has no
+  container equivalent; the container-side egress proxy that will enforce the switch is a later
+  slice.
 
 **Claude login in containers:** with no `containerClaudeOauthToken`, each container Claude run
 receives a RELAY of the gateway's resolved login — normally the host user's own `~/.claude` — as a
 current OAuth access token in `CLAUDE_CODE_OAUTH_TOKEN` (refreshed on the host first by a cheap
-haiku turn, in that login's own config dir, when under 30 minutes remain). Host runs are handed the
-same token for the same reason. The login file is never copied: Claude Code rotates refresh tokens,
+haiku turn, in that login's own config dir, when under 30 minutes remain). The login file is never
+copied: Claude Code rotates refresh tokens,
 and a copy that refreshes logs the original out. A relayed access token cannot rotate anything. A
 `claude setup-token` value, when configured, is used instead and needs no refresh.
 
 **Service unit:** the installer sets `KillMode=mixed`. systemd then sends SIGTERM only to the
-daemon, which drains, marks the shutdown and sweeps its own engine children (host process groups,
-container run groups) so interrupted turns replay on the next boot. With the default
+daemon, which drains, marks the shutdown and sweeps its own engine children (the container run
+groups) so interrupted turns replay on the next boot. With the default
 `control-group` mode systemd signals the engine (or the `podman exec` client) directly and the
 turn is recorded as a plain error instead of being replayed. Existing installs: add
 `KillMode=mixed` under `[Service]` and `systemctl --user daemon-reload`.
@@ -494,8 +490,8 @@ automated: legal and operational owners must define it before enabling destructi
 The transactional updater's phases are: preflight → snapshot → checkout → install → audit → test →
 provision → **channel image** → restart → verify, with an automatic rollback (restore → install →
 restart → verify) on any failure up to the restart. The channel-image phase is the single exception
-to that rollback: it only runs when the container runtime is on and the image is provably behind
-this revision, and a failure there is reported and stepped over rather than rolled back (see
+to that rollback: it only runs when the image is provably behind this revision, and a failure
+there is reported and stepped over rather than rolled back (see
 [Container runtime](#container-runtime)).
 
 Before promotion: run static checks, the complete suite, `npm run backup`, `npm run restore:drill`,

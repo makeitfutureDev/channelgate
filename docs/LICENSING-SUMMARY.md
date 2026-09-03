@@ -80,9 +80,9 @@ judged on its own, so twenty clients on twenty dedicated deployments are fine.
 
 ## Security is never a paid tier
 
-These stay free in every tier, permanently: the per-conversation sandbox and filesystem
-confinement, secret handling, the authorization model, the MCP allowlist, the audit event record,
-and backup/restore. Usage limits cap how much you run, never how safely.
+These stay free in every tier, permanently: the per-conversation sandbox (a container per channel)
+and filesystem confinement, secret handling, the authorization model, the MCP allowlist, the audit
+event record, and backup/restore. Usage limits cap how much you run, never how safely.
 
 Confinement is the product. A free tier with weaker isolation would make the security claim
 meaningless, so it is off the table — not "not planned", but excluded by policy. The rule for the

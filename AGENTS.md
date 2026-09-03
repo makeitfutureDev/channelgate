@@ -5,11 +5,13 @@ edit here only.
 
 ## What this is
 
-A **local, self-hosted Node.js daemon** that turns Claude Code into a Slack bot. Each Slack
-message spawns a **headless `claude -p` subprocess** that runs inside a **per-conversation
-gated folder** under `~/.channelgate/`. The folder is sandboxed (filesystem confined,
-MCP allowlist, memory off) per the `channelgate` skill, and the subprocess is driven per
-the `headless-app-creator` skill. A small admin web UI (served by the same process)
+A **local, self-hosted Node.js daemon** (Linux) that turns Claude Code into a Slack bot. Each
+Slack message runs a **headless `claude -p` subprocess** inside that conversation's **own
+container** (rootless Podman), with the **per-conversation gated folder**
+(`~/ChannelGate/<platform>/<slug>/`; metadata under `~/.channelgate/`) as its working directory.
+The container is the confinement boundary; the folder's `.claude/settings.json` carries the tool
+permissions, the MCP allowlist and memory-off per the `channelgate` skill, and the subprocess is
+driven per the `headless-app-creator` skill. A small admin web UI (served by the same process)
 configures per-channel access plus personal, channel, and organization Composio tokens.
 
 This is **not** a Vercel/Supabase/Next.js platform, so the MIF profiles (A/B/C) don't apply.
@@ -27,6 +29,8 @@ Gateway daemon (Node ESM, Express)
   │  gate: DM → no mention needed · elsewhere → require @bot mention
   │  authz: author must be in channel.allowedUsers
   │  ensure ~/.channelgate/channels/<platform>/<slug>/ exists (+ .claude/settings.json lockdown)
+  │  ensure the channel's container is up (rootless Podman: own HOME volume, work folder mounted,
+  │                                        bridge network)
   │  resolve session: thread_ts → claude session_id (resume) | new
   │  build MCP config: channel.allowedMcps + `composio-user` (author) + `composio` (channel→org)
   ▼
@@ -34,7 +38,7 @@ spawn("claude", ["-p", text, "--output-format","stream-json","--verbose",
                  ("--session-id"|"-r"), id,
                  "--mcp-config", <json>, "--strict-mcp-config",
                  (admin ? "--dangerously-skip-permissions" : [])],
-       { cwd: channelFolder })
+       { cwd: channelFolder })          ← exec'd inside the channel's container, never on the host
   │  parse NDJSON → final text + token/cost
   ▼
 post/edit Slack message in the thread
@@ -42,7 +46,7 @@ post/edit Slack message in the thread
 
 ## Where things live
 
-- `src/start.js` — the process entry point (`npm start`, launchd plist, systemd unit): checks the
+- `src/start.js` — the process entry point (`npm start`, systemd unit): checks the
   Node floor with NO static imports, then dynamic-imports `server.js`.
 - `src/server.js` — boot: load env, ensure gateway root, wire deps, start Slack + Express.
 - `src/config/` — on-disk config: `store.js` (users/channels CRUD), `settings.js` (UI settings +
@@ -53,8 +57,9 @@ post/edit Slack message in the thread
   and not a rewrite).
 - `src/gateway/run.js` — the run orchestrator: engine selection/precedence, Claude→Codex fallback,
   warm-vs-cold, session recovery; the heart of a turn.
-- `src/gateway/folders.js` — channel folder provisioning, `.claude/settings.json` (sandbox/permissions)
-  generation, the CLAUDE.md/AGENTS.md managed instructions block, and the auto-injected
+- `src/gateway/folders.js` — channel folder provisioning, `.claude/settings.json` generation (tool
+  permissions, the MCP allowlist, memory-off and the Stop hook — no `sandbox` block: the container
+  is the boundary), the CLAUDE.md/AGENTS.md managed instructions block, and the auto-injected
   `channel-memory` skill + library skill-stubs. `.claude/skills` is canonical; a guarded relative
   `.agents/skills` symlink exposes the same complete tree to Codex without duplicate copies.
 - `src/gateway/guide.js` + `gateway-usage/` — the **`gateway-usage` skill**: the chat operating
@@ -71,16 +76,26 @@ post/edit Slack message in the thread
   (gateway control MCP + dual Composio identities; Skills/Toolbox use channel→user→org). Slack
   beyond the gateway's own bot tools is the **Composio** Slack toolkit — there is no separate hosted
   Slack MCP.
-- `src/gateway/modes.js` — the read/bash/auto/admin mode → tool-permission mapping.
+- `src/gateway/modes.js` — the read/bash/auto/admin mode → tool-permission mapping (read = read-only
+  tools, bash = shell + file writes, auto = permission prompts auto-approved, admin =
+  `--dangerously-skip-permissions` for an admin author). A mode is a TOOL preset; none of them
+  changes what the channel's container mounts.
+- `src/runtimes/` — WHERE an engine process runs: the `RuntimeBackend` contract (`contract.js`),
+  `resolve.js` (the one place that builds the RuntimeTarget a turn, a background job and the memory
+  reviewer all receive — each resolves at its OWN spawn), and `container/` — the rootless Podman
+  backend: the CLI probe, the image, the lifecycle (create/start/stop, recreate by create-time
+  fingerprint, leases, the idle reaper), exec, the per-channel HOME volume and the mounts. It is the
+  only runtime: the daemon refuses to boot without a container CLI, and nothing downstream asks
+  "is this a container?" — it reads the target's declared capabilities.
 - `src/gateway/claude-login.js` + `claude-token-relay.js` — the one home for "WHICH Claude login
   does the gateway use, and what does a run receive?". The resolver's order is: a configured
   `claude setup-token` → the OPERATOR's own `$CLAUDE_CONFIG_DIR`/`~/.claude` login → a login signed
   in to the gateway's engine home → the daemon's `ANTHROPIC_API_KEY` → a named remedy. The operator's
   login is NEVER copied, linked or mounted (Claude Code writes `.credentials.json` by rename, so a
-  copy that refreshes logs the original out); every run — host and container alike — receives a
-  RELAY of that login's current ACCESS token in `CLAUDE_CODE_OAUTH_TOKEN`, refreshed by a cheap turn
-  in that login's own config dir. Container credential modes, the engine health probe, the boot log
-  and `/status` all read the same resolver; nothing else may stat a credentials file.
+  copy that refreshes logs the original out); every container run receives a RELAY of that login's
+  current ACCESS token in `CLAUDE_CODE_OAUTH_TOKEN`, refreshed by a cheap turn in that login's own
+  config dir. The container credential modes, the engine health probe, the boot log and `/status`
+  all read the same resolver; nothing else may stat a credentials file.
 - `src/gateway/{background,scheduler,followups,nudges}.js` — daemon-side automation (bg jobs that
   outlive the subprocess, cron/one-time schedules, pending-response digests, no-response nudges).
 - `src/gateway/channel-memory.js` + `memory-review.js` — the channel memory system: the budgeted
@@ -167,17 +182,33 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
   Slack can be (re)connected live via the manager — no process restart.
 - `~/.channelgate/config/mcp-catalog.json` — admin-curated MCP server catalog.
 - `~/.channelgate/channels/<platform>/<slug>/.claude/settings.json` — the per-channel lockdown contract
-  that Claude Code itself reads (must be a file).
+  that Claude Code itself reads (must be a file): tool permissions, the MCP allowlist, memory-off
+  and the Stop hook. No `sandbox` block — the container is the boundary.
 
 ## Non-negotiable rules
 
-- **Confinement is the product.** Every channel folder MUST get the `channelgate` lockdown
-  (sandbox filesystem to the folder, `autoMemoryEnabled:false`, `autoDreamEnabled:false`,
-  curated `permissions.allow`). Never spawn `claude` in an un-gated folder. When the folder must be
-  writable, the sandbox switches from a blanket `$HOME` write-deny to an ENUMERATED deny list, so
-  anything missing from it is writable: keep the credential stores AND the delayed-escape paths
-  (shell rc files, LaunchAgents/LaunchDaemons, systemd user units, `~/bin`, `~/.local`, the daemon's
-  own checkout) in `SENSITIVE_HOME` — each is code execution outside the sandbox on a delay.
+- **Confinement is the product, and the container is the boundary.** Every turn — foreground,
+  background job, schedule, memory review — runs inside the channel's own container (rootless
+  Podman, image-shipped toolchain, `--cap-drop ALL`, no `sudo`): a per-channel HOME volume at
+  `/home/agent` (engine sessions, CLI logins, installed tools) and, bind-mounted at their identical
+  absolute paths, ONLY the channel's work folder, its clean workspace and its artifact dir
+  (`~/ChannelGate/.runtime/<platform>/<slug>`, which also backs `/tmp` and `/var/tmp`), plus the
+  read-only control socket. Nothing else exists on that side: no host home, no gateway root, no
+  `gateway.db`, no other channel's folder, no daemon checkout, no operator `~/.claude`/`~/.codex`.
+  Every container runs on the default bridge network: the per-channel *Allow network* switch
+  (`allowNetwork`) is kept and tells the engines whether the channel is meant to have network
+  (Codex read mode refuses network on its own), but there is no domain filtering and, in this
+  release, no egress cut-off — the boundary today is the container's filesystem and process
+  isolation, not its egress (a container-side egress proxy is the planned follow-up). Every
+  channel folder still gets the `channelgate` lockdown file
+  (`autoMemoryEnabled:false`, `autoDreamEnabled:false`, curated `permissions.allow`, the MCP
+  allowlist, the Stop hook) — it carries POLICY, never a `sandbox` block, and nothing a run can do
+  changes what its container mounts. Never exec an engine outside a container. Admin channels run
+  in containers too: the admin author's live turn adds the bypass flag, and the work folder is
+  mounted read-write like any other's — so an admin channel whose work folder is a host directory
+  (the gateway's own checkout, say) hands that directory, and only that directory, to its
+  container, everything in it included. That is the intended trust model for admin channels; put
+  nothing in such a folder that the channel must not see.
 - **Secrets never ride a listing response.** `/api/settings`, `/api/channels`, `/api/users` and the
   channel-meta PUT return `has*`/`last4` ONLY. A value is fetched one at a time from
   `POST /api/secrets/reveal`, which re-checks the admin password even for a valid session and
@@ -243,10 +274,10 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
   read, link or copy a `.credentials.json`. Claude Code writes that file by RENAME and rotates the
   refresh token on every refresh, so any second copy that refreshes logs the first one out — that is
   exactly how the gateway's own engine-home copy silently expired while the operator stayed signed
-  in. A run receives a RELAY of the resolved login's ACCESS token instead (host and container
-  alike), gateway-owned and applied last in the child env so a channel secret cannot displace it.
-  Fail-closed is CONTAINER-only: a host turn with no login still runs and lets the engine raise its
-  own error. A new consumer asks the resolver; it never adds a second notion of "the login".
+  in. A run receives a RELAY of the resolved login's ACCESS token instead, gateway-owned and
+  applied last in the child env so a channel secret cannot displace it. A turn with no resolvable
+  login fails closed with the remedy named; it never runs on a guessed credential. A new consumer
+  asks the resolver; it never adds a second notion of "the login".
 - **Only admins get `--dangerously-skip-permissions`.** Non-admins run with the folder's
   `permissions.allow` allowlist (headless can't answer interactive prompts).
 - **Authorization (who may talk):** a user is allowed if they are an **admin** or **approved**

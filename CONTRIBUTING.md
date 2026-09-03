@@ -1,7 +1,7 @@
 # Contributing
 
 ChannelGate (formerly Claude Gateway for Slack) is a self-hosted daemon that runs coding agents
-inside per-conversation sandboxes. Contributions are welcome, and because the gateway executes
+inside a container per conversation. Contributions are welcome, and because the gateway executes
 model output on someone's machine, review is strict about isolation, secret handling, and
 cross-platform behaviour. Everything below is what a reviewer will actually check.
 
@@ -37,7 +37,7 @@ npm run check:dco          # every commit in origin/main..HEAD carries a sign-of
 ```
 
 `npm run test:security-coverage` enforces the extra coverage floors on the security-critical
-modules; run it when you touch authorization, sandboxing, secrets, or the admin API. A single file
+modules; run it when you touch authorization, confinement, secrets, or the admin API. A single file
 runs with `node --test test/<name>.test.js`.
 
 Tests must leave no scratch directories behind. Create temp directories with `tempDir(prefix)` from
@@ -129,12 +129,14 @@ leaked before you report.
 
 These are not style preferences; a change that breaks one of them does not merge.
 
-- **Confinement is the product.** Every channel folder gets the lockdown settings — filesystem
-  sandbox scoped to the folder, automatic memory off, curated permission allowlist. An agent is
-  never spawned in an un-gated folder. When a folder must be writable, the sandbox switches to an
-  enumerated deny list, so anything missing from it becomes writable: credential stores and the
-  delayed-escape paths (shell rc files, LaunchAgents/LaunchDaemons, systemd user units, `~/bin`,
-  `~/.local`, the daemon's own checkout) stay denied.
+- **Confinement is the product, and the container is the boundary.** Every turn runs inside the
+  channel's own container: a per-channel HOME volume, only the work folder (plus its clean
+  workspace and artifact dir) mounted, no host home and no gateway root on that side. Every channel
+  folder still gets the lockdown settings — automatic memory off, curated permission allowlist,
+  the MCP allowlist — as policy, never a `sandbox` block. An engine is never exec'd outside a
+  container, and nothing a run can do changes what its container mounts. The boundary is
+  filesystem and process isolation, not egress: *Allow network* is a per-channel switch the
+  engines are told about, not a filter.
 - **Secrets never ride a listing response.** Listing endpoints return `has*` and `last4` only. A
   value is fetched one at a time through the reveal endpoint, which re-checks the admin password
   and audit-logs what was revealed, never the value. New secret fields go in the reveal allowlist.
