@@ -4,7 +4,7 @@
 // importing any src module that opens the DB, so getDb() opens the scratch file — never the real
 // ~/.channelgate one.
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -42,8 +42,14 @@ function installScratchCleanup() {
 
 // Create a temp directory that is removed when this test process exits. Use this everywhere in the
 // suite instead of a bare `mkdtempSync(path.join(os.tmpdir(), …))`.
+// Canonical (realpath) on purpose: macOS's os.tmpdir() is /var/folders/…, a symlink to
+// /private/var/…, and the code under test resolves REAL paths — credential files, toolchain
+// binaries, custom work dirs — so a fixture built from the symlinked form never string-matches what
+// the code reports (13 macOS-only CI failures, 2026-09-03; Linux reproduces them with a symlinked
+// TMPDIR). Everything derived from this root, including the TMPDIR sibling below, inherits the
+// canonical form.
 export function tempDir(prefix = "cg-test-") {
-  return trackTempDir(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  return trackTempDir(realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix))));
 }
 
 // Register a directory created some other way (a fixed path a unix socket's 108-char limit forces,

@@ -19,6 +19,16 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Fixed
+- **CI is green on macOS again, and the security-coverage gate no longer depends on the runner's
+  toolchain.** Thirteen tests failed only on macOS because `os.tmpdir()` there is a symlink
+  (`/var/folders/…` → `/private/var/…`) and the code under test resolves REAL paths — credential
+  files, toolchain binaries, custom work dirs — so a fixture built from the symlinked form never
+  string-matched what the code reported. The shared test scratch root is now canonical
+  (`test/helpers.js`); Linux reproduces the old failure with a symlinked `TMPDIR`. The access-grants
+  coverage area gained tests for the stable toolchain launcher dir (with an explicit fixture
+  toolchain instead of whatever `~/.local/node` the runner happens to have), the isolated-target
+  refusal, an unreadable `.claude/agents` directory, every post-signature refusal of a gateway
+  capability, and `userOnlySkillGrants`.
 - **`/update` rebuilds the channel image when this revision needs a new one.** The updater pulled,
   installed dependencies and restarted; the container image was built only by a manual
   `npm run build:image`. So an update that changed `containers/` or bumped `imageSpecVersion` left
