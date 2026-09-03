@@ -53,8 +53,7 @@ import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
 import { listChannelEnv, patchChannelEnv } from "../../config/channel-env.js";
-import { cliEnvKeys } from "../../config/cli-catalog.js";
-import { getCliIntegrations } from "../../config/settings.js";
+import { cliEnvKeys, cliIntegrationIds } from "../../config/cli-catalog.js";
 import { decideRuntimeBackend } from "../../runtimes/resolve.js";
 import { RUNTIME_BACKEND_IDS } from "../../runtimes/contract.js";
 
@@ -586,7 +585,7 @@ export function createChannelsRouter({
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
-      res.json({ vars: listChannelEnv(ctx.meta), suggested: cliEnvKeys(getCliIntegrations()) });
+      res.json({ vars: listChannelEnv(ctx.meta), suggested: cliEnvKeys(cliIntegrationIds()) });
     } catch (e) {
       next(e);
     }

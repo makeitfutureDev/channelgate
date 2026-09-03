@@ -23,7 +23,7 @@ import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getComposioMode, getDefaultComposioToken, getDefaultSkillsToken, getDefaultToolboxToken, getOrgAccessGrants, getEffectiveNetworkDomains, getCliIntegrations } from "../config/settings.js";
+import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getComposioMode, getDefaultComposioToken, getDefaultSkillsToken, getDefaultToolboxToken, getOrgAccessGrants, getEffectiveNetworkDomains } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { warnClaudeLoginMissing } from "./claude-login.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
@@ -1228,7 +1228,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         codexStateDir: grantArtifacts.codexStateDir,
         codexSkillSupportDir: grantArtifacts.codexSkillSupportDir,
         codexCredentialPaths: meta.allowNetwork && codexWritable ? grantArtifacts.codexCredentialPaths : [],
-        codexToolchainPaths: dangerouslySkip ? [] : [...toolchainReadPaths({ root: gatewayRoot(), integrations: getCliIntegrations() }), grantArtifacts.codexToolchainBinDir].filter(Boolean),
+        codexToolchainPaths: dangerouslySkip ? [] : [...toolchainReadPaths({ root: gatewayRoot() }), grantArtifacts.codexToolchainBinDir].filter(Boolean),
         codexToolchainBinDir: dangerouslySkip ? "" : grantArtifacts.codexToolchainBinDir,
         toolchainBinDir: dangerouslySkip ? "" : grantArtifacts.toolchainBinDir,
         grantFingerprint,
@@ -1361,7 +1361,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           codexStateDir: grantArtifacts.codexStateDir,
           codexSkillSupportDir: grantArtifacts.codexSkillSupportDir,
           codexCredentialPaths: meta.allowNetwork && codexWritable ? grantArtifacts.codexCredentialPaths : [],
-          codexToolchainPaths: dangerouslySkip ? [] : [...toolchainReadPaths({ root: gatewayRoot(), integrations: getCliIntegrations() }), grantArtifacts.codexToolchainBinDir].filter(Boolean),
+          codexToolchainPaths: dangerouslySkip ? [] : [...toolchainReadPaths({ root: gatewayRoot() }), grantArtifacts.codexToolchainBinDir].filter(Boolean),
           codexToolchainBinDir: dangerouslySkip ? "" : grantArtifacts.codexToolchainBinDir,
         toolchainBinDir: dangerouslySkip ? "" : grantArtifacts.toolchainBinDir,
           grantFingerprint },

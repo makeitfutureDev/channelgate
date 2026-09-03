@@ -154,9 +154,9 @@ export function buildSecretsView(vars = [], state = {}, { channelName = "", mayE
   };
 }
 
-// The add/update form. `suggested` are the env names the channel's enabled CLI integrations
-// actually read (config/cli-catalog.js envKeys) — the difference between someone guessing
-// "SUPABASE_TOKEN" and typing the name the CLI looks for.
+// The add/update form. `suggested` are the env names the catalog CLIs actually read
+// (config/cli-catalog.js envKeys) — the difference between someone guessing "SUPABASE_TOKEN"
+// and typing the name the CLI looks for.
 export function buildSecretFormView(state = {}, { channelName = "", name = "", suggested = [] } = {}) {
   const hint = suggested.length
     ? `Names this channel's enabled integrations read: ${suggested.map((s) => `\`${s}\``).join(", ")}.`

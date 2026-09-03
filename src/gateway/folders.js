@@ -54,9 +54,7 @@ export function effectiveWorkDir(slug, meta = {}) {
 import { allowMatchesFor, gatewayToolRefs, namespacesFor } from "./mcp-catalog.js";
 import { applyGatewayGuide } from "./guide.js";
 import { DEFAULT_PLATFORM, platformFolderNames } from "../platforms/registry.js";
-import { getAgentsFile, getAgentsInstructions, getCliIntegrations, getCredentialHomePaths, getEffectiveNetworkDomains } from "../config/settings.js";
-import { hostCredentialSuppressedBy } from "../config/cli-catalog.js";
-import { normalizeChannelEnv } from "../config/channel-env.js";
+import { getAgentsFile, getAgentsInstructions, getCredentialHomePaths, getEffectiveNetworkDomains } from "../config/settings.js";
 import { allCliCredentialHomePaths } from "../config/cli-catalog.js";
 import { normalizeStoredDomains } from "../util/network-domains.js";
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
@@ -539,7 +537,7 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
   // gated on network: `node build.js` is useful with egress off, and the grant carries no
   // credential — the saved logins stay behind the network-gated carve-out below.
   if (filesystem && (bashy || allowBypass)) {
-    const toolchain = toolchainReadPaths({ home, root, integrations: getCliIntegrations() }).map(sandboxPath);
+    const toolchain = toolchainReadPaths({ home, root }).map(sandboxPath);
     // Per-file grants materialize as binds, and a SYMLINK entry cannot be bound — a host whose
     // shims are symlinks (node -> ../node/bin/node) loses them inside the sandbox while plain
     // binaries survive. The stable launcher directory (run-grant-artifacts.js) holds direct
@@ -551,11 +549,10 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
   }
 
   // Network egress is blocked by default. With allowNetwork, permit the configured domains
-  // (GitHub by default) plus each enabled CLI integration's domains (Vercel, Supabase, … — see
-  // config/cli-catalog.js). For write-capable Bash/Auto channels we also re-allow READING just
+  // (GitHub by default). For write-capable Bash/Auto channels we also re-allow READING just
   // the tooling credential files (home is otherwise read-denied): the git/gh baseline so
-  // `git push`/`gh` can authenticate, plus the enabled CLI integrations' saved logins so e.g.
-  // `vercel deploy` runs in-sandbox — a token can only travel to the allow-listed domains.
+  // `git push`/`gh` can authenticate — and nothing else: a channel's provider login is a
+  // `/secrets` variable (config/channel-env.js), never the daemon's host-wide saved login.
   // The admin-run variant (allowBypass) gets the same read re-allows even without Bash/Auto:
   // an admin author in an admin-mode channel is the most privileged run, and without this an
   // admin channel with Bash off was the only network-on mode that could never authenticate git.
@@ -577,8 +574,7 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
       const engineHome = claudeEngineHome();
       filesystem.allowRead = [
         ...filesystem.allowRead,
-        // A channel holding its OWN login for an integration does not get the shared one behind it.
-        ...getCredentialHomePaths({ suppress: hostCredentialSuppressedBy(Object.keys(normalizeChannelEnv(meta.env))) }).flatMap((rel) => [
+        ...getCredentialHomePaths().flatMap((rel) => [
           sandboxPath(path.join(home, rel)),
           sandboxPath(path.join(engineHome, rel)),
         ]),

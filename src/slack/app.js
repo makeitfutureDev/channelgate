@@ -42,8 +42,7 @@ import {
   SECRETS_VALUE_BLOCK_ID,
 } from "./secret-explorer.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
-import { cliEnvKeys } from "../config/cli-catalog.js";
-import { getCliIntegrations } from "../config/settings.js";
+import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
 
 import { uploadLocalFile } from "./upload.js";
 import { BROWSER_EDIT_MAX_BYTES, BROWSER_EDIT_MAX_CHARS, createFileEditorGrantUrl } from "../web/file-editor.js";
@@ -636,7 +635,7 @@ async function connectAndWire(app) {
       if (action?.action_id === SECRETS_ADD_ACTION_ID) {
         await client.views.push({
           trigger_id: body.trigger_id,
-          view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(getCliIntegrations()) }),
+          view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(cliIntegrationIds()) }),
         });
         return;
       }
