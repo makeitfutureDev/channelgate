@@ -94,6 +94,50 @@ export function effectiveMeta(meta) {
 // them — the 0-in/0-out token guard below is the real safety against a false positive (a genuine
 // answer always does work).
 const LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
+
+// Transient provider failures — a 5xx, "overloaded", a connection reset, or an unexplained 404 from
+// the Codex backend (2026-09-03) — are retried IN PLACE: same engine, same prompt, a short pause in
+// between. Two rules keep this safe: the failure must be replay-safe (the runner proved no tool
+// ran — the engines already retry mid-turn themselves, and a gateway replay after a tool call could
+// repeat a side effect), and authentication / usage-limit failures are excluded (they have their
+// own cross-engine failover, and repeating them only burns the pause). Both knobs are env-tunable
+// so the suite does not wait ten seconds per attempt.
+function envInt(name, fallback, min, max) {
+  const n = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+export const TRANSIENT_RETRY_ATTEMPTS = envInt("CG_TRANSIENT_RETRY_ATTEMPTS", 2, 0, 5);
+export const TRANSIENT_RETRY_DELAY_MS = envInt("CG_TRANSIENT_RETRY_DELAY_MS", 10_000, 0, 120_000);
+// Per engine, the runner's own classification of "the provider did not answer this request":
+// Codex's single transient kind (src/engines/codex.js), and the availability / connection /
+// unclassified-provider kinds of Claude's stream classifier (src/engines/stream.js).
+const TRANSIENT_KINDS = Object.freeze({
+  codex: Object.freeze(["transient"]),
+  claude: Object.freeze(["availability", "connection", "provider"]),
+});
+
+// The kind when this error is a transient, replay-safe provider failure of the engine that ran the
+// turn — "" otherwise (including every authentication / usage-limit / model-rejection case, which
+// belong to the failover and model-retry paths, and any error raised after a tool ran).
+export function transientProviderFailure(error, engine = "") {
+  const details = error?.details || {};
+  const ran = String(engine || "");
+  if (!ran || details.engine !== ran || details.providerError !== true || details.replaySafe !== true) return "";
+  const kind = String(details.providerKind || "");
+  return (TRANSIENT_KINDS[ran] || []).includes(kind) ? kind : "";
+}
+
+// A pause that ends early when the run is cancelled, so a stop button never waits out a retry.
+function sleepUnlessAborted(ms, signal) {
+  return new Promise((resolve) => {
+    if (ms <= 0 || signal?.aborted) return resolve();
+    // Deliberately NOT unref'd: the pause is live work for a turn that is still running, and an
+    // unreferenced timer lets an otherwise idle process exit before the retry fires.
+    const timer = setTimeout(done, ms);
+    function done() { clearTimeout(timer); signal?.removeEventListener?.("abort", done); resolve(); }
+    signal?.addEventListener?.("abort", done, { once: true });
+  });
+}
 const engineLimitedUntil = new Map(); // `${engine}::${slug}` -> epoch ms the cooldown ends
 const engineAuthFailedUntil = new Map(); // engine -> epoch ms; a shared daemon credential is gateway-wide
 // engine -> the credential fingerprint that FAILED. A cooldown remembers a broken credential, not
@@ -1215,6 +1259,42 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     }));
   };
 
+  // Run one attempt, and retry it in place on a transient, replay-safe provider failure — up to
+  // TRANSIENT_RETRY_ATTEMPTS more times, TRANSIENT_RETRY_DELAY_MS apart, never past a cancel. The
+  // result carries `transientRetries` when it took more than one attempt; an exhausted error says
+  // so in its message, so the thread never sees a bare provider line that looks unretried.
+  const withTransientRetry = async (engineName, attempt) => {
+    let retries = 0;
+    for (;;) {
+      try {
+        const out = await attempt();
+        return retries && out && typeof out === "object" ? { ...out, transientRetries: retries } : out;
+      } catch (err) {
+        const kind = transientProviderFailure(err, engineName);
+        if (!kind || retries >= TRANSIENT_RETRY_ATTEMPTS || signal?.aborted) {
+          if (retries) {
+            err.details = { ...(err.details || {}), transientRetries: retries };
+            err.message = `${err.message} — retried ${retries}× (${Math.round(TRANSIENT_RETRY_DELAY_MS / 1000)}s apart) before giving up`;
+          }
+          throw err;
+        }
+        retries += 1;
+        console.warn(`[gateway] transient ${engineName} ${kind} failure in ${entry.slug} (${String(err.message).slice(0, 200)}) — retry ${retries}/${TRANSIENT_RETRY_ATTEMPTS} in ${Math.round(TRANSIENT_RETRY_DELAY_MS / 1000)}s`);
+        await logEvent("run_transient_retry", {
+          channel: channelId, author: authorId, slug: entry.slug, threadKey, origin,
+          engine: engineName, kind, attempt: retries, maxAttempts: TRANSIENT_RETRY_ATTEMPTS, delayMs: TRANSIENT_RETRY_DELAY_MS,
+          error: String(err.message).slice(0, 300),
+        });
+        await sleepUnlessAborted(TRANSIENT_RETRY_DELAY_MS, signal);
+        if (signal?.aborted) throw err;
+      }
+    }
+  };
+  // The one-line notice a reply carries when the provider needed more than one attempt.
+  const transientRetryNote = (engineName, out) => (out?.transientRetries
+    ? { ...out, content: `⚠️ _${engineLabel(engineName)} hit a temporary provider error — retried ${out.transientRetries}× before answering._\n\n${out.content || ""}` }
+    : out);
+
   // A session heal (resume failed / resumed empty → fresh session) re-runs the SAME message, but
   // the fresh session has none of the thread's context: at the Slack layer the thread transcript
   // is only injected the very FIRST time the bot enters a thread, so a healed retry of "check
@@ -1340,10 +1420,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     };
     const execWithSessionHeal = async (modelOverride) => {
       try {
-        return await exec(prior || "", !prior, modelOverride);
+        return await withTransientRetry(fallbackEngine, () => exec(prior || "", !prior, modelOverride));
       } catch (error) {
         if (!prior || !isSessionNotFound(error)) throw error;
-        return exec("", true, modelOverride); // stored fallback thread expired — start fresh once
+        return withTransientRetry(fallbackEngine, () => exec("", true, modelOverride)); // stored fallback thread expired — start fresh once
       }
     };
     let cx;
@@ -1381,6 +1461,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       }
     }
     if (cx.sessionId) await saveSession(entry.slug, fbKey, cx.sessionId, fallbackEngine, sessionGen, runtimeStamp);
+    cx = transientRetryNote(fallbackEngine, cx);
     // `fellBack`/`fallbackFrom` are the engine-agnostic truth; `fellBackToCodex` is the original
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
     const fallbackResult = {
@@ -1490,7 +1571,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       // An explicit engine switch starts a fresh session that can't carry the old conversation —
       // replay the thread transcript into it (same treatment as a session heal) so the new engine
       // continues the conversation instead of starting amnesiac.
-      result = await runOnce(sid, fresh, initialPromptOverride);
+      result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride));
     } catch (err) {
       const defaultModel = replaySafeGatewayDefaultModel(err, { engine, model, defaultModel: gatewayDefaultModel });
       if (defaultModel) {
@@ -1508,7 +1589,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         });
         try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
         try {
-          result = await runOnce(sid, fresh, initialPromptOverride, defaultModel);
+          result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride, defaultModel));
           model = defaultModel;
           result = {
             ...result,
@@ -1552,7 +1633,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           console.warn(`[gateway] session ${sid} not resumable in ${entry.slug} — starting a fresh session`);
           sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
           fresh = true;
-          result = await runOnce(sid, fresh, await healedPrompt());
+          result = await withTransientRetry(engine, async () => runOnce(sid, fresh, await healedPrompt()));
         } else {
           throw err;
         }
@@ -1577,8 +1658,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       abortPooled(`${entry.slug}::${threadKey}`);
       sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
       fresh = true;
-      result = await runOnce(sid, fresh, await healedPrompt());
+      result = await withTransientRetry(engine, async () => runOnce(sid, fresh, await healedPrompt()));
     }
+
+    // Say so when the provider needed more than one attempt (after the empty-result check above,
+    // which must judge the engine's own output, not this notice).
+    result = transientRetryNote(engine, result);
 
     // Self-minting engines (Codex, OpenCode) return their own thread_id (result.sessionId) —
     // persist it over the locally-minted UUID so the next turn's resume actually finds the
