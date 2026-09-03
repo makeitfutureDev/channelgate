@@ -1,0 +1,3 @@
+#!/bin/sh
+printf '%s\n' '{"type":"assistant","error":"rate_limit","message":{"role":"assistant","content":[{"type":"text","text":"You’ve hit your session limit · resets 6am (Europe/Bucharest)"}]}}'
+exit 1

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux only: ChannelGate runs under systemd with rootless Podman, so there is no macOS leg.
+        os: [ubuntu-latest]
+        # 22.13 is the exact supported minimum (node:sqlite is stable from 22.13 — see
+        # package.json engines); 24 is the current LTS line. Node 20 cannot run the app at all.
+        node: ["22.13", "24"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Static syntax and formatting invariants
+        run: npm run check:static
+      # Runs the full suite with coverage floors enforced (see test:coverage in package.json).
+      - run: npm run test:coverage
+
+  dco:
+    # Every commit must carry the `Signed-off-by` trailer that accepts CLA.md (Section 7).
+    # Pull-request only: the check needs the PR's base commit, and the full history is required to
+    # walk the range, hence fetch-depth 0. No `npm ci` — the checker is dependency-free by design.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Sign-off (DCO) trailer on every commit in the pull request
+        run: node scripts/check-dco.mjs "${{ github.event.pull_request.base.sha }}..HEAD"
+
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Secret scan (tracked files, dependency-free)
+        run: node scripts/secret-scan.mjs
+      - name: Dedicated security-area coverage floors
+        run: npm run test:security-coverage
+      - name: Dependency audit (blocks on high/critical in production deps)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Dependency audit (moderate — warning only)
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=moderate || echo "::warning::npm audit found moderate advisories in production dependencies (non-blocking)"

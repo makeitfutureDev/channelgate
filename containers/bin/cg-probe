@@ -1,0 +1,16 @@
+#!/bin/sh
+# cg-probe <runId> — exit 0 iff the run's process-group leader is still alive. The gateway's stall
+# watchdog asks this instead of probing a host pid; only a definite non-zero ends a turn, so a
+# missing pidfile (the run never started, or a container restart cleared the tmpfs) is a definite
+# "gone", not an error. When the run has finished, its recorded exit status is printed on stdout —
+# that is how a detached background job's real exit code gets back to the daemon.
+id="$1"
+[ -n "$id" ] || exit 2
+if [ -f "/run/cg/$id.rc" ]; then
+  cat "/run/cg/$id.rc" 2>/dev/null
+  exit 1
+fi
+pid=$(cat "/run/cg/$id.pid" 2>/dev/null) || exit 1
+[ -n "$pid" ] || exit 1
+kill -0 "$pid" 2>/dev/null || exit 1
+exit 0

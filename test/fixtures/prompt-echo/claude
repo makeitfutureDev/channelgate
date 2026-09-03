@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+
+const promptFlag = process.argv.indexOf("-p");
+const prompt = promptFlag >= 0 ? String(process.argv[promptFlag + 1] || "") : "";
+process.stdout.write(`${JSON.stringify({
+  type: "result",
+  subtype: "success",
+  result: prompt,
+  session_id: "prompt-echo-session",
+  usage: { input_tokens: 12, output_tokens: 4 },
+  total_cost_usd: 0.001,
+})}\n`);

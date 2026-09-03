@@ -1,0 +1,22 @@
+#!/bin/sh
+# cg-init <cmd> [args…] — the container's OWN command, so it runs on every start (the create and
+# every later `start` of an exited container), not once at build time. It prepares the few HOME
+# paths the engines expect on a brand-new named volume, then execs the real command (`sleep infinity`) so PID 1 stays
+# tini's child. It deliberately never chowns or repairs anything root-owned: a container that
+# cannot write its own HOME must fail loudly at the first engine spawn rather than be silently
+# "fixed" by a privileged step.
+#
+# The two bin dirs matter as much as the engine state dirs: ~/.local/bin (pip --user, pipx, uv and
+# every curl installer) and ~/bin are on the image PATH, and a volume created before they were is
+# missing them — an install would then succeed into a directory nothing looks in.
+for d in /home/agent/.claude /home/agent/.codex /home/agent/.npm-global /home/agent/.cache \
+         /home/agent/.config /home/agent/.local/bin /home/agent/bin /run/cg; do
+  mkdir -p "$d" 2>/dev/null || true
+done
+
+# Claude credentials are NEVER copied in here: the daemon hands the engine a `claude setup-token`
+# value through the exec environment (CLAUDE_CODE_OAUTH_TOKEN). A copy of the gateway's own login
+# would refresh, rotate the refresh token and log the gateway itself out (2026-09-02 incident).
+
+[ $# -gt 0 ] || set -- sleep infinity
+exec "$@"

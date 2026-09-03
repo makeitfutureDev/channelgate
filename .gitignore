@@ -1,0 +1,39 @@
+node_modules/
+.env
+# Backups/variants of .env carry the same secrets (a .env.bak.<ts> appeared on 2026-08-26) — never track them.
+.env.*
+!.env.example
+*.log
+
+# The roadmap lives in the private companion repo (channelgate-internal) and is symlinked into this
+# checkout as ../channelgate-internal/TASKS.md so the agents' roadmap rule keeps working. Never track it.
+/TASKS.md
+
+# Runtime gateway root, if a developer points it inside the repo for testing.
+.channelgate/
+
+# Project MCP config carries plaintext credentials (e.g. aioutreach headers) — never commit it.
+.mcp.json
+
+# Runtime leakage when the daemon/a channel folder is pointed at the repo root during testing:
+# per-channel agent memory + downloaded attachments. Not source. (Anchored to root only.)
+/MEMORY.md
+/memory/
+/uploads/
+
+# Config backups live OUTSIDE the repo (~/.channelgate/backups) — even encrypted credential
+# blobs must never enter git history. Ignore any local straggler entirely.
+*.backup-key
+.backup-key
+backup/
+.gh/
+
+# Runtime leakage in .claude/ when gateway sessions run in the repo root: library skill STUBS
+# (marker .gateway-library-stub) materialized from Skills Manager favorites, and Claude Code
+# worktree state. The two BUNDLED skills (channelgate, headless-app-creator) are source and
+# stay tracked — negations below keep them visible.
+.claude/skills/*
+!.claude/skills/channelgate/
+!.claude/skills/headless-app-creator/
+.claude/worktrees/
+.agents/skills

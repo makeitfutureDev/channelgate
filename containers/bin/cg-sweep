@@ -1,0 +1,34 @@
+#!/bin/sh
+# cg-sweep [prefix…] — kill every recorded run group, SIGTERM then SIGKILL after 5s, and delete the
+# pidfiles. The daemon runs this on a RUNNING container at boot: every engine process inside it
+# belonged to the previous daemon, which can no longer read their stdout, and restart recovery
+# replays those turns. With prefixes it sweeps only matching run ids (`cg-sweep run warm` leaves
+# detached background jobs — which are meant to outlive a daemon restart — running).
+[ -d /run/cg ] || exit 0
+matches() {
+  [ $# -eq 1 ] && return 0
+  name="$1"; shift
+  for p in "$@"; do
+    case "$name" in "$p"-*) return 0 ;; esac
+  done
+  return 1
+}
+swept=""
+for f in /run/cg/*.pid; do
+  [ -e "$f" ] || continue
+  base=${f##*/}; base=${base%.pid}
+  matches "$base" "$@" || continue
+  pid=$(cat "$f" 2>/dev/null) || continue
+  [ -n "$pid" ] || continue
+  kill -s TERM -- "-$pid" 2>/dev/null || kill -s TERM "$pid" 2>/dev/null || true
+  swept="$swept $f:$pid"
+  echo "$base"
+done
+[ -n "$swept" ] || exit 0
+sleep 5
+for entry in $swept; do
+  f=${entry%:*}; pid=${entry##*:}
+  kill -s KILL -- "-$pid" 2>/dev/null || kill -s KILL "$pid" 2>/dev/null || true
+  rm -f "$f" "${f%.pid}.rc" 2>/dev/null || true
+done
+exit 0
