@@ -1,40 +1,44 @@
 ---
 name: "channelgate"
-description: "Set up a \"gated\" Claude Code session: confine Claude's filesystem to one folder and restrict which MCP servers it can use to an explicit allowlist. Use when asked to sandbox/lock-down/restrict a folder, limit Claude to certain MCP connectors (e.g. \"only HubSpot\"), disable memory for a folder, create an isolated/gateway working directory, or inject/restrict MCP config in a headless (-p / SDK) session via --mcp-config / --strict-mcp-config."
+description: "Set up a \"gated\" Claude Code session for ChannelGate: a per-conversation work folder whose .claude/settings.json carries the tool permissions, an explicit MCP allowlist and memory-off, run inside that conversation's own container. Use when asked to lock down / restrict a channel folder, limit Claude to certain MCP connectors (e.g. \"only HubSpot\"), disable memory for a folder, or inject/restrict MCP config in a headless (-p / SDK) session via --mcp-config / --strict-mcp-config."
 category: "claude-code"
-version: "1.2.0"
+version: "2.0.0"
 complexity: "intermediate"
 tags:
   - "claude-code"
   - "mcp"
-  - "sandbox"
+  - "containers"
   - "permissions"
   - "security"
   - "settings"
 created: "2026-06-16"
-updated: "2026-06-16"
+updated: "2026-09-03"
 ---
 
 # channelgate
 
-Create a **gated folder** for Claude Code: when `claude` is launched inside it, Claude's
-filesystem access is confined to that folder, only an explicit allowlist of MCP servers is
-reachable, and persistent memory is disabled. Everything else is unavailable.
-
-Driven by a project-scoped `<folder>/.claude/settings.json` (interactive), or by `--mcp-config`
-/ `--strict-mcp-config` flags (headless). No admin/sudo needed.
+A **gated folder** is a ChannelGate conversation's working directory. Confinement does NOT come
+from the folder: it comes from the **container** the gateway runs every turn in (rootless Podman,
+one per conversation) — a per-channel HOME volume at `/home/agent`, only the work folder, its
+clean workspace and its artifact dir bind-mounted at their identical absolute paths, and nothing of
+the operator's home, the gateway root or any other channel visible. (The boundary is the
+filesystem and the process namespace, not egress: every container is on the bridge network, and
+the channel's *Allow network* switch only tells the engines whether the channel is meant to use
+it.) The folder's `<folder>/.claude/settings.json` carries **policy only**: which
+tools run without a prompt, which MCP servers exist, and memory off. It never carries a `sandbox`
+block — there is no host sandbox to configure, and a `sandbox.filesystem` rule would only name
+host paths that do not exist inside the container.
 
 ## When to use
-- "Restrict/sandbox/lock down a folder", "isolate this project"
-- "Only let Claude use HubSpot (or X, Y) MCP here, nothing else"
-- "Don't let Claude read outside this folder / extend its own permissions / use memory"
+- "Lock down / restrict this channel folder", "only let Claude use HubSpot (or X, Y) MCP here"
+- "Don't let Claude extend its own permissions / use memory in this folder"
 - "Inject an MCP config into a headless session"
 
 ## Inputs to collect
-1. **Folder** — absolute path of the gateway folder (create it if missing).
-2. **Allowed MCP servers** — the exact connectors that should work inside it.
-   For each, you need either its **URL** (claude.ai cloud connectors) or its **name**
-   (locally-added servers). Get both from `claude mcp list`.
+1. **Folder** — the channel's work folder (the gateway creates it; a custom `workDir` is allowed).
+2. **Allowed MCP servers** — the exact connectors that should work inside it. For each, you need
+   either its **URL** (claude.ai cloud connectors) or its **name** (locally-added servers). Get
+   both from `claude mcp list`.
 
 ## How Claude Code MCP scoping actually works (verified, non-obvious)
 - **claude.ai cloud connectors are GLOBAL** — synced from the claude.ai account, available
@@ -56,9 +60,10 @@ Driven by a project-scoped `<folder>/.claude/settings.json` (interactive), or by
 - **`autoMemoryEnabled: false`** stops Claude reading from or writing to the auto-memory
   directory (`~/.claude/projects/<sanitized-cwd>/memory/`) for that folder.
 - **`autoDreamEnabled: false`** also disables background memory consolidation (async writes).
-- The sandbox filesystem rules already block *Bash* from touching `~/.claude/...`, but
-  auto-memory is accessed by Claude Code itself (not via Bash), so it needs these explicit
-  switches.
+- Inside a container that directory would live in the channel's own HOME volume — never the
+  operator's — but it is switched off anyway: the gateway's channel memory (`MEMORY.md` +
+  `memory/<topic>.md`, saved through `update_channel_memory`) is the memory that exists, and it is
+  folder-scoped by design.
 - Note: `autoMemoryDirectory` (which *relocates* memory) is **ignored when set in checked-in
   project settings, for security** — from a project `settings.json` you can only DISABLE
   memory, not redirect it.
@@ -100,7 +105,7 @@ injected servers come from the flags, not the file.
 5. Tell the user to relaunch any open `claude` session in the folder (or open `/mcp`) so the
    config reloads.
 
-## Template `<folder>/.claude/settings.json`
+## Template `<folder>/.claude/settings.json` (what the gateway generates)
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -128,20 +133,13 @@ injected servers come from the flags, not the file.
     "deny": [
       "mcp__claude-in-chrome"
     ]
-  },
-
-  "sandbox": {
-    "enabled": true,
-    "allowUnsandboxedCommands": false,
-    "filesystem": {
-      "denyRead":  ["//ABS/PARENT"],
-      "allowRead": ["//ABS/PARENT/<folder>"],
-      "denyWrite":  ["//ABS/PARENT"],
-      "allowWrite": ["//ABS/PARENT/<folder>"]
-    }
   }
 }
 ```
+
+The gateway adds its own `hooks.Stop` entry (the helper comes from the image's `/opt/channelgate`
+bundle, never from a path on the host) and keeps a separate variant of the file for an admin
+author's live turn, which permits the bypass. There is deliberately no `sandbox` key.
 
 ### Filling the template
 - **`allowedMcpServers`** — one entry per allowed server. claude.ai connectors → `serverUrl`
@@ -150,28 +148,29 @@ injected servers come from the flags, not the file.
   memory for the gateway folder. Omit (or set `true`) only if the gateway is allowed to learn.
 - **`permissions.allow`** — list the tool namespaces of the allowed servers so they run
   without prompts. The namespace is `mcp__<server>` where `<server>` is the name with
-  spaces/dots → underscores (e.g. `claude.ai HubSpot` → `mcp__claude_ai_HubSpot`).
+  spaces/dots → underscores (e.g. `claude.ai HubSpot` → `mcp__claude_ai_HubSpot`). The channel's
+  mode (read / bash / auto / admin) is expressed here too — it is a TOOL preset, nothing more.
 - **`permissions.deny`** — block built-in browser MCP tools you don't want
   (`mcp__claude-in-chrome`). `computer-use` is usually already disabled.
-- **`sandbox.filesystem`** — `denyRead`/`denyWrite` the parent (or home), then `allowRead`/
-  `allowWrite` re-allow the gateway folder (allow overrides deny). Use absolute paths with
-  the `//` prefix. This confines Bash. Edit/Write are also held to the folder by leaving
-  `additionalDirectories` empty.
 - **Lockdown extras** — `disableBypassPermissionsMode` blocks `--dangerously-skip-permissions`;
   `disableAutoMode` blocks auto-approve. Optionally `deny` edits to the folder's own
   `.claude/**` so a session can't loosen its own rules.
+- **What confines the run** — the container, decided by the daemon at create time: the mounts
+  (work folder, clean workspace, artifact dir, the HOME volume) and the image. Edit/Write are
+  held to the folder by leaving `additionalDirectories` empty; Bash cannot reach anything that is
+  not mounted. Nothing in this file (and nothing a run does) filters the network.
 
 ## Limits to state honestly
-- Project `settings.json` lives inside the folder — a strong guardrail, but anyone editing the
-  file on disk (outside a Claude session) can change it. A tamper-proof lock needs **managed
-  settings** (`/Library/Application Support/ClaudeCode/managed-settings.json`, sudo), which is
-  **machine-wide** and cannot be scoped to one folder.
+- The settings file is policy, not a wall: anyone who can edit the folder on disk can change it,
+  and a bash/auto-mode turn can edit its own folder. The wall is the container — a run cannot
+  change its own mounts or image. It is a filesystem/process wall, not a network one: there is no
+  per-domain filtering and the *Allow network* switch does not cut egress in this release. Managed settings
+  (`/etc/claude-code/managed-settings.json`) are machine-wide and cannot be scoped to one folder.
 - This is folder-scoped on purpose; disabling connectors in claude.ai is account-wide instead.
 
 ## Worked example (HubSpot + trigger only, memory off)
 A gateway folder restricted to the claude.ai HubSpot connector plus the local `trigger`
-server, with memory disabled, confined to
-`~/Agent Folders/access_test/demo`, was verified with `claude mcp list`
+server, with memory disabled, was verified with `claude mcp list` run inside the folder
 returning exactly:
 ```
 claude.ai HubSpot: https://mcp.hubspot.com/anthropic - ✔ Connected

@@ -10,10 +10,10 @@
 
 ## 1. What it is
 
-**Bring Claude into Slack — sandboxed per channel, governed by you.**
+**Bring Claude into Slack — isolated per channel, governed by you.**
 
 Mention the bot in a channel or just DM it. It runs a real, headless Claude Code session inside a
-per-conversation sandbox, with each teammate's own tools and tokens, and posts back in the thread.
+per-conversation container, with each teammate's own tools and tokens, and posts back in the thread.
 Self-hosted. No data leaves your machine except the model calls you already make.
 
 A local daemon that turns Claude Code (and optionally OpenAI Codex) into a Slack agent — with the
@@ -24,14 +24,14 @@ isolation, observability, and governance a team actually needs.
 Most "AI in Slack" bots are a thin proxy to a hosted assistant. ChannelGate runs **the real
 Claude Code agent** — tools, skills, MCP, multi-step work, background jobs — on **your own
 infrastructure**, with a hard **confinement boundary around every conversation**. Confinement is
-the product: each channel is its own sandboxed folder with an explicit tool allowlist, so what
-happens in one channel can't read or write another.
+the product: each channel is its own container with its own folder and an explicit tool allowlist,
+so what happens in one channel can't read or write another.
 
 ### The one-sentence pitch
 
 **ChannelGate puts a real, working AI agent inside the place your team already collaborates —
-Slack — while keeping every conversation sandboxed, every credential personal, and every token of
-spend on a ledger you own.**
+Slack — while keeping every conversation in its own container, every credential personal, and
+every token of spend on a ledger you own.**
 
 ### What it can do
 
@@ -41,7 +41,7 @@ context-aware suggested prompts. Replies stream into the thread and land as clea
 messages with a time · tokens · cost footer.
 
 **Real work, not just chat.** It uses tools and skills, reads attached images and files, edits
-code, and runs shell commands — all inside the channel's sandbox. **Background jobs** hand
+code, and runs shell commands — all inside the channel's container. **Background jobs** hand
 long-running work (builds, transcriptions, test suites) to the daemon, which continues the thread
 automatically when the job finishes — and **survives a restart**: an interrupted job still reports
 back instead of vanishing.
@@ -50,7 +50,7 @@ back instead of vanishing.
 that stays in the thread as a record. An optional activity log shows each step and collapses to a
 one-line summary when done.
 
-**Remembers — safely.** Each channel keeps a **`MEMORY.md` inside its own sandbox folder** that
+**Remembers — safely.** Each channel keeps a **`MEMORY.md` inside its own folder** that
 the agent reads and updates across that channel's threads, so understanding carries forward.
 Crucially, this is **folder-scoped**: there is no cross-channel memory bleed, and the harness's
 global auto-memory stays off by design.
@@ -76,8 +76,8 @@ for later review.
 Slack (Socket Mode)
   → gate:   DM = no mention · elsewhere = require @bot mention
   → authz:  admins + approved users only (fail-closed; unknown users denied everywhere)
-  → sandbox: ensure ~/.channelgate/channels/<slug>/  (filesystem confined, MCP allowlist,
-             persistent memory off, curated permissions)
+  → confine: ensure ~/.channelgate/channels/<slug>/  (MCP allowlist, persistent memory off,
+             curated permissions) and the channel's own container (own home, only its folder mounted)
   → session: resolve the thread's session (warm process if alive, else resume)
   → spawn:  claude -p  with --mcp-config (channel servers + THIS author's tokens),
             --strict-mcp-config, and --dangerously-skip-permissions for admins only
@@ -93,7 +93,7 @@ skills, modes, schedules, and the audit view — applied live, no restart.
 |---|---|
 | **Runs** | Headless Claude Code (or OpenAI Codex) as a local daemon |
 | **Surfaces** | Channel @mention · DM · Slack Assistant panel · App Home |
-| **Isolation** | Per-conversation sandboxed folder, MCP allowlist, memory off |
+| **Isolation** | A container per conversation (own home, only its folder mounted), MCP allowlist, memory off |
 | **Tools** | Per-author Composio / Skills / Toolbox tokens; per-channel MCP + skills |
 | **Automation** | Background jobs (restart-durable), recurring + one-time schedules |
 | **Memory** | Folder-scoped `MEMORY.md` per channel (no cross-channel bleed) |
@@ -133,8 +133,8 @@ under **centralized governance** the organization controls.
 
 ### Trust and security in four rules
 
-- **Confinement is the product.** Every channel runs in its own folder with the filesystem
-  sandboxed to that folder, an explicit MCP allowlist, and global persistent memory off.
+- **Confinement is the product.** Every channel runs in its own container with only its own
+  folder mounted, an explicit MCP allowlist, and global persistent memory off.
 - **Per-author secrets.** Tokens are injected at spawn, scoped to the message author, never
   shared, never persisted to channel settings, never logged.
 - **Least privilege by default.** Non-admins run a read-only tool allowlist; shell, network, and
@@ -158,9 +158,9 @@ team already uses — no new tool to adopt, no context lost to a separate app.
 
 ### 3.2 Confinement is the product, not a feature
 
-Every Slack conversation runs inside its **own sandboxed folder** with the filesystem confined to
-that folder, an explicit MCP tool allowlist, and the harness's global persistent memory switched
-off. What happens in a client channel physically cannot read or write the finance channel's files.
+Every Slack conversation runs inside its **own container** with only its own folder mounted, an
+explicit MCP tool allowlist, and the harness's global persistent memory switched off. What happens
+in a client channel physically cannot read or write the finance channel's files.
 Channel memory exists (`MEMORY.md`), but it is folder-scoped by design — no cross-channel bleed.
 
 **Benefit to the organization:** you can safely give an autonomous agent to *many teams and
@@ -233,7 +233,7 @@ channel.
 | --- | --- | --- |
 | **Consultancy / agency** | One channel per client, results in the client's own thread, per-client audit trail | Per-conversation confinement: client A's folder cannot read client B's |
 | **Ops / RevOps / delivery** | Conversational and scheduled automation over the org's real systems, visible in-channel | Per-author tokens: every action is attributable to a real person in the downstream system |
-| **Engineering org** | The full coding agent reachable from Slack — background builds, test runs, repo work | Channel modes + sandbox: bash and network are explicit, scoped grants |
+| **Engineering org** | The full coding agent reachable from Slack — background builds, test runs, repo work | Channel modes + the container boundary: bash and network are explicit, scoped grants |
 | **Security / compliance reviewer** | Fail-closed authorization, no third-party processor, a secret-free event log | Self-hosting plus the approval model: nothing is implicit and nothing leaves the machine |
 | **Finance / accountable exec** | One ledger row per run: who, where, engine, model, tokens, cost, duration | Daemon-side metering that no channel or user can opt out of |
 | **Non-engineer administrator** | A web UI that governs access, modes, skills, tokens and schedules — live, no restart | Governance that does not require a terminal is governance that actually happens |
@@ -256,7 +256,7 @@ channel.
 | --- | --- | --- | --- | --- |
 | Runs a real agent (tools, shell, files) | No | Yes | Partly | **Yes** |
 | Shared team surface | Yes | No | Yes | **Yes** |
-| Isolation between conversations | n/a | n/a | Vendor-defined | **Per-conversation sandboxed folder** |
+| Isolation between conversations | n/a | n/a | Vendor-defined | **A container per conversation** |
 | Credentials | Shared bot token | Personal, unmanaged | Vendor-brokered | **Per-author, injected per message** |
 | Long-running / background work | No | Only while the terminal is open | Limited | **Daemon-side, restart-durable** |
 | Where data lives | Vendor | The laptop | Vendor | **Your machine** |
@@ -318,7 +318,7 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **Reason:** Slack only delivers the single triggering message; without replay, the bot's first
   turn in a pre-existing discussion was blind, which read as stupidity to users.
 
-#### Attachments (files/images downloaded into the sandbox)
+#### Attachments (files/images downloaded into the channel folder)
 - **What:** files attached to a message are downloaded into the channel folder's `uploads/` and
   their paths handed to the agent (images render visually via the Read tool).
 - **Value:** screenshots, CSVs, PDFs, and code files become first-class inputs — "here's the
@@ -473,12 +473,13 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **Reason:** subscription limits are a real operational event; the cooldown avoids hammering a
   limited account with doomed probes on every message.
 
-#### Codex sandbox mirrors channel mode
-- **What:** Codex runs read-only by default, workspace-write when the channel allows bash/auto,
-  network egress only when allow-network is on, full bypass only for admin author + admin mode.
+#### Codex permissions mirror channel mode
+- **What:** inside the channel's container, Codex runs read-only in read mode (which also refuses
+  network on its own) and with writes enabled when the channel allows bash/auto; full bypass only
+  for admin author + admin mode.
 - **Value:** switching engines never weakens the channel's security posture.
-- **Reason:** the confinement contract must be engine-independent, or the second engine becomes a
-  sandbox-escape lever.
+- **Reason:** the confinement contract must be engine-independent, or the second engine becomes an
+  escape lever — which is why the boundary is the container, not either engine's own sandbox.
 
 #### Codex cost estimation
 - **What:** a blended $/1M-token rate (Settings) produces `costEstimated` in the ledger; Claude
@@ -497,8 +498,8 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 ### 6.3 Isolation and security
 
 #### Per-conversation gated folder (the core contract)
-- **What:** every conversation gets its own folder with `.claude/settings.json` confining the
-  filesystem to it, persistent memory off, and an MCP allowlist.
+- **What:** every conversation gets its own container and its own folder: only that folder is
+  mounted, and `.claude/settings.json` turns persistent memory off and carries the MCP allowlist.
 - **Value:** hard blast-radius containment — one channel's agent physically can't touch another
   channel's (or the host's) files; client channels are isolated from each other by construction.
 - **Reason:** this is the founding thesis ("confinement is the product"): org-wide agent rollout
@@ -524,10 +525,10 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 #### Gateway control MCP (always injected, channel/author-scoped)
 - **What:** a purpose-built MCP server giving the agent gateway powers — schedules, background
   jobs, channel admin, token self-setup, workdir changes, permission prompts — scoped to the
-  calling channel/author and running outside the sandbox.
+  calling channel/author and running on the daemon's side of the container boundary.
 - **Value:** users configure the gateway *by talking to it* ("schedule this daily", "set my
   Composio token") instead of visiting an admin UI.
-- **Reason:** daemon-side powers (cron, jobs outliving the subprocess) must cross the sandbox
+- **Reason:** daemon-side powers (cron, jobs outliving the subprocess) must cross the container
   boundary somewhere; one audited, narrowly-scoped MCP server is that single controlled door.
 
 #### Skills Manager favorites injection
@@ -557,7 +558,7 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
   boundary instead of through it.
 
 #### Four channel modes (`read` / `bash` / `auto` / `admin`)
-- **What:** a graduated capability ladder: read-only tools → shell+writes (sandboxed) →
+- **What:** a graduated capability ladder: read-only tools → shell+writes →
   autonomous approval → full access (which also requires an admin author). Changing modes is
   admin-only.
 - **Value:** risk posture per channel matches the work: a client-facing channel stays read-only
@@ -586,9 +587,13 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
   place alone is sufficient.
 
 #### Per-channel Allow-Bash / Allow-Network
-- **What:** opt-in shell+writes (with denials on the gateway root, `.ssh`/`.aws`/keychain paths,
-  and other channels' folders) and opt-in network egress to an allowlisted domain set (default:
-  GitHub; enables git push / gh).
+- **What:** opt-in shell+writes inside the channel's container (which mounts only the channel's
+  own folder — the gateway root, the operator's `.ssh`/`.aws`/keychain paths and other channels'
+  folders are simply absent) and an opt-in network switch that tells the engines whether the
+  channel is meant to have network (enables git push / gh / deploy CLIs). Every container is on
+  the bridge network; the switch does no per-domain filtering and, in this release, no egress
+  cut-off — the boundary is filesystem and process isolation, with a container-side egress proxy
+  as the planned follow-up.
 - **Value:** real development workflows (clone, edit, test, push) in channels that need them,
   while the daemon's own config and the host's secrets remain out of reach.
 - **Reason:** bash and network are the two big escape vectors; making each an explicit, separately
@@ -601,7 +606,7 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **Value:** closes an approval-bypass hole — no unattended shell in channels that demand
   human-in-the-loop.
 - **Reason:** background jobs run un-prompted on the daemon; allowing them in approval-required
-  channels would have made "run it in the background" a one-line sandbox policy bypass.
+  channels would have made "run it in the background" a one-line policy bypass.
 
 #### Approval-based user authorization (fail-closed)
 - **What:** only admins and approved users may talk to the bot — in channels *and* DMs; unknown
@@ -656,7 +661,7 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **Value:** users can open the agent's workspace in a file browser — artifacts are *theirs*; a
   channel can operate directly on a real project repo.
 - **Reason:** hidden dot-folders made output feel trapped; and pointing a channel at an existing
-  repo turned the gateway into a genuine dev tool rather than a sandbox toy.
+  repo turned the gateway into a genuine dev tool rather than a toy.
 
 #### Per-channel agent instructions (CLAUDE.md canonical, AGENTS.md symlink)
 - **What:** each folder gets a generated instruction file, canonical for Claude and symlinked for

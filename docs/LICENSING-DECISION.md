@@ -91,8 +91,9 @@ self-hoster now raises by default.
 Recorded here so the boundary is a decision rather than an accumulation of choices. Full list in
 `LICENSING-FAQ.md`.
 
-- **Never behind a paid tier, permanently:** the per-conversation sandbox and filesystem
-  confinement, secret handling, the authorization model, the MCP allowlist, the audit event
+- **Never behind a paid tier, permanently:** the per-conversation sandbox (a container per
+  channel) and filesystem confinement, secret handling, the authorization model, the MCP
+  allowlist, the audit event
   record, and backup/restore. `AGENTS.md` states confinement is the product; a free tier with
   weaker isolation would void the security claim and lose the audience the license is written for.
 - **Eligible for an enterprise tier:** SSO/SAML/OIDC/SCIM, multi-admin RBAC, audit-log export and

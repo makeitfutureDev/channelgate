@@ -20,10 +20,10 @@ and how it works, see [README.md](./README.md).
   npm install -g @openai/codex
   codex login           # or set OPENAI_API_KEY
   ```
-- **(Optional, Linux only) rootless Podman** — only if you'll run channels in their own containers
-  instead of the host sandbox: `sudo apt install podman uidmap`, confirm the daemon user has
-  `/etc/subuid` + `/etc/subgid` ranges, then build the channel image with `npm run build:image`.
-  Setup, settings and caveats are in
+- **Rootless Podman** (Linux) — required: every channel runs its engines in a container of its
+  own, and the daemon refuses to boot without a container CLI. `sudo apt install podman uidmap`,
+  confirm the daemon user has `/etc/subuid` + `/etc/subgid` ranges, then build the channel image
+  with `npm run build:image`. Setup, settings and caveats are in
   [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime).
 - A **Slack workspace** where you can create an app.
 
@@ -220,7 +220,7 @@ The first boot after the update runs `scripts/migrate-channelgate.mjs` automatic
 database opens and before Slack connects. It refuses while the old daemon (or a detached background
 job, or a self-update transaction) is still running, then moves `~/.claude-gateway/` →
 `~/.channelgate/` and each channel's `~/Slack Agent/<slug>/` → `~/ChannelGate/<platform>/<slug>/`,
-rewrites stored absolute paths, regenerates every channel's sandbox, and leaves a `MOVED.md`
+rewrites stored absolute paths, regenerates every channel's lockdown file, and leaves a `MOVED.md`
 breadcrumb behind. Channels with a custom working folder are left exactly where they are. Nothing
 is ever overwritten: an existing destination is skipped and reported.
 
@@ -254,7 +254,7 @@ Then restart the service once: the updater compares the running revision with th
 `HEAD` before it touches anything. To rename the checkout directory as well (the launch layout is
 `~/Code/channelgate`), stop the daemon, move the directory, and repath every store that recorded the
 old location — the channel records whose `workDir` is the checkout, Claude/Codex session state, the
-sandboxes and the installed service definition:
+per-channel lockdown files and the installed service definition:
 
 ```bash
 node scripts/migrate-channelgate.mjs --repath --from "$OLD_CHECKOUT" --to "$NEW_CHECKOUT"

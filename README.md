@@ -54,7 +54,7 @@ subscription, and no shared workspace where one channel can read another's files
 
 | Capability | What it means |
 | --- | --- |
-| **Per-conversation sandbox** | Each channel and DM runs in its own gated folder — filesystem confined to it, the MCP allowlist enforced with `--strict-mcp-config`, persistent harness memory off. |
+| **Per-conversation container** | Each channel and DM runs in its own container with its own gated folder — its own home, only that folder mounted, the MCP allowlist enforced with `--strict-mcp-config`, persistent harness memory off. |
 | **Dual Composio identities** | The message author's personal account is injected as `composio-user` and the channel/organization account separately as `composio`, resolved per run. User A's token never serves User B. |
 | **Warm sessions** | A thread's agent process stays alive (default 10 min, `SESSION_KEEPALIVE`) so follow-ups answer without a cold start, and relaunches transparently when a different author replies. |
 | **Threads are sessions** | A new thread starts a fresh session; replies resume it. The thread is the unit of context, and each thread can pin its own engine and model. |
@@ -71,7 +71,7 @@ subscription, and no shared workspace where one channel can read another's files
 Slack (Socket Mode)
   → gate: DM = no mention needed · channel/group/private = require @bot mention
   → authorize author against the channel's allowedUsers (fail-closed)
-  → ensure ~/.channelgate/channels/<platform>/<slug>/ (sandbox + MCP allowlist + memory off)
+  → ensure ~/.channelgate/channels/<platform>/<slug>/ (MCP allowlist + memory off) and the channel's own container
   → resolve the thread's Claude session (warm process if alive, else resume)
   → spawn claude with --mcp-config (channel servers + personal/shared Composio identities),
     --strict-mcp-config, and --dangerously-skip-permissions only for admins
@@ -92,7 +92,7 @@ Slack (Socket Mode)
 | | ChannelGate | Slack's built-in AI | Hosted AI bots | Build it yourself |
 | --- | --- | --- | --- | --- |
 | Data stays on your infrastructure | ✅ | ❌ | ❌ | ✅ |
-| Sandbox per conversation | ✅ | ➖ | ➖ | ❌ |
+| Container per conversation | ✅ | ➖ | ➖ | ❌ |
 | Choice of agent harness | ✅ | ❌ | ➖ | ✅ |
 | Works in Slack, Microsoft Teams and Google Chat | ✅ | ❌ | ➖ | ➖ |
 | No per-seat SaaS fee | ✅ | ❌ | ❌ | ✅ |
@@ -107,9 +107,10 @@ needs a machine you own and keep patched, which the hosted options do not.
 
 ## Security in five bullets
 
-1. **A sandbox per conversation.** Every channel folder is generated with the lockdown before the
-   agent starts: filesystem confined to that folder, automatic memory and dreaming off, a curated
-   permission allowlist. What happens in a client channel cannot read or write the finance channel.
+1. **A container per conversation.** Every channel runs its agent inside its own rootless
+   container — its own home, only that channel's folder mounted — and the folder's lockdown
+   (automatic memory and dreaming off, a curated permission allowlist) is generated before the
+   agent starts. What happens in a client channel cannot read or write the finance channel.
 2. **An explicit tool allowlist.** Only the MCP servers a channel was granted are reachable, passed
    per run with `--strict-mcp-config` — a runtime boundary, not a prompt instruction.
 3. **Credentials are personal and never at rest in a channel.** Tokens are resolved per run and
@@ -164,7 +165,7 @@ Worked examples — including the agency and managed-service cases — are in th
 ## Want it installed and operated for you?
 
 **Makeitfuture builds and runs ChannelGate deployments** — the chat app, the channels, the
-sandboxes, the tool allowlist and the admin handover, on infrastructure you own.
+containers, the tool allowlist and the admin handover, on infrastructure you own.
 [**Book a discovery call**](mailto:contact@makeitfuture.com?subject=ChannelGate%20discovery%20call)
 or read the product pages at
 [makeitfuture.com/channelgate](https://makeitfuture.com/channelgate/?utm_source=github&utm_medium=readme&utm_campaign=channelgate).
@@ -199,6 +200,10 @@ white-label — are described at
 - **`claude` CLI installed and authenticated** on this machine (`claude --version` must work).
   The daemon spawns it directly; auth is whatever the CLI already uses (login or
   `ANTHROPIC_API_KEY`).
+- **Rootless Podman** (Linux) — every channel's engines run in a container of that channel's own,
+  and the daemon refuses to boot without a container CLI: `sudo apt install podman uidmap`, then
+  `npm run build:image` once the code is in place (see
+  [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime)).
 - A **Slack app** in Socket Mode (below).
 
 ## Slack app setup (Socket Mode)
@@ -353,7 +358,7 @@ so a Slack `#ops` and a Teams "Ops" never share a folder.
 
 > Upgrading from *Claude Gateway for Slack*? The first boot migrates `~/.claude-gateway/` →
 > `~/.channelgate/` and `~/Slack Agent/<slug>/` → `~/ChannelGate/<platform>/<slug>/`, rewrites the
-> stored paths, and regenerates every sandbox. Preview it with
+> stored paths, and regenerates every channel's lockdown file. Preview it with
 > `node scripts/migrate-channelgate.mjs --dry-run`. `CLAUDE_GATEWAY_DIR` / `CLAUDE_GATEWAY_DB` are
 > still honoured (with a deprecation warning) for one major.
 
@@ -396,15 +401,18 @@ Headless runs can't do interactive OAuth, so shared servers should use **non-int
 
 ## Security model
 
-- **Filesystem**: each channel's Bash is sandboxed to its own folder; it cannot read the home
-  dir (`~/.ssh`, credentials) or the gateway root (other channels, the token config).
-  On Ubuntu 23.10+ (24.04 LTS included) the sandbox needs a one-time AppArmor exemption or every
-  Bash call fails — run `sudo sh scripts/apparmor/claude-userns-fix.sh --apply`; the daemon warns
-  at boot when it is missing (see `scripts/apparmor/README.md`).
-- **Container runtime (optional, Linux)**: a channel can instead run its engines inside a long-lived
-  container of its own — separate HOME, separate CLI logins, its own process namespace, and none of
-  the host's files reachable — with a gateway-wide kill switch that returns every channel to the
-  host sandbox at once; see [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime).
+- **A container per conversation** (rootless Podman, required): every channel's engines run inside
+  a long-lived container of that channel's own — its own HOME volume (CLI logins, installed tools,
+  sessions), its own process namespace, and only the channel's work folder mounted from the host.
+  The operator's home (`~/.ssh`, credentials), the gateway root (other channels, the token config)
+  and other channels' folders do not exist on that side of the boundary. Admin channels run in
+  containers too; an admin channel whose work folder is a host directory sees that directory and
+  nothing beside it. The daemon refuses to boot without a container CLI; see
+  [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime).
+- **Network**: every container is on the bridge network. The per-channel *Allow network* switch
+  tells the engines whether the channel is meant to have network (Codex read mode refuses it on
+  its own); there is no per-domain filtering and, in this release, no egress cut-off — the boundary
+  is the filesystem and the process namespace, not egress.
 - **MCP**: only the channel's allowlist is reachable; the per-run config is passed with
   `--strict-mcp-config`. Verify with `claude mcp list` inside a channel folder.
 - **Memory**: `autoMemoryEnabled` / `autoDreamEnabled` are off for every channel folder. The

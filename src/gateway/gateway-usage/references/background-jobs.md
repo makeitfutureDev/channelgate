@@ -22,9 +22,10 @@ Use for long-running commands — builds, transcription/ASR, test suites, data j
 
 The channel must be in **auto mode**, or in **admin mode with an admin author**. In Auto mode the
 daemon posts a durable approval with the exact command, and a gateway **admin** must click **Run
-it** before the unsandboxed job starts (anyone may Deny). In Admin mode, an admin author's job
-starts directly without that second approval because the live turn already has the explicitly
-selected sandbox-off tier. Non-admin authors never inherit that bypass. The Auto-mode approval is
+it** before the job starts (anyone may Deny) — the job runs inside this channel's container, in
+this folder, like everything else. In Admin mode, an admin author's job starts directly without
+that second approval because the live turn already runs with the admin bypass. Non-admin authors
+never inherit that bypass. The Auto-mode approval is
 single-use, remains valid across daemon/engine restarts, and starts only the displayed command.
 End the turn as soon as the tool returns; no engine process needs to wait for a decision or job.
 The command must fit the card in full — commands over
@@ -36,14 +37,15 @@ actually short.
 **Deploy CLIs (Vercel, Supabase, Make.com API): run them here FIRST.** The channel runtime ships
 `vercel` and `supabase`, and this channel's own credential arrives as environment from its
 `/secrets` variables (`SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN`, `MAKE_API_TOKEN`), so `vercel deploy`,
-`supabase functions deploy`, etc. run as a NORMAL command in this folder — no unsandboxed
+`supabase functions deploy`, etc. run as a NORMAL command in this folder — no background
 shell job, no approval click. Run them in the working folder (use the project's ignore file, e.g.
-`.vercelignore`, instead of staging a copy elsewhere). Only if the command fails on a network or
-credential-read denial should you escalate — in this order: for a BLOCKED DOMAIN, call the gateway
-tool `request_network_domain` with the exact domain from the error (any authorized user's Approve
-click adds it to this channel's allow-list; effective on the NEXT message, so finish the turn and
-retry then); for a known deploy CLI, ask an admin to enable that CLI integration; only as a last
-resort use `run_in_background` with its unsandboxed-shell approval.
+`.vercelignore`, instead of staging a copy elsewhere). If the command fails on a network error,
+check the channel's *Allow network* switch — there is no per-domain allow-list to add to; if it
+is off, ask an admin to turn it on (`set_channel_network`, effective on the NEXT message, so
+finish the turn and retry then). If it fails on a missing credential, the channel needs that
+`/secrets` variable (see
+`references/administration.md`). Neither is fixed by `run_in_background`: a background job runs
+in the same container, with the same network and the same environment.
 
 Never restart the gateway with a background `launchctl`, `systemctl`, `kill`, or shell command.
 Use `restart_gateway` instead: it checks all ongoing gateway work, waits and rechecks before
@@ -63,11 +65,10 @@ Works in **every channel mode** — the agent obeys the channel's own permission
 normal turn (its permission prompts surface as approval buttons in this thread). Mode mapping for
 unattended runs (background agents, their continuations, schedules): **auto** channels run
 writable with prompts auto-approved; **admin** channels give an ADMIN author's unattended runs
-that same auto tier (writable + auto-approved — but always sandboxed, never the admin turn's
-sandbox-off); other modes keep their normal floor. Consequence: an unattended run can NEVER read
-files outside its sandbox view (e.g. credentials elsewhere in the home directory) — if the task
-needs one, have the admin read/copy it in a live admin-mode turn FIRST and hand the agent a path
-inside the working folder, or design the task to not need it. Background agents may run up to **one week**;
+that same auto tier (writable + auto-approved — never the live admin turn's bypass); other modes
+keep their normal floor. Every unattended run sees exactly what a live turn sees — this channel's
+container and nothing of the host — so a credential the task needs is a `/secrets` variable,
+never a file to fetch from somewhere else; design the task around that. Background agents may run up to **one week**;
 they are never killed for being slow or quiet, only at that ceiling. For a longer pipeline, chain
 batches: each agent processes a bounded chunk and the continuation launches the next.
 

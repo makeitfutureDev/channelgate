@@ -159,7 +159,7 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       13 tests (container credentials, Codex args, run-grant isolation, sandbox toolchain) on the
       macOS CI runners only; Linux reproduces the failure, and now passes the same files, with a
       symlinked `TMPDIR` (`test/helpers.js`).
-- [x] Unit (access-grants coverage area, deterministic on any runner): the stable toolchain
+- [x] **Retired 2026-09-03 (Linux + containers only):** the toolchain-launcher clause — the image ships the toolchain; the rest stands. Unit (access-grants coverage area, deterministic on any runner): the stable toolchain
       launcher dir is content-addressed, idempotent and empty for an empty FIXTURE toolchain; an
       isolated runtime target without an `artifactDir` is refused; an unreadable `.claude/agents`
       directory delivers the plugin without agents; a genuinely signed capability is refused for a
@@ -604,7 +604,8 @@ shape is asserted, not reviewed by eye.
       An admin author in Admin mode starts directly without the second card; Auto mode retains it,
       and non-admin authors cannot use Admin mode's bypass.
       → `bg-agent-jobs.test.js`, `durable-approvals.test.js`.
-- [ ] Live: in an auto channel, `run_in_background` posts a "Background shell job (unsandboxed)"
+- [ ] **Retired 2026-09-03 (Linux + containers only):** the `(unsandboxed)` wording — the card reads `Background shell job (in this channel's container)`;
+      the rest of the entry stands. Live: in an auto channel, `run_in_background` posts a "Background shell job (unsandboxed)"
       approval with the exact command; the agent ends its turn immediately; *Run it* starts the job
       even after a daemon restart, *Deny* refuses it, and the same button cannot start it twice.
       Auto mode does not skip the prompt and pending durable cards do not expire after four minutes.
@@ -735,6 +736,12 @@ shape is asserted, not reviewed by eye.
       the clean turn's prompt carries no provenance line and no thread replay.
 
 ### Engines (Claude + Codex)
+
+**Retired 2026-09-03 (Linux + containers only):** the entries below that exercise Codex's host
+permission profiles, the semantic network compiler / `network_proxy`, the macOS seatbelt probes and
+the credential/toolchain re-grants describe the retired host sandbox and are kept as history. Inside
+its container Codex states `--sandbox read-only` / `danger-full-access` per mode; the container is on
+the bridge network and *Allow network* is only a switch the engines are told about.
 
 - [ ] Codex 0.147+ resume state: `CODEX_HOME` is stable and contains only linked auth/session
   state; private granted skills live under the disposable synthetic `HOME/.agents/skills`; cleanup
@@ -886,7 +893,7 @@ shape is asserted, not reviewed by eye.
       runners; any tool attempt disables replay; a real orchestrated authentication failure falls
       through to the other harness and labels the result. Normal assistant prose mentioning limits is not
       misclassified. (`test/claude-limit-errors.test.js`, `test/claude-fallback-e2e.test.js`).
-- [ ] Codex sandbox mirrors mode: read-mode channel → Codex write is refused; bash/auto → write works;
+- [ ] **Retired 2026-09-03 (Linux + containers only):** the approved-domain half; the read/write mirror stands. Codex sandbox mirrors mode: read-mode channel → Codex write is refused; bash/auto → write works;
       approved-domain requests reach listed public hosts and refuse unlisted/local/private hosts
       (including Claude→Codex fallback); admin foreground Full access is labeled unrestricted.
 - [x] Unit/integration: the signed gateway MCP exposes the same bounded `workspace_list`,
@@ -894,18 +901,18 @@ shape is asserted, not reviewed by eye.
       the effective channel workdir, refuses traversal/escaping symlinks and binary/oversize reads,
       and the reduced memory-review toolset exposes none of them
       (`test/workspace-read-tools.test.js`).
-- [x] Unit: semantic network compiler maps off/approved/unrestricted intent identically for Claude
+- [x] **Retired 2026-09-03 (Linux + containers only):** Unit: semantic network compiler maps off/approved/unrestricted intent identically for Claude
       and Codex, normalizes/deduplicates public DNS patterns, refuses empty/global/local/IP/URL-shaped
       lists, and keeps explicit admin bypass unrestricted. Slack/admin capability labels expose the
       same boundary (`test/network-domains.test.js`, `test/network-policy.test.js`, `test/modes.test.js`,
       admin shell assertions).
-- [x] Unit: non-Full Codex argv (fresh, resumed, clean, network-enabled) emits `--ignore-user-config`
+- [x] **Retired 2026-09-03 (Linux + containers only):** the permission-profile half; `--ignore-user-config` stands. Unit: non-Full Codex argv (fresh, resumed, clean, network-enabled) emits `--ignore-user-config`
       plus the Gateway-owned permission profile (`default_permissions` + `permissions.gateway-readonly`
       / `permissions.gateway-workspace` extending `:read-only` with `:root` denied), and NEVER emits
       `-s`, `sandbox_mode`, `sandbox_workspace_write.*`, or a filesystem grant on the gateway runtime
       root; full access keeps the bypass flag and no restricted profile; the child TMPDIR points at
       the private per-run scratch dir for sandboxed runs only.
-- [x] Live (macOS seatbelt, codex-cli 0.144.1): `codex sandbox` probes — readonly profile reads the
+- [x] **Retired 2026-09-03 (Linux + containers only):** Live (macOS seatbelt, codex-cli 0.144.1): `codex sandbox` probes — readonly profile reads the
       workspace but not `~/.channelgate`, home, or a sibling folder, and cannot write the
       workspace; workspace profile writes the workspace + its TMPDIR scratch only (`.git` write
       denied, sibling/gateway/home reads+writes denied; a sibling run's scratch dir under the gateway
@@ -913,7 +920,7 @@ shape is asserted, not reviewed by eye.
       succeeds, the embedded gateway MCP `list_schedules` tool works with zero filesystem grants, and
       the scratch dir is removed at completion. Documented carve-out: `:minimal` keeps shared `/tmp`
       read+write open regardless of denies (platform behavior — nothing sensitive is placed there).
-- [x] Live (macOS, codex-cli 0.144.1): the production-shaped permission profile with
+- [x] **Retired 2026-09-03 (Linux + containers only):** Live (macOS, codex-cli 0.144.1): the production-shaped permission profile with
       `network_proxy` reached allowlisted `api.github.com` and blocked unlisted `example.org`; local/
       private guards and both dangerous listener/socket switches remained false. The runner also
       checks `codex features list` before the first approved-domain spawn and fails closed when the
@@ -1000,7 +1007,8 @@ shape is asserted, not reviewed by eye.
 - [ ] read-mode + non-admin: a non-allowlisted tool posts Approve once / for-thread / forever / Deny;
       each behaves correctly and "forever" persists to `meta.approvedTools`. No click in 4 min → deny.
 - [ ] Only the author / an admin / an approved user can click an approval; others get an ephemeral no.
-- [ ] admin-mode escalation needs BOTH: admin author + adminMode channel → sandbox off; a non-admin in
+- [ ] **Retired 2026-09-03 (Linux + containers only):** the sandbox wording — escalation is the bypass flag inside the channel's container, and auto mode
+      stays inside it too. admin-mode escalation needs BOTH: admin author + adminMode channel → sandbox off; a non-admin in
       an admin-mode channel still gets prompted. auto-mode auto-approves but stays sandboxed.
 - [x] Unit (`test/mcp-control-plane-approval.test.js`, the 2026-08 update plan (internal repo) A3): control-plane MCP
       tools block on a human Approve click — deny (with reason) blocks the change and nothing
@@ -1043,6 +1051,11 @@ shape is asserted, not reviewed by eye.
       resolves as not-approved. Unlike a permission prompt, auto-mode does NOT auto-approve it.
 
 ### Sandbox boundaries (bash / network)
+**Retired 2026-09-03 (Linux + containers only):** the host sandbox is gone. The boundary is the
+channel's container (only the work folder mounted — `~/.ssh`, the gateway root and sibling folders do
+not exist inside it; see *Container runtime → channel isolation inside the containers*). *Allow
+network* is a per-channel switch the engines are told about — no domain filtering and, in this
+release, no egress cut-off — so the network entry has no container equivalent yet. Kept as history.
 - [ ] Bash channel: write inside the folder works; writing `~/.ssh`, `~/.aws`, the gateway root, or a
       sibling channel folder is denied; reading the home root / gateway root is denied.
 - [ ] Network off by default; allow-network + allow-bash → `gh`/`git push` succeed, a non-allowlisted
@@ -1781,8 +1794,12 @@ shape is asserted, not reviewed by eye.
 **Retired 2026-09-03 (slice S1 of "Linux + containers only", `docs/plans/2026-09-03-linux-containers-only.md`
 in the private repo):** the Settings card, the `cliIntegrations` setting, the install badges and the
 read-only host-login links are gone; the catalog stays for the `/secrets` suggestions and the
-write-deny list. The entries below that exercised the switch are replaced by the first three; the
-network-approval entries still apply to host-sandbox runs until the host runtime itself goes (S2).
+write-deny list. The entries below that exercised the switch are replaced by the first three.
+**Retired 2026-09-03 (Linux + containers only):** the network-approval, toolchain-grant and
+host-credential entries went with the host runtime and the domain allow-list — the container image
+ships the toolchain, a channel's credentials are its `/secrets` variables and its own HOME volume,
+and *Allow network* is a switch the engines are told about, with no domain filtering. Kept as
+history.
 
 - [x] Every catalog entry's domains pass the shared network-domain normalizer; credential paths
       are HOME-relative and cannot escape upward (automated: `test/cli-integrations.test.js`).
@@ -1798,12 +1815,12 @@ network-approval entries still apply to host-sandbox runs until the host runtime
 - [x] Retired 2026-09-03 with the switch: "with Vercel enabled in Settings, a Bash+network channel
       runs `vercel deploy` in-sandbox" — in a container the CLI is in the image and the credential
       is the channel's `/secrets` variable (Airtable CLI-02/CLI-05).
-- [ ] Manual: in an admin-mode, Bash-off, network-on channel, an admin author's `git push` over
+- [ ] **Retired 2026-09-03 (Linux + containers only):** Manual: in an admin-mode, Bash-off, network-on channel, an admin author's `git push` over
       HTTPS authenticates; a non-admin author in the same channel still cannot read `~/.gitconfig`.
 - [x] `normalizeRequestedDomain` accepts bare domains / wildcards / URLs (hostname only) and
       refuses IPs, localhost, single-label hosts; stored channel extras degrade to NO extras on
       any malformed entry; extras join only that channel's sandbox list (automated).
-- [ ] Manual: `request_network_domain` posts an Approve/Deny card any authorized user can approve;
+- [ ] **Retired 2026-09-03 (Linux + containers only):** the tool is gone. Manual: `request_network_domain` posts an Approve/Deny card any authorized user can approve;
       the domain lands in the channel card's "Extra network domains" field, works on the next
       message, and deleting it there revokes access. An invalid or already-allowed domain gets a
       refusal/no-op with NO card.
@@ -1839,11 +1856,11 @@ network-approval entries still apply to host-sandbox runs until the host runtime
       re-allowed only for write-capable channels (automated: `test/sandbox-toolchain.test.js`;
       live Airtable case CLI-12 — regression: a symlink-shim host lost node/npm/npx/supabase/vercel
       inside the Claude sandbox because per-file binds cannot materialize symlink entries).
-- [ ] Manual (Linux, per-user toolchain): in a Bash channel whose node lives under `~/.local/bin`,
+- [ ] **Retired 2026-09-03 (Linux + containers only):** Manual (Linux, per-user toolchain): in a Bash channel whose node lives under `~/.local/bin`,
       `node --version`, `npm --version`, `npx --version` and (Vercel enabled) `vercel --version`
       all resolve inside the sandbox; with the grant removed each reports `command not found`.
       Verified 2026-08-26 against a real `claude -p` sandbox run on the Linux host.
-- [ ] Manual (Linux Codex): in the same network-enabled channel, switch to Codex and verify
+- [ ] **Retired 2026-09-03 (Linux + containers only):** Manual (Linux Codex): in the same network-enabled channel, switch to Codex and verify
       `node --version`, `vercel --version`, and `vercel whoami` resolve in-sandbox without manual
       PATH or proxy exports and report the configured account.
 
@@ -1867,7 +1884,7 @@ network-approval entries still apply to host-sandbox runs until the host runtime
 - [ ] Manual (per host): with `agent-browser` enabled in two channels, channel A opens a page and
       leaves it; channel B's first `snapshot` shows ITS own blank browser, not A's page. Repeat
       after a daemon restart.
-- [ ] Manual (per host): a fully sandboxed (non-admin, non-bash) run navigates a public page and
+- [ ] **Retired 2026-09-03 (Linux + containers only):** the Bash-sandbox rationale; the per-channel namespace entries above stand. Manual (per host): a fully sandboxed (non-admin, non-bash) run navigates a public page and
       reads the rendered snapshot — proving the MCP child still escapes the Bash sandbox that
       denies Chromium's `socket(AF_UNIX)`.
 
@@ -1919,6 +1936,11 @@ network-approval entries still apply to host-sandbox runs until the host runtime
 
 ## Container runtime (v0.8 P1)
 
+**Retired 2026-09-03 (Linux + containers only):** the container is the ONLY runtime. The entries
+below that exercise the `host` backend, the kill switch, the per-channel pin and `runtimeEffective`,
+`set_channel_runtime`, the host-side background card and the host↔container session carry describe
+retired behaviour and are kept as history; everything else stands.
+
 Unit coverage runs without a container binary on the machine: `test/container-fake-cli.js` is a
 scripted stand-in for `podman`/`docker` that records every argv, and `test/runtime-fake.js` plus
 `test/fixtures/fake-runtime-backend.js` are contract-validated fake backends that delegate the
@@ -1930,13 +1952,13 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
       declared capability, accepts a target wrapper, and throws on an unknown KEY; the registry
       loads both backends and resolves an unknown or empty id to `host` (every pre-v0.8 record is a
       host record) (automated: `test/runtimes-core.test.js`).
-- [x] Unit: precedence produces the exact `{backend, reason}` pair for every rung — kill switch →
+- [x] **Retired 2026-09-03 (Linux + containers only):** every channel resolves to the container backend. Unit: precedence produces the exact `{backend, reason}` pair for every rung — kill switch →
       `disabled`, admin mode → `admin-mode`, a channel pin → `channel` in both directions, the
       gateway default → `default`, and an invalid pin falls back to `default`; `resolveRuntime()`
       builds the documented target (host: `artifactDir:null`, `container:null`, `cwd === workDir`,
       `fingerprint() === "host"`; clean mode swaps `cwd` to the clean workspace; container: the
       `.runtime/<platform>/<slug>` artifact dir and a container block) (automated).
-- [x] Unit: the host backend is byte-for-byte today's behaviour against a real child — spawn tags
+- [x] **Retired 2026-09-03 (Linux + containers only):** Unit: the host backend is byte-for-byte today's behaviour against a real child — spawn tags
       the child, `probe` follows the pid true→false across a real SIGTERM, `signal` returns true,
       `resumeCommand` is a passthrough, `describe` is `{backend:"host", state:"host"}`, and
       `helperCommand` resolves to `process.execPath` + this checkout's script (automated).
@@ -2173,7 +2195,7 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
       by the shell on the side that owns the files; the staging directory is removed on success AND
       on a failed exec; a file the container stages OUTSIDE the requested state dirs is refused with
       a log line rather than written (automated: `test/container-carry.test.js`).
-- [x] Unit: boot starts the idle reaper even with the gateway kill switch OFF (a carry may bring one
+- [x] **Retired 2026-09-03 (Linux + containers only):** Unit: boot starts the idle reaper even with the gateway kill switch OFF (a carry may bring one
       container up to read its HOME volume, and nothing else would stop it again), and the reaper is
       inert until that happens (automated: `test/container-carry.test.js`).
 - [x] Unit: the contract declares `copyIn`/`copyOut`/`credentialError` as OPTIONAL and still fails
@@ -2239,11 +2261,11 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
       window: the container is not stopped while it runs, the job's output is tailed live, its real
       exit code is reported, and the job survives a daemon restart (it is re-found by its runId, not
       by a pid).
-- [ ] Live: **kill switch round trip** — with a channel pinned to `container`, switch
+- [ ] **Retired 2026-09-03 (Linux + containers only):** Live: **kill switch round trip** — with a channel pinned to `container`, switch
       Settings → Container runtime off: the next turn runs on the host, `/status` says
       `host` with the kill-switch reason, the pin is still stored, and the thread's session RESUMES
       across the switch. Switch it back on and the same thread resumes in the container.
-- [ ] Live: **the conversation survives a backend change, not just the thread** — in a host channel
+- [ ] **Retired 2026-09-03 (Linux + containers only):** Live: **the conversation survives a backend change, not just the thread** — in a host channel
       have a Claude turn do real work (a compaction, a subagent, several tool calls), then flip the
       channel to `container` and continue the SAME thread with a question only the engine-native
       history can answer ("what did the subagent report?"). It answers without a heal, the log says
@@ -2251,7 +2273,7 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
       `sessionCarried`. Flip the channel back to `host` (or to admin mode) and repeat in the other
       direction. Then do both again on Codex, checking that the rollout arrives with its
       `sessions/YYYY/MM/DD` path intact and `codex exec resume` finds it.
-- [ ] Live: **a carry never breaks a turn** — with the container CLI stopped, send a message in a
+- [ ] **Retired 2026-09-03 (Linux + containers only):** Live: **a carry never breaks a turn** — with the container CLI stopped, send a message in a
       thread whose row still names the container: the turn answers (healed, as before), the log says
       `session carry-over failed (…) — the resume falls back to the existing heal`, and nothing under
       `~/ChannelGate/.runtime/<platform>/<slug>/carry/` is left behind.
@@ -2287,7 +2309,7 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
       candidate revision, and the boot line no longer says `the built image is spec X but this
       checkout expects Y`. Repeat with the container CLI stopped: the update reports the build
       failure with the `npm run build:image` remedy and still completes.
-- [x] Unit (`runtime-integration-jobs.test.js`): the background-shell approval card describes the
+- [x] **Retired 2026-09-03 (Linux + containers only):** the HOST-channel wording; the container card stands. Unit (`runtime-integration-jobs.test.js`): the background-shell approval card describes the
       environment the job will actually run in — a HOST channel keeps
       `Background shell job (unsandboxed)` / `Runs OUTSIDE the engine sandbox as the daemon user`,
       while a container channel's card reads
@@ -2296,7 +2318,8 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
       still require an admin-tier click, and the Deny refusal follows the same wording.
 
 ## Security checks
-- [ ] **Filesystem confinement:** inside a channel folder, `claude` cannot read/write outside it
+- [ ] **Retired 2026-09-03 (Linux + containers only):** the sandbox wording — inside the container `~/.ssh` and sibling channel folders do not exist at
+      all; the check itself stands. **Filesystem confinement:** inside a channel folder, `claude` cannot read/write outside it
       (attempt to read `~/.ssh` or a sibling channel folder is blocked by the sandbox).
 - [ ] **MCP allowlist:** `claude mcp list` inside a channel folder shows ONLY the channel's
       allowed servers + the injected personal/shared Composio identities (per the run); nothing else.
@@ -2304,7 +2327,8 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
 - [ ] **Composio isolation:** user A's `composio-user` token is never used for user B; shared
       `composio-agent` remains distinct; no tokens are written to channel `settings.json` or logs.
 - [ ] **Dangerous perms:** `--dangerously-skip-permissions` only ever passed for admin authors.
-- [ ] **Admin sandbox-off:** in an admin-mode channel, an admin's LIVE foreground turn can read a
+- [ ] **Retired 2026-09-03 (Linux + containers only):** admin channels run in containers too; the admin author's live turn keeps only the bypass flag and
+      its work folder mount. **Admin sandbox-off:** in an admin-mode channel, an admin's LIVE foreground turn can read a
       file outside the channel folder (e.g. `~/.config/...`) — the admin settings variant has
       `sandbox.enabled: false`; the shared variant keeps `enabled: true` and a non-admin (or any
       background/schedule/continuation run) still cannot read outside the folder.
@@ -2314,7 +2338,7 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
 - [ ] **Internal IPC:** `POST /internal/background` returns 403 without the per-process secret.
 - [ ] **Secrets:** `.env` and `~/.channelgate/config/users.json` are gitignored; tokens never
       appear in logs or Slack messages.
-- [ ] **Linux userns sandbox:** on an Ubuntu 23.10+ host, `sudo sh scripts/apparmor/claude-userns-fix.sh
+- [ ] **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — no host sandbox, no user namespace to exempt. **Linux userns sandbox:** on an Ubuntu 23.10+ host, `sudo sh scripts/apparmor/claude-userns-fix.sh
       --check` reports `RESULT: host OK` (after `--apply` if needed); a sandboxed `claude -p "run:
       echo ok"` in a folder with `{"sandbox":{"enabled":true}}` prints `ok`; with the profile removed
       the daemon logs `[gateway] WARNING: AppArmor restricts unprivileged user namespaces …` at boot.

@@ -72,46 +72,46 @@ what needs approving if they seem unaware. Read-only tools (`list_*`, `get_*`) a
 - `add_channel_mcps` / `remove_channel_mcps` — allow/stop MCP servers here (by name).
 
 ## Channel modes (permissions)
-- `set_channel_bash` (managers) — Bash + file-edit tools, sandboxed to the working folder.
+Modes are TOOL-permission presets. None of them changes what you can see: every run, whatever the
+mode and whoever the author, is confined to this channel's container.
+- `set_channel_bash` (managers) — Bash + file-edit tools in the working folder.
 - `set_channel_auto_mode` (managers) — autonomous: permission prompts auto-approved, folder
-  writable, still sandboxed. Needed for `run_in_background`.
-- `set_channel_admin_mode` (admin) — for **admin authors**, full access, no sandbox, no prompts
-  (`--dangerously-skip-permissions`). Non-admin authors stay restricted. The sandbox-off tier
-  applies ONLY to the admin author's LIVE turns — see "Admin access & the sandbox" below.
-- `set_channel_network` (admin) — allow egress to configured domains (needs Bash on) so
-  `git`/`gh`/`curl` work.
-- `request_network_domain` (anyone; Approve click required) — add ONE extra domain to THIS
-  channel's egress allow-list when a command fails on a blocked host. Any authorized user may
-  click Approve; the domain persists for the channel (admins prune it in the admin UI) and takes
-  effect on the NEXT message. Accepts a bare domain, `*.sub.example`, or a URL (hostname used).
+  writable. Needed for `run_in_background`.
+- `set_channel_admin_mode` (admin) — for **admin authors**, every tool without prompts
+  (`--dangerously-skip-permissions`). Non-admin authors stay restricted. Still inside the
+  container — see "Admin access & the container" below.
+- `set_channel_network` (admin) — record whether this channel is meant to have network access
+  (needs Bash on to be useful) so `git`/`gh`/`curl` and deploy CLIs may be used; the engines are
+  told the answer (Codex read mode refuses network on its own). There is no per-domain allow-list
+  to add to. If the switch is off and a task needs the network, ask an admin to turn it on
+  (effective on the NEXT message) rather than working around it.
 
-## Admin access & the sandbox (read this before diagnosing "file not found")
+## Admin access & the container (read this before diagnosing "file not found")
 
-**When a turn is actually unsandboxed.** All four must hold, decided fresh for EVERY message:
-the channel is in **admin mode**, the message AUTHOR is a gateway **admin**, and it is a **live
-foreground chat message** — not a background agent, continuation, schedule, or restart-recovery
-run. Those unattended shapes always run at the sandboxed **auto** tier (writable +
-auto-approved), even for an admin in an admin channel; that ceiling is by design and no setting
-raises it. So "admin mode is on" does NOT mean *this* turn can see the whole machine — a fresh
-message from the admin does.
+**Every turn runs inside this channel's container — admin mode included.** What exists on your
+side of the boundary: the working folder (bind-mounted from the host at the same absolute path),
+your own home directory (`/home/agent`, a per-channel volume — your CLI logins, installed tools,
+sessions), `/tmp`, and the image's toolchain. The operator's home, the gateway's own files, other
+channels' folders and every other host path are NOT permission-denied — they **do not exist** in
+your filesystem view, whoever the author is and whatever the mode. If a real host file seems
+missing, say "not visible inside this channel's container", not "deleted / a host mount / a
+permissions problem" — and do not diagnose host configuration from inside the container. There
+is no turn that sees the whole machine; a file the channel needs has to be put in the working
+folder by someone who can reach it.
 
-**What the sandbox looks like from inside (Linux).** Confinement is a mount namespace: paths
-outside the allowed set are NOT permission-denied — they **do not exist** in your filesystem
-view (the home directory appears as a nearly-empty tmpfs holding only the working folder and a
-few tooling paths like `.config/gh`, `.config/git`, `.ssh/known_hosts`). If a real host file
-seems missing, say "not visible inside my sandboxed turn", not "deleted / a host mount / a
-permissions problem" — and do not diagnose host configuration from inside a sandboxed view.
-The fix is never a workaround from inside: ask the channel admin to send a fresh live message
-in an admin-mode channel and do the read/copy in THAT turn.
+**An admin channel sees one host directory: its own working folder.** An admin channel whose
+working folder is a host directory (a repo checkout, say) has that directory mounted read-write —
+everything in it, and nothing beside it. That is the intended trust model for admin channels; it
+is not a route to the rest of the host.
 
-**`$HOME` is not the account home — even unsandboxed.** Every run gets a synthetic engine HOME
-(`…/.channelgate/engine-state/<engine>/home`), so `~` never points at the real account home.
-Use absolute paths (`/home/<user>/…`) for anything outside the working folder.
+**`$HOME` is this channel's home, not the operator's account home.** `~` is `/home/agent` inside
+the container and belongs to this channel alone: a login you make there (`gh auth login`,
+`vercel login`) or a tool you install stays for this channel's next turns and is invisible to
+every other channel.
 
-**Never copy secrets into the working folder to dodge the sandbox.** The folder is often a git
-checkout and may sync elsewhere; a credential pasted there can end up committed. Read secrets
-from their canonical path in an unsandboxed admin turn instead, or have the admin wire access
-properly (a `/secrets` variable for the channel, the network allow-list).
+**Never copy secrets into the working folder.** The folder is often a git checkout and may sync
+elsewhere; a credential pasted there can end up committed. A credential this channel should have
+is a `/secrets` variable (below) — it arrives as environment, never as a file.
 
 ## Working folder & Drive
 - `get_channel_workdir` / `set_channel_workdir` (admin) / `clear_channel_workdir` (admin) — run

@@ -34,8 +34,8 @@ npm run secret-scan    →
       description; `npm run secret-scan` is clean
 - [ ] macOS **and** Linux considered — no GNU-only flags, no platform-specific binaries, portable
       Node APIs preferred over shelling out
-- [ ] Confinement preserved: no agent spawned outside a gated folder, sandbox and permission
-      allowlists intact
+- [ ] Confinement preserved: no engine exec'd outside a channel container, the container mounts
+      and permission allowlists intact
 - [ ] Secrets still never ride a listing response (`has*` / `last4` only; new secret fields added
       to the reveal allowlist)
 - [ ] Documentation updated (`README.md`, `INSTALL.md`, `docs/`) where behaviour or setup changed

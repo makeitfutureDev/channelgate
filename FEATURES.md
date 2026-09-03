@@ -451,7 +451,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Background jobs survive a daemon restart: each job is persisted in SQLite's `bg_jobs` table; on boot
   a still-running job is watched to completion, and one that exited while the daemon was down gets a
   forced "interrupted by restart" continuation — a thread never silently stalls.
-- Unsandboxed background-shell approval cards are durable and single-use. `run_in_background`
+- **Retired 2026-09-03 (Linux + containers only):** the host-side card variant (`Runs OUTSIDE the engine sandbox as the daemon user`) — every shell
+  job now runs inside its channel's container and the card names the image; the durable single-use
+  card itself is unchanged. Unsandboxed background-shell approval cards are durable and single-use. `run_in_background`
   persists the exact command, author, channel/thread, working-folder identity, and runtime cap in
   SQLite and returns immediately so the engine can end its turn. Auto mode requires a gateway admin
   to click **Run it**; Admin mode starts directly only for an admin author, matching that live
@@ -709,7 +711,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   enabled: the Admin API refuses a save that would disable all of them or leave the gateway default
   pointing at a disabled engine, and the reader fails open if the stored state is ever inconsistent.
   → TEST-PLAN: Engines.
-- Codex confinement mirrors the channel via Gateway-owned permission profiles (never the legacy
+- **Retired 2026-09-03 (Linux + containers only):** the host permission profiles, the semantic network modes and the `network_proxy` compilation —
+  inside its container Codex runs `--sandbox read-only` in read mode (which refuses network on its
+  own) and `danger-full-access` for write modes, with no permission profiles; the container itself
+  is on the bridge network. Codex confinement mirrors the channel via Gateway-owned permission profiles (never the legacy
   broad-read sandbox modes): `gateway-readonly` (root denied, minimal runtime paths + workspace
   readable, nothing writable) by default, `gateway-workspace` (adds workspace write + a private
   per-run scratch dir as TMPDIR; `.git`/`.codex` stay read-only) when Bash/Auto mode is on, profile
@@ -723,7 +728,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Slack run. Known platform carve-out: Codex's `:minimal` grant keeps shared `/tmp` readable and
   writable on macOS regardless of denies, so nothing sensitive (including the run scratch dir, which
   lives under the sandbox-denied gateway root) is ever placed there. → TEST-PLAN: Engines.
-- Codex runs get NO filesystem access to the daemon runtime root (`~/.channelgate`): the local
+- **Retired 2026-09-03 (Linux + containers only):** the mechanism only — the runtime root is not mounted into the container at all and the control
+  plane is reached over the read-only unix socket; the fact stands. Codex runs get NO filesystem access to the daemon runtime root (`~/.channelgate`): the local
   gateway MCP server is a separate stdio subprocess outside the command sandbox, so schedules and
   channel state remain reachable through its authorized tools only.
 - **CLI catalog (`src/config/cli-catalog.js` — Vercel, Supabase, Make.com)**: the deploy CLIs the
@@ -736,10 +742,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (`~/.supabase`, `~/.vercel`) into runs. A container has no domain allow-list and its image
   ships the CLIs, so the switch had no effect there; a channel's own provider login is a `/secrets`
   variable and never the daemon's host-wide file. A stored `cliIntegrations` value is inert. The
-  git/gh baseline read re-allow for host runs is unchanged, including the admin-run settings
-  variant (`allowBypass`) of a no-Bash admin channel; the shared settings file for the same
-  channel stays narrow. → TEST-PLAN: CLI integrations.
-- **Toolchain reachability inside the sandbox** (`src/gateway/toolchain-paths.js`): the lockdown
+  git/gh baseline read re-allow for host runs went with the host runtime the same day — a container
+  reads the `git`/`gh` state in its own HOME volume, never the daemon's — and the catalog is now
+  only the `/secrets` name list. → TEST-PLAN: CLI integrations.
+- **Retired 2026-09-03 (Linux + containers only):** the image ships the toolchain (`containers/versions.json`) and a channel installs anything else
+  into its own HOME volume, so there is no host toolchain to grant. **Toolchain reachability inside the sandbox** (`src/gateway/toolchain-paths.js`): the lockdown
   denies reading all of HOME and re-allows only the work dir — and Claude Code implements that by
   tmpfs-masking HOME, so a per-user install of the agent's OWN runtime does not become unreadable,
   it stops EXISTING. On macOS this was invisible (Homebrew lives outside HOME); on Linux, where
@@ -779,7 +786,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Codex also sets
   `NODE_USE_ENV_PROXY=1` so Node-based CLIs honor its destination-restricted network proxy; this
   changes proxy consumption, not the approved-domain boundary. → TEST-PLAN: CLI integrations.
-- **Per-channel domain approvals (`request_network_domain`)**: when a sandboxed command fails on a
+- **Retired 2026-09-03 (Linux + containers only):** the tool, the card and `extraNetworkDomains` went with the host sandbox's allow-list — *Allow
+  network* stays as a per-channel switch the engines are told about, with no domain filtering and,
+  in this release, no egress cut-off in the container (every container is on the bridge network;
+  a container-side egress proxy is the planned follow-up). **Per-channel domain approvals (`request_network_domain`)**: when a sandboxed command fails on a
   blocked host, the agent may request ONE named domain; the gateway posts an Approve/Deny card
   that ANY authorized user can approve (the human click is the control — injected content can
   request but never click). Approved domains persist in the channel meta, join that channel's
@@ -907,7 +917,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   operating systems.
   All third-party Actions are SHA-pinned with read-only repository permissions. → TEST-PLAN:
   Automated release gate (B2–B5).
-- Per-conversation gated folder: filesystem sandbox confined to the folder, persistent memory
+- **Retired 2026-09-03 (Linux + containers only):** the filesystem-sandbox half — confinement is the channel's container (own HOME volume; only the
+  work folder, clean workspace and artifact dir mounted), while memory-off and the MCP allowlist are
+  unchanged. Per-conversation gated folder: filesystem sandbox confined to the folder, persistent memory
   off, MCP allowlist. → TEST-PLAN: Security (confinement, allowlist, memory).
 - **2026-07 full-codebase review remediation** (from `IMPROVEMENTS.md`): engine children run with a
   minimal allowlisted env (`src/engines/child-env.js` — Slack tokens / approval secret never reach
@@ -1024,7 +1036,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Customized/restored via the **`get_gateway_guide`** (anyone) / **`update_gateway_guide`** /
   **`reset_gateway_guide`** (admins) gateway MCP tools — per-file or whole-guide restore-to-default.
   → TEST-PLAN: Gateway-usage skill.
-- Four channel **modes** (set with `/mode`): `read` (Read/Glob/Grep only, every
+- **Retired 2026-09-03 (Linux + containers only):** the OS-sandbox half of this bullet — the four modes stay as TOOL-permission presets (read =
+  read-only tools, bash = shell + file writes, auto = prompts auto-approved, admin =
+  `--dangerously-skip-permissions` for an admin author), and none of them changes what the channel's
+  container can see. Four channel **modes** (set with `/mode`): `read` (Read/Glob/Grep only, every
   other tool asks for approval), `bash` (Bash + file writes, sandboxed to the folder), `auto`
   (autonomous — permission prompts auto-approve, still fully sandboxed), and `admin` (full tools,
   sandbox off — requires an **admin author** as well). `admin` is org-admin-only to select; the safe
@@ -1094,11 +1109,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `gateway-usage` skill (`references/approvals.md`). → TEST-PLAN: Modes & approvals.
 - Admin-only dangerous permissions (admin author **and** adminMode channel); non-admins run the
   folder allowlist. → TEST-PLAN: Security (dangerous perms).
-- Per-channel **Allow Bash**: unlocks Bash + Write/Edit, with writes kept away from the gateway root,
+- **Retired 2026-09-03 (Linux + containers only):** the deny lists and the allowlisted domain set — inside the container the gateway root, the
+  sensitive home paths and other channels' folders are simply not mounted, and **Allow Network** is
+  now only a per-channel switch the engines are told about (no domain filtering and, in this
+  release, no egress cut-off). Per-channel **Allow Bash**: unlocks Bash + Write/Edit, with writes kept away from the gateway root,
   sensitive home paths (`.ssh`, `.aws`, `.config`, `.claude`, keychains, …) and every other channel's
   folder. **Allow Network**: sandbox egress to an allowlisted domain set (default: GitHub) — with Bash
   on, git credentials become readable so `git push` / `gh` work. → TEST-PLAN: Sandbox boundaries.
-- **Linux hosts keep their Bash sandbox under Ubuntu's AppArmor userns restriction**: Ubuntu 23.10+
+- **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — with no host sandbox there is no user namespace for AppArmor to restrict,
+  and rootless Podman brings its own uid mapping (`--userns=keep-id`, `/etc/subuid`). **Linux hosts keep their Bash sandbox under Ubuntu's AppArmor userns restriction**: Ubuntu 23.10+
   (24.04 LTS included) stacks any unconfined process that creates a user namespace into a
   capability-stripped profile, which kills Claude Code's sandbox on its first `setgroups` write.
   `scripts/apparmor/claude-code-userns` is a targeted mediating profile attached to the Claude
@@ -1110,11 +1129,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   approved-domain `network_proxy`, which then resets every tunnel (allowed domains included) —
   the boot assessment flags a stale pre-Codex install of the profile and says to re-run
   `--apply`. → TEST-PLAN: Security (Linux userns sandbox).
-- Background shell jobs have two independent gates: the channel must be auto-mode (or admin-mode
+- **Retired 2026-09-03 (Linux + containers only):** the rationale only — the job runs inside the channel's container, and both gates stay. Background shell jobs have two independent gates: the channel must be auto-mode (or admin-mode
   with an admin author), then a gateway admin must click the durable exact-command Slack approval.
   The second gate is never auto-approved because the command runs outside the engine sandbox.
   → TEST-PLAN: Security (background gating).
-- **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
+- **Retired 2026-09-03 (Linux + containers only):** admin channels run in containers too — the admin author's live turn keeps the bypass flag, its
+  work folder is bind-mounted read-write like any other's (a host directory used as the work folder
+  is visible in full, nothing beside it), and nothing else of the host is reachable. **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
   live foreground turn in an admin-mode channel runs with the bypass AND `sandbox.enabled: false`
   (the flag alone never lifts the sandbox), so it can genuinely reach the whole account — while
   the shared settings keep every other run fully sandboxed, and unattended admin runs stay at the
@@ -1124,6 +1145,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   per-channel guest. New users are recorded as un-approved pending an admin's approval.
 
 ## Container runtime (v0.8 P1)
+**Since 2026-09-03 this is the ONLY runtime (Linux + containers only):** the `host` backend, the
+gateway-wide kill switch, the per-channel runtime pin and the host↔container session carry below
+are retired, bullet by bullet; everything else stands.
 - **Where a turn runs is a declared backend, resolved once.** `src/runtimes/` is to WHERE an engine
   process runs what `src/engines/` is to WHICH engine runs and `src/platforms/` to which surface
   answers: a `RuntimeBackend` contract (`prepareTarget` · `ensureUp` · `spawn` · `probe` · `signal`
@@ -1143,7 +1167,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `artifactDir` (null on the host), the container-runtime settings snapshot, and — for a container —
   the resolved container block. Nothing downstream asks "is this a container?"; it asks the target's
   declared capabilities. → TEST-PLAN: Container runtime (v0.8 P1).
-- **Backend precedence, stated once**: the gateway-wide kill switch `containerRuntimeEnabled:false`
+- **Retired 2026-09-03 (Linux + containers only):** the kill switch, the per-channel `meta.runtime` pin and the admin-mode → host rung — every channel
+  resolves to the container backend, there is no host to return to, and the daemon refuses to boot
+  without a container CLI. **Backend precedence, stated once**: the gateway-wide kill switch `containerRuntimeEnabled:false`
   → `host` (reason `disabled`, the v0.8 rollback lever); a channel in **admin mode** → `host`
   (`admin-mode` — an admin channel is deliberately unconfined, so it is honest about it);
   `meta.runtime` = `host`|`container` → that (`channel`); otherwise the gateway
@@ -1151,7 +1177,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   failing. A per-run override may only REDUCE capability, so the decision reads the CHANNEL's stored
   `adminMode`/`runtime` and never the overridden run view — `mode:"read"` cannot move a turn off its
   container. Clean mode changes the cwd, not the backend. → TEST-PLAN: Container runtime (v0.8 P1).
-- **Fail closed, never a silent fallback.** No usable container CLI, no built image, or no engine
+- **Retired 2026-09-03 (Linux + containers only):** the kill-switch clause only — a missing container CLI is now a refused BOOT rather than a refused
+  turn; the rest of the bullet stands. **Fail closed, never a silent fallback.** No usable container CLI, no built image, or no engine
   login ends the turn with the sentence that names the remedy (`npm run build:image` on the gateway
   host; `claude setup-token`; `codex login`) — the backend never quietly demotes the channel to the
   host, because a confinement boundary that disappears without saying so is worse than a refused
@@ -1343,7 +1370,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   container form — `podman exec -it -w <cwd> <name> <the engine's own resume command>` — with no
   redundant `cd`, while identical mount paths keep the transcript's recorded cwd valid so session
   adoption works unchanged in both directions. → TEST-PLAN: Container runtime (v0.8 P1).
-- **A thread's engine history follows it across runtime backends.** Stopping, starting or recreating
+- **Retired 2026-09-03 (Linux + containers only):** with one runtime there is no backend change to follow — a thread's history lives in its channel's
+  HOME volume and stays there, and a thread that last ran on the host before the switch falls back
+  to the existing heal. **A thread's engine history follows it across runtime backends.** Stopping, starting or recreating
   a container loses nothing — the HOME volume and the workdir bind outlive it. The one real loss was
   a thread whose CHANNEL changed backend between two messages (host → container when a channel is
   containerized, container → host when it is set to admin mode, pinned back, or caught by the kill
@@ -1366,7 +1395,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   line and the turn continues: the heal is still the safety net, it is just no longer the first
   resort. The `run_config` event records `sessionCarried` when it happened.
   → TEST-PLAN: Container runtime (v0.8 P1).
-- **Admin surface.** Settings → **Container runtime**: the gateway-wide enable switch, the default
+- **Retired 2026-09-03 (Linux + containers only):** the enable switch, the default-backend choice, the per-channel/DM **Runtime** select with its
+  `runtimeEffective`, and `set_channel_runtime` — the container is the only runtime; the CLI choice,
+  the image, idle minutes, max running, the caps and the Claude token stay. **Admin surface.** Settings → **Container runtime**: the gateway-wide enable switch, the default
   backend, the CLI choice (auto/podman/docker), the image reference, idle minutes, max running
   containers, the pids/memory/cpu caps, and the write-only Claude token from `claude setup-token`
   (listings return `has*`/`last4` only; the value is revealable one at a time through the named
@@ -1392,7 +1423,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   instead of leaving channels on yesterday's toolchain. The image is never built inside a turn: a
   missing image fails the run closed with the one command that fixes it. → TEST-PLAN: Container
   runtime (v0.8 P1).
-- **The daemon still runs everywhere; the containers do not.** A host with no container CLI boots
+- **Retired 2026-09-03 (Linux + containers only):** the daemon now refuses to boot without a usable container CLI, and Linux with rootless Podman is
+  the deployment target. **The daemon still runs everywhere; the containers do not.** A host with no container CLI boots
   exactly as before — the backend is imported dynamically, a failed probe is one legible log line
   plus a reason in `/api/health`, and the feature is simply off. The channel IMAGE and its helper
   scripts are Linux-only by design (the v0.8 decision drops the macOS DEPLOYMENT requirement for
@@ -1837,7 +1869,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   The bundled Poppins binaries retain the SIL Open Font License 1.1 and ship with its complete
   notice. The project is source-available, not OSI open source. → TEST-PLAN: Phase F operational
   readiness.
-- **Browser automation with per-channel isolation**: browser MCP servers (`@playwright/mcp` and
+- **Retired 2026-09-03 (Linux + containers only):** the Bash-sandbox rationale only — there is no host sandbox to escape; the per-channel browser
+  namespace is unchanged. **Browser automation with per-channel isolation**: browser MCP servers (`@playwright/mcp` and
   Vercel Labs' `agent-browser`) are spawned by the engine CLI, which places them outside the Bash
   sandbox — the only way Chrome can run at all, since that sandbox denies the `socket(AF_UNIX)`
   Chromium's Mojo IPC needs. `agent-browser` keeps a browser daemon alive across turns, so the
