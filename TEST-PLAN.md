@@ -749,6 +749,13 @@ shape is asserted, not reviewed by eye.
       harness changes (no forced fresh session); an explicit per-thread/per-run ask still switches;
       new/unlabeled/matching sessions never trigger a switch (`test/session-engine.test.js`,
       `decideThreadEngine`).
+- [x] E2E: a thread that started on Claude keeps the relayed Claude login when its channel's
+      harness later moves to Codex ("continuing on claude"): the stub `claude` echoes `oauth=yes`
+      on the resumed turn. The credential is resolved for the harness that actually runs, AFTER
+      `decideThreadEngine`; before the fix the turn spawned Claude with no `CLAUDE_CODE_OAUTH_TOKEN`
+      and a container answered Claude Code's own "Not logged in · Please run /login" (live,
+      2026-09-03, a Codex-default channel on Atlas). The test fails on the old ordering
+      (`test/message-to-reply-e2e.test.js`).
 - [ ] Live: start a thread in a Codex channel, flip the channel to Claude → the thread's next
       message still runs Codex and keeps its conversation; a brand-new thread runs Claude;
       `@bot claude …` in the old thread switches it (fresh session + thread-context replay).

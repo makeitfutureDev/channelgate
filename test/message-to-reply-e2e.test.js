@@ -149,3 +149,42 @@ test("a channel message without a bot mention exits before registration or engin
   }, client, { botUserId: "U_BOT", teamId: "T_E2E" });
   assert.deepEqual(client.posted, []);
 });
+
+// A thread that started on Claude keeps running on Claude when its channel's harness later moves to
+// Codex ("continuing on claude"). The relayed login is resolved for the harness that actually runs,
+// not for the channel's: it used to be resolved before that decision, so such a turn spawned Claude
+// with no token — inside a container that is Claude Code's own "Not logged in · Please run /login"
+// (live, 2026-09-03, a Codex-default channel on Atlas whose thread had started on Claude).
+test("a Claude thread inside a Codex-default channel still receives the relayed Claude login", async (t) => {
+  const { mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { operatorClaudeConfigDir } = await import("../src/gateway/claude-login.js");
+  const { listChannels, saveChannelMeta, getChannelMeta } = await import("../src/config/store.js");
+  // The operator's own login, in the scratch CLAUDE_CONFIG_DIR test/helpers.js pins. Far expiry:
+  // no refresh turn is attempted, the token is relayed as-is.
+  const operatorFile = path.join(operatorClaudeConfigDir(), ".credentials.json");
+  mkdirSync(path.dirname(operatorFile), { recursive: true, mode: 0o700 });
+  writeFileSync(operatorFile, JSON.stringify({
+    claudeAiOauth: { accessToken: "sk-ant-oat01-e2e-relay", refreshToken: "never-relayed", expiresAt: Date.now() + 4 * 60 * 60 * 1000, refreshTokenExpiresAt: Date.now() + 20 * 24 * 60 * 60 * 1000 },
+  }), { mode: 0o600 });
+  t.after(() => rmSync(operatorFile, { force: true }));
+
+  await setUser("U_E2E", { name: "E2E User", approved: true });
+  const client = fakeSlack();
+  const event = { type: "message", channel: "D_E2E_RELAY", channel_type: "im", user: "U_E2E", text: "start on claude", ts: "2000.001" };
+  await processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_E2E" });
+  const first = client.posted.find((message) => String(message.text || "").includes("Stub engine reply"));
+  assert.ok(first, `expected a stub reply, got: ${JSON.stringify(client.posted)}`);
+  assert.match(first.text, /oauth=yes/, "a Claude-default turn relays the login (sanity)");
+
+  // The channel's harness moves to Codex after the thread exists.
+  const entry = (await listChannels()).find((c) => c.channelId === "D_E2E_RELAY");
+  assert.ok(entry, "the DM must be registered by the first turn");
+  await saveChannelMeta(entry.slug, { ...((await getChannelMeta(entry.slug)) || {}), engine: "codex" });
+
+  const followUp = { ...event, text: "still on claude?", ts: "2000.002", thread_ts: event.ts };
+  await processMessageEvent(followUp, client, { botUserId: "U_BOT", teamId: "T_E2E" });
+  const resumed = client.posted.filter((message) => String(message.text || "").includes("Stub engine reply")).at(-1);
+  assert.ok(resumed && resumed !== first, "expected a reply to the follow-up turn");
+  assert.match(resumed.text, /resume=yes/, "the thread resumes its Claude session");
+  assert.match(resumed.text, /oauth=yes/, "the resumed Claude turn must carry the relayed login even though the channel is on Codex");
+});

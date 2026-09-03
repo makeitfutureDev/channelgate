@@ -19,6 +19,13 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Fixed
+- **A Claude thread inside a Codex-default channel no longer starts "Not logged in".** The
+  relayed Claude login was resolved for the CHANNEL's harness before the thread's own harness was
+  settled, so a thread that had started on Claude while its channel later moved to Codex spawned
+  Claude with no `CLAUDE_CODE_OAUTH_TOKEN` — inside a container that is Claude Code's own
+  "Not logged in · Please run /login", two seconds in, every time (`src/gateway/run.js`). The
+  credential is now resolved after the thread-engine decision; the stub engine reports whether it
+  received a login so the E2E can prove the spawn was authenticated.
 - **The nightly engine canary installs Claude Code the way the product documents.** Its Claude
   jobs had failed on both runners since the npm package moved to a native binary fetched by its
   postinstall — `npm install --ignore-scripts` left a shim with nothing to run ("executable format
