@@ -7,7 +7,7 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
 
-const [{ toolchainLauncherEntries, toolchainReadPaths, TOOLCHAIN_BINS }, { buildSettings }, { saveSettings, getCliIntegrations }, { gatewayRoot }] =
+const [{ toolchainLauncherEntries, toolchainReadPaths, TOOLCHAIN_BINS }, { buildSettings }, { saveSettings }, { gatewayRoot }] =
   await Promise.all([
     import("../src/gateway/toolchain-paths.js"),
     import("../src/gateway/folders.js"),
@@ -215,11 +215,10 @@ async function settingsFor(meta) {
 }
 
 function hostExpected() {
-  return toolchainReadPaths({ root: gatewayRoot(), integrations: getCliIntegrations() }).map(sandboxPath);
+  return toolchainReadPaths({ root: gatewayRoot() }).map(sandboxPath);
 }
 
 test("a Bash channel can reach the toolchain; a read-only channel cannot", async () => {
-  saveSettings({ cliIntegrations: ["vercel"] });
   const expected = hostExpected();
 
   const bash = await settingsFor({ allowBash: true });
@@ -232,7 +231,6 @@ test("a Bash channel can reach the toolchain; a read-only channel cannot", async
 });
 
 test("the toolchain grant is not gated on network — `node build.js` works with egress off", async () => {
-  saveSettings({ cliIntegrations: ["vercel"] });
   const expected = hostExpected();
   const s = await settingsFor({ allowBash: true, allowNetwork: false });
   assert.equal(s.sandbox.network, undefined);
@@ -240,7 +238,6 @@ test("the toolchain grant is not gated on network — `node build.js` works with
 });
 
 test("the grant is read-only: the toolchain never becomes writable", async () => {
-  saveSettings({ cliIntegrations: ["vercel"] });
   const s = await settingsFor({ allowBash: true, allowNetwork: true });
   for (const p of hostExpected()) {
     assert.ok(!(s.sandbox.filesystem.allowWrite || []).includes(p), `${p} must never be writable`);
@@ -254,7 +251,6 @@ test("the grant is read-only: the toolchain never becomes writable", async () =>
 });
 
 test("auto mode counts as write-capable for the toolchain grant, same as Bash", async () => {
-  saveSettings({ cliIntegrations: [] });
   const expected = hostExpected();
   const s = await settingsFor({ autoMode: true });
   for (const p of expected) assert.ok(s.sandbox.filesystem.allowRead.includes(p), `${p} must be readable in auto mode`);
@@ -298,7 +294,6 @@ test("buildClaudeEnv prepends the launcher dir to PATH; a channel secret cannot 
 });
 
 test("write-capable channels re-allow the launcher container; read-only channels do not", async () => {
-  saveSettings({ cliIntegrations: [] });
   const container = sandboxPath(path.join(gatewayRoot(), "runtime", "toolchain-bin"));
   const bash = await settingsFor({ allowBash: true });
   assert.ok(bash.sandbox.filesystem.allowRead.includes(container), "bash channels must see the launcher dir");

@@ -1,22 +1,19 @@
-// Curated catalog of deploy/infra CLIs a Bash+network channel may use IN-SANDBOX. Enabling an
-// integration (Settings → Network) does two narrow things, mirroring the long-standing git/gh
-// carve-out: its domains join the network egress allow-list, and the CLI's saved-login files
-// become READABLE (never writable) to write-capable network channels — so e.g. `vercel deploy`
-// can run inside the folder sandbox instead of falling back to the unsandboxed background shell
-// and its per-command admin approval.
+// Curated catalog of the deploy/infra CLIs the channel runtime ships (see containers/versions.json
+// for the pinned versions). Two things read it:
+//   - `envKeys`: the environment variables each CLI accepts instead of a saved login. They are what
+//     a channel sets through `/secrets` to act as ITS OWN account (config/channel-env.js) — the
+//     secrets UI suggests every catalog name, so nobody guesses "SUPABASE_TOKEN" for a CLI that
+//     reads SUPABASE_ACCESS_TOKEN.
+//   - `credentialHomePaths`: where each CLI keeps a saved login on a HOST. The host-sandbox runtime
+//     write-denies them in writable folders (a token on disk is never tamperable from a run); it
+//     never links them into a run any more.
+// The "Settings → Network → CLI integrations" switch that used to add `domains` to the host
+// egress allow-list and link the daemon's shared `~/.supabase` into runs was retired on
+// 2026-09-03: the product runs Linux + containers only, a container has no domain allow-list, and
+// its image ships the CLIs. `domains` stay as documentation of what each CLI talks to.
 //
 // This module is PURE data + functions (no imports, no settings access) so config, gateway, and
-// web layers can all use it without import cycles. To add a CLI: append an entry here — domains
-// must pass util/network-domains.js normalization; credentialHomePaths are HOME-relative, may
-// cover macOS and Linux variants (absent ones are skipped at link time), and are granted
-// read-only, so a token can only ever travel to the allow-listed domains.
-//
-// `envKeys` are the environment variables that CLI accepts INSTEAD of its saved login. They are
-// what a channel sets to act as its own account rather than the daemon's single host-wide one
-// (config/channel-env.js): the secrets UI suggests them for the channel's enabled integrations,
-// and hostCredentialSuppressedBy() reads them so a channel supplying its own key stops getting the
-// shared credential linked in behind it — a silent fallback to a different identity is worse than
-// a loud failure. Order matters only for display.
+// web layers can all use it without import cycles.
 
 export const CLI_INTEGRATIONS = {
   vercel: {
@@ -68,14 +65,6 @@ export function normalizeCliIntegrations(value) {
   return [...seen];
 }
 
-export function cliNetworkDomains(ids) {
-  const out = new Set();
-  for (const id of normalizeCliIntegrations(ids)) {
-    for (const domain of CLI_INTEGRATIONS[id].domains) out.add(domain);
-  }
-  return [...out];
-}
-
 // Every env name any catalog CLI understands, for the "suggested names" affordance in the UI.
 export function cliEnvKeys(ids) {
   const out = new Set();
@@ -83,14 +72,6 @@ export function cliEnvKeys(ids) {
     for (const key of CLI_INTEGRATIONS[id].envKeys || []) out.add(key);
   }
   return [...out];
-}
-
-// Which integrations this channel has taken over with its own credential. A channel that sets
-// SUPABASE_ACCESS_TOKEN is acting as ITS account, so linking the daemon's shared ~/.supabase in
-// behind it only creates a second identity that silently answers when the first is missing.
-export function hostCredentialSuppressedBy(envNames = []) {
-  const names = new Set([...envNames].map((n) => String(n || "")));
-  return cliIntegrationIds().filter((id) => (CLI_INTEGRATIONS[id].envKeys || []).some((key) => names.has(key)));
 }
 
 export function cliCredentialHomePaths(ids) {
@@ -112,16 +93,3 @@ export function allCliCredentialHomePaths() {
 // ONLY — never keys or ssh config; auth stays agent-based (SSH_AUTH_SOCK). One list feeds the
 // Claude sandbox read re-allows, both synthetic-HOME link sets, and the Codex read grants.
 export const GIT_TOOLING_HOME_PATHS = [".gitconfig", ".git-credentials", ".config/git", ".config/gh", ".ssh/known_hosts"];
-
-// Shape the admin UI renders its checkboxes from (id + display metadata, nothing resolved).
-export function publicCliCatalog() {
-  return Object.entries(CLI_INTEGRATIONS).map(([id, entry]) => ({
-    id,
-    label: entry.label,
-    desc: entry.desc,
-    domains: [...entry.domains],
-    envKeys: [...(entry.envKeys || [])],
-    credentialHomePaths: [...entry.credentialHomePaths],
-    bins: [...(entry.bins || [])],
-  }));
-}

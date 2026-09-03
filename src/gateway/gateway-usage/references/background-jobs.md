@@ -33,10 +33,10 @@ confined agent, prefer `run_agent_in_background` — it needs no approval. If re
 gate, ask an admin to enable auto mode (`references/administration.md`), or run it inline if it's
 actually short.
 
-**Deploy CLIs (Vercel, Supabase, Make.com API): try the sandbox FIRST.** When the gateway admin has
-enabled a CLI integration (admin UI → Settings → Network → CLI integrations), that CLI's domains
-are on the network allow-list and its saved login is readable, so `vercel deploy`,
-`supabase functions deploy`, etc. run as a NORMAL sandboxed command in this folder — no unsandboxed
+**Deploy CLIs (Vercel, Supabase, Make.com API): run them here FIRST.** The channel runtime ships
+`vercel` and `supabase`, and this channel's own credential arrives as environment from its
+`/secrets` variables (`SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN`, `MAKE_API_TOKEN`), so `vercel deploy`,
+`supabase functions deploy`, etc. run as a NORMAL command in this folder — no unsandboxed
 shell job, no approval click. Run them in the working folder (use the project's ignore file, e.g.
 `.vercelignore`, instead of staging a copy elsewhere). Only if the command fails on a network or
 credential-read denial should you escalate — in this order: for a BLOCKED DOMAIN, call the gateway

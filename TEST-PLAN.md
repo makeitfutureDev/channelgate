@@ -1769,21 +1769,28 @@ shape is asserted, not reviewed by eye.
 - [ ] The Slack app manifest declares only bot scopes (no `user` scopes, no `redirect_urls`); the
       boot scope-check still passes against the bot scopes.
 
-## CLI integrations (2026-08-19)
+## CLI integrations (2026-08-19) — switch retired 2026-09-03
+
+**Retired 2026-09-03 (slice S1 of "Linux + containers only", `docs/plans/2026-09-03-linux-containers-only.md`
+in the private repo):** the Settings card, the `cliIntegrations` setting, the install badges and the
+read-only host-login links are gone; the catalog stays for the `/secrets` suggestions and the
+write-deny list. The entries below that exercised the switch are replaced by the first three; the
+network-approval entries still apply to host-sandbox runs until the host runtime itself goes (S2).
 
 - [x] Every catalog entry's domains pass the shared network-domain normalizer; credential paths
       are HOME-relative and cannot escape upward (automated: `test/cli-integrations.test.js`).
-- [x] Enabling an integration merges its domains into the EFFECTIVE list only — the stored
-      `networkDomains` base value the UI round-trips is untouched; unknown ids are dropped on read
-      and on save (automated).
-- [x] Bash+network sandbox gains the integration's domains and read-ONLY credential paths; the
-      same paths are never writable, absent with network off, and absent when the integration is
-      disabled (git/gh baseline only) (automated).
+- [x] The `/secrets` suggestions cover every catalog env name with no per-gateway switch; a stored
+      `cliIntegrations` value is inert — the effective egress list equals the admin-typed base
+      list, the credential read paths are the git/gh baseline only, and `/api/settings` carries no
+      `cliIntegrations`/`cliIntegrationCatalog` (automated).
+- [x] A bash+network host sandbox reads the git/gh baseline only — never a catalog CLI's saved
+      login, which stays write-denied in writable folders; network-off channels get no credential
+      carve-outs at all (automated).
 - [x] Admin-run settings variant of a no-Bash admin+network channel includes the credential read
       re-allows; the shared variant of the same channel does not (automated).
-- [ ] Manual: with Vercel enabled in Settings, a Bash+network channel runs `vercel deploy` from
-      its working folder in-sandbox (no unsandboxed-shell approval card); with the integration
-      disabled the same command fails on a network/credential denial instead of leaking.
+- [x] Retired 2026-09-03 with the switch: "with Vercel enabled in Settings, a Bash+network channel
+      runs `vercel deploy` in-sandbox" — in a container the CLI is in the image and the credential
+      is the channel's `/secrets` variable (Airtable CLI-02/CLI-05).
 - [ ] Manual: in an admin-mode, Bash-off, network-on channel, an admin author's `git push` over
       HTTPS authenticates; a non-admin author in the same channel still cannot read `~/.gitconfig`.
 - [x] `normalizeRequestedDomain` accepts bare domains / wildcards / URLs (hostname only) and
@@ -1793,11 +1800,9 @@ shape is asserted, not reviewed by eye.
       the domain lands in the channel card's "Extra network domains" field, works on the next
       message, and deleting it there revokes access. An invalid or already-allowed domain gets a
       refusal/no-op with NO card.
-- [x] CLI install detection: every catalog id reported; API-only entries are `null` (no badge),
-      binary entries boolean; a binary appearing in a searched dir flips to installed; the TTL
-      cache holds between calls and clears on reset (automated: `test/cli-detect.test.js`).
-- [ ] Manual: Settings → CLI integrations shows "installed" on Vercel (present on this machine)
-      and "not installed" on Supabase; Make.com carries no badge.
+- [x] Retired 2026-09-03: CLI install detection and the Settings "installed" badges
+      (`test/cli-detect.test.js` removed; `resolveBinPath` stays covered by
+      `test/sandbox-toolchain.test.js`).
 - [x] Toolchain read grants: the whole Node prefix is granted (not just the `node` binary); a
       symlinked binary grants BOTH the link and its realpath target; a real binary grants itself;
       `~/.local` is never granted wholesale and `~/.local/share` stays masked; only an ENABLED

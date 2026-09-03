@@ -49,8 +49,6 @@ import { readSecret } from "../secrets.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
 import { engineUiManifest } from "../../engines/registry.js";
 import { normalizeNetworkDomains } from "../../util/network-domains.js";
-import { normalizeCliIntegrations } from "../../config/cli-catalog.js";
-import { detectInstalledClis } from "../../gateway/cli-detect.js";
 
 // The month the license ledger is keyed on — UTC, never the daemon's local zone (a deployment in
 // UTC+13 would otherwise roll its allowance a day early).
@@ -79,10 +77,6 @@ export function createSettingsRouter({
         ...manifest,
         connection: transports?.[manifest.id]?.snapshot?.() ?? { status: "disconnected", connected: false },
       }));
-      // Live install badges for the CLI-integrations checklist. Decorated here (web layer), not
-      // in the config payload: detection stats the filesystem and only the admin UI needs it.
-      const installed = detectInstalledClis();
-      payload.cliIntegrationCatalog = (payload.cliIntegrationCatalog || []).map((c) => ({ ...c, installed: installed[c.id] ?? null }));
       res.json(payload);
     } catch (e) {
       next(e);
@@ -191,12 +185,6 @@ export function createSettingsRouter({
         } catch (error) {
           return res.status(400).json({ error: error.message });
         }
-      }
-      // Enabled CLI integrations. Array or comma/space string of catalog ids; unknown ids are
-      // silently dropped (the catalog is the allowlist — this can never enable an unreviewed CLI).
-      if (body.cliIntegrations !== undefined) {
-        const arr = Array.isArray(body.cliIntegrations) ? body.cliIntegrations : String(body.cliIntegrations).split(/[\s,]+/);
-        patch.cliIntegrations = normalizeCliIntegrations(arr);
       }
       // Trusted bot apps: Slack app/bot IDs allowed to drive runs despite carrying a bot_id.
       if (body.trustedBotApps !== undefined) {

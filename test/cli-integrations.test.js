@@ -1,3 +1,6 @@
+// The CLI catalog after the Settings → Network → "CLI integrations" switch was retired
+// (2026-09-03, Linux + containers only): the catalog now feeds the `/secrets` name suggestions and
+// the host-sandbox write-deny list, and nothing links a shared host login into a run any more.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
@@ -7,8 +10,8 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 
 const [
-  { CLI_INTEGRATIONS, GIT_TOOLING_HOME_PATHS, normalizeCliIntegrations, cliNetworkDomains, cliCredentialHomePaths, publicCliCatalog },
-  { saveSettings, getCliIntegrations, getEffectiveNetworkDomains, getNetworkDomains, getCredentialHomePaths },
+  { CLI_INTEGRATIONS, GIT_TOOLING_HOME_PATHS, allCliCredentialHomePaths, cliEnvKeys, cliIntegrationIds, normalizeCliIntegrations },
+  { saveSettings, getEffectiveNetworkDomains, getNetworkDomains, getCredentialHomePaths, settingsForApi },
   { buildSettings },
   { normalizeNetworkDomains, normalizeRequestedDomain, normalizeStoredDomains },
 ] = await Promise.all([
@@ -20,9 +23,8 @@ const [
 
 const sandboxPath = (p) => `/${p.replace(/^\/+/, "")}`;
 
-test("every catalog entry ships domains that pass the shared normalizer", () => {
+test("every catalog entry ships normalizable domains and HOME-relative credential paths", () => {
   for (const [id, entry] of Object.entries(CLI_INTEGRATIONS)) {
-    // A catalog domain that fails normalization would silently vanish from an engine allow-list.
     assert.deepEqual(normalizeNetworkDomains(entry.domains), entry.domains, id);
     assert.ok(entry.label, id);
     for (const rel of entry.credentialHomePaths) {
@@ -37,65 +39,52 @@ test("normalizeCliIntegrations drops unknown ids, dedupes, and never throws on j
   assert.deepEqual(normalizeCliIntegrations(undefined), []);
 });
 
-test("settings getters merge enabled integrations without touching the base list", () => {
-  saveSettings({ cliIntegrations: ["vercel", "bogus"], networkDomains: [] });
-  assert.deepEqual(getCliIntegrations(), ["vercel"]);
-  const effective = getEffectiveNetworkDomains();
-  for (const d of getNetworkDomains()) assert.ok(effective.includes(d), d);
-  for (const d of cliNetworkDomains(["vercel"])) assert.ok(effective.includes(d), d);
-  // The stored/base list the UI round-trips must NOT absorb the integration domains.
-  assert.ok(!getNetworkDomains().includes("api.vercel.com"));
-  const creds = getCredentialHomePaths();
-  for (const p of GIT_TOOLING_HOME_PATHS) assert.ok(creds.includes(p), p);
-  for (const p of cliCredentialHomePaths(["vercel"])) assert.ok(creds.includes(p), p);
+test("the /secrets suggestions cover every catalog env name — there is no per-gateway switch any more", () => {
+  const suggested = cliEnvKeys(cliIntegrationIds());
+  for (const entry of Object.values(CLI_INTEGRATIONS)) for (const key of entry.envKeys) assert.ok(suggested.includes(key), key);
+  assert.ok(suggested.includes("SUPABASE_ACCESS_TOKEN") && suggested.includes("VERCEL_TOKEN") && suggested.includes("MAKE_API_TOKEN"));
+});
 
-  saveSettings({ cliIntegrations: [] });
-  assert.deepEqual(getCliIntegrations(), []);
+test("a stored cliIntegrations value is inert: no domains, no host logins, not in the public settings", () => {
+  // A settings.json written before the retirement still carries the key; it must not grant anything.
+  saveSettings({ cliIntegrations: ["vercel", "supabase"], networkDomains: [] });
+  assert.deepEqual(getEffectiveNetworkDomains(), getNetworkDomains());
   assert.ok(!getEffectiveNetworkDomains().includes("api.vercel.com"));
   assert.deepEqual(getCredentialHomePaths(), GIT_TOOLING_HOME_PATHS);
-});
-
-test("bash+network sandbox gains integration domains and read-only credential paths", async () => {
-  saveSettings({ cliIntegrations: ["vercel", "supabase"] });
-  const s = await buildSettings({ _slug: "cli-probe", allowBash: true, allowNetwork: true, allowedMcps: [] });
-  for (const d of cliNetworkDomains(["vercel", "supabase"])) assert.ok(s.sandbox.network.allowedDomains.includes(d), d);
-  const home = os.homedir();
-  for (const rel of cliCredentialHomePaths(["vercel", "supabase"])) {
-    const p = sandboxPath(path.join(home, rel));
-    assert.ok(s.sandbox.filesystem.allowRead.includes(p), p);
-    assert.ok(!(s.sandbox.filesystem.allowWrite || []).includes(p), `${p} must never be writable`);
-  }
-});
-
-test("network-off channels get no integration carve-outs at all", async () => {
-  saveSettings({ cliIntegrations: ["vercel"] });
-  const s = await buildSettings({ _slug: "cli-probe-off", allowBash: true, allowNetwork: false, allowedMcps: [] });
-  assert.equal(s.sandbox.network, undefined);
-  const home = os.homedir();
-  for (const rel of cliCredentialHomePaths(["vercel"])) {
-    assert.ok(!s.sandbox.filesystem.allowRead.includes(sandboxPath(path.join(home, rel))));
-  }
-});
-
-test("disabled integrations leave the sandbox exactly on the git/gh baseline", async () => {
+  const pub = settingsForApi();
+  assert.equal("cliIntegrations" in pub, false);
+  assert.equal("cliIntegrationCatalog" in pub, false);
   saveSettings({ cliIntegrations: [] });
-  const s = await buildSettings({ _slug: "cli-probe-base", allowBash: true, allowNetwork: true, allowedMcps: [] });
+});
+
+test("a bash+network host sandbox reads the git/gh baseline only, never a provider login", async () => {
+  const s = await buildSettings({ _slug: "cli-probe", allowBash: true, allowNetwork: true, allowedMcps: [] });
   const home = os.homedir();
   for (const rel of GIT_TOOLING_HOME_PATHS) {
     assert.ok(s.sandbox.filesystem.allowRead.includes(sandboxPath(path.join(home, rel))), rel);
   }
+  for (const rel of allCliCredentialHomePaths()) {
+    const p = sandboxPath(path.join(home, rel));
+    assert.ok(!s.sandbox.filesystem.allowRead.includes(p), `${p} must not be readable`);
+    assert.ok(!(s.sandbox.filesystem.allowWrite || []).includes(p), `${p} must never be writable`);
+  }
   assert.ok(!s.sandbox.network.allowedDomains.includes("api.vercel.com"));
-  for (const rel of cliCredentialHomePaths(["vercel"])) {
+});
+
+test("network-off channels get no credential carve-outs at all", async () => {
+  const s = await buildSettings({ _slug: "cli-probe-off", allowBash: true, allowNetwork: false, allowedMcps: [] });
+  assert.equal(s.sandbox.network, undefined);
+  const home = os.homedir();
+  for (const rel of [...GIT_TOOLING_HOME_PATHS, ...allCliCredentialHomePaths()]) {
     assert.ok(!s.sandbox.filesystem.allowRead.includes(sandboxPath(path.join(home, rel))));
   }
 });
 
 // The gap found in an ops channel: an admin-mode channel with Bash OFF is the most
 // privileged run yet was the only network-on mode that could never read the git credentials.
-// The ADMIN-RUN variant (allowBypass) now gets the credential re-allows; the shared settings
+// The ADMIN-RUN variant (allowBypass) gets the credential re-allows; the shared settings
 // file for the same channel must NOT (non-admin authors keep the narrow contract).
-test("admin-run variant of a no-bash network channel reads credentials; shared variant does not", async () => {
-  saveSettings({ cliIntegrations: [] });
+test("admin-run variant of a no-bash network channel reads git credentials; shared variant does not", async () => {
   const meta = { _slug: "cli-probe-admin", adminMode: true, allowNetwork: true, allowedMcps: [] };
   const home = os.homedir();
   const gitconfig = sandboxPath(path.join(home, ".gitconfig"));
@@ -107,8 +96,7 @@ test("admin-run variant of a no-bash network channel reads credentials; shared v
   assert.ok(!shared.sandbox.filesystem.allowRead.includes(gitconfig));
 });
 
-test("catalog credential paths are write-denied in writable folders even when DISABLED", async () => {
-  saveSettings({ cliIntegrations: [] });
+test("catalog credential paths are write-denied in writable folders", async () => {
   const s = await buildSettings({ _slug: "cli-probe-tamper", allowBash: true, allowNetwork: true, allowedMcps: [] });
   const home = os.homedir();
   for (const [id, entry] of Object.entries(CLI_INTEGRATIONS)) {
@@ -131,7 +119,6 @@ test("normalizeRequestedDomain accepts what humans paste, refuses what the sandb
 });
 
 test("channel extraNetworkDomains join that channel's sandbox list; malformed values degrade to none", async () => {
-  saveSettings({ cliIntegrations: [] });
   const meta = { _slug: "extra-probe", allowBash: true, allowNetwork: true, allowedMcps: [], extraNetworkDomains: ["api.example.com"] };
   const s = await buildSettings(meta);
   assert.ok(s.sandbox.network.allowedDomains.includes("api.example.com"));
@@ -166,15 +153,4 @@ test("the write path is strict: one bad entry rejects the save rather than wipin
   );
   assert.throws(() => normalizeNetworkDomains("api.ok.com", { allowEmpty: true }), /must be an array/);
   assert.throws(() => normalizeNetworkDomains(["*"], { allowEmpty: true }), /not allowed/);
-});
-
-test("public catalog exposes render metadata and the API surface round-trips ids", () => {
-  const catalog = publicCliCatalog();
-  assert.ok(catalog.length >= 3);
-  for (const entry of catalog) {
-    assert.ok(entry.id && entry.label && Array.isArray(entry.domains));
-  }
-  assert.ok(catalog.some((e) => e.id === "vercel"));
-  assert.ok(catalog.some((e) => e.id === "supabase"));
-  assert.ok(catalog.some((e) => e.id === "make"));
 });

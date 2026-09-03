@@ -2368,7 +2368,7 @@ function settingsBarOffset() {
   return Math.max(0, pad + top) + bar.offsetHeight + 18;
 }
 
-// Rebuilt on every query rather than cached: half these cards (MCP checklists, CLI integrations,
+// Rebuilt on every query rather than cached: half these cards (MCP checklists,
 // license state, template grants) are filled in asynchronously, and a stale index would silently
 // make freshly-loaded settings unsearchable. ~30 blocks of textContent is cheap.
 // Input VALUES are deliberately not indexed — textContent skips them, so no token can be surfaced
@@ -2624,19 +2624,6 @@ function paintSettings(s) {
   document.getElementById("set-keepalive").value = s.sessionKeepalive || "";
   document.getElementById("set-mention-reactions").value = (s.mentionReactions || []).join(", ");
   document.getElementById("set-network-domains").value = (s.networkDomains || []).join(", ");
-  // CLI integrations: checkboxes from the server-provided catalog (title attr shows what enabling
-  // grants). checkedValues() reads them back at save time.
-  checkboxList(
-    document.getElementById("set-cli-integrations"),
-    (s.cliIntegrationCatalog || []).map((c) => {
-      // installed: true = a listed binary was found on this machine; false = none found;
-      // null/undefined = API-only (nothing to detect) — no badge either way but false.
-      const badge = c.installed === false ? ' <span class="off-badge">not installed</span>'
-        : c.installed === true ? ' <span class="on-badge">installed</span>' : "";
-      return { value: c.id, labelHtml: `${escapeHtml(`${c.label} — ${(c.domains || []).join(", ")}`)}${badge}` };
-    }),
-    s.cliIntegrations || [],
-  );
   document.getElementById("set-trusted-apps").value = (s.trustedBotApps || []).join(", ");
   if (s.defaultChannelAccess) document.getElementById("set-channel-access").value = s.defaultChannelAccess;
   document.getElementById("set-composio-mode").value = s.composioMode === "sdk" ? "sdk" : "personal";
@@ -3021,7 +3008,6 @@ function bindSettings() {
           sessionKeepalive: document.getElementById("set-keepalive").value,
           mentionReactions: document.getElementById("set-mention-reactions").value,
           networkDomains: document.getElementById("set-network-domains").value,
-          cliIntegrations: checkedValues(document.getElementById("set-cli-integrations")),
           trustedBotApps: document.getElementById("set-trusted-apps").value,
           defaultChannelAccess: document.getElementById("set-channel-access").value,
           composioMode: document.getElementById("set-composio-mode").value,

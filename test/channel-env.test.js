@@ -10,7 +10,6 @@ const {
 const { createSecretRedactor, redactSecretValues } = await import("../src/util/redact.js");
 const { buildClaudeEnv } = await import("../src/engines/claude.js");
 const { buildCodexEnv } = await import("../src/engines/codex.js");
-const { hostCredentialSuppressedBy } = await import("../src/config/cli-catalog.js");
 const { buildSecretFormView, buildSecretsView, readSecretForm } = await import("../src/slack/secret-explorer.js");
 
 const metaWith = (vars) => ({ env: vars });
@@ -163,12 +162,6 @@ test("resolved variables reach the child environment, and cannot displace the ga
 test("safeSpawnEnv is the merge-site half of the name rule", () => {
   // Validation on write is the primary gate; this exists so a hand-edited store cannot bypass it.
   assert.deepEqual(safeSpawnEnv({ OK_ONE: "value", LD_PRELOAD: "/tmp/x.so", PATH: "/tmp", lower: "v", EMPTY: "" }), { OK_ONE: "value" });
-});
-
-test("a channel with its own login stops getting the shared one behind it", () => {
-  assert.deepEqual(hostCredentialSuppressedBy(["SUPABASE_ACCESS_TOKEN"]), ["supabase"]);
-  assert.deepEqual(hostCredentialSuppressedBy(["VERCEL_TOKEN", "SUPABASE_DB_PASSWORD"]).sort(), ["supabase", "vercel"]);
-  assert.deepEqual(hostCredentialSuppressedBy(["UNRELATED_TOKEN"]), []);
 });
 
 test("the warm-pool fingerprint tracks the values, not just the names", async () => {

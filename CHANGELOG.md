@@ -78,6 +78,16 @@ product overview.
   Boot, `/api/health` and `/status` name the login source and the date its session dies, and warn
   three days ahead. No setup-token is required for anything any more.
 
+### Removed
+- **Settings → Network → "CLI integrations".** The switch, its `cliIntegrations` setting, the
+  live "installed" badges and the read-only linking of the daemon's shared host login
+  (`~/.supabase`, `~/.vercel`) into runs are gone. ChannelGate now targets Linux with the container
+  runtime only: a container has no domain allow-list and its image ships `vercel` and `supabase`,
+  so the switch had no effect there, and a channel's own provider login is a `/secrets` variable —
+  never the daemon's host-wide file, which is the identity mix-up the switch invited. `/secrets`
+  now suggests every catalog name; a stored `cliIntegrations` value is inert. First slice of
+  retiring the host sandbox runtime and macOS.
+
 ### Changed
 - **The repository is `makeitfutureDev/channelgate`.** Development, the served `main` and the
   landing lock (`refs/channelgate/landing-lock`, renamed from `refs/claude-gateway/…`) live in the

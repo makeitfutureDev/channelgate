@@ -726,18 +726,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Codex runs get NO filesystem access to the daemon runtime root (`~/.channelgate`): the local
   gateway MCP server is a separate stdio subprocess outside the command sandbox, so schedules and
   channel state remain reachable through its authorized tools only.
-- **CLI integrations (sandboxed deploy CLIs)**: a curated pure catalog (`src/config/cli-catalog.js`
-  — Vercel, Supabase, Make.com) that admins enable per gateway in Settings → Network. Enabling one
-  adds its domains to the effective egress allow-list (the admin-typed `networkDomains` base value
-  round-trips untouched) and grants write-capable approved-network runs READ-ONLY access to that
-  CLI's saved login in HOME, exactly like the long-standing git/gh carve-out — so `vercel deploy` /
-  `supabase functions deploy` run in-sandbox instead of via the approval-gated unsandboxed shell.
-  One list (`getCredentialHomePaths`) feeds the Claude sandbox read re-allows, both synthetic-HOME
-  link sets, and the Codex read grants, so the surfaces can't diverge. Unknown/legacy stored ids
-  are dropped on read — a hand-edited settings.json can never enable an unreviewed carve-out. The
-  admin-run settings variant (`allowBypass`) now receives the credential re-allows even in a
-  no-Bash admin channel (previously the ONLY network-on mode that couldn't authenticate git); the
-  shared settings file for the same channel stays narrow. → TEST-PLAN: CLI integrations.
+- **CLI catalog (`src/config/cli-catalog.js` — Vercel, Supabase, Make.com)**: the deploy CLIs the
+  channel runtime image ships, with the environment variable each one accepts instead of a saved
+  login. It feeds the `/secrets` name suggestions (every catalog name, so a channel acting as its
+  own account types `SUPABASE_ACCESS_TOKEN`, not a guess) and the host-sandbox write-deny list for
+  saved-login files. **Retired 2026-09-03 (Linux + containers only):** the Settings → Network →
+  "CLI integrations" switch, its `cliIntegrations` setting, the live "installed" badges
+  (`cli-detect.js` detection) and the read-only linking of the daemon's shared host login
+  (`~/.supabase`, `~/.vercel`) into runs. A container has no domain allow-list and its image
+  ships the CLIs, so the switch had no effect there; a channel's own provider login is a `/secrets`
+  variable and never the daemon's host-wide file. A stored `cliIntegrations` value is inert. The
+  git/gh baseline read re-allow for host runs is unchanged, including the admin-run settings
+  variant (`allowBypass`) of a no-Bash admin channel; the shared settings file for the same
+  channel stays narrow. → TEST-PLAN: CLI integrations.
 - **Toolchain reachability inside the sandbox** (`src/gateway/toolchain-paths.js`): the lockdown
   denies reading all of HOME and re-allows only the work dir — and Claude Code implements that by
   tmpfs-masking HOME, so a per-user install of the agent's OWN runtime does not become unreadable,
@@ -748,7 +749,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   admin Claude runs and every confined Codex permission profile now re-allow READING the resolved
   toolchain: the Node install prefix (npm, npx and
   every globally-installed CLI are JS under `prefix/lib/node_modules` behind a `bin` shim) plus each
-  baseline binary and — for integrations an admin ENABLED — that CLI's binary, each granted as both
+  baseline binary, each granted as both
   the PATH entry and its resolved PACKAGE ROOT — a globally-installed CLI's `bin` entry is a shim
   that reaches the rest of its package by relative import, so granting the shim alone resolves the
   binary and then dies on its first require. This matters only where npm's global root sits outside
@@ -787,12 +788,6 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   single-label hosts are refused; malformed stored values degrade to no extras rather than
   breaking spawns. Invalid or already-allowed requests skip the card entirely (no approval spam).
   → TEST-PLAN: CLI integrations.
-- **Live CLI install detection**: the Settings → CLI integrations checklist badges each catalog
-  entry installed / not installed via a daemon-side pure-Node sweep of PATH plus well-known
-  install dirs (Homebrew, /usr/local/bin, ~/.local/bin — a launchd daemon's PATH misses those),
-  TTL-cached 60s. API-only entries (Make.com) get no badge. Detection informs, never grants: the
-  sandbox carve-outs still come only from the curated catalog entry an admin enables. → TEST-PLAN:
-  CLI integrations.
 - Engine-aware optional MCP picker: channel, DM, and access-template editors load the catalog for
   their effective Claude/Codex engine and retain each engine's selections independently. Claude
   keeps its configured-server catalog; Codex queries the active app-server inventory and exposes

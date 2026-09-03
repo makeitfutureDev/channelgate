@@ -8,9 +8,7 @@ import path from "node:path";
 import { channelFolder, claudeEngineHome, codexEngineHome, gatewayRoot, runTmpDir } from "../config/paths.js";
 import { operatorClaudeConfigDir } from "./claude-login.js";
 import { runtimeSupports } from "../runtimes/contract.js";
-import { getCliIntegrations, getCredentialHomePaths } from "../config/settings.js";
-import { hostCredentialSuppressedBy } from "../config/cli-catalog.js";
-import { normalizeChannelEnv } from "../config/channel-env.js";
+import { getCredentialHomePaths } from "../config/settings.js";
 import { buildSettings, enableSkills } from "./folders.js";
 import { applyLibrarySkillsToDir } from "./library-skills.js";
 import { ensureRealDir } from "./safe-fs.js";
@@ -184,11 +182,11 @@ export async function stableClaudeState() {
   for (const name of ["projects", "sessions", "session-env", "tasks"]) {
     await linkIfPresent(claudeStateDir, claudeConfigDir, name);
   }
-  // Synthetic HOME would otherwise hide the narrow tooling credential state (git/gh baseline +
-  // enabled CLI integrations) that buildSettings deliberately re-allows only for Bash/Auto or
-  // admin-bypass network runs. Link exact targets, never broad .config; the sandbox still denies
-  // their real targets in every other mode. linkIfPresent only ever ADDS: disabling an
-  // integration later leaves an inert dangling link whose target the sandbox again denies.
+  // Synthetic HOME would otherwise hide the narrow tooling credential state (the git/gh
+  // baseline) that buildSettings deliberately re-allows only for Bash/Auto or admin-bypass
+  // network runs. Link exact targets, never broad .config; the sandbox still denies their real
+  // targets in every other mode. linkIfPresent only ever ADDS: a link left behind by an earlier
+  // build is inert, its target denied by the sandbox.
   const hostHome = os.homedir();
   for (const name of getCredentialHomePaths()) {
     await linkIfPresent(hostHome, claudeHome, name);
@@ -304,15 +302,11 @@ export async function createRunGrantArtifacts({
     if (codexSkillsDir) await mkdir(codexSkillsDir, { recursive: true, mode: 0o700 });
     const codexToolchainBinDir = containerHomes
       ? ""
-      : await materializeCodexToolchainLaunchers(root, { root: gatewayRoot(), integrations: getCliIntegrations() });
+      : await materializeCodexToolchainLaunchers(root, { root: gatewayRoot() });
     const toolchainBinDir = containerHomes
       ? ""
-      : await materializeStableToolchainLaunchers({ root: gatewayRoot(), integrations: getCliIntegrations() });
-    // Codex's synthetic HOME is per RUN, so suppression here is a real "never linked" (Claude's
-    // home is shared between channels, where the same rule is enforced by the sandbox instead).
-    const credentialHomePaths = containerHomes
-      ? []
-      : getCredentialHomePaths({ suppress: hostCredentialSuppressedBy(Object.keys(normalizeChannelEnv(meta.env))) });
+      : await materializeStableToolchainLaunchers({ root: gatewayRoot() });
+    const credentialHomePaths = containerHomes ? [] : getCredentialHomePaths();
     for (const name of credentialHomePaths) {
       await linkIfPresent(os.homedir(), codexUserHome, name);
     }

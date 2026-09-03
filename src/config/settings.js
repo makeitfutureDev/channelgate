@@ -9,7 +9,7 @@ import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
 import { normalizeNetworkDomains } from "../util/network-domains.js";
-import { GIT_TOOLING_HOME_PATHS, cliCredentialHomePaths, cliNetworkDomains, normalizeCliIntegrations, publicCliCatalog } from "./cli-catalog.js";
+import { GIT_TOOLING_HOME_PATHS } from "./cli-catalog.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
@@ -562,34 +562,20 @@ export function getNetworkDomains() {
   return [...NETWORK_DOMAINS_DEFAULT];
 }
 
-// Enabled CLI integrations (Settings → Network): catalog ids from cli-catalog.js. Unknown/legacy
-// ids are dropped on read, so a stale settings.json can never grant an unreviewed carve-out.
-export function getCliIntegrations() {
-  return normalizeCliIntegrations(getSettings().cliIntegrations);
-}
-
-// What the engines actually receive as the egress allow-list: the admin-managed base list plus
-// the domains of every enabled CLI integration. The base `networkDomains` value stays untouched
-// so the Settings UI round-trips exactly what the admin typed.
+// What the host-sandbox engines receive as the egress allow-list. The "CLI integrations" setting
+// that used to merge Vercel/Supabase domains in here was retired on 2026-09-03 (the product runs
+// Linux + containers only; a container has no domain allow-list, and its image ships the CLIs).
 export function getEffectiveNetworkDomains() {
-  return [...new Set([...getNetworkDomains(), ...cliNetworkDomains(getCliIntegrations())])];
+  return [...getNetworkDomains()];
 }
 
-// HOME-relative paths write-capable approved-network runs may READ (never write): the git/gh
-// baseline plus each enabled CLI integration's saved-login files. One list feeds the Claude
-// sandbox read re-allows, both synthetic-HOME link sets, and the Codex read grants — keep them
-// from diverging by always going through here.
-// `suppress` names integrations this CHANNEL has taken over with its own environment secret
-// (config/cli-catalog.js hostCredentialSuppressedBy). Their saved logins are then withheld from
-// that channel — not to protect the file, but so a channel acting as its own account can never
-// silently fall back to the daemon's shared identity when its own token is missing or expired.
-// The git/gh baseline is never suppressible: it is what makes `git push` work at all.
-export function getCredentialHomePaths({ suppress = [] } = {}) {
-  const enabled = getCliIntegrations().filter((id) => !suppress.includes(id));
-  return [...new Set([...GIT_TOOLING_HOME_PATHS, ...cliCredentialHomePaths(enabled)])];
+// HOME-relative paths write-capable approved-network HOST runs may READ (never write): the git/gh
+// baseline only. The per-integration saved-login links (one shared ~/.supabase for every channel)
+// went with the CLI-integrations setting: a channel's own provider login is a `/secrets` variable
+// (config/channel-env.js), never the daemon's host-wide file. Goes away with the host runtime.
+export function getCredentialHomePaths() {
+  return [...GIT_TOOLING_HOME_PATHS];
 }
-
-export { publicCliCatalog };
 
 // Scheduler guardrails. The minimum interval (minutes) a recurring cron may fire at — schedules
 // that would fire more often are rejected (default 60, i.e. at most hourly). Plus a ceiling on how
@@ -740,8 +726,6 @@ export function settingsForApi() {
     progressView: getProgressView(),
     mentionReactions: getMentionReactions(),
     networkDomains: getNetworkDomains(),
-    cliIntegrations: getCliIntegrations(),
-    cliIntegrationCatalog: publicCliCatalog(),
     trustedBotApps: getTrustedBotApps(),
     defaultChannelAccess: getDefaultChannelAccess(),
     hasDefaultComposioToken: Boolean(getDefaultComposioToken()),

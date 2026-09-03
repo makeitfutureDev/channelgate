@@ -1,13 +1,10 @@
-// Live detection of which catalog CLIs are installed on THIS machine, so the admin UI can badge
-// the Settings → CLI integrations checklist ("installed" / "not installed"). Detection informs —
-// it never grants: the sandbox carve-outs still come only from the reviewed catalog entry an
-// admin enables. Pure-Node PATH scan (no subprocess): the daemon under launchd/systemd often has
-// a minimal PATH that misses Homebrew and per-user bins, so well-known install dirs are searched
-// too. macOS + Linux only (this daemon never targets Windows).
+// Where a host binary lives: a pure-Node PATH scan (no subprocess) that also searches the
+// well-known install dirs a daemon's minimal PATH misses. Used by the host-sandbox toolchain read
+// grants (toolchain-paths.js) and the Codex runner; the admin-UI "installed" badges that used to
+// live here went with the CLI-integrations setting (2026-09-03).
 import { accessSync, constants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CLI_INTEGRATIONS } from "../config/cli-catalog.js";
 
 // Searched AFTER the daemon's own PATH. Order matters only for reporting, not for authority —
 // existence anywhere counts as installed.
@@ -39,33 +36,4 @@ export function resolveBinPath(bin, dirs = searchDirs()) {
     }
   }
   return null;
-}
-
-function binOnDisk(bin, dirs) {
-  return resolveBinPath(bin, dirs) !== null;
-}
-
-// TTL cache: /api/settings is polled by the admin UI, and a stat sweep across ~20 dirs per bin is
-// cheap but not free. Detection state changes at human speed (someone installs a CLI).
-const TTL_MS = 60_000;
-let cache = { at: 0, result: null };
-
-// id → true (a listed bin is installed) | false (bins listed, none found) | null (API-only entry,
-// nothing to detect — the UI shows no badge). `dirs` override is a test hook: it bypasses both
-// the PATH+well-known sweep and the cache so scenarios can't leak into each other.
-export function detectInstalledClis({ now = Date.now(), dirs: dirsOverride } = {}) {
-  if (!dirsOverride && cache.result && now - cache.at < TTL_MS) return cache.result;
-  const dirs = dirsOverride || searchDirs();
-  const result = {};
-  for (const [id, entry] of Object.entries(CLI_INTEGRATIONS)) {
-    const bins = entry.bins || [];
-    result[id] = bins.length === 0 ? null : bins.some((b) => binOnDisk(b, dirs));
-  }
-  if (!dirsOverride) cache = { at: now, result };
-  return result;
-}
-
-// Test hook — detection results must never leak between test scenarios.
-export function resetCliDetectionCache() {
-  cache = { at: 0, result: null };
 }

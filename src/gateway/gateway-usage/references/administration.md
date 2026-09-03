@@ -111,7 +111,7 @@ Use absolute paths (`/home/<user>/…`) for anything outside the working folder.
 **Never copy secrets into the working folder to dodge the sandbox.** The folder is often a git
 checkout and may sync elsewhere; a credential pasted there can end up committed. Read secrets
 from their canonical path in an unsandboxed admin turn instead, or have the admin wire access
-properly (CLI integrations, network allow-list).
+properly (a `/secrets` variable for the channel, the network allow-list).
 
 ## Working folder & Drive
 - `get_channel_workdir` / `set_channel_workdir` (admin) / `clear_channel_workdir` (admin) — run
