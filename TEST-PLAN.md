@@ -120,8 +120,9 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       deny policy for shell/edit/web/subagent/LSP/execute/external-directory, and no MCP transport.
 - [x] Portable stub E2E covers new session, emitted session identity, resume, streamed text,
       tokens, reported cost, health/version-compatible CLI shape, and AbortSignal process-group
-      cancellation on macOS/Linux.
-- [ ] Live/manual: on both macOS and Linux with a low-privilege provider account, confirm a normal
+      cancellation (the macOS leg retired 2026-09-03 — Linux only).
+- [ ] Live/manual: on Linux (the macOS leg retired 2026-09-03 — Linux only) with a low-privilege
+      provider account, confirm a normal
       workspace read succeeds while shell, edit, external-directory, web access, and MCP attempts
       are denied. Broader modes remain blocked until an independently reviewed OS sandbox exists.
 
@@ -149,7 +150,7 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       dependency-free static/format gate; repo-wide ESLint/typed-JS adoption remains a future
       ratchet rather than a permanently red flag-day check.
 - [x] `npm run test:coverage`: full-suite coverage floors remain 67% lines / 67% branches / 66%
-      functions on macOS and Linux at Node 22.13 and 24.
+      functions on Linux at Node 22.13 and 24 (the macOS leg retired 2026-09-03 — Linux only).
 - [x] `npm run test:security-coverage`: independent floors prevent unrelated code from masking
       regressions in authorization (95/95/95), access grants and engine-scope isolation
       (95/75/70), sandbox policy (90/90/80), secrets (90/80/65), and transactional updater state
@@ -158,7 +159,8 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       the code resolves: on macOS `os.tmpdir()` is `/var/folders/…` → `/private/var/…`, which failed
       13 tests (container credentials, Codex args, run-grant isolation, sandbox toolchain) on the
       macOS CI runners only; Linux reproduces the failure, and now passes the same files, with a
-      symlinked `TMPDIR` (`test/helpers.js`).
+      symlinked `TMPDIR` (`test/helpers.js`). The macOS CI leg retired 2026-09-03 (Linux only); the
+      canonical scratch root stays because a symlinked `TMPDIR` reproduces the same failure on Linux.
 - [x] Unit (access-grants coverage area, deterministic on any runner): the stable toolchain
       launcher dir is content-addressed, idempotent and empty for an empty FIXTURE toolchain; an
       isolated runtime target without an `artifactDir` is refused; an unreadable `.claude/agents`
@@ -170,7 +172,7 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 - [x] `test/codex-message-to-reply-e2e.test.js`: a stub Codex binary drives an authorized Slack DM
       through message→reply, persists the returned session, uses `exec resume` on the follow-up,
       receives the gateway MCP registration, and terminates on cancellation.
-- [x] Nightly compatibility: macOS + Linux install pinned Claude Code `2.1.258` (the official
+- [x] Nightly compatibility: Ubuntu (the macOS leg retired 2026-09-03 — Linux only) installs pinned Claude Code `2.1.258` (the official
       installer — the npm package's postinstall fetches the native binary, so `--ignore-scripts`
       left nothing runnable) and `@openai/codex@0.152.0` targets, probe every provider-free CLI flag the adapters depend
       on, then run each engine's adapter/stub message-to-reply regression. Action revisions and CLI
@@ -178,7 +180,7 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 - [ ] Nightly authenticated turn: message→reply against the live Claude and Codex providers is
       intentionally not automated until CI has isolated low-privilege provider credentials and a
       zero-retention test workspace. The deterministic harness tests do not claim provider parity.
-- [ ] Live confinement canary (macOS + Linux): from read and worker profiles, attempt reads/writes
+- [ ] Live confinement canary (Linux; the macOS leg retired 2026-09-03 — Linux only): from read and worker profiles, attempt reads/writes
       outside the channel root, credential/env extraction, network access with policy off, gateway
       state mutation, and cross-channel Slack List access. Existing unit suites verify generated
       policy and escape-path denials; this OS-level adversarial run remains a release/manual gate.
@@ -215,11 +217,17 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       extracts, and requires `PRAGMA quick_check=ok`.
 - [x] Central console redaction covers Slack/OpenAI token shapes, bearer credentials, and secret
       query parameters before service-manager logs receive them.
-- [x] Linux systemd packaging asserts a dedicated non-login identity and hardening boundaries;
-      launchd packaging asserts background throttling and private runtime/log permissions.
+- [x] Linux systemd packaging asserts a dedicated non-login identity and hardening boundaries, and
+      the uninstaller mirrors it (system + user units, current + pre-rename names, never the runtime
+      root, root required for the system unit); the launchd packaging assertions retired 2026-09-03
+      (Linux only). → `test/operations-readiness.test.js`, `test/channelgate-rename.test.js`.
+- [x] Unit (2026-09-03, Linux only): the entry point refuses every platform but Linux with one
+      plain line — `src/platform-gate.js` is dependency-free and `src/start.js` dynamically imports
+      it after the Node floor and before the server graph; `serviceProbes()` is systemd-only
+      (`test/operations-readiness.test.js`, `test/update-runner.test.js`).
 - [x] Release artifact generation emits CycloneDX SBOM, in-toto/SLSA-shaped provenance, and SHA-256
       checksums; tag workflow retains evidence as an immutable workflow artifact.
-- [ ] Operator canaries: clean-machine install/uninstall on current macOS + Linux, 24-hour Slack and
+- [ ] Operator canaries: clean-machine install/uninstall on a current Linux (the macOS leg retired 2026-09-03 — Linux only), 24-hour Slack and
       engine canary, forced update failure/rollback, off-host restore with independently stored key.
 
 ### Phase E module boundaries
@@ -367,7 +375,7 @@ shape is asserted, not reviewed by eye.
 - [ ] Failure: remove/override runtime/model/`ffmpeg`; local failures fall back to an already-generated
       Slack transcript. With no Slack transcript, guidance says **Generate transcript**, clears
       progress, and starts no voice-only run.
-- [ ] Provisioning: fresh setup on macOS and Linux verifies both choices. Yes installs/reuses pinned
+- [ ] Provisioning: fresh setup on Linux (the macOS leg retired 2026-09-03 — Linux only) verifies both choices. Yes installs/reuses pinned
       Whisper + model; no downloads neither and update skips them. Flags work noninteractively;
       `npm run whisper:install` repairs assets after enabling the Admin setting.
 
@@ -691,8 +699,9 @@ shape is asserted, not reviewed by eye.
       the Test button must not depend on the boot-time sweep having run first).
 - [x] Update provisions rclone (`scripts/update.sh` → `ensure_rclone`), verified across all branches
       with the real functions: Drive sync off → skip; on + rclone on PATH → present; on + rclone off
-      PATH but a valid configured absolute path → present; on + missing → install (brew/macOS,
-      official installer/Linux, best-effort, never aborts the update); no settings file → skip.
+      PATH but a valid configured absolute path → present; on + missing → install (the official
+      installer, best-effort, never aborts the update; the brew/macOS branch retired 2026-09-03 —
+      Linux only); no settings file → skip.
       `read_setting` reads the right instance's `settings.json` (honors `CHANNELGATE_DIR`) via
       explicit-ESM node (stable under `"type":"module"`).
 - [ ] Manual: on a host without rclone, enable Drive sync, run `/update` (or `npm run …` update),
@@ -1510,7 +1519,7 @@ shape is asserted, not reviewed by eye.
 
 ### Admin UI — 2026-07 redesign
 - [ ] No emoji anywhere in the UI chrome (icons are inline SVG); reveal-eye, folder rows, offline
-      badge, status dots all render identically on macOS + Linux browsers.
+      badge, status dots all render identically across browsers.
 - [ ] Conversations list: three groups (Templates / Channels / Direct messages) with capability
       color dots (read=light teal, worker=teal, autonomous=amber, full=red, lean=gray); segmented
       All/Channels/DMs filter and search combine; 30-day cost badges appear when the dashboard API
@@ -2319,7 +2328,7 @@ are the v0.8 Xavier deployment gate and are executed in the QA loop that follows
       echo ok"` in a folder with `{"sandbox":{"enabled":true}}` prints `ok`; with the profile removed
       the daemon logs `[gateway] WARNING: AppArmor restricts unprivileged user namespaces …` at boot.
       Unit: `test/linux-userns.test.js` (verdicts for restricted/no-profile, profile installed, knob
-      absent, Debian hard-off, macOS, and the stale pre-Codex profile that lacks the `codex-userns`
+      absent, Debian hard-off, a non-Linux platform, and the stale pre-Codex profile that lacks the `codex-userns`
       block). Live: with the updated profile applied, an approved-network Codex channel's Bash
       `curl https://api.github.com/` returns HTTP 200 while an unlisted domain stays blocked
       (QA case DRV-04; before the codex-userns block both reset with curl exit 56).
@@ -2378,7 +2387,8 @@ Manual checks for the daemon-level behavior:
       high/critical audit counts block while moderate counts are preserved; readiness requires a
       replacement instance on the expected boot revision, Claude, and prior Slack connectivity.
 - [x] Unit: successful candidate phases, preflight refusal before mutation, post-checkout rollback,
-      rollback failure, targeted systemd `MainPID`, launchd support, wrapper/provisioning contracts,
+      rollback failure, targeted systemd `MainPID`, wrapper/provisioning contracts (launchd support
+      retired 2026-09-03 — Linux only),
       exact Admin 202/409 behavior, transaction-bound markers, all four final result messages, and
       durable browser polling are covered.
 - [x] Automated acceptance (2026-07-24): `npm audit --omit=dev --audit-level=high` exits 0 with
@@ -2408,14 +2418,14 @@ Manual checks for the daemon-level behavior:
       secret and a non-loopback caller still get only `{ok,instanceId}`. This is the HTTP seam the
       updater unit tests and the health-endpoint test each covered one side of while the flow
       between them was broken. → `run-api.test.js`.
-- [x] Unit (2026-08-25): service probes are platform-derived — launchd only on darwin, BOTH systemd
-      scopes (system, then `--user`) on linux, both managers on anything else; the refusal names
-      only managers that can exist on the host, and the detected scope rides on the service record
+- [x] Unit (2026-08-25, revised 2026-09-03 — Linux only): `serviceProbes()` is systemd-only, BOTH
+      scopes (system, then `--user`), with no platform-derived variant left (the launchd probe
+      retired); the refusal names only systemd, and the detected scope rides on the service record
       so the restart asks `systemctl` in the same scope. → `update-runner.test.js`.
-- [ ] **Service portability:** repeat candidate success and rollback on macOS launchd and Linux
-      systemd, including a Linux box whose daemon is a USER unit at
-      `~/.config/systemd/user/channelgate.service`. Systemd signals only the validated positive
-      `MainPID`; launchd uses `kickstart -k` with the existing installer fallback.
+- [ ] **Service portability:** repeat candidate success and rollback on a Linux SYSTEM unit and on
+      a box whose daemon is a USER unit at `~/.config/systemd/user/channelgate.service`. Systemd
+      signals only the validated positive `MainPID` (the macOS launchd leg retired 2026-09-03 —
+      Linux only).
 
 ### Codex usage accounting and API-equivalent rates
 - [ ] Settings → Behavior shows the Codex/OpenAI rates table prefilled with the rates verified
@@ -2522,11 +2532,11 @@ Manual checks for the daemon-level behavior:
       dead pid in a lock is not a blocker. After a refusal `applyFallback` pins `CHANNELGATE_DIR`
       and `CG_WORKSPACE_DIR` back to the pre-rename roots (env override, not a symlink) so the
       daemon serves from where the data actually is (`test/migrate-channelgate.test.js`).
-- [ ] Live drill (macOS + Linux, on a scratch HOME): seed a pre-rename install, run
+- [ ] Live drill (Linux, on a scratch HOME; the macOS leg retired 2026-09-03 — Linux only): seed a pre-rename install, run
       `node scripts/migrate-channelgate.mjs --dry-run`, review the plan, then boot the daemon and
       confirm zero lost channels/memory/schedules, a regenerated sandbox per channel, and that
-      `npm run service:install` / `sudo bash scripts/install-systemd.sh` leave exactly ONE service
-      registered under the new name.
+      `sudo bash scripts/install-systemd.sh` leaves exactly ONE service registered under the new
+      name.
 - [x] Unit (migration go/no-go): the decision is made on gateway STATE (`gateway.db` or `config/`),
       not on a directory existing. A new root that exists but holds no state is a leftover — the old
       install is merged into it entry by entry, the leftover survives, and a colliding name is
@@ -2673,13 +2683,14 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       `memory/<topic>.md`, `CLAUDE.md`) are repathed; the content-addressed per-run caches under
       `channels/**/runtime/` are DELETED rather than rewritten, because their filename is a digest
       of their contents (`test/migrate-channelgate.test.js`).
-- [x] Unit (migration): the installed systemd user unit and launchd plist have their runtime-root
-      paths rewritten while an unrelated `WorkingDirectory` is left alone, and a
+- [x] Unit (migration): the installed systemd user unit has its runtime-root paths rewritten (the
+      launchd plist rewrite retired 2026-09-03 — Linux only) while an unrelated `WorkingDirectory`
+      is left alone, and a
       `service-reload-required.json` marker is written for the updater
       (`test/migrate-channelgate.test.js`).
-- [x] Unit: `applyPendingServiceReload()` consumes that marker exactly once — `daemon-reload` before
-      the systemd restart signal, `bootout` + `bootstrap` INSTEAD of a kickstart on launchd (a
-      kickstart re-runs the old plist), reporting `restarted` so the caller does not restart twice
+- [x] Unit: `applyPendingServiceReload()` consumes that marker exactly once — `daemon-reload` in the
+      unit's own scope (system or `--user`) before the systemd restart signal; the launchd
+      `bootout` + `bootstrap` path and its `restarted` flag retired 2026-09-03 (Linux only)
       (`test/update-runner.test.js` seam, `test/migrate-channelgate.test.js`).
 - [x] Unit: `--verify` / `auditLegacyPaths()` names every store on a fresh fixture (project
       directories, transcripts, Codex state, work-folder text, config JSON), and reports 0 after a

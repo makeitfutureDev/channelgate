@@ -32,8 +32,8 @@ npm run secret-scan    →
       user-visible one
 - [ ] No secrets, tokens, license keys, customer data, or internal notes in the diff or the
       description; `npm run secret-scan` is clean
-- [ ] macOS **and** Linux considered — no GNU-only flags, no platform-specific binaries, portable
-      Node APIs preferred over shelling out
+- [ ] Linux only (systemd + rootless Podman) — no macOS/launchd branches, no platform-specific
+      binaries, portable Node APIs preferred over shelling out
 - [ ] Confinement preserved: no agent spawned outside a gated folder, sandbox and permission
       allowlists intact
 - [ ] Secrets still never ride a listing response (`has*` / `last4` only; new secret fields added

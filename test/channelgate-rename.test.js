@@ -222,36 +222,32 @@ test("the bundled skill ships in the tree under its new name and is not gitignor
 
 test("every shell script parses and the service scripts carry the new identities", () => {
   const scriptsDir = path.join(repoRoot, "scripts");
-  const launchd = readFileSync(path.join(scriptsDir, "install-launchd.sh"), "utf8");
-  const uninstall = readFileSync(path.join(scriptsDir, "uninstall-launchd.sh"), "utf8");
   const systemd = readFileSync(path.join(scriptsDir, "install-systemd.sh"), "utf8");
-  for (const name of ["install-launchd.sh", "uninstall-launchd.sh", "install-systemd.sh"]) {
+  const uninstall = readFileSync(path.join(scriptsDir, "uninstall-systemd.sh"), "utf8");
+  for (const name of ["install-systemd.sh", "uninstall-systemd.sh"]) {
     execFileSync("bash", ["-n", path.join(scriptsDir, name)], { stdio: "pipe" });
   }
+  // Linux only: the launchd installers are gone, and nothing may bring them back by another name.
+  assert.equal(existsSync(path.join(scriptsDir, "install-launchd.sh")), false);
+  assert.equal(existsSync(path.join(scriptsDir, "uninstall-launchd.sh")), false);
 
-  assert.match(launchd, /^LABEL="com\.makeitfuture\.channelgate"$/m);
   assert.match(systemd, /^UNIT_NAME="channelgate\.service"$/m);
   assert.match(systemd, /Environment=CHANNELGATE_DIR=\$SERVICE_HOME/);
 
-  // An upgrade must tear the OLD job down before installing the new one, in every installer —
-  // otherwise two daemons race for the runtime root's singleton lock and KeepAlive/Restart turns
-  // that into a crash loop.
-  assert.match(launchd, /^LEGACY_LABEL="com\.makeitfuture\.claude-gateway"$/m);
-  assert.match(launchd, /Removing the pre-rename LaunchDaemon/);
-  assert.match(launchd, /Removing the pre-rename LaunchAgent/);
+  // An upgrade must tear the OLD unit down before installing the new one — otherwise two daemons
+  // race for the runtime root's singleton lock and Restart= turns that into a crash loop — and the
+  // uninstaller must remove the pre-rename unit as well as the current one.
   assert.match(systemd, /^LEGACY_UNIT_NAME="claude-gateway\.service"$/m);
   assert.match(systemd, /systemctl disable --now "\$LEGACY_UNIT_NAME"/);
-  assert.match(uninstall, /LEGACY_LABEL="com\.makeitfuture\.claude-gateway"/);
+  assert.match(uninstall, /^LEGACY_UNIT_NAME="claude-gateway\.service"$/m);
 
   // Nothing may assume the checkout's directory NAME — the operator renames it separately.
-  assert.match(launchd, /APP_DIR="\$\(cd "\$\(dirname "\$0"\)\/\.\." && pwd\)"/);
   assert.match(systemd, /APP_DIR="\$\(cd "\$\(dirname "\$0"\)\/\.\." && pwd\)"/);
 });
 
 test("self-update finds the service under the new identity and still under the old one", async () => {
-  const { systemdUnitCandidates, launchdLabelCandidates } = await import("../scripts/update-runner.mjs");
+  const { systemdUnitCandidates } = await import("../scripts/update-runner.mjs");
   assert.deepEqual(systemdUnitCandidates({}), ["channelgate.service", "claude-gateway.service"]);
-  assert.deepEqual(launchdLabelCandidates(), ["com.makeitfuture.channelgate", "com.makeitfuture.claude-gateway"]);
   // The current env name wins; the pre-rename one is still honoured.
   assert.deepEqual(systemdUnitCandidates({ CHANNELGATE_SYSTEMD_UNIT: "x.service" }), ["x.service"]);
   assert.deepEqual(systemdUnitCandidates({ CLAUDE_GATEWAY_SYSTEMD_UNIT: "y.service" }), ["y.service"]);
@@ -335,7 +331,6 @@ const LEGACY_NAME_ALLOWLIST = new Map([
   ["src/config/paths.js", "the comment that documents the rename"],
   ["src/gateway/folders.js", "RENAMED_MANAGED_SKILLS maps the old bundled-skill name forward"],
   ["src/slack/app-context.js", "\"Slack Agent\" here is Slack's own split-view feature, not our old name"],
-  ["src/web/routes/settings.js", "boots out the pre-rename launchd label as well as the new one"],
 ]);
 
 test("no shipped source file resolves a pre-rename root or label as its own", () => {

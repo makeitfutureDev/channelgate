@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest] # Linux only — the product runs nowhere else
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -26,7 +26,7 @@ jobs:
           cache: npm
       - run: npm ci
       # The npm package's postinstall is what fetches the native binary, so with --ignore-scripts the
-      # shim had nothing to run ("executable format is invalid" on macOS, a spawn error on Linux).
+      # shim had nothing to run (a spawn error, since the binary was never fetched).
       # Install the way the product documents instead: the official installer, pinned.
       - name: Install pinned compatibility target
         run: |
@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest] # Linux only — the product runs nowhere else
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

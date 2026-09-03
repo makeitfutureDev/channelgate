@@ -251,7 +251,7 @@ export async function runWithLandingLock({
 } = {}) {
   if (!command) throw new Error("A command is required.");
   if (process.platform === "win32") {
-    throw new Error("The landing-lock command wrapper supports macOS and Linux.");
+    throw new Error("The landing-lock command wrapper needs a POSIX host (ChannelGate targets Linux).");
   }
 
   const lock = await acquireLandingLock({ cwd, lockContext });

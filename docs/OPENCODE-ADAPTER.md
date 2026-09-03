@@ -13,7 +13,7 @@ boundary applies to the shell working directory rather than every path passed to
 - <https://opencode.ai/v2/docs/permissions>
 - <https://opencode.ai/docs/permissions/>
 
-Those rules are model-tool policy, not a macOS/Linux OS sandbox. The gateway therefore does not
+Those rules are model-tool policy, not an OS-level sandbox. The gateway therefore does not
 expose OpenCode shell, edit, web, subagent, LSP, code-execute, skill, external-directory, or MCP
 actions. `--pure` disables external plugins. The inline config carries both stable V1
 `permission`/`agent` and current V2 `permissions`/`agents` forms; both the global policy and the
@@ -23,7 +23,7 @@ rejected before process spawn. Unknown capabilities remain denied by the adapter
 
 This restriction still trusts OpenCode itself to enforce its read-action path boundary. OpenCode
 must not be enabled for hostile repositories or multi-tenant secrets until the gateway can wrap it
-in a real, cross-platform OS sandbox and verify that boundary on both macOS and Linux.
+in a real OS-level sandbox and verify that boundary on Linux.
 
 ## Supported runtime contract
 

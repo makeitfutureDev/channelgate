@@ -14,7 +14,7 @@
 - [ ] CI, security coverage, dependency/secret scans, and real CLI nightly canaries are green.
 - [ ] Release workflow emitted checksum-verified SBOM and provenance evidence.
 - [ ] Encrypted backup completed and `npm run restore:drill` passed off production data.
-- [ ] macOS and Linux service packages passed install/restart/uninstall checks.
+- [ ] The Linux systemd service package passed install/restart/uninstall checks.
 - [ ] Canary passed health, Slack, engine, approval, confinement, update, and rollback checks.
 - [ ] Security/privacy contacts, subprocessors, retention, incident response, and support owner confirmed.
 - [ ] Independent review has no unresolved critical/high finding (or documented authorized acceptance).

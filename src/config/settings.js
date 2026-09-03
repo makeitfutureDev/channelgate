@@ -401,7 +401,7 @@ export function getDriveSyncConflict() {
   return DRIVE_SYNC_CONFLICTS.includes(v) ? v : "newer";
 }
 export function getDriveSyncRclonePath() {
-  const v = getSettings().driveSyncRclonePath; // absolute path sidesteps launchd's minimal PATH
+  const v = getSettings().driveSyncRclonePath; // absolute path sidesteps the service unit's minimal PATH
   return typeof v === "string" && v.trim() ? v.trim() : "rclone";
 }
 

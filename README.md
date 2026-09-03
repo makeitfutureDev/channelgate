@@ -35,8 +35,8 @@ subscription, and no shared workspace where one channel can read another's files
    cd channelgate
    npm run setup            # add -- --without-whisper for a lightweight server install
    ```
-   It checks prerequisites, installs dependencies, scaffolds `.env`, and installs the autostart
-   service on macOS.
+   It checks prerequisites, installs dependencies, and scaffolds `.env`; then install the systemd
+   service with `sudo bash scripts/install-systemd.sh`.
 3. **Create the Slack app from the bundled manifest.** <https://api.slack.com/apps> → *Create New
    App* → *From a manifest* → paste [`slack-app-manifest.json`](./slack-app-manifest.json). Then
    generate an app-level token with `connections:write`, install the app, and copy the bot token and
@@ -177,7 +177,7 @@ white-label — are described at
 
 | Document | What it covers |
 | --- | --- |
-| [INSTALL.md](./INSTALL.md) | Installing on a fresh macOS or Linux host, the Slack app, backups, troubleshooting |
+| [INSTALL.md](./INSTALL.md) | Installing on a fresh Linux host, the Slack app, backups, troubleshooting |
 | [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) | The runbook: backup/restore, updates, health, incident handling |
 | [`docs/COMPATIBILITY.md`](./docs/COMPATIBILITY.md) | Supported OS, Node, CLI and SQLite versions, and the release gates |
 | [`docs/WHY.md`](./docs/WHY.md) | The product story: what it is, who it is for, how it compares, feature rationale |
@@ -245,7 +245,7 @@ fallback works without registering the slash command.
 
 > **Setting it up on a new machine?** See **[INSTALL.md](./INSTALL.md)** — or just clone and run
 > `npm run setup` (checks prerequisites, installs dependencies, asks whether to provision local
-> Whisper + its multilingual model, scaffolds `.env`, and installs the autostart service on macOS).
+> Whisper + its multilingual model, and scaffolds `.env`; the systemd service is one `sudo` step after).
 > Choosing local Whisper downloads about 1.5 GiB for `large-v3-turbo`; server installs can skip it.
 
 ```bash
@@ -271,7 +271,7 @@ npm run update
 ```
 
 All paths use one locked transaction. Before changing the checkout, it verifies Git/upstream,
-runtime/configuration, active launchd or systemd service, calculated free space, current health, and
+runtime/configuration, active systemd service, calculated free space, current health, and
 a real Claude turn in a temporary gated folder. The candidate must pass exact dependency install,
 the production security-advisory gate, all tests, restart on the expected revision, Slack reconnect
 when applicable, and another isolated Claude turn.
@@ -477,7 +477,7 @@ The admin UI + API hand over the stored Slack/Composio tokens, the filesystem br
 admin/workDir switches, so they always require sign-in. A new install generates a password on
 first boot and prints it once; set your own with `ADMIN_PASSWORD` in `.env` (or `adminPassword`
 in `~/.channelgate/config/settings.json`) and restart the daemon (Settings → Restart, or
-`launchctl kickstart -k gui/$(id -u)/com.makeitfuture.channelgate`). The UI then shows a login
+`sudo systemctl restart channelgate`). The UI then shows a login
 page and a "Logout" button in the header; sessions are in-memory (a restart signs everyone out).
 
 Until a password exists, every privileged `/api` route refuses with instructions — **on every

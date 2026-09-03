@@ -149,20 +149,20 @@ export async function performShutdown({
 
 // Which service manager relaunches us after exit, so restart-style shutdowns can pick an exit
 // code that actually produces a relaunch:
-//   - launchd (macOS LaunchAgent): KeepAlive=true relaunches on ANY exit — a clean 0 is correct.
 //   - systemd (scripts/install-systemd.sh unit): Restart=on-failure, so a clean 0 STOPS the
 //     service. A restart must therefore exit nonzero (the same "die abnormally" contract the
 //     self-updater uses via SIGUSR2 to the MainPID).
+//   - none: an unmanaged run (a terminal `npm start`, container init) — nothing relaunches us.
 // systemd sets INVOCATION_ID (and JOURNAL_STREAM when wired to the journal) on every service
 // process; neither appears in a plain terminal, so their absence means "not systemd-managed".
+// Linux only: there is no other service manager to detect.
 export function detectServiceManager({ platform = process.platform, env = process.env } = {}) {
-  if (platform === "darwin") return "launchd";
   if (platform === "linux" && (env.INVOCATION_ID || env.JOURNAL_STREAM)) return "systemd";
   return "none";
 }
 
 // Exit code for an admin-requested RESTART (not a stop): nonzero under systemd's
-// Restart=on-failure, clean 0 everywhere else (launchd KeepAlive, or an unmanaged terminal run).
+// Restart=on-failure, clean 0 for an unmanaged terminal run.
 export function restartExitCode({ platform, env } = {}) {
   return detectServiceManager({ platform, env }) === "systemd" ? 1 : 0;
 }

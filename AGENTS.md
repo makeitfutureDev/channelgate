@@ -262,12 +262,11 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
   where the streamed placeholder message is the feedback.
 - **Mention gating:** respond in a DM without a mention; everywhere else require an explicit
   `<@BOT_ID>` mention.
-- **Cross-platform (macOS + Linux):** everything we build MUST run on BOTH macOS and Linux — the
-  daemon is developed on macOS but also deploys on Linux servers. Don't depend on platform-specific
-  binaries or GNU-only flags (e.g. `setsid` does not exist on macOS; BSD `sed`/`date`/`stat` differ
-  from their GNU forms). Prefer portable Node APIs over shelling out (`child_process` with
-  `detached:true` instead of `setsid`, `node:fs`/`node:path` instead of shell utils) and keep any
-  shell POSIX-portable; when a platform difference is unavoidable, detect the platform and branch.
+- **Linux only:** ChannelGate targets Linux with systemd and rootless Podman — no macOS/launchd
+  branches, no BSD-tool assumptions; `src/start.js` refuses every other platform with one plain
+  line. Still prefer portable Node APIs over shelling out (`child_process` with `detached:true`
+  instead of `setsid`, `node:fs`/`node:path` instead of shell utils) and keep any shell
+  POSIX-portable.
 - **Secrets** live in `.env` (repo root, gitignored) and per-user tokens in `users.json`
   (gitignored runtime dir). Never hardcode tokens; never log them.
 - **One source of truth:** build status lives in `TASKS.md`, not chat. Shipped features in

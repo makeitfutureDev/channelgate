@@ -550,7 +550,7 @@
                 </div>
                 <div class="setcard">
                   <h4>Google Drive sync</h4>
-                  <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and a dedicated <code>Drive/</code> subfolder inside that channel's working folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>brew install rclone</code> / <code>apt install rclone</code>).</p>
+                  <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and a dedicated <code>Drive/</code> subfolder inside that channel's working folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>apt install rclone</code>, or the official installer from rclone.org).</p>
                   <label class="toggle"><input type="checkbox" id="set-drivesync-enabled" /> <strong>Enable scheduled Drive sync</strong> — off keeps the whole feature dormant even if channels have a folder link set.</label>
                   <label class="field">
                     <span>Service-account key (JSON) <span id="drivesync-key-state" class="state"></span> — paste the downloaded key; it's stored write-only on this host and never shown again. Share your Drive folders with the service-account email shown here.</span>
@@ -580,7 +580,7 @@
                     </select>
                   </label>
                   <label class="field">
-                    <span>rclone binary path (blank = find on PATH; set an absolute path if the daemon runs under launchd/systemd with a minimal PATH)</span>
+                    <span>rclone binary path (blank = find on PATH; set an absolute path if the daemon runs as a systemd service with a minimal PATH)</span>
                     <input id="set-drivesync-rclone" type="text" placeholder="rclone" />
                   </label>
                 </div>

@@ -9,15 +9,15 @@ const runner = readFileSync(new URL("../scripts/update-runner.mjs", import.meta.
 test("update shell is a strict compatibility wrapper around the Node transaction runner", () => {
   assert.match(update, /set -euo pipefail/);
   assert.match(update, /exec node "\$APP_DIR\/scripts\/update-runner\.mjs" "\$@"/);
-  assert.doesNotMatch(update, /git pull|npm ci|launchctl|systemctl/);
+  assert.doesNotMatch(update, /git pull|npm ci|systemctl/);
 });
 
-test("runner retains targeted systemd and launchd service support", () => {
+test("runner retains targeted systemd service support and has no launchd path left", () => {
   assert.match(runner, /systemctl/);
   assert.match(runner, /MainPID/);
   assert.match(runner, /SIGUSR2/);
-  assert.match(runner, /launchctl/);
-  assert.match(runner, /kickstart/);
+  // Linux only: the launchd probe/restart/reload paths retired with macOS support.
+  assert.doesNotMatch(runner, /launchctl|kickstart|\.plist|darwin/);
 });
 
 test("runner preflight enforces the real runtime floor and gates candidates on the full check set", () => {

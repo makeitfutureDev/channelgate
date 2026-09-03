@@ -582,9 +582,10 @@ test("shutdown deadline warns with recoverability before forcing both process re
 });
 
 test("an admin restart exits with the code its service manager treats as 'relaunch me'", () => {
-  // launchd's KeepAlive=true relaunches on ANY exit, so a clean 0 is right on macOS.
-  assert.equal(detectServiceManager({ platform: "darwin", env: {} }), "launchd");
-  assert.equal(restartExitCode({ platform: "darwin", env: {} }), 0);
+  // Linux only: systemd is the one service manager, so a foreign platform never reports one even
+  // with systemd's own env markers present.
+  assert.equal(detectServiceManager({ platform: "freebsd", env: { INVOCATION_ID: "abc" } }), "none");
+  assert.equal(restartExitCode({ platform: "freebsd", env: { INVOCATION_ID: "abc" } }), 0);
   // The systemd unit uses Restart=on-failure: a clean 0 STOPS the service, which is exactly how
   // the admin Restart button used to take a Linux deployment down. INVOCATION_ID (or
   // JOURNAL_STREAM) is set on every systemd service process and on no plain terminal.

@@ -30,8 +30,8 @@ A report we can reproduce gets fixed; one we cannot gets questions. Include:
 
 1. **Version** — the release tag, or `git rev-parse --short HEAD` in the checkout, plus the
    `version` from `package.json`.
-2. **Operating system** — macOS or Linux, the version, and how the daemon runs (foreground,
-   launchd, systemd).
+2. **Operating system** — the Linux distribution and version, and how the daemon runs
+   (foreground, systemd system unit, systemd user unit).
 3. **Node version** — `node --version` (the floor is 22.13).
 4. **Engine** — Claude Code or Codex, and the CLI version (`claude --version` / `codex --version`).
 5. **Chat platform** — Slack, Google Chat, or Microsoft Teams, and whether it happened in a DM, a

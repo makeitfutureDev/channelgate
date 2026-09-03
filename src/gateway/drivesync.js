@@ -176,7 +176,7 @@ export function resolveDriveSyncKeyFile() {
 
 // Is the rclone binary runnable? Probed once PER BINARY PATH — a single global boolean meant that
 // correcting a wrong path in Settings had no effect until the daemon restarted. An absolute path
-// from settings sidesteps launchd's minimal PATH.
+// from settings sidesteps the service unit's minimal PATH.
 export function rcloneAvailable(bin) {
   const key = String(bin || "");
   if (rcloneChecked.has(key)) return rcloneChecked.get(key);

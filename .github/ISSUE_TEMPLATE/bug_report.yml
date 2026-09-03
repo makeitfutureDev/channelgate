@@ -42,7 +42,6 @@ body:
     attributes:
       label: Operating system
       options:
-        - macOS
         - Linux (systemd service)
         - Linux (other)
     validations:
@@ -94,5 +93,5 @@ body:
           required: true
         - label: This is not a security vulnerability.
           required: true
-        - label: I am running a supported Node version (>= 22.13) on macOS or Linux.
+        - label: I am running a supported Node version (>= 22.13) on Linux (systemd + rootless Podman).
           required: true

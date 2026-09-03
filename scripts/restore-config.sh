@@ -98,4 +98,4 @@ replace_dir() {
 replace_dir "$TMP/payload/config" "$GW_HOME/config"
 if [ -d "$TMP/payload/channels" ]; then replace_dir "$TMP/payload/channels" "$GW_HOME/channels"; fi
 echo "✅ Restored config into $GW_HOME"
-echo "   Restart the gateway: launchctl kickstart -k gui/\$(id -u)/com.makeitfuture.channelgate  (or npm start)"
+echo "   Restart the gateway: sudo systemctl restart channelgate  (systemctl --user restart channelgate for a user unit, or npm start)"

@@ -74,7 +74,7 @@ test("Codex app-server inventory performs initialize then requests tool status",
       const message = JSON.parse(String(chunk));
       requests.push(message);
       if (message.method === "initialize") {
-        queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: message.id, result: { userAgent: "codex", platformFamily: "unix", platformOs: "macos", codexHome: "/tmp/codex" } })}\n`));
+        queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: message.id, result: { userAgent: "codex", platformFamily: "unix", platformOs: "linux", codexHome: "/tmp/codex" } })}\n`));
       } else if (message.method === "mcpServerStatus/list") {
         queueMicrotask(() => child.stdout.write(`${JSON.stringify({
           id: message.id,

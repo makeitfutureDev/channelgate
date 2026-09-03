@@ -1,14 +1,15 @@
 # Installing ChannelGate on a new machine
 
-A step-by-step guide to get the gateway running on a fresh macOS or Linux host. For what it does
-and how it works, see [README.md](./README.md).
+A step-by-step guide to get the gateway running on a fresh Linux host. ChannelGate runs on
+**Linux only**: the daemon is a systemd service and every channel runs inside its own rootless
+Podman container (Ubuntu 24.04 is the tested distribution). For what it does and how it works,
+see [README.md](./README.md).
 
 ## 1. Prerequisites
 
-- **macOS or Linux** (the bundled autostart service uses macOS `launchd`; Linux can run the daemon
-  manually or under its normal service manager).
+- **Linux with systemd** (Ubuntu 24.04 tested). The daemon refuses to start anywhere else.
 - **Node.js ≥ 22.13** — `node -v` (the gateway's SQLite store uses the built-in `node:sqlite`,
-  stable from 22.13). Install from <https://nodejs.org> or `brew install node`.
+  stable from 22.13). Install from <https://nodejs.org> or your distribution's packages.
 - **Claude Code CLI**, installed and authenticated — the gateway spawns it directly:
   ```bash
   npm install -g @anthropic-ai/claude-code
@@ -20,10 +21,9 @@ and how it works, see [README.md](./README.md).
   npm install -g @openai/codex
   codex login           # or set OPENAI_API_KEY
   ```
-- **(Optional, Linux only) rootless Podman** — only if you'll run channels in their own containers
-  instead of the host sandbox: `sudo apt install podman uidmap`, confirm the daemon user has
-  `/etc/subuid` + `/etc/subgid` ranges, then build the channel image with `npm run build:image`.
-  Setup, settings and caveats are in
+- **Rootless Podman** — every channel runs inside its own container: `sudo apt install podman
+  uidmap`, confirm the daemon user has `/etc/subuid` + `/etc/subgid` ranges, then build the
+  channel image with `npm run build:image`. Setup, settings and caveats are in
   [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime).
 - A **Slack workspace** where you can create an app.
 
@@ -40,11 +40,10 @@ cd channelgate
 npm run setup
 ```
 
-This checks Node/CLI prerequisites, installs dependencies, asks whether to provision pinned
-`whisper.cpp` plus the multilingual `large-v3-turbo` model, creates `.env`, and (on macOS) installs
-the **launchd** service so the gateway starts on login and restarts on crash. Choosing Whisper
-downloads about 1.5 GiB. On macOS the installer uses Homebrew for missing `ffmpeg`/`cmake`; on Linux
-it uses the available package manager when permitted, or explains which prerequisite is missing.
+This checks the Linux/Node/CLI/Podman prerequisites, installs dependencies, asks whether to
+provision pinned `whisper.cpp` plus the multilingual `large-v3-turbo` model, and creates `.env`.
+Choosing Whisper downloads about 1.5 GiB; the installer uses the available package manager for a
+missing `ffmpeg` when permitted, or explains which prerequisite is missing.
 
 The runtime and model are reused on subsequent setup/update runs. A no-Whisper install skips them
 on later updates too. For unattended installs, make the choice explicit:
@@ -61,54 +60,45 @@ assets independently:
 npm run whisper:install
 ```
 
-- To skip the autostart service: `npm run setup -- --no-service` (then run `npm start` yourself).
-- Manage the service later: `npm run service:install` / `npm run service:uninstall`, or
-  `launchctl kickstart -k gui/$(id -u)/com.makeitfuture.channelgate` to restart it.
+#### The systemd service (starts at boot, restarts on failure)
 
-#### Starting at boot instead of at login (macOS)
-
-The default macOS install is a **LaunchAgent**, and a LaunchAgent's domain only exists while its
-user is logged in graphically. After an unattended restart the Mac sits at the login window and the
-gateway never starts — Slack goes quiet and the admin UI is unreachable until somebody signs in.
-
-To load it at boot instead, install the **LaunchDaemon** variant:
+The service is a separate, root-only step because it creates a dedicated non-login account and
+hands it the checkout:
 
 ```bash
-npm run service:install:boot     # = sudo bash scripts/install-launchd.sh --boot
+sudo bash scripts/install-systemd.sh      # = npm run service:install, run as root
 ```
 
-It writes `/Library/LaunchDaemons/com.makeitfuture.channelgate.plist` (root-owned, 0644) and
-still runs the daemon as *you* via `UserName`, since the engine credentials, runtime root and
-channel folders all live in your home. It removes the LaunchAgent as it goes: the daemon takes a
-singleton lock on the runtime root, so two copies can never run — the loser exits with
-`EALREADYRUNNING` and `KeepAlive` turns that into a crash loop.
+It writes `/etc/systemd/system/channelgate.service` (hardened: `NoNewPrivileges`,
+`ProtectSystem=strict`, `ProtectHome`, private `/tmp`), runs the daemon as the `channelgate`
+account with its runtime root in `/var/lib/channelgate`, bakes the engine CLIs' directories into
+the unit's `PATH`, and enables it at boot. Manage it with `systemctl`:
 
-Two limits worth knowing before you rely on it:
+```bash
+sudo systemctl status channelgate
+sudo systemctl restart channelgate
+sudo journalctl -u channelgate -f
+sudo bash scripts/uninstall-systemd.sh    # = npm run service:uninstall — removes the unit, keeps the runtime root
+```
 
-- **FileVault.** On a cold unattended reboot (power cut, panic) the Mac halts at the preboot unlock
-  screen, where nothing runs at all — no daemons, no SSH. Boot mode covers *"disk unlocked, nobody
-  logged in"*, not *"nobody touched the Mac"*. For a planned restart that comes back on its own, use
-  `sudo fdesetup authrestart`.
-- **No GUI session.** The login keychain stays locked. The engine CLIs read
-  `~/.claude/.credentials.json` so they authenticate fine, but anything reading a secret from
-  Keychain, and any GUI/browser automation, will not work.
-
-Revert to login-time start with `npm run service:uninstall:boot` followed by `npm run
-service:install`.
+`npm run setup -- --no-service` only skips the reminder; `npm start` runs the daemon in the
+foreground without a service. The service identities, the engine credentials of the login-less
+account and the user-scope alternative (`~/.config/systemd/user/channelgate.service`) are in
+[`docs/OPERATIONS.md`](./docs/OPERATIONS.md#service-identities).
 
 The admin UI + health endpoint come up on <http://localhost:4747> (set `PORT` in `.env` to change).
 
 ### Safe updates
 
 Run `npm run update`, use the dashboard Update button, or ask an admin to use Slack `/update`.
-The updater requires an active launchd service on macOS or `channelgate.service` under systemd
-on Linux so it can prove both candidate and rollback restarts.
+The updater requires an active `channelgate.service` under systemd (system or user scope) so it
+can prove both candidate and rollback restarts.
 
 Before changing Git it checks upstream access, a clean fast-forward-only checkout, Node/npm,
 settings, service state, free space, current gateway health, and an isolated Claude turn. Base
 staging requires 1 GiB free. If local Whisper is enabled but its 1.5 GiB model is missing, the
-calculated requirement becomes 3 GiB on Linux or 4 GiB on macOS; disabling local Whisper makes the
-large optional download explicit and skips it.
+calculated requirement becomes 3 GiB; disabling local Whisper makes the large optional download
+explicit and skips it.
 
 The candidate runs `npm ci`, the production advisory gate, the full test suite, and provisioning
 before restart. It is accepted only after the replacement reports the expected revision, Claude is
@@ -199,7 +189,7 @@ npm run setup
 #   cp /path/to/.backup-key ~/.channelgate/.backup-key      (the generated key), or
 #   export CG_BACKUP_PASSPHRASE='…'                            (your passphrase)
 npm run restore    # decrypts into ~/.channelgate
-launchctl kickstart -k gui/$(id -u)/com.makeitfuture.channelgate   # restart (or npm start)
+sudo systemctl restart channelgate   # restart (or npm start)
 ```
 
 > ⚠️ Without the key the backup cannot be decrypted. If you used the generated
@@ -234,8 +224,8 @@ If the migration refuses or fails, the daemon keeps serving from the OLD paths (
 `CHANNELGATE_DIR` / `CG_WORKSPACE_DIR` back to them for that process) and logs what to clear.
 `CLAUDE_GATEWAY_DIR` and `CLAUDE_GATEWAY_DB` are still honoured — with a one-time deprecation
 warning — for one major; rename them to `CHANNELGATE_DIR` / `CHANNELGATE_DB`. Re-run
-`npm run service:install` (macOS) or `sudo bash scripts/install-systemd.sh` (Linux) to move the
-service to the new label/unit; each installer removes the pre-rename one first.
+`sudo bash scripts/install-systemd.sh` to move the service to the new unit; the installer removes
+the pre-rename one first.
 
 **Checkouts cloned from the previous repository.** The code moved to
 `https://github.com/makeitfutureDev/channelgate` on 2026-09-03 with a fresh history (one initial
@@ -262,8 +252,8 @@ node scripts/migrate-channelgate.mjs --verify --from "$OLD_CHECKOUT" --to "$NEW_
 ```
 
 The repath rewrites the service definition's `WorkingDirectory` and prints the reload command
-(`systemctl --user daemon-reload`, or `bootout` + `bootstrap` on macOS) to run before starting the
-service again. See `docs/OPERATIONS.md` → `--repath`.
+(`systemctl --user daemon-reload`) to run before starting the service again. See
+`docs/OPERATIONS.md` → `--repath`.
 
 
 
@@ -276,15 +266,15 @@ the repo—back it up if you want to preserve config/sessions. Advanced deployme
 
 ## Troubleshooting
 
-- **"localhost refused to connect"** — the daemon isn't running. `launchctl list | grep
-  channelgate`; restart with `launchctl kickstart -k gui/$(id -u)/com.makeitfuture.channelgate`,
-  or `npm start`. Check `~/.channelgate/logs/launchd.err.log`.
+- **"localhost refused to connect"** — the daemon isn't running. `systemctl status channelgate`;
+  restart with `sudo systemctl restart channelgate` (or `npm start`). Check
+  `journalctl -u channelgate` and the runtime root's `logs/`.
 - **Bot won't answer in a channel** — the author must be **approved** (Users tab) and the bot
   must be **@mentioned** (DMs need neither). New channels are fail-closed.
 - **Images come back as "HTML"/can't read** — the Slack app needs the `files:read` scope; update
   the manifest and **reinstall** the app.
 - **Voice transcript is unavailable** — if local Whisper is enabled, run `npm run whisper:install`
-  and follow missing `ffmpeg`/`cmake` guidance. Otherwise click **Generate transcript** on the Slack
+  and follow the missing `ffmpeg` guidance. Otherwise click **Generate transcript** on the Slack
   voice note, then mention the bot again or react 🤖. Setup treats selected local provisioning
   failure as fatal; an update warns and keeps the gateway online.
 - **Codex 401 / won't run** — `codex` isn't authenticated; run `codex login`.

@@ -220,7 +220,7 @@ async function pastedPathMatches(pasted, dir) {
   if (await sameDirectory(pasted, dir)) return true;
   // The collapsed spelling doesn't exist on disk, so realpath can't canonicalize it — compare it
   // against both the resolved and the fully-real form of the target (they differ wherever a
-  // parent is a symlink, e.g. macOS /var → /private/var).
+  // parent is a symlink, e.g. a symlinked /tmp or home directory).
   const target = collapsed(pasted);
   return target === collapsed(path.resolve(String(dir || ""))) || target === collapsed(await realOrResolved(dir));
 }

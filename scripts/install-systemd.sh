@@ -30,7 +30,7 @@ NODE_BIN="$(command -v node)"
 
 # The daemon spawns `claude`/`codex` by bare name, and systemd services get a minimal PATH —
 # resolve the engine CLIs NOW (from the installing user's PATH) and bake their dirs into the
-# unit, mirroring what install-launchd.sh already does on macOS. A binary under /home or /root
+# unit. A binary under /home or /root
 # would be unreachable behind ProtectHome=true, so those dirs also get a read-only bind hole.
 SERVICE_PATH="$(dirname "$NODE_BIN"):/usr/local/bin:/usr/bin:/bin"
 BIND_RO=""

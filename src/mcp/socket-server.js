@@ -43,7 +43,7 @@ import { runBridge } from "./composio-sdk-bridge.js";
 
 const HELLO_TIMEOUT_MS = 2_000;
 const HELLO_MAX_BYTES = 64 * 1024;
-// The kernel's sockaddr_un limit is 108 bytes on Linux, 104 on macOS — and it is a HARD limit, not
+// The kernel's sockaddr_un limit is 108 bytes on Linux — and it is a HARD limit, not
 // a truncation. A gateway root deep enough to blow it must degrade to "container runs can't reach
 // the control plane", never to a failed boot.
 const MAX_SOCKET_PATH_BYTES = 100;

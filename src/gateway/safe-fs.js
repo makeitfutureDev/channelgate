@@ -11,14 +11,15 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 // The failures that mean "there is no managed FILE here", all of which callers already treat like
-// a missing file: ENOENT (absent), the two spellings of "O_NOFOLLOW refused a symlink" (macOS
-// EMLINK, Linux ELOOP), and the two shapes of "something that isn't a file is squatting on the
+// a missing file: ENOENT (absent), the two spellings of "O_NOFOLLOW refused a symlink" (ELOOP on
+// Linux; EMLINK is the BSD spelling, kept so a planted link can never read as a real error), and
+// the two shapes of "something that isn't a file is squatting on the
 // path" — EISDIR (a directory planted on a file name; folders.js then rm -r's the junk) and
 // ENOTDIR (a parent component is a file). Anything else is a real I/O failure — see readNoFollow.
 const ABSENT_CODES = new Set(["ENOENT", "ELOOP", "EMLINK", "EISDIR", "ENOTDIR"]);
 
 // Read a managed file without following a symlink at its path. Returns null when the file is
-// absent OR is a symlink (macOS reports EMLINK, Linux ELOOP — both mean "refused to follow"),
+// absent OR is a symlink (ELOOP, or the BSD spelling EMLINK — both mean "refused to follow"),
 // so callers treat a planted link exactly like a missing file (see ABSENT_CODES for the full set).
 // Every OTHER error — EACCES, EIO, EMFILE… — is a REAL failure and propagates: swallowing it made
 // a read-modify-write caller (channel-memory's `add`) treat an unreadable MEMORY.md as empty and

@@ -94,6 +94,18 @@ product overview.
   never the daemon's host-wide file, which is the identity mix-up the switch invited. `/secrets`
   now suggests every catalog name; a stored `cliIntegrations` value is inert. First slice of
   retiring the host sandbox runtime and macOS.
+- **macOS support.** ChannelGate runs on Linux only — systemd for the service, rootless Podman for
+  every channel. Gone: the launchd installers (`scripts/install-launchd.sh`,
+  `scripts/uninstall-launchd.sh`, the `service:*:boot` npm scripts), the darwin branches of the
+  self-updater (launchd probe, `kickstart` restart, `bootout` + `bootstrap` reload), the
+  migration's plist rewrite, the admin Stop route's `launchctl bootout`, the shutdown exit-code
+  rule for `KeepAlive`, the Homebrew/CMake Whisper source build, the extra macOS disk requirement,
+  and the macOS legs of the CI and nightly matrices. `npm run service:install` /
+  `service:uninstall` now wrap `scripts/install-systemd.sh` and the new
+  `scripts/uninstall-systemd.sh` (system AND user units, current and pre-rename names, never the
+  runtime root); `npm run setup` and `src/start.js` refuse any other platform with one plain line
+  ("ChannelGate runs on Linux only (systemd + rootless Podman); this host is <platform>."), and the
+  documentation describes one platform.
 
 ### Changed
 - **The repository is `makeitfutureDev/channelgate`.** Development, the served `main` and the

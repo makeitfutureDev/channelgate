@@ -50,13 +50,11 @@ function reserve(root) {
 }
 
 test("disk requirement includes temporary optional Whisper space", () => {
-  const basic = requiredDiskBytes({ whisperEnabled: false, modelExists: false, platform: "linux" });
-  const linuxWhisper = requiredDiskBytes({ whisperEnabled: true, modelExists: false, platform: "linux" });
-  const macWhisper = requiredDiskBytes({ whisperEnabled: true, modelExists: false, platform: "darwin" });
-  const existing = requiredDiskBytes({ whisperEnabled: true, modelExists: true, platform: "darwin" });
+  const basic = requiredDiskBytes({ whisperEnabled: false, modelExists: false });
+  const whisper = requiredDiskBytes({ whisperEnabled: true, modelExists: false });
+  const existing = requiredDiskBytes({ whisperEnabled: true, modelExists: true });
   assert.equal(basic, 1024 ** 3);
-  assert.ok(linuxWhisper >= 3 * 1024 ** 3);
-  assert.ok(macWhisper > linuxWhisper);
+  assert.equal(whisper, 3 * 1024 ** 3); // Linux only: the release asset needs no build staging
   assert.equal(existing, basic);
 });
 
@@ -131,7 +129,7 @@ test("candidate success follows the transaction phases and releases the lock", a
             targetRevision: "new",
             previousInstanceId: "instance-old",
             requireSlack: true,
-            service: { kind: "launchd" },
+            service: { kind: "systemd", scope: "system", unit: "channelgate.service" },
             needBytes: 4 * 1024 ** 3,
             availableBytes: 16 * 1024 ** 3,
             optionalDownloadBytes: 1_621_356_544,
@@ -277,7 +275,7 @@ test("rollback failure reports both candidate and rollback errors", async () => 
           targetRevision: "new",
           previousInstanceId: "instance-old",
           requireSlack: false,
-          service: { kind: "launchd" },
+          service: { kind: "systemd", scope: "user", unit: "channelgate.service" },
         }),
         snapshot: async () => {},
         checkout: async () => {},
@@ -302,24 +300,24 @@ test("rollback failure reports both candidate and rollback errors", async () => 
   }
 });
 
-test("service detection probes only the managers the platform actually has", () => {
-  // macOS has launchd and no systemctl; Linux is the reverse. Probing the absent one only buys a
-  // guaranteed ENOENT and a refusal message naming a service manager that cannot exist here.
-  assert.deepEqual(serviceProbes("darwin").map((p) => p.kind), ["launchd"]);
-  assert.deepEqual(serviceProbes("linux").map((p) => p.kind), ["systemd", "systemd"]);
-  assert.match(noServiceRefusal("darwin"), /launchd/);
-  assert.doesNotMatch(noServiceRefusal("darwin"), /systemd/);
-  assert.match(noServiceRefusal("linux"), /systemd/);
+test("service detection probes systemd only, both scopes, system first", () => {
+  // Linux only: systemd is the one service manager, so the probe list has no platform-derived
+  // variant left and the refusal never names a manager that cannot exist here. The system scope
+  // goes first because the documented install is the hardened system unit.
+  assert.deepEqual(serviceProbes(), [
+    { kind: "systemd", scope: "system", args: [] },
+    { kind: "systemd", scope: "user", args: ["--user"] },
+  ]);
+  assert.deepEqual(serviceProbes("darwin"), serviceProbes()); // whatever the caller passes
+  assert.match(noServiceRefusal("linux"), /^no active systemd gateway service was detected on linux$/);
   assert.doesNotMatch(noServiceRefusal("linux"), /launchd/);
-  // An unknown platform stays permissive rather than refusing outright.
-  assert.deepEqual(serviceProbes("freebsd").map((p) => p.kind), ["systemd", "systemd", "launchd"]);
 });
 
 test("Linux systemd detection covers the user scope, not just the system unit", () => {
   // The documented install is a hardened system unit, but plenty of single-user boxes run
   // ~/.config/systemd/user/channelgate.service, which system-scope `is-active` reports as
   // inactive (exit 4). Those boxes were told no gateway service existed at all.
-  const probes = serviceProbes("linux");
+  const probes = serviceProbes();
   assert.deepEqual(probes.map((p) => p.scope), ["system", "user"]);
   assert.deepEqual(probes.map((p) => p.args), [[], ["--user"]]);
 });

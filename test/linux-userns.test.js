@@ -1,7 +1,7 @@
 // The boot-time userns assessment must name the one Linux condition that silently kills every
 // sandboxed Bash call (Ubuntu's AppArmor unprivileged-userns restriction with no exemption
 // profile), stay quiet once the profile is installed or on kernels without the knob, and never
-// fire on macOS. Regression: a whole fleet's channels lost Bash after an OS upgrade and nothing
+// fire off Linux. Regression: a whole fleet's channels lost Bash after an OS upgrade and nothing
 // in the daemon said why — the error only surfaced inside the model's own turn.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,8 +17,8 @@ const RESTRICT = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 const CLONE = "/proc/sys/kernel/unprivileged_userns_clone";
 const MAX = "/proc/sys/user/max_user_namespaces";
 
-test("does not apply on macOS", () => {
-  assert.deepEqual(assessLinuxUserns({ platform: "darwin", readFile: () => { throw new Error("must not read"); } }), { applies: false });
+test("does not apply off Linux (defensive: the daemon refuses to boot anywhere else)", () => {
+  assert.deepEqual(assessLinuxUserns({ platform: "win32", readFile: () => { throw new Error("must not read"); } }), { applies: false });
 });
 
 test("Ubuntu restriction on + no profile → broken, with the fix hint", () => {

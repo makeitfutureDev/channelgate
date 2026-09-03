@@ -13,4 +13,13 @@ if (major < 22 || (major === 22 && minor < 13)) {
   process.exit(1);
 }
 
+// Linux only (systemd + rootless Podman). The check lives in a dependency-free module so it stays
+// unit-testable without booting the server; importing it touches nothing but that one file.
+const { platformRefusal } = await import("./platform-gate.js");
+const refusal = platformRefusal(process.platform);
+if (refusal) {
+  console.error(refusal);
+  process.exit(1);
+}
+
 await import("./server.js");

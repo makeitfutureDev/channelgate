@@ -108,11 +108,11 @@ test("non-string source values are skipped", () => {
 test("child PATH never contains the interactive launcher shim directory", async () => {
   const os = await import("node:os");
   const launcher = `${os.homedir()}/.claude-launcher`;
-  const env = buildChildEnv({}, { PATH: `/opt/homebrew/bin:${launcher}:/usr/bin:${launcher}/:${os.homedir()}/.local/bin` });
+  const env = buildChildEnv({}, { PATH: `/usr/local/bin:${launcher}:/usr/bin:${launcher}/:${os.homedir()}/.local/bin` });
   // The wrapper menu between the gateway and the real CLI exec-looped every run in the
   // 2026-08-06 outage (its self-detection assumed the daemon's HOME). Children resolve engines
   // from the real install dirs only.
   assert.equal(env.PATH.includes(".claude-launcher"), false);
-  assert.ok(env.PATH.includes("/opt/homebrew/bin"));
+  assert.ok(env.PATH.includes("/usr/local/bin"));
   assert.ok(env.PATH.endsWith("/.local/bin"));
 });
