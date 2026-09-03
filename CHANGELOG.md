@@ -19,6 +19,13 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Fixed
+- **The nightly engine canary installs Claude Code the way the product documents.** Its Claude
+  jobs had failed on both runners since the npm package moved to a native binary fetched by its
+  postinstall — `npm install --ignore-scripts` left a shim with nothing to run ("executable format
+  is invalid" on macOS). The pinned and the drift-probe jobs now use the official installer
+  (`2.1.258` / `latest`), and the Codex target moves to `0.152.0`, the first release whose network
+  proxy keeps approved tunnels on Linux (`.github/workflows/nightly-canary.yml`,
+  `docs/COMPATIBILITY.md`).
 - **CI is green on macOS again, and the security-coverage gate no longer depends on the runner's
   toolchain.** Thirteen tests failed only on macOS because `os.tmpdir()` there is a symlink
   (`/var/folders/…` → `/private/var/…`) and the code under test resolves REAL paths — credential
