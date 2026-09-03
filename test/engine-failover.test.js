@@ -30,11 +30,13 @@ test("the live Codex plan-limit message classifies as a usage limit", () => {
   assert.equal(classifyCodexFailure({ message: "You have run out of credits" }), "usage_limit");
 });
 
-test("authentication failures are classified apart from limits, and ordinary errors stay unclassified", () => {
+test("authentication failures are classified apart from limits; server and connection errors are transient; the rest stays unclassified", () => {
   assert.equal(classifyCodexFailure({ message: "Not logged in. Run `codex login` to continue." }), "authentication");
   assert.equal(classifyCodexFailure({ message: "unauthorized", status: 401 }), "authentication");
-  assert.equal(classifyCodexFailure({ message: "The server had an error while processing your request" }), "");
-  assert.equal(classifyCodexFailure({ message: "connection reset by peer" }), "");
+  assert.equal(classifyCodexFailure({ message: "The server had an error while processing your request" }), "transient");
+  assert.equal(classifyCodexFailure({ message: "connection reset by peer" }), "transient");
+  assert.equal(classifyCodexFailure({ message: "stub failure detail" }), "", "an unexplained failure is still nobody's to retry");
+  assert.equal(classifyCodexFailure({ message: "Something in the request is malformed", status: 400 }), "", "a 400 means the request was wrong, not that the provider was away");
 });
 
 test("a model rejection still wins over the limit/auth patterns", () => {

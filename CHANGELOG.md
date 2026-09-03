@@ -128,6 +128,16 @@ product overview.
   across unrelated histories, and the updater refuses a diverged checkout by design.
 
 ### Added
+- **Transient provider failures are retried in place.** A 5xx, an "overloaded", a connection
+  reset/timeout, or an unexplained 404 from the Codex backend (the 2026-09-03 ChatGPT Codex outage
+  failed every turn on both gateways with "404 Not Found: Unknown error" for a few minutes) no
+  longer ends the turn with a red error on the first try: the gateway re-runs the same turn on the
+  same engine up to two more times, ten seconds apart (`CG_TRANSIENT_RETRY_ATTEMPTS`,
+  `CG_TRANSIENT_RETRY_DELAY_MS`), only while no tool has run, and never for authentication,
+  usage-limit or model-rejection failures, which keep their own failover / model-retry paths. Every
+  attempt is a `run_transient_retry` event; a reply that needed more than one attempt says so in
+  one line, an exhausted error says how often it was retried, and a cancel ends the pause early
+  (`src/gateway/run.js`, `src/engines/codex.js`).
 - **`--repath --from <old> --to <new>` for a folder moved by hand.** The rename migration's rules
   only know the roots the product renamed; a folder the operator moved — the daemon's own checkout,
   a channel's custom `workDir` — was invisible to them, so its channel record, Claude project

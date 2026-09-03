@@ -86,17 +86,30 @@ const AUTH_FAILURE_RE = /not logged in|log ?in (?:again|with)|sign ?in (?:again|
 // pre-generation rejections get a kind: a model-availability rejection is retryable with another
 // model, and authentication / usage-limit failures are the operator-authorized cross-engine
 // failover cases. Anything else stays an ordinary opaque failure.
+// Provider-side failures worth retrying IN PLACE: the request never got a real answer. 5xx and 529
+// (overloaded) are the textbook cases; 404 is listed on purpose — on 2026-09-03 the ChatGPT Codex
+// backend answered every request with "404 Not Found: Unknown error" for a few minutes, and a
+// retry ten seconds later was the right response, not a red error in the thread. A 400 is NOT
+// here: it says the request itself was wrong, and a model rejection has its own kind above.
+const TRANSIENT_STATUSES = new Set([404, 408, 409, 425, 502, 503, 504, 529]);
+const TRANSIENT_FAILURE_RE = /unknown error|timed? ?out|ECONN(?:RESET|REFUSED|ABORTED)|EAI_AGAIN|ENOTFOUND|EPIPE|socket hang up|network (?:error|failure)|stream disconnected|connection (?:reset|refused|closed|error|failed)|reconnecting|overloaded|server (?:had an )?error|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|internal (?:server )?error/i;
+
 export function classifyCodexFailure({ message = "", providerType = "", status = 0 } = {}) {
   const text = `${providerType} ${message}`;
-  if ((status === 400 || /invalid[_ -]?request/i.test(providerType)) && MODEL_REJECTION_RE.test(message)) return "model_rejected";
-  if (status === 429 || /rate[_ -]?limit|quota|insufficient[_ -]?quota|usage[_ -]?limit/i.test(providerType) || USAGE_LIMIT_RE.test(text)) return "usage_limit";
-  if (status === 401 || status === 403 || /auth|credential|unauthori[sz]ed/i.test(providerType) || AUTH_FAILURE_RE.test(text)) return "authentication";
+  // The HTTP status often travels only in the prose ("unexpected status 404 Not Found: …").
+  const quoted = /unexpected status (\d{3})\b/i.exec(message);
+  const httpStatus = Number(status) || (quoted ? Number(quoted[1]) : 0);
+  if ((httpStatus === 400 || /invalid[_ -]?request/i.test(providerType)) && MODEL_REJECTION_RE.test(message)) return "model_rejected";
+  if (httpStatus === 429 || /rate[_ -]?limit|quota|insufficient[_ -]?quota|usage[_ -]?limit/i.test(providerType) || USAGE_LIMIT_RE.test(text)) return "usage_limit";
+  if (httpStatus === 401 || httpStatus === 403 || /auth|credential|unauthori[sz]ed/i.test(providerType) || AUTH_FAILURE_RE.test(text)) return "authentication";
+  if (TRANSIENT_STATUSES.has(httpStatus) || httpStatus >= 500 || TRANSIENT_FAILURE_RE.test(text)) return "transient";
   return "";
 }
 
 // Pre-generation rejections: the turn provably did nothing, so the orchestrator may replay it
-// (with another model, or on the other harness) as long as no tool ran.
-const REPLAY_SAFE_KINDS = Object.freeze(["model_rejected", "usage_limit", "authentication"]);
+// (with another model, on the other harness, or — for a transient provider failure — the same
+// engine again after a pause) as long as no tool ran.
+const REPLAY_SAFE_KINDS = Object.freeze(["model_rejected", "usage_limit", "authentication", "transient"]);
 
 // Codex's OWN logged-out phrasing, matched on stderr WHILE the process is still running.
 // Deliberately narrower than AUTH_FAILURE_RE, which only ever runs on a corpse: this match ENDS a
@@ -132,7 +145,7 @@ export function codexDiagnosticLine(text = "") {
 // event. Keeps the CLI's own actionable text (reset time, top-up link) instead of an exit code.
 export function codexProcessFailureMessage(kind, stderr = "") {
   const detail = String(stderr || "").replace(/\s+/g, " ").trim().slice(0, 600);
-  const label = kind === "usage_limit" ? "Codex usage limit reached" : "Codex authentication failed";
+  const label = { usage_limit: "Codex usage limit reached", authentication: "Codex authentication failed" }[kind] || "Codex provider error";
   return detail ? `${label}: ${detail}` : label;
 }
 

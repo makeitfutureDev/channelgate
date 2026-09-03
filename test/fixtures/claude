@@ -7,12 +7,15 @@ resume=no; mcp=no; cancel=no; fail=no; auth_fail=no; limit_fail=no; limit_answer
 # itself is never echoed — only that it was there — so the E2E can prove the spawn was
 # authenticated the way a real turn would be.
 oauth=no; [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && oauth=yes
+transient_times=0
 for arg in "$@"; do
   case "$arg" in
     -r) resume=yes ;;
     --mcp-config) mcp=yes ;;
     *CLAUDE_STUB_WAIT_FOR_CANCEL*) cancel=yes ;;
     *CLAUDE_STUB_FAIL_GENERIC*) fail=yes ;;
+    *CLAUDE_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
+    *CLAUDE_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
     *CLAUDE_STUB_AUTH_FAIL_SAFE*) auth_fail=yes ;;
     *CLAUDE_STUB_LIMIT_FAIL_SAFE*) limit_fail=yes ;;
     *CLAUDE_STUB_LIMIT_ANSWER*) limit_answer=yes ;;
@@ -31,6 +34,16 @@ fi
 # overwrite each other's copy.
 if [ -n "$mcp_path" ] && [ -f "$mcp_path" ]; then
   cp "$mcp_path" "${TMPDIR:-/tmp}/cg-stub-mcp-$(basename "$PWD").json" 2>/dev/null || true
+fi
+# A provider that is briefly unavailable ("API Error: 529 Overloaded") for the first N invocations
+# of this folder, then answers — the gateway must retry in place and still post the reply.
+if [ "$transient_times" -gt 0 ]; then
+  count=0; [ -f .cg-stub-transient ] && count=$(cat .cg-stub-transient)
+  if [ "$count" -lt "$transient_times" ]; then
+    echo $((count + 1)) > .cg-stub-transient
+    printf '%s\n' '{"type":"assistant","error":"api_error","message":{"role":"assistant","content":[{"type":"text","text":"API Error: 529 Overloaded"}]}}'
+    exit 1
+  fi
 fi
 if [ "$auth_fail" = "yes" ]; then
   printf '%s\n' '{"type":"assistant","error":"authentication_failed","message":{"role":"assistant","content":[{"type":"text","text":"OAuth session expired and could not be refreshed"}]}}'

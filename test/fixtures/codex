@@ -18,6 +18,8 @@ resume="no"
 mcp="no"
 cancel="no"
 fail="no"
+transient_times=0
+transient_after_tool="no"
 reject_model="no"
 reject_all_models="no"
 reject_after_tool="no"
@@ -40,6 +42,9 @@ for arg in "$@"; do
     *'domains = { "api.github.com" = "allow" }'*) network_domain="yes" ;;
     *CODEX_STUB_WAIT_FOR_CANCEL*) cancel="yes" ;;
     *CODEX_STUB_FAIL_GENERIC*) fail="yes" ;;
+    *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
+    *CODEX_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
+    *CODEX_STUB_TRANSIENT_AFTER_TOOL*) transient_after_tool="yes" ;;
     *CODEX_STUB_REJECT_MODEL*) reject_model="yes" ;;
     *CODEX_STUB_REJECT_ALL_MODELS*) reject_all_models="yes" ;;
     *CODEX_STUB_REJECT_AFTER_TOOL*) reject_after_tool="yes" ;;
@@ -79,6 +84,24 @@ if [ "$stall_401" = "yes" ]; then
 fi
 if [ "$fail" = "yes" ]; then
   printf '%s\n' 'stub failure detail' >&2
+  exit 1
+fi
+# A backend that answers the very first request with an error and nothing else — the shape of the
+# 2026-09-03 ChatGPT Codex outage ("404 Not Found: Unknown error"). Fails the first N invocations
+# for this folder (counter file in the run cwd), then answers normally, so the E2E can prove the
+# gateway retried in place and the reply still arrived.
+if [ "$transient_times" -gt 0 ]; then
+  count=0; [ -f .cg-stub-transient ] && count=$(cat .cg-stub-transient)
+  if [ "$count" -lt "$transient_times" ]; then
+    echo $((count + 1)) > .cg-stub-transient
+    printf '%s\n' '{"type":"error","message":"unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses, cf-ray: stub"}'
+    exit 1
+  fi
+fi
+# The same outage AFTER a tool ran: the turn may have mutated something, so it must NOT be retried.
+if [ "$transient_after_tool" = "yes" ]; then
+  printf '%s\n' '{"type":"item.started","item":{"id":"tool-before-transient","type":"command_execution","command":"already-ran"}}'
+  printf '%s\n' '{"type":"error","message":"unexpected status 503 Service Unavailable"}'
   exit 1
 fi
 # Plan/credit exhaustion as Codex reports it: a JSON error event, no tokens, no tool call.

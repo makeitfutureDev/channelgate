@@ -805,8 +805,18 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       error surfaces. A post-tool failure never replays.
 - [x] Unit: the Codex runner classifies its plan-limit rejection ("purchase more credits…") as a
       replay-safe `usage_limit` — as a JSON error event AND on stderr with a nonzero exit — while
-      model rejections keep routing to the same-engine model retry and ordinary
-      provider/connection errors stay unclassified (`test/engine-failover.test.js`).
+      model rejections keep routing to the same-engine model retry, server/connection errors
+      classify as `transient` (retried in place) and unexplained failures stay unclassified
+      (`test/engine-failover.test.js`).
+- [x] Unit + integration (`test/transient-retry.test.js`): a transient provider failure — the
+      2026-09-03 Codex "404 Not Found: Unknown error", a 503, a 529, a connection reset — is retried
+      in place on the SAME engine (two more attempts, env-tunable pause): the stub that fails its
+      first two invocations still yields the reply, prefixed with the retried-N× notice, and exactly
+      two `run_transient_retry` events; a failure that outlives every attempt surfaces the
+      provider's own message marked "retried 2×" with NO cross-engine failover; a transient failure
+      AFTER a tool ran is never retried (replaySafe=false, zero retry events); the Claude
+      `availability` kind ("API Error: 529 Overloaded") takes the same path; authentication,
+      usage-limit, model-rejection and invalid-request kinds are never treated as transient.
 - [x] Integration: a channel whose PRIMARY harness is Codex hits its usage limit and the turn is
       answered by Claude (reason note, thread transcript replayed into the fresh session,
       `fellBack`/`fallbackFrom` set); the same limit on stderr behaves identically; a limit that

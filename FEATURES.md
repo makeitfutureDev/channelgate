@@ -630,6 +630,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
    or tool attempt; generic failures and partially executed turns are never replayed. Slack status,
    the reply note/footer, and the audit event identify the default that actually ran. If the default
    also fails, the original model error remains authoritative. → TEST-PLAN: Engines.
+- **Transient provider failures are retried in place (2026-09-03).** When the provider does not
+  answer a request — a 5xx or 529 "overloaded", a connection reset or timeout, or an unexplained
+  404 from the Codex backend (the 2026-09-03 ChatGPT Codex outage answered every request that way
+  for a few minutes) — the gateway re-runs the SAME turn on the SAME engine up to two more times,
+  ten seconds apart, before giving up (`CG_TRANSIENT_RETRY_ATTEMPTS`, `CG_TRANSIENT_RETRY_DELAY_MS`).
+  Two rules keep it safe: the failure must be replay-safe (the runner proved no tool ran — the
+  engines retry mid-turn themselves, and a gateway replay after a tool call could repeat a side
+  effect), and authentication / usage-limit / model-rejection failures are excluded because they
+  have their own paths (failover below, the same-engine model retry). Each attempt is a
+  `run_transient_retry` event and a daemon log line; a reply that needed more than one attempt says
+  so in one italic line, and an exhausted error names how often it was retried. The pause ends early
+  on cancel. Codex classifies these as `transient` (`classifyCodexFailure`); Claude's
+  `availability` / `connection` / `provider` kinds qualify. → TEST-PLAN: Engines.
 - **Bidirectional harness failover** when the engine driving a turn hits its usage/session/plan
   limit or its authentication is unavailable — Claude→Codex and Codex→Claude are the same mechanism,
   so a channel whose primary engine is Codex is not stranded until its ChatGPT quota resets (and
