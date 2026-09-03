@@ -457,7 +457,7 @@ async function rewriteJsonFiles(root, rules, { dryRun, log }) {
 
 // ── Text stores ──────────────────────────────────────────────────────────────────────────────
 // The JSON/deep rewrite above only reaches values that are already parsed. A lot of what has to
-// move lives in plain text — TOML, Markdown, a launchd plist, a systemd unit — so this is the
+// move lives in plain text — TOML, Markdown, a systemd unit — so this is the
 // same rule applied to raw text.
 //
 // Two guards make a substring replacement safe here:
@@ -1018,28 +1018,23 @@ export async function rewriteWorkFolderText(folders, rules, { dryRun = false, lo
 }
 
 // ── Service definitions ──────────────────────────────────────────────────────────────────────
-// The installed service definition bakes the runtime root into its log paths (and, on launchd,
-// into the environment). After the move those paths point at a directory that no longer exists, so
-// the service would start and then fail to open its own log. These are user-owned files, so they
-// are rewritten in place — but the running service still holds the OLD definition: launchd and
-// systemd both cache it until told otherwise, which is why this reports a reload command.
+// The installed service definition bakes the runtime root into its log paths. After the move those
+// paths point at a directory that no longer exists, so the service would start and then fail to
+// open its own log. These are user-owned files, so they are rewritten in place — but the running
+// service still holds the OLD definition: systemd caches it until told otherwise, which is why
+// this reports a reload command. Only the user-scope unit an ordinary single-user box runs is
+// listed: the system unit scripts/install-systemd.sh writes is root-owned and bakes no log path.
 export function serviceDefinitionPaths(home = os.homedir()) {
   return [
-    // macOS, both install modes.
-    path.join(home, "Library", "LaunchAgents", "com.makeitfuture.channelgate.plist"),
-    path.join(home, "Library", "LaunchAgents", "com.makeitfuture.claude-gateway.plist"),
-    // Linux, the user-scope unit an ordinary single-user box runs.
     path.join(home, ".config", "systemd", "user", "channelgate.service"),
     path.join(home, ".config", "systemd", "user", "claude-gateway.service"),
   ];
 }
 
-// Rewriting a service definition is not enough: both service managers keep their own cached copy
-// of it. systemd needs `daemon-reload` before the next start picks up the new log paths, and
-// launchd needs the job booted out and bootstrapped again — a `kickstart -k` re-runs the OLD
-// definition. The migration cannot do that itself (it runs INSIDE the service it would tear down),
-// so it leaves a marker and the updater's restart step consumes it. See
-// scripts/update-runner.mjs applyPendingServiceReload().
+// Rewriting a service definition is not enough: systemd keeps its own cached copy of it and needs
+// `daemon-reload` before the next start picks up the new log paths. The migration cannot do that
+// itself (it runs INSIDE the service it would tear down), so it leaves a marker and the updater's
+// restart step consumes it. See scripts/update-runner.mjs applyPendingServiceReload().
 export function serviceReloadMarkerFile(root) {
   return path.join(root, "service-reload-required.json");
 }
@@ -1051,9 +1046,7 @@ export async function rewriteServiceDefinitions(home, rules, { dryRun = false, l
     if (!count) continue;
     result.files.push(file);
     result.occurrences += count;
-    const reload = file.endsWith(".plist")
-      ? `launchctl bootout gui/$(id -u)/${path.basename(file, ".plist")} && launchctl bootstrap gui/$(id -u) ${file}`
-      : "systemctl --user daemon-reload";
+    const reload = "systemctl --user daemon-reload";
     if (!result.reloads.includes(reload)) result.reloads.push(reload);
   }
   return result;

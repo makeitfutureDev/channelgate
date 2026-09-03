@@ -36,8 +36,7 @@ export const CLI_INTEGRATIONS = {
     desc: "supabase CLI management operations (link, functions deploy, db push over HTTPS)",
     domains: ["supabase.com", "api.supabase.com", "*.supabase.co"],
     envKeys: ["SUPABASE_ACCESS_TOKEN", "SUPABASE_DB_PASSWORD"],
-    // Keychain-less fallback token store; on macOS the CLI may use the system keychain instead,
-    // in which case only the file fallback works inside the sandbox.
+    // The CLI's keychain-less token store — the one a headless Linux host uses.
     credentialHomePaths: [".supabase"],
   },
   make: {

@@ -303,8 +303,8 @@ test("a recycled pid is not our child, and an unverifiable probe never invents a
   assert.equal(pidIdentityAlive(0, spawnTime), false);
   assert.equal(pidIdentityAlive(0x7fffffff, spawnTime), false, "a pid nobody owns is dead");
 
-  // The probe itself is best-effort and portable (macOS + procps Linux both accept
-  // `ps -p <pid> -o lstart=`); where it can't run it degrades to "" instead of throwing.
+  // The probe itself is best-effort (procps `ps -p <pid> -o lstart=`); where it can't run it
+  // degrades to "" instead of throwing.
   assert.equal(typeof processStartTime(process.pid), "string");
   assert.equal(processStartTime(0), "");
 });

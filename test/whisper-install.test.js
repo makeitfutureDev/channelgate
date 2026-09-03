@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { platformArtifact, safeArchiveEntries } from "../scripts/install-whisper.mjs";
 
-test("selects pinned official Linux assets and source-builds macOS", () => {
+test("selects pinned official Linux assets and refuses every other platform", () => {
   assert.deepEqual(platformArtifact({ platform: "linux", arch: "x64" }), {
     name: "whisper-bin-ubuntu-x64.tar.gz",
     sha256: "f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5",
@@ -12,7 +12,7 @@ test("selects pinned official Linux assets and source-builds macOS", () => {
     name: "whisper-bin-ubuntu-arm64.tar.gz",
     sha256: "e0b66cd551ff6f2a28fabe3c6e89691eea037bb76833493abb9a71ca788994b3",
   });
-  assert.equal(platformArtifact({ platform: "darwin", arch: "arm64" }), null);
+  assert.throws(() => platformArtifact({ platform: "darwin", arch: "arm64" }), /Linux only/);
   assert.throws(() => platformArtifact({ platform: "linux", arch: "riscv64" }), /unsupported/i);
 });
 

@@ -12,7 +12,7 @@ trailer on each commit *is* that acceptance (CLA Section 7). Participation is go
 ## Set up
 
 Requirements: Node **>= 22.13** (the floor is exact — `node:sqlite` is stable from 22.13 and the
-daemon refuses to boot below it), Git, macOS or Linux.
+daemon refuses to boot below it), Git, and Linux — the daemon refuses to boot anywhere else.
 
 ```bash
 git clone <your fork> && cd <checkout>
@@ -46,7 +46,7 @@ exit-handler cleanup, and `npm test` also runs `scripts/test-scratch-sweep.mjs` 
 anything a crashed run left in the system temp dir.
 
 Every one of these must pass before you open a pull request. CI runs the suite on Node 22.13 and 24
-across ubuntu-latest and macos-latest.
+on ubuntu-latest.
 
 ## Branch, worktree, landing lock
 
@@ -139,9 +139,9 @@ These are not style preferences; a change that breaks one of them does not merge
   value is fetched one at a time through the reveal endpoint, which re-checks the admin password
   and audit-logs what was revealed, never the value. New secret fields go in the reveal allowlist.
   Nothing is hardcoded and nothing is logged.
-- **Cross-platform: macOS and Linux, both.** No GNU-only flags, no `setsid`, no platform-specific
-  binaries; prefer portable Node APIs over shelling out, keep shell POSIX-portable, and branch
-  explicitly where a difference is unavoidable.
+- **Linux only.** ChannelGate targets Linux with systemd and rootless Podman: no macOS/launchd
+  branches, no BSD-tool assumptions — and still no `setsid` or other platform-specific binaries;
+  prefer portable Node APIs over shelling out and keep shell POSIX-portable.
 - **A run is never killed for being quiet**, and a waiting state always announces itself. Silence
   that looks like death is the bug the heartbeat and watchdog exist to prevent.
 - **Platform capabilities are declared once and fail closed.** Read them through the capability

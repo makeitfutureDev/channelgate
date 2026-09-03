@@ -155,7 +155,7 @@ and friends read `SUPABASE_ACCESS_TOKEN` / `VERCEL_TOKEN` without being told to.
   `~/.channelgate/update-backups/`.
 
 ## Restarting the gateway safely (admin)
-- Use `restart_gateway`; never run `launchctl`, `systemctl`, `kill`, or another restart command via
+- Use `restart_gateway`; never run `systemctl`, `kill`, or another restart command via
   `run_in_background`.
 - The daemon lets the requesting turn finish, then checks foreground/queued engine turns,
   background jobs and agents, API runs, and update transactions. If anything is active, it stays

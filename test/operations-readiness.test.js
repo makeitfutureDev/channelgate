@@ -104,18 +104,18 @@ test("backup and restore honor the CLAUDE_GATEWAY_DB override", () => {
 test("log rotation copy-truncates the live file instead of renaming its inode", () => {
   const runtime = tempDir("cg-maint-test-");
   mkdirSync(path.join(runtime, "logs"), { recursive: true });
-  const log = path.join(runtime, "logs", "launchd.out.log");
+  const log = path.join(runtime, "logs", "daemon.out.log");
   writeFileSync(log, "x".repeat(1024 * 1024 + 1)); // just over the 1 MiB floor
   const inodeBefore = statSync(log).ino;
   execFileSync(process.execPath, [path.join(root, "scripts/runtime-maintenance.mjs")], {
     env: { ...process.env, CLAUDE_GATEWAY_DIR: runtime, CG_MAX_LOG_BYTES: "1048576" },
     stdio: "pipe",
   });
-  // Same inode, now empty: launchd/systemd keep the daemon's fd open, so a rename would let the
+  // Same inode, now empty: systemd keeps the daemon's fd open, so a rename would let the
   // "rotated" inode keep growing forever while the cap never applies to the live path.
   assert.equal(statSync(log).ino, inodeBefore);
   assert.equal(statSync(log).size, 0);
-  assert.equal(statSync(path.join(runtime, "logs", "launchd.out.log.1")).size, 1024 * 1024 + 1);
+  assert.equal(statSync(path.join(runtime, "logs", "daemon.out.log.1")).size, 1024 * 1024 + 1);
 });
 
 test("release artifact generator emits deterministic SBOM and provenance checksums", () => {
@@ -129,7 +129,7 @@ test("release artifact generator emits deterministic SBOM and provenance checksu
 
 test("service packages pin dedicated identities and hardened runtime boundaries", () => {
   const systemd = readFileSync(path.join(root, "scripts/install-systemd.sh"), "utf8");
-  const launchd = readFileSync(path.join(root, "scripts/install-launchd.sh"), "utf8");
+  const uninstall = readFileSync(path.join(root, "scripts/uninstall-systemd.sh"), "utf8");
   assert.match(systemd, /User=\$SERVICE_USER/);
   assert.match(systemd, /NoNewPrivileges=true/);
   assert.match(systemd, /ProtectSystem=strict/);
@@ -140,30 +140,29 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   assert.match(systemd, /Environment=HOME=\$SERVICE_HOME/);
   assert.match(systemd, /EnvironmentFile=-\$ENV_FILE/);
   assert.match(systemd, /command -v "\$engine"/);
-  assert.match(launchd, /ProcessType<\/key><string>Background/);
   // Self-update runs git + npm as the service account inside the checkout, so the installer must
   // hand it ownership (guarded, then proven) instead of leaving root-owned files behind.
   assert.match(systemd, /chown -R "\$SERVICE_USER:\$SERVICE_USER" "\$APP_DIR"/);
   assert.match(systemd, /refusing to chown it/);
   assert.match(systemd, /su -s \/bin\/sh/);
-});
-
-test("the launchd PATH has no empty components, covers every engine CLI, and is XML-escaped", () => {
-  const launchd = readFileSync(path.join(root, "scripts/install-launchd.sh"), "utf8");
-  // The old build pasted a possibly-empty $CLAUDE_DIR straight into the PATH string; an empty
-  // component means "the current directory", which every spawned subprocess would then search.
-  assert.doesNotMatch(launchd, /AGENT_PATH="[^"]*\$CLAUDE_DIR/);
-  assert.doesNotMatch(launchd, /::/);
-  assert.match(launchd, /for engine in claude codex opencode/); // same engine list as install-systemd.sh
-  assert.match(launchd, /\[ -d "\$1" \]/); // only directories that exist
-  assert.match(launchd, /case ":\$AGENT_PATH:" in \*":\$1:"\*/); // deduplicated
-  // Every value interpolated into the plist goes through xml_escape — a repo path containing &,
-  // < or > would otherwise produce a document launchd refuses to parse.
-  assert.match(launchd, /xml_escape\(\)/);
-  for (const name of ["NODE_BIN", "APP_DIR", "LOG_DIR", "AGENT_PATH"]) {
-    assert.match(launchd, new RegExp(`${name}_XML="\\$\\(xml_escape "\\$${name}"\\)"`));
-    assert.doesNotMatch(launchd, new RegExp(`<string>\\$${name}(?!_XML)`));
-  }
+  // Linux only: both packaging scripts refuse any other kernel, and the uninstaller mirrors what
+  // the installer creates — the system unit (root) and the user-scope unit, current AND pre-rename
+  // names — without ever touching the service account or the runtime root that holds the database.
+  for (const script of [systemd, uninstall]) assert.match(script, /uname -s.*Linux/);
+  assert.match(uninstall, /^UNIT_NAME="channelgate\.service"$/m);
+  assert.match(uninstall, /^LEGACY_UNIT_NAME="claude-gateway\.service"$/m);
+  assert.match(uninstall, /\/etc\/systemd\/system/);
+  assert.match(uninstall, /\.config\/systemd\/user/);
+  assert.match(uninstall, /systemctl disable --now "\$unit"/);
+  assert.match(uninstall, /systemctl --user "\$@"/);
+  assert.match(uninstall, /needs root/);
+  assert.doesNotMatch(uninstall, /userdel|rm -rf/);
+  // The npm aliases point at the systemd scripts and nothing else; the launchd ones are gone.
+  const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.equal(pkg.scripts["service:install"], "bash scripts/install-systemd.sh");
+  assert.equal(pkg.scripts["service:uninstall"], "bash scripts/uninstall-systemd.sh");
+  assert.deepEqual(Object.keys(pkg.scripts).filter((name) => name.startsWith("service:")).sort(), ["service:install", "service:uninstall"]);
+  assert.doesNotMatch(JSON.stringify(pkg.scripts), /launchd/);
 });
 
 test("the service entry point gates the Node version before any src module is imported", () => {
@@ -181,7 +180,25 @@ test("the service entry point gates the Node version before any src module is im
   assert.equal(pkg.scripts.start, "node src/start.js");
   assert.match(pkg.scripts.dev, /src\/start\.js$/);
   assert.match(readFileSync(path.join(root, "scripts/install-systemd.sh"), "utf8"), /ExecStart=\$NODE_BIN \$APP_DIR\/src\/start\.js/);
-  assert.match(readFileSync(path.join(root, "scripts/install-launchd.sh"), "utf8"), /<string>\$APP_DIR_XML\/src\/start\.js<\/string>/);
+  // Linux only: the platform refusal is one plain line from a dependency-free module that the
+  // gate dynamically imports AFTER the Node floor and BEFORE the server graph.
+  assert.match(entry, /await import\("\.\/platform-gate\.js"\)/);
+  assert.ok(entry.indexOf("process.versions.node") < entry.indexOf("platform-gate.js"));
+  assert.ok(entry.indexOf("platform-gate.js") < entry.indexOf('await import("./server.js")'));
+});
+
+test("the entry point refuses every platform but Linux with one plain line", async () => {
+  const { platformRefusal, SUPPORTED_PLATFORM } = await import("../src/platform-gate.js");
+  assert.equal(SUPPORTED_PLATFORM, "linux");
+  assert.equal(platformRefusal("linux"), "");
+  for (const platform of ["darwin", "win32", "freebsd"]) {
+    assert.equal(platformRefusal(platform), `ChannelGate runs on Linux only (systemd + rootless Podman); this host is ${platform}.`);
+  }
+  // The gate module must stay free of imports so the refusal never depends on a Linux-only module.
+  const gate = readFileSync(path.join(root, "src/platform-gate.js"), "utf8");
+  assert.doesNotMatch(gate, /^\s*import\s/m);
+  // And no launchd/macOS surface is left for the entry point to fall through to.
+  assert.doesNotMatch(readFileSync(path.join(root, "src/start.js"), "utf8"), /darwin|launchd/i);
 });
 
 test("backup fails closed and restore replaces managed directories instead of merging", () => {
@@ -208,36 +225,4 @@ test("every operations shell script parses", () => {
   const scripts = readdirSync(path.join(root, "scripts")).filter((name) => name.endsWith(".sh"));
   assert.ok(scripts.length > 0);
   for (const name of scripts) execFileSync("bash", ["-n", path.join(root, "scripts", name)], { stdio: "pipe" });
-});
-
-test("launchd boot mode starts without a login and cannot coexist with the LaunchAgent", () => {
-  const launchd = readFileSync(path.join(root, "scripts/install-launchd.sh"), "utf8");
-  const uninstall = readFileSync(path.join(root, "scripts/uninstall-launchd.sh"), "utf8");
-
-  // A LaunchAgent's domain only exists once its user logs in graphically, so an unattended
-  // reboot leaves the Mac at the login window with the gateway down. Boot mode installs a
-  // system-domain LaunchDaemon instead.
-  assert.match(launchd, /LaunchDaemons/);
-  assert.match(launchd, /launchctl bootstrap system/);
-
-  // It must drop to the owning user — the engine credentials, runtime root and channel folders
-  // all live in that home — and carry an explicit HOME, since system-domain jobs inherit none.
-  assert.match(launchd, /<key>UserName<\/key><string>\$\(xml_escape "\$RUN_USER"\)<\/string>/);
-  assert.match(launchd, /<key>HOME<\/key><string>\$RUN_HOME_XML<\/string>/);
-  // launchd refuses a system plist that isn't root-owned.
-  assert.match(launchd, /chown root:wheel/);
-
-  // Under sudo, $HOME/$USER/PATH belong to root; every value must be resolved against the
-  // invoking user or the service would point at /var/root and root's secure_path.
-  assert.match(launchd, /SUDO_USER/);
-  assert.match(launchd, /dscl \. -read "\/Users\/\$RUN_USER" NFSHomeDirectory/);
-
-  // The runtime-root singleton lock means agent + daemon can never both run: the loser exits
-  // EALREADYRUNNING and KeepAlive turns that into a crash loop. Installing one removes/refuses
-  // the other, in both directions.
-  assert.match(launchd, /Removing the login-time LaunchAgent/);
-  assert.match(launchd, /would crash-loop/);
-
-  assert.match(uninstall, /--boot/);
-  assert.match(uninstall, /launchctl bootout "system\/\$label"/);
 });

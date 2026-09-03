@@ -3,7 +3,6 @@
 // filesystem browser, and UI reference data (/skills, /mcp/available). Split from admin.js;
 // mounted by createAdminRouter so every URL is unchanged.
 import { Router } from "express";
-import { spawnSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -457,8 +456,9 @@ export function createSettingsRouter({
 
   // Restart the whole daemon only after the safe-restart coordinator observes an idle window.
   // The coordinator leaves Slack connected while active work drains, rechecks for up to five
-  // minutes, and cancels instead of interrupting anything still running. launchd's KeepAlive
-  // relaunches after shutdown (only when installed as the launchd service).
+  // minutes, and cancels instead of interrupting anything still running. The unit's
+  // Restart=on-failure relaunches after the nonzero restart exit (only when installed as the
+  // systemd service — see shutdown.js restartExitCode).
   router.post("/daemon/restart", (_req, res) => {
     if (!restartCoordinator) {
       return res.status(503).json({ ok: false, error: "Safe restart is unavailable." });
@@ -476,23 +476,11 @@ export function createSettingsRouter({
 
   });
 
-  // Stop the daemon: unload the launchd job so it does NOT respawn, then exit. After this the
-  // admin UI is offline; start it again from a terminal (npm run service:install / npm start).
+  // Stop the daemon: exit CLEANLY, which the unit's Restart=on-failure does not respawn. After this
+  // the admin UI is offline; start it again from a terminal (systemctl start channelgate / npm start).
   router.post("/daemon/stop", (_req, res) => {
-    res.json({ ok: true, message: "Stopping. Start again from a terminal (npm run service:install)." });
+    res.json({ ok: true, message: "Stopping. Start again from a terminal (sudo systemctl start channelgate, or npm start)." });
     setTimeout(() => {
-      try {
-        const uid = process.getuid?.();
-        // Both labels: a machine upgraded from the pre-rename install may still be running under
-        // the old one, and booting out only the new label would leave the job alive to respawn.
-        if (uid != null) {
-          for (const label of ["com.makeitfuture.channelgate", "com.makeitfuture.claude-gateway"]) {
-            spawnSync("launchctl", ["bootout", `gui/${uid}/${label}`], { stdio: "ignore" });
-          }
-        }
-      } catch {
-        /* not launchd-managed */
-      }
       requestShutdown({ slack, code: 0, reason: "admin stop" });
     }, 300);
   });

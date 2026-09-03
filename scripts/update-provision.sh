@@ -17,9 +17,6 @@ read_setting() {
 
 install_rclone() {
   case "$(uname -s)" in
-    Darwin)
-      if command -v brew >/dev/null 2>&1; then brew install rclone; else
-        echo "⚠ Homebrew not found — install rclone manually: brew install rclone (or https://rclone.org/install/)"; return 1; fi ;;
     Linux)
       if ! command -v curl >/dev/null 2>&1; then echo "⚠ curl not found — install rclone manually: https://rclone.org/install/"; return 1; fi
       if [ "$(id -u)" = "0" ]; then curl -fsSL https://rclone.org/install.sh | bash

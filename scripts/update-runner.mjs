@@ -31,10 +31,8 @@ import { processFailureMessage } from "../src/util/process-outcome.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, "..");
-// Service identities, current first. The pre-rename label/unit stay in the probe list for one
-// major so self-update still finds (and restarts) a machine that has not re-run the installer.
-const LABEL = "com.makeitfuture.channelgate";
-const LEGACY_LABEL = "com.makeitfuture.claude-gateway";
+// Service identities, current first. The pre-rename unit stays in the probe list for one major so
+// self-update still finds (and restarts) a machine that has not re-run the installer.
 const DEFAULT_SYSTEMD_UNIT = "channelgate.service";
 const LEGACY_SYSTEMD_UNIT = "claude-gateway.service";
 const GIB = 1024 ** 3;
@@ -46,16 +44,9 @@ const IMAGE_BUILD_TIMEOUT_MS = 45 * 60_000;
 const MAX_OUTPUT = 2_000_000;
 const CONTAINER_CLI_CANDIDATES = Object.freeze(["podman", "docker"]);
 
-export function requiredDiskBytes({
-  whisperEnabled = false,
-  modelExists = false,
-  platform = process.platform,
-} = {}) {
+export function requiredDiskBytes({ whisperEnabled = false, modelExists = false } = {}) {
   let bytes = GIB; // npm staging, logs, and the local recovery snapshot.
-  if (whisperEnabled && !modelExists) {
-    bytes += 2 * GIB; // 1.51 GiB model plus its verified temporary download.
-    if (platform === "darwin") bytes += GIB; // source + CMake build staging.
-  }
+  if (whisperEnabled && !modelExists) bytes += 2 * GIB; // 1.51 GiB model plus its verified temporary download.
   return bytes;
 }
 
@@ -225,26 +216,20 @@ async function smokeAt(root) {
   );
 }
 
-// Which probes are worth running here, and in what order. launchd only exists on macOS and
-// systemctl only on Linux, so probing the other one is a guaranteed ENOENT that only slows the
-// preflight down and muddies the refusal message. On Linux BOTH systemd scopes count: the
-// documented install (scripts/install-systemd.sh) is a hardened system unit, but a plain
-// single-user box commonly runs `~/.config/systemd/user/channelgate.service`, which
-// system-scope `systemctl is-active` reports as inactive (exit 4) — that box used to be told no
-// service existed at all.
-export function serviceProbes(platform = process.platform) {
-  const systemd = [
+// Which probes to run, and in what order. systemd is the only service manager ChannelGate runs
+// under (Linux only), and BOTH scopes count: the documented install (scripts/install-systemd.sh)
+// is a hardened system unit, but a plain single-user box commonly runs
+// `~/.config/systemd/user/channelgate.service`, which system-scope `systemctl is-active` reports
+// as inactive (exit 4) — that box used to be told no service existed at all.
+export function serviceProbes() {
+  return [
     { kind: "systemd", scope: "system", args: [] },
     { kind: "systemd", scope: "user", args: ["--user"] },
   ];
-  const launchd = [{ kind: "launchd", scope: "gui" }];
-  if (platform === "darwin") return launchd;
-  if (platform === "linux") return systemd;
-  return [...systemd, ...launchd];
 }
 
 export function noServiceRefusal(platform = process.platform) {
-  const managers = serviceProbes(platform).map((probe) => probe.kind);
+  const managers = serviceProbes().map((probe) => probe.kind);
   const names = [...new Set(managers)].join(" or ");
   return `no active ${names} gateway service was detected on ${platform}`;
 }
@@ -258,22 +243,11 @@ export function systemdUnitCandidates(env = process.env) {
   return [DEFAULT_SYSTEMD_UNIT, LEGACY_SYSTEMD_UNIT];
 }
 
-export function launchdLabelCandidates() {
-  return [LABEL, LEGACY_LABEL];
-}
-
 async function detectService(platform = process.platform) {
-  for (const probe of serviceProbes(platform)) {
-    if (probe.kind === "systemd") {
-      for (const unit of systemdUnitCandidates()) {
-        const result = await runCommand("systemctl", [...probe.args, "is-active", "--quiet", unit], { allowFailure: true, quiet: true, timeoutMs: 10_000 });
-        if (result.code === 0) return { kind: "systemd", scope: probe.scope, unit };
-      }
-      continue;
-    }
-    for (const label of launchdLabelCandidates()) {
-      const result = await runCommand("launchctl", ["list", label], { allowFailure: true, quiet: true, timeoutMs: 10_000 });
-      if (result.code === 0) return { kind: "launchd", label };
+  for (const probe of serviceProbes()) {
+    for (const unit of systemdUnitCandidates()) {
+      const result = await runCommand("systemctl", [...probe.args, "is-active", "--quiet", unit], { allowFailure: true, quiet: true, timeoutMs: 10_000 });
+      if (result.code === 0) return { kind: "systemd", scope: probe.scope, unit };
     }
   }
   throw refusal(noServiceRefusal(platform));
@@ -329,7 +303,6 @@ async function defaultPreflight({ root, repoRoot }) {
   const needBytes = requiredDiskBytes({
     whisperEnabled: settings.whisperEnabled !== false,
     modelExists: !whisperDownloadRequired,
-    platform: process.platform,
   });
   const availableBytes = freeBytes(repoRoot);
   if (availableBytes < needBytes) {
@@ -393,43 +366,31 @@ async function defaultSnapshot({ root, repoRoot, context, owner }) {
 
 // The rename migration edits the installed service definition (its log paths name the runtime
 // root), but it runs INSIDE the service and cannot tear that service down, so it leaves a marker.
-// Both managers cache the definition: systemd needs `daemon-reload` before the next start reads
-// the new paths, and launchd re-runs the OLD plist on `kickstart -k` — only bootout + bootstrap
-// picks up an edit. Consuming the marker here is what makes `update_gateway` / `restart_gateway`
-// after a migration come back on the definition that is actually on disk.
+// systemd caches the definition: it needs `daemon-reload` before the next start reads the new
+// paths. Consuming the marker here is what makes `update_gateway` / `restart_gateway` after a
+// migration come back on the definition that is actually on disk.
 export function serviceReloadMarkerFile(root) {
   return path.join(root, "service-reload-required.json");
 }
 
 export async function applyPendingServiceReload({ root, service, run = runCommand, log = logStep } = {}) {
   const marker = serviceReloadMarkerFile(root);
-  if (!existsSync(marker)) return { reloaded: false, restarted: false };
+  if (!existsSync(marker)) return { reloaded: false };
   let pending;
   try {
     pending = JSON.parse(readFileSync(marker, "utf8"));
   } catch {
     rmSync(marker, { force: true });
-    return { reloaded: false, restarted: false };
+    return { reloaded: false };
   }
   log(`→ Service definition changed by the ChannelGate migration (${(pending.files || []).join(", ")}) — reloading before restart…`);
-  let restarted = false;
   if (service?.kind === "systemd") {
+    // daemon-reload alone: the restart signal that follows is what re-execs onto the new unit.
     const scope = service.scope === "user" ? ["--user"] : [];
     await run("systemctl", [...scope, "daemon-reload"], { allowFailure: true, quiet: true, timeoutMs: 30_000 });
-  } else if (service?.kind === "launchd") {
-    const uid = typeof process.getuid === "function" ? process.getuid() : NaN;
-    const label = service.label || LABEL;
-    const plist = (pending.files || []).find((file) => file.endsWith(`${label}.plist`)) || (pending.files || []).find((file) => file.endsWith(".plist"));
-    if (Number.isInteger(uid) && plist) {
-      // bootout + bootstrap IS the restart on launchd: the job comes back running the new plist,
-      // so the caller must not also kickstart it.
-      await run("launchctl", ["bootout", `gui/${uid}/${label}`], { allowFailure: true, quiet: true, timeoutMs: 30_000 });
-      const boot = await run("launchctl", ["bootstrap", `gui/${uid}`, plist], { allowFailure: true, quiet: true, timeoutMs: 30_000 });
-      restarted = boot.code === 0;
-    }
   }
   rmSync(marker, { force: true });
-  return { reloaded: true, restarted };
+  return { reloaded: true };
 }
 
 // ── Channel image ─────────────────────────────────────────────────────────────────────────────
@@ -532,8 +493,7 @@ export async function defaultImageBuild({
 
 async function defaultRestart({ service, root = gatewayRoot() }) {
   // Never restart onto a stale cached definition.
-  const reload = await applyPendingServiceReload({ root, service });
-  if (reload.restarted) return; // launchd bootstrap already brought the job back
+  await applyPendingServiceReload({ root, service });
   if (service.kind === "systemd") {
     // Ask the SAME scope detectService found the unit in — a user unit is invisible to system-scope
     // `systemctl show`, which answers MainPID=0 and would fail the restart on a healthy box.
@@ -543,15 +503,6 @@ async function defaultRestart({ service, root = gatewayRoot() }) {
     if (!pid) throw new Error(`could not resolve a safe MainPID for ${service.unit}`);
     logStep(`→ Restarting systemd service ${service.unit} (${service.scope || "system"} scope, pid ${pid})…`);
     process.kill(pid, "SIGUSR2");
-    return;
-  }
-  if (service.kind === "launchd") {
-    const uid = typeof process.getuid === "function" ? process.getuid() : NaN;
-    if (!Number.isInteger(uid)) throw new Error("cannot resolve uid for launchd restart");
-    const target = `gui/${uid}/${service.label || LABEL}`;
-    logStep(`→ Restarting launchd service ${target}…`);
-    const kick = await runCommand("launchctl", ["kickstart", "-k", target], { allowFailure: true, quiet: true, timeoutMs: 30_000 });
-    if (kick.code !== 0) await runCommand("bash", [path.join(REPO_ROOT, "scripts", "install-launchd.sh")], { timeoutMs: 60_000 });
     return;
   }
   throw new Error(`unsupported service manager: ${service.kind || "unknown"}`);

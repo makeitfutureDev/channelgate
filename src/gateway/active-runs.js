@@ -1,6 +1,6 @@
 // Restart recovery for interactive Slack turns. Engine subprocesses run in detached process groups
 // so stop/restart can kill their MCP grandchildren too; controlled daemon shutdown explicitly
-// terminates those groups before launchd/systemd relaunches the gateway. The answer only ever lives
+// terminates those groups before systemd relaunches the gateway. The answer only ever lives
 // in an in-memory Promise, so a restart can otherwise leave the thread stuck on a "Working…"
 // placeholder with no follow-up. This module makes turns durable the same way background.js makes
 // shell jobs durable: while a turn runs we persist a row in `active_runs` (written at start, deleted

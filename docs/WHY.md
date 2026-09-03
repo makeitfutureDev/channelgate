@@ -99,7 +99,7 @@ skills, modes, schedules, and the audit view — applied live, no restart.
 | **Memory** | Folder-scoped `MEMORY.md` per channel (no cross-channel bleed) |
 | **Observability** | Usage ledger + Audit view; streaming progress; live to-do checklist |
 | **Governance** | Approval-based access, per-channel modes, audit trail, no spend leaks |
-| **Hosting** | Self-hosted; config under `~/.channelgate/`; launchd / systemd service |
+| **Hosting** | Self-hosted on Linux; config under `~/.channelgate/`; systemd service |
 
 ---
 

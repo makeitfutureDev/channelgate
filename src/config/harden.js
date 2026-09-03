@@ -16,7 +16,7 @@ const DIR_MODE = 0o700;
 
 // Atomically replace a secret-bearing file with a same-directory 0600 temporary file. fsync before
 // rename means readers see either the old complete JSON or the new complete JSON, never a torn
-// write. Same-directory rename is atomic on both macOS and Linux. The parent directory is fsynced
+// write. Same-directory rename is atomic on Linux. The parent directory is fsynced
 // after the rename so a hard crash can't revert the rename itself (losing the newest write —
 // still never corruption or a world-readable window); best-effort because directory fsync is
 // platform-dependent.

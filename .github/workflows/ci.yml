@@ -13,7 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Linux only: ChannelGate runs under systemd with rootless Podman, so there is no macOS leg.
+        os: [ubuntu-latest]
         # 22.13 is the exact supported minimum (node:sqlite is stable from 22.13 — see
         # package.json engines); 24 is the current LTS line. Node 20 cannot run the app at all.
         node: ["22.13", "24"]

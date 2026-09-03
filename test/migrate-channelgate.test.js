@@ -764,14 +764,11 @@ test("service definitions are rewritten and a reload marker is left for the upda
   await registerChannels(fx);
   const fakeHome = path.join(fx.temp, "fake-home");
   const unit = path.join(fakeHome, ".config", "systemd", "user", "claude-gateway.service");
-  const plist = path.join(fakeHome, "Library", "LaunchAgents", "com.makeitfuture.channelgate.plist");
   await mkdir(path.dirname(unit), { recursive: true });
-  await mkdir(path.dirname(plist), { recursive: true });
   await writeFile(
     unit,
     `[Service]\nWorkingDirectory=/home/me/Code/channelgate\nStandardOutput=append:${fx.legacyRoot}/logs/systemd.log\nStandardError=append:${fx.legacyRoot}/logs/systemd.err\n`,
   );
-  await writeFile(plist, `<key>StandardOutPath</key><string>${fx.legacyRoot}/logs/launchd.out.log</string>\n`);
 
   const summary = await migrateChannelGate(runOptions(fx, { home: fakeHome }));
 
@@ -780,14 +777,12 @@ test("service definitions are rewritten and a reload marker is left for the upda
   assert.match(unitText, new RegExp(`append:${fx.newRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/logs/systemd\\.err`));
   // The unrelated WorkingDirectory (the repo checkout) is not ours to move.
   assert.match(unitText, /WorkingDirectory=\/home\/me\/Code\/channelgate/);
-  assert.match(await readFile(plist, "utf8"), new RegExp(fx.newRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.equal(summary.services.files.length, 2);
-  assert.ok(summary.services.reloads.includes("systemctl --user daemon-reload"));
-  assert.ok(summary.services.reloads.some((r) => r.includes("launchctl bootout")));
+  assert.deepEqual(summary.services.files, [unit]);
+  assert.deepEqual(summary.services.reloads, ["systemctl --user daemon-reload"]);
 
-  // Both managers cache the definition, so the migration leaves a marker the updater consumes.
+  // systemd caches the definition, so the migration leaves a marker the updater consumes.
   const marker = JSON.parse(await readFile(path.join(fx.newRoot, "service-reload-required.json"), "utf8"));
-  assert.deepEqual(marker.files.sort(), [plist, unit].sort());
+  assert.deepEqual(marker.files, [unit]);
 });
 
 test("the updater reloads a changed service definition before restarting, once", async (t) => {
@@ -802,24 +797,19 @@ test("the updater reloads a changed service definition before restarting, once",
     return { code: 0, stdout: "", stderr: "" };
   };
   const systemd = await applyPendingServiceReload({ root: temp, service: { kind: "systemd", scope: "user", unit: "channelgate.service" }, run, log: () => {} });
-  assert.equal(systemd.reloaded, true);
   // daemon-reload alone: the SIGUSR2 restart that follows is what re-execs onto the new unit.
-  assert.equal(systemd.restarted, false);
+  assert.deepEqual(systemd, { reloaded: true });
   assert.deepEqual(calls, ["systemctl --user daemon-reload"]);
   // The marker is consumed, so an ordinary later restart does no extra work.
   const again = await applyPendingServiceReload({ root: temp, service: { kind: "systemd", scope: "user" }, run, log: () => {} });
-  assert.equal(again.reloaded, false);
+  assert.deepEqual(again, { reloaded: false });
 
-  // launchd re-runs the OLD plist on `kickstart -k`; only bootout + bootstrap picks up an edit,
-  // and that IS the restart, so the caller must not kickstart afterwards.
-  const plist = path.join(temp, "com.makeitfuture.channelgate.plist");
-  await writeFile(serviceReloadMarkerFile(temp), JSON.stringify({ files: [plist], reloads: [] }));
+  // A system-scope unit reloads the system manager, never `--user`.
+  await writeFile(serviceReloadMarkerFile(temp), JSON.stringify({ files: [path.join(temp, "channelgate.service")], reloads: ["systemctl daemon-reload"] }));
   calls.length = 0;
-  const launchd = await applyPendingServiceReload({ root: temp, service: { kind: "launchd", label: "com.makeitfuture.channelgate" }, run, log: () => {} });
-  assert.equal(launchd.restarted, true);
-  assert.equal(calls.length, 2);
-  assert.match(calls[0], /^launchctl bootout gui\/\d+\/com\.makeitfuture\.channelgate$/);
-  assert.match(calls[1], new RegExp(`^launchctl bootstrap gui/\\d+ ${plist.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  const system = await applyPendingServiceReload({ root: temp, service: { kind: "systemd", scope: "system", unit: "channelgate.service" }, run, log: () => {} });
+  assert.deepEqual(system, { reloaded: true });
+  assert.deepEqual(calls, ["systemctl daemon-reload"]);
 });
 
 test("--verify reports every store before the migration and nothing after it", async (t) => {

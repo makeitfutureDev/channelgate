@@ -52,7 +52,7 @@ function segmentMatcher(segment) {
 }
 
 // Split an absolute path into [root, tail], where `tail` is its last `depth` segments. Both sides
-// of a carry are POSIX (the daemon runs on macOS or Linux; a container is always Linux), so the
+// of a carry are POSIX (the daemon and every container run on Linux), so the
 // separator is the same on both — `sep` exists so a caller can be explicit rather than lucky.
 export function splitCarryPath(abs, depth, sep = path.sep) {
   const parts = String(abs).split(sep);

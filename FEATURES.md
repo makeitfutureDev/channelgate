@@ -16,7 +16,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   queue/dedupe ownership lives in `message-lifecycle.js`; status rendering is a controller; the
   message pipeline retains orchestration while preserving its public compatibility exports.
 - **Crash- and contention-safe config**: secret JSON replacement writes a same-directory 0600 temp,
-  fsyncs, then atomically renames on macOS/Linux. User and channel read-modify-write patches take an
+  fsyncs, then atomically renames. User and channel read-modify-write patches take an
   immediate SQLite transaction and skip omitted fields, preventing concurrent writers from
   silently restoring stale security or credential fields. → TEST-PLAN: Phase E module boundaries.
 
@@ -897,14 +897,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   for zero use. Clean mode gets none either, like every other injected grant.
 
 ## Isolation & security
-- **Trustworthy cross-platform release gate**: every pull request runs the complete coverage-gated
-  suite on macOS + Linux at the exact Node 22.13 minimum and Node 24, plus dependency-free syntax /
+- **Trustworthy release gate** (the macOS leg retired 2026-09-03 — Linux only): every pull request
+  runs the complete coverage-gated suite on Ubuntu at the exact Node 22.13 minimum and Node 24, plus dependency-free syntax /
   whitespace checks, tracked-file secret scanning, production dependency audit, and independent
   coverage floors for authorization, access-grant isolation, sandbox policy, secret handling, and
   updater state. Claude
   and Codex stubs exercise Slack message→reply plus their engine-specific resume/MCP/cancellation
-  contracts; a separate pinned nightly probes both real provider-free CLI command surfaces on both
-  operating systems.
+  contracts; a separate pinned nightly probes both real provider-free CLI command surfaces on Ubuntu.
   All third-party Actions are SHA-pinned with read-only repository permissions. → TEST-PLAN:
   Automated release gate (B2–B5).
 - Per-conversation gated folder: filesystem sandbox confined to the folder, persistent memory
@@ -1392,12 +1391,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   instead of leaving channels on yesterday's toolchain. The image is never built inside a turn: a
   missing image fails the run closed with the one command that fixes it. → TEST-PLAN: Container
   runtime (v0.8 P1).
-- **The daemon still runs everywhere; the containers do not.** A host with no container CLI boots
-  exactly as before — the backend is imported dynamically, a failed probe is one legible log line
-  plus a reason in `/api/health`, and the feature is simply off. The channel IMAGE and its helper
-  scripts are Linux-only by design (the v0.8 decision drops the macOS DEPLOYMENT requirement for
-  containers); macOS remains a supported development and daemon host on the `host` backend, which is
-  unchanged. → TEST-PLAN: Container runtime (v0.8 P1).
+- **The daemon still runs everywhere; the containers do not** — *Retired 2026-09-03 (Linux only):
+  the daemon now refuses every platform but Linux (`src/platform-gate.js`), so there is no
+  "everywhere" left.* A host with no container CLI boots exactly as before — the backend is
+  imported dynamically, a failed probe is one legible log line plus a reason in `/api/health`, and
+  the feature is simply off. The channel IMAGE and its helper scripts are Linux-only by design (the
+  v0.8 decision drops the macOS DEPLOYMENT requirement for containers); macOS remains a supported
+  development and daemon host on the `host` backend, which is unchanged. → TEST-PLAN: Container
+  runtime (v0.8 P1).
 
 ## Performance
 - Warm session pool: a thread's `claude` process stays alive (default 10 min idle) for fast
@@ -1554,18 +1555,20 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   and `npm run update` all reserve one stale-safe global transaction. A second caller gets the
   active transaction instead of starting an overlapping updater. Before touching Git, the runner
   checks the attached/clean/fast-forward checkout and upstream access, Node/npm, parseable
-  settings, an active launchd or systemd service, available disk, current daemon health, and a real
-  isolated Claude turn. Missing Whisper assets add 2 GiB of required staging space on Linux and
-  3 GiB on macOS to the 1 GiB base requirement; the 1.5 GiB optional model is never downloaded
-  silently when local Whisper is disabled.
+  settings, an active systemd service (the launchd probe retired 2026-09-03 — Linux only),
+  available disk, current daemon health, and a real isolated Claude turn. Missing Whisper assets
+  add 2 GiB of required staging space to the 1 GiB base requirement (the extra macOS build staging
+  retired 2026-09-03 — Linux only); the 1.5 GiB optional model is never downloaded silently when
+  local Whisper is disabled.
 - **Mode-aware MCP update authorization**: `update_gateway` remains admin-only. Its additional
   control-plane approval card is skipped in Auto/Admin channels and retained in Read/Worker
   channels; Claude and Codex share the same gateway MCP policy.
 - **Candidate validation and automatic rollback**: the updater snapshots the exact revision,
   lockfile, local config, `.env`, and a consistent SQLite copy under mode-0700
   `~/.channelgate/update-backups/<transaction>/`; fast-forwards, runs exact `npm ci`, the
-  production advisory gate, all tests, and optional provisioning; then restarts through launchd
-  or the exact systemd `MainPID`. Success requires a new daemon instance on the expected revision,
+  production advisory gate, all tests, and optional provisioning; then restarts through the exact
+  systemd `MainPID` (the launchd restart retired 2026-09-03 — Linux only). Success requires a new
+  daemon instance on the expected revision,
   Claude availability, Slack reconnect when it was previously connected, and another real isolated
   Claude smoke. A post-checkout failure resets the old revision, reinstalls its lockfile, restarts,
   and proves the restored build with the same checks. Runtime snapshots are operator recovery
@@ -1606,12 +1609,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   runtime config dir (outside every sandbox) so rclone gets a file path, not the raw key. An
   on-host key-file path is kept as an advanced fallback. Global settings (Settings → Google Drive
   sync): master enable, pasted key / key-file path, impersonate subject, interval, conflict policy,
-  rclone binary path (absolute path sidesteps launchd's minimal PATH). Dormant unless enabled + a
+  rclone binary path (absolute path sidesteps the service unit's minimal PATH). Dormant unless enabled + a
   key exists + rclone is installed. A per-channel **Test** button verifies the service account can
   see the folder before the first sync (`rclone lsf`). The update flow (`scripts/update.sh`, shared
   by the CLI / `/update` / admin button) auto-installs rclone when Drive sync is enabled and it's
-  missing — brew on macOS, the official installer on Linux — gated on the setting, best-effort, and
-  never aborting the update. The per-channel folder link can also be wired up **by asking the agent**
+  missing — the official installer (the Homebrew branch retired 2026-09-03 — Linux only) — gated on
+  the setting, best-effort, and never aborting the update. The per-channel folder link can also be
+  wired up **by asking the agent**
   (not only the admin UI): gateway control MCP tools `get_channel_drive_folder` (anyone — shows the
   link + whether sync is globally armed), `set_channel_drive_folder` (admins — validates/parses the
   link, saves it, runs the same read-only connection test, and reports the SA `client_email` to share
@@ -1760,10 +1764,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 ## Phase F operational readiness
 
 - **Renamed to ChannelGate** (formerly *Claude Gateway for Slack*): display name, npm package
-  (`channelgate`), Slack app manifest, launchd label `com.makeitfuture.channelgate`, systemd unit
-  `channelgate.service`, and the bundled lockdown skill `.claude/skills/channelgate`. Both
-  installers remove the pre-rename service before installing the new one, and self-update still
-  finds a host running under the old label/unit. → TEST-PLAN: ChannelGate rename.
+  (`channelgate`), Slack app manifest, the launchd label (retired 2026-09-03 — Linux only), systemd
+  unit `channelgate.service`, and the bundled lockdown skill `.claude/skills/channelgate`. The
+  installer removes the pre-rename service before installing the new one, and self-update still
+  finds a host running under the old unit. → TEST-PLAN: ChannelGate rename.
 - **Renamed runtime + workspace roots**: `~/.channelgate/` (env `CHANNELGATE_DIR`,
   `CHANNELGATE_DB`; the pre-rename `CLAUDE_GATEWAY_DIR`/`CLAUDE_GATEWAY_DB` still work for one
   major behind a single deprecation warning) and `~/ChannelGate/<platform>/<slug>/` (env
@@ -1785,8 +1789,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   directories (renamed to the encoding of the NEW cwd — that is what keeps `-r` resume working) and
   the `cwd` inside every transcript, Codex's `threads` index `rollout_path`, rollout headers,
   `config.toml` and shell snapshots, the agent's own prose in `MEMORY.md`/`memory/*.md`/`CLAUDE.md`,
-  and the installed launchd plist / systemd unit (with a reload marker the updater consumes, since
-  both managers cache the definition). The content-addressed per-run caches under
+  and the installed systemd unit (with a reload marker the updater consumes, since systemd caches
+  the definition; the launchd plist rewrite retired 2026-09-03 — Linux only). The
+  content-addressed per-run caches under
   `channels/**/runtime/` are dropped rather than rewritten — their filename is a digest of their
   contents — and the historical `events` log is left untouched by design. `--verify` is a read-only
   audit of all of it that exits 1 while any STATE still points at a pre-rename root — decided per
@@ -1849,11 +1854,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Portable serialized landing lock**: `npm run with-landing-lock -- <command> [args...]` guards
   the common Git repository across every worktree with an atomic compare-and-swap owner ref,
   refuses concurrent landings, safely recovers a dead same-host owner, and drains the complete
-  child process group before releasing on macOS/Linux. → TEST-PLAN: Automated release gate.
+  child process group before releasing. → TEST-PLAN: Automated release gate.
 - **Recoverable encrypted state**: live SQLite is snapshotted transactionally into encrypted
   backups; a disposable restore drill verifies decryption, contents, and database integrity.
-- **Production service packaging**: hardened dedicated-account systemd installation complements
-  private launchd packaging, with documented macOS/Linux operator contracts.
+- **Production service packaging**: hardened dedicated-account systemd installation with a matching
+  uninstaller (`scripts/uninstall-systemd.sh`: system and user units, current and pre-rename names,
+  never the runtime root) and a documented Linux operator contract. The private launchd packaging
+  it used to complement retired 2026-09-03 (Linux only).
+- **Linux only** (2026-09-03): the daemon targets Linux with systemd and rootless Podman.
+  `src/start.js` refuses any other platform with one plain line (`src/platform-gate.js`, imported
+  after the Node floor and before the server graph), `npm run setup` says so before touching
+  anything, `npm run service:install` / `service:uninstall` wrap the systemd installer and
+  uninstaller, and the self-updater probes systemd only (system scope, then user scope). → TEST-PLAN:
+  Phase F operational readiness.
 - **Lifecycle and release evidence**: configurable backup retention/log rotation, centralized log
   redaction, compatibility matrix, tag-built SBOM/provenance/checksums, canary/rollback checklist,
   and security/privacy/data-flow documentation.

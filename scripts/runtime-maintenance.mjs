@@ -22,7 +22,7 @@ if (existsSync(logs)) for (const name of readdirSync(logs)) {
   const file = path.join(logs, name);
   const stat = lstatSync(file); // never follow symlinks in a deletion routine
   if (stat.isFile() && stat.size > maxLogBytes) {
-    // Copy-truncate, NOT rename: launchd/systemd keep the daemon's stdout/stderr fd open, so a
+    // Copy-truncate, NOT rename: systemd keeps the daemon's stdout/stderr fd open, so a
     // renamed file would keep growing under the new name and the size cap would never apply to
     // the live log. Truncating in place keeps the open fd on a now-empty inode. (A write landing
     // between copy and truncate is lost — acceptable for logs, standard copytruncate trade-off.)

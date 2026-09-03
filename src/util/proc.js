@@ -1,8 +1,8 @@
 // Process-group kill helpers. Engine and background children are spawned with `detached: true`,
 // which makes each one the leader of its own process group — so signalling the NEGATIVE pid takes
 // down the whole tree (MCP stdio servers, `npx mcp-remote` bridges, backgrounded grandchildren).
-// A plain child.kill() only hits the direct child and orphans those. Pure POSIX semantics — works
-// on both deploy targets (macOS + Linux), no setsid or other platform binaries involved.
+// A plain child.kill() only hits the direct child and orphans those. Pure POSIX semantics — no
+// setsid or other platform binaries involved.
 import { execFileSync } from "node:child_process";
 
 // Signal a process group by its leader pid. Falls back to signalling the single process when the
@@ -33,7 +33,7 @@ export function killTree(child, signal = "SIGTERM") {
 // Persisted next to a background job's pid so a boot-recovery signal can prove the pid still names
 // OUR child: after a long outage the OS may have recycled the pid onto an unrelated process, and a
 // bare kill(pid) would then SIGTERM a stranger's process group. `ps -p <pid> -o lstart=` is
-// portable across both deploy targets (macOS + procps Linux). Graceful fallback: "" (unknown)
+// what procps ships on every Linux we run on. Graceful fallback: "" (unknown)
 // when ps is unavailable or the process is gone — callers treat "" as "identity unverifiable".
 export function processStartTime(pid) {
   if (!pid) return "";

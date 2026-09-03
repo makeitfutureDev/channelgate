@@ -223,8 +223,8 @@ export async function listVisibleDirectory(root, relative = "", { page = 0, page
   const safePage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
   return {
     root: dir.rootReal,
-    // Display the configured logical root spelling (for example, macOS `/var` rather than its
-    // `/private/var` realpath alias). Filesystem access and confinement stay on `dir.path`.
+    // Display the configured logical root spelling (a symlinked root rather than its realpath
+    // alias). Filesystem access and confinement stay on `dir.path`.
     absolutePath: path.resolve(root, dir.relative),
     relative: dir.relative,
     entries: entries.slice(safePage * pageSize, (safePage + 1) * pageSize),
@@ -517,7 +517,7 @@ export async function createVisibleDirectory(root, relative, requestedName) {
 // before the script starts; replacing the pathname with an escaping symlink afterward cannot move
 // that cwd. The child re-realpaths `.` before opening the basename, so a swap that wins before spawn
 // is refused without creating or writing the file. This provides portable openat-like containment
-// with documented Node APIs on both macOS and Linux.
+// with documented Node APIs.
 export function writeNewFileInBoundDirectory(directoryPath, rootReal, name, bytes) {
   return new Promise((resolve, reject) => {
     let child;

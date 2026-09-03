@@ -31,20 +31,13 @@ non-login `channelgate` account and a mode-0700 `/var/lib/channelgate` (an insta
 pre-rename release keeps its existing `claude-gateway` account and `/var/lib/claude-gateway`, so no
 data moves underneath it; only a fresh install gets the new names). It also `chown`s the
 checkout to that account and verifies the account can write it — self-update runs `git` and `npm ci`
-as the service user, which fails on a root-owned checkout. macOS LaunchAgents run
-as the logged-in account; use a dedicated macOS account for production rather than an administrator
-login. Neither service should share credentials or a runtime root with interactive development.
-
-**macOS start-at-boot:** a LaunchAgent only starts when its user logs in graphically, so an
-unattended restart leaves the Mac at the login window with the gateway down. `sudo bash
-scripts/install-launchd.sh --boot` installs a LaunchDaemon instead — loaded in the system domain at
-boot, still running as the owning user via `UserName`, with `HOME` set explicitly because
-system-domain jobs inherit none. It removes the LaunchAgent, which the runtime-root singleton lock
-would otherwise turn into a `KeepAlive` crash loop. Two ceilings remain: FileVault halts a cold
-unattended reboot at the preboot unlock screen (`sudo fdesetup authrestart` covers *planned*
-restarts), and with no GUI session the login keychain stays locked — the engine CLIs read
-`~/.claude/.credentials.json` and are unaffected, but Keychain-sourced secrets and GUI automation
-are not available.
+as the service user, which fails on a root-owned checkout. A single-user box may instead run a
+user-scope unit (`~/.config/systemd/user/channelgate.service`, with `loginctl enable-linger` so it
+survives logout); the updater and the migration find both scopes. `sudo bash
+scripts/uninstall-systemd.sh` (`npm run service:uninstall`) removes either unit — current and
+pre-rename names — and leaves the service account and runtime root in place. The service must never
+share credentials or a runtime root with interactive development. ChannelGate runs on Linux only;
+there is no other service packaging.
 
 **Engine credentials — Claude uses the host user's own login.** The gateway authenticates Claude
 with the `claude` sign-in of the user the daemon runs as (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) —
@@ -129,7 +122,7 @@ the daemon comes back pointing at directories that no longer exist:
 | Claude engine home | `.claude.json` (both copies) keys a `projects` map by absolute cwd |
 | Codex state | the `threads` index's `rollout_path` column, each rollout's `session_meta`/`turn_context` `cwd` + `workspace_roots`, `config.toml`'s `[projects."…"]` sections, and `shell_snapshots` |
 | Work folder text | `MEMORY.md`, `memory/<topic>.md`, `CLAUDE.md`/`AGENTS.md` — the agent's own prose can quote a path it was told to use |
-| Service definitions | the installed launchd plist / systemd user unit (their log paths name the runtime root) |
+| Service definitions | the installed systemd user unit (its log paths name the runtime root) |
 | Per-channel lockdown | `.claude/settings.json` and `settings-admin.json` are REGENERATED, not rewritten |
 | Per-channel `runtime/` | the content-addressed run caches (`claude-settings/<digest>.json`, `claude-plugins/<digest>/`) are DELETED. Their filename is a digest of their contents, so rewriting one would leave a file whose name no longer describes it; the next run recreates what it needs |
 
@@ -243,12 +236,11 @@ the same pairs counts what still names the old side, so the acceptance check is 
 ### Reloading the service after the migration
 
 The migration rewrites the installed service definition, but the running service holds a CACHED
-copy: `systemctl --user daemon-reload` is required before the next start reads the new log paths,
-and on macOS `launchctl kickstart -k` re-runs the OLD plist — only `bootout` + `bootstrap` picks up
-an edit. The migration cannot do this itself (it runs inside the service it would tear down), so it
-leaves `<runtime root>/service-reload-required.json` and `scripts/update-runner.mjs` consumes it on
-the next restart: `daemon-reload` before the systemd restart signal, `bootout` + `bootstrap` instead
-of a kickstart on launchd. Restarting by hand? Run the command the migration logged first.
+copy: `systemctl --user daemon-reload` is required before the next start reads the new log paths.
+The migration cannot do this itself (it runs inside the service it would tear down), so it leaves
+`<runtime root>/service-reload-required.json` and `scripts/update-runner.mjs` consumes it on the
+next restart: `daemon-reload` (in the unit's own scope) before the restart signal. Restarting by
+hand? Run the command the migration logged first.
 
 `--dry-run` deliberately bypasses these checks and reports them instead — previewing the plan while
 the daemon is up is exactly when an operator wants it. The finding is printed as the first plan line
@@ -266,9 +258,9 @@ clobbered (it is skipped and reported), a cross-device move copies and verifies 
 source, and each old location keeps a `MOVED.md` breadcrumb. Every channel's `.claude/settings.json`
 is regenerated afterwards because the sandbox allow/deny lists embed absolute paths.
 
-After migrating, re-run the service installer so the launchd label / systemd unit match the new
-names (`com.makeitfuture.channelgate`, `channelgate.service`); each installer removes the pre-rename
-one first so an upgraded host never runs two daemons against one runtime root.
+After migrating, re-run the service installer so the systemd unit matches the new name
+(`channelgate.service`); the installer removes the pre-rename one first so an upgraded host never
+runs two daemons against one runtime root.
 
 ## Container runtime
 
@@ -491,10 +483,10 @@ turn is recorded as a plain error instead of being replayed. Existing installs: 
 
 Run `npm run maintenance` daily from the service manager. `CG_RETENTION_DAYS` defaults to 30 and
 removes expired backup files; `CG_MAX_LOG_BYTES` defaults to 10 MiB and retains one rotated copy.
-Active logs are rotated by copy-truncate, not rename: launchd and systemd hold the daemon's
+Active logs are rotated by copy-truncate, not rename: systemd holds the daemon's
 stdout/stderr file descriptor open, so a renamed file would keep growing under its new name and the
 size cap would never apply to the live log again. Console output is centrally redacted for Slack/OpenAI-style tokens, bearer values, and secret query
-parameters before launchd/systemd receives it. Database audit/usage retention is deliberately not
+parameters before systemd (or the journal) receives it. Database audit/usage retention is deliberately not
 automated: legal and operational owners must define it before enabling destructive row pruning.
 
 ## Upgrade and rollback canary
@@ -513,9 +505,9 @@ returns Git/dependencies to the prior revision after a failed health check; runt
 are never restored automatically. Keep the previous release artifact and backup until the canary
 has run for 24 hours.
 
-The admin **Restart** button picks its exit code from the detected service manager (clean 0 under
-launchd's `KeepAlive`, nonzero under the unit's `Restart=on-failure`). Nothing in the test suite can
-prove a real launchd/systemd relaunch — that stays a manual canary step, and a follow-up if these
+The admin **Restart** button picks its exit code from the detected service manager (nonzero under
+the unit's `Restart=on-failure`, clean 0 for an unmanaged foreground run). Nothing in the test suite
+can prove a real systemd relaunch — that stays a manual canary step, and a follow-up if these
 paths ever get an automated harness: press Restart on the canary and confirm the daemon comes back
 with a new instance id.
 

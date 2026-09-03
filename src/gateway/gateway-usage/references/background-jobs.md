@@ -45,7 +45,7 @@ click adds it to this channel's allow-list; effective on the NEXT message, so fi
 retry then); for a known deploy CLI, ask an admin to enable that CLI integration; only as a last
 resort use `run_in_background` with its unsandboxed-shell approval.
 
-Never restart the gateway with a background `launchctl`, `systemctl`, `kill`, or shell command.
+Never restart the gateway with a background `systemctl`, `kill`, or shell command.
 Use `restart_gateway` instead: it checks all ongoing gateway work, waits and rechecks before
 shutdown, and cancels rather than interrupting work that remains active.
 
