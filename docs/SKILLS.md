@@ -61,16 +61,22 @@ pruned.
 
 ## Templates
 
-**Development**, **Sales**, **Marketing** and **Management** are seeded; each names categories
-and/or explicit skills, and admins edit or add templates in the admin UI (Skills → Templates).
-Applying a template to a conversation copies a **snapshot** of the skills it resolves to at that
-moment into the conversation's grants — a later template edit never changes a conversation by
-itself. Preview first to see what would be added, kept or removed.
+**Development**, **Sales**, **Marketing** and **Management** are seeded; each is a named skill
+set — explicit catalog skills (a checklist) plus every catalog skill in its categories — edited
+under Settings → Access Templates → *Skill templates*, where admins add more (Support, Legal, …).
+
+A conversation **follows** one template: Conversations → Tools → *Skill template* (or
+`set_channel_skill_template` from chat, or Skills → Templates → *Assign*). Its channel tier is the
+template's **current** skills plus the skills added to the conversation itself, so a template
+edit reaches every conversation that follows it, and "add this skill to the channel" always adds
+on top. The organization and personal tiers union in as before. `template: none` stops
+following; the conversation's own additions stay. DM templates (User / Admin) can name a skill
+template too. Preview first to see what a conversation would gain, keep or drop.
 
 From chat (managers, or an admin): `list_skill_templates`, `preview_skill_template`,
-`apply_skill_template` (`mode: add | replace`), `add_channel_skills`, `remove_channel_skills`,
-`show_channel_skills`. These change persistent state and show an Approve/Deny card unless the
-conversation is in auto mode.
+`set_channel_skill_template`, `add_channel_skills`, `remove_channel_skills`,
+`show_channel_skills` (which names the template and marks which skills come from it). These
+change persistent state and show an Approve/Deny card unless the conversation is in auto mode.
 
 ## Sources (GitHub and host folders)
 
@@ -201,7 +207,7 @@ integration left in channel folders are pruned automatically on each channel's n
 
 All routes sit under `/api/skills/…` (admin session): `overview`, `catalog` (list, detail, `file`,
 create/update, pin, remove/restore), `staged` + `revisions/:id/approve|reject|files`, `sources`
-(CRUD, `:id/sync`, `sync-all`, `refresh-host`), `templates` (CRUD, `:slug/preview`, `:slug/apply`),
+(CRUD, `:id/sync`, `sync-all`, `refresh-host`), `templates` (CRUD, `:slug/preview`, `:slug/assign`), `profile/:channel/template` (assign or clear),
 `profile/:channel` (+ `grant`, `revoke`), `profiles`, `usage`, `proposals` (+ `approve|reject`),
 `org/grant`, `org/revoke`, `tokens` (create returns the value once, `:id/revoke`, delete),
 `catalog/:slug/visibility`, `catalog/:slug/publish`. Public (self-authenticating): `POST /mcp/skills`,

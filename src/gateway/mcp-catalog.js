@@ -104,7 +104,7 @@ export const GATEWAY_TOOL_NAMES = [
   "remove_channel_skills",
   "list_skill_templates",
   "preview_skill_template",
-  "apply_skill_template",
+  "set_channel_skill_template",
   "get_skill_file",
   "create_skill",
   "update_skill",

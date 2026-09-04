@@ -1771,11 +1771,16 @@ are retired, bullet by bullet; everything else stands.
   write-only, revealable only through the secrets allowlist) serves private repositories; it never
   enters a conversation folder or an MCP config. Folder sources import a host directory the same
   way. → TEST-PLAN: Skills platform (Core).
-- **Templates as data** (`templates.js`): seeded **Development / Sales / Marketing / Management**
-  (categories + explicit slugs; admins edit or add templates), resolved live against the catalog
-  (category match case-insensitive), **preview** (add / keep / remove + resulting context cost) and
-  **apply** with `add` or `replace` — a SNAPSHOT copied into the conversation's grants with
-  dependencies, never a live link. → TEST-PLAN: Skills platform (Core).
+- **Templates as data, followed live** (`templates.js`): seeded **Development / Sales /
+  Marketing / Management** (explicit skills + categories), edited under Settings → Access
+  Templates → *Skill templates* with a catalog checklist, resolved live against the catalog
+  (category match case-insensitive). A conversation is ASSIGNED a template (`meta.skillTemplate`;
+  Conversations → Tools, the Skills view, `set_channel_skill_template`, or a DM template's own
+  field): its channel tier is the template's current skills plus the skills added to the
+  conversation (`meta.skills`), so a template edit reaches every follower and additions come on
+  top; `none` stops following and keeps the additions. **Preview** shows gains / keeps / drops and
+  the context cost. (2026-09-05, replacing the earlier snapshot-copy apply.)
+  → TEST-PLAN: Skills platform (Core).
 - **Chat verbs** (`src/mcp/tools/skills.js`, in the lockdown allowlist and the control-plane
   approval map): `list_skills`, `show_channel_skills` (tiers, dependencies, missing/staged, context
   cost), `get_skill_file`, `list_skill_templates`, `preview_skill_template` (open);

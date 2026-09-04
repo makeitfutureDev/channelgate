@@ -73,7 +73,7 @@ what needs approving if they seem unaware. Read-only tools (`list_*`, `get_*`) a
 ## Skills granted in this channel (managers)
 - `show_channel_skills` — what is active here, by tier, with the context cost.
 - `add_channel_skills` / `remove_channel_skills` — grant/revoke catalog skills here (by slug).
-- `apply_skill_template` — copy a template's skills (Development, Sales, …) into this channel.
+- `set_channel_skill_template` — make this channel follow a template (Development, Sales, …) live.
 - `add_my_skills` / `remove_my_skills` — any member's OWN tier (their runs only, no card).
 - Authoring, proposals, usage, sources, publishing and the organization tier: `references/skills.md`.
 

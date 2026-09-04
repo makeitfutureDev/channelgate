@@ -56,6 +56,7 @@ import { isLibraryStub, splitFavorites, ensureCodexSkillsLink, pruneLegacyLibrar
 import { MANAGED_SKILL_MARKER, materializeSkill, pruneManagedSkills } from "./skills/materialize.js";
 import { listSkills as listCatalogSkills } from "./skills/catalog.js";
 import { withDependencies } from "./skills/resolve.js";
+import { channelSkillGrants } from "./skills/templates.js";
 import { sanitizeSkillGrantNames } from "./access-grants.js";
 import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 // Capability reads only — never the registry or the resolver (resolve.js imports THIS module for
@@ -508,12 +509,14 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
 
   // The durable workspace always reflects organization+channel grants. A run-specific clean/mode
   // override may select a different cwd, but must not prune or rewrite this shared baseline.
+  // The channel tier: the assigned skill template's current skills plus the conversation's own.
+  const channelSkills = meta.cleanMode ? [] : channelSkillGrants(meta);
   const durableCwd = effectiveWorkDir(slug, meta);
-  await configureWorkspace(durableCwd, meta, meta.cleanMode ? [] : (meta.skills ?? []));
+  await configureWorkspace(durableCwd, meta, channelSkills);
 
   const cwd = effectiveWorkDir(slug, runMeta);
   if (cwd !== durableCwd) {
-    await configureWorkspace(cwd, runMeta, runMeta.cleanMode ? [] : (meta.skills ?? []));
+    await configureWorkspace(cwd, runMeta, runMeta.cleanMode ? [] : channelSkills);
   }
 
   return {

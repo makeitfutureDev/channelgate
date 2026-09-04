@@ -128,33 +128,35 @@ test("sources: a folder source imports in review mode, the review queue approves
   assert.equal((await request("/skills/catalog/folder-skill")).json.skill.deleted, true);
 });
 
-test("templates: preview and apply to a conversation, grant/revoke, profile and usage endpoints", async () => {
-  await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Tpl Sales Skill", "sales via template", "category: Sales\nrequires: [tpl-dep]\n") }] } });
-  await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Tpl Dep", "a dependency") }] } });
+test("templates: preview and assign to a conversation, grant/revoke, profile and usage endpoints", async () => {
+  await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Tpl Sales Skill", "sales via template", "category: Sales\nrequires: [tpl-dep]\n") }], publish: false } });
+  await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Tpl Dep", "a dependency") }], publish: false } });
   const templates = await request("/skills/templates");
   const sales = templates.json.templates.find((t) => t.slug === "sales");
   assert.ok(sales.resolved.includes("tpl-sales-skill"));
 
-  const preview = await request(`/skills/templates/sales/preview?channel=${entry.slug}&mode=add`);
+  const preview = await request(`/skills/templates/sales/preview?channel=${entry.slug}`);
   assert.equal(preview.status, 200);
   assert.ok(preview.json.preview.add.includes("tpl-sales-skill") && preview.json.preview.add.includes("tpl-dep"));
   assert.equal((await request("/skills/templates/sales/preview?channel=nope")).status, 404);
 
-  const applied = await request("/skills/templates/sales/apply", { method: "POST", body: { channel: entry.slug, mode: "add" } });
-  assert.equal(applied.status, 200);
-  assert.ok((await getChannelMeta(entry.slug)).skills.includes("tpl-sales-skill"));
+  const assigned = await request("/skills/templates/sales/assign", { method: "POST", body: { channel: entry.slug } });
+  assert.equal(assigned.status, 200);
+  assert.equal((await getChannelMeta(entry.slug)).skillTemplate, "sales");
+  assert.deepEqual((await getChannelMeta(entry.slug)).skills, [], "following a template stores no copy of its skills");
 
   const profile = await request(`/skills/profile/${entry.slug}`);
   assert.equal(profile.status, 200);
-  // Applying a template snapshots the dependency INTO the grant list, so it resolves as a grant.
-  assert.ok(profile.json.profile.active.some((e) => e.slug === "tpl-dep"));
-  assert.ok(profile.json.grants.includes("tpl-dep"));
+  assert.equal(profile.json.skillTemplate, "sales");
+  assert.ok(profile.json.profile.active.some((e) => e.slug === "tpl-sales-skill"));
+  assert.ok(profile.json.profile.active.some((e) => e.slug === "tpl-dep"), "the dependency resolves live");
   assert.equal(typeof profile.json.profile.contextTokens, "number");
 
+  const granted = await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["Tpl Sales Skill"] } });
+  assert.deepEqual(granted.json.added, ["tpl-sales-skill", "tpl-dep"], "an addition is stored on the conversation even when the template already provides it");
   const revoked = await request(`/skills/profile/${entry.slug}/revoke`, { method: "POST", body: { slugs: ["tpl-sales-skill"] } });
   assert.deepEqual(revoked.json.removed, ["tpl-sales-skill"]);
-  const granted = await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["Tpl Sales Skill"] } });
-  assert.deepEqual(granted.json.added, ["tpl-sales-skill"], "a name resolves to its slug; the dependency is already there");
+  assert.ok((await request(`/skills/profile/${entry.slug}`)).json.profile.active.some((e) => e.slug === "tpl-sales-skill"), "still active through the template");
   assert.equal((await request("/skills/profile/nope/grant", { method: "POST", body: { slugs: ["x"] } })).status, 404);
 
   const custom = await request("/skills/templates", { method: "POST", body: { slug: "support", name: "Support", categories: ["Support"], skills: ["tpl-dep"] } });
@@ -166,9 +168,9 @@ test("templates: preview and apply to a conversation, grant/revoke, profile and 
   catalog.recordSkillUsage({ slug: "tpl-sales-skill", channelSlug: entry.slug, engine: "claude", signal: "exact", userId: "U1" });
   const usage = await request(`/skills/usage?channel=${entry.slug}&days=7`);
   assert.equal(usage.json.report.used[0].slug, "tpl-sales-skill");
-  assert.ok(usage.json.report.neverUsed.some((n) => n.slug === "tpl-dep"));
   const profiles = await request("/skills/profiles");
-  assert.ok(profiles.json.profiles.some((p) => p.slug === entry.slug && p.skills.includes("tpl-sales-skill")));
+  assert.ok(profiles.json.profiles.some((p) => p.slug === entry.slug && p.skills.includes("tpl-sales-skill") && p.skillTemplate === "sales"));
+  await request(`/skills/profile/${entry.slug}/template`, { method: "POST", body: { template: "none" } });
 });
 
 test("proposals: list pending, approve into a revision, reject with a note", async () => {

@@ -42,6 +42,7 @@ export const cleanAccessGrants = (value) => ({
 // Used by the settings PUT — the templates live under Settings → Access Templates.
 export const cleanConversationTemplate = (t) => ({
   skills: Array.isArray(t?.skills) ? t.skills : [],
+  skillTemplate: typeof t?.skillTemplate === "string" ? t.skillTemplate.trim() : "",
   allowedMcps: sanitizeMcps(t?.allowedMcps),
   allowedCodexMcps: sanitizeCodexMcps(t?.allowedCodexMcps),
   model: typeof t?.model === "string" ? t.model.trim() : "",

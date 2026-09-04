@@ -210,7 +210,7 @@ export function buildControlPlane({ loadMeta }) {
     // admin decisions carry a card.
     ["add_channel_skills", { authz: "manage", details: ({ slugs }) => `Grant skill(s) in this channel: ${summarize((slugs || []).join(", "))}` }],
     ["remove_channel_skills", { authz: "manage", details: ({ slugs }) => `Remove skill grant(s) from this channel: ${summarize((slugs || []).join(", "))}` }],
-    ["apply_skill_template", { authz: "manage", details: ({ template, mode }) => `Apply the "${summarize(template)}" skill template to this channel (${mode === "replace" ? "REPLACE the current grants" : "add to the current grants"}).` }],
+    ["set_channel_skill_template", { authz: "manage", details: ({ template }) => (String(template || "").toLowerCase() === "none" ? "Stop this channel from following a skill template." : `Make this channel follow the "${summarize(template)}" skill template (live).`) }],
     ["create_skill", { authz: "any", details: ({ slug, files }) => `Add a new skill to the shared catalog${slug ? ` (\`${summarize(slug)}\`)` : ""} with ${(files || []).length} file(s) and grant it here.` }],
     ["update_skill", { authz: "any", details: ({ skill, files }) => `Publish a new revision of skill \`${summarize(skill)}\` (${(files || []).length} changed file(s)).` }],
     ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => `${decision === "approve" ? "APPROVE" : "Reject"} skill proposal #${Number(id) || "?"}.` }],

@@ -626,6 +626,11 @@
                   <h3 id="set-templates-h">Access Templates</h3>
                   <p class="setsec-desc">The capabilities new channels and DMs start from.</p>
                 </header>
+                <div class="setcard" id="skill-templates-card">
+                  <h4>Skill templates <em class="state">· Development, Sales, Marketing, Management, …</em></h4>
+                  <p class="desc">A named set of skills from the catalog. Assign one to a conversation (Conversations → Tools → Skill template, or the <code>set_channel_skill_template</code> verb) and the conversation follows it live: edits here reach every conversation that uses the template, and skills added to a conversation come on top. A template is its explicit skills plus every catalog skill in its categories.</p>
+                  <div id="skill-templates-editor">Loading…</div>
+                </div>
                 <div class="setcard">
                   <h4>New channel template <em class="state">· copied when the bot first joins</em></h4>
                   <p class="desc">Applied once when a channel is first registered. Later edits affect only channels the gateway bot joins afterward; existing channel settings stay unchanged.</p>
@@ -1069,7 +1074,12 @@
               <div class="ch-mcps checks"></div>
             </div>
             <div class="col tools-col">
-              <div class="checks-head"><h4>Skills</h4><span class="checks-count ch-skills-count"></span></div>
+              <label class="field">
+                <span>Skill template <em class="state">· the channel follows it live; skills checked below are added on top</em></span>
+                <select class="ch-skill-template"><option value="">none</option></select>
+                <em class="state ch-skill-template-state"></em>
+              </label>
+              <div class="checks-head"><h4>Additional skills</h4><span class="checks-count ch-skills-count"></span></div>
               <input type="search" class="checks-filter ch-skills-filter" placeholder="Filter skills…" autocomplete="off" />
               <div class="ch-skills checks"></div>
             </div>
