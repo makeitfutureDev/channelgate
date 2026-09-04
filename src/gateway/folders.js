@@ -51,7 +51,7 @@ export function effectiveWorkDir(slug, meta = {}) {
 import { allowMatchesFor, gatewayToolRefs, namespacesFor } from "./mcp-catalog.js";
 import { applyGatewayGuide } from "./guide.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
-import { getAgentsFile, getAgentsInstructions } from "../config/settings.js";
+import { getAgentsFile, getAgentsInstructions, getComposioMode } from "../config/settings.js";
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
 import { isLibraryStub, splitFavorites, ensureCodexSkillsLink } from "./library-skills.js";
 import { sanitizeSkillGrantNames } from "./access-grants.js";
@@ -377,7 +377,12 @@ export async function buildSettings(meta, { allowBypass = false } = {}) {
   const clean = Boolean(meta.cleanMode);
   const namespaces = clean ? [] : await namespacesFor(meta.allowedMcps);
   const gatewayTools = clean ? [] : gatewayToolRefs();
-  const allowMatches = clean ? [] : await allowMatchesFor(meta.allowedMcps);
+  // The injected remote servers need their URLs in the allowlist as well as their names — a picked
+  // global server (a serverUrl entry) otherwise makes Claude Code drop them (mcp-catalog.js).
+  const allowMatches = clean ? [] : await allowMatchesFor(meta.allowedMcps, {
+    makeToolboxUrl: meta.makeToolboxUrl,
+    composioSdk: getComposioMode() === "sdk",
+  });
 
   // Auto mode (autonomous: permission prompts auto-approved — see requestApproval) gets the same
   // file-writing tools as Allow Bash, so the agent can actually do file work without prompts.

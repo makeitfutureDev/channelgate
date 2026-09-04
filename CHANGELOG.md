@@ -19,6 +19,16 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Fixed
+- **Composio (and every other injected remote MCP server) is back for Claude in channels that pick
+  a global MCP server.** The channel lockdown lists a picked server by URL, and Claude Code then
+  matches every REMOTE server by URL: a `serverName` entry no longer admits it, so `composio-user`,
+  `composio-agent`, Skills Manager, Toolbox and the Make toolbox were dropped as "blocked by
+  enterprise policy" — silently, before any connection attempt, which is why the run config still
+  showed both Composio identities resolved while the model reported no Composio tools. Codex was
+  never affected (it has no such allowlist). The lockdown now carries each injected remote server's
+  URL beside its name (`injectedRemoteAllowMatches`, `src/gateway/mcp-catalog.js`); SDK-mode
+  Composio admits its `*.composio.dev` tool-router hosts. Takes effect on the next turn after a
+  restart — the per-run settings artifact is keyed by content.
 - **A Claude thread inside a Codex-default channel no longer starts "Not logged in".** The
   relayed Claude login was resolved for the CHANNEL's harness before the thread's own harness was
   settled, so a thread that had started on Claude while its channel later moved to Codex spawned
