@@ -476,6 +476,16 @@ test("an unreadable .claude/agents directory delivers the plugin without agents 
     await rm(temp, { recursive: true, force: true });
   });
 
+  // Some containerized test users retain CAP_DAC_OVERRIDE even with a non-zero uid. In that
+  // environment chmod(000) cannot create the failure this test is specifically about; ordinary
+  // Linux CI still exercises the branch.
+  try {
+    await readdir(workspaceAgentsDir);
+    return t.skip("effective user can still read chmod(000) directories");
+  } catch {
+    // Expected fixture state.
+  }
+
   const artifacts = await grants({ slug: "agent-grants-unreadable", workspaceSkillsDir, workspaceAgentsDir, needsClaudeSettings: true });
   t.after(() => artifacts.cleanup());
   const plugin = artifacts.claudePluginDirs[0];

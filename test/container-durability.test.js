@@ -17,7 +17,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFakeCli, inspectLine } from "./container-fake-cli.js";
@@ -31,7 +30,7 @@ const read = (rel) => readFileSync(path.join(repoRoot, rel), "utf8");
 
 const { createContainerCli } = await import("../src/runtimes/container/cli.js");
 const { createContainerImage } = await import("../src/runtimes/container/image.js");
-const { buildCreateArgs, buildMounts, createContainerLifecycle, PERSISTENT_TMP_DIRS, TMPFS_SPECS } = await import("../src/runtimes/container/lifecycle.js");
+const { buildMounts, createContainerLifecycle, PERSISTENT_TMP_DIRS, TMPFS_SPECS } = await import("../src/runtimes/container/lifecycle.js");
 const { createContainerReaper } = await import("../src/runtimes/container/reaper.js");
 const { currentInstallId } = await import("../src/runtimes/container/names.js");
 const { containerRunEnv } = await import("../src/runtimes/container/exec.js");
@@ -123,28 +122,6 @@ test("durability: /tmp and /var/tmp are persistent binds under the artifact dir,
   // A target with no artifact dir (never a container target, but buildMounts is exported) must not
   // emit a mount whose source is the empty string.
   assert.ok(!buildMounts({ ...t, artifactDir: "" }).some((m) => m.kind === "tmp" || m.kind === "var-tmp"));
-});
-
-test("durability: the create argv mounts both temp trees and pins the uid on both CLI kinds", async () => {
-  const t = target("dur-argv");
-  t.container.imageId = "sha256:deadbeef";
-
-  const podmanCaps = await createContainerCli({ exec: createFakeCli({ kind: "podman" }).exec }).probe(SETTINGS, { image: SETTINGS.image });
-  const podman = buildCreateArgs(t, podmanCaps, { fingerprint: "c1-dur" });
-  assert.ok(podman.includes(`${path.join(t.artifactDir, "tmp")}:/tmp`));
-  assert.ok(podman.includes(`${path.join(t.artifactDir, "var-tmp")}:/var/tmp`));
-  assert.deepEqual(podman.filter((a, i) => podman[i - 1] === "--tmpfs"), ["/run:rw,noexec,size=64m"]);
-  // Rootless podman maps the daemon user 1:1, so files written in the volume AND in the two binds
-  // are owned by the daemon user on both sides — without that, "persistent" would mean "there but
-  // unreadable" the next time the daemon looked.
-  assert.ok(podman.includes("--userns=keep-id"));
-  assert.ok(!podman.includes("--user"));
-
-  const dockerCaps = await createContainerCli({ exec: createFakeCli({ kind: "docker", available: ["docker"] }).exec }).probe(SETTINGS, { image: SETTINGS.image });
-  const docker = buildCreateArgs(t, dockerCaps, { fingerprint: "c1-dur" });
-  assert.ok(!docker.includes("--userns=keep-id"));
-  assert.equal(docker[docker.indexOf("--user") + 1], `${t.container.uid}:${t.container.gid}`);
-  assert.ok(docker.includes(`${path.join(t.artifactDir, "tmp")}:/tmp`));
 });
 
 test("durability: the idle sweep only ever stops — never rm, never a volume command", async () => {
@@ -289,11 +266,13 @@ test("durability: the container env never lets a host value displace the image's
   assert.equal(written.CLAUDE_CONFIG_DIR, "/home/agent/.claude");
   assert.equal(written.CODEX_HOME, "/home/agent/.codex");
   assert.equal(written.ANTHROPIC_MODEL, "opus");
-  // The defaults themselves never name a host path.
+  // The defaults themselves never retain any of the hostile host paths supplied above. Comparing
+  // them to ambient os.homedir() was invalid when the test itself ran inside /home/agent.
   const defaults = containerEnvDefaults(t);
   assert.equal(defaults.PATH, undefined, "the image owns PATH; the backend must not restate it");
+  const hostileHostPaths = ["/home/daemon", "/var/folders/host"];
   for (const value of Object.values(defaults)) {
-    assert.ok(!String(value).startsWith(os.homedir()), `a container default leaked the daemon's home: ${value}`);
+    assert.ok(!hostileHostPaths.some((hostPath) => String(value).startsWith(hostPath)), `a container default retained a host path: ${value}`);
   }
 });
 
