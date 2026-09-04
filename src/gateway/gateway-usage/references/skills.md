@@ -61,7 +61,7 @@ channel is in auto mode.
 - `list_skill_sources` / `add_skill_source` / `set_skill_source` / `remove_skill_source` — the
   sources: GitHub repositories, host folders, or a peer gateway (URL + a token minted there).
 - `add_org_skills` / `remove_org_skills` — the organization tier (every conversation).
-- `set_skill_excluded` — hide a synced/bundled skill from the catalog (tombstone) or bring it back.
+- `set_skill_excluded` — hide a synced/bundled skill from the catalog (it stays hidden across syncs) or bring it back.
 - `publish_skill` (managers too) — push a local skill to the configured Git repository now.
 - Templates, pins/rollbacks, staged revisions, access tokens for the catalog's MCP endpoint, the
   GitHub webhook and the usage dashboard live in the admin UI under **Skills**.

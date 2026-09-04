@@ -603,4 +603,16 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 16,
+    up(db) {
+      db.exec(`
+        -- An operator EXCLUSION is sticky: a skill an admin removed (set_skill_excluded, the admin
+        -- UI's Remove, a migrated Skills Manager exclusion) stays out of the catalog when a sync or
+        -- a host-folder import delivers it again — unlike a plain tombstone (deleted_at), which a
+        -- returning source restores. '' = not excluded; restoring a skill clears both columns.
+        ALTER TABLE skills ADD COLUMN excluded_at TEXT NOT NULL DEFAULT '';
+      `);
+    },
+  },
 ];

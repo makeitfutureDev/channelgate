@@ -41,7 +41,9 @@ Every skill has one **owner**:
 A slug is owned by exactly one owner. A sync or an import that finds a slug another owner holds
 reports a **conflict** and writes nothing. Changing a source-owned skill goes through a
 **proposal** (below). Removing a skill is a **tombstone**: its revisions stay, a conversation that
-still grants it sees why it is missing, and a returning source restores it.
+still grants it sees why it is missing, and a returning source restores it. A skill an admin
+removed (the Skills view, `set_skill_excluded`, a migrated Skills Manager exclusion) is an
+**exclusion**: it stays out across syncs and imports until an admin restores it.
 
 ## Channel profiles (no tokens)
 
@@ -94,8 +96,9 @@ skipped and reported. A **folder** source is a directory on the gateway host.
 - **pin**: freeze a git source at one commit; **enabled** off pauses it.
 - Sync runs at boot (30 s after start), on the interval in Settings (default 60 minutes; 0 = off),
   on *Sync now*, and from chat with `sync_skill_sources` (admins).
-- A skill removed upstream is tombstoned, never deleted. Sync errors are shown on the source and
-  never discard the last-good revisions.
+- A skill removed upstream is tombstoned, never deleted, and comes back when upstream delivers it
+  again; a skill an admin excluded does not. Sync errors are shown on the source and never discard
+  the last-good revisions.
 - A **GitHub token** (Settings, write-only) is only needed for private repositories or API rate
   limits; it never enters a conversation folder or an MCP config.
 

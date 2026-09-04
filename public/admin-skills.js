@@ -108,6 +108,7 @@ function renderSummary() {
     stat(st.pendingProposals, "pending proposals", st.pendingProposals > 0),
     stat(st.usage30d, "uses in 30 days"),
     st.tombstoned ? stat(st.tombstoned, "removed") : "",
+    st.excluded ? stat(st.excluded, "excluded") : "",
     stat((state.overview?.orgSkills || []).length, "organization-wide"),
   ].join("");
 }
@@ -118,7 +119,7 @@ function renderCatalog() {
   const owners = ["", "bundled", "local", "folder", "git"];
   const rows = skills.map((s) => `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
-      <td><code>${esc(s.slug)}</code>${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.deleted ? ' <span class="pill">removed</span>' : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
+      <td><code>${esc(s.slug)}</code>${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
       <td class="desc">${esc(s.description)}</td>
       <td>${esc(s.category || "—")}</td>
       <td><span class="muted">${esc(ownerLabel(s))}</span></td>
@@ -184,7 +185,7 @@ function renderDetail() {
   const usage = d.usage ? `${d.usage.total} use(s) in 90 days (${d.usage.exact} exact, ${d.usage.inferred} inferred), last ${fmtWhen(d.usage.lastTs)}` : "no use recorded in 90 days";
   return `
     <div class="card skills-detail">
-      <div class="card-head"><h3><code>${esc(s.slug)}</code> ${esc(s.name !== s.slug ? s.name : "")}</h3><span class="badge">${esc(s.owner)}</span>${s.deleted ? '<span class="badge">removed</span>' : ""}</div>
+      <div class="card-head"><h3><code>${esc(s.slug)}</code> ${esc(s.name !== s.slug ? s.name : "")}</h3><span class="badge">${esc(s.owner)}</span>${s.excluded ? '<span class="badge" title="Excluded by an admin; stays out across syncs until restored">excluded</span>' : s.deleted ? '<span class="badge" title="Dropped by its source; comes back if the source delivers it again">removed</span>' : ""}</div>
       <p class="skills-note">${esc(s.description)}</p>
       <p class="skills-note">Category: ${esc(s.category || "—")} · Version: ${esc(s.version || "—")} · Tags: ${esc((s.tags || []).join(", ") || "—")} · Requires: ${esc((s.requires || []).join(", ") || "—")}${s.createdBy ? ` · Author: ${esc(s.createdBy)}` : ""}</p>
       <p class="skills-note">${esc(usage)}</p>
@@ -419,7 +420,7 @@ async function act(action, el) {
       break;
     }
     case "remove":
-      if (await confirmDialog({ title: `Remove ${state.selected} from the catalog?`, body: "Conversations that grant it will report it as removed; its revisions are kept and it can be restored.", confirmLabel: "Remove", danger: true })) {
+      if (await confirmDialog({ title: `Remove ${state.selected} from the catalog?`, body: "It stays out of the catalog across syncs and imports until you restore it; its revisions are kept. Conversations that grant it report it as removed.", confirmLabel: "Remove", danger: true })) {
         await withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(state.selected)}`, { method: "DELETE" }), `Removed ${state.selected}.`);
         await refreshAll();
       }

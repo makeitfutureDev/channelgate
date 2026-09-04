@@ -16,7 +16,7 @@ import {
   rejectRevision,
   listStagedRevisions,
   pinSkill,
-  tombstoneSkill,
+  excludeSkill,
   restoreSkill,
   listSources,
   getSource,
@@ -154,7 +154,7 @@ export function createSkillsRouter() {
   router.delete("/skills/catalog/:slug", guard(async (req, res) => {
     const skill = getSkill(req.params.slug);
     if (!skill) return res.status(404).json({ error: "skill not found" });
-    tombstoneSkill(skill.slug);
+    excludeSkill(skill.slug); // sticky: a sync or import that delivers it again keeps it out
     logEvent("skill_removed", { skill: skill.slug, author: ADMIN_UI });
     res.json({ ok: true });
   }));

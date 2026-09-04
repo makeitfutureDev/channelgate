@@ -201,7 +201,7 @@ if (SUPA_URL && SUPA_KEY) {
     const skill = catalog.getSkill(row.name || row.slug);
     if (!skill) continue;
     log(`  exclude ${skill.slug}`);
-    if (!DRY) catalog.tombstoneSkill(skill.slug);
+    if (!DRY) catalog.excludeSkill(skill.slug);
     summary.excluded++;
   }
   // Personal skills of the users whose tokens the gateway holds (email ↔ user via whoami).
@@ -261,7 +261,7 @@ log(`Organization grants added: ${summary.grants.org.length}`);
 for (const [slug, added] of Object.entries(summary.grants.channels)) log(`Channel ${slug}: +${added.length}`);
 for (const [id, added] of Object.entries(summary.grants.users)) log(`User ${id}: +${added.length}`);
 if (Object.keys(summary.templates).length) log(`Templates: ${Object.entries(summary.templates).map(([t, s]) => `${t} (${s.length})`).join(", ")}`);
-if (summary.excluded) log(`Excluded skills tombstoned: ${summary.excluded}`);
+if (summary.excluded) log(`Excluded skills: ${summary.excluded} (kept out of the catalog across syncs)`);
 if (summary.personal.imported || summary.personal.skipped.length) log(`Personal skills: ${summary.personal.imported} imported${summary.personal.skipped.length ? `, skipped: ${summary.personal.skipped.join("; ")}` : ""}`);
 if (summary.unresolved.size) log(`Favorites that matched no catalog skill (not granted): ${[...summary.unresolved].join(", ")}`);
 log(`Catalog now: ${JSON.stringify(catalog.catalogStats())}`);

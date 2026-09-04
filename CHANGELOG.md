@@ -62,6 +62,10 @@ product overview.
   the next message. Skills Manager itself remains a standalone product; Toolbox is unchanged.
 
 ### Changed
+- **Skill exclusions stick.** A skill an admin removes from the catalog (the Skills view,
+  `set_skill_excluded`, a Skills Manager exclusion carried over by the migration) now stays out when
+  its source delivers it again; before, the next sync silently restored it. Only a skill its source
+  dropped still comes back on its own. Restore brings an excluded skill back on its newest revision.
 - **Production license verification is live by default.** The gateway now ships the Ed25519 public
   key published by the ChannelGate licensing platform and uses `https://channelgate.dev` as
   its default platform URL. Fresh installs can verify platform-issued keys without an environment
