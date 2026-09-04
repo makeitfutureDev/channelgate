@@ -1814,7 +1814,7 @@ are retired, bullet by bullet; everything else stands.
 - **Verification** against `POST {platform}/v1/license/verify` at boot and every 24 h, with the
   response's Ed25519 signature verified locally against the key in
   `src/ee/license-public-key.js`. The compiled trust root matches the production platform at
-  `https://channelgate.vercel.app`; `CHANNELGATE_LICENSE_PUBLIC_KEY` overrides it for staging or a
+  `https://channelgate.dev`; `CHANNELGATE_LICENSE_PUBLIC_KEY` overrides it for staging or a
   coordinated rotation. The
   boot path never awaits it — Slack connects while the check is in flight and the run gate reads
   the cached state, so a slow or dead platform costs the daemon nothing.

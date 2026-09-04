@@ -12,7 +12,7 @@
 // DNS answer pointed at somebody else's server) can withhold a verification — which lands in the
 // grace state — but can never mint a tier.
 //
-// The production key published by https://channelgate.vercel.app/v1/license/public-key. Its
+// The production key published by https://channelgate.dev/v1/license/public-key. Its
 // private half exists only in the Licensor's key store and the platform's server-side secrets.
 // Staging and tests override this through CHANNELGATE_LICENSE_PUBLIC_KEY instead of editing the
 // shipped trust root — the tests generate their own pair per run.

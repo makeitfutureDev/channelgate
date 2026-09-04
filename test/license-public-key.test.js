@@ -10,6 +10,7 @@ const {
   isPlaceholderKey,
   licensePublicKeyPem,
 } = await import("../src/ee/license-public-key.js");
+const { DEFAULT_PLATFORM_URL } = await import("../src/ee/tiers.js");
 
 test.after(() => {
   if (ambient === undefined) delete process.env.CHANNELGATE_LICENSE_PUBLIC_KEY;
@@ -21,6 +22,7 @@ test("the default trust root is the production Ed25519 key, not the development 
   assert.notEqual(PRODUCTION_PUBLIC_KEY_PEM, PLACEHOLDER_PUBLIC_KEY_PEM);
   assert.equal(isPlaceholderKey(), false);
   assert.equal(createPublicKey(PRODUCTION_PUBLIC_KEY_PEM).asymmetricKeyType, "ed25519");
+  assert.equal(DEFAULT_PLATFORM_URL, "https://channelgate.dev");
 });
 
 test("an environment override still supports escaped newlines for staging and rotation", () => {

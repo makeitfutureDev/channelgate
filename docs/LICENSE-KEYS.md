@@ -90,7 +90,7 @@ Any one of these; the first that is set wins.
 | Variable | Meaning |
 | --- | --- |
 | `CHANNELGATE_LICENSE_KEY` | the key, when it is not set in the admin UI |
-| `CHANNELGATE_PLATFORM_URL` | the platform base URL (default `https://channelgate.vercel.app`); also settable in the UI |
+| `CHANNELGATE_PLATFORM_URL` | the platform base URL (default `https://channelgate.dev`); also settable in the UI |
 | `CHANNELGATE_LICENSE_PAYLOAD` | a signed offline license (see below) |
 | `CHANNELGATE_LICENSE_PUBLIC_KEY` | overrides the compiled-in production verification key (staging or an explicitly coordinated key rotation only) |
 

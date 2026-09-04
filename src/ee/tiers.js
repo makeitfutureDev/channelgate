@@ -17,7 +17,7 @@
 
 // One home for the base URL. Env wins over the compiled default; Settings (`platformUrl`) is
 // copied into the env at boot and on save, exactly like the other UI-managed settings.
-export const DEFAULT_PLATFORM_URL = "https://channelgate.vercel.app";
+export const DEFAULT_PLATFORM_URL = "https://channelgate.dev";
 
 export function platformBaseUrl() {
   const raw = String(process.env.CHANNELGATE_PLATFORM_URL || "").trim() || DEFAULT_PLATFORM_URL;

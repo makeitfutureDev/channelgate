@@ -40,7 +40,7 @@ product overview.
 
 ### Changed
 - **Production license verification is live by default.** The gateway now ships the Ed25519 public
-  key published by the ChannelGate licensing platform and uses `https://channelgate.vercel.app` as
+  key published by the ChannelGate licensing platform and uses `https://channelgate.dev` as
   its default platform URL. Fresh installs can verify platform-issued keys without an environment
   override; `CHANNELGATE_LICENSE_PUBLIC_KEY` remains available for staging and coordinated rotation.
 - **Small text files now offer both editing surfaces.** When a Public URL is configured, eligible
