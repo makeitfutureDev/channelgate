@@ -19,7 +19,6 @@ const ENV_MAP = {
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   sessionKeepalive: "SESSION_KEEPALIVE",
   composioMcpUrl: "COMPOSIO_MCP_URL",
-  skillsMcpUrl: "SKILLS_MCP_URL",
   toolboxMcpUrl: "TOOLBOX_MCP_URL",
   publicUrl: "GATEWAY_PUBLIC_URL",
   platformUrl: "CHANNELGATE_PLATFORM_URL",
@@ -498,15 +497,11 @@ export function getComposioSdkApiKey() {
   return typeof v === "string" ? v.trim() : "";
 }
 
-// Org-level (gateway) default tokens. For shared Composio this follows the channel token; Skills
-// Manager and Toolbox use the full channel → user → org chain (see src/gateway/run.js). Write-only
-// via the admin API (masked on read), never logged.
+// Org-level (gateway) default tokens. For shared Composio this follows the channel token; Toolbox
+// uses the full channel → user → org chain (see src/gateway/run.js). Write-only via the admin API
+// (masked on read), never logged.
 export function getDefaultComposioToken() {
   const v = getSettings().defaultComposioToken;
-  return typeof v === "string" ? v : "";
-}
-export function getDefaultSkillsToken() {
-  const v = getSettings().defaultSkillsToken;
   return typeof v === "string" ? v : "";
 }
 export function getDefaultToolboxToken() {
@@ -709,7 +704,6 @@ export function settingsForApi() {
     hasComposioSdkApiKey: Boolean(getComposioSdkApiKey()),
     composioSdkApiKeyLast4: last4(getComposioSdkApiKey()),
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
-    skillsMcpUrl: s.skillsMcpUrl ?? process.env.SKILLS_MCP_URL ?? "https://www.skillsmanager.uk/mcp",
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
     progressView: getProgressView(),
@@ -719,9 +713,6 @@ export function settingsForApi() {
     hasDefaultComposioToken: Boolean(getDefaultComposioToken()),
     defaultComposioTokenLast4: last4(getDefaultComposioToken()),
     defaultComposioTokenLabel: s.defaultComposioTokenLabel || "",
-    hasDefaultSkillsToken: Boolean(getDefaultSkillsToken()),
-    defaultSkillsTokenLast4: last4(getDefaultSkillsToken()),
-    defaultSkillsTokenLabel: s.defaultSkillsTokenLabel || "",
     hasDefaultToolboxToken: Boolean(getDefaultToolboxToken()),
     defaultToolboxTokenLast4: last4(getDefaultToolboxToken()),
     defaultToolboxTokenLabel: s.defaultToolboxTokenLabel || "",

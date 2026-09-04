@@ -239,8 +239,6 @@ export function buildControlPlane({ loadMeta }) {
     // Connector identity: changing whose account future runs act as. Never echo the token value.
     ["set_my_composio_token", { authz: "any", details: () => "Set YOUR Composio token (value hidden) — future runs use this account." }],
     ["clear_my_composio_token", { authz: "any", details: () => "Remove YOUR Composio token." }],
-    ["set_my_skills_token", { authz: "any", details: () => "Set YOUR Skills Manager token (value hidden)." }],
-    ["clear_my_skills_token", { authz: "any", details: () => "Remove YOUR Skills Manager token." }],
     ["set_my_toolbox_token", { authz: "any", details: () => "Set YOUR Toolbox token (value hidden)." }],
     ["clear_my_toolbox_token", { authz: "any", details: () => "Remove YOUR Toolbox token." }],
     // The deployment's license key: gateway-wide, persistent, and the thing that decides how many

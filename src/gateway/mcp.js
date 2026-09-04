@@ -6,10 +6,9 @@
 //   - composio-agent: the agent's OWN account — injected independently with the channel token, or
 //     the org token as fallback (the model never learns which; to it this is simply its account).
 //     Both tokens ride x-consumer-api-key headers and are never written to channel storage.
-//   - makeitfuture-skills: injected only when a resolved per-user/channel/org
-//     token is available, carrying it in the Authorization: Bearer header.
-//   - makeitfuture-toolbox: same idea as makeitfuture-skills — injected only when a (per-user,
-//     channel, or org-default) token is available, carrying it in the Authorization: Bearer header.
+//   - makeitfuture-toolbox: injected only when a (per-user, channel, or org-default) token is
+//     available, carrying it in the Authorization: Bearer header. (Skills come from the gateway's
+//     own catalog as files — src/gateway/skills — never from an MCP server.)
 // The channel's other picked MCP servers are NOT injected — they're the machine's
 // globally-configured servers, reachable via the lockdown's allowedMcpServers allowlist.
 //
@@ -21,7 +20,7 @@
 // Remote http entries are the same with or without a target — the engine dials those itself. The
 // local runtime (daemon-internal turns) or no target at all produces the plain stdio form.
 import { fileURLToPath } from "node:url";
-import { composioUrl, skillsUrl, toolboxUrl } from "./mcp-catalog.js";
+import { composioUrl, toolboxUrl } from "./mcp-catalog.js";
 import { gatewayRoot } from "../config/paths.js";
 import { requireAdapter } from "../engines/registry.js";
 import { runtimeSupports } from "../runtimes/contract.js";
@@ -69,7 +68,7 @@ function composioServer(endpoint, legacyToken, { socketBridge = null, gatewayCap
   };
 }
 
-export async function buildMcpConfig({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", skillsToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null } = {}) {
+export async function buildMcpConfig({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null } = {}) {
   // Identity claim — fail closed on garbage instead of silently signing as Claude.
   const normalizedEngine = requireAdapter(engine || "claude").id;
   const gatewayCapability = mintGatewayCapability({
@@ -132,9 +131,6 @@ export async function buildMcpConfig({ composioUserEndpoint = null, composioEndp
   if (userComposio) servers["composio-user"] = userComposio;
   const sharedComposio = composioServer(composioEndpoint, composioToken, composioOpts);
   if (sharedComposio) servers["composio-agent"] = sharedComposio;
-  if (skillsToken) {
-    servers["makeitfuture-skills"] = { type: "http", url: skillsUrl(), headers: { Authorization: `Bearer ${skillsToken}` } };
-  }
   if (toolboxToken) {
     servers["makeitfuture-toolbox"] = { type: "http", url: toolboxUrl(), headers: { Authorization: `Bearer ${toolboxToken}` } };
   }

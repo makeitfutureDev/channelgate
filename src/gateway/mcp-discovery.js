@@ -16,7 +16,7 @@ const TTL_MS = 5 * 60 * 1000; // `claude mcp list` health-checks every server (~
 const CODEX_DISCOVERY_TIMEOUT_MS = 20_000;
 const CODEX_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const CODEX_MAX_PAGES = 20;
-const BUILTIN_SERVER_NAMES = new Set(["gateway", "composio", "composio-user", "makeitfuture-skills", "makeitfuture-toolbox", "make-toolbox"]);
+const BUILTIN_SERVER_NAMES = new Set(["gateway", "composio", "composio-user", "makeitfuture-toolbox", "make-toolbox"]);
 const SAFE_CODEX_APP_ID = /^[a-zA-Z0-9_-]{1,120}$/;
 const CODEX_GROUP_LABELS = {
   boost_space: "Boost.space",

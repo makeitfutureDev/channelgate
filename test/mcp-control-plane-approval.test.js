@@ -264,7 +264,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
     "add_channel_mcps", "remove_channel_mcps", "update_channel_instructions",
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
-    "set_my_composio_token", "clear_my_composio_token", "set_my_skills_token", "clear_my_skills_token",
+    "set_my_composio_token", "clear_my_composio_token",
     "set_my_toolbox_token", "clear_my_toolbox_token",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
     // skills platform: grants, templates, catalog writes and admin decisions are persistent state

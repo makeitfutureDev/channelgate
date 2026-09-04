@@ -163,7 +163,6 @@ export function createSettingsRouter({
       if (typeof body.composioSdkApiKey === "string" && body.composioSdkApiKey.trim()) patch.composioSdkApiKey = body.composioSdkApiKey.trim();
       if (body.clearComposioSdkApiKey === true) patch.composioSdkApiKey = "";
       if (typeof body.composioMcpUrl === "string") patch.composioMcpUrl = body.composioMcpUrl.trim();
-      if (typeof body.skillsMcpUrl === "string") patch.skillsMcpUrl = body.skillsMcpUrl.trim();
       if (typeof body.toolboxMcpUrl === "string") patch.toolboxMcpUrl = body.toolboxMcpUrl.trim();
       if (typeof body.publicUrl === "string") patch.publicUrl = normalizePublicUrl(body.publicUrl);
       // Self-diagnosis target channel slug ("" turns the feature off).
@@ -185,14 +184,11 @@ export function createSettingsRouter({
       // have none). Set on a non-empty value; clear explicitly with the *Clear flags.
       if (typeof body.defaultComposioToken === "string" && body.defaultComposioToken) patch.defaultComposioToken = body.defaultComposioToken.trim();
       if (body.clearDefaultComposioToken === true) patch.defaultComposioToken = "";
-      if (typeof body.defaultSkillsToken === "string" && body.defaultSkillsToken) patch.defaultSkillsToken = body.defaultSkillsToken.trim();
-      if (body.clearDefaultSkillsToken === true) patch.defaultSkillsToken = "";
       if (typeof body.defaultToolboxToken === "string" && body.defaultToolboxToken) patch.defaultToolboxToken = body.defaultToolboxToken.trim();
       if (body.clearDefaultToolboxToken === true) patch.defaultToolboxToken = "";
       // Owner labels (who the shared org-default token authenticates as). Not secret — a plain
       // string that always round-trips; an empty string clears it.
       if (typeof body.defaultComposioTokenLabel === "string") patch.defaultComposioTokenLabel = body.defaultComposioTokenLabel.trim();
-      if (typeof body.defaultSkillsTokenLabel === "string") patch.defaultSkillsTokenLabel = body.defaultSkillsTokenLabel.trim();
       if (typeof body.defaultToolboxTokenLabel === "string") patch.defaultToolboxTokenLabel = body.defaultToolboxTokenLabel.trim();
       // Skills platform: the daemon's GitHub token (write-only), the source sync interval and the
       // context-cost soft cap. Numbers are clamped in the getters; a blank string means "default".

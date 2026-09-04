@@ -1364,13 +1364,10 @@ function renderChannelDetail(ch) {
   card.querySelector(".ch-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (meta.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
     : (meta.hasComposioToken ? "" : "no token (uses org default)");
-  card.querySelector(".ch-skillstoken-state").textContent = meta.hasSkillsToken ? "" : "no token (uses each user's own)";
   card.querySelector(".ch-toolboxtoken-state").textContent = meta.hasToolboxToken ? "" : "no token (uses each user's own)";
   attachReveal(card.querySelector(".ch-composio"), { has: meta.hasComposioToken, last4: meta.composioTokenLast4, fetch: revealSecret("channel", "composioToken", ch.slug) });
-  attachReveal(card.querySelector(".ch-skillstoken"), { has: meta.hasSkillsToken, last4: meta.skillsTokenLast4, fetch: revealSecret("channel", "skillsToken", ch.slug) });
   attachReveal(card.querySelector(".ch-toolboxtoken"), { has: meta.hasToolboxToken, last4: meta.toolboxTokenLast4, fetch: revealSecret("channel", "toolboxToken", ch.slug) });
   card.querySelector(".ch-composio-label").value = meta.composioTokenLabel || "";
-  card.querySelector(".ch-skillstoken-label").value = meta.skillsTokenLabel || "";
   card.querySelector(".ch-toolboxtoken-label").value = meta.toolboxTokenLabel || "";
   // Per-channel environment secrets. These are the ONE part of the channel card that saves
   // immediately rather than on the card's Save button: the card round-trips its fields, and a
@@ -1501,10 +1498,8 @@ function renderChannelDetail(ch) {
   // ── Save (full meta PUT — identical body/fields to before) ────────────────────
   savebar.querySelector(".save-channel").addEventListener("click", async () => {
     const composioTok = tokenValue(card.querySelector(".ch-composio"));
-    const skillsTok = tokenValue(card.querySelector(".ch-skillstoken"));
     const toolboxTok = tokenValue(card.querySelector(".ch-toolboxtoken"));
     const composioLabel = card.querySelector(".ch-composio-label").value;
-    const skillsLabel = card.querySelector(".ch-skillstoken-label").value;
     const toolboxLabel = card.querySelector(".ch-toolboxtoken-label").value;
     const makeToolboxKey = tokenValue(makeToolboxKeyInput);
     try {
@@ -1534,11 +1529,9 @@ function renderChannelDetail(ch) {
           model: card.querySelector(".ch-model").value,
           effort: card.querySelector(".ch-effort").value,
           ...(composioTok ? { composioToken: composioTok } : {}),
-          ...(skillsTok ? { skillsToken: skillsTok } : {}),
           ...(toolboxTok ? { toolboxToken: toolboxTok } : {}),
           // Owner labels always round-trip (empty clears them) — notes, not secrets.
           composioTokenLabel: composioLabel,
-          skillsTokenLabel: skillsLabel,
           toolboxTokenLabel: toolboxLabel,
           makeToolboxUrl: makeToolboxUrlInput.value,
           ...(makeToolboxKey ? { makeToolboxKey } : {}),
@@ -2156,7 +2149,6 @@ function renderUsersTable() {
     const tok =
       `<span class="tokdots">` +
       `<i class="${u.hasComposioToken ? "set" : ""}" title="Composio">C</i>` +
-      `<i class="${u.hasSkillsToken ? "set" : ""}" title="Skills Manager">S</i>` +
       `<i class="${u.hasToolboxToken ? "set" : ""}" title="Toolbox">T</i></span>`;
     return `<tr data-id="${escapeHtml(id)}"${userDrawerId === id ? ' class="sel"' : ""}>
       <td>${escapeHtml(u.name || id)}</td>
@@ -2198,7 +2190,6 @@ function openUserDrawer(id) {
   node.querySelector(".ud-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (u.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
     : (u.hasComposioToken ? "" : "no token set");
-  node.querySelector(".ud-skills-state").textContent = u.hasSkillsToken ? "" : "no token set";
   node.querySelector(".ud-toolbox-state").textContent = u.hasToolboxToken ? "" : "no token set";
 
   drawer.innerHTML = "";
@@ -2207,10 +2198,8 @@ function openUserDrawer(id) {
 
   // Editable masked token fields — same reveal semantics as before.
   attachReveal(drawer.querySelector(".ud-composio"), { has: u.hasComposioToken, last4: u.composioTokenLast4, fetch: revealSecret("user", "composioToken", id) });
-  attachReveal(drawer.querySelector(".ud-skillstoken"), { has: u.hasSkillsToken, last4: u.skillsTokenLast4, fetch: revealSecret("user", "skillsToken", id) });
   attachReveal(drawer.querySelector(".ud-toolboxtoken"), { has: u.hasToolboxToken, last4: u.toolboxTokenLast4, fetch: revealSecret("user", "toolboxToken", id) });
   drawer.querySelector(".ud-composio-label").value = u.composioTokenLabel || "";
-  drawer.querySelector(".ud-skillstoken-label").value = u.skillsTokenLabel || "";
   drawer.querySelector(".ud-toolboxtoken-label").value = u.toolboxTokenLabel || "";
 
   drawer.querySelector(".ud-close").addEventListener("click", closeUserDrawer);
@@ -2218,11 +2207,9 @@ function openUserDrawer(id) {
   const saved = drawer.querySelector(".ud-saved");
   drawer.querySelector(".ud-save").addEventListener("click", async () => {
     const token = tokenValue(drawer.querySelector(".ud-composio"));
-    const skillsToken = tokenValue(drawer.querySelector(".ud-skillstoken"));
     const toolboxToken = tokenValue(drawer.querySelector(".ud-toolboxtoken"));
     // Owner labels always round-trip (empty clears them) — notes, not secrets.
     const composioTokenLabel = drawer.querySelector(".ud-composio-label").value;
-    const skillsTokenLabel = drawer.querySelector(".ud-skillstoken-label").value;
     const toolboxTokenLabel = drawer.querySelector(".ud-toolboxtoken-label").value;
     saved.textContent = "saving…";
     try {
@@ -2233,10 +2220,8 @@ function openUserDrawer(id) {
           isAdmin: drawer.querySelector(".ud-admin").checked,
           approved: drawer.querySelector(".ud-approved").checked,
           ...(token ? { composioToken: token } : {}),
-          ...(skillsToken ? { skillsToken } : {}),
           ...(toolboxToken ? { toolboxToken } : {}),
           composioTokenLabel,
-          skillsTokenLabel,
           toolboxTokenLabel,
           accessGrants: userGrantsEditor.getValues(),
         }),
@@ -2615,7 +2600,6 @@ function paintSettings(s) {
   attachReveal(document.getElementById("set-composio-sdk-key"), "");
   syncComposioModeUi();
   document.getElementById("set-composio").value = s.composioMcpUrl || "";
-  document.getElementById("set-skills").value = s.skillsMcpUrl || "";
   document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
   // ── Google Chat + Teams ────────────────────────────────────────────────────
@@ -2640,13 +2624,10 @@ function paintSettings(s) {
     ? `teams app create --name "ChannelGate" --endpoint "${teamsEndpoint}"`
     : 'teams app create --name "ChannelGate" --endpoint "https://<public-url>/api/teams/messages"';
   document.getElementById("default-composio-state").textContent = tokenState(s.hasDefaultComposioToken, s.defaultComposioTokenLast4);
-  document.getElementById("default-skills-state").textContent = tokenState(s.hasDefaultSkillsToken, s.defaultSkillsTokenLast4);
   document.getElementById("default-toolbox-state").textContent = tokenState(s.hasDefaultToolboxToken, s.defaultToolboxTokenLast4);
   attachReveal(document.getElementById("set-default-composio"), { has: s.hasDefaultComposioToken, last4: "", fetch: revealSecret("settings", "defaultComposioToken") });
-  attachReveal(document.getElementById("set-default-skills"), { has: s.hasDefaultSkillsToken, last4: "", fetch: revealSecret("settings", "defaultSkillsToken") });
   attachReveal(document.getElementById("set-default-toolbox"), { has: s.hasDefaultToolboxToken, last4: "", fetch: revealSecret("settings", "defaultToolboxToken") });
   document.getElementById("set-default-composio-label").value = s.defaultComposioTokenLabel || "";
-  document.getElementById("set-default-skills-label").value = s.defaultSkillsTokenLabel || "";
   document.getElementById("set-default-toolbox-label").value = s.defaultToolboxTokenLabel || "";
   document.getElementById("set-ctxwindow").value = s.contextWindow || "";
   if (s.engine) document.getElementById("set-engine").value = s.engine;
@@ -2841,7 +2822,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-skills", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -2995,17 +2976,13 @@ function bindSettings() {
           ...(document.getElementById("clear-composio-sdk-key").classList.contains("armed") ? { clearComposioSdkApiKey: true } : {}),
           ...(tokenValue(document.getElementById("set-default-composio")) ? { defaultComposioToken: tokenValue(document.getElementById("set-default-composio")) } : {}),
           ...(document.getElementById("clear-default-composio").classList.contains("armed") ? { clearDefaultComposioToken: true } : {}),
-          ...(tokenValue(document.getElementById("set-default-skills")) ? { defaultSkillsToken: tokenValue(document.getElementById("set-default-skills")) } : {}),
-          ...(document.getElementById("clear-default-skills").classList.contains("armed") ? { clearDefaultSkillsToken: true } : {}),
           ...(tokenValue(document.getElementById("set-default-toolbox")) ? { defaultToolboxToken: tokenValue(document.getElementById("set-default-toolbox")) } : {}),
           ...(document.getElementById("clear-default-toolbox").classList.contains("armed") ? { clearDefaultToolboxToken: true } : {}),
           // Owner labels always round-trip (empty clears them) — they're notes, not secrets.
           defaultComposioTokenLabel: document.getElementById("set-default-composio-label").value,
-          defaultSkillsTokenLabel: document.getElementById("set-default-skills-label").value,
           defaultToolboxTokenLabel: document.getElementById("set-default-toolbox-label").value,
           accessGrants: orgGrantsEditor?.getValues() || {},
           composioMcpUrl: document.getElementById("set-composio").value,
-          skillsMcpUrl: document.getElementById("set-skills").value,
           toolboxMcpUrl: document.getElementById("set-toolbox").value,
           publicUrl: document.getElementById("set-public-url").value,
           ...(document.getElementById("set-gchat-key").value.trim() ? { googleChatServiceAccountJson: document.getElementById("set-gchat-key").value } : {}),
@@ -3076,7 +3053,7 @@ function bindSettings() {
       // Reset only the write-only password box; the token fields are repainted (masked) by the
       // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
       document.getElementById("set-adminpw").value = "";
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-skills", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) disarmClearTok(document.getElementById(id));
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.
       loadLicense().catch(() => { /* the save itself succeeded — the card refreshes on reload */ });

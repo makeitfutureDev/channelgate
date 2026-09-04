@@ -20,7 +20,6 @@ const READERS = {
     slackSigningSecret: (s) => s.slackSigningSecret,
     slackAdminUserToken: (s) => s.slackAdminUserToken,
     defaultComposioToken: (s) => s.defaultComposioToken,
-    defaultSkillsToken: (s) => s.defaultSkillsToken,
     defaultToolboxToken: (s) => s.defaultToolboxToken,
     // The daemon's GitHub token for private skill sources (skills platform). Same terms.
     skillsGithubToken: (s) => s.skillsGithubToken,
@@ -42,12 +41,10 @@ const READERS = {
   },
   user: {
     composioToken: (u) => u.composioToken,
-    skillsToken: (u) => u.skillsToken,
     toolboxToken: (u) => u.toolboxToken,
   },
   channel: {
     composioToken: (m) => m.composioToken,
-    skillsToken: (m) => m.skillsToken,
     toolboxToken: (m) => m.toolboxToken,
     makeToolboxKey: (m) => m.makeToolboxKey,
   },

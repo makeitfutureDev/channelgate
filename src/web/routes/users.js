@@ -8,7 +8,6 @@ function maskUsers(users) {
   const out = {};
   for (const [id, u] of Object.entries(users)) {
     const token = u.composioToken || "";
-    const skills = u.skillsToken || "";
     const toolbox = u.toolboxToken || "";
     out[id] = {
       name: u.name || "",
@@ -17,9 +16,6 @@ function maskUsers(users) {
       hasComposioToken: Boolean(token),
       composioTokenLast4: token ? token.slice(-4) : "",
       composioTokenLabel: u.composioTokenLabel || "",
-      hasSkillsToken: Boolean(skills),
-      skillsTokenLast4: skills ? skills.slice(-4) : "",
-      skillsTokenLabel: u.skillsTokenLabel || "",
       hasToolboxToken: Boolean(toolbox),
       toolboxTokenLast4: toolbox ? toolbox.slice(-4) : "",
       toolboxTokenLabel: u.toolboxTokenLabel || "",
@@ -53,16 +49,12 @@ export function createUsersRouter() {
       if (typeof body.composioToken === "string" && body.composioToken.length > 0)
         patch.composioToken = body.composioToken;
       if (body.clearComposioToken === true) patch.composioToken = "";
-      if (typeof body.skillsToken === "string" && body.skillsToken.length > 0)
-        patch.skillsToken = body.skillsToken;
-      if (body.clearSkillsToken === true) patch.skillsToken = "";
       if (typeof body.toolboxToken === "string" && body.toolboxToken.length > 0)
         patch.toolboxToken = body.toolboxToken;
       if (body.clearToolboxToken === true) patch.toolboxToken = "";
       // Owner labels (a note for the admin — whose account the token authenticates as). Not secret;
       // a plain string that always round-trips, with an empty string clearing it.
       if (typeof body.composioTokenLabel === "string") patch.composioTokenLabel = body.composioTokenLabel.trim();
-      if (typeof body.skillsTokenLabel === "string") patch.skillsTokenLabel = body.skillsTokenLabel.trim();
       if (typeof body.toolboxTokenLabel === "string") patch.toolboxTokenLabel = body.toolboxTokenLabel.trim();
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))
         Object.assign(patch, cleanAccessGrants(body.accessGrants));
@@ -75,7 +67,6 @@ export function createUsersRouter() {
           isAdmin: saved.isAdmin,
           approved: saved.approved,
           hasComposioToken: Boolean(saved.composioToken),
-          hasSkillsToken: Boolean(saved.skillsToken),
           hasToolboxToken: Boolean(saved.toolboxToken),
           ...cleanAccessGrants(saved),
         },

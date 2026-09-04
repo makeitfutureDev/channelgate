@@ -345,7 +345,6 @@ test("every connector secret stays out of Codex argv and child env", () => {
     gatewayCapability: "signed-gateway-capability-secret",
     composioUserToken: "user-super-secret",
     composioToken: "shared-super-secret",
-    skillsToken: "skills-super-secret",
     toolboxToken: "toolbox-super-secret",
     makeToolboxKey: "make-super-secret",
   };

@@ -10,11 +10,11 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 
 // Captured BEFORE the first applySettingsToEnv call, which is when the ambient snapshot is taken:
-// COMPOSIO_MCP_URL stands for "the .env/shell already provided a value", SKILLS_MCP_URL for
+// COMPOSIO_MCP_URL stands for "the .env/shell already provided a value", TOOLBOX_MCP_URL for
 // "this variable did not exist at boot".
 const AMBIENT = "https://ambient.example/mcp";
 process.env.COMPOSIO_MCP_URL = AMBIENT;
-delete process.env.SKILLS_MCP_URL;
+delete process.env.TOOLBOX_MCP_URL;
 
 const { applySettingsToEnv, getPublicUrl, normalizePublicUrl, saveSettings } = await import("../src/config/settings.js");
 
@@ -31,17 +31,17 @@ test("public URLs default bare hostnames to HTTPS and retain explicit schemes", 
 test("a cleared setting restores the ambient value, or deletes the variable it invented", () => {
   applySettingsToEnv(); // boot: nothing stored yet
   assert.equal(process.env.COMPOSIO_MCP_URL, AMBIENT);
-  assert.equal("SKILLS_MCP_URL" in process.env, false);
+  assert.equal("TOOLBOX_MCP_URL" in process.env, false);
 
-  saveSettings({ composioMcpUrl: "https://ui.example/mcp", skillsMcpUrl: "https://ui.example/skills" });
+  saveSettings({ composioMcpUrl: "https://ui.example/mcp", toolboxMcpUrl: "https://ui.example/toolbox" });
   applySettingsToEnv();
   assert.equal(process.env.COMPOSIO_MCP_URL, "https://ui.example/mcp"); // UI wins over .env
-  assert.equal(process.env.SKILLS_MCP_URL, "https://ui.example/skills");
+  assert.equal(process.env.TOOLBOX_MCP_URL, "https://ui.example/toolbox");
 
-  saveSettings({ composioMcpUrl: "", skillsMcpUrl: "" }); // admin empties both fields
+  saveSettings({ composioMcpUrl: "", toolboxMcpUrl: "" }); // admin empties both fields
   applySettingsToEnv();
   assert.equal(process.env.COMPOSIO_MCP_URL, AMBIENT, "must fall back to the pre-override value");
-  assert.equal("SKILLS_MCP_URL" in process.env, false, "must be deleted, not left at the stale UI value");
+  assert.equal("TOOLBOX_MCP_URL" in process.env, false, "must be deleted, not left at the stale UI value");
 });
 
 test("the ambient snapshot is taken once, not refreshed from an already-overridden env", () => {

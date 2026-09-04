@@ -82,7 +82,7 @@
           <div class="view-head dash-head">
             <div>
               <h2>Users</h2>
-              <p class="hint">Approve who may use the bot, mark <strong>admins</strong>, and set each user's personal <strong>Composio</strong> / <strong>Skills Manager</strong> / <strong>Toolbox</strong> tokens (injected only into their own messages). Click a row to edit.</p>
+              <p class="hint">Approve who may use the bot, mark <strong>admins</strong>, and set each user's personal <strong>Composio</strong> / <strong>Toolbox</strong> tokens (injected only into their own messages) and personal skill grants. Click a row to edit.</p>
             </div>
             <div class="dash-tools">
               <button id="add-user-toggle" type="button">+ Add user</button>
@@ -647,7 +647,7 @@
               <section class="setsec" id="set-integrations" data-sec="integrations" aria-labelledby="set-integrations-h">
                 <header class="setsec-head">
                   <h3 id="set-integrations-h">Integrations</h3>
-                  <p class="setsec-desc">Composio, Skills Manager and Toolbox endpoints plus the org-default tokens.</p>
+                  <p class="setsec-desc">Composio and Toolbox endpoints plus the org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
                 </header>
                 <div class="setcard">
                   <h4>Composio connection mode</h4>
@@ -674,28 +674,18 @@
                     <input id="set-composio" type="text" placeholder="https://connect.composio.dev/mcp" />
                   </label>
                   <label class="field">
-                    <span>Skills Manager MCP URL</span>
-                    <input id="set-skills" type="text" placeholder="https://www.skillsmanager.uk/mcp" />
-                  </label>
-                  <label class="field">
                     <span>Toolbox MCP URL</span>
                     <input id="set-toolbox" type="text" placeholder="https://www.skillsmanager.uk/toolbox" />
                   </label>
                 </div>
                 <div class="setcard">
                   <h4>Org-default tokens <em class="state" id="composio-personal-token-note"></em></h4>
-                  <p class="desc">In Personal mode, shared Composio resolves <strong>channel → this org default</strong> while the active user's personal Composio remains separate. Saved Composio tokens are retained but inactive in SDK mode. Skills and Toolbox always resolve <strong>channel → user → this org default</strong>. Shown masked — click the eye to reveal. The <strong>owner</strong> label is only an admin note.</p>
+                  <p class="desc">In Personal mode, shared Composio resolves <strong>channel → this org default</strong> while the active user's personal Composio remains separate. Saved Composio tokens are retained but inactive in SDK mode. Toolbox always resolves <strong>channel → user → this org default</strong>. Shown masked — click the eye to reveal. The <strong>owner</strong> label is only an admin note.</p>
                   <label class="field">
                     <span>Default Composio token <em class="state" id="default-composio-state"></em></span>
                     <input id="set-default-composio-label" class="tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
                     <input id="set-default-composio" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
                     <div class="tok-foot"><button type="button" class="clear-tok" id="clear-default-composio">clear</button></div>
-                  </label>
-                  <label class="field">
-                    <span>Default Skills Manager token <em class="state" id="default-skills-state"></em></span>
-                    <input id="set-default-skills-label" class="tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-                    <input id="set-default-skills" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-default-skills">clear</button></div>
                   </label>
                   <label class="field">
                     <span>Default Toolbox token <em class="state" id="default-toolbox-state"></em></span>
@@ -1092,12 +1082,6 @@
               <em class="state ch-composio-state"></em>
             </label>
             <label class="field">
-              <span>Channel Skills Manager token (used for everyone here — overrides per-user)</span>
-              <input class="ch-skillstoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-              <input class="ch-skillstoken" type="password" placeholder="leave blank to keep / use per-user" />
-              <em class="state ch-skillstoken-state"></em>
-            </label>
-            <label class="field">
               <span>Channel Toolbox token (used for everyone here — overrides per-user)</span>
               <input class="ch-toolboxtoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
               <input class="ch-toolboxtoken" type="password" placeholder="leave blank to keep / use per-user" />
@@ -1247,12 +1231,6 @@
           <input class="ud-composio-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
           <input class="ud-composio" type="password" placeholder="Composio token (x-consumer-api-key)" />
           <em class="state ud-composio-state"></em>
-        </div>
-        <div class="ud-row">
-          <label class="fldlab">Skills Manager token</label>
-          <input class="ud-skillstoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-          <input class="ud-skillstoken" type="password" placeholder="Skills Manager token (Authorization: Bearer)" />
-          <em class="state ud-skills-state"></em>
         </div>
         <div class="ud-row">
           <label class="fldlab">Toolbox token</label>

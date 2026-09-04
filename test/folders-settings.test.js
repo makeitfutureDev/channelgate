@@ -8,7 +8,7 @@ ensureTestEnv();
 
 const [
   { buildSettings, ensureChannelFolder },
-  { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs, composioUrl, skillsUrl, toolboxUrl, injectedRemoteAllowMatches },
+  { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs, composioUrl, toolboxUrl, injectedRemoteAllowMatches },
   { channelSettingsFile, channelAdminSettingsFile, gatewayRoot },
 ] = await Promise.all([
   import("../src/gateway/folders.js"),
@@ -171,7 +171,7 @@ test("the lockdown admits the injected remote servers by URL next to a picked gl
   const picked = { name: "aioutreach", namespace: "mcp__aioutreach", match: { serverUrl: "https://mcp.example.test/aioutreach" } };
   const settings = await buildSettings({ _slug: "claude-remote-allow", cleanMode: false, allowedMcps: [picked], makeToolboxUrl: "https://hook.eu2.make.com/mcp/example" });
   const urls = settings.allowedMcpServers.filter((m) => m.serverUrl).map((m) => m.serverUrl);
-  for (const url of [composioUrl(), skillsUrl(), toolboxUrl(), "https://hook.eu2.make.com/mcp/example", picked.match.serverUrl]) {
+  for (const url of [composioUrl(), toolboxUrl(), "https://hook.eu2.make.com/mcp/example", picked.match.serverUrl]) {
     assert.ok(urls.includes(url), `missing serverUrl entry for ${url}`);
   }
   assert.ok(settings.allowedMcpServers.some((m) => m.serverName === composioRef().name));

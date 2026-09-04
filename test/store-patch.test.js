@@ -80,7 +80,6 @@ test("setUser transaction merges field-scoped patches without clearing omitted v
     approved: false,
     isAdmin: false,
     composioToken: "kept",
-    skillsToken: "",
     toolboxToken: "",
     skills: [],
     allowedMcps: [],

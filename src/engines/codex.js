@@ -18,7 +18,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { composioUrl, skillsUrl, toolboxUrl } from "../gateway/mcp-catalog.js";
+import { composioUrl, toolboxUrl } from "../gateway/mcp-catalog.js";
 import { argvSafePrompt } from "./contract.js";
 import { buildChildEnv } from "./child-env.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
@@ -371,7 +371,7 @@ export function progressFromCodexEvent(p) {
 }
 
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", skillsToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", attachments = [], target = null, outFile }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", attachments = [], target = null, outFile }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
   // The CONTAINER is the confinement boundary, so Codex's own sandbox is switched off: no
   // permission profiles, no network_proxy — egress is the container's network mode.
@@ -508,9 +508,6 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
   addComposio("composio-agent", composioEndpoint, composioToken, "composioToken");
 
   // Skills Manager MCP, same HTTP→stdio bridge, carrying this run's token as a Bearer header.
-  if (!clean && skillsToken) {
-    addSecretRemote("makeitfuture-skills", skillsUrl(), "skillsToken", "Authorization", "Bearer ");
-  }
 
   // Toolbox MCP, same HTTP→stdio bridge, carrying this run's token as a Bearer header.
   if (!clean && toolboxToken) {
@@ -583,7 +580,6 @@ export async function runCodex({
   composioEndpoint = null,
   composioUserToken = "",
   composioToken = "",
-  skillsToken = "",
   toolboxToken = "",
   makeToolboxUrl = "",
   makeToolboxKey = "",
@@ -655,14 +651,14 @@ export async function runCodex({
   const scratchDir = await mkdtemp(path.join(scratchBase, "run-"));
   const outFile = path.join(scratchDir, `cg-codex-${randomUUID()}.txt`);
   const secretDir = path.join(artifactDir, "run");
-  const secretBundlePath = !clean && [gatewayCapability, composioUserToken, composioToken, skillsToken, toolboxToken, makeToolboxKey].some(Boolean)
+  const secretBundlePath = !clean && [gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey].some(Boolean)
     ? path.join(secretDir, `cg-codex-secrets-${randomUUID()}.json`)
     : "";
   if (secretBundlePath) {
     await mkdir(secretDir, { recursive: true, mode: 0o700 });
-    await writeFile(secretBundlePath, JSON.stringify({ gatewayCapability, composioUserToken, composioToken, skillsToken, toolboxToken, makeToolboxKey }), { mode: 0o600 });
+    await writeFile(secretBundlePath, JSON.stringify({ gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey }), { mode: 0o600 });
   }
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, skillsToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, attachments, target: runtime, outFile });
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, attachments, target: runtime, outFile });
 
   return await new Promise((resolve, reject) => {
     // Minimal allowlisted env — the sandbox can't hide the child's own environment (see child-env.js).

@@ -198,10 +198,10 @@ test("SDK-mode Composio rides the same socket bridge in a container, and the pla
 
 test("remote http MCP entries are identical on both backends", async () => {
   const fake = createFakeRuntime();
-  const opts = { skillsToken: "sk-1", toolboxToken: "tb-1", composioToken: "ck_shared", makeToolboxUrl: "https://eu1.make.com/mcp/server/x", makeToolboxKey: "mk" };
+  const opts = { toolboxToken: "tb-1", composioToken: "ck_shared", makeToolboxUrl: "https://eu1.make.com/mcp/server/x", makeToolboxKey: "mk" };
   const host = JSON.parse(await buildMcpConfig(opts));
   const isolated = JSON.parse(await buildMcpConfig({ ...opts, target: fake.target() }));
-  for (const name of ["makeitfuture-skills", "makeitfuture-toolbox", "composio-agent", "make-toolbox"]) {
+  for (const name of ["makeitfuture-toolbox", "composio-agent", "make-toolbox"]) {
     assert.deepEqual(isolated.mcpServers[name], host.mcpServers[name], name);
   }
 });
