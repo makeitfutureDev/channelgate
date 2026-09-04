@@ -979,7 +979,7 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       `mcp__composio-user` + `mcp__composio-agent` outside clean mode, each Claude MCP config entry sets
       `default_tools_approval_mode:"approve"`, and Codex argv mirrors both named approvals.
 - [x] Unit: the lockdown's `allowedMcpServers` carries a `serverUrl` entry for every injected remote
-      server (Composio personal URL, Skills Manager, Toolbox, the channel's Make toolbox URL; the
+      server (Composio personal URL, Toolbox, the channel's Make toolbox URL; the
       `*.composio.dev` pattern in SDK mode) beside the `serverName` entries, and still does so when the
       channel picks a global server — Claude Code matches remote servers by URL once any `serverUrl`
       entry exists, which silently blocked Composio in #int-sales (2026-09-04). Clean mode stays empty.
@@ -1142,7 +1142,7 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [ ] Runtime UI effort options follow the selected/inherited engine: Claude shows Claude effort
       choices, Codex shows Codex reasoning levels; Codex argv includes `model_reasoning_effort`.
 - [x] Unit: `/help` includes the practical user workflows: `@agent`/🤖 engagement, per-thread stop,
-      file browsing, Composio and Skills Manager setup, memory/rules, automatic gateway skills,
+      file browsing, Composio setup, the skill catalog, memory/rules, automatic gateway skills,
       reminders/schedules, durable background work, `/status`, and `/pending`; it distinguishes a
       thread's `stop`/🛑 from the top-level `/stop` sweep.
 - [ ] `/clear` drops the session (next message is a cold start); `/help` shows the practical guide
@@ -2456,6 +2456,60 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] Live: `create_skill` from a channel as a non-admin approved member (approval card), then
       `propose_skill_change` on a synced skill and approve it in the admin UI → pinned override;
       `skill_usage_report` after a few turns lists the never-used grants.
+
+### Skills platform (round two) — personal skills, publishing, webhook, MCP endpoint, peers, migration
+
+- [x] Unit: the Skills Manager integration is gone from source (no `makeitfuture-skills` server, no
+      skills tokens in identity resolution, MCP config, Codex argv, secrets allowlist or user/channel
+      defaults); leftover stub folders are pruned on workspace configure while real skill folders
+      survive; the lockdown carries no Skills Manager URL (`test/managed-write-symlinks.test.js`,
+      `test/mcp-config.test.js`, `test/codex-args.test.js`, `test/access-grants.test.js`,
+      `test/store-patch.test.js`, `test/folders-settings.test.js`, `test/settings-env-lifecycle.test.js`).
+- [x] Integration: a personal skill is listed and grantable only to its author (admin surfaces see
+      it), is granted to the author's own tier on creation and never published; feedback proposals
+      need a note and close without a revision; an approved promotion turns it into an organization
+      skill (`test/skills-standalone.test.js`).
+- [x] Integration: user-tier and organization-tier grant/revoke resolve names to slugs and pull
+      dependencies; `deleteOwnSkill` refuses another author and a synced skill
+      (`test/skills-standalone.test.js`).
+- [x] Unit: compatibility declarations report engine/platform/version/MCP mismatches as notes and
+      never stop a skill from resolving (`test/skills-standalone.test.js`).
+- [x] Unit: access tokens are minted once (`cgs_` prefix), listed by prefix only, verified by hash,
+      scoped, and stop working on revocation (`test/skills-standalone.test.js`).
+- [x] Integration (mocked GitHub Contents API): publishing writes every file of a revision under
+      `<folder>/<slug>/`, deletes files a newer revision dropped, records the commit on the revision,
+      and adopts the skill into a git source that points at the publish repository; missing token or
+      repository reports instead of throwing (`test/skills-standalone.test.js`).
+- [x] Integration (real HTTP): `/mcp/skills` refuses without a valid token (401) and GET (405),
+      honours scopes (`propose`/`sync` denied to a read token), serves `library_search_skills` with
+      facets, `library_get_skill_info`/`library_get_skill_file`, files proposals and creates skills
+      with the right scopes, and exports manifests/files for peers — personal skills never appear
+      (`test/skills-standalone.test.js`).
+- [x] Integration (real HTTP): the GitHub webhook answers 404 until a secret is set, 401 on a bad
+      signature, triggers a sync for the matching source on a valid push, and pongs a ping
+      (`test/skills-standalone.test.js`).
+- [x] Integration: a gateway source pulls a peer's manifest + files over the export tools, stages
+      in review mode, activates the same bytes in auto mode without a new revision, tombstones what
+      the peer dropped, keeps last-good on failure, refuses to run without a token, and never
+      returns its secret on an API response (`test/skills-standalone.test.js`).
+- [x] Admin API: tokens (value only on creation), visibility switch (400 on a bad value),
+      organization grant/revoke, gateway sources with a write-only secret (+ clear), publish and
+      webhook settings with validation (`test/skills-standalone.test.js`).
+- [x] Drift tripwires updated for the new verbs (gated: delete/publish/org/source/exclude; open:
+      reads and the member's own tier) (`test/mcp-control-plane-approval.test.js`,
+      `test/folders-settings.test.js`).
+- [ ] Live: run `scripts/migrate-skills-manager.mjs --dry-run` then for real on the production
+      gateway; confirm every Skills Manager repository is a synced source, the organization tier and
+      the two personal tiers carry the former favorites, and a channel's next message materializes
+      them without any Skills Manager token.
+- [ ] Live: add `/mcp/skills` with a read token to a laptop Claude Code (`claude mcp add --transport
+      http …`), search and read a skill; revoke the token and confirm 401.
+- [ ] Live: configure the publish repository = the private skills repository (also a source),
+      create a skill from chat, confirm the commit lands and the skill shows as owned by that source
+      after the next sync; push a change to a source repository with the webhook configured and
+      confirm the sync runs within seconds.
+- [ ] Live (two gateways): mint a `sync` token on Xavier, add Xavier as a gateway source on Atlas in
+      review mode, approve a staged skill there, and use it in an Atlas channel.
 
 ## Security checks
 - [ ] **Retired 2026-09-03 (Linux + containers only):** the sandbox wording — inside the container `~/.ssh` and sibling channel folders do not exist at

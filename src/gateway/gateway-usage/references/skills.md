@@ -17,6 +17,12 @@ when a skill fires. No token or network call is involved.
   did. Claude's Skill tool gives exact counts; Codex reads the file, so those counts are
   labelled *inferred*.
 
+## Your own skills (any approved member)
+
+- `add_my_skills` / `remove_my_skills` — carry catalog skills in YOUR runs, in every
+  conversation (the personal tier; like starring in a skill library). No approval card.
+- `get_skill_info` — a skill's owner, version, revisions, files and dependencies.
+
 ## Changing this channel's skills (managers, or an admin)
 
 - `add_channel_skills` / `remove_channel_skills` — grant or revoke skills here by slug.
@@ -34,20 +40,28 @@ channel is in auto mode.
 ## Authoring (anyone approved to use the channel)
 
 - `create_skill` — add a new skill to the shared catalog from files you pass (`SKILL.md`
-  required) and grant it to this channel at once. Use the `skill-authoring` skill for the
-  frontmatter contract and a description that actually triggers.
+  required) and grant it to this channel at once; `personal: true` keeps it private to you. Use
+  the `skill-authoring` skill for the frontmatter contract and a description that actually
+  triggers. When Git publishing is configured the files are also pushed to the repository.
 - `update_skill` — a new revision of a skill you created (managers and admins may update any
   locally authored skill). Pass the changed files; unnamed files are kept.
 - `propose_skill_change` — for a skill you may not edit directly (synced from a repository,
-  bundled, or someone else's): send the changed files and a note. An admin reviews it; on
-  approval it becomes a new revision (pinned as a local override when the skill comes from a
-  source). `kind: "promote"` asks for a skill to be granted organization-wide.
+  bundled, or someone else's): send the changed files and a note (`kind: "change"`), a note
+  alone (`kind: "feedback"`), or `kind: "promote"` (a personal skill becomes an organization
+  skill; an organization skill gets granted everywhere). An admin reviews it; an approved change
+  becomes a new revision (pinned as a local override when the skill comes from a source).
+- `delete_skill` — remove a skill you authored (admins: any local skill); restorable by an admin.
 
 ## Admins
 
 - `list_skill_proposals` / `decide_skill_proposal` — review pending proposals in the thread
   (`decision: "approve" | "reject"`, optional `note`).
-- `sync_skill_sources` — pull the configured GitHub sources now (a source in *review* mode
-  stages new revisions for approval in the admin UI; *auto* activates them).
-- Sources, templates, pins/rollbacks, staged revisions and the usage dashboard live in the admin
-  UI under **Skills**.
+- `sync_skill_sources` — pull the configured sources now (a source in *review* mode stages new
+  revisions for approval in the admin UI; *auto* activates them).
+- `list_skill_sources` / `add_skill_source` / `set_skill_source` / `remove_skill_source` — the
+  sources: GitHub repositories, host folders, or a peer gateway (URL + a token minted there).
+- `add_org_skills` / `remove_org_skills` — the organization tier (every conversation).
+- `set_skill_excluded` — hide a synced/bundled skill from the catalog (tombstone) or bring it back.
+- `publish_skill` (managers too) — push a local skill to the configured Git repository now.
+- Templates, pins/rollbacks, staged revisions, access tokens for the catalog's MCP endpoint, the
+  GitHub webhook and the usage dashboard live in the admin UI under **Skills**.

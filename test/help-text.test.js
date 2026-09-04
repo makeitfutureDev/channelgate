@@ -11,7 +11,7 @@ test("/help explains the gateway's essential user workflows", () => {
     "react 🛑",
     "`@agent /files`",
     "set my Composio token",
-    "set my Skills Manager token",
+    "list skills",
     "`remember that …`",
     "`gateway-usage`",
     "`channel-memory`",

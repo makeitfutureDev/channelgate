@@ -381,8 +381,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   jobs, scheduled work, and warm/in-flight sessions. A plain "status" message deliberately goes to
   Claude (it summarizes the thread's actual work), not the canned report.
 - In-thread commands (typed as normal messages): `/help` (a practical operating guide covering
-  channel/DM addressing, 🤖 engagement, thread stopping/steering, files, personal Composio and
-  Skills Manager setup, channel memory/rules, the automatic gateway skills, reminders/schedules,
+  channel/DM addressing, 🤖 engagement, thread stopping/steering, files, personal Composio setup,
+  the skill catalog, channel memory/rules, the automatic gateway skills, reminders/schedules,
   long-running background work, useful status checks, and the complete command reference),
   `/files` (native explorer; thread-aware open button), `/clear` (drop the thread's session — next
   message starts fresh), `/context` (token usage + % of the context window from the last turn),
@@ -865,7 +865,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   or clear it atomically. Normal Claude and Codex turns expose it as `make-toolbox`; clean mode
   removes it. Claude carries the key only in the mode-0600 temporary MCP config, while Codex uses a
   daemon-root 0600 secret bundle read by the local remote-MCP broker. The same broker protects
-  signed gateway capability plus legacy Composio, Skills Manager, and Toolbox credentials: Codex argv carries only the bundle
+  signed gateway capability plus legacy Composio and Toolbox credentials: Codex argv carries only the bundle
   path + logical key, and the Codex process environment receives no connector secret. The global
   child-env boundary admits exact reviewed engine variables only, never broad vendor prefixes.
   → TEST-PLAN: MCP injection & tokens.
@@ -886,7 +886,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `mcp__composio-user` and `mcp__composio-agent`; each emitted server sets
   `default_tools_approval_mode:"approve"`. Codex mirrors both named approval configurations.
   The lockdown's `allowedMcpServers` names every injected server AND lists each remote one by URL
-  (Composio, Skills Manager, Toolbox, the channel's Make toolbox; `*.composio.dev` in SDK mode):
+  (Composio, Toolbox, the channel's Make toolbox; `*.composio.dev` in SDK mode):
   Claude Code matches remote servers by URL as soon as the list holds any `serverUrl` entry — a
   picked global server adds one — and a name entry alone then no longer admits them (2026-09-04:
   Composio silently "blocked by enterprise policy" in a channel with a picked server).
@@ -1010,24 +1010,24 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   unchanged).
   → TEST-PLAN: Security (Composio isolation) + MCP injection & tokens.
 - Per-run MCP config: the **gateway control MCP** is always injected (scheduling + channel-admin
-  tools, scoped to the channel/author, run outside the sandbox); personal/shared **Composio**,
-  **Skills Manager**, and embedded **Toolbox** (`makeitfuture-toolbox`) are injected only when their
-  tokens resolve. → TEST-PLAN: MCP injection & tokens.
+  tools, scoped to the channel/author, run outside the sandbox); personal/shared **Composio** and
+  embedded **Toolbox** (`makeitfuture-toolbox`) are injected only when their tokens resolve. Skills
+  are never an MCP server: they come from the gateway's own catalog as files (Skills platform
+  below). → TEST-PLAN: MCP injection & tokens.
 - Token resolution: Personal-mode Composio is two paths (**user only** plus **channel →
   org-default**); SDK mode replaces both active paths with stable user/channel identities without
-  mutating saved tokens. Skills and Toolbox retain **channel → user → org-default**. Tokens can be
+  mutating saved tokens. Toolbox retains **channel → user → org-default**. Tokens can be
   set via `set_my_*_token` or the admin UI; org-default tokens and the write-only SDK key live in
   Settings → Integrations.
 - Per-channel opt-out of the org-default token fallback (`meta.noDefaultTokens`): a sensitive channel
   refuses the broad gateway-wide tokens (channel/user tokens still apply).
-- Skills Manager favorites are materialized as **native skill-stub folders** under the channel's
-  `.claude/skills/` (one `<slug>/SKILL.md` per starred skill): the frontmatter name + description
-  drive Claude's own skill triggering, and the stub body routes the agent to load the real
-  instructions on demand via the `makeitfuture-skills` MCP (`library_get_skill_file`) — progressive
-  disclosure, so only the descriptions are always-on. Refreshed each run (favorites cached ~10 min),
-  pruned when the token is gone; stubs carry a marker so a **local (admin-granted) skill of the same
-  name always wins** and is never clobbered. Replaces the old `CLAUDE.md` favorites prose block (which
-  is stripped on first re-provision). → TEST-PLAN: MCP injection & tokens.
+- **Skills Manager integration retired (2026-09-05).** The `makeitfuture-skills` MCP injection, the
+  organization/channel/user Skills Manager tokens (their tools, routes, UI fields and secret
+  readers), the favorites stubs and the App Home favorites fetch are gone; Skills Manager remains a
+  standalone product. Stub folders the old integration left in a channel folder are pruned on the
+  channel's next message so they never shadow a catalog skill; the legacy `CLAUDE.md` favorites
+  block is still stripped. `scripts/migrate-skills-manager.mjs` moves a deployment's Skills Manager
+  data into the catalog (below). → TEST-PLAN: Skills platform (Core).
 - Trusted bot apps allowlist (`settings.trustedBotApps`): lets a specific bot's posts (e.g. a Make.com
   scenario) trigger runs by bypassing the reply-loop guard **only** — the message must still carry an
   `@bot` mention and come from an approved author. → TEST-PLAN: Trusted bot apps.
@@ -1508,7 +1508,7 @@ are retired, bullet by bullet; everything else stands.
 - Warm session pool: a thread's `claude` process stays alive (default 10 min idle) for fast
   follow-ups; relaunches on author/permission change. → verified: warm reuse retains context.
 - Clean mode (per channel / DM): run bare for the lowest token cost — no MCP servers injected
-  (gateway control, Composio, Skills Manager), no skills copied, no skills-favorites block, and no
+  (gateway control, Composio, Toolbox), no skills copied, no skills-favorites block, and no
   per-author tokens. The per-run `--mcp-config` is empty + `--strict-mcp-config` (so global servers
   are replaced by nothing) and the lockdown's `allowedMcpServers` is empty; Codex skips its gateway
   `-c mcp_servers.*` injection. Loads as close to the model's base prompt as the harness allows.
@@ -1801,6 +1801,59 @@ are retired, bullet by bullet; everything else stands.
   token and sync settings), **Templates** (edit, preview/apply to a conversation), **Usage**
   (per-conversation report, never-used, and every conversation's profile + context cost).
   → TEST-PLAN: Skills platform (Core).
+- **Personal skills and self-service grants.** A skill created with `personal: true` (or switched in
+  the admin UI) is visible and grantable only to its author (admins see everything) and is never
+  published or exported; a `promote` proposal, once approved, makes it an organization skill.
+  `add_my_skills` / `remove_my_skills` let any approved member carry catalog skills in their OWN
+  runs (the user tier of the grant union — Skills Manager's "stars"), no card needed; `delete_skill`
+  removes a skill you authored (tombstone). Proposals gain `kind: feedback` (a note without files).
+  Admins get chat verbs for the organization tier (`add_org_skills` / `remove_org_skills`), the
+  sources (`list_skill_sources`, `add_skill_source`, `set_skill_source`, `remove_skill_source`),
+  exclusions (`set_skill_excluded`) and `get_skill_info`. → TEST-PLAN: Skills platform (round two).
+- **Git publishing** (`src/gateway/skills/publish.js`): with a publish repository configured
+  (Settings via the Skills view: repository, branch, folder, mode) and the daemon's GitHub token,
+  every new revision of a local skill — create, update, approved change, promotion — is pushed
+  through the GitHub Contents API (one commit per file under `<folder>/<slug>/`, dropped files
+  deleted) and the revision records the commit. When the publish repository is also a git source,
+  the published skill is ADOPTED by that source (owner git, same source), so the next sync sees its
+  own files instead of a conflict — authored in chat, pushed to GitHub, part of the library.
+  `publish_skill` (managers) and the admin UI push on demand; publishing is best effort and never
+  blocks a turn. → TEST-PLAN: Skills platform (round two).
+- **Webhook-triggered sync.** `POST /api/skills/webhook/github` (outside the admin session)
+  verifies GitHub's `X-Hub-Signature-256` over the raw body against the write-only webhook secret,
+  matches the pushed repository against the git sources, and schedules a debounced sync of each —
+  seconds instead of the interval. `ping` events answer without syncing.
+  → TEST-PLAN: Skills platform (round two).
+- **The catalog's own MCP endpoint** (`POST /mcp/skills`, stateless Streamable HTTP,
+  `src/web/skills-mcp.js`): any MCP client — laptop Claude Code, Codex, another gateway — uses the
+  catalog with a bearer **access token** minted in the admin UI (`skill_access_tokens`: random,
+  shown once, stored hashed, scoped `read` / `propose` / `manage` / `sync`, revocable, last-used
+  tracked). Skills Manager's `library_*` surface is kept for the read/author subset
+  (`library_search_skills` with facets + pagination, `library_get_skill_info`,
+  `library_get_skill_file`, `library_list_templates`, `library_whoami`,
+  `library_suggest_skill_change`, `library_create_skill`, `library_update_skill`) plus
+  `library_export` / `library_export_skill` for peers. Personal skills never leave the gateway.
+  → TEST-PLAN: Skills platform (round two).
+- **Gateway-to-gateway sources** (`src/gateway/skills/peer-sync.js`): a source of kind `gateway`
+  (a peer's URL + a token with the `sync` scope, stored write-only) pulls the peer's organization
+  skills through that endpoint — staged in review mode, active in auto mode, tombstoned when the
+  peer drops them, last-good kept on failure — so a second gateway (Atlas following Xavier) shares
+  one library with nothing but a URL and a token. All source kinds (git / folder / gateway) sync
+  through one dispatcher on the interval, from the UI and from chat.
+  → TEST-PLAN: Skills platform (round two).
+- **Compatibility declarations** (`compatibility:` in a skill's frontmatter: `engines`,
+  `platforms`, `min_gateway`, `mcp`) are checked against the conversation's engine, platform,
+  gateway version and MCP servers and reported as notes in `show_channel_skills` — advisory, never
+  a refusal. → TEST-PLAN: Skills platform (round two).
+- **Migration from Skills Manager** (`scripts/migrate-skills-manager.mjs`, idempotent, `--dry-run`):
+  using the tokens the retired integration stored, every Skills Manager repository becomes a git
+  source (auto mode) and is synced (the host's `gh auth token` is stored as the GitHub token when
+  none is set); the organization token's effective favorites become the organization tier, a
+  channel token's favorites that channel's grants, a user token's favorites that user's tier; with
+  Skills Manager's Supabase service credentials, team favorites become templates (Development,
+  Sales & Marketing → sales + marketing, Management, Admin), admin exclusions become tombstones,
+  and each token user's personal skills become personal local skills.
+  → TEST-PLAN: Skills platform (round two).
 
 ## Licensing (`src/ee/` — proprietary, source-visible)
 - **Tiered license keys.** No key: 1 conversation per UTC month, 500 AI messages in it. Free key:

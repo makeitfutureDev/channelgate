@@ -19,6 +19,16 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Skills platform, round two: Skills Manager migrated in, Git publishing, an MCP endpoint of its
+  own, peer gateways.** Skills authored or approved in chat are pushed to a configured GitHub
+  repository (one commit per file) and adopted by the matching source; a GitHub push webhook
+  triggers a debounced sync; `POST /mcp/skills` serves the catalog to laptop Claude Code, Codex and
+  any MCP client with scoped, revocable access tokens (the `library_*` tool names kept); a source
+  of kind `gateway` lets a second gateway follow another's library; personal (author-only) skills,
+  self-service personal grants (`add_my_skills`), feedback proposals, `delete_skill`, organization-
+  tier and source administration from chat, compatibility notes, and
+  `scripts/migrate-skills-manager.mjs`, which moves a deployment's Skills Manager repositories,
+  favorites, team favorites, exclusions and personal skills into the catalog.
 - **Skills platform (Core): the gateway owns its skill library.** A local catalog in the gateway
   database stores every skill a conversation can be granted as immutable, content-hashed revisions
   of the exact bytes of every file (`SKILL.md` included), with explicit ownership per slug
@@ -37,6 +47,13 @@ product overview.
   lists never-used grants; the admin UI gains a **Skills** view (catalog, review, sources,
   templates, usage). `src/gateway/skills/`, `src/mcp/tools/skills.js`, `src/web/routes/skills.js`,
   `public/admin-skills.js`, migration 14, `docs/SKILLS.md`, `gateway-usage` → `references/skills.md`.
+
+### Removed
+- **The Skills Manager runtime integration.** Skills now come from the gateway's own catalog as
+  files, so the `makeitfuture-skills` MCP injection, the organization/channel/user Skills Manager
+  tokens (with their tools, routes, admin UI fields and secret readers), the favorites stubs and
+  the App Home favorites fetch are gone. Stub folders left in older channel folders are pruned on
+  the next message. Skills Manager itself remains a standalone product; Toolbox is unchanged.
 
 ### Changed
 - **Production license verification is live by default.** The gateway now ships the Ed25519 public
