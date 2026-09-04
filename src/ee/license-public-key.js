@@ -12,13 +12,17 @@
 // DNS answer pointed at somebody else's server) can withhold a verification — which lands in the
 // grace state — but can never mint a tier.
 //
-// ⚠️ PLACEHOLDER KEY ⚠️
-// The constant below is a BUILD-TIME PLACEHOLDER generated for development. Its private half was
-// never persisted anywhere and no license the platform issues verifies against it. The PRODUCTION
-// public key is swapped into this file at deploy time (release step: replace the PEM, commit,
-// tag). Staging and tests override it through CHANNELGATE_LICENSE_PUBLIC_KEY instead of editing
-// this file — the tests generate their own pair per run.
+// The production key published by https://channelgate.vercel.app/v1/license/public-key. Its
+// private half exists only in the Licensor's key store and the platform's server-side secrets.
+// Staging and tests override this through CHANNELGATE_LICENSE_PUBLIC_KEY instead of editing the
+// shipped trust root — the tests generate their own pair per run.
 
+const PRODUCTION_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAbXN9l8r94LbSp1ybwWGXmXSDzIwWS5P5yM846TIZlXY=
+-----END PUBLIC KEY-----
+`;
+
+// Retained only so old development builds can still identify and report the unusable placeholder.
 const PLACEHOLDER_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAGifTHprvQdMSnHH/n3kxprEs4oAR1LX+q8I/wBY1wQA=
 -----END PUBLIC KEY-----
@@ -35,7 +39,7 @@ export function isPlaceholderKey(pem = licensePublicKeyPem()) {
 export function licensePublicKeyPem() {
   const override = String(process.env.CHANNELGATE_LICENSE_PUBLIC_KEY || "").trim();
   if (override) return override.includes("\\n") ? override.replace(/\\n/g, "\n") : override;
-  return PLACEHOLDER_PUBLIC_KEY_PEM;
+  return PRODUCTION_PUBLIC_KEY_PEM;
 }
 
-export { PLACEHOLDER_PUBLIC_KEY_PEM };
+export { PLACEHOLDER_PUBLIC_KEY_PEM, PRODUCTION_PUBLIC_KEY_PEM };

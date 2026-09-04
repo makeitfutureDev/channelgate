@@ -20,7 +20,7 @@ deployment-owner responsibilities, not claims made by this repository.
 The only outbound traffic the gateway itself originates — as distinct from the CLI's model
 provider and the connectors an operator enables — is the license check described in
 [`LICENSE-KEYS.md`](LICENSE-KEYS.md). It goes to the ChannelGate platform at
-`CHANNELGATE_PLATFORM_URL` (default `https://makeitfuture.com/channelgate/api`) and consists of
+`CHANNELGATE_PLATFORM_URL` (default `https://channelgate.vercel.app`) and consists of
 exactly two request shapes. There are no others, and there is no analytics, telemetry, crash
 reporting, or heartbeat.
 
