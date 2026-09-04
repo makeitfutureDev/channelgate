@@ -135,9 +135,23 @@ product overview.
   same engine up to two more times, ten seconds apart (`CG_TRANSIENT_RETRY_ATTEMPTS`,
   `CG_TRANSIENT_RETRY_DELAY_MS`), only while no tool has run, and never for authentication,
   usage-limit or model-rejection failures, which keep their own failover / model-retry paths. Every
-  attempt is a `run_transient_retry` event; a reply that needed more than one attempt says so in
-  one line, an exhausted error says how often it was retried, and a cancel ends the pause early
-  (`src/gateway/run.js`, `src/engines/codex.js`).
+  attempt is a `run_transient_retry` event and a status-line notice ("retrying in 10s (1/2)"); a
+  reply that needed more than one attempt says so in one line, an exhausted error says how often it
+  was retried, and a cancel ends the pause early (`src/gateway/run.js`, `src/engines/codex.js`).
+  Review fixes on the same change: a retried FRESH Claude session runs under a new session id (the
+  CLI refuses to create one twice — "Session ID … is already in use"); the warm Claude process, which
+  stays alive after a provider failure, now rejects that turn with the classified error instead of
+  posting "API Error: …" as the reply (`src/engines/persistent-session.js`); a turn that already
+  streamed text is never replayed (Claude's replay-safety now matches Codex's); Claude's catch-all
+  `provider` kind and the bare "API Error:" prefix no longer count as an outage (a rejected model or
+  an unknown 4xx fails once); Codex's stderr never decides a replay (a wedge or an unexplained exit
+  keeps its honest message, and a recovered "unexpected status 429" line no longer becomes a
+  usage-limit cooldown), the underscore error codes it actually emits (`internal_server_error`,
+  `response_stream_disconnected`, …) do qualify, a 404 whose body names the model is a model
+  rejection, and the stderr excerpt in a classified failure is redacted; the retry knobs are read
+  per turn (so `.env` values count) and the kinds each engine may replay are an adapter fact
+  (`transientKinds`). Known cost, inherent to a replay: on a RESUMED session the failed attempt's
+  prompt (and the provider's error line) stay in the transcript before the retried one.
 - **`--repath --from <old> --to <new>` for a folder moved by hand.** The rename migration's rules
   only know the roots the product renamed; a folder the operator moved — the daemon's own checkout,
   a channel's custom `workDir` — was invisible to them, so its channel record, Claude project

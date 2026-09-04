@@ -12,6 +12,10 @@ export function engineSupports(engine, capability) { return Boolean(adapterFor(e
 export function mintsOwnSessionId(engine) { return Boolean(adapterFor(engine)?.mintsOwnSessionId); }
 export function usesMcpConfigFile(engine) { return requireAdapter(engine).mcpTransport === "file"; }
 export function engineLabel(engine) { return adapterFor(engine)?.label ?? String(engine || ""); }
+// The provider-failure kinds this engine's runner reports as "the provider did not answer" — the
+// only kinds the orchestrator replays in place (src/gateway/run.js withTransientRetry). An engine
+// that declares none is simply never retried that way.
+export function engineTransientKinds(engine) { return adapterFor(engine)?.transientKinds || []; }
 // The command a human types to pick this session up by hand. The engine owns the command itself;
 // the RUNTIME owns how you reach the engine — a container run has to be entered first, so the
 // backend wraps the base command (`<cli> exec -it -w <cwd> <name> <baseCommand>`). Called without

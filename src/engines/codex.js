@@ -31,7 +31,7 @@ import { isProgressReportTool, normalizeProgressReport } from "./progress-report
 import { thinkingSummary } from "./stream.js";
 import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 import { redactLogValue } from "../util/redact.js";
-import { processFailureMessage } from "../util/process-outcome.js";
+import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { collectCodexChildAccounting, readCodexRootAccounting, snapshotCodexUsage, subtractCodexTokenUsage } from "./codex-usage.js";
 
@@ -90,19 +90,36 @@ const AUTH_FAILURE_RE = /not logged in|log ?in (?:again|with)|sign ?in (?:again|
 // (overloaded) are the textbook cases; 404 is listed on purpose — on 2026-09-03 the ChatGPT Codex
 // backend answered every request with "404 Not Found: Unknown error" for a few minutes, and a
 // retry ten seconds later was the right response, not a red error in the thread. A 400 is NOT
-// here: it says the request itself was wrong, and a model rejection has its own kind above.
-const TRANSIENT_STATUSES = new Set([404, 408, 409, 425, 502, 503, 504, 529]);
-const TRANSIENT_FAILURE_RE = /unknown error|timed? ?out|ECONN(?:RESET|REFUSED|ABORTED)|EAI_AGAIN|ENOTFOUND|EPIPE|socket hang up|network (?:error|failure)|stream disconnected|connection (?:reset|refused|closed|error|failed)|reconnecting|overloaded|server (?:had an )?error|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|internal (?:server )?error/i;
+// here: it says the request itself was wrong, and a model rejection has its own kind above — that
+// check runs first, so the 404 an OpenAI-style backend answers for a model that does not exist
+// ("model_not_found") is a rejection, not an outage. Every 5xx qualifies via `>= 500`, so only the
+// sub-500 members are listed.
+const TRANSIENT_STATUSES = new Set([404, 408, 409, 425]);
+// Codex names most of these as underscore codes in `error.type` (internal_server_error,
+// response_stream_disconnected, http_connection_failed, retry_limit, …); the text is matched with
+// underscores folded to spaces so one vocabulary covers both the code and the prose.
+const TRANSIENT_FAILURE_RE = /unknown error|timed? ?out|ECONN(?:RESET|REFUSED|ABORTED)|EAI_AGAIN|ENOTFOUND|EPIPE|socket hang up|network (?:error|failure)|stream (?:disconnected|failed)|connection (?:reset|refused|closed|error|failed)|reconnecting|overloaded|high load|at capacity|server (?:had an )?error|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|internal (?:server )?error|too many failed attempts|retry limit/i;
 
-export function classifyCodexFailure({ message = "", providerType = "", status = 0 } = {}) {
+// `source` says what `message` IS. "event" (default): one structured failure report — a JSON error
+// event, a credential probe. "stderr": the process's accumulated log, which is not a verdict: it
+// carries the CLI's own recovered retries ("stream disconnected … retrying", an "unexpected status
+// 429" it got past) and boilerplate, so from a log only the explicit usage-limit / authentication
+// phrasings count — never a status quoted in passing, never the transient wording. A wedge or an
+// unexplained exit is therefore never replayed on the strength of its log; the in-place retry is
+// decided from the event the provider actually answered with.
+export function classifyCodexFailure({ message = "", providerType = "", status = 0, source = "event" } = {}) {
   const text = `${providerType} ${message}`;
-  // The HTTP status often travels only in the prose ("unexpected status 404 Not Found: …").
-  const quoted = /unexpected status (\d{3})\b/i.exec(message);
+  const fromLog = source === "stderr";
+  // The HTTP status often travels only in the prose ("unexpected status 404 Not Found: …") — but
+  // not in a "Reconnecting... 2/5 (unexpected status 429 …)" progress line, which reports a
+  // failure the CLI is still retrying: transient by definition, whatever status it quotes.
+  const quoted = fromLog || /\breconnecting\b/i.test(message) ? null : /unexpected status (\d{3})\b/i.exec(message);
   const httpStatus = Number(status) || (quoted ? Number(quoted[1]) : 0);
-  if ((httpStatus === 400 || /invalid[_ -]?request/i.test(providerType)) && MODEL_REJECTION_RE.test(message)) return "model_rejected";
+  if ((httpStatus === 400 || httpStatus === 404 || /invalid[_ -]?request|model[_ -]?not[_ -]?found/i.test(providerType)) && MODEL_REJECTION_RE.test(message)) return "model_rejected";
   if (httpStatus === 429 || /rate[_ -]?limit|quota|insufficient[_ -]?quota|usage[_ -]?limit/i.test(providerType) || USAGE_LIMIT_RE.test(text)) return "usage_limit";
   if (httpStatus === 401 || httpStatus === 403 || /auth|credential|unauthori[sz]ed/i.test(providerType) || AUTH_FAILURE_RE.test(text)) return "authentication";
-  if (TRANSIENT_STATUSES.has(httpStatus) || httpStatus >= 500 || TRANSIENT_FAILURE_RE.test(text)) return "transient";
+  if (fromLog) return "";
+  if (TRANSIENT_STATUSES.has(httpStatus) || httpStatus >= 500 || TRANSIENT_FAILURE_RE.test(text.replace(/_/g, " "))) return "transient";
   return "";
 }
 
@@ -142,9 +159,12 @@ export function codexDiagnosticLine(text = "") {
 }
 
 // The user-facing sentence for a classified failure that arrived on stderr rather than as a JSON
-// event. Keeps the CLI's own actionable text (reset time, top-up link) instead of an exit code.
+// event. Keeps the CLI's own actionable text (reset time, top-up link) instead of an exit code —
+// as the redacted last lines of the log, never the raw buffer: this sentence is posted to the
+// thread and stored in the event log, and a CLI that fails will happily echo a token into its own
+// error line (src/util/redact.js).
 export function codexProcessFailureMessage(kind, stderr = "") {
-  const detail = String(stderr || "").replace(/\s+/g, " ").trim().slice(0, 600);
+  const detail = conciseProcessDiagnostic(stderr, 600);
   const label = { usage_limit: "Codex usage limit reached", authentication: "Codex authentication failed" }[kind] || "Codex provider error";
   return detail ? `${label}: ${detail}` : label;
 }
@@ -830,7 +850,10 @@ export async function runCodex({
         // A wedged turn is still worth classifying: the reason it went quiet is usually sitting in
         // the stderr we buffered. Naming it turns an opaque "no output" into an actionable
         // failure the orchestrator can fail over on (when nothing ran), instead of a dead end.
-        const wedgedKind = classifyCodexFailure({ message: stderr });
+        // `source: "stderr"` — a log, not a verdict: only the explicit limit/auth phrasings count,
+        // never the transient wording, so a wedge that already spent the whole silence budget is
+        // not replayed for another one on the strength of a recovered retry line.
+        const wedgedKind = classifyCodexFailure({ message: stderr, source: "stderr" });
         const waited = describeSilence(silenceMs || timeoutMs);
         if (wedgedKind && wedgedKind !== "model_rejected") {
           return reject(commandError(`${codexProcessFailureMessage(wedgedKind, stderr)} (no output for ${waited})`, {
@@ -888,8 +911,10 @@ export async function runCodex({
       if ((code !== 0 || exitSignal) && !finalText) {
         // Some Codex builds print the limit/auth notice on stderr and exit nonzero WITHOUT emitting
         // a JSON error event. Classify that too, so the same actionable message and failover path
-        // apply instead of an opaque "Codex exited with code 1".
-        const kind = classifyCodexFailure({ message: stderr });
+        // apply instead of an opaque "Codex exited with code 1". Same `source: "stderr"` rule as
+        // the wedge above: an unexplained exit whose log merely mentions a timeout or a reset is
+        // an ordinary process failure, not a provider outage to replay.
+        const kind = classifyCodexFailure({ message: stderr, source: "stderr" });
         if (kind && kind !== "model_rejected") {
           return reject(commandError(codexProcessFailureMessage(kind, stderr), {
             engine: "codex",

@@ -814,9 +814,18 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       first two invocations still yields the reply, prefixed with the retried-N× notice, and exactly
       two `run_transient_retry` events; a failure that outlives every attempt surfaces the
       provider's own message marked "retried 2×" with NO cross-engine failover; a transient failure
-      AFTER a tool ran is never retried (replaySafe=false, zero retry events); the Claude
-      `availability` kind ("API Error: 529 Overloaded") takes the same path; authentication,
-      usage-limit, model-rejection and invalid-request kinds are never treated as transient.
+      AFTER a tool ran (Codex) or after text already streamed (Claude) is never retried
+      (replaySafe=false, zero retry events); the Claude `availability` kind ("API Error: 529
+      Overloaded") takes the same path, and a retried FRESH Claude session runs under a new
+      session id (the stub, like the CLI, refuses to create the same `--session-id` twice — three
+      attempts, three ids, the thread keeps the one that answered); the warm Claude process's
+      is_error result after a provider failure REJECTS replay-safe (unit, PersistentClaudeSession);
+      authentication, usage-limit, model-rejection, invalid-request and the catch-all `provider`
+      kinds are never treated as transient; the Codex classifier: a 404 naming the model is
+      `model_rejected`, the CLI's underscore codes (`internal_server_error`, …) are `transient`, a
+      "Reconnecting… (unexpected status 429 …)" progress line is transient (never a limit), and
+      from stderr (`source: "stderr"`) only the explicit limit/auth phrasings count; the knobs are
+      read per turn (clamped, duration syntax, unparseable → default).
 - [x] Integration: a channel whose PRIMARY harness is Codex hits its usage limit and the turn is
       answered by Claude (reason note, thread transcript replayed into the fresh session,
       `fellBack`/`fallbackFrom` set); the same limit on stderr behaves identically; a limit that

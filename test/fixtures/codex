@@ -91,7 +91,7 @@ fi
 # for this folder (counter file in the run cwd), then answers normally, so the E2E can prove the
 # gateway retried in place and the reply still arrived.
 if [ "$transient_times" -gt 0 ]; then
-  count=0; [ -f .cg-stub-transient ] && count=$(cat .cg-stub-transient)
+  count=$(tr -dc 0-9 < .cg-stub-transient 2>/dev/null); count=${count:-0} # garbage reads as 0: fail again, never pass silently
   if [ "$count" -lt "$transient_times" ]; then
     echo $((count + 1)) > .cg-stub-transient
     printf '%s\n' '{"type":"error","message":"unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses, cf-ray: stub"}'

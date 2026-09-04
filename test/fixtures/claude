@@ -7,7 +7,7 @@ resume=no; mcp=no; cancel=no; fail=no; auth_fail=no; limit_fail=no; limit_answer
 # itself is never echoed — only that it was there — so the E2E can prove the spawn was
 # authenticated the way a real turn would be.
 oauth=no; [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && oauth=yes
-transient_times=0
+transient_times=0; transient_after_text=no; session_id=""
 for arg in "$@"; do
   case "$arg" in
     -r) resume=yes ;;
@@ -16,6 +16,7 @@ for arg in "$@"; do
     *CLAUDE_STUB_FAIL_GENERIC*) fail=yes ;;
     *CLAUDE_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
     *CLAUDE_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
+    *CLAUDE_STUB_TRANSIENT_AFTER_TEXT*) transient_after_text=yes ;;
     *CLAUDE_STUB_AUTH_FAIL_SAFE*) auth_fail=yes ;;
     *CLAUDE_STUB_LIMIT_FAIL_SAFE*) limit_fail=yes ;;
     *CLAUDE_STUB_LIMIT_ANSWER*) limit_answer=yes ;;
@@ -23,6 +24,7 @@ for arg in "$@"; do
     *CLAUDE_STUB_ANSWERLESS*) answerless=yes ;;
   esac
   if [ "$prev" = "--mcp-config" ]; then mcp_path="$arg"; fi
+  if [ "$prev" = "--session-id" ]; then session_id="$arg"; fi
   prev="$arg"
 done
 if [ "$cancel" = "yes" ]; then
@@ -37,13 +39,31 @@ if [ -n "$mcp_path" ] && [ -f "$mcp_path" ]; then
 fi
 # A provider that is briefly unavailable ("API Error: 529 Overloaded") for the first N invocations
 # of this folder, then answers — the gateway must retry in place and still post the reply.
+# The real CLI refuses to CREATE a session id twice ("Session ID … is already in use" — the failed
+# attempt already wrote that id's transcript), so in this mode a repeated --session-id is refused
+# the same way: a retried fresh turn has to arrive under a new id. Counter and ledger live in the
+# run cwd; a garbage counter reads as 0 (the stub fails again — loud, never a silent pass).
 if [ "$transient_times" -gt 0 ]; then
-  count=0; [ -f .cg-stub-transient ] && count=$(cat .cg-stub-transient)
+  if [ -n "$session_id" ]; then
+    if [ -f .cg-stub-sessions ] && grep -qxF "$session_id" .cg-stub-sessions; then
+      printf 'Error: Session ID %s is already in use.\n' "$session_id" >&2
+      exit 1
+    fi
+    echo "$session_id" >> .cg-stub-sessions
+  fi
+  count=$(tr -dc 0-9 < .cg-stub-transient 2>/dev/null); count=${count:-0}
   if [ "$count" -lt "$transient_times" ]; then
     echo $((count + 1)) > .cg-stub-transient
-    printf '%s\n' '{"type":"assistant","error":"api_error","message":{"role":"assistant","content":[{"type":"text","text":"API Error: 529 Overloaded"}]}}'
+    printf '%s\n' '{"type":"assistant","error":"server_error","message":{"role":"assistant","content":[{"type":"text","text":"API Error: 529 Overloaded"}]}}'
     exit 1
   fi
+fi
+# The same failure AFTER part of the answer already streamed: the thread has seen text, so the turn
+# must NOT be replayed (a replay would append a second answer under the first half).
+if [ "$transient_after_text" = "yes" ]; then
+  printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Half an answer, then the stream dropped"}}}'
+  printf '%s\n' '{"type":"assistant","error":"server_error","message":{"role":"assistant","content":[{"type":"text","text":"API Error: Connection dropped (ECONNRESET)"}]}}'
+  exit 1
 fi
 if [ "$auth_fail" = "yes" ]; then
   printf '%s\n' '{"type":"assistant","error":"authentication_failed","message":{"role":"assistant","content":[{"type":"text","text":"OAuth session expired and could not be refreshed"}]}}'
