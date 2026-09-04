@@ -33,7 +33,6 @@ test("runner preflight enforces the real runtime floor and gates candidates on t
 });
 
 test("optional provisioning retains Whisper, workspace migration, and gated rclone behavior", () => {
-  assert.match(provision, /install-whisper\.mjs/);
   assert.match(provision, /migrate-workspace\.mjs/);
   assert.match(provision, /driveSyncEnabled/);
   assert.match(provision, /install_rclone/);

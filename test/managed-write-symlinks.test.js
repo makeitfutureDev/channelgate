@@ -78,12 +78,10 @@ test("readNoFollow rethrows a REAL read failure instead of reporting the file as
   // `add` is a read-modify-WRITE, so an unreadable MEMORY.md was treated as empty and the very next
   // add blanked the file. Data loss wearing a symlink guard's clothing.
   const { cwd } = await scratch(t);
-  const unreadable = path.join(cwd, "MEMORY.md");
-  await writeFile(unreadable, "important standing context\n");
-  await chmod(unreadable, 0o000);
-  t.after(() => chmod(unreadable, 0o644).catch(() => {}));
-
-  await assert.rejects(readNoFollow(unreadable), { code: "EACCES" });
+  // A chmod(000) fixture is still readable under CAP_DAC_OVERRIDE. NAME_MAX is deterministic on
+  // every supported Linux filesystem and exercises the same "not an absent code" branch.
+  const invalid = path.join(cwd, "x".repeat(256));
+  await assert.rejects(readNoFollow(invalid), { code: "ENAMETOOLONG" });
   // A DIRECTORY squatting on a managed file name stays "absent" — folders.js relies on that to
   // rm -r the agent-planted junk instead of wedging every later turn.
   const dir = path.join(cwd, "AGENTS.md");
