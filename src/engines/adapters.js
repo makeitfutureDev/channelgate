@@ -58,6 +58,10 @@ const claude = validateEngineAdapter({
     { label: "Sonnet", value: "sonnet", description: "Claude Sonnet alias." },
     { label: "Haiku", value: "haiku", description: "Claude Haiku alias." },
   ], mintsOwnSessionId: false,
+  // Provider-failure kinds (stream.js claudeProviderError) the orchestrator may replay IN PLACE on
+  // this engine: the provider did not answer the request. Never the limit/credential kinds (their
+  // own failover) and never the catch-all "provider" (a rejected request fails the same way twice).
+  transientKinds: Object.freeze(["availability", "connection"]),
   supports: { warmPool: true, interruptSteer: true, permissionPrompt: true, compact: true, realCost: true, usageLimitFallback: true, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
   modelBelongs: (m) => /^(?:opus|sonnet|haiku|opusplan)(?:\[1m\])?$|^claude-/.test(m),
   resumeCommand: (id) => `claude --resume ${id}`,
@@ -164,6 +168,8 @@ const codex = validateEngineAdapter({
   efforts: ["none", "low", "medium", "high", "xhigh", "max"], models: [
     ...["codex", "gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"].map((value) => ({ label: value === "codex" ? "Codex" : value.toUpperCase().replace("GPT-", "GPT-"), value, description: `${value} model.` })),
   ], mintsOwnSessionId: true,
+  // The runner's own "the provider did not answer" kind (classifyCodexFailure), replayable in place.
+  transientKinds: Object.freeze(["transient"]),
   supports: { warmPool: false, interruptSteer: false, permissionPrompt: false, compact: false, realCost: false, usageLimitFallback: true, userSkillOverlay: true, networkModes: FULL_NETWORK_MODES },
   modelBelongs: (m) => /^(?:gpt-|o[0-9]|codex)/.test(m),
   resumeCommand: (id) => `codex exec resume ${id}`,
@@ -210,6 +216,7 @@ const opencode = validateEngineAdapter({
   mcpMetaKey: "allowedOpenCodeMcps", instructionFile: "AGENTS.md", skillsDir: ".opencode/skills",
   mcpTransport: "none", contextWindow: 200_000, efforts: ["low", "medium", "high"], models: [],
   mintsOwnSessionId: true,
+  transientKinds: Object.freeze([]), // its runner classifies no provider failures yet
   supports: { warmPool: false, interruptSteer: false, permissionPrompt: false, compact: false,
     realCost: true, usageLimitFallback: false, userSkillOverlay: false, networkModes: ["off"], readOnly: true, mcp: false },
   // OpenCode model IDs are provider/model. An empty value deliberately delegates to its configured

@@ -639,10 +639,20 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   engines retry mid-turn themselves, and a gateway replay after a tool call could repeat a side
   effect), and authentication / usage-limit / model-rejection failures are excluded because they
   have their own paths (failover below, the same-engine model retry). Each attempt is a
-  `run_transient_retry` event and a daemon log line; a reply that needed more than one attempt says
-  so in one italic line, and an exhausted error names how often it was retried. The pause ends early
-  on cancel. Codex classifies these as `transient` (`classifyCodexFailure`); Claude's
-  `availability` / `connection` / `provider` kinds qualify. → TEST-PLAN: Engines.
+  `run_transient_retry` event, a daemon log line and a status-line notice ("retrying in 10s (1/2)");
+  a reply that needed more than one attempt says so in one italic line, and an exhausted error names
+  how often it was retried. The pause ends early on cancel. "Replay-safe" means nothing of the turn
+  reached anyone: no tool ran AND no text streamed (both engines). A retried FRESH Claude session
+  runs under a new session id (the CLI refuses to create the same id twice), and the warm Claude
+  process — which stays alive after a provider failure — rejects that turn with the classified
+  failure like print mode does, so the retry covers the default Slack path. Which failure kinds an
+  engine may replay is its adapter fact (`transientKinds`, `src/engines/adapters.js`): Codex's
+  `transient` (`classifyCodexFailure` — status codes, the CLI's underscore error codes, or outage
+  wording in the error EVENT; never its stderr, which can quote a retry it recovered from), Claude's
+  `availability` / `connection` (an overload, a 5xx, a `server_error` label, a dropped connection —
+  never the catch-all `provider` kind or the bare "API Error:" prefix a rejected request also
+  carries). The knobs are read per turn, so `.env` / settings values count without a restart.
+  → TEST-PLAN: Engines.
 - **Bidirectional harness failover** when the engine driving a turn hits its usage/session/plan
   limit or its authentication is unavailable — Claude→Codex and Codex→Claude are the same mechanism,
   so a channel whose primary engine is Codex is not stranded until its ChatGPT quota resets (and

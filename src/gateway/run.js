@@ -21,7 +21,7 @@ import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
-import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState } from "../engines/registry.js";
+import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
 import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getComposioMode, getDefaultComposioToken, getDefaultSkillsToken, getDefaultToolboxToken, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
@@ -97,34 +97,31 @@ const LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
 
 // Transient provider failures — a 5xx, "overloaded", a connection reset, or an unexplained 404 from
 // the Codex backend (2026-09-03) — are retried IN PLACE: same engine, same prompt, a short pause in
-// between. Two rules keep this safe: the failure must be replay-safe (the runner proved no tool
-// ran — the engines already retry mid-turn themselves, and a gateway replay after a tool call could
-// repeat a side effect), and authentication / usage-limit failures are excluded (they have their
-// own cross-engine failover, and repeating them only burns the pause). Both knobs are env-tunable
-// so the suite does not wait ten seconds per attempt.
-function envInt(name, fallback, min, max) {
-  const n = Number.parseInt(process.env[name] ?? "", 10);
+// between. Two rules keep this safe: the failure must be replay-safe (the runner proved nothing of
+// the turn reached anyone — no tool ran, no text streamed; the engines already retry mid-turn
+// themselves, and a gateway replay after a tool call could repeat a side effect), and
+// authentication / usage-limit failures are excluded (they have their own cross-engine failover,
+// and repeating them only burns the pause). Both knobs are read PER TURN, like COMMAND_TIMEOUT and
+// CG_MAX_SILENCE below: `.env` and settings.json reach process.env only after this module's import
+// graph has evaluated (src/server.js), so an import-time read would see neither.
+function clampInt(value, fallback, min, max) {
+  const n = Number.parseInt(value ?? "", 10);
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 }
-export const TRANSIENT_RETRY_ATTEMPTS = envInt("CG_TRANSIENT_RETRY_ATTEMPTS", 2, 0, 5);
-export const TRANSIENT_RETRY_DELAY_MS = envInt("CG_TRANSIENT_RETRY_DELAY_MS", 10_000, 0, 120_000);
-// Per engine, the runner's own classification of "the provider did not answer this request":
-// Codex's single transient kind (src/engines/codex.js), and the availability / connection /
-// unclassified-provider kinds of Claude's stream classifier (src/engines/stream.js).
-const TRANSIENT_KINDS = Object.freeze({
-  codex: Object.freeze(["transient"]),
-  claude: Object.freeze(["availability", "connection", "provider"]),
-});
+export function transientRetryAttempts() { return clampInt(process.env.CG_TRANSIENT_RETRY_ATTEMPTS, 2, 0, 5); }
+// Milliseconds, or a duration the other knobs accept ("10s", "1m"); an unparseable value keeps the default.
+export function transientRetryDelayMs() { return Math.min(120_000, Math.max(0, parseDurationMs(process.env.CG_TRANSIENT_RETRY_DELAY_MS, 10_000))); }
 
 // The kind when this error is a transient, replay-safe provider failure of the engine that ran the
 // turn — "" otherwise (including every authentication / usage-limit / model-rejection case, which
-// belong to the failover and model-retry paths, and any error raised after a tool ran).
+// belong to the failover and model-retry paths, and any error raised after a tool ran). Which kinds
+// count is the engine's own fact (`transientKinds` in src/engines/adapters.js).
 export function transientProviderFailure(error, engine = "") {
   const details = error?.details || {};
   const ran = String(engine || "");
   if (!ran || details.engine !== ran || details.providerError !== true || details.replaySafe !== true) return "";
   const kind = String(details.providerKind || "");
-  return (TRANSIENT_KINDS[ran] || []).includes(kind) ? kind : "";
+  return engineTransientKinds(ran).includes(kind) ? kind : "";
 }
 
 // A pause that ends early when the run is cancelled, so a stop button never waits out a retry.
@@ -1260,10 +1257,15 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   };
 
   // Run one attempt, and retry it in place on a transient, replay-safe provider failure — up to
-  // TRANSIENT_RETRY_ATTEMPTS more times, TRANSIENT_RETRY_DELAY_MS apart, never past a cancel. The
-  // result carries `transientRetries` when it took more than one attempt; an exhausted error says
-  // so in its message, so the thread never sees a bare provider line that looks unretried.
-  const withTransientRetry = async (engineName, attempt) => {
+  // transientRetryAttempts() more times, transientRetryDelayMs() apart, never past a cancel. The
+  // result carries `transientRetries` when it took more than one attempt; an error that exhausted
+  // the budget says so in its message, so the thread never sees a bare provider line that looks
+  // unretried. `beforeRetry(n)` runs right before attempt n+1 — the hook a fresh session needs to
+  // change its id (see remintFreshSession below).
+  const withTransientRetry = async (engineName, attempt, { beforeRetry = null } = {}) => {
+    const maxAttempts = transientRetryAttempts();
+    const delayMs = transientRetryDelayMs();
+    const delayLabel = delayMs >= 1000 ? `${Math.round(delayMs / 1000)}s` : `${delayMs}ms`;
     let retries = 0;
     for (;;) {
       try {
@@ -1271,27 +1273,37 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         return retries && out && typeof out === "object" ? { ...out, transientRetries: retries } : out;
       } catch (err) {
         const kind = transientProviderFailure(err, engineName);
-        if (!kind || retries >= TRANSIENT_RETRY_ATTEMPTS || signal?.aborted) {
+        if (!kind || retries >= maxAttempts || signal?.aborted) {
           if (retries) {
             err.details = { ...(err.details || {}), transientRetries: retries };
-            err.message = `${err.message} — retried ${retries}× (${Math.round(TRANSIENT_RETRY_DELAY_MS / 1000)}s apart) before giving up`;
+            // Only the failure that exhausted the budget was "retried": a different failure after
+            // a transient one (a limit, a lost session) was not, and its line must not claim so.
+            if (kind) err.message = `${err.message} — retried ${retries}× (${delayLabel} apart) before giving up`;
           }
           throw err;
         }
         retries += 1;
-        console.warn(`[gateway] transient ${engineName} ${kind} failure in ${entry.slug} (${String(err.message).slice(0, 200)}) — retry ${retries}/${TRANSIENT_RETRY_ATTEMPTS} in ${Math.round(TRANSIENT_RETRY_DELAY_MS / 1000)}s`);
+        console.warn(`[gateway] transient ${engineName} ${kind} failure in ${entry.slug} (${String(err.message).slice(0, 200)}) — retry ${retries}/${maxAttempts} in ${delayLabel}`);
         await logEvent("run_transient_retry", {
           channel: channelId, author: authorId, slug: entry.slug, threadKey, origin,
-          engine: engineName, kind, attempt: retries, maxAttempts: TRANSIENT_RETRY_ATTEMPTS, delayMs: TRANSIENT_RETRY_DELAY_MS,
+          engine: engineName, kind, attempt: retries, maxAttempts, delayMs,
           error: String(err.message).slice(0, 300),
         });
-        await sleepUnlessAborted(TRANSIENT_RETRY_DELAY_MS, signal);
+        // The pause is a waiting state, so it announces itself on the status line (same rule as the
+        // queue and warm-up notices: silence that looks like death is the bug this prevents).
+        try {
+          onEvent?.({ kind: "notice", scope: "gateway", text: `${engineLabel(engineName)} hit a temporary provider error — retrying in ${delayLabel} (${retries}/${maxAttempts})` });
+        } catch { /* a status callback must never block a run */ }
+        await sleepUnlessAborted(delayMs, signal);
         if (signal?.aborted) throw err;
+        await beforeRetry?.(retries);
       }
     }
   };
-  // The one-line notice a reply carries when the provider needed more than one attempt.
-  const transientRetryNote = (engineName, out) => (out?.transientRetries
+  // The one-line notice a reply carries when the provider needed more than one attempt. An EMPTY
+  // result stays empty: the caller's empty-result path must still see it as one, not as a reply
+  // consisting of this notice.
+  const transientRetryNote = (engineName, out) => (out?.transientRetries && !isEmptyResult(out)
     ? { ...out, content: `⚠️ _${engineLabel(engineName)} hit a temporary provider error — retried ${out.transientRetries}× before answering._\n\n${out.content || ""}` }
     : out);
 
@@ -1566,12 +1578,23 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     let sid = sessionId;
     let fresh = isNew;
     let result;
+    // A FRESH session is created by its id (`claude --session-id <sid>`), and the attempt that just
+    // failed already wrote that id's transcript — the CLI refuses to create it twice ("Session ID …
+    // is already in use"), so a retried fresh turn runs under a new id (persisted, so a concurrent
+    // reply resumes the live one, not the dead file). A resume replays as-is, and a self-minting
+    // engine (Codex) ignores the id on a fresh run. The warm process, if any, is bound to the old
+    // id and is retired with it.
+    const remintFreshSession = async () => {
+      if (!fresh || mintsOwnSessionId(engine)) return;
+      abortPooled(`${entry.slug}::${threadKey}`);
+      sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+    };
     const initialPromptOverride = switchedEngine ? await healedPrompt() : null;
     try {
       // An explicit engine switch starts a fresh session that can't carry the old conversation —
       // replay the thread transcript into it (same treatment as a session heal) so the new engine
       // continues the conversation instead of starting amnesiac.
-      result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride));
+      result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride), { beforeRetry: remintFreshSession });
     } catch (err) {
       const defaultModel = replaySafeGatewayDefaultModel(err, { engine, model, defaultModel: gatewayDefaultModel });
       if (defaultModel) {
@@ -1589,7 +1612,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         });
         try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
         try {
-          result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride, defaultModel));
+          result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride, defaultModel), { beforeRetry: remintFreshSession });
           model = defaultModel;
           result = {
             ...result,
@@ -1633,7 +1656,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           console.warn(`[gateway] session ${sid} not resumable in ${entry.slug} — starting a fresh session`);
           sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
           fresh = true;
-          result = await withTransientRetry(engine, async () => runOnce(sid, fresh, await healedPrompt()));
+          // Built once: every attempt replays the SAME turn (a re-fetch could come back empty and
+          // silently run the bare text, context-blind).
+          const healed = await healedPrompt();
+          result = await withTransientRetry(engine, () => runOnce(sid, fresh, healed), { beforeRetry: remintFreshSession });
         } else {
           throw err;
         }
@@ -1658,12 +1684,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       abortPooled(`${entry.slug}::${threadKey}`);
       sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
       fresh = true;
-      result = await withTransientRetry(engine, async () => runOnce(sid, fresh, await healedPrompt()));
+      const healed = await healedPrompt(); // once — see the session-not-found heal above
+      result = await withTransientRetry(engine, () => runOnce(sid, fresh, healed), { beforeRetry: remintFreshSession });
     }
-
-    // Say so when the provider needed more than one attempt (after the empty-result check above,
-    // which must judge the engine's own output, not this notice).
-    result = transientRetryNote(engine, result);
 
     // Self-minting engines (Codex, OpenCode) return their own thread_id (result.sessionId) —
     // persist it over the locally-minted UUID so the next turn's resume actually finds the
@@ -1718,6 +1741,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       });
       result = { ...result, content: answerlessNotice(result), answerless: true };
     }
+
+    // Say so when the provider needed more than one attempt — only now, after every check above
+    // that judges the engine's OWN output (empty resume, limit-as-answer, answerless) has seen it
+    // without this notice in front.
+    result = transientRetryNote(engine, result);
 
     const finalSessionId = mintsOwnSessionId(engine) ? result.sessionId ?? sid : sid;
     // Back-fill the owning engine on a pre-v4/legacy session row (engine ''), so the NEXT harness

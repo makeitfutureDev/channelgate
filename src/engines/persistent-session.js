@@ -136,7 +136,8 @@ export class PersistentClaudeSession {
           providerError: true,
           providerCode: provider.code || "",
           providerKind: provider.kind || "",
-          replaySafe: this.turn.stream.toolUseCount === 0,
+          // Same rule as the cold runner: no tool AND no text already streamed to the thread.
+          replaySafe: this.turn.stream.toolUseCount === 0 && !this.turn.stream.text.trim(),
           toolUseCount: this.turn.stream.toolUseCount,
         };
       }
@@ -268,10 +269,21 @@ export class PersistentClaudeSession {
     const p = parseJsonLine(line);
     if (!p || !this.turn) return;
 
-    this.turn.providerError ||= claudeProviderError(p);
+    // The LAST provider error wins (an earlier one the CLI recovered from must not label the turn).
+    this.turn.providerError = claudeProviderError(p) || this.turn.providerError;
     this.turn.stream.consume(p);
     if (p.type === "result") {
       const t = this.turn;
+      // The CLI reported a provider failure for this turn (the assistant `error` marker) and — a
+      // long-lived process — stayed alive to end it as an is_error result. Print mode exits 1 on
+      // the same failure and the cold runner rejects with the classified error; do the same here,
+      // so the orchestrator's in-place retry and cross-engine failover see the outage instead of
+      // the "API Error: …" text being posted as the reply. The process is retired with the turn
+      // (_die evicts it from the pool); the retry spawns afresh, exactly as on the cold path.
+      if (p.is_error === true && t.providerError && !t.interrupted) {
+        this._die(new Error(t.providerError.message));
+        return;
+      }
       t.resolve({
         content: t.stream.text || p.result || "",
         usage: p.usage ?? null,

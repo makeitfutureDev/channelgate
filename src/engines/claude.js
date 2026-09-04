@@ -275,7 +275,9 @@ export async function runClaude({
     const handleLine = (line) => {
       const p = parseJsonLine(line);
       if (!p) return;
-      providerError ||= claudeProviderError(p);
+      // The LAST provider error wins: an earlier one the CLI recovered from must not label the
+      // failure that actually ended the turn.
+      providerError = claudeProviderError(p) || providerError;
       stream.consume(p);
       if (p.type === "result") result = p;
     };
@@ -332,7 +334,9 @@ export async function runClaude({
           providerError: Boolean(providerError),
           providerCode: providerError?.code || "",
           providerKind: providerError?.kind || "",
-          replaySafe: Boolean(providerError) && stream.toolUseCount === 0,
+          // Replayable only when NOTHING of this turn reached anyone: no tool, and no text already
+          // streamed to the thread (a replay would append a second answer under the first half).
+          replaySafe: Boolean(providerError) && stream.toolUseCount === 0 && !stream.text.trim(),
           toolUseCount: stream.toolUseCount,
         }));
         return;

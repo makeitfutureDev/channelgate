@@ -64,6 +64,11 @@ export function validateEngineAdapter(adapter) {
       throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares an incomplete sessionState fact`);
     }
   }
+  // OPTIONAL: the provider-failure kinds the orchestrator may replay in place. Declared → an array
+  // of kind names; a malformed declaration must not load, or the retry would silently never fire.
+  if (adapter.transientKinds !== undefined && (!Array.isArray(adapter.transientKinds) || adapter.transientKinds.some((k) => typeof k !== "string" || !k))) {
+    throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed transientKinds fact`);
+  }
   const probe = adapter.compileConfinement({ allowNetwork: false, dangerouslySkip: false, writable: false });
   if (!probe || probe.supported !== true || probe.network?.mode !== "off") {
     throw new TypeError(`EngineAdapter ${adapter.id} confinement compiler must fail closed to network-off`);

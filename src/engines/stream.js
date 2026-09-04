@@ -40,6 +40,11 @@ export function claudeProviderError(event) {
   const detail = claudeEventText(event);
   const combined = `${code} ${detail}`;
   const usageLimited = /(?:rate|usage|session|account|spend|credit|token)[_-]?limit|quota/i.test(combined);
+  // `availability` means the provider did not ANSWER (overloaded, 5xx, "server_error") — the one
+  // kind the orchestrator replays in place. The CLI prefixes every failure with "API Error: …",
+  // including the ones it answers with a plain 4xx (a rejected model, an unknown 400), so the
+  // prefix itself proves nothing: only overload / unavailable wording, a server_error label or a
+  // 5xx status in the text qualifies. Anything else the labels leave open stays "provider".
   const kind = usageLimited
     ? "usage_limit"
     : /auth|credential|unauthori[sz]ed/i.test(combined)
@@ -48,7 +53,7 @@ export function claudeProviderError(event) {
         ? "permission"
         : /invalid[_ -]?request|bad[_ -]?request|validation/i.test(combined)
           ? "invalid_request"
-          : /overload|unavailable|server[_ -]?error|api[_ -]?error/i.test(combined)
+          : /overload|unavailable|server[_ -]?error|bad gateway|gateway time-?out|api error:? 5\d\d\b/i.test(combined)
             ? "availability"
             : /billing|payment|credit/i.test(combined)
               ? "billing"
