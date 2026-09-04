@@ -17,6 +17,7 @@ import {
   FILES_ACTION_ID,
   FILES_ACTION_PATTERN,
   FILES_BROWSER_UPLOAD_ACTION_ID,
+  FILES_BROWSER_EDIT_ACTION_ID,
   FILES_EDIT_ACTION_ID,
   FILES_NEW_FOLDER_ACTION_ID,
   FILES_NEW_FOLDER_BLOCK_ID,
@@ -407,7 +408,7 @@ test("truncated preview says the real file is complete and remains editable with
   assert.ok(view.blocks.flatMap((b) => b.elements || []).some((e) => e.action_id === FILES_EDIT_ACTION_ID));
 });
 
-test("browser editor URL replaces the Slack modal and supports files beyond 3,000 characters", async (t) => {
+test("browser editor URL complements the Slack modal and supports files beyond 3,000 characters", async (t) => {
   const { root } = await fixture(t);
   await writeFile(path.join(root, "browser.md"), "# Browser editor\n\n" + "x".repeat(5_000));
   const state = { channelId: "C123", slug: "channel", threadTs: "", ownerId: "U123", relative: "", page: 0 };
@@ -420,12 +421,28 @@ test("browser editor URL replaces the Slack modal and supports files beyond 3,00
       return "https://gateway.example/file-editor/open/opaque";
     },
   });
-  const edit = view.blocks.flatMap((block) => block.elements || []).find((item) => item.action_id === FILES_EDIT_ACTION_ID);
-  assert.equal(edit.text.text, "Edit in browser");
-  assert.equal(edit.url, "https://gateway.example/file-editor/open/opaque");
-  assert.equal(JSON.parse(edit.value).o, "browser_edit");
+  const actions = view.blocks.flatMap((block) => block.elements || []);
+  const browserEdit = actions.find((item) => item.action_id === FILES_BROWSER_EDIT_ACTION_ID);
+  assert.equal(browserEdit.text.text, "Edit in browser");
+  assert.equal(browserEdit.url, "https://gateway.example/file-editor/open/opaque");
+  assert.equal(JSON.parse(browserEdit.value).o, "browser_edit");
+  assert.equal(actions.some((item) => item.action_id === FILES_EDIT_ACTION_ID), false, "large files remain browser-only");
   assert.equal(granted.relative, "browser.md");
   assert.match(granted.expectedHash, /^[a-f0-9]{64}$/);
+  assertUniqueActionIds(view);
+});
+
+test("eligible small text offers both Slack-popup and browser editing", async (t) => {
+  const { root } = await fixture(t);
+  const state = { channelId: "C123", slug: "channel", threadTs: "", ownerId: "U123", relative: "", page: 0 };
+  const view = await buildFilePreviewView(root, state, "readme.txt", {
+    canEdit: true,
+    browserEditLimits: { maxChars: 250_000, maxBytes: 1_000_000, label: "Browser editing" },
+    createEditUrl: () => "https://gateway.example/file-editor/open/opaque",
+  });
+  const actions = view.blocks.flatMap((block) => block.elements || []);
+  assert.equal(actions.find((item) => item.action_id === FILES_EDIT_ACTION_ID)?.text.text, "Edit");
+  assert.equal(actions.find((item) => item.action_id === FILES_BROWSER_EDIT_ACTION_ID)?.text.text, "Edit in browser");
   assertUniqueActionIds(view);
 });
 

@@ -19,6 +19,7 @@ export const FILES_BACK_ACTION_ID = "cg_channel_files_back";
 export const FILES_SHARE_ACTION_ID = "cg_channel_files_share";
 export const FILES_SEND_DM_ACTION_ID = "cg_channel_files_send_dm";
 export const FILES_EDIT_ACTION_ID = "cg_channel_files_edit";
+export const FILES_BROWSER_EDIT_ACTION_ID = "cg_channel_files_browser_edit";
 export const FILES_BROWSER_UPLOAD_ACTION_ID = "cg_channel_files_browser_upload";
 export const FILES_NEW_FILE_ACTION_ID = "cg_channel_files_new_file";
 export const FILES_NEW_FOLDER_ACTION_ID = "cg_channel_files_new_folder";
@@ -846,12 +847,13 @@ export async function buildFilePreviewView(root, state, relative, { notice = "",
   if (browserEditUrl) {
     elements.push({
       type: "button",
-      action_id: FILES_EDIT_ACTION_ID,
+      action_id: FILES_BROWSER_EDIT_ACTION_ID,
       text: plain("Edit in browser"),
       value: actionValue("browser_edit", { p: file.relative }),
       url: browserEditUrl,
     });
-  } else if (canEdit && !file.binary) {
+  }
+  if (canEdit && !file.binary) {
     try {
       await readEditableFile(root, file.relative);
       elements.push({

@@ -238,7 +238,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   selected regular file (≤25 MB) only into the originating channel/thread; *Send to me* delivers the
   complete selected file privately through the bot's Slack DM, independent of the user's network.
   Preview truncation is explicitly presentation-only. In
-  Worker/Auto modes, authorized members get *Edit in browser* for valid UTF-8 text files up to
+  Worker/Auto modes, authorized members get both the native Slack *Edit* popup (for files up to
+  3,000 characters) and *Edit in browser* for valid UTF-8 text files up to
   250,000 characters / 1 MB regardless of extension, including `.env*`, JSON/YAML/TOML, scripts,
   configs, and extensionless files. Managed, credential/token/secret, key, binary, and invalid-UTF-8
   paths stay read-only. The configured public gateway URL opens a full-page editor with a live
@@ -246,8 +247,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   same-site, one-file browser session; the route is no-store/CSP/CSRF protected. Full mode remains
   admin-only, and every load/save rechecks access/membership/mode, verifies the open-time content
   hash, atomically replaces the confined file, and records an audit event. Without a public URL the
-  3,000-character Slack modal editor remains the fallback. Existing Slack apps must apply the latest
-  manifest to activate the registered command + shortcut; typed `@bot /files` uses normal messages.
+  Slack controls its native modal dimensions; apps cannot request a larger popup. Without a public
+  URL, the 3,000-character Slack modal editor remains available on its own. Existing Slack apps must
+  apply the latest manifest to activate the registered command + shortcut; typed `@bot /files` uses
+  normal messages.
   → TEST-PLAN: Channel file explorer.
 - Slack Agent app (`agent_view`): native status animation (`assistant.threads.setStatus`) with
   progress-tracking phrases in agent threads. As soon as the spawn runtime resolves, the prominent
