@@ -37,9 +37,10 @@ const channel = async (id, name, engine) => {
   return entry;
 };
 const retryEvents = (slug) => readEvents({ limit: 200 }).filter((e) => e.event === "run_transient_retry" && e.slug === slug).reverse();
-const turn = (channelId, authorId, text, threadKey) => runMessage({
+const turn = (channelId, authorId, text, threadKey, extra = {}) => runMessage({
   channelId, authorId, text, threadKey, origin: "slack_foreground", preferCold: true,
   getFallbackContext: async () => "Conversation context\n\n",
+  ...extra,
 });
 
 test("the knobs read the environment PER TURN: two more attempts, a short pause in the suite", () => {
@@ -89,7 +90,7 @@ test("the Claude classifier retries only what the provider failed to ANSWER", ()
   assert.equal(evt("overloaded", "API Error: 529 Overloaded").kind, "availability");
   assert.equal(evt("unknown", "API Error: 502 Bad Gateway").kind, "availability", "a 5xx in the text is an outage even under the unknown label");
   assert.equal(evt("unknown", "API Error: 400 mock: provider says no").kind, "provider", "the API Error prefix alone proves nothing — a 4xx was answered, and will be answered the same way again");
-  assert.equal(evt("model_not_found", "There's an issue with the selected model (claude-x). It may not exist or you may not have access to it.").kind, "provider");
+  assert.equal(evt("model_not_found", "There's an issue with the selected model (claude-x). It may not exist or you may not have access to it.").kind, "model_rejected", "a rejected model takes the same-engine model retry, never a replay");
   assert.equal(evt("invalid_request", "Prompt is too long").kind, "invalid_request");
   assert.equal(evt("rate_limit", "You've hit your session limit · resets 6am").kind, "usage_limit");
   assert.equal(evt("authentication_failed", "OAuth session expired").kind, "authentication");
@@ -130,9 +131,9 @@ test("Codex: two transient failures, then the answer — retried in place, the r
   assert.ok(events.every((e) => e.engine === "codex" && e.kind === "transient" && e.maxAttempts === 2 && e.delayMs === 40 && /404 Not Found/.test(e.error)));
 });
 
-test("Codex: a failure that outlives every attempt surfaces the provider error, marked as retried, without failover", async () => {
+test("Codex: with failover OFF, a failure that outlives every attempt surfaces the provider error, marked as retried", async () => {
   resetEngineCooldowns();
-  saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  saveSettings({ engine: "codex", engineFallback: false, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
   await setUser("U_TR_ALWAYS", { name: "Transient Always", approved: true, isAdmin: false });
   const entry = await channel("D_TR_ALWAYS", "transient-always", "codex");
 
@@ -254,4 +255,96 @@ test("warm Claude: the same failure after streamed text is not replay-safe; a pl
   const result = await ok.promise;
   assert.equal(result.content, "Half an answer");
   assert.equal(ok.session.state, "ready");
+});
+
+// ── After the retries: failover, and who decides ──────────────────────────────────────────────
+test("Codex: with failover ON, a failure that outlives every attempt is answered by the other harness, and the channel stays there for the cooldown", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_FO", { name: "Transient Failover", approved: true, isAdmin: false });
+  const entry = await channel("D_TR_FO", "transient-failover", "codex");
+
+  const result = await turn("D_TR_FO", "U_TR_FO", "CODEX_STUB_TRANSIENT_ALWAYS", "1903.010");
+  assert.equal(result.engine, "claude");
+  assert.equal(result.fellBack, true);
+  assert.equal(result.fallbackFrom, "codex");
+  assert.match(result.content, /Codex hit a temporary provider error — retried 2× before giving up — using Claude/);
+  assert.match(result.content, /Stub engine reply/);
+  assert.equal(retryEvents(entry.slug).length, 2, "the in-place retries ran first");
+
+  // The outage cooldown: the channel's next turn goes straight to the other harness — no re-probe.
+  const next = await turn("D_TR_FO", "U_TR_FO", "hello again", "1903.011");
+  assert.equal(next.engine, "claude");
+  assert.equal(next.fellBack, true);
+  assert.equal(retryEvents(entry.slug).length, 2, "Codex was not re-probed during the cooldown");
+});
+
+test("ask mode: the exhausted failure is handed back as a choice — no switch, no cooldown", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_ASK", { name: "Transient Ask", approved: true, isAdmin: false });
+  const entry = await channel("D_TR_ASK", "transient-ask", "codex");
+
+  await assert.rejects(
+    turn("D_TR_ASK", "U_TR_ASK", "CODEX_STUB_TRANSIENT_ALWAYS", "1903.020", { fallbackPolicy: "ask" }),
+    (error) => {
+      assert.match(error.message, /404 Not Found/);
+      assert.match(error.message, /retried 2×/);
+      assert.deepEqual(error.details.askFallback, { to: "claude", kind: "transient" });
+      assert.equal(error.details.transientRetries, 2);
+      return true;
+    },
+  );
+  assert.equal(retryEvents(entry.slug).length, 2);
+  // "Try again" must be a real re-probe: nothing cooled Codex down for this channel.
+  const again = await turn("D_TR_ASK", "U_TR_ASK", "CODEX_STUB_TRANSIENT_TWICE", "1903.021", { fallbackPolicy: "ask" });
+  assert.equal(again.engine, "codex");
+  assert.notEqual(again.fellBack, true);
+});
+
+test("ask mode: a usage limit that arrives as the answer takes the same choice path", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "claude", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_ASKL", { name: "Ask Limit", approved: true, isAdmin: false });
+  await channel("D_TR_ASKL", "transient-ask-limit", "claude");
+
+  await assert.rejects(
+    turn("D_TR_ASKL", "U_TR_ASKL", "CLAUDE_STUB_LIMIT_ANSWER", "1903.030", { fallbackPolicy: "ask" }),
+    (error) => {
+      assert.match(error.message, /Claude usage limit reached/);
+      assert.deepEqual(error.details.askFallback, { to: "codex", kind: "usage_limit" });
+      assert.equal(error.details.replaySafe, true);
+      return true;
+    },
+  );
+});
+
+test("both harnesses failed: one sentence names both, and a watched thread gets the choice back", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_BOTH", { name: "Both Failed", approved: true, isAdmin: false });
+  const entry = await channel("D_TR_BOTH", "transient-both", "codex");
+
+  await assert.rejects(
+    turn("D_TR_BOTH", "U_TR_BOTH", "CODEX_STUB_TRANSIENT_ALWAYS CLAUDE_STUB_TRANSIENT_ALWAYS", "1903.040", { fallbackPolicy: "auto" }),
+    (error) => {
+      assert.match(error.message, /404 Not Found.*retried 2×.*Claude could not answer either: .*529 Overloaded/s);
+      assert.equal(error.details.engine, "codex", "the original error stays authoritative");
+      assert.match(error.details.fallbackError, /529 Overloaded/);
+      assert.deepEqual(error.details.askFallback, { to: "claude", kind: "transient", bothFailed: true });
+      return true;
+    },
+  );
+  assert.equal(retryEvents(entry.slug).length, 4, "both harnesses got their in-place retries");
+});
+
+test("an unattended origin never asks: the same double failure has no choice attached", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_BG", { name: "Background", approved: true, isAdmin: false });
+  await channel("D_TR_BG", "transient-both-bg", "codex");
+  await assert.rejects(
+    turn("D_TR_BG", "U_TR_BG", "CODEX_STUB_TRANSIENT_ALWAYS CLAUDE_STUB_TRANSIENT_ALWAYS", "1903.050"),
+    (error) => { assert.equal(error.details.askFallback, undefined); assert.match(error.details.fallbackError, /529/); return true; },
+  );
 });

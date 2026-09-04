@@ -10,7 +10,7 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 const { createSettingsRouter } = await import("../src/web/routes/settings.js");
-const { saveSettings, getEngine, isEngineEnabled, getEngineFallback } = await import("../src/config/settings.js");
+const { saveSettings, getEngine, isEngineEnabled, getEngineFallback, getEngineFallbackMode } = await import("../src/config/settings.js");
 
 const app = express();
 app.use(express.json());
@@ -67,6 +67,16 @@ test("the failover toggle accepts both the canonical and the legacy key, writing
   assert.equal(getEngineFallback(), true, "an older UI's key still works");
 });
 
+test("the failover MODE defaults to automatic, accepts \"ask\", and ignores anything else", async () => {
+  saveSettings({ engineFallbackMode: undefined });
+  assert.equal(getEngineFallbackMode(), "auto");
+  assert.equal((await putSettings({ engineFallbackMode: "ask" })).status, 200);
+  assert.equal(getEngineFallbackMode(), "ask");
+  assert.equal((await putSettings({ engineFallbackMode: "bogus" })).status, 200);
+  assert.equal(getEngineFallbackMode(), "ask", "an unknown value is dropped, not stored");
+  saveSettings({ engineFallbackMode: "auto" });
+});
+
 test("the admin UI renders the harness switches and saves both engine settings", () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
@@ -76,6 +86,9 @@ test("the admin UI renders the harness switches and saves both engine settings",
   assert.doesNotMatch(html, /id="set-codex-fallback"/, "the Codex-only wording is gone");
   assert.match(client, /set-engine-fallback"\)\.checked = s\.engineFallback !== false/);
   assert.match(client, /engineFallback: document\.getElementById\("set-engine-fallback"\)\.checked/);
+  assert.match(html, /id="set-engine-fallback-mode"/);
+  assert.match(client, /set-engine-fallback-mode"\)\.value = s\.engineFallbackMode \|\| "auto"/);
+  assert.match(client, /engineFallbackMode: document\.getElementById\("set-engine-fallback-mode"\)\.value/);
   assert.match(client, /engineEnabled: \{ \.\.\.ENGINE_ENABLED \}/);
   // Every engine picker is built from the enabled set, so a disabled harness can't be chosen.
   assert.match(client, /function selectableEngines/);

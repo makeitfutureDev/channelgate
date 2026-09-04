@@ -629,7 +629,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   gateway defaults again; DMs, existing thread-owned sessions, effort, access, tools, and tokens
   are untouched. → TEST-PLAN: Engines.
  - A thread/channel/per-run Codex model that the provider explicitly rejects before generation
-   retries once with Codex's distinct gateway-default model. The runner must prove there was no output
+   retries once with that harness's distinct gateway-default model — Codex (`invalid_request_error`) and Claude (`model_not_found`) alike. The runner must prove there was no output
    or tool attempt; generic failures and partially executed turns are never replayed. Slack status,
    the reply note/footer, and the audit event identify the default that actually ran. If the default
    also fails, the original model error remains authoritative. → TEST-PLAN: Engines.
@@ -669,6 +669,25 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   is kept. When failover can't cover a limit (disabled, or the other harness is off), the error line
   tells the user they can say `claude`/`codex` in the thread to switch by hand. Toggle in Settings
   (default on). → TEST-PLAN: Engines.
+- **Failover after the in-place retries, and a choice of who decides (2026-09-04).** A provider that
+  stayed unavailable through the transient retries is a failover case too: with failover on, the
+  turn is answered by the other harness ("⚠️ _Codex hit a temporary provider error — retried 2×
+  before giving up — using Claude._") and the channel's next turns go straight there for five
+  minutes before the primary is tried again. Settings → *How a failover happens*: `auto` (default)
+  switches silently — `ask` posts a card in the thread instead ("⚠️ Codex hit a temporary provider
+  error — retried 2× before giving up. Nothing ran for your message. Switch this thread to Claude,
+  or try Codex again?") with buttons *Switch to Claude* / *Try Codex again*, and nothing runs until
+  the message's author clicks. A click re-runs the ORIGINAL Slack message (same text, attachments,
+  thread) on the chosen harness; *Switch* also pins the thread to it, exactly like the `claude` /
+  `codex` directive (the thread transcript is replayed into the fresh session). The card is the same
+  durable, expiring, single-shot record as the busy-thread card (`src/slack/engine-switch-choice.js`;
+  🛑 / `stop` discards it, a restart keeps it). Usage-limit and authentication failures follow the
+  same mode (a limit that arrives as the answer included). Only a watched Slack thread can be asked —
+  schedules, background agents, continuations and API runs always switch automatically. When BOTH
+  harnesses fail, the error says so in one sentence ("… — Claude could not answer either: …") and a
+  Slack thread gets the same card with *Try Codex again* / *Try Claude again*, in either mode. The
+  retry pause itself now hands the global run slot and the container lease back for its length, so
+  a sleeping turn never queues another channel's turn behind it. → TEST-PLAN: Engines.
 - **A runtime the user PINNED is never traded away.** Failover exists so a DEFAULT never strands a
   thread; a thread someone pinned by hand — the `/model` wizard's "just this thread" scope, a
   `claude`/`codex` directive, or a per-run API engine/model override — is the opposite case, so it

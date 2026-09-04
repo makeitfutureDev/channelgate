@@ -778,7 +778,7 @@ the bridge network and *Allow network* is only a switch the engines are told abo
 - [x] Unit: gateway default model — unset → "" (CLI default) for both engines; per-engine values
       round-trip through saveSettings + settingsForApi; values are trimmed, non-strings ignored,
       blank clears; the admin-route `isValidModel` guard accepts known ids and rejects garbage.
-- [x] Unit: an explicit pre-output/pre-tool Codex model rejection retries once with a distinct
+- [x] Unit: an explicit pre-output/pre-tool model rejection (Codex `invalid_request_error`, Claude `model_not_found` — under a NEW session id, which the stub enforces) retries once with a distinct
       gateway default, updates runtime/model reporting, and labels the reply. Generic failures and
       post-tool model errors never replay; if the default also fails, the original error is kept.
 - [ ] Live: with no channel model set and a gateway default of `sonnet`, a run's `--model` is
@@ -799,6 +799,21 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       only `engine` + `model` for every channel (including a never-configured channel), skips DMs,
       preserves effort/access/skills/credentials, refreshes the conversation cache, and reports
       the affected count (`test/channel-runtime-reset.test.js`).
+- [x] Integration (`test/transient-retry.test.js`): with failover ON, a transient failure that outlives
+      every in-place retry is answered by the other harness (note "retried 2× before giving up —
+      using Claude", `fellBack`, `fallbackFrom`) and the channel's next turn skips the primary for the
+      outage cooldown; with failover OFF the retried error surfaces; `fallbackPolicy: "ask"` (a
+      watched Slack thread, Settings → engineFallbackMode) hands the failure back with
+      `details.askFallback { to, kind }` and writes NO cooldown (a following turn still runs on the
+      primary), for an exhausted transient failure and for a limit-as-answer alike; when BOTH
+      harnesses fail the message names both ("— Claude could not answer either: …") and a watched
+      thread gets `askFallback.bothFailed`, an unattended origin does not.
+- [x] Unit + integration (`test/engine-switch-choice.test.js`): the harness-switch card — store
+      isolation from the busy-thread card (shared table, separate kind), owner-only / single-shot /
+      expired clicks, the ask-mode failure posts the card with *Switch* / *Try again* buttons,
+      *Switch* re-runs the original message on the other harness, pins the thread there and deletes
+      the card, *Try again* re-runs where it failed and a second failure asks again; 🛑 discards a
+      pending card with its own wording; auto mode never posts a card.
 - [ ] Cross-engine failover, both directions: with failover ON, a usage-limit response or pre-tool
       authentication failure answers via the OTHER harness with a reason note and observes its
       per-engine per-channel / gateway-wide ~15-min cooldown; with failover OFF, the engine's own

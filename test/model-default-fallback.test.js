@@ -130,3 +130,55 @@ test("if the gateway default is also rejected, the original model error is prese
     },
   );
 });
+
+// ── The same path for Claude ─────────────────────────────────────────────────────────────────
+async function claudeChannel(id, { model = "opus" } = {}) {
+  await setUser(`U_${id}`, { name: id, approved: true, isAdmin: false });
+  const entry = await upsertChannelEntry(`D_${id}`, { name: id.toLowerCase(), type: "im", isDM: true });
+  await saveChannelMeta(entry.slug, {
+    channelId: `D_${id}`, name: entry.name, type: "im", isDM: true, template: "custom",
+    engine: "claude", model, cleanMode: true, allowNetwork: false,
+  });
+  return { entry, channelId: `D_${id}`, authorId: `U_${id}` };
+}
+
+test("Claude: a rejected channel model retries once with the gateway default, under a new session id", async () => {
+  saveSettings({ engine: "claude", defaultClaudeModel: "sonnet", composioMode: "personal" });
+  const channel = await claudeChannel("CLAUDE_MODEL_FALLBACK");
+  const runtimes = [];
+
+  const result = await runMessage({
+    ...channel,
+    text: "CLAUDE_STUB_REJECT_MODEL",
+    threadKey: "2100.400",
+    origin: "slack_foreground",
+    preferCold: true,
+    onRuntimeResolved: ({ engine, model }) => runtimes.push({ engine, model }),
+  });
+
+  assert.equal(result.engine, "claude");
+  assert.equal(result.model, "sonnet");
+  assert.deepEqual(runtimes, [
+    { engine: "claude", model: "opus" },
+    { engine: "claude", model: "sonnet" },
+  ]);
+  assert.match(result.content, /opus was rejected before the turn started/i);
+  assert.match(result.content, /using gateway default sonnet/i);
+  // The stub refuses a reused --session-id like the real CLI, so this reply proves the replay ran under a new id.
+  assert.match(result.content, /model=sonnet/);
+});
+
+test("Claude: if the gateway default is also rejected, the original model error is preserved", async () => {
+  saveSettings({ engine: "claude", defaultClaudeModel: "sonnet", composioMode: "personal" });
+  const channel = await claudeChannel("CLAUDE_MODEL_DOUBLE_FAIL");
+  await assert.rejects(
+    runMessage({ ...channel, text: "CLAUDE_STUB_REJECT_ALL_MODELS", threadKey: "2100.500", origin: "slack_foreground", preferCold: true }),
+    (error) => {
+      assert.match(error.message, /Claude provider rejected the model: .*selected model \(opus\)/);
+      assert.equal(error.details?.providerKind, "model_rejected");
+      assert.equal(error.details?.defaultModel, "sonnet");
+      assert.match(error.details?.defaultModelError || "", /selected model \(sonnet\)/);
+      return true;
+    },
+  );
+});

@@ -2653,6 +2653,7 @@ function paintSettings(s) {
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
   document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
+  document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";
   document.getElementById("set-show-message-cost").checked = s.showMessageCost !== false;
   document.getElementById("set-whisper-enabled").checked = s.whisperEnabled !== false;
   // Container runtime. The token follows the write-only rule: has*/last4 here, value on demand.
@@ -3023,6 +3024,7 @@ function bindSettings() {
           modelChangeAccess: document.getElementById("set-model-change-access").value,
           engineEnabled: { ...ENGINE_ENABLED },
           engineFallback: document.getElementById("set-engine-fallback").checked,
+    engineFallbackMode: document.getElementById("set-engine-fallback-mode").value,
           showMessageCost: document.getElementById("set-show-message-cost").checked,
           whisperEnabled: document.getElementById("set-whisper-enabled").checked,
           containerCli: document.getElementById("set-container-cli").value,
