@@ -27,6 +27,7 @@ import {
   upsertTemplate,
   deleteTemplate,
   listProposals,
+  recordSourceSync,
   usageCountsBySlug,
   catalogStats,
   SOURCE_KINDS,
@@ -67,6 +68,16 @@ function skillToApi(skill, usage = null) {
     owner: describeOwner(skill),
     usage30d: u ? { total: u.total, exact: u.exact, inferred: u.inferred, lastTs: u.lastTs } : { total: 0, exact: 0, inferred: 0, lastTs: "" },
   };
+}
+
+// A folder source imports the directory the way git sync imports a tarball, and records the
+// same last-sync state on the source row so the UI shows when it ran and what it found.
+async function syncFolderSource(source) {
+  const result = await importSkillTree(source.url, { ownerKind: "git", sourceId: source.id, sourceRef: source.url, status: source.mode === "auto" ? "active" : "staged" });
+  const stats = { discovered: result.presentSlugs.length + result.conflicts.length, created: result.imported.filter((x) => x.created).length, updated: result.imported.filter((x) => !x.created).length, staged: source.mode === "auto" ? 0 : result.imported.length, unchanged: result.unchanged.length, conflicts: result.conflicts, errors: result.errors };
+  const ok = result.errors.length === 0;
+  recordSourceSync(source.id, { ok, ref: "", error: ok ? "" : result.errors.map((e) => `${e.slug}: ${e.error}`).join("; "), stats });
+  return { ok, ...stats, ...result };
 }
 
 function channelGrants(slug) {
@@ -193,7 +204,7 @@ export function createSkillsRouter() {
     const source = addSource({ kind: b.kind, label: b.label || "", url: b.url, ref: b.ref || "", subpath: b.subpath || "", pinnedRef: b.pinnedRef || "", mode: b.mode || "review", enabled: b.enabled !== false, createdBy: ADMIN_UI });
     logEvent("skill_source_added", { source: source.id, kind: source.kind, author: ADMIN_UI });
     let sync = null;
-    if (b.syncNow !== false) sync = source.kind === "git" ? await syncOneSource(source.id, { log: () => {} }) : await importSkillTree(source.url, { ownerKind: "git", sourceId: source.id, sourceRef: source.url, status: source.mode === "auto" ? "active" : "staged" });
+    if (b.syncNow !== false) sync = source.kind === "git" ? await syncOneSource(source.id, { log: () => {} }) : await syncFolderSource(source);
     res.status(201).json({ ok: true, source: getSource(source.id), sync });
   }));
 
@@ -214,9 +225,7 @@ export function createSkillsRouter() {
   router.post("/skills/sources/:id/sync", guard(async (req, res) => {
     const source = getSource(Number(req.params.id));
     if (!source) return res.status(404).json({ error: "source not found" });
-    const result = source.kind === "git"
-      ? await syncOneSource(source.id, { log: () => {} })
-      : await importSkillTree(source.url, { ownerKind: "git", sourceId: source.id, sourceRef: source.url, status: source.mode === "auto" ? "active" : "staged" });
+    const result = source.kind === "git" ? await syncOneSource(source.id, { log: () => {} }) : await syncFolderSource(source);
     res.json({ ok: true, result, source: getSource(source.id) });
   }));
 
