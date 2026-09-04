@@ -449,11 +449,13 @@ Headless runs can't do interactive OAuth, so shared servers should use **non-int
   for up to 200 files / 250 MB total while preserving nested paths; files go directly into the
   gateway folder without using Slack file storage, and existing items are never overwritten.
   Eligible UTF-8 text files—including `.env*`, JSON/YAML/TOML, scripts, configs, and extensionless
-  files—can open through the configured public gateway
+  files up to 3,000 characters retain the quick native Slack *Edit* popup and can also open through
+  the configured public gateway
   URL in a full browser editor (up to 250,000 characters / 1 MB, with a live Markdown preview and
   conflict check); binary/invalid UTF-8 and remaining protected paths stay read-only, while Full mode
   file changes remain admin-only. Browser links are short-lived, one-use,
-  and scoped to the selected file or folder. With no public URL, the 3,000-character Slack editor remains.
+  and scoped to the selected file or folder. Slack controls the native modal size, so the app cannot
+  enlarge that popup; use the browser editor for a larger workspace. With no public URL, the 3,000-character Slack editor remains.
 - **Stopping a run**: three ways, all interrupt the in-flight answer (kill that thread's Claude
   process, clear the status; the next message resumes):
   - **`/stop`** slash command — works in channels and regular DMs.

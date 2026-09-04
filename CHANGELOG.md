@@ -18,6 +18,12 @@ product overview.
 
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
+### Changed
+- **Small text files now offer both editing surfaces.** When a Public URL is configured, eligible
+  files up to 3,000 characters retain the native Slack *Edit* popup alongside *Edit in browser*;
+  larger eligible files remain browser-only. Slack does not expose a modal-size setting, so the
+  browser editor remains the larger workspace.
+
 ### Fixed
 - **Composio (and every other injected remote MCP server) is back for Claude in channels that pick
   a global MCP server.** The channel lockdown lists a picked server by URL, and Claude Code then

@@ -1223,7 +1223,9 @@ release, no egress cut-off — so the network entry has no container equivalent 
       are enforced. `.env*`, JSON/YAML/TOML, scripts, configs, extensionless files, and text with an
       unfamiliar extension are editable; binary/invalid UTF-8 and remaining protected paths are
       refused. Read-only/Worker/Auto/Full permission combinations are covered.
-- [x] Unit (`test/file-editor.test.js`): a browser edit button supports eligible files beyond the
+- [x] Unit (`test/file-editor.test.js`, `test/file-explorer.test.js`): eligible files up to 3,000
+      characters expose both the native Slack Edit popup and the browser editor with distinct action
+      IDs; larger eligible files remain browser-only. The browser button supports files beyond the
       Slack 3,000-character limit; its opaque grant is short-lived and single-use, exchanges into an
       HttpOnly/SameSite editor cookie, requires CSRF, serves no-store with CSP/no-referrer headers,
       provides Markdown preview, re-authorizes on exchange/page/save, atomically saves + audits, and
@@ -1303,12 +1305,14 @@ release, no egress cut-off — so the network entry has no container equivalent 
       or symlink is never replaced. Read-only hides the control; Full allows only an admin. Losing
       authorization/membership/mode, protected/traversal names, NUL/binary/invalid UTF-8 content,
       protected parents, and collisions refuse the write.
-- [ ] In Worker/Auto mode, *Edit in browser* opens the public gateway editor in a new browser window,
-      with full content and a live split preview for Markdown; Save changes the confined file and
+- [ ] In Worker/Auto mode, an eligible file up to 3,000 characters offers both *Edit* in the native
+      Slack popup and *Edit in browser*; Slack fixes the native modal dimensions, while the browser
+      provides the larger workspace. *Edit in browser* opens the public gateway editor in a new
+      browser window, with full content and a live split preview for Markdown; Save changes the confined file and
       `channel_file_edited_in_browser` is audited. Read-only hides Edit; Full allows only an admin.
       Reusing/forwarding an already-opened link, leaving the channel, losing authorization/mode, or
       changing the file after opening refuses access/save and leaves the latest disk version intact.
-- [ ] Remove the configured public URL → eligible files ≤3,000 characters fall back to the Slack
+- [ ] Remove the configured public URL → eligible files ≤3,000 characters retain only the Slack
       modal editor and continue auditing `channel_file_edited`; larger files expose no Edit button.
 
 ### MCP injection & tokens
