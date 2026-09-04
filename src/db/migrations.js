@@ -428,4 +428,147 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 14,
+    up(db) {
+      db.exec(`
+        -- Skills platform Core (src/gateway/skills/, docs/SKILLS.md). The LOCAL skill catalog: every
+        -- skill a conversation can be granted lives here as immutable, content-hashed revisions that
+        -- hold the exact bytes of every file — SKILL.md included. The parsed frontmatter columns on
+        -- \`skills\` are a DERIVED index (rebuilt from the revision on every activation), never the
+        -- canonical content, so a key the parser does not model (allowed-tools, say) is never lost.
+        -- Ownership is explicit per skill (owner_kind): a synced skill is re-synced or forked, never
+        -- edited in place. Tombstones (deleted_at) keep dependents readable instead of breaking them.
+        CREATE TABLE skills (
+          id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+          slug                TEXT NOT NULL UNIQUE,          -- the folder name under .claude/skills/
+          name                TEXT NOT NULL DEFAULT '',      -- frontmatter name (what the Skill tool fires)
+          description         TEXT NOT NULL DEFAULT '',      -- frontmatter description (the always-on text)
+          owner_kind          TEXT NOT NULL DEFAULT 'local', -- bundled | local | folder | git
+          source_id           INTEGER,                       -- skill_sources.id for synced skills
+          source_path         TEXT NOT NULL DEFAULT '',      -- skill directory inside its source
+          current_revision_id INTEGER,                       -- newest ACTIVE revision; NULL = none yet
+          pinned_revision_id  INTEGER,                       -- operator pin/rollback; NULL follows current
+          category            TEXT NOT NULL DEFAULT '',
+          tags                TEXT NOT NULL DEFAULT '[]',    -- JSON string[]
+          requires            TEXT NOT NULL DEFAULT '[]',    -- JSON string[] of skill slugs (dependencies)
+          version             TEXT NOT NULL DEFAULT '',      -- semver from the frontmatter (human metadata)
+          meta                TEXT NOT NULL DEFAULT '{}',    -- JSON: the full parsed frontmatter
+          created_at          TEXT NOT NULL,
+          updated_at          TEXT NOT NULL,
+          created_by          TEXT NOT NULL DEFAULT '',      -- platform user id for locally authored skills
+          deleted_at          TEXT NOT NULL DEFAULT ''       -- tombstone ('' = live)
+        );
+        CREATE INDEX idx_skills_source ON skills(source_id);
+        CREATE INDEX idx_skills_owner ON skills(owner_kind);
+
+        CREATE TABLE skill_revisions (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          skill_id     INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+          revision_no  INTEGER NOT NULL,
+          status       TEXT NOT NULL DEFAULT 'active',  -- active | staged (awaiting review) | rejected
+          content_hash TEXT NOT NULL,                   -- sha256 over every (path, bytes) — the integrity identity
+          version      TEXT NOT NULL DEFAULT '',
+          source_ref   TEXT NOT NULL DEFAULT '',        -- git commit / folder / 'manual' / 'proposal:<id>'
+          note         TEXT NOT NULL DEFAULT '',
+          file_count   INTEGER NOT NULL DEFAULT 0,
+          total_bytes  INTEGER NOT NULL DEFAULT 0,
+          created_at   TEXT NOT NULL,
+          created_by   TEXT NOT NULL DEFAULT '',
+          UNIQUE (skill_id, revision_no)
+        );
+        CREATE INDEX idx_skill_revisions_skill ON skill_revisions(skill_id, status);
+
+        CREATE TABLE skill_revision_files (
+          revision_id  INTEGER NOT NULL REFERENCES skill_revisions(id) ON DELETE CASCADE,
+          path         TEXT NOT NULL,                   -- posix path relative to the skill folder
+          content      BLOB NOT NULL,                   -- exact bytes
+          size         INTEGER NOT NULL,
+          sha256       TEXT NOT NULL,
+          content_type TEXT NOT NULL DEFAULT '',
+          executable   INTEGER NOT NULL DEFAULT 0,      -- materialized 0755 instead of 0644
+          PRIMARY KEY (revision_id, path)
+        );
+
+        -- Where synced skills come from. A git source is one GitHub repository (optionally a
+        -- branch + subfolder, the /tree/<branch>/<path> form); a folder source is a directory on
+        -- the daemon host. mode=review stages every new revision for an admin to approve before it
+        -- can reach a channel (synced third-party skills are an instruction supply chain); mode=auto
+        -- activates on sync. pinned_ref freezes a git source at one commit.
+        CREATE TABLE skill_sources (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind            TEXT NOT NULL,                 -- git | folder
+          label           TEXT NOT NULL DEFAULT '',
+          url             TEXT NOT NULL DEFAULT '',      -- repository URL or host directory
+          ref             TEXT NOT NULL DEFAULT '',      -- branch/tag ('' = the repository default)
+          subpath         TEXT NOT NULL DEFAULT '',      -- only discover skills below this folder
+          pinned_ref      TEXT NOT NULL DEFAULT '',      -- commit sha to stay on ('' = follow ref)
+          mode            TEXT NOT NULL DEFAULT 'review',-- auto | review
+          enabled         INTEGER NOT NULL DEFAULT 1,
+          last_sync_at    TEXT NOT NULL DEFAULT '',
+          last_sync_ref   TEXT NOT NULL DEFAULT '',
+          last_sync_error TEXT NOT NULL DEFAULT '',
+          last_sync_stats TEXT NOT NULL DEFAULT '{}',
+          created_at      TEXT NOT NULL,
+          created_by      TEXT NOT NULL DEFAULT ''
+        );
+
+        -- Channel skill templates ("Development", "Sales", …): data, not enums. A template names
+        -- explicit skills and/or categories; applying it copies a SNAPSHOT of the resolved slugs
+        -- into the conversation's own grant list (never a live link).
+        CREATE TABLE skill_templates (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          slug        TEXT NOT NULL UNIQUE,
+          name        TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          skills      TEXT NOT NULL DEFAULT '[]',        -- JSON string[] of skill slugs
+          categories  TEXT NOT NULL DEFAULT '[]',        -- JSON string[] of categories (case-insensitive)
+          builtin     INTEGER NOT NULL DEFAULT 0,
+          created_at  TEXT NOT NULL,
+          updated_at  TEXT NOT NULL
+        );
+
+        -- One row per observed skill use. Claude fires skills through its Skill tool, so those rows
+        -- are EXACT; a Codex turn has no such tool and reads the SKILL.md file, so those rows are
+        -- INFERRED from a read/shell command and labelled as such. Never carries prompt text.
+        CREATE TABLE skill_usage (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts              TEXT NOT NULL,
+          slug            TEXT NOT NULL,
+          skill_id        INTEGER,
+          revision_id     INTEGER,
+          channel_slug    TEXT NOT NULL DEFAULT '',
+          conversation_id TEXT NOT NULL DEFAULT '',
+          user_id         TEXT NOT NULL DEFAULT '',
+          engine          TEXT NOT NULL DEFAULT '',
+          session_id      TEXT NOT NULL DEFAULT '',
+          run_id          TEXT NOT NULL DEFAULT '',
+          origin          TEXT NOT NULL DEFAULT '',
+          signal          TEXT NOT NULL                  -- exact | inferred
+        );
+        CREATE INDEX idx_skill_usage_ts ON skill_usage(ts);
+        CREATE INDEX idx_skill_usage_channel ON skill_usage(channel_slug, ts);
+        CREATE INDEX idx_skill_usage_slug ON skill_usage(slug, ts);
+
+        -- Proposed changes to a shared skill (anyone may propose; an admin decides). An approved
+        -- change becomes one new revision of that skill.
+        CREATE TABLE skill_proposals (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          slug          TEXT NOT NULL,
+          kind          TEXT NOT NULL,                   -- change | promote
+          status        TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+          files         TEXT NOT NULL DEFAULT '[]',      -- JSON [{ path, content, encoding }]
+          note          TEXT NOT NULL DEFAULT '',
+          proposed_by   TEXT NOT NULL DEFAULT '',
+          channel_slug  TEXT NOT NULL DEFAULT '',
+          created_at    TEXT NOT NULL,
+          decided_at    TEXT NOT NULL DEFAULT '',
+          decided_by    TEXT NOT NULL DEFAULT '',
+          decision_note TEXT NOT NULL DEFAULT '',
+          revision_id   INTEGER
+        );
+        CREATE INDEX idx_skill_proposals_status ON skill_proposals(status);
+      `);
+    },
+  },
 ];

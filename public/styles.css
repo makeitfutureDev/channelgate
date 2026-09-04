@@ -831,3 +831,47 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .license-usage-empty { color: var(--faint); font-size: 12.5px; }
 .bar-fill.over { background: var(--danger); }
 .bar-fill.near { background: var(--warn); }
+
+/* ── Skills view ─────────────────────────────────────────────────────────────── */
+.skills-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.skills-summary .stat { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 8px; padding: 6px 12px; font-size: 12px; color: var(--muted); }
+.skills-summary .stat b { color: var(--ink); font-size: 14px; margin-right: 4px; }
+.skills-summary .stat.warn b { color: var(--orange); }
+.skills-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line-soft); margin-bottom: 16px; }
+.skills-tab { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 12px; font-weight: 500; }
+.skills-tab:hover { filter: none; color: var(--ink); }
+.skills-tab.active { color: var(--ink); border-bottom-color: var(--orange); }
+.skills-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.skills-toolbar input[type="search"], .skills-toolbar select { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 7px 10px; border-radius: 8px; font: inherit; }
+.skills-toolbar input[type="search"] { min-width: 220px; }
+.skills-toolbar .spacer { flex: 1; }
+.skills-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel-dark); border: 1px solid var(--line-soft); border-radius: 10px; overflow: hidden; }
+.skills-table th, .skills-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.skills-table th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); font-weight: 600; }
+.skills-table tr.clickable { cursor: pointer; }
+.skills-table tr.clickable:hover td { background: var(--panel); }
+.skills-table tr.selected td { background: var(--panel-2); }
+.skills-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.skills-table .muted, .skills-muted { color: var(--faint); font-size: 12px; }
+.skills-table .desc { color: var(--muted); font-size: 12px; max-width: 420px; }
+.skills-detail { margin-top: 16px; }
+.skills-detail h3 { margin: 0 0 6px; font-size: 15px; }
+.skills-detail pre { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px; padding: 12px; overflow: auto; max-height: 420px; font-size: 12px; white-space: pre-wrap; }
+.skills-detail .files, .skills-detail .revs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.skills-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.skills-chip.active { border-color: var(--orange); }
+.skills-chip button { padding: 0 4px; background: transparent; color: var(--muted); border: 0; font-size: 11px; }
+.skills-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; margin: 10px 0; }
+.skills-form .wide { grid-column: 1 / -1; }
+.skills-form textarea { min-height: 220px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.skills-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.skills-note { font-size: 12px; color: var(--muted); margin: 6px 0; }
+.skills-error { color: var(--danger); font-size: 12px; margin: 6px 0; }
+.skills-ok { color: var(--muted); font-size: 12px; margin: 6px 0; }
+.skills-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.skills-cards .card h4 { margin: 0 0 4px; font-size: 14px; }
+.skills-cards .card p { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.skills-cards .card .who { font-size: 11px; color: var(--faint); }
+.skills-inline { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.skills-inline select, .skills-inline input { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 5px 8px; border-radius: 6px; font: inherit; font-size: 12px; }
+@media (max-width: 720px) { .skills-table .desc { max-width: 200px; } }

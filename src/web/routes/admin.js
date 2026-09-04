@@ -17,6 +17,7 @@ import { createObservabilityRouter } from "./observability.js";
 import { createSchedulesRouter } from "./schedules.js";
 import { createChannelsRouter } from "./channels.js";
 import { createUsersRouter } from "./users.js";
+import { createSkillsRouter } from "./skills.js";
 
 export function createAdminRouter({
   slack,
@@ -33,6 +34,7 @@ export function createAdminRouter({
   router.use(createSchedulesRouter());
   router.use(createChannelsRouter({ slack, testMakeToolbox }));
   router.use(createUsersRouter());
+  router.use(createSkillsRouter());
 
   return router;
 }

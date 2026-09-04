@@ -6,6 +6,7 @@ export const ADMIN_VIEWS = Object.freeze({
   users: Object.freeze({ path: "/users", title: "Users" }),
   schedules: Object.freeze({ path: "/automations", title: "Automations" }),
   audit: Object.freeze({ path: "/activity", title: "Activity" }),
+  skills: Object.freeze({ path: "/skills", title: "Skills" }),
   api: Object.freeze({ path: "/api-docs", title: "HTTP run API" }),
   settings: Object.freeze({ path: "/settings", title: "Settings" }),
 });

@@ -22,6 +22,7 @@ const EXPECTED = {
   users: "/users",
   schedules: "/automations",
   audit: "/activity",
+  skills: "/skills",
   api: "/api-docs",
   settings: "/settings",
 };

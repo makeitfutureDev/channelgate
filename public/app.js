@@ -14,6 +14,7 @@ import {
 import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
+import { loadSkills } from "./admin-skills.js";
 
 // ── Inline SVG icon ─────────────────────────────────────────────────────────────
 const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z"/></svg>`;
@@ -254,6 +255,7 @@ function loadView(name) {
   if (name === "users" && !viewLoaded.users) { viewLoaded.users = true; loadUsers().catch(() => {}); }
   if (name === "settings" && !viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
   if (name === "api" && !viewLoaded.api) { viewLoaded.api = true; loadApiDocs().catch(() => {}); }
+  if (name === "skills") loadSkills().catch(() => {}); // always refresh
   if (name === "schedules") loadSchedules().catch(() => {}); // always refresh
   if (name === "audit") loadAudit().catch(() => {}); // always refresh
   if (name === "dashboard") loadDashboard().catch(() => {}); // always refresh

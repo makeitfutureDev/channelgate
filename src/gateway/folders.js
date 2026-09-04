@@ -12,7 +12,6 @@ import { fileURLToPath } from "node:url";
 import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder } from "../config/paths.js";
 import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
 
-const MANAGED_SKILL_MARKER = ".gateway-managed-skill";
 
 // The directory Claude actually runs in for a channel: a custom meta.workDir when set to a
 // valid absolute, existing path; otherwise the visible default workspace folder
@@ -54,6 +53,9 @@ import { DEFAULT_PLATFORM } from "../platforms/registry.js";
 import { getAgentsFile, getAgentsInstructions, getComposioMode } from "../config/settings.js";
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
 import { isLibraryStub, splitFavorites, ensureCodexSkillsLink } from "./library-skills.js";
+import { MANAGED_SKILL_MARKER, materializeSkill, pruneManagedSkills } from "./skills/materialize.js";
+import { listSkills as listCatalogSkills } from "./skills/catalog.js";
+import { withDependencies } from "./skills/resolve.js";
 import { sanitizeSkillGrantNames } from "./access-grants.js";
 import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 // Capability reads only — never the registry or the resolver (resolve.js imports THIS module for
@@ -327,7 +329,7 @@ const SHELL_TOOLS = ["Bash", "Write", "Edit", "MultiEdit"];
 
 // Where to look for a skill by name when a channel grants it. First match wins; copy is
 // skipped if the destination already exists (preserves per-folder customization).
-function skillSourceDirs() {
+export function skillSourceDirs() {
   if (process.env.GATEWAY_SKILL_SOURCES) {
     return process.env.GATEWAY_SKILL_SOURCES.split(":").filter(Boolean);
   }
@@ -519,9 +521,16 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   };
 }
 
-// List all skill names available to grant (union across the source dirs) for the admin UI.
+// List all skill names available to grant for the admin UI: every live catalog skill (the
+// canonical set — bundled, authored, synced and imported host folders) plus, for a deployment
+// that has not imported its host folders yet, the names found there directly.
 export async function listAvailableSkills() {
   const names = new Set();
+  try {
+    for (const skill of listCatalogSkills()) names.add(skill.slug);
+  } catch {
+    /* catalog unavailable (no database yet) — fall back to the host folders alone */
+  }
   for (const dir of skillSourceDirs()) {
     try {
       for (const d of await readdir(dir, { withFileTypes: true })) {
@@ -558,35 +567,57 @@ async function renameLegacyManagedSkills(skillsDir) {
   }
 }
 
-// Copy each granted skill into the given .claude/skills dir (skip if already present).
+// Materialize each granted skill into the given .claude/skills dir. The catalog is the source
+// (real files of the skill's effective revision, write-on-change — see skills/materialize.js); a
+// grant that names nothing in the catalog falls back to the pre-catalog host-folder copy so an
+// un-imported folder keeps working. Managed copies whose grant ended are pruned; a project-owned
+// folder of the same name is never touched and always wins.
 export async function enableSkills(skillsDir, skillNames) {
   const sources = skillSourceDirs();
   // Defense at the filesystem sink: web writes and run-time grant resolution already normalize
   // names, but legacy/manual config and direct callers must not turn a grant into `../` traversal.
   // A grant stored under a renamed bundled skill's OLD name resolves to the new one, so an
   // existing channel keeps the skill it was granted without an admin re-granting it.
-  const safeSkillNames = sanitizeSkillGrantNames(skillNames).map((n) => RENAMED_MANAGED_SKILLS[n] || n);
-  const wanted = new Set(safeSkillNames);
+  const grantNames = sanitizeSkillGrantNames(skillNames).map((n) => RENAMED_MANAGED_SKILLS[n] || n);
+  // Dependencies (`requires:` in a catalog skill's frontmatter) are resolved HERE, at every
+  // materialization, not only when a grant is written: a dependency that was still awaiting
+  // review when the grant was made arrives the moment it is approved. Unknown names pass through
+  // untouched for the host-folder fallback below.
+  let safeSkillNames = grantNames;
+  try {
+    const { names, profile } = withDependencies(grantNames);
+    // Dependencies that cannot be materialized yet (awaiting review, tombstoned, not in the
+    // catalog) still go through the loop below so they are REPORTED as missing, never dropped.
+    const pending = [
+      ...profile.staged.filter((e) => e.via === "dependency").map((e) => e.slug),
+      ...profile.removed.filter((e) => e.via === "dependency").map((e) => e.slug),
+      ...profile.missingDependencies.map((m) => m.slug),
+    ];
+    safeSkillNames = [...new Set([...names, ...pending])];
+  } catch {
+    /* catalog unavailable — materialize the grants as given */
+  }
   const enabled = [];
   const missing = [];
-
-  // Revoke stale grants, but only when the marker proves this exact copy was created by us. A
-  // project-owned skill with the same name is never removed merely because an admin grant ended.
-  try {
-    for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
-      // Gateway copies are real directories. Never follow/remove a project-owned symlink even if
-      // its target happens to contain a marker file with the same name.
-      if (wanted.has(entry.name) || !entry.isDirectory()) continue;
-      const dest = path.join(skillsDir, entry.name);
-      if (await exists(path.join(dest, MANAGED_SKILL_MARKER))) {
-        await rm(dest, { recursive: true, force: true });
-      }
-    }
-  } catch {
-    // The caller normally creates skillsDir first; an absent directory simply has nothing to prune.
-  }
+  const states = {};
 
   for (const name of safeSkillNames) {
+    let result;
+    try {
+      result = await materializeSkill(skillsDir, name);
+    } catch (err) {
+      result = { state: "error", slug: name, error: err?.message || String(err) };
+    }
+    states[name] = result.state;
+    if (result.state === "written" || result.state === "unchanged" || result.state === "project") {
+      enabled.push(result.slug);
+      continue;
+    }
+    if (result.state === "staged" || result.state === "removed") {
+      missing.push(name);
+      continue;
+    }
+    // Not in the catalog (or the catalog failed): the original host-folder copy path.
     const dest = path.join(skillsDir, name);
     if (await exists(dest)) {
       // A real granted skill wins over a library stub of the same name — replace the stub with it.
@@ -611,5 +642,11 @@ export async function enableSkills(skillsDir, skillNames) {
     }
     if (!copied) missing.push(name);
   }
-  return { enabled, missing };
+
+  // Revoke stale grants, but only when the marker proves this exact copy was created by us. A
+  // project-owned skill with the same name is never removed merely because an admin grant ended.
+  // Runs AFTER materialization so a skill whose catalog slug differs from its grant name (a name
+  // grant resolving to a slug) is kept under the slug it was written to.
+  await pruneManagedSkills(skillsDir, enabled);
+  return { enabled, missing, states };
 }
