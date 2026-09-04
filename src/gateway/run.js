@@ -40,7 +40,7 @@ import { randomUUID } from "node:crypto";
 import { createSemaphore } from "../util/semaphore.js";
 import { logEvent } from "../util/logger.js";
 import { resolveRunAccessGrants, resolveRunUserIdentity, userOnlySkillGrants } from "./access-grants.js";
-import { assertUserSkillOverlaySupported, createRunGrantArtifacts } from "./run-grant-artifacts.js";
+import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntimeReadPaths } from "./run-grant-artifacts.js";
 import { isForceStopping } from "./shutdown.js";
 import { allowedFsRoot } from "../web/security.js";
 import { licenseAdmission } from "../ee/limits.js";
@@ -1559,6 +1559,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           else warmupText = line;
         },
       });
+      // A cold runtime probe settles the host-side HOME-volume path. Codex usage accounting must
+      // see that settled path before it snapshots a resumed session, or the footer shows the
+      // whole session's cumulative tokens/value instead of this message's delta.
+      refreshRuntimeReadPaths(grantArtifacts, target);
       if (warmup?.created || warmup?.started) {
         console.log(`[gateway] ${entry.slug}: ${target.backend} runtime ${warmup.created ? "created" : "started"} in ${Date.now() - warmupStartedAt}ms`);
       }

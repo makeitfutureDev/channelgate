@@ -1028,6 +1028,12 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       model in the footer, `/context`, and usage ledger. If Claude reports multiple models in
       `modelUsage`, the answering model is selected by dominant output tokens rather than first map
       key, and a reported `contextWindow` for that selected model wins over id-pattern guessing.
+- [ ] **Per-message footer accounting:** run one fresh and two resumed messages in the Claude and
+      Codex Auto fixtures. Each footer must show only that message's root-turn tokens/cost; Codex's
+      second and third footers must not grow cumulatively. Activity retains the same root component
+      and adds any native subagent components without adding them to the reply footer. Automated:
+      `test/runtime-integration-folders.test.js`, `test/codex-usage-accounting.test.js`, and
+      `test/message-cost-visibility.test.js`.
 - [ ] **`/resume <command or id>` adopts a local session, same channel only:** paste the 💻
       button's `cd "<channel folder>" && claude --resume <id>` back into the channel it came from →
       "🔁 This thread now continues Claude session …"; the next message continues that terminal

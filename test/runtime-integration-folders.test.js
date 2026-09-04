@@ -19,7 +19,7 @@ const scratch = ensureTestEnv();
 process.env.CG_WORKSPACE_DIR ||= path.join(scratch, "workspace");
 
 const { buildSettings, ensureChannelFolder, subagentStopHooks, STOP_SUBAGENTS_HOOK } = await import("../src/gateway/folders.js");
-const { createRunGrantArtifacts, engineHomesFor, CONTAINER_AGENT_HOME } = await import("../src/gateway/run-grant-artifacts.js");
+const { createRunGrantArtifacts, engineHomesFor, refreshRuntimeReadPaths, CONTAINER_AGENT_HOME } = await import("../src/gateway/run-grant-artifacts.js");
 const { channelFolder, gatewayRoot } = await import("../src/config/paths.js");
 const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
 const { IMAGE_HELPERS } = await import("../src/runtimes/container/image-paths.js");
@@ -154,4 +154,15 @@ test("engineHomesFor answers null for no target, and prefers what the backend de
   const declared = { ...target, container: { ...target.container, home: "/srv/agent", claudeConfigDir: "/opt/state/.claude", codexHome: "/opt/state/.codex" } };
   assert.deepEqual(engineHomesFor(declared).claudeConfigDir, "/opt/state/.claude");
   assert.deepEqual(engineHomesFor(declared).codexHome, "/opt/state/.codex");
+});
+
+test("runtime read paths refresh after a cold container probe settles its volume root", () => {
+  const cold = fakeTarget(backend, "footer-cost-delta", { platform: "slack" });
+  cold.container.homeVolumeHostPath = "";
+  const artifacts = { ...engineHomesFor(cold) };
+  assert.equal(artifacts.codexStateDir, "");
+
+  cold.container.homeVolumeHostPath = "/var/lib/cg/settled-volume";
+  assert.equal(refreshRuntimeReadPaths(artifacts, cold), artifacts);
+  assert.equal(artifacts.codexStateDir, "/var/lib/cg/settled-volume/.codex");
 });

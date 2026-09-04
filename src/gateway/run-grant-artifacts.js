@@ -39,6 +39,17 @@ export function engineHomesFor(target = null) {
   };
 }
 
+// prepareTarget() is deliberately pure, so a cold daemon may not know Podman's host-side volume
+// root until ensureUp() probes the runtime. Refresh only the daemon-readable accounting path at
+// that boundary; engine-facing HOME paths were already materialized inside the container and do
+// not change. Without this refresh a resumed Codex turn sees a zero baseline and its cumulative
+// provider-session usage is mislabeled as the current message's usage/cost.
+export function refreshRuntimeReadPaths(artifacts = {}, target = null) {
+  const current = engineHomesFor(target);
+  if (current?.codexStateDir) artifacts.codexStateDir = current.codexStateDir;
+  return artifacts;
+}
+
 export function assertUserSkillOverlaySupported(adapter, userSkills = []) {
   if (userSkills.length > 0 && !adapter?.supports?.userSkillOverlay) {
     throw new Error(`${adapter?.label || adapter?.id || "Selected engine"} cannot isolate per-user skill grants; refusing the run`);
