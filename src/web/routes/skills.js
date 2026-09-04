@@ -37,7 +37,7 @@ import {
 } from "../../gateway/skills/catalog.js";
 import { fileToApi, SkillFileError } from "../../gateway/skills/files.js";
 import { resolveSkillProfile } from "../../gateway/skills/resolve.js";
-import { listTemplateSummaries, previewTemplate, applyTemplateToChannel, templateSummary } from "../../gateway/skills/templates.js";
+import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, templateSummary, templateAssignments, withTemplateSkills, templateOfMeta } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
 import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, revokeSkillsFromOrg } from "../../gateway/skills/authoring.js";
 import { importHostSkillFolders } from "../../gateway/skills/import-folder.js";
@@ -74,7 +74,7 @@ function skillToApi(skill, usage = null) {
 }
 
 function channelGrants(slug) {
-  return getChannelMeta(slug).then((meta) => (meta ? resolveAccessGrants({ organization: getOrgAccessGrants(), channel: meta }) : null));
+  return getChannelMeta(slug).then((meta) => (meta ? resolveAccessGrants({ organization: getOrgAccessGrants(), channel: withTemplateSkills(meta) }) : null));
 }
 
 export function createSkillsRouter() {
@@ -252,7 +252,10 @@ export function createSkillsRouter() {
   }));
 
   // ── Templates ─────────────────────────────────────────────────────────────────────────────
-  router.get("/skills/templates", guard(async (_req, res) => res.json({ templates: listTemplateSummaries() })));
+  router.get("/skills/templates", guard(async (_req, res) => {
+    const assigned = await templateAssignments();
+    res.json({ templates: listTemplateSummaries().map((t) => ({ ...t, channels: assigned.get(t.slug.toLowerCase()) || [] })) });
+  }));
 
   router.post("/skills/templates", guard(async (req, res) => {
     const b = req.body || {};
@@ -268,30 +271,44 @@ export function createSkillsRouter() {
     res.json({ ok: true });
   }));
 
+  // What a conversation would get if it followed this template (its own additions kept).
   router.get("/skills/templates/:slug/preview", guard(async (req, res) => {
     const channel = String(req.query.channel || "");
     const meta = channel ? await getChannelMeta(channel) : null;
     if (channel && !meta) return res.status(404).json({ error: "conversation not found" });
-    const preview = previewTemplate(req.params.slug, meta?.skills || [], { mode: req.query.mode === "replace" ? "replace" : "add" });
+    const preview = previewTemplate(req.params.slug, meta || {});
     if (!preview) return res.status(404).json({ error: "template not found" });
     res.json({ preview });
   }));
 
-  router.post("/skills/templates/:slug/apply", guard(async (req, res) => {
+  // Assign the template to a conversation (a live link; "apply" kept as the older route name).
+  const assign = guard(async (req, res) => {
     const channel = String(req.body?.channel || "");
     if (!channel) return res.status(400).json({ error: "channel (slug) is required" });
-    const r = await applyTemplateToChannel(channel, req.params.slug, { mode: req.body?.mode === "replace" ? "replace" : "add" });
+    const r = await assignTemplateToChannel(channel, req.params.slug);
     if (!r) return res.status(404).json({ error: "template or conversation not found" });
-    logEvent("skill_template_applied", { slug: channel, template: req.params.slug, mode: r.mode, added: r.add.length, author: ADMIN_UI });
-    res.json({ ok: true, applied: r });
+    logEvent("skill_template_assigned", { slug: channel, template: req.params.slug, author: ADMIN_UI });
+    res.json({ ok: true, assigned: r, applied: r });
+  });
+  router.post("/skills/templates/:slug/assign", assign);
+  router.post("/skills/templates/:slug/apply", assign);
+
+  // Assign (or clear with "" / "none") from the conversation's side.
+  router.post("/skills/profile/:channel/template", guard(async (req, res) => {
+    const r = await assignTemplateToChannel(req.params.channel, String(req.body?.template ?? ""));
+    if (!r) return res.status(404).json({ error: "template or conversation not found" });
+    logEvent("skill_template_assigned", { slug: req.params.channel, template: r.skillTemplate || "none", author: ADMIN_UI });
+    res.json({ ok: true, assigned: r });
   }));
 
   // ── Profiles + usage ──────────────────────────────────────────────────────────────────────
   router.get("/skills/profile/:channel", guard(async (req, res) => {
     const grants = await channelGrants(req.params.channel);
     if (!grants) return res.status(404).json({ error: "conversation not found" });
+    const meta = await getChannelMeta(req.params.channel);
+    const template = templateOfMeta(meta);
     const profile = resolveSkillProfile(grants.skills, { warnTokens: getSkillsContextWarnTokens() });
-    res.json({ grants: grants.skills, profile: { ...profile, active: profile.active.map((e) => ({ slug: e.slug, name: e.name, via: e.via, requiredBy: e.requiredBy, tokens: e.tokens, revisionNo: e.revision?.revisionNo, version: e.revision?.version, ownerKind: e.skill.ownerKind })) } });
+    res.json({ grants: grants.skills, skillTemplate: meta?.skillTemplate || "", template: template ? templateSummary(template) : null, own: meta?.skills || [], profile: { ...profile, active: profile.active.map((e) => ({ slug: e.slug, name: e.name, via: e.via, requiredBy: e.requiredBy, tokens: e.tokens, revisionNo: e.revision?.revisionNo, version: e.revision?.version, ownerKind: e.skill.ownerKind })) } });
   }));
 
   router.post("/skills/profile/:channel/grant", guard(async (req, res) => {
@@ -315,9 +332,9 @@ export function createSkillsRouter() {
   router.get("/skills/profiles", guard(async (_req, res) => {
     const out = [];
     for (const ch of await listChannels()) {
-      const grants = ch.meta ? resolveAccessGrants({ organization: getOrgAccessGrants(), channel: ch.meta }) : { skills: [] };
+      const grants = ch.meta ? resolveAccessGrants({ organization: getOrgAccessGrants(), channel: withTemplateSkills(ch.meta) }) : { skills: [] };
       const profile = resolveSkillProfile(grants.skills, { warnTokens: getSkillsContextWarnTokens() });
-      out.push({ slug: ch.slug, name: ch.name, platform: ch.platform, isDM: ch.isDM, skills: profile.slugs, contextTokens: profile.contextTokens, warnings: profile.warnings.length });
+      out.push({ slug: ch.slug, name: ch.name, platform: ch.platform, isDM: ch.isDM, skillTemplate: ch.meta?.skillTemplate || "", own: ch.meta?.skills || [], skills: profile.slugs, contextTokens: profile.contextTokens, warnings: profile.warnings.length });
     }
     res.json({ profiles: out });
   }));

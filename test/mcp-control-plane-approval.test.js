@@ -268,7 +268,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "set_my_toolbox_token", "clear_my_toolbox_token",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
     // skills platform: grants, templates, catalog writes and admin decisions are persistent state
-    "add_channel_skills", "remove_channel_skills", "apply_skill_template",
+    "add_channel_skills", "remove_channel_skills", "set_channel_skill_template",
     "create_skill", "update_skill", "decide_skill_proposal", "sync_skill_sources",
     "delete_skill", "publish_skill", "add_org_skills", "remove_org_skills",
     "add_skill_source", "set_skill_source", "remove_skill_source", "set_skill_excluded",

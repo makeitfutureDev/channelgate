@@ -15,6 +15,7 @@ import {
 import { ensureChannelFolder } from "./folders.js";
 import { memorySnapshotPrefix } from "./channel-memory.js";
 import { createSkillUsageRecorder } from "./skills/usage.js";
+import { withTemplateSkills } from "./skills/templates.js";
 import { resolveSession, resetSession, getSession, saveSession, sessionGeneration } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
@@ -61,6 +62,7 @@ export function effectiveMeta(meta) {
     return {
       ...meta,
       skills: t.skills,
+      skillTemplate: typeof t.skillTemplate === "string" ? t.skillTemplate : "",
       allowedMcps: t.allowedMcps,
       allowedCodexMcps: t.allowedCodexMcps,
       model: [meta.model, t.model].find((m) => m && modelBelongsToEngine(m, engine)) || "",
@@ -687,10 +689,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // daemon's run_in_background / run_agent_in_background tools, which re-invoke the thread.
   const turnText = String(text ?? "");
 
-  const channelMeta = effectiveMeta(
+  // The channel tier is the assigned skill template's CURRENT skills plus the conversation's own
+  // additions (skills/templates.js) — resolved live, so a template edit reaches every follower.
+  const channelMeta = withTemplateSkills(effectiveMeta(
     (await getChannelMeta(entry.slug)) ??
       defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM })
-  );
+  ));
 
   // Resolve the durable org+channel baseline separately from this run's trusted user tier. The
   // HTTP run API authenticates only its API key; its caller-supplied Slack author id must never

@@ -184,7 +184,8 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     allowedUsers: [], // empty = nobody until configured (fail closed). DMs auto-allow the peer.
     allowedMcps: [], // Claude catalog entries; both built-in Composio identities are separate.
     allowedCodexMcps: [], // Codex runtime app-family/server identities; enforced by codex launch overrides.
-    skills: [], // skill names to enable inside this folder
+    skills: [], // skills added to this conversation (on top of its skill template)
+    skillTemplate: "", // slug of the skill template this conversation follows ("" = none)
     adminMode: false, // channel-level escalation (still also requires an admin author)
     allowBash: false, // allow Bash + file-edit tools, still confined to the folder by the sandbox
     allowNetwork: false, // allow sandbox network egress (to the configured domains) for git/gh/curl

@@ -2425,8 +2425,12 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       commit pin, and reports a slug held by another owner as a conflict
       (`test/skills-platform.test.js`).
 - [x] Integration: templates seed once, resolve by category (case-insensitive) and explicit slug,
-      preview add/replace with dependencies, apply a snapshot into channel meta that later template
-      edits do not change (`test/skills-platform.test.js`, `test/skills-admin-api.test.js`).
+      preview with dependencies, and are FOLLOWED live: assigning stores only the template slug on
+      the conversation, the channel tier is template + own additions, a template edit reaches the
+      follower, clearing keeps the additions, DM templates carry a template through `effectiveMeta`,
+      the channel PUT resolves a template name and refuses an unknown one (400), and the profile
+      endpoints expose the assignment (`test/skills-templates-assign.test.js`,
+      `test/skills-platform.test.js`, `test/skills-admin-api.test.js`).
 - [x] Integration: the usage recorder records Claude's `Skill` tool as exact and a `SKILL.md` read
       (path, target or shell command) as inferred, dedupes per run, `toolTarget("Skill")` names the
       skill, and the report lists never-used grants and off-catalog names

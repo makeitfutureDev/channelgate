@@ -3,6 +3,7 @@
 // instructions (CLAUDE.md). Split from admin.js; mounted by createAdminRouter so every URL is
 // unchanged.
 import { Router } from "express";
+import { getTemplate } from "../../gateway/skills/catalog.js";
 import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
@@ -178,6 +179,11 @@ export function createChannelsRouter({
       const next_ = { ...current };
       if (["user", "admin", "custom"].includes(body.template)) next_.template = body.template;
       if (Array.isArray(body.skills)) next_.skills = body.skills;
+      if (typeof body.skillTemplate === "string") {
+        const key = body.skillTemplate.trim();
+        if (key && !getTemplate(key)) return res.status(400).json({ error: `unknown skill template "${key}"` });
+        next_.skillTemplate = key ? getTemplate(key).slug : "";
+      }
       if (Array.isArray(body.allowedMcps)) next_.allowedMcps = sanitizeMcps(body.allowedMcps);
       if (Array.isArray(body.allowedCodexMcps)) next_.allowedCodexMcps = sanitizeCodexMcps(body.allowedCodexMcps);
       if (typeof body.model === "string") next_.model = body.model.trim();
@@ -315,6 +321,7 @@ export function createChannelsRouter({
             allowedMcps: Array.isArray(body.allowedMcps) ? sanitizeMcps(body.allowedMcps) : current.allowedMcps,
             allowedCodexMcps: Array.isArray(body.allowedCodexMcps) ? sanitizeCodexMcps(body.allowedCodexMcps) : current.allowedCodexMcps ?? [],
             skills: Array.isArray(body.skills) ? body.skills : current.skills,
+            skillTemplate: typeof body.skillTemplate === "string" ? (body.skillTemplate.trim() ? getTemplate(body.skillTemplate.trim())?.slug ?? "__unknown__" : "") : (current.skillTemplate || ""),
             adminMode: typeof body.adminMode === "boolean" ? body.adminMode : current.adminMode,
             allowBash: typeof body.allowBash === "boolean" ? body.allowBash : current.allowBash,
             allowNetwork: typeof body.allowNetwork === "boolean" ? body.allowNetwork : current.allowNetwork,
@@ -354,6 +361,7 @@ export function createChannelsRouter({
           if (typeof body.composioTokenLabel === "string") out.composioTokenLabel = body.composioTokenLabel.trim();
           if (typeof body.toolboxTokenLabel === "string") out.toolboxTokenLabel = body.toolboxTokenLabel.trim();
           Object.assign(out, resolveMakeToolboxUpdate(current, body));
+          if (out.skillTemplate === "__unknown__") throw Object.assign(new Error(`unknown skill template "${String(body.skillTemplate).trim()}"`), { statusCode: 400 });
           return out;
         });
       };

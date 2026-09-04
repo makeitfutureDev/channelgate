@@ -19,6 +19,12 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Skill templates are followed live, and edited in Settings.** A conversation is assigned a
+  template (Conversations → Tools → *Skill template*, the Skills view, `set_channel_skill_template`,
+  or a DM template) and gets the template's current skills plus whatever is added to the
+  conversation itself; editing the template under Settings → Access Templates → *Skill templates*
+  (a catalog checklist plus categories) reaches every conversation that follows it. Replaces the
+  one-time copy of the day before.
 - **Skills platform, round two: Skills Manager migrated in, Git publishing, an MCP endpoint of its
   own, peer gateways.** Skills authored or approved in chat are pushed to a configured GitHub
   repository (one commit per file) and adopted by the matching source; a GitHub push webhook

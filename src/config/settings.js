@@ -643,7 +643,7 @@ export function getContextWindow() {
 
 // Org-level conversation templates. The channel template is copied once when a non-DM is first
 // registered; DM templates remain live selections that DMs resolve on every run.
-const DM_TEMPLATE_DEFAULT = { skills: [], allowedMcps: [], allowedCodexMcps: [], model: "", effort: "", adminMode: false, allowBash: false, allowNetwork: false, autoMode: false, cleanMode: false, engine: "" };
+const DM_TEMPLATE_DEFAULT = { skills: [], skillTemplate: "", allowedMcps: [], allowedCodexMcps: [], model: "", effort: "", adminMode: false, allowBash: false, allowNetwork: false, autoMode: false, cleanMode: false, engine: "" };
 const CHANNEL_TEMPLATE_DEFAULT = { ...DM_TEMPLATE_DEFAULT, allowBash: true, allowNetwork: true, autoMode: true };
 export function getChannelTemplate() {
   const t = getSettings().channelTemplate;

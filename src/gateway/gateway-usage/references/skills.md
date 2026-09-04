@@ -28,11 +28,11 @@ when a skill fires. No token or network call is involved.
 - `add_channel_skills` / `remove_channel_skills` — grant or revoke skills here by slug.
   Dependencies (`requires:` in a skill's frontmatter) are added with the skill. Active on the
   next message.
-- `list_skill_templates` / `preview_skill_template` / `apply_skill_template` — templates such as
-  **Development**, **Sales**, **Marketing**, **Management** are named skill sets (explicit skills
-  and/or categories). Preview shows what would be added or removed; apply copies a snapshot into
-  this channel's grants (`mode: "add"` keeps the current grants, `"replace"` makes the list
-  exactly the template's). A later template edit never changes this channel by itself.
+- `list_skill_templates` / `preview_skill_template` / `set_channel_skill_template` — templates
+  such as **Development**, **Sales**, **Marketing**, **Management** are named skill sets. A
+  channel FOLLOWS its template live: it gets the template's current skills, and
+  `add_channel_skills` adds on top; `template: "none"` stops following (the channel's own
+  additions stay). Preview shows what the channel would gain, keep or drop.
 
 These change persistent state, so they show an Approve/Deny card in the conversation unless the
 channel is in auto mode.

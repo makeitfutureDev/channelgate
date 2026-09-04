@@ -21,6 +21,7 @@ const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none"
 
 // ── Reference data / state ──────────────────────────────────────────────────────
 let SKILLS = [];
+let SKILL_TEMPLATES = []; // { slug, name, description, skills, categories, resolved, channels }
 let AVAILABLE_MCPS = { claude: null, codex: null }; // engine → catalog (null until loaded)
 const MCP_CATALOG_LOADS = {}; // engine → in-flight Promise (dedupe open channel/template editors)
 let USERS = {};
@@ -1239,6 +1240,7 @@ function renderChannelDetail(ch) {
   wireChecksTools(mcpsBox, card.querySelector(".ch-mcps-filter"), mcpsCount);
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
   wireChecksTools(skillsBox, card.querySelector(".ch-skills-filter"), card.querySelector(".ch-skills-count"));
+  fillSkillTemplateSelect(card.querySelector(".ch-skill-template"), meta.skillTemplate || "", card.querySelector(".ch-skill-template-state"));
 
   // Raw capability flags (edited directly only in Custom; a preset drives them via applyProfileUI).
   const flagEls = {
@@ -1512,6 +1514,7 @@ function renderChannelDetail(ch) {
           allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
             .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
           skills: checkedValues(card.querySelector(".ch-skills")),
+          skillTemplate: card.querySelector(".ch-skill-template").value,
           profile: card.querySelector(".ch-profile").value,
           access: card.querySelector(".ch-access").value,
           manageAccess: card.querySelector(".ch-manage").value,
@@ -1736,7 +1739,10 @@ function buildConfigEditor(cfg = {}) {
         <div class="cfg-mcps checks"></div>
       </div>
       <div class="col tools-col">
-        <div class="checks-head"><h4>Skills</h4><span class="checks-count cfg-skills-count"></span></div>
+        <label class="field"><span>Skill template <em class="state">· followed live; skills checked below are added on top</em></span>
+          <select class="cfg-skill-template"><option value="">none</option></select>
+          <em class="state cfg-skill-template-state"></em></label>
+        <div class="checks-head"><h4>Additional skills</h4><span class="checks-count cfg-skills-count"></span></div>
         <input type="search" class="checks-filter cfg-skills-filter" placeholder="Filter skills…" autocomplete="off" />
         <div class="cfg-skills checks"></div>
       </div>
@@ -1763,6 +1769,7 @@ function buildConfigEditor(cfg = {}) {
   wireChecksTools(mcpsBox, el.querySelector(".cfg-mcps-filter"), mcpsCount);
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
   wireChecksTools(skillsBox, el.querySelector(".cfg-skills-filter"), el.querySelector(".cfg-skills-count"));
+  fillSkillTemplateSelect(el.querySelector(".cfg-skill-template"), cfg.skillTemplate || "", el.querySelector(".cfg-skill-template-state"));
   const engineSelect = el.querySelector(".cfg-engine");
   engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true });
   engineSelect.value = cfg.engine || "";
@@ -1834,6 +1841,7 @@ function buildConfigEditor(cfg = {}) {
 
   const getValues = () => ({
     skills: checkedValues(skillsBox),
+    skillTemplate: el.querySelector(".cfg-skill-template").value,
     allowedMcps: selectedMcpEntries(mcpsBox, "claude").map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
     allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
       .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
@@ -2694,6 +2702,7 @@ function paintSettings(s) {
     )
     .join("");
   renderSlackStatus(s.slack);
+  renderSkillTemplatesSettings().catch(() => {});
   renderChannelTemplateSettings(s.channelTemplate || {});
   // DM templates: (re)build the two editors from the stored config, and keep DM_TEMPLATES in sync so
   // the Conversations list shows each DM row's template-derived capdot after an edit + save.
@@ -3599,6 +3608,11 @@ async function init() {
   loadUpdateStatus().catch(() => {}); // version chip + update button — off the critical path
   bindSettings();
   const { skills } = await api("/api/skills");
+  try {
+    SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];
+  } catch {
+    SKILL_TEMPLATES = [];
+  }
   SKILLS = skills;
   await loadSettings();
   await loadUsers(); // populate USERS for the channel user pickers (+ render the Users view)
@@ -3646,3 +3660,103 @@ function showFatalError(error) {
 }
 
 init().catch(showFatalError);
+
+
+// ── Skill templates ──────────────────────────────────────────────────────────────
+// A conversation follows one template (live) and adds its own skills on top; the templates are
+// edited under Settings → Access Templates. `SKILL_TEMPLATES` is loaded with the skill catalog.
+function fillSkillTemplateSelect(select, value, stateEl) {
+  if (!select) return;
+  select.innerHTML = `<option value="">none</option>${SKILL_TEMPLATES.map((t) => `<option value="${escapeHtml(t.slug)}">${escapeHtml(t.name)} (${(t.resolved || []).length})</option>`).join("")}`;
+  select.value = SKILL_TEMPLATES.some((t) => t.slug === value) ? value : "";
+  const paint = () => {
+    const t = SKILL_TEMPLATES.find((x) => x.slug === select.value);
+    if (stateEl) stateEl.textContent = t ? `${(t.resolved || []).length} skill(s) from the template: ${(t.resolved || []).slice(0, 12).join(", ")}${(t.resolved || []).length > 12 ? "…" : ""}` : "no template — only the skills checked below (plus organization and personal grants)";
+  };
+  paint();
+  select.addEventListener("change", paint);
+}
+
+let skillTplEditing = null; // slug being edited, "" for a new one, null for the list
+
+async function renderSkillTemplatesSettings() {
+  const mount = document.getElementById("skill-templates-editor");
+  if (!mount) return;
+  try {
+    SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];
+  } catch (err) {
+    mount.innerHTML = `<p class="skills-error">Could not load templates: ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  if (skillTplEditing !== null) return renderSkillTemplateEditor(mount, skillTplEditing);
+  const rows = SKILL_TEMPLATES.map((t) => `
+    <tr>
+      <td><strong>${escapeHtml(t.name)}</strong> <span class="skills-muted">${escapeHtml(t.slug)}</span>${t.builtin ? ' <span class="pill">built-in</span>' : ""}<br/><span class="skills-muted">${escapeHtml(t.description || "")}</span></td>
+      <td>${(t.resolved || []).length} skill(s)<br/><span class="skills-muted">${escapeHtml((t.categories || []).length ? `categories: ${t.categories.join(", ")}` : "")}${(t.missing || []).length ? ` · <span class="skills-error">missing: ${escapeHtml(t.missing.join(", "))}</span>` : ""}</span></td>
+      <td>${(t.channels || []).length ? t.channels.map((c) => escapeHtml(c.name)).join(", ") : '<span class="skills-muted">no conversation yet</span>'}</td>
+      <td><button type="button" class="ghost" data-tpl-edit="${escapeHtml(t.slug)}">Edit</button></td>
+    </tr>`).join("");
+  mount.innerHTML = `
+    <table class="skills-table"><thead><tr><th>Template</th><th>Skills</th><th>Used by</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="skills-muted">No templates yet.</td></tr>'}</tbody></table>
+    <div class="skills-actions"><button type="button" class="ghost" data-tpl-new="1">+ New template</button></div>`;
+  mount.querySelectorAll("[data-tpl-edit]").forEach((b) => b.addEventListener("click", () => { skillTplEditing = b.dataset.tplEdit; renderSkillTemplatesSettings(); }));
+  mount.querySelector("[data-tpl-new]")?.addEventListener("click", () => { skillTplEditing = ""; renderSkillTemplatesSettings(); });
+}
+
+function renderSkillTemplateEditor(mount, slug) {
+  const t = SKILL_TEMPLATES.find((x) => x.slug === slug) || { slug: "", name: "", description: "", skills: [], categories: [], builtin: false, channels: [] };
+  const isNew = !slug;
+  mount.innerHTML = `
+    <div class="skills-form">
+      <label class="field"><span>Name</span><input class="tpl-name" value="${escapeHtml(t.name)}" placeholder="Support" /></label>
+      <label class="field"><span>Slug</span><input class="tpl-slug" value="${escapeHtml(t.slug)}" placeholder="support"${isNew ? "" : " readonly"} /></label>
+      <label class="field wide"><span>Description</span><input class="tpl-desc" value="${escapeHtml(t.description || "")}" /></label>
+      <label class="field wide"><span>Categories (comma-separated) — every catalog skill in these categories is part of the template</span><input class="tpl-cats" value="${escapeHtml((t.categories || []).join(", "))}" placeholder="Sales, CRM" /></label>
+    </div>
+    <div class="col tools-col">
+      <div class="checks-head"><h4>Explicit skills</h4><span class="checks-count tpl-skills-count"></span></div>
+      <input type="search" class="checks-filter tpl-skills-filter" placeholder="Filter skills…" autocomplete="off" />
+      <div class="tpl-skills checks"></div>
+    </div>
+    <p class="skills-note tpl-resolved">${(t.resolved || []).length ? `Currently resolves to ${(t.resolved || []).length} skill(s): ${escapeHtml((t.resolved || []).join(", "))}` : ""}</p>
+    <div class="skills-actions">
+      <button type="button" class="tpl-save">${isNew ? "Create template" : "Save template"}</button>
+      ${!isNew && !t.builtin ? '<button type="button" class="ghost danger-btn tpl-delete">Delete</button>' : ""}
+      <button type="button" class="ghost tpl-cancel">Back to the list</button>
+      <span class="skills-muted tpl-status"></span>
+    </div>`;
+  const box = mount.querySelector(".tpl-skills");
+  box.dataset.kind = "s";
+  checkboxList(box, accessGrantSkillOptions(SKILLS, t.skills || []), t.skills || []);
+  wireChecksTools(box, mount.querySelector(".tpl-skills-filter"), mount.querySelector(".tpl-skills-count"));
+  const status = mount.querySelector(".tpl-status");
+  mount.querySelector(".tpl-cancel").addEventListener("click", () => { skillTplEditing = null; renderSkillTemplatesSettings(); });
+  mount.querySelector(".tpl-save").addEventListener("click", async () => {
+    status.textContent = "saving…";
+    try {
+      const body = {
+        slug: mount.querySelector(".tpl-slug").value.trim(),
+        name: mount.querySelector(".tpl-name").value.trim(),
+        description: mount.querySelector(".tpl-desc").value.trim(),
+        categories: mount.querySelector(".tpl-cats").value.split(",").map((x) => x.trim()).filter(Boolean),
+        skills: checkedValues(box),
+      };
+      const r = await api("/api/skills/templates", { method: "POST", body: JSON.stringify(body) });
+      status.textContent = `saved — ${(r.template.resolved || []).length} skill(s)`;
+      skillTplEditing = null;
+      await renderSkillTemplatesSettings();
+    } catch (err) {
+      status.textContent = err.message;
+    }
+  });
+  mount.querySelector(".tpl-delete")?.addEventListener("click", async () => {
+    if (!(await confirmDialog({ title: `Delete the ${t.name} template?`, body: "Conversations that follow it keep only their own added skills afterwards.", confirmLabel: "Delete", danger: true }))) return;
+    try {
+      await api(`/api/skills/templates/${encodeURIComponent(t.slug)}`, { method: "DELETE" });
+      skillTplEditing = null;
+      await renderSkillTemplatesSettings();
+    } catch (err) {
+      status.textContent = err.message;
+    }
+  });
+}

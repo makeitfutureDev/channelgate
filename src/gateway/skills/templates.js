@@ -1,11 +1,15 @@
-// Channel skill templates: "apply the Development template to this channel". A template is data
-// (a row: explicit skill slugs and/or categories); the four seeded ones exist so a fresh
-// deployment has something to apply, and an admin can edit or add more. Applying copies a
-// SNAPSHOT of the resolved slugs into the conversation's own grant list — never a live link, so a
-// later template edit does not silently rewrite every channel that ever used it.
+// Channel skill templates: "this channel follows the Development template". A template is data
+// (a row: explicit skill slugs and/or categories) edited under Settings → Access Templates; the
+// four seeded ones exist so a fresh deployment has something to assign, and admins add more.
+//
+// A conversation is ASSIGNED a template (`meta.skillTemplate`, a live link): its effective channel
+// tier is the template's current skills plus whatever was added to the conversation itself
+// (`meta.skills`), so editing a template later reaches every conversation that follows it, and
+// "add this skill to the channel" always adds on top of the template. The organization and
+// personal tiers union in as before (access-grants.js).
 import { getTemplate, listTemplates, upsertTemplate, resolveTemplateSkills } from "./catalog.js";
 import { withDependencies } from "./resolve.js";
-import { patchChannelMeta } from "../../config/store.js";
+import { patchChannelMeta, listChannels } from "../../config/store.js";
 import { sanitizeSkillGrantNames } from "../access-grants.js";
 
 export const BUILTIN_TEMPLATES = Object.freeze([
@@ -56,40 +60,90 @@ export function listTemplateSummaries() {
   return listTemplates().map(templateSummary);
 }
 
-// What applying `templateKey` to a conversation whose grants are `currentGrants` would do.
-// mode "add" keeps the current grants and adds the template's; "replace" makes the grant list
-// exactly the template's. Dependencies of the final list are pulled in automatically.
-export function previewTemplate(templateKey, currentGrants = [], { mode = "add" } = {}) {
-  const template = getTemplate(templateKey);
-  if (!template) return null;
-  const current = sanitizeSkillGrantNames(currentGrants);
-  const { skills, missing } = resolveTemplateSkills(template);
-  const templateSlugs = skills.map((s) => s.slug);
-  const have = new Set(current.map((s) => s.toLowerCase()));
-  const base = mode === "replace" ? templateSlugs : [...current, ...templateSlugs.filter((s) => !have.has(s.toLowerCase()))];
+// The template a conversation follows (by its stored slug), or null.
+export function templateOfMeta(meta) {
+  const key = typeof meta?.skillTemplate === "string" ? meta.skillTemplate.trim() : "";
+  return key ? getTemplate(key) : null;
+}
+
+// The conversation's own tier: the assigned template's CURRENT skills plus the skills added to
+// the conversation itself. This is what the grant union takes as the channel tier.
+export function channelSkillGrants(meta = {}) {
+  const own = sanitizeSkillGrantNames(meta?.skills || []);
+  const template = templateOfMeta(meta);
+  if (!template) return own;
+  const fromTemplate = resolveTemplateSkills(template).skills.map((s) => s.slug);
+  const seen = new Set();
+  const out = [];
+  for (const s of [...fromTemplate, ...own]) {
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
+// A copy of the conversation meta whose `skills` is the full channel tier (template + own). Used
+// wherever a run or a report resolves grants from a stored meta.
+export function withTemplateSkills(meta) {
+  if (!meta) return meta;
+  const template = templateOfMeta(meta);
+  if (!template) return meta;
+  return { ...meta, skills: channelSkillGrants(meta) };
+}
+
+// What assigning `templateKey` to a conversation would give it: the template's skills plus the
+// conversation's own additions, with dependencies, against its current effective tier.
+export function previewTemplate(templateKey, meta = {}, { additions = null } = {}) {
+  const template = templateKey ? getTemplate(templateKey) : null;
+  if (templateKey && !template) return null;
+  const currentTier = channelSkillGrants(meta);
+  const own = sanitizeSkillGrantNames(additions ?? meta?.skills ?? []);
+  const { skills, missing } = template ? resolveTemplateSkills(template) : { skills: [], missing: [] };
+  const have = new Set(own.map((s) => s.toLowerCase()));
+  const base = [...skills.map((s) => s.slug).filter((s) => !have.has(s.toLowerCase())), ...own];
   const { names, profile } = withDependencies(base);
-  const final = new Set(names.map((s) => s.toLowerCase()));
+  const current = new Set(currentTier.map((s) => s.toLowerCase()));
+  const next = new Set(names.map((s) => s.toLowerCase()));
   return {
-    template: { slug: template.slug, name: template.name, description: template.description, builtin: template.builtin },
-    mode,
-    add: names.filter((s) => !have.has(s.toLowerCase())),
-    keep: current.filter((s) => final.has(s.toLowerCase())),
-    remove: mode === "replace" ? current.filter((s) => !final.has(s.toLowerCase())) : [],
+    template: template ? { slug: template.slug, name: template.name, description: template.description, builtin: template.builtin } : null,
+    add: names.filter((s) => !current.has(s.toLowerCase())),
+    keep: currentTier.filter((s) => next.has(s.toLowerCase())),
+    remove: currentTier.filter((s) => !next.has(s.toLowerCase())),
     names,
     missing,
     profile,
   };
 }
 
-// Apply the template to a conversation (its stored channel meta). Returns the preview that was
-// applied, or null when the conversation is unknown / the template does not exist.
-export async function applyTemplateToChannel(channelSlug, templateKey, { mode = "add" } = {}) {
-  let applied = null;
+// Assign (or clear, with "" / "none") the template a conversation follows. The conversation's own
+// additions are kept. Returns the preview of the resulting tier, or null when unknown.
+export async function assignTemplateToChannel(channelSlug, templateKey) {
+  const key = String(templateKey || "").trim();
+  const clearing = !key || key.toLowerCase() === "none";
+  const template = clearing ? null : getTemplate(key);
+  if (!clearing && !template) return null;
+  let preview = null;
   const next = await patchChannelMeta(channelSlug, (meta) => {
     if (!meta) return null;
-    applied = previewTemplate(templateKey, meta.skills || [], { mode });
-    if (!applied) return null;
-    return { skills: applied.names };
+    preview = previewTemplate(template?.slug || "", meta);
+    return { skillTemplate: template?.slug || "" };
   });
-  return next ? { ...applied, channelSlug, skills: next.skills } : null;
+  return next ? { ...preview, channelSlug, skillTemplate: next.skillTemplate || "", skills: channelSkillGrants(next) } : null;
+}
+
+// Kept for callers of the earlier name: "apply" now means assign (a live link, not a copy).
+export const applyTemplateToChannel = (channelSlug, templateKey) => assignTemplateToChannel(channelSlug, templateKey);
+
+// Which conversations follow each template (for the admin UI).
+export async function templateAssignments() {
+  const out = new Map();
+  for (const ch of await listChannels()) {
+    const key = typeof ch.meta?.skillTemplate === "string" ? ch.meta.skillTemplate.trim().toLowerCase() : "";
+    if (!key) continue;
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push({ slug: ch.slug, name: ch.name || ch.slug, channelId: ch.channelId });
+  }
+  return out;
 }

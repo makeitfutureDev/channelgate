@@ -386,28 +386,29 @@ test("git sync refuses a slug another owner holds and reports it as a conflict",
 
 // ── templates ────────────────────────────────────────────────────────────────────────────────
 
-test("templates resolve by category and explicit slug, preview add/replace, and apply a snapshot with dependencies", async () => {
+test("templates resolve by category and explicit slug, preview against a conversation, and are followed live", async () => {
   templates.seedBuiltinTemplates();
   assert.equal(templates.seedBuiltinTemplates().length, 0, "seeding is idempotent");
   catalog.putSkillRevision({ files: [md("Sales Play", "A sales skill", "category: sales\nrequires: [crm-base]\n")], ownerKind: "local" });
   catalog.putSkillRevision({ files: [md("CRM Base", "Base CRM skill", "category: Internal\n")], ownerKind: "local" });
   const sales = templates.templateSummary(catalog.getTemplate("Sales"));
   assert.ok(sales.resolved.includes("sales-play"), "category match is case-insensitive");
-  const preview = templates.previewTemplate("sales", ["existing-grant"], { mode: "add" });
+  const preview = templates.previewTemplate("sales", { skills: ["existing-grant"] });
   assert.deepEqual(preview.keep, ["existing-grant"]);
   assert.ok(preview.add.includes("sales-play") && preview.add.includes("crm-base"), "the dependency rides along");
-  const replace = templates.previewTemplate("sales", ["existing-grant"], { mode: "replace" });
-  assert.deepEqual(replace.remove, ["existing-grant"]);
 
   const entry = await upsertChannelEntry("C_SKILLS_TPL", { name: "skills-tpl", type: "channel", isDM: false });
   await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: "C_SKILLS_TPL", name: "skills-tpl", type: "channel", isDM: false }), skills: ["existing-grant"] });
-  const applied = await templates.applyTemplateToChannel(entry.slug, "sales", { mode: "add" });
-  assert.ok(applied.skills.includes("sales-play") && applied.skills.includes("existing-grant"));
-  assert.deepEqual((await getChannelMeta(entry.slug)).skills, applied.skills);
-  // Editing the template later does not touch the channel (snapshot, not link).
+  const assigned = await templates.assignTemplateToChannel(entry.slug, "sales");
+  assert.equal(assigned.skillTemplate, "sales");
+  assert.ok(assigned.skills.includes("sales-play") && assigned.skills.includes("existing-grant"));
+  const stored = await getChannelMeta(entry.slug);
+  assert.deepEqual(stored.skills, ["existing-grant"], "the conversation's own additions stay separate");
+  assert.equal(stored.skillTemplate, "sales");
+  // Editing the template later changes what the follower gets (live link, not a snapshot).
   catalog.upsertTemplate({ slug: "sales", name: "Sales", categories: [], skills: [] });
-  assert.ok((await getChannelMeta(entry.slug)).skills.includes("sales-play"));
-  assert.equal(await templates.applyTemplateToChannel("no-such-channel", "sales"), null);
+  assert.deepEqual(templates.channelSkillGrants(await getChannelMeta(entry.slug)), ["existing-grant"]);
+  assert.equal(await templates.assignTemplateToChannel("no-such-channel", "sales"), null);
 });
 
 // ── usage ────────────────────────────────────────────────────────────────────────────────────

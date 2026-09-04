@@ -339,19 +339,19 @@ function renderTemplates() {
     </div>` : "";
   const preview = state.templatePreview;
   return `
+    <p class="skills-note">Templates are edited under <a href="/settings#set-templates">Settings → Access Templates</a>. A conversation <strong>follows</strong> its template live and adds its own skills on top.</p>
     <div class="skills-toolbar"><button type="button" class="ghost" data-action="new-template">+ New template</button><span class="spacer"></span></div>
     ${form}
     <div class="skills-cards">${cards || '<p class="muted">No templates.</p>'}</div>
     <div class="card skills-detail">
-      <h3>Apply a template to a conversation</h3>
+      <h3>Assign a template to a conversation</h3>
       <div class="skills-inline">
-        <select id="apply-template">${templates.map((t) => `<option value="${esc(t.slug)}"${t.slug === state.applyTemplate ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select>
-        <select id="apply-channel">${channels.map((c) => `<option value="${esc(c.slug)}"${c.slug === state.applyChannel ? " selected" : ""}>${esc(c.name || c.slug)} (${c.skills.length} skills)</option>`).join("")}</select>
-        <select id="apply-mode"><option value="add"${state.applyMode !== "replace" ? " selected" : ""}>add to current grants</option><option value="replace"${state.applyMode === "replace" ? " selected" : ""}>replace current grants</option></select>
+        <select id="apply-template"><option value="none"${state.applyTemplate === "none" ? " selected" : ""}>none (stop following)</option>${templates.map((t) => `<option value="${esc(t.slug)}"${t.slug === state.applyTemplate ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select>
+        <select id="apply-channel">${channels.map((c) => `<option value="${esc(c.slug)}"${c.slug === state.applyChannel ? " selected" : ""}>${esc(c.name || c.slug)}${c.skillTemplate ? ` — follows ${esc(c.skillTemplate)}` : ""} (${c.skills.length} skills)</option>`).join("")}</select>
         <button type="button" class="ghost" data-action="preview-template">Preview</button>
-        <button type="button" data-action="apply-template">Apply</button>
+        <button type="button" data-action="apply-template">Assign</button>
       </div>
-      ${preview ? `<p class="skills-note"><strong>${esc(preview.template.name)}</strong> → add ${esc(preview.add.join(", ") || "nothing")}; keep ${esc(preview.keep.join(", ") || "nothing")}${preview.mode === "replace" ? `; remove ${esc(preview.remove.join(", ") || "nothing")}` : ""}. Result: ${preview.names.length} skill(s), ~${preview.profile.contextTokens} always-on tokens.${preview.profile.warnings.length ? `<br/><span class="skills-error">${esc(preview.profile.warnings.join(" · "))}</span>` : ""}</p>` : ""}
+      ${preview ? `<p class="skills-note"><strong>${esc(preview.template ? preview.template.name : "no template")}</strong> → gain ${esc(preview.add.join(", ") || "nothing")}; keep ${esc(preview.keep.join(", ") || "nothing")}; drop ${esc(preview.remove.join(", ") || "nothing")}. Channel tier: ${preview.names.length} skill(s), ~${preview.profile.contextTokens} always-on tokens.${preview.profile.warnings.length ? `<br/><span class="skills-error">${esc(preview.profile.warnings.join(" · "))}</span>` : ""}</p>` : ""}
     </div>`;
 }
 
@@ -590,21 +590,21 @@ async function act(action, el) {
       break;
     }
     case "delete-template":
-      if (await confirmDialog({ title: `Delete template ${slug}?`, body: "Conversations keep the skills it already applied.", confirmLabel: "Delete", danger: true })) {
+      if (await confirmDialog({ title: `Delete template ${slug}?`, body: "Conversations that follow it keep only their own added skills afterwards.", confirmLabel: "Delete", danger: true })) {
         await withStatus(() => api(`/api/skills/templates/${encodeURIComponent(slug)}`, { method: "DELETE" }), "Template deleted.");
         await refreshAll();
       }
       break;
     case "preview-template": {
       rememberApplySelection();
-      const r = await withStatus(() => api(`/api/skills/templates/${encodeURIComponent(state.applyTemplate)}/preview?channel=${encodeURIComponent(state.applyChannel)}&mode=${state.applyMode}`));
+      const r = await withStatus(() => api(`/api/skills/templates/${encodeURIComponent(state.applyTemplate === "none" ? "" : state.applyTemplate)}/preview?channel=${encodeURIComponent(state.applyChannel)}`).catch((err) => { if (state.applyTemplate === "none") return { preview: null }; throw err; }));
       if (r) state.templatePreview = r.preview;
       break;
     }
     case "apply-template": {
       rememberApplySelection();
-      const r = await withStatus(() => api(`/api/skills/templates/${encodeURIComponent(state.applyTemplate)}/apply`, { method: "POST", body: JSON.stringify({ channel: state.applyChannel, mode: state.applyMode }) }));
-      if (r) setMessage(`Applied ${r.applied.template.name}: +${r.applied.add.length} skill(s)${r.applied.remove.length ? `, −${r.applied.remove.length}` : ""} — ${r.applied.names.length} granted now.`);
+      const r = await withStatus(() => api(`/api/skills/profile/${encodeURIComponent(state.applyChannel)}/template`, { method: "POST", body: JSON.stringify({ template: state.applyTemplate }) }));
+      if (r) setMessage(r.assigned.template ? `${state.applyChannel} now follows ${r.assigned.template.name}: gains ${r.assigned.add.length}, drops ${r.assigned.remove.length} — channel tier ${r.assigned.names.length} skill(s).` : `${state.applyChannel} follows no template now.`);
       state.templatePreview = null;
       await refreshAll();
       break;

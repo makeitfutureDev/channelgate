@@ -10,7 +10,7 @@ import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEn
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, tombstoneSkill, restoreSkill, effectiveRevisionFor, listRevisions, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility } from "../../gateway/skills/resolve.js";
-import { listTemplateSummaries, previewTemplate, applyTemplateToChannel } from "../../gateway/skills/templates.js";
+import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
 import { fileToApi } from "../../gateway/skills/files.js";
 import {
@@ -81,20 +81,24 @@ export function register(server, ctx) {
 
   // The conversation's profile: organization + channel grants (durable) plus the requester's own.
   const channelProfile = async () => {
-    const meta = (await loadMeta()) || {};
+    const stored = (await loadMeta()) || {};
+    const meta = withTemplateSkills(stored);
+    const template = templateOfMeta(stored);
     const user = createdBy ? (await getUser(createdBy)) || {} : {};
     const shared = resolveAccessGrants({ organization: getOrgAccessGrants(), channel: meta });
     const effective = resolveAccessGrants({ organization: getOrgAccessGrants(), channel: meta, user });
     const warnTokens = getSkillsContextWarnTokens();
     return {
       meta,
+      template,
       user,
       shared,
       effective,
       profile: resolveSkillProfile(effective.skills, { warnTokens }),
       sharedProfile: resolveSkillProfile(shared.skills, { warnTokens }),
       orgSkills: new Set((getOrgAccessGrants().skills || []).map((s) => String(s).toLowerCase())),
-      channelSkills: new Set((meta.skills || []).map((s) => String(s).toLowerCase())),
+      channelSkills: new Set((stored.skills || []).map((s) => String(s).toLowerCase())),
+      templateSkills: new Set(template ? (meta.skills || []).filter((s) => !(stored.skills || []).some((o) => String(o).toLowerCase() === String(s).toLowerCase())).map((s) => String(s).toLowerCase()) : []),
     };
   };
 
@@ -138,13 +142,14 @@ export function register(server, ctx) {
     "show_channel_skills",
     { description: "Show the skills active in this conversation: grants by tier (organization / this channel / your personal), dependencies pulled in automatically, anything missing or awaiting review, compatibility notes, and the estimated always-on context cost.", inputSchema: {} },
     async () => {
-      const { meta, profile, orgSkills, channelSkills, effective } = await channelProfile();
-      if (!effective.skills.length) return text("No skills are granted here yet. A manager can apply a template (list_skill_templates → apply_skill_template) or add skills by slug (add_channel_skills); you can add skills for your own runs with add_my_skills.");
+      const { meta, template, profile, orgSkills, channelSkills, templateSkills, effective } = await channelProfile();
+      if (!effective.skills.length) return text("No skills are granted here yet. A manager can assign a template (list_skill_templates → set_channel_skill_template) or add skills by slug (add_channel_skills); you can add skills for your own runs with add_my_skills.");
       const tier = (e) => {
         const k = e.slug.toLowerCase();
         if (e.via === "dependency") return `required by ${e.requiredBy.join(", ")}`;
         if (orgSkills.has(k)) return "organization";
-        if (channelSkills.has(k)) return "this channel";
+        if (channelSkills.has(k)) return "added to this channel";
+        if (templateSkills.has(k)) return `template ${template?.name || meta.skillTemplate}`;
         return "your personal grant";
       };
       const lines = profile.active.map((e) => `• \`${e.slug}\` — ${tier(e)}${e.revision?.version ? `, v${e.revision.version}` : ""} (~${e.tokens} tokens)`);
@@ -158,7 +163,8 @@ export function register(server, ctx) {
       if (compat.length) extra.push(`Compatibility: ${compat.join("; ")}`);
       const cost = `Always-on context: ~${profile.contextTokens} tokens across ${profile.active.length} skill(s)${profile.contextTokens > profile.warnTokens ? ` — above the ${profile.warnTokens}-token soft cap; consider removing skills that never fire (skill_usage_report)` : ""}.`;
       const overlaps = profile.overlaps.length ? `\nOverlapping triggers: ${profile.overlaps.map((o) => `\`${o.a}\` ↔ \`${o.b}\``).join(", ")}` : "";
-      return text(clipText(`${lines.join("\n")}\n\n${cost}${overlaps}${extra.length ? `\n\n${extra.join("\n")}` : ""}`));
+      const head = template ? `This channel follows the **${template.name}** template (${templateSkills.size} skill(s) from it; add_channel_skills adds on top).\n` : "This channel follows no template (set_channel_skill_template assigns one).\n";
+      return text(clipText(`${head}${lines.join("\n")}\n\n${cost}${overlaps}${extra.length ? `\n\n${extra.join("\n")}` : ""}`));
     },
   );
 
@@ -267,28 +273,29 @@ export function register(server, ctx) {
   server.registerTool(
     "preview_skill_template",
     {
-      description: "Show what applying a template to this conversation would change (skills added/kept/removed, dependencies, context cost) without applying it.",
-      inputSchema: { template: z.string(), mode: z.enum(["add", "replace"]).optional() },
+      description: "Show what this conversation's skills would be if it followed a template (its own added skills kept): skills gained/kept/dropped, dependencies, context cost. Nothing changes.",
+      inputSchema: { template: z.string() },
     },
-    async ({ template, mode = "add" }) => {
+    async ({ template }) => {
       const meta = (await loadMeta()) || {};
-      const p = previewTemplate(template, meta.skills || [], { mode });
+      const p = previewTemplate(template, meta);
       if (!p) return text(`No template named "${template}". See list_skill_templates.`);
-      return text(`Template **${p.template.name}**, mode ${mode}:\n• add: ${p.add.join(", ") || "(nothing)"}\n• keep: ${p.keep.join(", ") || "(nothing)"}${mode === "replace" ? `\n• remove: ${p.remove.join(", ") || "(nothing)"}` : ""}${p.missing.length ? `\n• template names skills not in the catalog: ${p.missing.join(", ")}` : ""}\nResulting grants (${p.names.length}): ${p.names.join(", ") || "(none)"}\nAlways-on context: ~${p.profile.contextTokens} tokens${p.profile.warnings.length ? `\nWarnings: ${p.profile.warnings.join("; ")}` : ""}`);
+      return text(`Following **${p.template.name}** here would give:\n• gain: ${p.add.join(", ") || "(nothing)"}\n• keep: ${p.keep.join(", ") || "(nothing)"}\n• drop: ${p.remove.join(", ") || "(nothing)"}${p.missing.length ? `\n• template names skills not in the catalog: ${p.missing.join(", ")}` : ""}\nChannel tier (${p.names.length}): ${p.names.join(", ") || "(none)"}\nAlways-on context: ~${p.profile.contextTokens} tokens${p.profile.warnings.length ? `\nWarnings: ${p.profile.warnings.join("; ")}` : ""}`);
     },
   );
 
   server.registerTool(
-    "apply_skill_template",
+    "set_channel_skill_template",
     {
-      description: "ADMINS / CHANNEL MANAGERS. Apply a skill template to this conversation: copies the template's current skills into this channel's grants (mode add = keep existing grants, replace = exactly the template). A snapshot — later template edits do not follow. Active on the next message.",
-      inputSchema: { template: z.string(), mode: z.enum(["add", "replace"]).optional() },
+      description: "ADMINS / CHANNEL MANAGERS. Make this conversation follow a skill template (Development, Sales, …): it gets the template's CURRENT skills, live, plus whatever add_channel_skills adds on top. `template: \"none\"` stops following. Active on the next message.",
+      inputSchema: { template: z.string() },
     },
-    async ({ template, mode = "add" }) => {
+    async ({ template }) => {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its skills.");
-      const r = await applyTemplateToChannel(slug, template, { mode });
-      if (!r) return text(`Could not apply "${template}": unknown template, or this channel isn't set up yet.`);
-      return text(`✅ Applied **${r.template.name}** (${mode}): +${r.add.length} skill(s)${r.remove.length ? `, −${r.remove.length}` : ""}.\nGranted here now (${r.names.length}): ${r.names.join(", ") || "(none)"}\nAlways-on context ~${r.profile.contextTokens} tokens.${r.profile.staged.length ? `\nAwaiting admin review: ${r.profile.staged.map((s) => s.slug).join(", ")}` : ""} Active on the next message.`);
+      const r = await assignTemplateToChannel(slug, template);
+      if (!r) return text(`Could not assign "${template}": unknown template, or this channel isn't set up yet.`);
+      if (!r.template) return text(`✅ This channel follows no template now. Its own added skills stay (${r.names.length}): ${r.names.join(", ") || "(none)"}.`);
+      return text(`✅ This channel now follows **${r.template.name}**: +${r.add.length} skill(s)${r.remove.length ? `, −${r.remove.length}` : ""}. Channel tier (${r.names.length}): ${r.names.join(", ") || "(none)"}\nAlways-on context ~${r.profile.contextTokens} tokens.${r.profile.staged.length ? `\nAwaiting admin review: ${r.profile.staged.map((s) => s.slug).join(", ")}` : ""} Template edits follow automatically; add_channel_skills adds on top. Active on the next message.`);
     },
   );
 
