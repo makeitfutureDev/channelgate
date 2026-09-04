@@ -29,6 +29,12 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **Resumed Codex replies show the current message's cost, not the whole session's.** On a cold
+  runtime probe the daemon learned Podman's host-side HOME-volume path only after run artifacts
+  were materialized. Codex accounting then had no rollout baseline and treated its cumulative
+  terminal counter as one reply. The settled read path is now refreshed immediately after the
+  container starts, before the resumed turn snapshots usage; Claude's provider-reported per-turn
+  cost and the canonical descendant-aware ledger are unchanged.
 - **Composio (and every other injected remote MCP server) is back for Claude in channels that pick
   a global MCP server.** The channel lockdown lists a picked server by URL, and Claude Code then
   matches every REMOTE server by URL: a `serverName` entry no longer admits it, so `composio-user`,

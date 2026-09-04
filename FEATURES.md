@@ -266,7 +266,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   auto-titling (`assistant.threads.setTitle`) so the Messages-tab timeline reads well.
   → TEST-PLAN: Slack gateway.
 - Auto-registration of any conversation the bot sees (index + default meta + folder).
-- In-thread replies with a placeholder that streams → final answer + token/cost footer.
+- In-thread replies with a placeholder that streams → final answer + token/cost footer. Every
+  footer reports only that message's root turn: resumed Codex sessions refresh their settled
+  container-volume accounting path before the baseline snapshot, so cumulative provider-session
+  totals cannot masquerade as one reply's tokens/value. Canonical ledger descendants remain
+  additive and separate from the message footer. → TEST-PLAN: Slack gateway.
 - Slack replies use native Slack text streaming: the answer is written live via
   `chat.startStream` / `appendStream` / `stopStream`, with the run-stats footer appended as a block
   at `stopStream`. Answer deltas use `markdown_text`, so small GFM pipe tables render as styled
