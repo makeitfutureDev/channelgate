@@ -557,7 +557,7 @@ per-conversation usage against the limit. *Verify now* forces a check. In chat,
 | key rejected / revoked | the platform returned 401 / 403 | the no-key limits are already in force; install a valid key |
 
 **Egress.** The only host the daemon itself contacts is `CHANNELGATE_PLATFORM_URL`
-(`https://makeitfuture.com/channelgate/api` by default) over HTTPS, with a 10-second timeout. A
+(`https://channelgate.vercel.app` by default) over HTTPS, with a 10-second timeout. A
 deployment that must originate no outbound traffic at all runs on `CHANNELGATE_LICENSE_PAYLOAD`
 (an offline signed license) and makes no request.
 

@@ -1733,7 +1733,9 @@ are retired, bullet by bullet; everything else stands.
   time through the existing `POST /api/secrets/reveal` allowlist, behind a fresh admin password.
 - **Verification** against `POST {platform}/v1/license/verify` at boot and every 24 h, with the
   response's Ed25519 signature verified locally against the key in
-  `src/ee/license-public-key.js` (`CHANNELGATE_LICENSE_PUBLIC_KEY` overrides it for staging). The
+  `src/ee/license-public-key.js`. The compiled trust root matches the production platform at
+  `https://channelgate.vercel.app`; `CHANNELGATE_LICENSE_PUBLIC_KEY` overrides it for staging or a
+  coordinated rotation. The
   boot path never awaits it — Slack connects while the check is in flight and the run gate reads
   the cached state, so a slow or dead platform costs the daemon nothing.
 - **State machine** `no_key · valid · invalid · revoked · grace · expired_grace`, all of them

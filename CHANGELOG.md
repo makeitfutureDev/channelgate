@@ -19,6 +19,10 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Changed
+- **Production license verification is live by default.** The gateway now ships the Ed25519 public
+  key published by the ChannelGate licensing platform and uses `https://channelgate.vercel.app` as
+  its default platform URL. Fresh installs can verify platform-issued keys without an environment
+  override; `CHANNELGATE_LICENSE_PUBLIC_KEY` remains available for staging and coordinated rotation.
 - **Small text files now offer both editing surfaces.** When a Public URL is configured, eligible
   files up to 3,000 characters retain the native Slack *Edit* popup alongside *Edit in browser*;
   larger eligible files remain browser-only. Slack does not expose a modal-size setting, so the
