@@ -635,12 +635,8 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // disables the card — never the answer: some workspaces/apps can't render task chunks, and we
   // degrade to plain streamed text there instead of falling back off streaming entirely.
   let timelineOff = false;
-  // Slack renders the plan card where its FIRST chunk lands, so a live card is necessarily ABOVE
-  // the answer — where a long reply pushes it out of view. Deferring the whole card to the end
-  // fixes the position but costs every live signal (ticking heartbeat, quiet reports, subagent
-  // tracking): during the run the message would show nothing at all. That trade isn't worth it,
-  // so the card stays live and a compact recap is appended AFTER the answer instead. Flip
-  // DEFER_CARD to true to move the card itself and accept the loss.
+  // Slack renders the plan card where its FIRST chunk lands, so keep it live above the answer:
+  // deferring it would cost every live signal (heartbeat, quiet reports, subagent tracking).
   const DEFER_CARD = false;
   const pushTimeline = (chunks) => {
     if (timelineOff || DEFER_CARD) return;
@@ -748,26 +744,13 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // Heartbeat pulses are complete from the moment they are emitted, so success, delivery
   // failure, or an abrupt restart cannot strand an in_progress row. The terminal path still
   // relabels the latest pulse for a clear successful/stopped final state.
-  // A one-line recap appended AFTER the answer, so a long reply still ends with what the run did
-  // and how long it took — the plan card itself is pinned above by Slack and scrolls out of view.
-  // Text, not a task_update: appending more rows would just update the same (top) card.
-  let recapDone = false;
+  let cardFlushed = false;
   const flushCard = () => {
-    if (recapDone) return;
-    recapDone = true;
-    if (DEFER_CARD) {
-      const chunks = timeline.snapshot();
-      if (chunks.length) chain = chain.then(() => appendCurrent({ chunks })).catch((error) => { reportStreamFailure("task-card append", error); timelineOff = true; });
-      return;
-    }
-    const steps = timeline.snapshot()
-      .filter((chunk) => chunk.type === "task_update" && !isHeartbeatRow(chunk.id))
-      .length;
-    if (!steps) return; // nothing ran worth recapping (a plain answer)
-    const secs = Math.round((Date.now() - runStartedAt) / 1000);
-    const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s`;
-    const line = `\n\n_🧰 ${steps} ${steps === 1 ? "step" : "steps"} · ${elapsed} — details in the card above._`;
-    chain = chain.then(() => appendCurrent({ markdown_text: line })).catch((error) => reportStreamFailure("recap append", error));
+    if (cardFlushed) return;
+    cardFlushed = true;
+    if (!DEFER_CARD) return;
+    const chunks = timeline.snapshot();
+    if (chunks.length) chain = chain.then(() => appendCurrent({ chunks })).catch((error) => { reportStreamFailure("task-card append", error); timelineOff = true; });
   };
 
   const stopHeartbeat = (label) => {

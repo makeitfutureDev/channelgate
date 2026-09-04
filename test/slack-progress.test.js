@@ -184,9 +184,10 @@ test("stream progress keeps a persistent toolbox while assistant status stays te
   const bash = [...toolbox.values()].find((row) => /Bash\(npm test\)/.test(row.title));
   assert.ok(bash, "an assistant thread must retain the tool row in its message toolbox");
   assert.equal(bash.status, "complete", "the persistent tool row must be terminal at completion");
-  assert.ok(
-    calls.some((c) => c[0] === "append" && /1 step/.test(c[1]?.markdown_text || "")),
-    "the persistent toolbox keeps its recap"
+  assert.equal(
+    calls.some((c) => c[0] === "append" && /details in the card above/i.test(c[1]?.markdown_text || "")),
+    false,
+    "the persistent toolbox should not add a duplicate text recap"
   );
   const statuses = calls
     .filter((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus")
@@ -1976,10 +1977,7 @@ test("a stopped run also closes the heartbeat row", async (t) => {
   assert.match(beats.at(-1).title, /Stopped/);
 });
 
-// Slack pins the plan card where its first chunk lands, so it always sits ABOVE the answer and a
-// long reply scrolls it out of view. Deferring the whole card would fix the position but cost
-// every live signal, so a compact recap is appended after the answer instead.
-test("a run with steps ends with a recap line after the answer", async (t) => {
+test("a run with steps does not append a toolbox recap line", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "Date"] });
   const calls = [];
   const streamer = {
@@ -1997,14 +1995,11 @@ test("a run with steps ends with a recap line after the answer", async (t) => {
   await progress.finalize({ content: "Answer text." });
 
   const texts = calls.filter((c) => c[0] === "append" && c[1]?.markdown_text).map((c) => c[1].markdown_text);
-  const recap = texts.find((t) => /step/.test(t));
-  assert.ok(recap, "a run with steps should end with a recap");
-  assert.match(recap, /2 steps/, "the recap counts the steps that ran");
-  assert.ok(!/heartbeat/i.test(recap), "the liveness row is not a step");
-  assert.ok(texts.indexOf(recap) > texts.indexOf("Answer text."), "it must come AFTER the answer");
+  assert.equal(texts.some((text) => /details in the card above/i.test(text)), false);
+  assert.equal(texts.some((text) => /🧰/.test(text)), false);
 });
 
-test("a plain answer with no steps gets no recap line", async () => {
+test("a plain answer with no steps gets no toolbox recap line", async () => {
   const calls = [];
   const streamer = {
     ts: "1720000000.000100",
@@ -2019,5 +2014,5 @@ test("a plain answer with no steps gets no recap line", async () => {
   await progress.finalize({ content: "Just an answer." });
 
   const texts = calls.filter((c) => c[0] === "append" && c[1]?.markdown_text).map((c) => c[1].markdown_text);
-  assert.ok(!texts.some((t) => /step/.test(t)), "a plain reply shouldn't carry run bookkeeping");
+  assert.ok(!texts.some((text) => /details in the card above/i.test(text)), "a plain reply shouldn't carry run bookkeeping");
 });

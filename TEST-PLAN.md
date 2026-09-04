@@ -474,7 +474,7 @@ shape is asserted, not reviewed by eye.
       or forcing the plain-post fallback (`test/slack-progress.test.js`).
 - [x] Unit: a run beyond five minutes emits completed heartbeat pulses every 20 seconds and rotates
       task IDs before Slack's five-minute threshold; finish, stop, and failure paths relabel the
-      newest pulse, abrupt restart leaves no open row, and recaps exclude every heartbeat generation
+      newest pulse, abrupt restart leaves no open row, and no text recap is appended after the answer
       (`test/slack-progress.test.js`).
 - [x] Unit: message-level native-stream rollover starts its age clock only after Slack creates the
       message; a long pre-answer card rolls repeatedly before five minutes and seeds each successor
@@ -533,7 +533,7 @@ shape is asserted, not reviewed by eye.
       Confirm no supplementary Plan message appears, then send a routine turn and confirm it adds
       no semantic stages.
 - [x] Unit: the persistent toolbox is independent of assistant-status availability — an assistant
-      thread (setStatus accepted) retains terminal tool rows and the recap in its finalized answer
+      thread (setStatus accepted) retains terminal tool rows without a duplicate text recap in its finalized answer
       message while the temporary status carries thinking summaries/tool labels and clears on
       finalize/stop; an ordinary channel thread (setStatus refused) keeps the same live toolbox;
       quiet reports reach both durable heartbeat rows and the temporary status where supported

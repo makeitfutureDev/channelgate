@@ -1776,6 +1776,8 @@ are retired, bullet by bullet; everything else stands.
   context% and Codex cost rates still key on the CLI-reported runtime model, where multi-model
   Claude `modelUsage` maps use the model with dominant output tokens, and a reported
   `contextWindow` for that model overrides id-pattern guessing.
+- Tool and plan history remains available in Slack's expandable native toolbox card; completed
+  replies do not repeat its step count and elapsed time in a separate text recap line.
 - **Global footer-cost visibility** (Settings → Behavior → Slack replies): administrators can hide
   exact/estimated dollar cost from every Slack run footer while keeping model, duration, tokens,
   and context percentage. Existing installs default on; the setting affects subsequent replies
