@@ -52,7 +52,7 @@ import { applyGatewayGuide } from "./guide.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
 import { getAgentsFile, getAgentsInstructions, getComposioMode } from "../config/settings.js";
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
-import { isLibraryStub, splitFavorites, ensureCodexSkillsLink } from "./library-skills.js";
+import { isLibraryStub, splitFavorites, ensureCodexSkillsLink, pruneLegacyLibraryStubs } from "./library-skills.js";
 import { MANAGED_SKILL_MARKER, materializeSkill, pruneManagedSkills } from "./skills/materialize.js";
 import { listSkills as listCatalogSkills } from "./skills/catalog.js";
 import { withDependencies } from "./skills/resolve.js";
@@ -492,6 +492,9 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
     // skills/ would otherwise route every managed write below to wherever the agent pointed it.
     const skillsDir = await ensureRealDir(cwd, ".claude", "skills");
     await ensureCodexSkillsLink(cwd);
+    // Stub folders the retired Skills Manager integration generated are removed on sight: the
+    // catalog delivers real files now, and a leftover stub would shadow a same-named skill.
+    await pruneLegacyLibraryStubs(skillsDir);
     await renameLegacyManagedSkills(skillsDir);
     await enableSkills(skillsDir, skills);
     // The gateway-usage skill (the chat operating manual) is injected in EVERY mode — including

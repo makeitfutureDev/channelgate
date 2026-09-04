@@ -5,7 +5,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildSettings, enableSkills } from "./folders.js";
-import { applyLibrarySkillsToDir } from "./library-skills.js";
 import { ensureRealDir } from "./safe-fs.js";
 
 // ── Isolated-runtime engine homes ─────────────────────────────────────────────────────────────
@@ -129,7 +128,7 @@ async function copyWorkspaceAgents(pluginDir, workspaceAgentsDir) {
   return copied;
 }
 
-async function materializePlugin({ pluginDir, name, description, skillNames = [], workspaceSkillsDir = "", workspaceAgentsDir = "", librarySkillsToken = "" }) {
+async function materializePlugin({ pluginDir, name, description, skillNames = [], workspaceSkillsDir = "", workspaceAgentsDir = "" }) {
   const skillsDir = path.join(pluginDir, "skills");
   await mkdir(path.join(pluginDir, ".claude-plugin"), { recursive: true });
   await mkdir(skillsDir, { recursive: true });
@@ -146,7 +145,6 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
     if (!(await isRealDir(source)) || await exists(destination)) continue;
     await cp(source, destination, { recursive: true });
   }
-  await applyLibrarySkillsToDir(skillsDir, librarySkillsToken);
   const hasAgents = await copyWorkspaceAgents(pluginDir, workspaceAgentsDir);
   // The manifest is written LAST so it can declare the directories that actually exist. Claude Code
   // auto-discovers ./skills and ./agents, but naming them keeps an empty-agents plugin from
@@ -168,7 +166,6 @@ export async function createRunGrantArtifacts({
   sharedSkills = [],
   workspaceSkillsDir = "",
   workspaceAgentsDir = "",
-  librarySkillsToken = "",
   needsClaudeSettings = false,
   allowBypass = false,
   target = null,
@@ -232,17 +229,16 @@ export async function createRunGrantArtifacts({
       }
     }
 
-    // User grants and library favorites can differ by author/token, so they remain per-run and
-    // make only those Claude turns cold. They are deleted after the process exits.
+    // User grants differ by author, so they remain per-run and make only those Claude turns cold.
+    // They are deleted after the process exits.
     let claudePluginEphemeral = false;
-    if (userSkills.length > 0 || librarySkillsToken) {
+    if (userSkills.length > 0) {
       const pluginDir = path.join(root, "user-grants-plugin");
       const personal = await materializePlugin({
         pluginDir,
         name: "gateway-user-grants",
         description: "Private skill grants for one gateway run",
         skillNames: userSkills,
-        librarySkillsToken,
       });
       missingSkills = [...new Set([...missingSkills, ...personal.missing])];
       if (personal.populated) {

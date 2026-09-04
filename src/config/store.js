@@ -28,7 +28,7 @@ export async function ensureRoot() {
 }
 
 // ── Users (global) ────────────────────────────────────────────────────────────
-// Shape: { "<slackUserId>": { name, composioToken, skillsToken, toolboxToken, isAdmin, approved,
+// Shape: { "<slackUserId>": { name, composioToken, toolboxToken, isAdmin, approved,
 //          skills[], allowedMcps[], allowedCodexMcps[] } }
 export async function getUsers() {
   const rows = getDb().prepare("SELECT user_id, data FROM users").all();
@@ -52,7 +52,7 @@ export async function setUser(userId, patch) {
     const row = db.prepare("SELECT data FROM users WHERE user_id = ?").get(userId);
     const existing = row ? fromJson(row.data, {}) : null;
     const next = {
-      name: "", composioToken: "", skillsToken: "", toolboxToken: "", isAdmin: false,
+      name: "", composioToken: "", toolboxToken: "", isAdmin: false,
       approved: false, skills: [], allowedMcps: [], allowedCodexMcps: [],
       allowedOpenCodeMcps: [], ...existing,
     };
@@ -81,10 +81,6 @@ export async function isApproved(userId) {
 
 export async function getComposioToken(userId) {
   return (await getUser(userId))?.composioToken || "";
-}
-
-export async function getSkillsToken(userId) {
-  return (await getUser(userId))?.skillsToken || "";
 }
 
 export async function getToolboxToken(userId) {
@@ -202,7 +198,6 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     workDir: "", // custom absolute path to run Claude in (empty = the default gateway folder)
     syncDriveFolder: "", // Google Drive folder link to 2-way sync (scheduled) with this channel's working folder (empty = off)
     composioToken: "", // shared `composio` token; personal `composio-user` remains available too
-    skillsToken: "", // channel-wide Skills Manager token used for everyone here (overrides per-user)
     toolboxToken: "", // channel-wide Toolbox token used for everyone here (overrides per-user)
     makeToolboxUrl: "", // per-channel Make MCP toolbox server URL (key stays separate)
     makeToolboxKey: "", // per-channel Make MCP toolbox Bearer key

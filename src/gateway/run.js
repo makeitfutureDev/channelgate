@@ -7,7 +7,6 @@ import {
   getChannelMeta,
   defaultChannelMeta,
   getComposioToken,
-  getSkillsToken,
   getToolboxToken,
   getUser,
   isAdmin,
@@ -15,7 +14,6 @@ import {
 } from "../config/store.js";
 import { ensureChannelFolder } from "./folders.js";
 import { memorySnapshotPrefix } from "./channel-memory.js";
-import { applyLibrarySkills } from "./library-skills.js";
 import { createSkillUsageRecorder } from "./skills/usage.js";
 import { resolveSession, resetSession, getSession, saveSession, sessionGeneration } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
@@ -24,7 +22,7 @@ import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getComposioMode, getDefaultComposioToken, getDefaultSkillsToken, getDefaultToolboxToken, getOrgAccessGrants } from "../config/settings.js";
+import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getComposioMode, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
@@ -1022,13 +1020,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     untrustedPrincipal,
     needsApproval: composioMode === "sdk" && !clean,
     loadComposioToken: getComposioToken,
-    loadSkillsToken: getSkillsToken,
     loadToolboxToken: getToolboxToken,
     loadIsAdmin: isAdmin,
     loadIsApproved: isApproved,
   });
   const personalComposioToken = userIdentity.composioToken;
-  const personalSkillsToken = userIdentity.skillsToken;
   const personalToolboxToken = userIdentity.toolboxToken;
   const authorIsAdmin = userIdentity.isAdmin;
   const authorIsApproved = userIdentity.isApproved;
@@ -1048,13 +1044,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     noOrg,
     isDM: Boolean(meta.isDM || meta.type === "im"),
   });
-  const skills = resolveTokenSource({ clean, channelToken: meta.skillsToken, userToken: personalSkillsToken, defaultToken: getDefaultSkillsToken(), noOrg });
   const toolbox = resolveTokenSource({ clean, channelToken: meta.toolboxToken, userToken: personalToolboxToken, defaultToken: getDefaultToolboxToken(), noOrg });
   const composioUserToken = composio.user.token;
   const composioToken = composio.shared.token;
   const composioUserEndpoint = composio.user.endpoint;
   const composioEndpoint = composio.shared.endpoint;
-  const skillsToken = skills.token;
   const toolboxToken = toolbox.token;
   const { makeToolboxUrl, makeToolboxKey } = resolveMakeToolboxRuntime({
     makeToolboxUrl: meta.makeToolboxUrl,
@@ -1070,7 +1064,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const mcpRuntimeInput = {
     clean,
     composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
-    skillsToken, toolboxToken, makeToolboxUrl, makeToolboxKey,
+    toolboxToken, makeToolboxUrl, makeToolboxKey,
     channelId, slug: entry.slug, authorId, threadKey, origin,
     progressReport: progressReportEnabled,
     principalTrusted: !untrustedPrincipal,
@@ -1088,14 +1082,6 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const mintGatewayMcpRuntime = async () => {
     ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, engine, target }));
   };
-
-  // When the Skills Manager MCP is active for this run, materialize the user's favorite library
-  // skills as native skill-stub folders in `.claude/skills/` (each loads its real body on demand via
-  // the library MCP). Clean mode passes no token, which prunes any existing stubs (and strips the
-  // legacy CLAUDE.md favorites block). Local (admin-granted) skills are left untouched.
-  // Library favorites can be personal too. Remove any legacy shared stubs, then materialize the
-  // active token's favorites only inside this run's private engine overlays below.
-  await applyLibrarySkills(cwd, "");
 
   // Strict (only the injected gateway/token-backed servers) when the channel picks no global MCP servers — keeps the
   // common case hermetic. When global servers ARE picked, go non-strict so they're reachable,
@@ -1193,7 +1179,6 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     allowedMcpCount: clean ? 0 : (Array.isArray(meta.allowedMcps) ? meta.allowedMcps.length : 0),
     composioUser: composio.user.source,
     composio: composio.shared.source,
-    skills: skills.source,
     toolbox: toolbox.source,
     makeToolbox: Boolean(makeToolboxUrl && makeToolboxKey),
   });
@@ -1228,7 +1213,6 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Channel-owned custom agents. `--setting-sources ""` hides `.claude/agents` from the CLI, so
     // the plugin is the only delivery path that keeps them working (see materializePlugin).
     workspaceAgentsDir: path.join(cwd, ".claude", "agents"),
-    librarySkillsToken: clean ? "" : skillsToken,
     needsClaudeSettings,
     allowBypass: dangerouslySkip,
     // Decides both WHERE the artifacts land and WHICH of them exist: an isolated runtime gets no
@@ -1263,7 +1247,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         model: modelOverride, effort, permissionPromptTool, timeoutMs, maxSilenceMs, signal, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
         channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
         writable: codexWritable, autoApprove: codexAutoApprove, clean,
-        composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, skillsToken, toolboxToken,
+        composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken,
         makeToolboxUrl, makeToolboxKey, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled,
         allowedMcps: clean ? [] : (meta[adapter.mcpMetaKey] || []),
         claudePluginDirs: grantArtifacts.claudePluginDirs,
@@ -1383,8 +1367,6 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     hasComposio: Boolean(composioToken || composioEndpoint),
     composioSource: composio.shared.source,
     usedChannelComposio: composio.shared.source === "channel", // a DM refuses it even when one is stored
-    hasSkills: Boolean(skillsToken),
-    usedChannelSkills: !clean && Boolean(meta.skillsToken),
     hasToolbox: Boolean(toolboxToken),
     usedChannelToolbox: !clean && Boolean(meta.toolboxToken),
     hasMakeToolbox: Boolean(makeToolboxUrl && makeToolboxKey),
@@ -1472,7 +1454,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         runtime: { target, claudeOauthToken: fallbackClaudeToken, claudeTokenFingerprint: fallbackClaudeTokenFp, artifactDir: target.artifactDir,
           preferCold: true, keepAliveMs: 0, poolKey: `${entry.slug}::${fbKey}`, dangerouslySkip,
           writable: codexWritable, autoApprove: codexAutoApprove, clean, composioUserEndpoint, composioEndpoint,
-          composioUserToken, composioToken, skillsToken, toolboxToken, makeToolboxUrl, makeToolboxKey,
+          composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey,
           gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort: "",
           attachments, signal, timeoutMs, maxSilenceMs, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
           channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,

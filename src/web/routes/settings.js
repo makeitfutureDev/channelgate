@@ -163,7 +163,6 @@ export function createSettingsRouter({
       if (typeof body.composioSdkApiKey === "string" && body.composioSdkApiKey.trim()) patch.composioSdkApiKey = body.composioSdkApiKey.trim();
       if (body.clearComposioSdkApiKey === true) patch.composioSdkApiKey = "";
       if (typeof body.composioMcpUrl === "string") patch.composioMcpUrl = body.composioMcpUrl.trim();
-      if (typeof body.skillsMcpUrl === "string") patch.skillsMcpUrl = body.skillsMcpUrl.trim();
       if (typeof body.toolboxMcpUrl === "string") patch.toolboxMcpUrl = body.toolboxMcpUrl.trim();
       if (typeof body.publicUrl === "string") patch.publicUrl = normalizePublicUrl(body.publicUrl);
       // Self-diagnosis target channel slug ("" turns the feature off).
@@ -185,14 +184,11 @@ export function createSettingsRouter({
       // have none). Set on a non-empty value; clear explicitly with the *Clear flags.
       if (typeof body.defaultComposioToken === "string" && body.defaultComposioToken) patch.defaultComposioToken = body.defaultComposioToken.trim();
       if (body.clearDefaultComposioToken === true) patch.defaultComposioToken = "";
-      if (typeof body.defaultSkillsToken === "string" && body.defaultSkillsToken) patch.defaultSkillsToken = body.defaultSkillsToken.trim();
-      if (body.clearDefaultSkillsToken === true) patch.defaultSkillsToken = "";
       if (typeof body.defaultToolboxToken === "string" && body.defaultToolboxToken) patch.defaultToolboxToken = body.defaultToolboxToken.trim();
       if (body.clearDefaultToolboxToken === true) patch.defaultToolboxToken = "";
       // Owner labels (who the shared org-default token authenticates as). Not secret — a plain
       // string that always round-trips; an empty string clears it.
       if (typeof body.defaultComposioTokenLabel === "string") patch.defaultComposioTokenLabel = body.defaultComposioTokenLabel.trim();
-      if (typeof body.defaultSkillsTokenLabel === "string") patch.defaultSkillsTokenLabel = body.defaultSkillsTokenLabel.trim();
       if (typeof body.defaultToolboxTokenLabel === "string") patch.defaultToolboxTokenLabel = body.defaultToolboxTokenLabel.trim();
       // Skills platform: the daemon's GitHub token (write-only), the source sync interval and the
       // context-cost soft cap. Numbers are clamped in the getters; a blank string means "default".
@@ -208,6 +204,17 @@ export function createSettingsRouter({
         if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: "skillsContextWarnTokens must be a positive number" });
         patch.skillsContextWarnTokens = Math.floor(n);
       }
+      // Git publishing target for authored/approved skills, and the GitHub webhook secret (write-only).
+      if (typeof body.skillsPublishRepo === "string") {
+        const repo = body.skillsPublishRepo.trim();
+        if (repo && !/^(https?:\/\/(www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?\/?|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.test(repo)) return res.status(400).json({ error: "skillsPublishRepo must be a GitHub repository (owner/repo or its URL)" });
+        patch.skillsPublishRepo = repo;
+      }
+      if (typeof body.skillsPublishBranch === "string") patch.skillsPublishBranch = body.skillsPublishBranch.trim();
+      if (typeof body.skillsPublishSubpath === "string") patch.skillsPublishSubpath = body.skillsPublishSubpath.trim().replace(/^\/+|\/+$/g, "");
+      if (typeof body.skillsPublishMode === "string" && ["commit", "off"].includes(body.skillsPublishMode)) patch.skillsPublishMode = body.skillsPublishMode;
+      if (typeof body.skillsWebhookSecret === "string" && body.skillsWebhookSecret.trim()) patch.skillsWebhookSecret = body.skillsWebhookSecret.trim();
+      if (body.clearSkillsWebhookSecret === true) patch.skillsWebhookSecret = "";
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))
         patch.accessGrants = cleanAccessGrants(body.accessGrants);
       // Per-harness on/off. Normalized to an explicit boolean per KNOWN engine (an unknown key is

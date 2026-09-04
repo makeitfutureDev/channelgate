@@ -30,7 +30,6 @@ Composio's Slack toolkit is how the bot does Slack actions beyond the gateway's 
 (send elsewhere, schedule, canvas, react, cross-channel search — see `references/messages.md`).
 
 Other personal integrations:
-- `set_my_skills_token` / `clear_my_skills_token` — Skills Manager (skillsmanager.uk).
 - `set_my_toolbox_token` / `clear_my_toolbox_token` — Toolbox.
 
 `composio-agent` always remains separate from every user's `composio-user` connection, and it is
@@ -75,7 +74,8 @@ what needs approving if they seem unaware. Read-only tools (`list_*`, `get_*`) a
 - `show_channel_skills` — what is active here, by tier, with the context cost.
 - `add_channel_skills` / `remove_channel_skills` — grant/revoke catalog skills here (by slug).
 - `apply_skill_template` — copy a template's skills (Development, Sales, …) into this channel.
-- Authoring, proposals, usage and source sync: `references/skills.md`.
+- `add_my_skills` / `remove_my_skills` — any member's OWN tier (their runs only, no card).
+- Authoring, proposals, usage, sources, publishing and the organization tier: `references/skills.md`.
 
 ## Channel modes (permissions)
 Modes are TOOL-permission presets. None of them changes what you can see: every run, whatever the

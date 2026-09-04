@@ -107,39 +107,6 @@ test("escalated run artifact settings omit the bypass key; ordinary artifacts pi
   }
 });
 
-test("personal library favorites are isolated per run instead of written to shared skills", async (t) => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (_url, options = {}) => {
-    const token = String(options.headers?.Authorization || "").replace(/^Bearer\s+/, "");
-    return {
-      ok: true,
-      json: async () => ({ favorites: [{ name: token === "isolation-token-a" ? "Favorite A" : "Favorite B", description: "private" }] }),
-    };
-  };
-  t.after(() => { globalThis.fetch = originalFetch; });
-
-  const [a, b] = await Promise.all([
-    grants({ slug: "library-a", librarySkillsToken: "isolation-token-a" }),
-    grants({ slug: "library-b", librarySkillsToken: "isolation-token-b" }),
-  ]);
-  t.after(() => Promise.all([a.cleanup(), b.cleanup()]));
-
-  assert.ok(!(await absent(path.join(a.claudePluginDirs[0], "skills", "favorite-a", "SKILL.md"))));
-  assert.ok(await absent(path.join(a.claudePluginDirs[0], "skills", "favorite-b")));
-  assert.ok(!(await absent(path.join(b.claudePluginDirs[0], "skills", "favorite-b", "SKILL.md"))));
-  assert.ok(await absent(path.join(b.claudePluginDirs[0], "skills", "favorite-a")));
-  // Both plugins are per-run (cold Claude turns), each under its own channel's artifact dir, and
-  // nothing was written into either channel's shared skills tree.
-  assert.equal(a.claudePluginEphemeral, true);
-  assert.equal(b.claudePluginEphemeral, true);
-  assert.ok(a.claudePluginDirs[0].startsWith(`${targetFor("library-a").artifactDir}${path.sep}`), a.claudePluginDirs[0]);
-  assert.ok(b.claudePluginDirs[0].startsWith(`${targetFor("library-b").artifactDir}${path.sep}`), b.claudePluginDirs[0]);
-  for (const slug of ["library-a", "library-b"]) {
-    assert.ok(await absent(path.join(workspaceFolder(slug), ".claude", "skills", "favorite-a")));
-    assert.ok(await absent(path.join(workspaceFolder(slug), ".claude", "skills", "favorite-b")));
-  }
-});
-
 test("concurrent users get private settings/plugins without mutating the shared channel tree", async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "cg-run-grants-"));
   t.after(() => rm(temp, { recursive: true, force: true }));

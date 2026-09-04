@@ -31,22 +31,7 @@ export function composioUserRef() {
   };
 }
 
-// Skills Manager (makeitfuture-skills) — a separately injected token-backed MCP. Its resolved
-// user/channel token is injected at spawn time in the
-// `Authorization: Bearer <token>` header, and the server is always referenced in the lockdown so
-// the injected one is permitted. URL is overridable via SKILLS_MCP_URL (settings.json).
-export function skillsUrl() {
-  return process.env.SKILLS_MCP_URL || "https://www.skillsmanager.uk/mcp";
-}
-export function skillsRef() {
-  return {
-    name: "makeitfuture-skills",
-    namespace: "mcp__makeitfuture-skills",
-    allowMatch: { serverName: "makeitfuture-skills" },
-  };
-}
-
-// Toolbox (makeitfuture-toolbox) — a THIRD per-author injected MCP, identical in shape to Skills
+// Toolbox (makeitfuture-toolbox) — a per-author injected MCP, identical in shape to Composio
 // Manager: each user's own token (or a channel-wide one, or the org default) is injected at spawn
 // time in the `Authorization: Bearer <token>` header, and the server is always referenced in the
 // lockdown so the injected one is permitted. URL is overridable via TOOLBOX_MCP_URL (settings.json).
@@ -111,8 +96,6 @@ export const GATEWAY_TOOL_NAMES = [
   "reset_gateway_guide",
   "set_my_composio_token",
   "clear_my_composio_token",
-  "set_my_skills_token",
-  "clear_my_skills_token",
   "set_my_toolbox_token",
   "clear_my_toolbox_token",
   "list_skills",
@@ -130,6 +113,18 @@ export const GATEWAY_TOOL_NAMES = [
   "decide_skill_proposal",
   "skill_usage_report",
   "sync_skill_sources",
+  "get_skill_info",
+  "add_my_skills",
+  "remove_my_skills",
+  "delete_skill",
+  "publish_skill",
+  "add_org_skills",
+  "remove_org_skills",
+  "list_skill_sources",
+  "add_skill_source",
+  "set_skill_source",
+  "remove_skill_source",
+  "set_skill_excluded",
   "report_progress",
   "slack_list_create",
   "slack_list_add_item",
@@ -155,7 +150,7 @@ export function gatewayToolRefs() {
 // (Slack capabilities beyond the gateway's own bot-token tools come from the Slack toolkit inside
 // the selected `mcp__composio-user` or `mcp__composio-agent` namespace — not a hosted Slack MCP.)
 export function namespacesFor(allowed = []) {
-  const out = new Set([composioUserRef().namespace, composioRef().namespace, skillsRef().namespace, toolboxRef().namespace, makeToolboxRef().namespace, gatewayRef().namespace]);
+  const out = new Set([composioUserRef().namespace, composioRef().namespace, toolboxRef().namespace, makeToolboxRef().namespace, gatewayRef().namespace]);
   for (const a of allowed) if (a?.namespace) out.add(a.namespace);
   return [...out];
 }
@@ -172,17 +167,17 @@ const COMPOSIO_SDK_URL_PATTERN = "https://*.composio.dev/*";
 // still reports both Composio identities resolved while the model never sees composio-user /
 // composio-agent (#int-sales, 2026-09-04). Codex has no such allowlist and was never affected.
 export function injectedRemoteAllowMatches({ makeToolboxUrl = "", composioSdk = false } = {}) {
-  const urls = new Set([composioUrl(), skillsUrl(), toolboxUrl()]);
+  const urls = new Set([composioUrl(), toolboxUrl()]);
   if (composioSdk) urls.add(COMPOSIO_SDK_URL_PATTERN);
   const make = typeof makeToolboxUrl === "string" ? makeToolboxUrl.trim() : "";
   if (/^https?:\/\//i.test(make)) urls.add(make);
   return [...urls].map((serverUrl) => ({ serverUrl }));
 }
 
-// The allowedMcpServers match objects for the lockdown (+ both Composio identities, Skills
-// Manager, Toolbox & scheduler, each by name AND by URL — see injectedRemoteAllowMatches).
+// The allowedMcpServers match objects for the lockdown (+ both Composio identities, Toolbox &
+// scheduler, each by name AND by URL — see injectedRemoteAllowMatches).
 export function allowMatchesFor(allowed = [], remote = {}) {
-  const out = [composioUserRef().allowMatch, composioRef().allowMatch, skillsRef().allowMatch, toolboxRef().allowMatch, makeToolboxRef().allowMatch, gatewayRef().allowMatch];
+  const out = [composioUserRef().allowMatch, composioRef().allowMatch, toolboxRef().allowMatch, makeToolboxRef().allowMatch, gatewayRef().allowMatch];
   out.push(...injectedRemoteAllowMatches(remote));
   for (const a of allowed) if (a?.match) out.push(a.match);
   return out;

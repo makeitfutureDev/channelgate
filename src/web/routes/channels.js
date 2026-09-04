@@ -62,7 +62,6 @@ const WEB_ADMIN_ACTOR = "admin UI";
 export function maskChannelMeta(meta = {}) {
   const mask = (v) => ({ has: Boolean(v), last4: v ? String(v).slice(-4) : "" });
   const tok = mask(meta.composioToken);
-  const sk = mask(meta.skillsToken);
   const tb = mask(meta.toolboxToken);
   const mk = mask(meta.makeToolboxKey);
   return {
@@ -73,9 +72,6 @@ export function maskChannelMeta(meta = {}) {
     composioToken: undefined,
     hasComposioToken: tok.has,
     composioTokenLast4: tok.last4,
-    skillsToken: undefined,
-    hasSkillsToken: sk.has,
-    skillsTokenLast4: sk.last4,
     toolboxToken: undefined,
     hasToolboxToken: tb.has,
     toolboxTokenLast4: tb.last4,
@@ -143,7 +139,6 @@ export function createChannelsRouter({
           const meta = c.meta || {};
           const uid = meta.dmUserId || resolveDmUserId(c.slug, users);
           const tok = meta.composioToken || "";
-          const sk = meta.skillsToken || "";
           const tb = meta.toolboxToken || "";
           return {
             channelId: c.channelId,
@@ -159,9 +154,6 @@ export function createChannelsRouter({
               composioToken: undefined,
               hasComposioToken: Boolean(tok),
               composioTokenLast4: tok ? tok.slice(-4) : "",
-              skillsToken: undefined,
-              hasSkillsToken: Boolean(sk),
-              skillsTokenLast4: sk ? sk.slice(-4) : "",
               toolboxToken: undefined,
               hasToolboxToken: Boolean(tb),
               toolboxTokenLast4: tb ? tb.slice(-4) : "",
@@ -198,8 +190,6 @@ export function createChannelsRouter({
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
-      if (typeof body.skillsToken === "string" && body.skillsToken) next_.skillsToken = body.skillsToken.trim();
-      if (body.clearSkillsToken === true) next_.skillsToken = "";
       if (typeof body.toolboxToken === "string" && body.toolboxToken) next_.toolboxToken = body.toolboxToken.trim();
       if (body.clearToolboxToken === true) next_.toolboxToken = "";
       await saveChannelMeta(entry.slug, next_);
@@ -225,7 +215,6 @@ export function createChannelsRouter({
       for (const ch of channels) {
         if (!ch.meta) continue;
         const tok = ch.meta.composioToken || "";
-        const sk = ch.meta.skillsToken || "";
         const tb = ch.meta.toolboxToken || "";
         const makeKey = ch.meta.makeToolboxKey || "";
         ch.meta = {
@@ -235,9 +224,6 @@ export function createChannelsRouter({
           composioToken: undefined,
           hasComposioToken: Boolean(tok),
           composioTokenLast4: tok ? tok.slice(-4) : "",
-          skillsToken: undefined,
-          hasSkillsToken: Boolean(sk),
-          skillsTokenLast4: sk ? sk.slice(-4) : "",
           toolboxToken: undefined,
           hasToolboxToken: Boolean(tb),
           toolboxTokenLast4: tb ? tb.slice(-4) : "",
@@ -361,14 +347,11 @@ export function createChannelsRouter({
           // clear flag empties it.
           if (typeof body.composioToken === "string" && body.composioToken.length > 0) out.composioToken = body.composioToken.trim();
           if (body.clearComposioToken === true) out.composioToken = "";
-          if (typeof body.skillsToken === "string" && body.skillsToken.length > 0) out.skillsToken = body.skillsToken.trim();
-          if (body.clearSkillsToken === true) out.skillsToken = "";
           if (typeof body.toolboxToken === "string" && body.toolboxToken.length > 0) out.toolboxToken = body.toolboxToken.trim();
           if (body.clearToolboxToken === true) out.toolboxToken = "";
           // Owner labels (who the shared channel token authenticates as). Not secret — plain strings
           // that always round-trip; an empty string clears the label.
           if (typeof body.composioTokenLabel === "string") out.composioTokenLabel = body.composioTokenLabel.trim();
-          if (typeof body.skillsTokenLabel === "string") out.skillsTokenLabel = body.skillsTokenLabel.trim();
           if (typeof body.toolboxTokenLabel === "string") out.toolboxTokenLabel = body.toolboxTokenLabel.trim();
           Object.assign(out, resolveMakeToolboxUpdate(current, body));
           return out;

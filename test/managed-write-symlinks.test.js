@@ -408,44 +408,20 @@ test("the API attachment sink replaces a symlink planted at the destination name
   assert.equal(await readFile(dest, "utf8"), "api bytes\n");
 });
 
-// ── library stub frontmatter ──────────────────────────────────────────────────
-
-// Minimal single-quoted YAML scalar reader: the value runs to the first quote that is not doubled.
-function readSingleQuoted(line) {
-  const body = line.replace(/^description: /, "");
-  assert.equal(body.startsWith("'") && body.endsWith("'"), true, `not a single-quoted scalar: ${line}`);
-  return body.slice(1, -1).replace(/''/g, "'");
-}
-
-test("library stub frontmatter quotes the remote description so it cannot restructure the YAML", async () => {
-  const hostile = [
-    "Use when: the user asks # anything",
-    "[not, a, list] {nor: a map}",
-    "it's the user's own words",
-    "line one\nname: hijacked\ndescription: replaced",
-    "*alias &anchor | folded > text",
-  ];
-
-  for (const description of hostile) {
-    const md = librarySkills.libraryStubSkillMd("demo-skill", "Demo Skill", description);
-    const lines = md.split("\n");
-    assert.equal(lines[0], "---");
-    assert.equal(lines[1], "name: demo-skill");
-    assert.equal(lines[3], "---", `frontmatter must stay exactly two keys for ${JSON.stringify(description)}`);
-    assert.equal(readSingleQuoted(lines[2]), description.replace(/\s+/g, " ").trim());
-  }
-});
-
-test("library stubs land as real files even when the skill folder path is a symlink", async (t) => {
-  const { cwd, outside } = await scratch(t);
-  const victimDir = path.join(outside, "host-skills");
-  await mkdir(victimDir);
-  await symlink(victimDir, path.join(cwd, ".claude"));
-
-  // Empty token → prune-only path, which must still not traverse the planted link.
-  await librarySkills.applyLibrarySkills(cwd, "");
-
-  assert.equal((await lstat(path.join(cwd, ".claude"))).isSymbolicLink(), false);
-  assert.equal((await lstat(path.join(cwd, ".claude", "skills"))).isDirectory(), true);
-  assert.deepEqual(await readdir(victimDir), []);
+// ── legacy library stubs ─────────────────────────────────────────────────────
+// The retired Skills Manager integration left marker-bearing stub folders in older channel
+// folders. Workspace provisioning prunes them (never a real skill folder), and does not follow a
+// planted symlink while doing so.
+test("leftover library stubs are pruned on workspace configure and real skill folders survive", async (t) => {
+  const { cwd } = await scratch(t);
+  const skills = path.join(cwd, ".claude", "skills");
+  await mkdir(path.join(skills, "old-stub"), { recursive: true });
+  await writeFile(path.join(skills, "old-stub", ".gateway-library-stub"), "");
+  await writeFile(path.join(skills, "old-stub", "SKILL.md"), "stub\n");
+  await mkdir(path.join(skills, "real-skill"), { recursive: true });
+  await writeFile(path.join(skills, "real-skill", "SKILL.md"), "# real\n");
+  assert.equal(await librarySkills.pruneLegacyLibraryStubs(skills), 1);
+  await assert.rejects(lstat(path.join(skills, "old-stub")), { code: "ENOENT" });
+  assert.equal(await readFile(path.join(skills, "real-skill", "SKILL.md"), "utf8"), "# real\n");
+  assert.equal(await librarySkills.pruneLegacyLibraryStubs(path.join(cwd, "nope")), 0);
 });

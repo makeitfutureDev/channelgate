@@ -1,5 +1,5 @@
 // Personal token tools for the gateway control MCP server: set/clear the author's own
-// Composio, Skills Manager, and Toolbox tokens. Split out of gateway-server.js — registered
+// Composio and Toolbox tokens. Split out of gateway-server.js — registered
 // via register(server, ctx); the tool contracts are unchanged.
 import { z } from "zod";
 import { setUser } from "../../config/store.js";
@@ -42,37 +42,6 @@ export function register(server, ctx) {
       if (!createdBy) return text("No user context.");
       await setUser(createdBy, { composioToken: "" });
       return text("🗑️ Removed your Composio token.");
-    }
-  );
-
-  // ── Personal Skills Manager token (any user, for themselves) ────────────────────
-  server.registerTool(
-    "set_my_skills_token",
-    {
-      description:
-        "Set YOUR OWN personal Skills Manager (skillsmanager.uk) access token so your messages can " +
-        "use your Skills Manager tools. It's sent as an Authorization: Bearer token. IMPORTANT: send " +
-        "it in a DM with the bot, never in a shared channel, and DELETE the message containing the " +
-        "token immediately after — it stays readable in Slack history until you do. Use " +
-        "clear_my_skills_token to remove it.",
-      inputSchema: { token: z.string() },
-    },
-    async ({ token }) => {
-      if (!createdBy) return text("No user context — can't set a token here.");
-      const t = (token || "").trim();
-      if (t.length < 6) return text("That doesn't look like a valid Skills Manager token.");
-      await setUser(createdBy, { skillsToken: t });
-      return text(`✅ Saved your Skills Manager token. It'll be used for your messages.${DELETE_MSG_WARNING}`);
-    }
-  );
-
-  server.registerTool(
-    "clear_my_skills_token",
-    { description: "Remove YOUR OWN Skills Manager token.", inputSchema: {} },
-    async () => {
-      if (!createdBy) return text("No user context.");
-      await setUser(createdBy, { skillsToken: "" });
-      return text("🗑️ Removed your Skills Manager token.");
     }
   );
 

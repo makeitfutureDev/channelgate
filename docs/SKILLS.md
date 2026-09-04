@@ -126,14 +126,89 @@ content. `skill_usage_report` in chat and Skills → Usage in the admin UI show 
 more usefully, which granted skills **never** fired; the per-conversation profile table shows
 each conversation's always-on context cost.
 
+## Personal skills
+
+`create_skill` with `personal: true` (or the *Make personal* switch in the admin UI) keeps a skill
+visible and grantable only to its author; admins see everything. Personal skills are granted to
+the author's own tier on creation, are never published to Git and never leave the gateway over
+MCP. A `promote` proposal, once approved, turns a personal skill into an organization skill (and
+publishes it). Any approved member can also carry organization skills in their own runs with
+`add_my_skills` / `remove_my_skills` — the user tier of the grant union, no approval card.
+
+## Publishing to Git
+
+Admin UI → Skills → Sources → *Publishing to Git*: a GitHub repository (owner/repo), branch and
+folder. With the daemon's GitHub token set, every new revision of a local skill — created,
+updated, an approved change, an approved promotion — is pushed with the GitHub Contents API, one
+commit per file under `<folder>/<slug>/`, and files a newer revision dropped are deleted. The
+revision records the commit. When the publish repository is also a configured git source, the
+published skill is **adopted** by that source (it becomes a synced skill of that source), so the
+next sync recognises its own files instead of reporting a conflict: authored in chat, pushed to
+GitHub, part of the library. `publish_skill` (managers) and *Publish to Git now* push on demand.
+Publishing is best effort: a failure is reported in the reply and logged, never blocks a turn.
+
+## Webhook-triggered sync
+
+`POST <public URL>/api/skills/webhook/github` accepts GitHub push webhooks (JSON, secret = the
+webhook secret in Skills → Sources). The signature is verified over the raw body; the pushed
+repository is matched against the git sources and each match is synced a few seconds later
+(bursts are coalesced). `ping` events answer without syncing. The interval sync keeps running.
+
+## The catalog over MCP (laptop Claude Code, Codex, other clients)
+
+`POST <public URL>/mcp/skills` is a stateless Streamable HTTP MCP endpoint for the catalog. It
+authenticates a bearer **access token** minted in Skills → Sources → *MCP endpoint & access
+tokens*: random, shown once, stored hashed, revocable, with scopes:
+
+| scope   | tools                                                                                  |
+| ------- | -------------------------------------------------------------------------------------- |
+| read    | `library_search_skills` (facets + pagination), `library_get_skill_info`, `library_get_skill_file`, `library_list_templates`, `library_whoami` |
+| propose | `library_suggest_skill_change` (changed files + note, or feedback with a note only)     |
+| manage  | `library_create_skill`, `library_update_skill`                                          |
+| sync    | `library_export`, `library_export_skill` (what a peer gateway needs)                    |
+
+Claude Code: `claude mcp add --transport http channelgate-skills <public URL>/mcp/skills --header
+"Authorization: Bearer <token>"`. Personal skills never appear over MCP.
+
+## Peer gateways
+
+A source of kind **gateway** (Skills → Sources → *Another ChannelGate*) is a peer's URL plus a
+token minted on that peer with the `sync` scope (stored write-only). Sync pulls the peer's
+organization skills through its MCP endpoint — staged in review mode, active in auto mode,
+tombstoned when the peer drops them, last-good kept on failure. Two gateways on one host share a
+library with nothing but a URL and a token.
+
+## Migrating from Skills Manager
+
+The Skills Manager runtime integration was retired on 2026-09-05; Skills Manager remains a
+standalone product. `node scripts/migrate-skills-manager.mjs [--dry-run]`, run on the gateway host
+with the gateway's environment, uses the Skills Manager tokens the old integration stored:
+
+1. every Skills Manager repository becomes a git source (auto mode) and is synced — a private
+   repository needs the GitHub token (settings, `--github-token`, or the host's `gh auth token`,
+   which the script stores when none is set);
+2. the organization token's effective favorites become the organization tier, a channel token's
+   favorites that channel's grants, a user token's favorites that user's own tier;
+3. with `SM_SUPABASE_URL` + `SM_SUPABASE_SERVICE_KEY` (Skills Manager's service role): team
+   favorites become templates (Development; Sales & Marketing → sales and marketing; Management;
+   Admin), admin exclusions become tombstones, and each token user's personal skills become
+   personal local skills.
+
+The script is idempotent and prints what it would do with `--dry-run`. Stub folders the old
+integration left in channel folders are pruned automatically on each channel's next message.
+
 ## Admin API
 
 All routes sit under `/api/skills/…` (admin session): `overview`, `catalog` (list, detail, `file`,
 create/update, pin, remove/restore), `staged` + `revisions/:id/approve|reject|files`, `sources`
 (CRUD, `:id/sync`, `sync-all`, `refresh-host`), `templates` (CRUD, `:slug/preview`, `:slug/apply`),
-`profile/:channel` (+ `grant`, `revoke`), `profiles`, `usage`, `proposals` (+ `approve|reject`).
-Settings: `skillsGithubToken` (write-only, `clearSkillsGithubToken`), `skillsSyncIntervalMinutes`,
-`skillsContextWarnTokens`.
+`profile/:channel` (+ `grant`, `revoke`), `profiles`, `usage`, `proposals` (+ `approve|reject`),
+`org/grant`, `org/revoke`, `tokens` (create returns the value once, `:id/revoke`, delete),
+`catalog/:slug/visibility`, `catalog/:slug/publish`. Public (self-authenticating): `POST /mcp/skills`,
+`POST /api/skills/webhook/github`. Settings: `skillsGithubToken` (write-only,
+`clearSkillsGithubToken`), `skillsSyncIntervalMinutes`, `skillsContextWarnTokens`,
+`skillsPublishRepo` / `skillsPublishBranch` / `skillsPublishSubpath` / `skillsPublishMode`,
+`skillsWebhookSecret` (write-only, `clearSkillsWebhookSecret`).
 
 ## Where things live
 
@@ -143,4 +218,7 @@ Settings: `skillsGithubToken` (write-only, `clearSkillsGithubToken`), `skillsSyn
   and the sync timer), `bundled/` (the starter library).
 - `src/mcp/tools/skills.js` — the chat verbs; `src/web/routes/skills.js` — the admin API;
   `public/admin-skills.js` — the admin UI view; migration 14 in `src/db/migrations.js`.
-- Tests: `test/skills-platform.test.js`, `test/skills-admin-api.test.js`, `test/folders-skills.test.js`.
+- Round two: `publish.js`, `tokens.js`, `peer-sync.js`, `src/web/skills-mcp.js` (the MCP endpoint
+  and the webhook), `scripts/migrate-skills-manager.mjs`, migration 15.
+- Tests: `test/skills-platform.test.js`, `test/skills-admin-api.test.js`, `test/skills-standalone.test.js`,
+  `test/folders-skills.test.js`.

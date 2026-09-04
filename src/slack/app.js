@@ -5,9 +5,8 @@
 import pkg from "@slack/bolt";
 const { App, LogLevel } = pkg;
 
-import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, isAdmin, isApproved, listChannels, getComposioToken, getSkillsToken, getToolboxToken } from "../config/store.js";
+import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, isAdmin, isApproved, listChannels, getComposioToken, getToolboxToken } from "../config/store.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
-import { fetchLibraryFavorites } from "../gateway/library-skills.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { modeLabel, canManage, isAuthorized } from "../gateway/modes.js";
 // Re-exported: the authorization contract moved to gateway/modes.js (beside canManage).
@@ -28,7 +27,7 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultSkillsToken, getDefaultToolboxToken, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
@@ -1321,9 +1320,7 @@ async function connectAndWire(app) {
     // Connection status distinguishes personal Composio from the shared org fallback. Only
     // ✅/⚪/❌ is ever rendered — never a token value. A channel token may replace the org source
     // during an actual channel run, but is not knowable from the global App Home.
-    const [cTok, sTok, tTok] = await Promise.all([
-      getComposioToken(userId), getSkillsToken(userId), getToolboxToken(userId),
-    ]);
+    const [cTok, tTok] = await Promise.all([getComposioToken(userId), getToolboxToken(userId)]);
     const connLine = (label, mine, fallback, note) =>
       mine
         ? `✅ *${label}* — your account`
@@ -1349,31 +1346,19 @@ async function connectAndWire(app) {
         ];
     const conns = [
       ...composioLines,
-      connLine("Skills Manager", sTok, getDefaultSkillsToken(), "your starred skills load once connected"),
       connLine("Toolbox", tTok, getDefaultToolboxToken(), "admin tools"),
       "🛠 *Gateway control* — always on (schedules, channel admin, workdir)",
     ].join("\n");
 
-    // Your starred skills from the library — best-effort; a slow/failed fetch must never blank the Home.
-    let favLines;
-    const favTok = sTok || getDefaultSkillsToken();
-    if (!favTok) {
-      favLines = "_Connect Skills Manager to see your starred skills._";
-    } else {
-      try {
-        const favs = await fetchLibraryFavorites(favTok);
-        if (!favs.length) {
-          favLines = "_No starred skills yet — star some in Skills Manager and they auto-load._";
-        } else {
-          favLines = favs.slice(0, 8)
-            .map((f) => `• *${f.name}*${f.description ? ` — ${f.description.slice(0, 80)}` : ""}`)
-            .join("\n");
-          if (favs.length > 8) favLines += `\n_+ ${favs.length - 8} more_`;
-        }
-      } catch {
-        favLines = "_Couldn't reach Skills Manager just now._";
-      }
-    }
+    // Your skills: the personal tier of the grant union (skills only your own runs carry) plus the
+    // organization tier everyone gets. Channel grants are per conversation and not knowable here.
+    const homeUser = (await getUsers())[userId] || {};
+    const personalSkills = Array.isArray(homeUser.skills) ? homeUser.skills : [];
+    const orgSkills = Array.isArray(getOrgAccessGrants().skills) ? getOrgAccessGrants().skills : [];
+    let favLines = personalSkills.length
+      ? personalSkills.slice(0, 8).map((s) => `• *${s}*`).join("\n") + (personalSkills.length > 8 ? `\n_+ ${personalSkills.length - 8} more_` : "")
+      : "_No personal skills yet — ask me \"add the X skill for me\" in any thread, or browse the catalog with \"list skills\"._";
+    if (orgSkills.length) favLines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
 
     // In-thread commands + the active engine / how to switch models.
     const commands = "`/help` · `/status` · `/files` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/update` _(admin)_";
@@ -1411,7 +1396,7 @@ async function connectAndWire(app) {
       // in SDK mode, where the identity is minted per user at run time and there is nothing to set.
       ...composioHomeButtons({ hasToken: Boolean(cTok), enabled: composioMode !== "sdk" }),
       { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Your favourite skills*\n${favLines}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*Your skills*\n${favLines}` } },
       { type: "divider" },
       { type: "section", text: { type: "mrkdwn", text: `*Commands* (type in a thread)\n${commands}` } },
       { type: "section", text: { type: "mrkdwn", text: `*Engine & models*\n${engineInfo}` } },

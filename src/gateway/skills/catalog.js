@@ -18,7 +18,8 @@ import { parseFrontmatter, skillMetadata, slugFromName } from "./frontmatter.js"
 import { normalizeSkillFiles, hashSkillFiles, isSkillManifestPath, classifyBytes, sha256, MAX_FILE_BYTES } from "./files.js";
 
 export const OWNER_KINDS = Object.freeze(["bundled", "local", "folder", "git"]);
-export const SOURCE_KINDS = Object.freeze(["git", "folder"]);
+export const SOURCE_KINDS = Object.freeze(["git", "folder", "gateway"]);
+export const VISIBILITIES = Object.freeze(["org", "personal"]);
 export const SOURCE_MODES = Object.freeze(["auto", "review"]);
 export const REVISION_STATUSES = Object.freeze(["active", "staged", "rejected"]);
 
@@ -89,6 +90,7 @@ function rowToSkill(r) {
     createdBy: r.created_by,
     deletedAt: r.deleted_at || "",
     deleted: Boolean(r.deleted_at),
+    visibility: r.visibility === "personal" ? "personal" : "org",
     stagedCount: Number(r.staged_count || 0),
   };
 }
@@ -108,6 +110,8 @@ function rowToRevision(r) {
     totalBytes: r.total_bytes,
     createdAt: r.created_at,
     createdBy: r.created_by,
+    publishedRef: r.published_ref || "",
+    publishedAt: r.published_at || "",
   };
 }
 
@@ -134,6 +138,7 @@ function rowToSource(r) {
     lastSyncStats: fromJson(r.last_sync_stats, {}) || {},
     createdAt: r.created_at,
     createdBy: r.created_by,
+    hasSecret: Boolean(r.secret),
   };
 }
 
@@ -198,10 +203,20 @@ export function getSkillById(id) {
   return rowToSkill(getDb().prepare(`${SKILL_SELECT} WHERE s.id = ?`).get(Number(id)));
 }
 
-export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = null, category = "", query = "", limit = 0 } = {}) {
+// `viewer` narrows personal skills: "" (nobody) hides every personal skill, a user id shows that
+// user's own, "*" (an admin surface) shows all.
+export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = null, category = "", query = "", limit = 0, viewer = "*", visibility = "" } = {}) {
   const where = [];
   const args = [];
   if (!includeDeleted) where.push("s.deleted_at = ''");
+  if (visibility) {
+    where.push("s.visibility = ?");
+    args.push(visibility);
+  }
+  if (viewer !== "*") {
+    where.push("(s.visibility <> 'personal' OR s.created_by = ?)");
+    args.push(String(viewer || ""));
+  }
   if (ownerKind) {
     where.push("s.owner_kind = ?");
     args.push(ownerKind);
@@ -308,9 +323,11 @@ export function putSkillRevision({
   note = "",
   createdBy = "",
   status = "active",
+  visibility = "org",
   now = nowIso(),
 } = {}) {
   if (!OWNER_KINDS.includes(ownerKind)) throw new SkillCatalogError(`unknown owner kind "${ownerKind}"`);
+  if (!VISIBILITIES.includes(visibility)) throw new SkillCatalogError(`unknown visibility "${visibility}"`);
   if (!["active", "staged"].includes(status)) throw new SkillCatalogError(`a new revision is active or staged, not "${status}"`);
   const normalized = normalizeSkillFiles(files);
   const manifest = normalized.find((f) => isSkillManifestPath(f.path));
@@ -333,10 +350,10 @@ export function putSkillRevision({
     if (!existing) {
       const res = db
         .prepare(
-          `INSERT INTO skills(slug, name, description, owner_kind, source_id, source_path, category, tags, requires, version, meta, created_at, updated_at, created_by)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO skills(slug, name, description, owner_kind, source_id, source_path, category, tags, requires, version, meta, created_at, updated_at, created_by, visibility)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(resolvedSlug, md.name, md.description, ownerKind, sid, sourcePath, md.category, toJson(md.tags), toJson(md.requires), md.version, toJson(parsed.data), now, now, createdBy);
+        .run(resolvedSlug, md.name, md.description, ownerKind, sid, sourcePath, md.category, toJson(md.tags), toJson(md.requires), md.version, toJson(parsed.data), now, now, createdBy, visibility);
       skillId = Number(res.lastInsertRowid);
       created = true;
     } else {
@@ -419,6 +436,30 @@ export function restoreSkill(slug, { now = nowIso() } = {}) {
   return res.changes > 0;
 }
 
+export function setSkillVisibility(slug, visibility, { now = nowIso() } = {}) {
+  if (!VISIBILITIES.includes(visibility)) throw new SkillCatalogError(`unknown visibility "${visibility}"`);
+  const res = getDb().prepare("UPDATE skills SET visibility = ?, updated_at = ? WHERE slug = ? COLLATE NOCASE").run(visibility, now, String(slug));
+  if (res.changes === 0) throw new SkillCatalogError("skill not found", { status: 404 });
+  return getSkill(slug);
+}
+
+// A locally authored skill that was published into a repository that is also a git source now
+// belongs to that source: the next sync sees its own files (same bytes → unchanged) instead of a
+// conflict. The revisions stay; only ownership moves.
+export function adoptSkillIntoSource(slug, sourceId, { sourcePath = "", sourceRef = "", now = nowIso() } = {}) {
+  const res = getDb()
+    .prepare("UPDATE skills SET owner_kind = 'git', source_id = ?, source_path = ?, updated_at = ? WHERE slug = ? COLLATE NOCASE")
+    .run(Number(sourceId), sourcePath, now, String(slug));
+  if (res.changes === 0) throw new SkillCatalogError("skill not found", { status: 404 });
+  if (sourceRef) getDb().prepare("UPDATE skill_revisions SET source_ref = CASE WHEN source_ref = '' OR source_ref = 'manual' THEN ? ELSE source_ref END WHERE skill_id = (SELECT id FROM skills WHERE slug = ? COLLATE NOCASE)").run(sourceRef, String(slug));
+  return getSkill(slug);
+}
+
+export function markRevisionPublished(revisionId, { ref = "", now = nowIso() } = {}) {
+  getDb().prepare("UPDATE skill_revisions SET published_ref = ?, published_at = ? WHERE id = ?").run(String(ref || ""), now, Number(revisionId));
+  return getRevision(revisionId);
+}
+
 // A source's sync found these slugs; every other live skill of that source is gone upstream and
 // becomes a tombstone (never a hard delete: a channel still granting it sees why it is missing).
 export function tombstoneMissingSourceSkills(sourceId, presentSlugs, { now = nowIso() } = {}) {
@@ -456,7 +497,7 @@ export function findSourceByUrl(url) {
   return rowToSource(getDb().prepare("SELECT * FROM skill_sources WHERE url = ? COLLATE NOCASE").get(String(url)));
 }
 
-export function addSource({ kind, label = "", url, ref = "", subpath = "", pinnedRef = "", mode = "review", enabled = true, createdBy = "", now = nowIso() } = {}) {
+export function addSource({ kind, label = "", url, ref = "", subpath = "", pinnedRef = "", mode = "review", enabled = true, secret = "", createdBy = "", now = nowIso() } = {}) {
   if (!SOURCE_KINDS.includes(kind)) throw new SkillCatalogError(`unknown source kind "${kind}"`);
   if (!SOURCE_MODES.includes(mode)) throw new SkillCatalogError(`unknown source mode "${mode}"`);
   const u = String(url ?? "").trim();
@@ -464,10 +505,10 @@ export function addSource({ kind, label = "", url, ref = "", subpath = "", pinne
   if (findSourceByUrl(u)) throw new SkillCatalogError("this source already exists", { status: 409 });
   const res = getDb()
     .prepare(
-      `INSERT INTO skill_sources(kind, label, url, ref, subpath, pinned_ref, mode, enabled, created_at, created_by)
-       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO skill_sources(kind, label, url, ref, subpath, pinned_ref, mode, enabled, secret, created_at, created_by)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(kind, String(label || "").trim(), u, String(ref || "").trim(), String(subpath || "").trim().replace(/^\/+|\/+$/g, ""), String(pinnedRef || "").trim(), mode, enabled ? 1 : 0, now, createdBy);
+    .run(kind, String(label || "").trim(), u, String(ref || "").trim(), String(subpath || "").trim().replace(/^\/+|\/+$/g, ""), String(pinnedRef || "").trim(), mode, enabled ? 1 : 0, String(secret || ""), now, createdBy);
   return getSource(Number(res.lastInsertRowid));
 }
 
@@ -494,7 +535,15 @@ export function updateSource(id, patch = {}) {
       toJson(next.lastSyncStats || {}),
       cur.id,
     );
+  // The peer credential is write-only: set on a non-empty value, cleared explicitly, never read back.
+  if (typeof patch.secret === "string" && patch.secret) getDb().prepare("UPDATE skill_sources SET secret = ? WHERE id = ?").run(patch.secret, cur.id);
+  if (patch.clearSecret === true) getDb().prepare("UPDATE skill_sources SET secret = '' WHERE id = ?").run(cur.id);
   return getSource(cur.id);
+}
+
+// The one reader of a gateway source's credential (peer-sync.js). Never on an API response.
+export function sourceSecret(id) {
+  return String(getDb().prepare("SELECT secret FROM skill_sources WHERE id = ?").get(Number(id))?.secret || "");
 }
 
 export function recordSourceSync(id, { ok, ref = "", error = "", stats = {}, now = nowIso() } = {}) {
@@ -620,7 +669,7 @@ export function usageCountsBySlug({ since = "" } = {}) {
 // ── Proposals ───────────────────────────────────────────────────────────────────────────────
 
 export function createProposal({ slug, kind = "change", files = [], note = "", proposedBy = "", channelSlug = "", now = nowIso() } = {}) {
-  if (!["change", "promote"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
+  if (!["change", "promote", "feedback"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
   const s = normalizeSlug(slug);
   if (!isValidSlug(s)) throw new SkillCatalogError("a proposal needs a valid skill slug");
   const stored = (Array.isArray(files) ? files : []).map((f) => {

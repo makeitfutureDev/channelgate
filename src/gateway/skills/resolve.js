@@ -161,6 +161,42 @@ export function resolveSkillProfile(grantNames = [], { lookup = getSkill, revisi
   };
 }
 
+// Compatibility requirements a skill may declare in its frontmatter:
+//   compatibility:
+//     engines: [claude, codex]        # harnesses it works in
+//     platforms: [slack]              # chat surfaces
+//     min_gateway: 1.2.0              # minimum gateway version
+//     mcp: [composio-agent]           # MCP servers it needs present
+// Advisory: a mismatch is reported as a warning for the conversation, never a refusal — a skill
+// that names a harness it does not support is still a valid skill elsewhere.
+function cmpVersion(a, b) {
+  const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+const asList = (v) => (Array.isArray(v) ? v : String(v ?? "").split(",")).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+
+export function checkCompatibility(skill, { engine = "", platform = "", gatewayVersion = "", mcpServers = [] } = {}) {
+  const c = skill?.meta?.compatibility;
+  if (!c || typeof c !== "object" || Array.isArray(c)) return [];
+  const issues = [];
+  const engines = asList(c.engines ?? c.engine);
+  if (engine && engines.length && !engines.includes(String(engine).toLowerCase())) issues.push(`"${skill.slug}" declares engines ${engines.join("/")}; this conversation runs ${engine}`);
+  const platforms = asList(c.platforms ?? c.platform);
+  if (platform && platforms.length && !platforms.includes(String(platform).toLowerCase())) issues.push(`"${skill.slug}" declares platforms ${platforms.join("/")}; this conversation is on ${platform}`);
+  const min = String(c.min_gateway ?? c.minGateway ?? "").trim();
+  if (min && gatewayVersion && cmpVersion(gatewayVersion, min) < 0) issues.push(`"${skill.slug}" needs gateway ${min} or newer (this is ${gatewayVersion})`);
+  const mcp = asList(c.mcp);
+  const have = new Set((mcpServers || []).map((s) => String(s).toLowerCase()));
+  for (const m of mcp) if (have.size && !have.has(m)) issues.push(`"${skill.slug}" needs the MCP server "${m}", which this conversation does not have`);
+  return issues;
+}
+
 // The names a grant list should carry so every dependency is included: the input names plus the
 // resolved dependency slugs, in a stable order. Used when a template is applied or a skill added.
 export function withDependencies(grantNames = [], opts = {}) {

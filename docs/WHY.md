@@ -531,13 +531,16 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **Reason:** daemon-side powers (cron, jobs outliving the subprocess) must cross the container
   boundary somewhere; one audited, narrowly-scoped MCP server is that single controlled door.
 
-#### Skills Manager favorites injection
-- **What:** the author's starred skills are written into the channel's instruction file as a
-  managed, delimited block (refreshed each run, stripped when the token is gone, cached ~10 min).
-- **Value:** the org's curated skill library actually gets used in Slack runs — the agent knows
-  the user's preferred workflows at session start.
-- **Reason:** skills only deliver value if the agent knows they exist; injecting favorites at
-  the folder level made the library self-propagating instead of relying on users to mention it.
+#### The gateway's own skill library
+- **What:** every skill a conversation can use lives in the gateway's catalog (bundled, imported,
+  synced from GitHub or a peer gateway, or authored in chat) and is written into the channel folder
+  as real files; profiles come from organization, channel and personal grants plus templates such
+  as Development or Sales; changes to shared skills go through proposals an admin approves, and
+  approved skills are published back to Git.
+- **Value:** the curated library actually gets used in every run with no token and no network
+  call, and it stays governed — one owner per skill, review before activation, usage measured.
+- **Reason:** skills only deliver value if the agent finds them natively; a library the gateway
+  owns is self-propagating, works offline, and never depends on a second product at run time.
 
 #### Trusted bot apps allowlist
 - **What:** posts from specific allowlisted Slack apps (e.g. an automation-platform scenario) may

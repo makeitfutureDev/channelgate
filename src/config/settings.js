@@ -19,7 +19,6 @@ const ENV_MAP = {
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   sessionKeepalive: "SESSION_KEEPALIVE",
   composioMcpUrl: "COMPOSIO_MCP_URL",
-  skillsMcpUrl: "SKILLS_MCP_URL",
   toolboxMcpUrl: "TOOLBOX_MCP_URL",
   publicUrl: "GATEWAY_PUBLIC_URL",
   platformUrl: "CHANNELGATE_PLATFORM_URL",
@@ -498,15 +497,11 @@ export function getComposioSdkApiKey() {
   return typeof v === "string" ? v.trim() : "";
 }
 
-// Org-level (gateway) default tokens. For shared Composio this follows the channel token; Skills
-// Manager and Toolbox use the full channel → user → org chain (see src/gateway/run.js). Write-only
-// via the admin API (masked on read), never logged.
+// Org-level (gateway) default tokens. For shared Composio this follows the channel token; Toolbox
+// uses the full channel → user → org chain (see src/gateway/run.js). Write-only via the admin API
+// (masked on read), never logged.
 export function getDefaultComposioToken() {
   const v = getSettings().defaultComposioToken;
-  return typeof v === "string" ? v : "";
-}
-export function getDefaultSkillsToken() {
-  const v = getSettings().defaultSkillsToken;
   return typeof v === "string" ? v : "";
 }
 export function getDefaultToolboxToken() {
@@ -529,6 +524,23 @@ export function getSkillsSyncIntervalMinutes() {
 export function getSkillsContextWarnTokens() {
   const v = Number(getSettings().skillsContextWarnTokens);
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : 6000;
+}
+// Git publishing of authored/approved skills (src/gateway/skills/publish.js): the repository,
+// branch and folder, and whether publishing is on. Empty repo = off.
+export function getSkillsPublish() {
+  const s = getSettings();
+  const mode = s.skillsPublishMode === "off" ? "off" : "commit";
+  return {
+    repo: typeof s.skillsPublishRepo === "string" ? s.skillsPublishRepo.trim() : "",
+    branch: typeof s.skillsPublishBranch === "string" && s.skillsPublishBranch.trim() ? s.skillsPublishBranch.trim() : "main",
+    subpath: typeof s.skillsPublishSubpath === "string" ? s.skillsPublishSubpath.trim().replace(/^\/+|\/+$/g, "") : "skills",
+    mode,
+  };
+}
+// The shared secret GitHub signs push webhooks with (X-Hub-Signature-256). Write-only.
+export function getSkillsWebhookSecret() {
+  const v = getSettings().skillsWebhookSecret;
+  return typeof v === "string" ? v.trim() : "";
 }
 
 // Organization-wide skill/connector grants. Unlike tokens these are not a fallback: they are the
@@ -709,7 +721,6 @@ export function settingsForApi() {
     hasComposioSdkApiKey: Boolean(getComposioSdkApiKey()),
     composioSdkApiKeyLast4: last4(getComposioSdkApiKey()),
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
-    skillsMcpUrl: s.skillsMcpUrl ?? process.env.SKILLS_MCP_URL ?? "https://www.skillsmanager.uk/mcp",
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
     progressView: getProgressView(),
@@ -719,9 +730,6 @@ export function settingsForApi() {
     hasDefaultComposioToken: Boolean(getDefaultComposioToken()),
     defaultComposioTokenLast4: last4(getDefaultComposioToken()),
     defaultComposioTokenLabel: s.defaultComposioTokenLabel || "",
-    hasDefaultSkillsToken: Boolean(getDefaultSkillsToken()),
-    defaultSkillsTokenLast4: last4(getDefaultSkillsToken()),
-    defaultSkillsTokenLabel: s.defaultSkillsTokenLabel || "",
     hasDefaultToolboxToken: Boolean(getDefaultToolboxToken()),
     defaultToolboxTokenLast4: last4(getDefaultToolboxToken()),
     defaultToolboxTokenLabel: s.defaultToolboxTokenLabel || "",
@@ -729,6 +737,12 @@ export function settingsForApi() {
     skillsGithubTokenLast4: last4(getSkillsGithubToken()),
     skillsSyncIntervalMinutes: getSkillsSyncIntervalMinutes(),
     skillsContextWarnTokens: getSkillsContextWarnTokens(),
+    skillsPublishRepo: getSkillsPublish().repo,
+    skillsPublishBranch: getSkillsPublish().branch,
+    skillsPublishSubpath: getSkillsPublish().subpath,
+    skillsPublishMode: getSkillsPublish().mode,
+    hasSkillsWebhookSecret: Boolean(getSkillsWebhookSecret()),
+    skillsWebhookSecretLast4: last4(getSkillsWebhookSecret()),
     // Google Chat + Teams credentials follow the same write-only rule as the Slack tokens: the
     // listing says whether a value EXISTS and its last four characters, never the value. A
     // service-account key is a private key — only its client_email is echoed, because that is the

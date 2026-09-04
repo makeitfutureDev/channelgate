@@ -1,17 +1,22 @@
-// Authoring and review: create a local skill, revise one, and decide a proposal. Shared by the
-// gateway MCP tools (chat) and the admin API so both surfaces apply exactly the same rules:
-//   • only a LOCAL skill is edited in place; a bundled/folder/git skill is changed through a
+// Authoring and review: create a local skill, revise one, delete your own, decide a proposal,
+// and the grant helpers for the three tiers. Shared by the gateway MCP tools (chat), the external
+// MCP endpoint and the admin API so every surface applies exactly the same rules:
+//   • only a LOCAL skill is edited in place; a bundled/folder/synced skill is changed through a
 //     proposal whose approval becomes a pinned local-override revision (the source keeps flowing
 //     into later revisions; the pin holds until an admin unpins);
 //   • a revision is the complete folder — callers may pass only the files that change, and the
 //     rest of the current revision is carried over (plus an explicit remove list);
-//   • a "promote" proposal, once approved, grants the skill organization-wide.
-import { getSkill, putSkillRevision, skillBundle, pinSkill, getProposal, decideProposal, createProposal, normalizeSlug, SkillCatalogError } from "./catalog.js";
+//   • a PERSONAL skill is visible and grantable only to its author (and admins); a "promote"
+//     proposal, once approved, makes it an organization skill;
+//   • every new revision of a local skill is published to the configured Git repository when
+//     publishing is on (publish.js) — best effort, reported, never blocking.
+import { getSkill, putSkillRevision, skillBundle, pinSkill, getProposal, decideProposal, createProposal, normalizeSlug, setSkillVisibility, tombstoneSkill, SkillCatalogError } from "./catalog.js";
 import { normalizeSkillFiles, decodeInputFile, isSkillManifestPath } from "./files.js";
 import { parseFrontmatter, skillMetadata, slugFromName } from "./frontmatter.js";
 import { withDependencies } from "./resolve.js";
+import { publishQuietly } from "./publish.js";
 import { getOrgAccessGrants, saveSettings } from "../../config/settings.js";
-import { patchChannelMeta } from "../../config/store.js";
+import { patchChannelMeta, getUser, setUser } from "../../config/store.js";
 import { sanitizeSkillGrantNames } from "../access-grants.js";
 import { logEvent } from "../../util/logger.js";
 
@@ -31,9 +36,29 @@ export function currentFilesOf(skill) {
   return skillBundle(skill)?.files || [];
 }
 
+export function describeOwner(skill) {
+  switch (skill?.ownerKind) {
+    case "git":
+      return `synced from a source${skill.sourceId ? ` (#${skill.sourceId})` : ""}`;
+    case "folder":
+      return "imported from a host skill folder";
+    case "bundled":
+      return "bundled with the gateway";
+    default:
+      return `${skill?.visibility === "personal" ? "personal, " : ""}authored locally${skill?.createdBy ? ` by ${skill.createdBy}` : ""}`;
+  }
+}
+
+// May `userId` see this skill at all? Personal skills are their author's (admins see everything).
+export function canSeeSkill(skill, { userId = "", isAdmin = false } = {}) {
+  if (!skill) return false;
+  if (skill.visibility !== "personal") return true;
+  return isAdmin || (Boolean(userId) && skill.createdBy === userId);
+}
+
 // Add a new locally authored skill. `grantTo` (a channel slug) grants it there at once, with its
-// dependencies. Refuses a slug another owner holds.
-export async function createLocalSkill({ slug = "", files, note = "", createdBy = "", grantTo = "" } = {}) {
+// dependencies; `personal` keeps it private to the author (granted to the author's own tier).
+export async function createLocalSkill({ slug = "", files, note = "", createdBy = "", grantTo = "", personal = false, publish = true } = {}) {
   // "Create" never revises: an existing live skill of that slug — whoever owns it — is refused.
   const manifest = (Array.isArray(files) ? files : []).find((f) => isSkillManifestPath(f?.path));
   const name = manifest ? skillMetadata(parseFrontmatter(Buffer.isBuffer(manifest.content) ? manifest.content.toString("utf8") : String(manifest.content ?? "")).data).name : "";
@@ -42,129 +67,178 @@ export async function createLocalSkill({ slug = "", files, note = "", createdBy 
   if (existing && !existing.deleted) {
     throw new SkillCatalogError(`"${existing.slug}" already exists (${describeOwner(existing)}) — update it with update_skill, or propose a change`, { status: 409 });
   }
-  const r = putSkillRevision({ slug, files, ownerKind: "local", sourceRef: "manual", note, createdBy, status: "active" });
+  const r = putSkillRevision({ slug, files, ownerKind: "local", sourceRef: "manual", note, createdBy, status: "active", visibility: personal ? "personal" : "org" });
   if (r.conflict) throw new SkillCatalogError(`${r.reason} — update it with update_skill, or propose a change`, { status: 409 });
   let granted = null;
-  if (grantTo) granted = await grantSkillsToChannel(grantTo, [r.skill.slug]);
-  logEvent("skill_created", { slug: grantTo, author: createdBy, skill: r.skill.slug, revision: r.revision?.revisionNo });
-  return { ...r, granted };
+  if (personal && createdBy) granted = await grantSkillsToUser(createdBy, [r.skill.slug]);
+  else if (grantTo) granted = await grantSkillsToChannel(grantTo, [r.skill.slug]);
+  logEvent("skill_created", { slug: grantTo, author: createdBy, skill: r.skill.slug, revision: r.revision?.revisionNo, personal });
+  const published = publish && !personal ? await publishQuietly({ slug: r.skill.slug, revisionId: r.revision.id, actor: createdBy }) : { published: false, reason: personal ? "personal skills are not published" : "skipped" };
+  return { ...r, granted, published };
 }
 
 // A new revision of a LOCAL skill from partial files. Authorization is the caller's job (author,
 // manager or admin); ownership is enforced here.
-export function updateLocalSkill({ skill, files = [], remove = [], note = "", createdBy = "" } = {}) {
+export async function updateLocalSkill({ skill, files = [], remove = [], note = "", createdBy = "", publish = true } = {}) {
   if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
   if (skill.ownerKind !== "local") throw new SkillCatalogError(`"${skill.slug}" is ${describeOwner(skill)}; it is changed through a proposal (propose_skill_change), not edited in place`, { status: 409 });
   const merged = mergeSkillFiles(currentFilesOf(skill), files, remove);
   const r = putSkillRevision({ slug: skill.slug, files: merged, ownerKind: "local", sourceRef: "manual", note, createdBy, status: "active" });
   if (r.conflict) throw new SkillCatalogError(r.reason, { status: 409 });
   if (r.changed) logEvent("skill_updated", { author: createdBy, skill: skill.slug, revision: r.revision?.revisionNo });
-  return r;
+  const published = r.changed && publish && skill.visibility !== "personal" ? await publishQuietly({ slug: skill.slug, revisionId: r.revision.id, actor: createdBy }) : { published: false, reason: r.changed ? "not published" : "unchanged" };
+  return { ...r, published };
 }
 
-export function describeOwner(skill) {
-  switch (skill?.ownerKind) {
-    case "git":
-      return `synced from a git source${skill.sourceId ? ` (#${skill.sourceId})` : ""}`;
-    case "folder":
-      return "imported from a host skill folder";
-    case "bundled":
-      return "bundled with the gateway";
-    default:
-      return `authored locally${skill?.createdBy ? ` by ${skill.createdBy}` : ""}`;
-  }
+// Remove a skill you authored (tombstone: revisions stay, restorable by an admin).
+export function deleteOwnSkill({ skill, userId = "", isAdmin = false } = {}) {
+  if (!skill || skill.deleted) throw new SkillCatalogError("skill not found", { status: 404 });
+  if (skill.ownerKind !== "local") throw new SkillCatalogError(`"${skill.slug}" is ${describeOwner(skill)} and cannot be deleted from chat; an admin can exclude it in the admin UI`, { status: 409 });
+  if (!isAdmin && skill.createdBy !== userId) throw new SkillCatalogError(`only the author of "${skill.slug}" (or an admin) can delete it`, { status: 403 });
+  tombstoneSkill(skill.slug);
+  logEvent("skill_removed", { skill: skill.slug, author: userId });
+  return getSkill(skill.slug);
 }
 
-// Grant slugs (plus their dependencies) to a conversation. Returns { added, names } or null when
-// the conversation is unknown.
-export async function grantSkillsToChannel(channelSlug, slugs) {
-  let added = [];
-  const next = await patchChannelMeta(channelSlug, (meta) => {
-    if (!meta) return null;
-    const current = sanitizeSkillGrantNames(meta.skills || []);
-    const have = new Set(current.map((s) => s.toLowerCase()));
+// ── Grant helpers (organization / conversation / user tiers) ────────────────────────────────
+
+function resolveGrantSlugs(slugs, current) {
+  const have = new Set(current.map((s) => s.toLowerCase()));
+  const wanted = [];
+  for (const s of sanitizeSkillGrantNames(slugs)) {
     // Store the catalog slug for a catalog skill (a name or a differently-cased folder name
     // resolves to it); a name the catalog does not know is kept as given (a host-folder grant).
-    const wanted = [];
-    for (const s of sanitizeSkillGrantNames(slugs)) {
-      const resolved = getSkill(s)?.slug || s;
-      if (!have.has(resolved.toLowerCase()) && !wanted.some((w) => w.toLowerCase() === resolved.toLowerCase())) wanted.push(resolved);
-    }
-    const { names } = withDependencies([...current, ...wanted]);
-    added = names.filter((s) => !have.has(s.toLowerCase()));
-    return { skills: names };
-  });
-  return next ? { added, names: next.skills } : null;
+    const resolved = getSkill(s)?.slug || s;
+    if (!have.has(resolved.toLowerCase()) && !wanted.some((w) => w.toLowerCase() === resolved.toLowerCase())) wanted.push(resolved);
+  }
+  const { names } = withDependencies([...current, ...wanted]);
+  return { names, added: names.filter((s) => !have.has(s.toLowerCase())) };
 }
 
-export async function revokeSkillsFromChannel(channelSlug, slugs) {
-  // Both spellings of every requested name: as given, and the catalog slug it resolves to.
+function dropGrantSlugs(slugs, current) {
   const drop = new Set();
   for (const s of sanitizeSkillGrantNames(slugs)) {
     drop.add(s.toLowerCase());
     const skill = getSkill(s);
     if (skill) drop.add(skill.slug.toLowerCase());
   }
-  let removed = [];
-  const next = await patchChannelMeta(channelSlug, (meta) => {
-    if (!meta) return null;
-    const current = sanitizeSkillGrantNames(meta.skills || []);
-    // A grant may be stored under a name that resolves to a slug: drop by either spelling.
-    const kept = current.filter((s) => {
-      const skill = getSkill(s);
-      const hit = drop.has(s.toLowerCase()) || (skill && drop.has(skill.slug.toLowerCase()));
-      if (hit) removed.push(s);
-      return !hit;
-    });
-    return { skills: kept };
+  const removed = [];
+  const kept = current.filter((s) => {
+    const skill = getSkill(s);
+    const hit = drop.has(s.toLowerCase()) || (skill && drop.has(skill.slug.toLowerCase()));
+    if (hit) removed.push(s);
+    return !hit;
   });
-  return next ? { removed, names: next.skills } : null;
+  return { names: kept, removed };
 }
 
-// Grant a skill in the organization tier (every conversation).
+// Grant slugs (plus their dependencies) to a conversation. Returns { added, names } or null when
+// the conversation is unknown.
+export async function grantSkillsToChannel(channelSlug, slugs) {
+  let result = null;
+  const next = await patchChannelMeta(channelSlug, (meta) => {
+    if (!meta) return null;
+    result = resolveGrantSlugs(slugs, sanitizeSkillGrantNames(meta.skills || []));
+    return { skills: result.names };
+  });
+  return next ? { added: result.added, names: next.skills } : null;
+}
+
+export async function revokeSkillsFromChannel(channelSlug, slugs) {
+  let result = null;
+  const next = await patchChannelMeta(channelSlug, (meta) => {
+    if (!meta) return null;
+    result = dropGrantSlugs(slugs, sanitizeSkillGrantNames(meta.skills || []));
+    return { skills: result.names };
+  });
+  return next ? { removed: result.removed, names: next.skills } : null;
+}
+
+// A user's own tier: skills only that user's runs carry (Skills Manager's "stars").
+export async function grantSkillsToUser(userId, slugs) {
+  const user = (await getUser(userId)) || {};
+  const result = resolveGrantSlugs(slugs, sanitizeSkillGrantNames(user.skills || []));
+  await setUser(userId, { skills: result.names });
+  return { added: result.added, names: result.names };
+}
+
+export async function revokeSkillsFromUser(userId, slugs) {
+  const user = (await getUser(userId)) || {};
+  const result = dropGrantSlugs(slugs, sanitizeSkillGrantNames(user.skills || []));
+  await setUser(userId, { skills: result.names });
+  return { removed: result.removed, names: result.names };
+}
+
+// The organization tier: every conversation.
+export function grantSkillsToOrg(slugs) {
+  const grants = getOrgAccessGrants();
+  const result = resolveGrantSlugs(slugs, sanitizeSkillGrantNames(grants.skills || []));
+  if (result.added.length) saveSettings({ accessGrants: { ...grants, skills: result.names } });
+  return { added: result.added, names: result.names };
+}
+
+export function revokeSkillsFromOrg(slugs) {
+  const grants = getOrgAccessGrants();
+  const result = dropGrantSlugs(slugs, sanitizeSkillGrantNames(grants.skills || []));
+  if (result.removed.length) saveSettings({ accessGrants: { ...grants, skills: result.names } });
+  return { removed: result.removed, names: result.names };
+}
+
+// Kept for callers of the previous name: grant one skill organization-wide.
 export function promoteSkillToOrg(slug) {
   const skill = getSkill(slug);
   if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
-  const grants = getOrgAccessGrants();
-  const current = sanitizeSkillGrantNames(grants.skills || []);
-  if (current.some((s) => s.toLowerCase() === skill.slug.toLowerCase())) return { promoted: false, skills: current };
-  const { names } = withDependencies([...current, skill.slug]);
-  saveSettings({ accessGrants: { ...grants, skills: names } });
-  return { promoted: true, skills: names };
+  const r = grantSkillsToOrg([skill.slug]);
+  return { promoted: r.added.length > 0, skills: r.names };
 }
 
-// File a proposal. A change proposal on an unknown slug proposes a NEW local skill.
+// ── Proposals ───────────────────────────────────────────────────────────────────────────────
+
+// File a proposal. Kinds: change (files + note), feedback (note only), promote (make a personal
+// skill an organization skill, or grant an organization skill everywhere — decided on approval).
 export function proposeSkillChange({ skill = "", kind = "change", files = [], note = "", proposedBy = "", channelSlug = "" } = {}) {
   const existing = getSkill(skill);
   const slug = existing?.slug || skill;
-  if (kind === "promote" && !existing) throw new SkillCatalogError(`"${skill}" is not in the catalog`, { status: 404 });
+  if (!["change", "feedback", "promote"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
+  if ((kind === "promote" || kind === "feedback") && !existing) throw new SkillCatalogError(`"${skill}" is not in the catalog`, { status: 404 });
+  if (kind === "feedback" && !String(note || "").trim()) throw new SkillCatalogError("feedback needs a note");
   if (kind === "change" && !existing && !(files || []).some((f) => isSkillManifestPath(f?.path))) {
     throw new SkillCatalogError(`"${skill}" is not in the catalog — a proposal for a new skill needs a SKILL.md`, { status: 404 });
   }
-  const proposal = createProposal({ slug, kind, files, note, proposedBy, channelSlug });
+  const proposal = createProposal({ slug, kind, files: kind === "feedback" ? [] : files, note, proposedBy, channelSlug });
   logEvent("skill_proposal", { slug: channelSlug, author: proposedBy, skill: slug, kind, proposal: proposal.id });
   return { proposal, skill: existing };
 }
 
 // Approve or reject. Approval of a change writes one revision (pinned as an override when the
-// skill is source-owned); approval of a promotion grants organization-wide.
-export function decideSkillProposal(id, { decision, decidedBy = "", note = "" } = {}) {
+// skill is source-owned) and publishes it; approval of a promotion makes a personal skill an
+// organization skill (and publishes it) or, for an organization skill, grants it everywhere;
+// approving feedback just closes it.
+export async function decideSkillProposal(id, { decision, decidedBy = "", note = "" } = {}) {
   const proposal = getProposal(id);
   if (!proposal) throw new SkillCatalogError("proposal not found", { status: 404 });
   if (proposal.status !== "pending") throw new SkillCatalogError(`proposal #${id} is already ${proposal.status}`, { status: 409 });
   if (decision === "reject") {
     const p = decideProposal(id, { status: "rejected", decidedBy, note });
     logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "rejected" });
-    return { proposal: p, revision: null, pinned: false, promoted: false };
+    return { proposal: p, revision: null, pinned: false, promoted: false, published: null };
   }
-  if (decision !== "approve") throw new SkillCatalogError(`decision must be approve or reject`);
+  if (decision !== "approve") throw new SkillCatalogError("decision must be approve or reject");
   const skill = getSkill(proposal.slug);
   let revision = null;
   let pinned = false;
   let promoted = false;
+  let published = null;
   if (proposal.kind === "promote") {
-    promoted = promoteSkillToOrg(proposal.slug).promoted;
-  } else {
+    if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
+    if (skill.visibility === "personal") {
+      setSkillVisibility(skill.slug, "org");
+      promoted = true;
+      published = await publishQuietly({ slug: skill.slug, actor: decidedBy });
+    } else {
+      promoted = grantSkillsToOrg([skill.slug]).added.length > 0;
+    }
+  } else if (proposal.kind === "change") {
     const merged = mergeSkillFiles(skill ? currentFilesOf(skill) : [], proposal.files);
     const r = putSkillRevision({
       slug: skill?.slug || proposal.slug,
@@ -183,8 +257,9 @@ export function decideSkillProposal(id, { decision, decidedBy = "", note = "" } 
       pinSkill(skill.slug, revision.revisionNo);
       pinned = true;
     }
+    if (revision && (skill?.ownerKind === "local" || !skill)) published = await publishQuietly({ slug: r.skill.slug, revisionId: revision.id, actor: decidedBy });
   }
   const p = decideProposal(id, { status: "approved", decidedBy, note, revisionId: revision?.id ?? null });
   logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "approved", revision: revision?.revisionNo, pinned, promoted });
-  return { proposal: p, revision, pinned, promoted };
+  return { proposal: p, revision, pinned, promoted, published };
 }

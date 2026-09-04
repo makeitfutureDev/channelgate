@@ -27,8 +27,9 @@ import {
   upsertTemplate,
   deleteTemplate,
   listProposals,
-  recordSourceSync,
   usageCountsBySlug,
+  setSkillVisibility,
+  VISIBILITIES,
   catalogStats,
   SOURCE_KINDS,
   SOURCE_MODES,
@@ -38,11 +39,13 @@ import { fileToApi, SkillFileError } from "../../gateway/skills/files.js";
 import { resolveSkillProfile } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, applyTemplateToChannel, templateSummary } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
-import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel } from "../../gateway/skills/authoring.js";
-import { importSkillTree, importHostSkillFolders } from "../../gateway/skills/import-folder.js";
+import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, revokeSkillsFromOrg } from "../../gateway/skills/authoring.js";
+import { importHostSkillFolders } from "../../gateway/skills/import-folder.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
+import { publishRevision, publishTarget, publishSource } from "../../gateway/skills/publish.js";
+import { createAccessToken, listAccessTokens, revokeAccessToken, deleteAccessToken, TOKEN_SCOPES } from "../../gateway/skills/tokens.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
-import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsGithubToken } from "../../config/settings.js";
+import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsGithubToken, getSkillsWebhookSecret, getPublicUrl } from "../../config/settings.js";
 import { getChannelMeta, listChannels } from "../../config/store.js";
 import { skillSourceDirs } from "../../gateway/folders.js";
 import { logEvent } from "../../util/logger.js";
@@ -70,16 +73,6 @@ function skillToApi(skill, usage = null) {
   };
 }
 
-// A folder source imports the directory the way git sync imports a tarball, and records the
-// same last-sync state on the source row so the UI shows when it ran and what it found.
-async function syncFolderSource(source) {
-  const result = await importSkillTree(source.url, { ownerKind: "git", sourceId: source.id, sourceRef: source.url, status: source.mode === "auto" ? "active" : "staged" });
-  const stats = { discovered: result.presentSlugs.length + result.conflicts.length, created: result.imported.filter((x) => x.created).length, updated: result.imported.filter((x) => !x.created).length, staged: source.mode === "auto" ? 0 : result.imported.length, unchanged: result.unchanged.length, conflicts: result.conflicts, errors: result.errors };
-  const ok = result.errors.length === 0;
-  recordSourceSync(source.id, { ok, ref: "", error: ok ? "" : result.errors.map((e) => `${e.slug}: ${e.error}`).join("; "), stats });
-  return { ok, ...stats, ...result };
-}
-
 function channelGrants(slug) {
   return getChannelMeta(slug).then((meta) => (meta ? resolveAccessGrants({ organization: getOrgAccessGrants(), channel: meta }) : null));
 }
@@ -100,7 +93,14 @@ export function createSkillsRouter() {
         syncIntervalMinutes: getSkillsSyncIntervalMinutes(),
         contextWarnTokens: getSkillsContextWarnTokens(),
         hasGithubToken: Boolean(getSkillsGithubToken()),
+        hasWebhookSecret: Boolean(getSkillsWebhookSecret()),
+        webhookUrl: getPublicUrl() ? `${getPublicUrl()}/api/skills/webhook/github` : "",
+        mcpUrl: getPublicUrl() ? `${getPublicUrl()}/mcp/skills` : "",
+        publish: publishTarget(),
+        publishSourceId: publishSource()?.id ?? null,
       },
+      tokens: listAccessTokens(),
+      orgSkills: getOrgAccessGrants().skills || [],
     });
   }));
 
@@ -144,11 +144,11 @@ export function createSkillsRouter() {
     const files = Array.isArray(body.files) ? body.files : [];
     const existing = body.slug ? getSkill(body.slug) : null;
     if (existing && !existing.deleted) {
-      const r = updateLocalSkill({ skill: existing, files, remove: body.remove || [], note: body.note || "", createdBy: ADMIN_UI });
-      return res.json({ ok: true, changed: r.changed, skill: skillToApi(r.skill), revision: r.revision });
+      const r = await updateLocalSkill({ skill: existing, files, remove: body.remove || [], note: body.note || "", createdBy: ADMIN_UI, publish: body.publish !== false });
+      return res.json({ ok: true, changed: r.changed, skill: skillToApi(r.skill), revision: r.revision, published: r.published });
     }
-    const r = await createLocalSkill({ slug: body.slug || "", files, note: body.note || "", createdBy: ADMIN_UI });
-    res.status(201).json({ ok: true, created: r.created, skill: skillToApi(r.skill), revision: r.revision });
+    const r = await createLocalSkill({ slug: body.slug || "", files, note: body.note || "", createdBy: ADMIN_UI, personal: body.personal === true, publish: body.publish !== false });
+    res.status(201).json({ ok: true, created: r.created, skill: skillToApi(r.skill), revision: r.revision, published: r.published });
   }));
 
   router.delete("/skills/catalog/:slug", guard(async (req, res) => {
@@ -164,6 +164,18 @@ export function createSkillsRouter() {
     if (!skill) return res.status(404).json({ error: "skill not found" });
     restoreSkill(skill.slug);
     res.json({ ok: true, skill: skillToApi(getSkill(skill.slug)) });
+  }));
+
+  router.post("/skills/catalog/:slug/visibility", guard(async (req, res) => {
+    const visibility = String(req.body?.visibility || "");
+    if (!VISIBILITIES.includes(visibility)) return res.status(400).json({ error: `visibility must be one of ${VISIBILITIES.join(", ")}` });
+    res.json({ ok: true, skill: skillToApi(setSkillVisibility(req.params.slug, visibility)) });
+  }));
+
+  router.post("/skills/catalog/:slug/publish", guard(async (req, res) => {
+    const skill = getSkill(req.params.slug);
+    if (!skill) return res.status(404).json({ error: "skill not found" });
+    res.json({ ok: true, result: await publishRevision({ slug: skill.slug, actor: ADMIN_UI }) });
   }));
 
   router.post("/skills/catalog/:slug/pin", guard(async (req, res) => {
@@ -201,10 +213,10 @@ export function createSkillsRouter() {
     const b = req.body || {};
     if (!SOURCE_KINDS.includes(b.kind)) return res.status(400).json({ error: `kind must be one of ${SOURCE_KINDS.join(", ")}` });
     if (b.mode && !SOURCE_MODES.includes(b.mode)) return res.status(400).json({ error: `mode must be one of ${SOURCE_MODES.join(", ")}` });
-    const source = addSource({ kind: b.kind, label: b.label || "", url: b.url, ref: b.ref || "", subpath: b.subpath || "", pinnedRef: b.pinnedRef || "", mode: b.mode || "review", enabled: b.enabled !== false, createdBy: ADMIN_UI });
+    const source = addSource({ kind: b.kind, label: b.label || "", url: b.url, ref: b.ref || "", subpath: b.subpath || "", pinnedRef: b.pinnedRef || "", mode: b.mode || "review", enabled: b.enabled !== false, secret: typeof b.secret === "string" ? b.secret : "", createdBy: ADMIN_UI });
     logEvent("skill_source_added", { source: source.id, kind: source.kind, author: ADMIN_UI });
     let sync = null;
-    if (b.syncNow !== false) sync = source.kind === "git" ? await syncOneSource(source.id, { log: () => {} }) : await syncFolderSource(source);
+    if (b.syncNow !== false) sync = await syncOneSource(source.id, { log: () => {} });
     res.status(201).json({ ok: true, source: getSource(source.id), sync });
   }));
 
@@ -213,6 +225,8 @@ export function createSkillsRouter() {
     const patch = {};
     for (const k of ["label", "url", "ref", "subpath", "pinnedRef", "mode"]) if (typeof b[k] === "string") patch[k] = b[k];
     if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (typeof b.secret === "string" && b.secret) patch.secret = b.secret;
+    if (b.clearSecret === true) patch.clearSecret = true;
     res.json({ ok: true, source: updateSource(Number(req.params.id), patch) });
   }));
 
@@ -225,7 +239,7 @@ export function createSkillsRouter() {
   router.post("/skills/sources/:id/sync", guard(async (req, res) => {
     const source = getSource(Number(req.params.id));
     if (!source) return res.status(404).json({ error: "source not found" });
-    const result = source.kind === "git" ? await syncOneSource(source.id, { log: () => {} }) : await syncFolderSource(source);
+    const result = await syncOneSource(source.id, { log: () => {} });
     res.json({ ok: true, result, source: getSource(source.id) });
   }));
 
@@ -321,11 +335,44 @@ export function createSkillsRouter() {
   }));
 
   router.post("/skills/proposals/:id/approve", guard(async (req, res) => {
-    res.json({ ok: true, ...decideSkillProposal(Number(req.params.id), { decision: "approve", decidedBy: ADMIN_UI, note: String(req.body?.note || "") }) });
+    res.json({ ok: true, ...(await decideSkillProposal(Number(req.params.id), { decision: "approve", decidedBy: ADMIN_UI, note: String(req.body?.note || "") })) });
   }));
 
   router.post("/skills/proposals/:id/reject", guard(async (req, res) => {
-    res.json({ ok: true, ...decideSkillProposal(Number(req.params.id), { decision: "reject", decidedBy: ADMIN_UI, note: String(req.body?.note || "") }) });
+    res.json({ ok: true, ...(await decideSkillProposal(Number(req.params.id), { decision: "reject", decidedBy: ADMIN_UI, note: String(req.body?.note || "") })) });
+  }));
+
+  // ── Organization tier ─────────────────────────────────────────────────────────────────────
+  router.post("/skills/org/grant", guard(async (req, res) => {
+    const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
+    if (!slugs.length) return res.status(400).json({ error: "slugs is required" });
+    res.json({ ok: true, ...grantSkillsToOrg(slugs) });
+  }));
+
+  router.post("/skills/org/revoke", guard(async (req, res) => {
+    const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
+    if (!slugs.length) return res.status(400).json({ error: "slugs is required" });
+    res.json({ ok: true, ...revokeSkillsFromOrg(slugs) });
+  }));
+
+  // ── Access tokens for /mcp/skills ─────────────────────────────────────────────────────────
+  router.get("/skills/tokens", guard(async (_req, res) => res.json({ tokens: listAccessTokens(), scopes: TOKEN_SCOPES })));
+
+  router.post("/skills/tokens", guard(async (req, res) => {
+    const { token, record } = createAccessToken({ name: req.body?.name, scopes: req.body?.scopes || ["read"], createdBy: ADMIN_UI });
+    logEvent("skill_token_created", { token: record.id, scopes: record.scopes, author: ADMIN_UI });
+    // The only response that ever carries the value.
+    res.status(201).json({ ok: true, token, record });
+  }));
+
+  router.post("/skills/tokens/:id/revoke", guard(async (req, res) => {
+    const record = revokeAccessToken(Number(req.params.id));
+    logEvent("skill_token_revoked", { token: record.id, author: ADMIN_UI });
+    res.json({ ok: true, record });
+  }));
+
+  router.delete("/skills/tokens/:id", guard(async (req, res) => {
+    res.json({ ok: deleteAccessToken(Number(req.params.id)) });
   }));
 
   return router;

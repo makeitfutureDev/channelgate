@@ -90,22 +90,20 @@ export async function resolveRunUserIdentity({
   untrustedPrincipal = false,
   needsApproval = false,
   loadComposioToken = async () => "",
-  loadSkillsToken = async () => "",
   loadToolboxToken = async () => "",
   loadIsAdmin = async () => false,
   loadIsApproved = async () => false,
 } = {}) {
   if (untrustedPrincipal) {
-    return { composioToken: "", skillsToken: "", toolboxToken: "", isAdmin: false, isApproved: false };
+    return { composioToken: "", toolboxToken: "", isAdmin: false, isApproved: false };
   }
-  const [composioToken, skillsToken, toolboxToken, isAdmin, isApproved] = await Promise.all([
+  const [composioToken, toolboxToken, isAdmin, isApproved] = await Promise.all([
     loadComposioToken(authorId),
-    loadSkillsToken(authorId),
     loadToolboxToken(authorId),
     loadIsAdmin(authorId),
     needsApproval ? loadIsApproved(authorId) : false,
   ]);
-  return { composioToken, skillsToken, toolboxToken, isAdmin: Boolean(isAdmin), isApproved: Boolean(isApproved) };
+  return { composioToken, toolboxToken, isAdmin: Boolean(isAdmin), isApproved: Boolean(isApproved) };
 }
 
 export function userOnlySkillGrants({ shared = {}, effective = {} } = {}) {
