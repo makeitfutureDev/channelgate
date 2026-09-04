@@ -460,6 +460,25 @@ async function notifyAdminsScopes(client, missing) {
   await logEvent("scope_check_notified", { admins: sent, missing: missing.join(",") });
 }
 
+// A reply footer belongs to the requester who caused that reply, but gateway admins must still
+// be able to inspect its workspace files. Everyone else remains bound to their own controls.
+export function canOpenMessageFileButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
+  return Boolean(clickerId && (clickerId === ownerId || clickerIsAdmin));
+}
+
+// Slack does not infer the source thread for an ephemeral posted from a Block Kit action. Carry
+// the thread encoded into the button (falling back to the action's message envelope) explicitly.
+export function fileButtonNoticePayload(body, command, clicker, text) {
+  const channel = body?.channel?.id || command?.c || "";
+  const threadTs = command?.t || body?.message?.thread_ts || body?.message?.ts || "";
+  return {
+    channel,
+    user: clicker,
+    ...(threadTs ? { thread_ts: threadTs } : {}),
+    text,
+  };
+}
+
 async function connectAndWire(app) {
   const auth = await app.client.auth.test();
   const botUserId = auth.user_id;
@@ -488,7 +507,10 @@ async function connectAndWire(app) {
     const command = parseFileActionValue(action?.value);
     try {
       if (command.o === "open" || command.o === "open_file") {
-        if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This file explorer button isn't for you.");
+        const clickerIsAdmin = clicker && command.u !== clicker ? await isAdmin(clicker) : false;
+        if (!canOpenMessageFileButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin }) || !body?.trigger_id) {
+          throw new Error("This file explorer button isn't for you.");
+        }
         await openFileExplorer(client, body.trigger_id, {
           channelId: command.c,
           userId: clicker,
@@ -597,8 +619,8 @@ async function connectAndWire(app) {
       console.warn(`[slack] file explorer error: ${e.message}`);
       if (body?.view?.id) {
         await updateFileExplorerView(client, body, fileExplorerErrorView(e.message)).catch(() => {});
-      } else if (body?.channel?.id && clicker) {
-        await client.chat.postEphemeral({ channel: body.channel.id, user: clicker, text: e.message }).catch(() => {});
+      } else if ((body?.channel?.id || command?.c) && clicker) {
+        await client.chat.postEphemeral(fileButtonNoticePayload(body, command, clicker, e.message)).catch(() => {});
       }
     }
   };

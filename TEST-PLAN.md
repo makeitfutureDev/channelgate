@@ -1235,6 +1235,9 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [x] Interactive run footers show `💻` and `📂` as adjacent actions; the Files value is bound to
       the current requester/channel/thread, native-stream and classic fallback trailers match, and
       clicking it opens the explorer without another AI turn.
+- [x] Unit (`test/file-button-actions.test.js`): message file buttons accept the originating user
+      or a gateway admin, still reject another ordinary user, and all action notices carry the
+      button's source thread (with the Slack message envelope as an older-control fallback).
 - [x] Unit (`test/review-file-buttons.test.js`, `test/slack-progress.test.js`): final answers naming
       one or several existing confined files produce deduplicated requester-bound direct-preview
       buttons (maximum five) in mention order. Inline absolute paths, legacy Markdown paths,

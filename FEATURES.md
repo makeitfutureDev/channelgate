@@ -201,14 +201,17 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
   *Browse channel files* message shortcut opens it for a selected thread, typed `@bot /files` posts
   an ephemeral *Open files* button for thread-aware use, and every interactive run footer carries a
-  requester-bound `📂` button beside `💻` for one-click access. When an agent names up to five
+  requester-bound `📂` button beside `💻` for one-click access; gateway admins may also open a
+  control attached to another user's bot reply. When an agent names up to five
   existing files inside its effective working folder for review, the same footer adds deduplicated
   `📄 filename` buttons in mention order. A named path may be absolute or written relative to the
   working folder — the form an agent inside a gated channel folder actually uses, and the one that
   keeps the host's home directory out of the Slack message. Relative references resolve against the
   run cwd before the same realpath confinement check, and must carry a separator or an extension,
   so ordinary inline code (`main`, `npm test`) and URLs never become controls. Each is bound to the requester/channel/thread and opens
-  the existing explorer directly on the exact file preview. Every sibling footer control carries a
+  the existing explorer directly on the exact file preview. Button notices are ephemeral to the
+  clicker and explicitly remain in the source thread instead of leaking into the channel timeline.
+  Every sibling footer control carries a
   unique registered action id, so one or many review targets remain valid Block Kit; encoded spaces
   and source-line suffixes are accepted, while missing files, directories, malformed paths, and
   realpath escapes produce no control. The injected Slack writing guide makes the
