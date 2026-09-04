@@ -23,6 +23,7 @@ import {
   getDmTemplates,
   CHANNEL_ACCESS_MODES,
   MODEL_CHANGE_ACCESS_MODES,
+  ENGINE_FALLBACK_MODES,
   DEFAULT_CODEX_RATES,
   DRIVE_SYNC_CONFLICTS,
   COMPOSIO_MODES,
@@ -227,6 +228,7 @@ export function createSettingsRouter({
       // write the canonical one so the two can never disagree on disk.
       if (typeof body.engineFallback === "boolean") patch.engineFallback = body.engineFallback;
       else if (typeof body.codexFallback === "boolean") patch.engineFallback = body.codexFallback;
+      if (typeof body.engineFallbackMode === "string" && ENGINE_FALLBACK_MODES.includes(body.engineFallbackMode)) patch.engineFallbackMode = body.engineFallbackMode;
       if (typeof body.showMessageCost === "boolean") patch.showMessageCost = body.showMessageCost;
       if (typeof body.whisperEnabled === "boolean") patch.whisperEnabled = body.whisperEnabled;
       // ── Container runtime ───────────────────────────────────────────────────

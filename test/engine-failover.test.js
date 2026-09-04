@@ -129,6 +129,7 @@ test("the failover toggle honors the pre-rename settings key", () => {
   const api = settingsForApi();
   assert.equal(api.engineFallback, true);
   assert.equal(api.codexFallback, true, "the legacy key keeps reporting the same value");
+  assert.equal(api.engineFallbackMode, "auto", "the mode is reported beside the toggle");
 });
 
 // ── The user-facing dead end ───────────────────────────────────────────────────

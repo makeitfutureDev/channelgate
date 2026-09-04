@@ -12,13 +12,21 @@ export const BUSY_THREAD_STEER_ACTION = "cg_busy_thread_steer";
 export const BUSY_THREAD_QUEUE_ACTION = "cg_busy_thread_queue";
 export const BUSY_THREAD_CANCEL_ACTION = "cg_busy_thread_cancel";
 
-export function createBusyThreadChoiceStore({ ttlMs = 10 * 60 * 1000, maxEntries = 1000, now = Date.now } = {}) {
+// One durable, expiring store of "a Slack message is waiting on a button" records, keyed by the
+// KIND of question asked: the busy-thread card (steer / queue / cancel) and the harness-switch card
+// (src/slack/engine-switch-choice.js) share the table and the TTL but never see each other's rows.
+// A record with no kind is a busy-thread one (rows written before kinds existed).
+export const BUSY_THREAD_CHOICE_KIND = "busy_thread";
+const kindOf = (record) => record?.kind || BUSY_THREAD_CHOICE_KIND;
+
+export function createBusyThreadChoiceStore({ ttlMs = 10 * 60 * 1000, maxEntries = 1000, now = Date.now, kind = BUSY_THREAD_CHOICE_KIND } = {}) {
   const claimed = new Set();
   const limit = Math.max(1, Number(maxEntries) || 1);
+  const mine = () => listPendingRunChoices().filter((record) => kindOf(record) === kind);
 
   const sweep = () => {
     const cutoff = now() - ttlMs;
-    for (const record of listPendingRunChoices()) {
+    for (const record of mine()) {
       if ((record.choiceCreatedAt || 0) > cutoff) continue;
       clearPendingRunChoice(record.id);
       claimed.delete(record.id);
@@ -28,7 +36,7 @@ export function createBusyThreadChoiceStore({ ttlMs = 10 * 60 * 1000, maxEntries
   return {
     create(record) {
       sweep();
-      const pending = listPendingRunChoices();
+      const pending = mine();
       for (let index = 0; index <= pending.length - limit; index++) {
         clearPendingRunChoice(pending[index].id);
         claimed.delete(pending[index].id);
@@ -37,6 +45,7 @@ export function createBusyThreadChoiceStore({ ttlMs = 10 * 60 * 1000, maxEntries
       const event = record?.event || {};
       const saved = {
         ...record,
+        kind,
         channelId: event.channel || "",
         threadKey: event.thread_ts || event.ts || "",
         authorId: event.user || "",
@@ -49,7 +58,7 @@ export function createBusyThreadChoiceStore({ ttlMs = 10 * 60 * 1000, maxEntries
       sweep();
       id = String(id || "");
       const record = getPendingRunChoice(id);
-      if (!record) return { ok: false, reason: "expired" };
+      if (!record || kindOf(record) !== kind) return { ok: false, reason: "expired" };
       if (!userId || record.event?.user !== userId) return { ok: false, reason: "owner" };
       if (channelId && record.event?.channel !== channelId) return { ok: false, reason: "channel" };
       if (claimed.has(id)) return { ok: false, reason: "claimed" };
@@ -74,11 +83,11 @@ export function createBusyThreadChoiceStore({ ttlMs = 10 * 60 * 1000, maxEntries
     pendingFor(channelId, ts) {
       if (!channelId || !ts) return null;
       sweep();
-      return listPendingRunChoices().find((rec) => rec?.event?.channel === channelId && rec?.event?.ts === ts) || null;
+      return mine().find((rec) => rec?.event?.channel === channelId && rec?.event?.ts === ts) || null;
     },
     size() {
       sweep();
-      return listPendingRunChoices().length;
+      return mine().length;
     },
   };
 }

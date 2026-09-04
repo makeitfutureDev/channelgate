@@ -32,7 +32,7 @@ import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser } from "../gateway/followups.js";
 
-import { resolveSlackConfig, getProgressView, getContextWindow, getEngine, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled } from "../config/settings.js";
+import { resolveSlackConfig, getProgressView, getContextWindow, getEngine, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode } from "../config/settings.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
 import { hydrateSlackMessage } from "./attachments.js";
@@ -55,7 +55,8 @@ import { ensureRealDir, writeNoFollow } from "../gateway/safe-fs.js";
 
 import { buildResumeCommand, resumeButton, footerButtons, footerText } from "./footer.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
-import { busyThreadChoiceBlocks, busyThreadChoices, steerActiveRun } from "./busy-thread-choice.js";
+import { busyThreadChoiceBlocks, busyThreadChoices, steerActiveRun, BUSY_THREAD_CHOICE_KIND } from "./busy-thread-choice.js";
+import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText } from "./engine-switch-choice.js";
 
 // In-flight runs by "<slug>::<threadKey>". The queue serializes turns per thread — a second
 // message in the same thread waits FIFO behind the running one instead of racing it in the same
@@ -119,14 +120,19 @@ export async function stopRunsInChannel(client, channelId, slug, byUser, threadK
   // a burst of pending cards produces one notice instead of a rate-limit-amplifying message storm.
   const pendingByThread = new Map();
   for (const pending of pendingChoices) {
-    pendingByThread.set(pending.threadKey, (pendingByThread.get(pending.threadKey) || 0) + 1);
+    const kind = pending.kind || BUSY_THREAD_CHOICE_KIND;
+    const key = `${pending.threadKey}\n${kind}`;
+    pendingByThread.set(key, (pendingByThread.get(key) || 0) + 1);
   }
-  for (const [pendingThread, count] of pendingByThread) {
-    const noun = count === 1 ? "message choice" : "message choices";
+  for (const [key, count] of pendingByThread) {
+    const [pendingThread, kind] = key.split("\n");
+    const noun = kind === BUSY_THREAD_CHOICE_KIND
+      ? `busy-thread ${count === 1 ? "message choice" : "message choices"}`
+      : `harness-switch ${count === 1 ? "prompt" : "prompts"}`;
     await client.chat.postMessage({
       channel: channelId,
       thread_ts: pendingThread,
-      text: `🛑 Discarded ${count} pending busy-thread ${noun}.`,
+      text: `🛑 Discarded ${count} pending ${noun}.`,
     }).catch(() => {});
   }
 
@@ -555,7 +561,11 @@ async function ensureUserKnown(client, userId) {
   // Core message processing, shared by the `message` event and the 🤖 reaction (which treats a
   // reacted message as if the bot had been mentioned). `bypassMention` skips the channel mention
   // gate — the reaction itself is the mention.
-export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null } = {}) {
+// `engineChoice` / `engineChoiceSwitch` / `engineChoiceId` / `onEngineChoiceAccepted`: a click on the
+// harness-switch card (src/slack/engine-switch-choice.js) re-entering with the original event —
+// run it on `engineChoice`, pin the thread there when `engineChoiceSwitch`, and hand the pending
+// row over exactly like a busy-thread choice.
+export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null } = {}) {
   try {
     if (isIgnorable(event, botUserId, getTrustedBotApps())) return;
     // A message without a human author (e.g. a trusted-bot post carrying no `user`) can't be
@@ -899,7 +909,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // event in a bounded, expiring durable store and ask its author what to do. The action handler
     // re-enters this pipeline with busyChoice="steer" or "queue". No persistent thread setting
     // changes and no attachment download happens until that choice is made.
-    const busyTarget = !busyChoice && !forceQueue ? runQueue.activeHandle(runKey) : null;
+    // A harness-choice re-entry never asks again: if the thread got busy meanwhile, it queues.
+    const busyTarget = !busyChoice && !forceQueue && !engineChoiceId ? runQueue.activeHandle(runKey) : null;
     if (busyTarget) {
       // Never ask about a message the gateway is ALREADY handling. Slack redelivers envelopes it
       // never saw acked — after a restart both in-memory dedupes (event id, message trigger) are
@@ -939,6 +950,16 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // stamp), and the session-stamp comparison after the directive blocks (covers switches made
     // out-of-band — the /model wizard, the admin UI, a flipped gateway default).
     let engineSwitched = false;
+    // A harness-switch card click: the person chose where this message runs. "Switch" pins the
+    // thread there (the same per-thread choice the `claude` / `codex` directive makes); "try
+    // again" leaves the thread as it is. Any engine directive in the text was already applied
+    // when the message first ran, so it is stripped below but not re-applied over this choice.
+    if (engineChoice && ENGINE_IDS.includes(engineChoice) && engineChoiceSwitch) {
+      engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== engineChoice;
+      await setThreadEngine(entry.slug, threadKey, engineChoice);
+      if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), engineChoice)) await setThreadModel(entry.slug, threadKey, "");
+      if (!effortBelongsToEngine(await getThreadEffort(entry.slug, threadKey), engineChoice)) await setThreadEffort(entry.slug, threadKey, "");
+    }
     // Engine directive: pick the engine for THIS thread. Two forms — (1) anchored: the message
     // STARTS with "claude"/"codex" ("@bot codex build the feature"); (2) an explicit mid-sentence
     // switch phrase ("try again with codex", "switch to codex", "use claude") — a switch verb
@@ -957,12 +978,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       }
       if (anchored || phrase) {
         const eng = (anchored ? anchored[1] : phrase[1]).toLowerCase();
-        engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== eng;
-        await setThreadEngine(entry.slug, threadKey, eng);
-        // A thread model/effort pinned by the /model wizard is engine-specific — switching the
-        // thread's harness drops whatever doesn't belong to the new one (mirrors the wizard).
-        if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), eng)) await setThreadModel(entry.slug, threadKey, "");
-        if (!effortBelongsToEngine(await getThreadEffort(entry.slug, threadKey), eng)) await setThreadEffort(entry.slug, threadKey, "");
+        if (!engineChoice) {
+          engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== eng;
+          await setThreadEngine(entry.slug, threadKey, eng);
+          // A thread model/effort pinned by the /model wizard is engine-specific — switching the
+          // thread's harness drops whatever doesn't belong to the new one (mirrors the wizard).
+          if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), eng)) await setThreadModel(entry.slug, threadKey, "");
+          if (!effortBelongsToEngine(await getThreadEffort(entry.slug, threadKey), eng)) await setThreadEffort(entry.slug, threadKey, "");
+        }
         if (anchored) {
           prompt = anchored[2].trim();
           if (!prompt) {
@@ -1174,6 +1197,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     if (busyChoiceId) {
       const accepted = onBusyChoiceAccepted?.({ runId, rec: acceptedRun });
       if (!accepted) throw new Error("This busy-thread choice is no longer available. Send the message again if it still needs attention.");
+    } else if (engineChoiceId) {
+      const accepted = onEngineChoiceAccepted?.({ runId, rec: acceptedRun });
+      if (!accepted) throw new Error("This harness choice is no longer available. Send the message again if it still needs attention.");
     } else {
       recordActiveRun(runId, acceptedRun);
     }
@@ -1301,6 +1327,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         authorId: event.user,
         workspaceId: teamId,
         origin: "slack_foreground", // the only escalatable origin: a watched, Slack-authenticated turn
+        // A watched Slack thread is the one place a failover can ASK (Settings → engineFallbackMode);
+        // every other origin runs with the automatic default.
+        fallbackPolicy: getEngineFallbackMode(),
 
         text: textForRun,
         threadKey,
@@ -1439,6 +1468,38 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // replays it instead of surfacing a transient shutdown error.
       } else {
         console.error(`[slack] run failed in ${entry.slug}:`, err.message);
+        // A replay-safe provider failure the orchestrator left to the PERSON (Settings →
+        // engineFallbackMode = "ask", or both harnesses failed): post the choice card instead of
+        // the bare error line. Nothing ran for the message; the click re-runs it.
+        const ask = err?.details?.askFallback;
+        if (ask?.to) {
+          const record = {
+            event,
+            options: { botUserId, teamId, bypassMention, activeViewContext },
+            ask: {
+              failedEngine: err.details.engine || "",
+              otherEngine: ask.to,
+              kind: ask.kind || "",
+              transientRetries: Number(err.details.transientRetries) || 0,
+              bothFailed: Boolean(ask.bothFailed),
+              fallbackError: String(err.details.fallbackError || "").slice(0, 300),
+            },
+          };
+          const choiceId = engineSwitchChoices.create(record);
+          try {
+            await client.chat.postMessage({
+              channel: event.channel,
+              thread_ts: threadKey,
+              text: engineSwitchChoiceText(record.ask),
+              blocks: engineSwitchChoiceBlocks(choiceId, record.ask),
+            });
+          } catch (error) {
+            engineSwitchChoices.discard(choiceId);
+            throw error;
+          }
+          markTerminal();
+          await logEvent("run_ask_switch", { channel: event.channel, author: event.user, slug: entry.slug, threadKey, engine: record.ask.failedEngine, to: ask.to, kind: record.ask.kind, transientRetries: record.ask.transientRetries, bothFailed: record.ask.bothFailed, error: String(err.message).slice(0, 300) });
+        } else {
         // Process-death errors (stall watchdog, crashed warm session) leave the thread's session
         // intact — work already streamed is on disk and the next message resumes it. Say so.
         const resumable = Boolean(runDeathRecovery(err));
@@ -1454,6 +1515,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // fail the error path; the module itself rate-limits and refuses recursion.
         maybeDiagnoseRunError({ client, err, channelId: event.channel, slug: entry.slug, threadKey, authorId: event.user })
           .catch((e) => console.warn("[diagnosis] failed:", e.message));
+        }
       }
     } finally {
       // Per-turn terminal state wins over the global shutdown phase: a delivered answer, reported

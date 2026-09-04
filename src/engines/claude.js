@@ -338,6 +338,7 @@ export async function runClaude({
           // streamed to the thread (a replay would append a second answer under the first half).
           replaySafe: Boolean(providerError) && stream.toolUseCount === 0 && !stream.text.trim(),
           toolUseCount: stream.toolUseCount,
+          requestedModel: model, // the same-engine model retry replays only when THIS is the rejected pick
         }));
         return;
       }

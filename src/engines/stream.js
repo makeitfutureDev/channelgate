@@ -40,12 +40,18 @@ export function claudeProviderError(event) {
   const detail = claudeEventText(event);
   const combined = `${code} ${detail}`;
   const usageLimited = /(?:rate|usage|session|account|spend|credit|token)[_-]?limit|quota/i.test(combined);
+  // The CLI's own label for a model the provider does not serve ("There's an issue with the
+  // selected model (m). It may not exist or you may not have access to it.") — a rejection the
+  // orchestrator answers with the gateway default model, exactly as it does for Codex.
+  const modelRejected = /model[_ -]?not[_ -]?found/i.test(code) || /issue with the selected model/i.test(combined);
   // `availability` means the provider did not ANSWER (overloaded, 5xx, "server_error") — the one
   // kind the orchestrator replays in place. The CLI prefixes every failure with "API Error: …",
   // including the ones it answers with a plain 4xx (a rejected model, an unknown 400), so the
   // prefix itself proves nothing: only overload / unavailable wording, a server_error label or a
   // 5xx status in the text qualifies. Anything else the labels leave open stays "provider".
-  const kind = usageLimited
+  const kind = modelRejected
+    ? "model_rejected"
+    : usageLimited
     ? "usage_limit"
     : /auth|credential|unauthori[sz]ed/i.test(combined)
       ? "authentication"
@@ -62,6 +68,7 @@ export function claudeProviderError(event) {
                 : "provider";
   const label = {
     usage_limit: "Claude usage limit reached",
+    model_rejected: "Claude provider rejected the model",
     authentication: "Claude authentication failed",
     permission: "Claude provider denied the request",
     invalid_request: "Claude provider rejected the request",

@@ -481,7 +481,15 @@
                     <button type="button" id="reset-channel-runtime" class="dz-btn">Reset all…</button>
                     <span class="saved" id="reset-channel-runtime-saved"></span>
                   </div>
-                  <label class="toggle"><input type="checkbox" id="set-engine-fallback" /> <strong>Automatic failover between harnesses</strong> — when the engine driving a turn hits its usage/session limit or can't authenticate <em>before doing any work</em>, answer with the other enabled harness (either direction) and keep using it for that channel until the failed one recovers. Requires both CLIs set up.</label>
+                  <label class="toggle"><input type="checkbox" id="set-engine-fallback" /> <strong>Automatic failover between harnesses</strong> — when the engine driving a turn hits its usage/session limit, can't authenticate, or its provider stays unavailable through the in-place retries, <em>before doing any work</em>, answer with the other enabled harness (either direction) and keep using it for that channel until the failed one recovers. Requires both CLIs set up.</label>
+              <label class="field">
+                <span>How a failover happens</span>
+                <select id="set-engine-fallback-mode">
+                  <option value="auto">Switch automatically and answer</option>
+                  <option value="ask">Ask in the thread first (buttons: switch / try again)</option>
+                </select>
+                <em class="state">"Ask" posts a message with buttons in the Slack thread and runs nothing until someone clicks; the click re-runs the same message on the chosen harness. Scheduled runs, background agents and API runs cannot be asked and always switch automatically.</em>
+              </label>
                   <label class="toggle"><input type="checkbox" id="set-whisper-enabled" /> Use <strong>local Whisper</strong> for voice notes when installed. When off or unavailable, the gateway uses a completed Slack transcript instead.</label>
                   <label class="field">
                     <span>Warm-session keep-alive (e.g. <code>10m</code>, <code>0</code> to disable)</span>

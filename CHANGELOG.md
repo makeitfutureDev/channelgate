@@ -128,6 +128,15 @@ product overview.
   across unrelated histories, and the updater refuses a diverged checkout by design.
 
 ### Added
+- **Failover after the in-place retries, with a choice of who decides.** A provider that stays
+  unavailable through the transient retries now fails over to the other harness (five-minute
+  cooldown for the channel), and Settings gained *How a failover happens*: `auto` (the silent switch)
+  or `ask` — a card in the Slack thread with *Switch to <other>* / *Try <failed> again* buttons; the
+  click re-runs the original message on the chosen harness (*Switch* pins the thread there). When
+  both harnesses fail the error names both in one sentence and a watched thread gets the same card.
+  The retry pause hands the run slot and container lease back for its length. The same-engine
+  gateway-default-model retry now covers Claude (`model_not_found`) as well as Codex
+  (`src/gateway/run.js`, `src/slack/engine-switch-choice.js`, `src/engines/stream.js`).
 - **Transient provider failures are retried in place.** A 5xx, an "overloaded", a connection
   reset/timeout, or an unexplained 404 from the Codex backend (the 2026-09-03 ChatGPT Codex outage
   failed every turn on both gateways with "404 Not Found: Unknown error" for a few minutes) no

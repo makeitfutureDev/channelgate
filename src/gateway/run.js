@@ -94,6 +94,10 @@ export function effectiveMeta(meta) {
 // them — the 0-in/0-out token guard below is the real safety against a false positive (a genuine
 // answer always does work).
 const LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
+// A provider that stayed unavailable through the in-place retries is an OUTAGE, not a quota: the
+// channel's next turns go straight to the other harness for a few minutes, then try the primary
+// again — long enough to ride out the blip, short enough that the thread comes home.
+const TRANSIENT_COOLDOWN_MS = 5 * 60 * 1000;
 
 // Transient provider failures — a 5xx, "overloaded", a connection reset, or an unexplained 404 from
 // the Codex backend (2026-09-03) — are retried IN PLACE: same engine, same prompt, a short pause in
@@ -669,7 +673,7 @@ function assertRuntimeCanStart() {
   }
 }
 
-export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, sessionId: presetSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "" }) {
+export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, sessionId: presetSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -1256,6 +1260,30 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     }));
   };
 
+  // The global run slot and the container lease this turn holds (acquired below, released in the
+  // finally). Declared here because the retry pause hands both back for its length.
+  let releaseRunSlot = null;
+  let runtimeLease = null;
+  // A retry pause is idle time: nothing is spawned, nothing streams. Give the slot and the lease
+  // back for its length so other channels' turns are not queued behind a sleeping one, then queue
+  // again like a new arrival (reported as run_queued, cancellable). The container may have been
+  // idle-stopped or evicted while unleased, and spawn() does not self-heal, so ensureUp runs again
+  // on the way back (a no-op while it is up; a ~0.2 s announced restart otherwise).
+  const parkForRetry = () => {
+    try { runtimeLease?.release(); } catch { /* never mask the retry */ }
+    runtimeLease = null;
+    const release = releaseRunSlot;
+    releaseRunSlot = null;
+    release?.();
+  };
+  const resumeFromRetry = async () => {
+    releaseRunSlot = await acquireRunSlotWithStatus({ signal, onEvent, origin });
+    if (signal?.aborted) throw Object.assign(new Error("Run aborted while queued"), { name: "AbortError" });
+    assertRuntimeCanStart();
+    runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
+    await bringRuntimeUp();
+  };
+
   // Run one attempt, and retry it in place on a transient, replay-safe provider failure — up to
   // transientRetryAttempts() more times, transientRetryDelayMs() apart, never past a cancel. The
   // result carries `transientRetries` when it took more than one attempt; an error that exhausted
@@ -1294,8 +1322,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         try {
           onEvent?.({ kind: "notice", scope: "gateway", text: `${engineLabel(engineName)} hit a temporary provider error — retrying in ${delayLabel} (${retries}/${maxAttempts})` });
         } catch { /* a status callback must never block a run */ }
+        const yielded = delayMs > 0 && Boolean(releaseRunSlot);
+        if (yielded) parkForRetry();
         await sleepUnlessAborted(delayMs, signal);
         if (signal?.aborted) throw err;
+        if (yielded) await resumeFromRetry(); // re-queued: run_queued if it waits; a cancel while queued aborts
         await beforeRetry?.(retries);
       }
     }
@@ -1362,7 +1393,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const modelPinnedByUser = [threadModel, overrides?.model].some((m) => m && modelBelongsToEngine(m, engine));
   const runtimePinned = enginePinnedByUser || modelPinnedByUser;
   const fallbackEngine = getEngineFallback() && !runtimePinned ? fallbackTargets(engine).find(isEngineEnabled) || "" : "";
-  const fallbackOn = Boolean(fallbackEngine);
+  // `fallbackPolicy` is the caller's word on WHO decides a switch: "auto" (or nothing — every
+  // unattended origin) switches here; "ask" (a watched Slack thread, Settings → engineFallbackMode)
+  // throws the replay-safe failure back with `details.askFallback` so the thread gets a card with
+  // buttons and nothing runs until someone clicks. `canAsk` — a person is watching, so a failure
+  // both harnesses could not answer may also be handed back as a choice.
+  const askFallback = Boolean(fallbackEngine) && fallbackPolicy === "ask";
+  const canAsk = Boolean(fallbackEngine) && (fallbackPolicy === "ask" || fallbackPolicy === "auto");
+  const fallbackOn = Boolean(fallbackEngine) && !askFallback;
   const runFallbackEngine = async (note, failureContext = "a usage/spend limit") => {
     const fallbackAdapter = requireAdapter(fallbackEngine);
     // Same fail-closed check the primary engine gets: an isolated runtime that cannot authenticate
@@ -1491,29 +1529,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     return { ...fallbackResult, loopWakeup, runtimeModel: resolveCurrentModel(fallbackResult), model: fallbackModel || resolveCurrentModel(fallbackResult) };
   };
 
-  // Park for a global run slot. Reports honestly (only if it actually queues) and stays
-  // cancellable, so a stop while queued never burns the slot it was waiting for.
-  let releaseRunSlot = null;
-  let runtimeLease = null;
-  try {
-    releaseRunSlot = await acquireRunSlotWithStatus({ signal, onEvent, origin });
-    // A stop that landed while this turn was parked on the semaphore must win BEFORE any side
-    // effects — the caller already marked the handle aborted and posted "🛑 Stopped.".
-    if (signal?.aborted) throw Object.assign(new Error("Run aborted while queued"), { name: "AbortError" });
-    assertRuntimeCanStart();
-
-    // ── Make the run environment ready ────────────────────────────────────────────────────────
-    // Credentials first: a container with no engine token can never answer, and warming one up to
-    // discover that wastes seconds and leaves the operator reading an engine error instead of the
-    // configuration message. Then the LEASE (so the idle reaper cannot stop the environment out
-    // from under a turn that is about to spawn in it), then ensureUp. Daemon-internal turns never come
-    // through here (they spawn on the local runtime directly), which is why there is no branch.
-    assertRuntimeCredentials(target, engine);
-    runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
-    // A cold start is the one wait in a turn that looks like nothing is happening: the engine has
-    // not spawned, so there is no stream, no tool row, no token. Announce it — but only once it is
-    // slow enough to be worth a line, so a warm channel (the normal case, sub-second) stays quiet.
-    // Same rule as the queue notice: silence that looks like death is the bug this prevents.
+  // Bring the run environment up, announcing the wait only once it is slow enough to be worth a
+  // line. A cold start is the one wait in a turn that looks like nothing is happening: the engine
+  // has not spawned, so there is no stream, no tool row, no token — and a warm channel (the normal
+  // case, sub-second) stays quiet. Same rule as the queue notice: silence that looks like death is
+  // the bug this prevents. Called once per turn, and again after a retry pause handed the lease back.
+  async function bringRuntimeUp() {
     let warmupTimer = null;
     let warmupPosted = false;
     let warmupText = "Warming up the channel container…";
@@ -1544,6 +1565,26 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     } finally {
       if (warmupTimer) clearTimeout(warmupTimer);
     }
+  }
+
+  // Park for a global run slot. Reports honestly (only if it actually queues) and stays
+  // cancellable, so a stop while queued never burns the slot it was waiting for.
+  try {
+    releaseRunSlot = await acquireRunSlotWithStatus({ signal, onEvent, origin });
+    // A stop that landed while this turn was parked on the semaphore must win BEFORE any side
+    // effects — the caller already marked the handle aborted and posted "🛑 Stopped.".
+    if (signal?.aborted) throw Object.assign(new Error("Run aborted while queued"), { name: "AbortError" });
+    assertRuntimeCanStart();
+
+    // ── Make the run environment ready ────────────────────────────────────────────────────────
+    // Credentials first: a container with no engine token can never answer, and warming one up to
+    // discover that wastes seconds and leaves the operator reading an engine error instead of the
+    // configuration message. Then the LEASE (so the idle reaper cannot stop the environment out
+    // from under a turn that is about to spawn in it), then ensureUp. Daemon-internal turns never come
+    // through here (they spawn on the local runtime directly), which is why there is no branch.
+    assertRuntimeCredentials(target, engine);
+    runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
+    await bringRuntimeUp();
 
     // If THIS engine was recently limited in THIS channel (or its credential failed gateway-wide),
     // skip it and use the fallback harness for the cooldown window instead of re-probing it.
@@ -1612,6 +1653,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         });
         try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
         try {
+          // The rejected attempt already consumed a FRESH session's id (see remintFreshSession).
+          await remintFreshSession();
           result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride, defaultModel), { beforeRetry: remintFreshSession });
           model = defaultModel;
           result = {
@@ -1624,32 +1667,56 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           throw err;
         }
       } else {
-        const fallbackKind = fallbackOn ? replaySafeFallbackKind(err, engine) : "";
+        // The failover cases: a replay-safe limit/credential failure, or a transient provider
+        // failure that outlived every in-place retry (`transientRetries` proves the budget was
+        // spent). Same rule for both — nothing of the turn ran — so the other harness may answer.
+        const switchKind = replaySafeFallbackKind(err, engine) || (err?.details?.transientRetries ? transientProviderFailure(err, engine) : "");
+        const fallbackKind = fallbackOn ? switchKind : "";
         // The failure WOULD have been failed over, and wasn't, because the user pinned this
         // runtime. Say so on the error rather than leaving a bare provider message that looks
         // like the gateway simply forgot to fail over.
-        if (!fallbackKind && runtimePinned && replaySafeFallbackKind(err, engine)) {
+        if (!fallbackKind && runtimePinned && switchKind) {
           err.details = { ...(err.details || {}), runtimePinned: true, pinnedEngine: engine, pinnedModel: model || "" };
         }
+        // Ask mode: hand the decision to the person watching the thread. No cooldown is written —
+        // "try again" must be a real re-probe, not a pre-decided switch.
+        if (askFallback && switchKind) {
+          err.details = { ...(err.details || {}), askFallback: { to: fallbackEngine, kind: switchKind } };
+          throw err;
+        }
         if (fallbackKind) {
+          const retries = Number(err?.details?.transientRetries) || 0;
+          const transient = fallbackKind !== "authentication" && fallbackKind !== "usage_limit";
           // An auth failure is a broken CREDENTIAL — shared by every channel on that engine, so its
           // cooldown is gateway-wide. A usage limit is a quota the daemon can't scope any better
-          // than the channel that hit it.
+          // than the channel that hit it. An outage gets the short cooldown.
           if (fallbackKind === "authentication") await rememberAuthFailure(engine);
-          else engineLimitedUntil.set(limitKey, Date.now() + LIMIT_COOLDOWN_MS);
+          else engineLimitedUntil.set(limitKey, Date.now() + (transient ? TRANSIENT_COOLDOWN_MS : LIMIT_COOLDOWN_MS));
           console.warn(`[gateway] replay-safe ${engine} ${fallbackKind} failure in ${entry.slug} — falling back to ${fallbackEngine}`);
           try {
             return await runFallbackEngine(
               fallbackKind === "authentication"
                 ? `⚠️ _${engineLabel(engine)} authentication failed — using ${engineLabel(fallbackEngine)}._\n\n`
-                : `⚠️ _${engineLabel(engine)} hit its usage limit before any tool call — using ${engineLabel(fallbackEngine)}._\n\n`,
+                : transient
+                  ? `⚠️ _${engineLabel(engine)} hit a temporary provider error — retried ${retries}× before giving up — using ${engineLabel(fallbackEngine)}._\n\n`
+                  : `⚠️ _${engineLabel(engine)} hit its usage limit before any tool call — using ${engineLabel(fallbackEngine)}._\n\n`,
               fallbackKind === "authentication"
                 ? "its authentication failed before any tool call"
-                : "it hit a usage limit before any tool call",
+                : transient
+                  ? `its provider stayed unavailable through ${retries} retries, before any tool call`
+                  : "it hit a usage limit before any tool call",
             );
           } catch (fallbackError) {
+            // Both harnesses failed. Keep the original error authoritative (its details drive every
+            // consumer), but say the whole story in one sentence, and — when a person is watching —
+            // hand it back as a choice (try either harness again) instead of a dead end.
             console.warn(`[gateway] ${fallbackEngine} fallback also failed (${fallbackError.message}) — preserving the original ${engine} provider error`);
-            err.details = { ...(err.details || {}), fallbackError: fallbackError.message };
+            err.details = {
+              ...(err.details || {}),
+              fallbackError: fallbackError.message,
+              ...(canAsk ? { askFallback: { to: fallbackEngine, kind: fallbackKind, bothFailed: true } } : {}),
+            };
+            err.message = `${err.message} — ${engineLabel(fallbackEngine)} could not answer either: ${fallbackError.message}`;
             throw err;
           }
         } else if (!fresh && isSessionNotFound(err)) {
@@ -1701,6 +1768,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Same situation, arriving as a zero-token "answer" instead of a thrown error: the engine
     // exited 0 and its reply IS the limit notice. A pinned thread keeps that notice (nothing was
     // switched), but must be told why, or the silence reads as the failover being broken.
+    // Ask mode: the limit-as-answer takes the same card path as a thrown limit — as a replay-safe
+    // error (0 tokens, no tool: the runner proved it did nothing).
+    if (askFallback && isUsageLimited(result)) {
+      throw Object.assign(new Error(`${engineLabel(engine)} usage limit reached: ${String(result.content || "").replace(/\s+/g, " ").trim().slice(0, 300)}`), {
+        details: { engine, providerError: true, providerKind: "usage_limit", replaySafe: true, toolUseCount: 0, askFallback: { to: fallbackEngine, kind: "usage_limit" } },
+      });
+    }
     if (!fallbackOn && runtimePinned && isUsageLimited(result)) {
       result = {
         ...result,

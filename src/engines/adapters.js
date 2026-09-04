@@ -112,7 +112,12 @@ const claude = validateEngineAdapter({
         // refreshed token must retire it or the pool keeps presenting one that is about to die.
         claudeToken: r.claudeTokenFingerprint || "",
       });
-      return runPooled({ key: r.poolKey, cwd: ctx.cwd, args, env: buildClaudeEnv({ extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, oauthToken: claudeOauthToken }), idleMs, target, mcpConfigJson: r.mcpConfigFingerprint || r.mcpConfigJson, dangerouslySkip: r.dangerouslySkip, fingerprintExtra: `${r.model}|${r.effort}|${r.permissionPromptTool}|${isolationFingerprint}`, text: ctx.prompt, turnTimeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent });
+      // The warm process never learns the model it was started with; a provider failure it reports
+      // still needs `requestedModel` for the same-engine model retry (see gateway/run.js).
+      return runPooled({ key: r.poolKey, cwd: ctx.cwd, args, env: buildClaudeEnv({ extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, oauthToken: claudeOauthToken }), idleMs, target, mcpConfigJson: r.mcpConfigFingerprint || r.mcpConfigJson, dangerouslySkip: r.dangerouslySkip, fingerprintExtra: `${r.model}|${r.effort}|${r.permissionPromptTool}|${isolationFingerprint}`, text: ctx.prompt, turnTimeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent }).catch((error) => {
+        if (error?.details?.providerError === true && error.details.requestedModel === undefined) error.details.requestedModel = r.model;
+        throw error;
+      });
     }
     return runClaude({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip, settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent, permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs, instructionFile: r.instructionFile, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, claudeOauthToken });
   },

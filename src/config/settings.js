@@ -259,6 +259,15 @@ export function getEngineFallback() {
 }
 // Deprecated alias — kept so nothing outside this module has to know about the rename.
 export const getCodexFallback = getEngineFallback;
+// HOW a replay-safe failure switches harness: "auto" — the turn is answered by the other harness
+// without asking (today's behaviour); "ask" — the thread gets a message with buttons (switch / try
+// again) and nothing runs until someone clicks. Only a live Slack turn can be asked; every other
+// origin (schedules, background agents, continuations, the API) behaves as "auto".
+export const ENGINE_FALLBACK_MODES = ["auto", "ask"];
+export function getEngineFallbackMode() {
+  const v = getSettings().engineFallbackMode;
+  return ENGINE_FALLBACK_MODES.includes(v) ? v : "auto";
+}
 
 // Dollar cost is still recorded in the usage ledger and exposed through reporting APIs when this
 // display preference is off. Missing stays enabled so existing installations keep today's footer.
@@ -727,6 +736,7 @@ export function settingsForApi() {
     modelChangeAccess: getModelChangeAccess(),
     engineEnabled: getEngineEnabledMap(),
     engineFallback: getEngineFallback(),
+    engineFallbackMode: getEngineFallbackMode(),
     codexFallback: getEngineFallback(), // legacy key — same value, kept for older API clients
 
     showMessageCost: getShowMessageCost(),
