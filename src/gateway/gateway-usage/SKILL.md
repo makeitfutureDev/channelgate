@@ -105,6 +105,7 @@ the tool that does it.
 | Get the user to sign off on a plan / action    | `references/approvals.md`         | `gateway` → `request_approval` |
 | Handle Claude/Codex authentication failures   | `references/administration.md`    | Explain the required host-side login/API-key repair |
 | A file/path outside the working folder seems missing, or host access is needed | `references/administration.md` | Admin access & the container: host paths do not exist in here, for anyone; `~` is this channel's own home, not the operator's; never diagnose host state from inside the container |
+| See, grant or remove skills here, apply a skills template, create/update/propose a skill, see skill usage | `references/skills.md` | `gateway` → `show_channel_skills`, `add_channel_skills`, `apply_skill_template`, `create_skill`, `propose_skill_change`, `skill_usage_report` |
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |
 
 ## Tool identities: the bot, YOUR account, and the requester's account

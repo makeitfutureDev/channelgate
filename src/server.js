@@ -155,6 +155,11 @@ async function main() {
   const lock = acquireSingletonLock(root);
   pruneTerminalApprovalRequests();
   applySettingsToEnv(); // UI-managed settings.json overrides .env
+  // Skills platform (src/gateway/skills): fill the local catalog from the bundled starter library
+  // and the host's skill folders, and seed the built-in channel templates. Never fatal — a turn
+  // runs without a catalog exactly as it did before, on host-folder copies.
+  const { bootSkillsPlatform, startSkillsSync } = await import("./gateway/skills/index.js");
+  await bootSkillsPlatform({ log: (m) => console.log(m) }).catch((e) => console.error("[skills] catalog boot failed (continuing):", e?.message || e));
   // Every boot: 0700 the runtime root and 0600 the credential files (settings.json, users.json,
   // gateway.db + its WAL). They predate this hardening on existing installs, so chmod rather than
   // relying on create-time modes.
@@ -310,6 +315,9 @@ async function main() {
 
   // Cron scheduler: fires saved per-channel jobs (posts results to the channel via Slack).
   startScheduler({ slack });
+
+  // Git skill sources: periodic sync (settings: skillsSyncIntervalMinutes; 0 = off).
+  startSkillsSync({ log: (m) => console.log(m) });
 
   // Opt-in no-response thread nudges (per-channel meta.nudges).
   startNudgeSweep({ slack });

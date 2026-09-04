@@ -135,6 +135,9 @@ export function toolTarget(name, input) {
       return clip(input.description || input.prompt, 60);
     case "TodoWrite":
       return "";
+    case "Skill":
+      // The skill the model invoked — exact usage telemetry keys on it (gateway/skills/usage.js).
+      return clip(input.skill || input.name || input.skill_name || "", 60);
     default:
       return firstStringArg(input);
   }
@@ -411,7 +414,10 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
         const id = String(b.id || "").trim();
         const target = toolTarget(b.name, input);
         if (id) toolCalls.set(id, { name: b.name, target });
-        onEvent?.({ kind: "tool_use", ...(id ? { id } : {}), name: b.name, target });
+        // The full file path rides along for file tools (the target is only the basename): skill
+        // usage capture needs to see `…/skills/<slug>/SKILL.md`.
+        const filePath = typeof input?.file_path === "string" ? input.file_path : "";
+        onEvent?.({ kind: "tool_use", ...(id ? { id } : {}), name: b.name, target, ...(filePath ? { path: filePath } : {}) });
       }
     }
   }

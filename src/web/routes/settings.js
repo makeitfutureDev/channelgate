@@ -194,6 +194,20 @@ export function createSettingsRouter({
       if (typeof body.defaultComposioTokenLabel === "string") patch.defaultComposioTokenLabel = body.defaultComposioTokenLabel.trim();
       if (typeof body.defaultSkillsTokenLabel === "string") patch.defaultSkillsTokenLabel = body.defaultSkillsTokenLabel.trim();
       if (typeof body.defaultToolboxTokenLabel === "string") patch.defaultToolboxTokenLabel = body.defaultToolboxTokenLabel.trim();
+      // Skills platform: the daemon's GitHub token (write-only), the source sync interval and the
+      // context-cost soft cap. Numbers are clamped in the getters; a blank string means "default".
+      if (typeof body.skillsGithubToken === "string" && body.skillsGithubToken.trim()) patch.skillsGithubToken = body.skillsGithubToken.trim();
+      if (body.clearSkillsGithubToken === true) patch.skillsGithubToken = "";
+      if (body.skillsSyncIntervalMinutes !== undefined && body.skillsSyncIntervalMinutes !== "") {
+        const n = Number(body.skillsSyncIntervalMinutes);
+        if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: "skillsSyncIntervalMinutes must be a number of minutes (0 = off)" });
+        patch.skillsSyncIntervalMinutes = Math.min(Math.floor(n), 24 * 60);
+      }
+      if (body.skillsContextWarnTokens !== undefined && body.skillsContextWarnTokens !== "") {
+        const n = Number(body.skillsContextWarnTokens);
+        if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: "skillsContextWarnTokens must be a positive number" });
+        patch.skillsContextWarnTokens = Math.floor(n);
+      }
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))
         patch.accessGrants = cleanAccessGrants(body.accessGrants);
       // Per-harness on/off. Normalized to an explicit boolean per KNOWN engine (an unknown key is

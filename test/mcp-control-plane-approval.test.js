@@ -267,6 +267,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     "set_my_composio_token", "clear_my_composio_token", "set_my_skills_token", "clear_my_skills_token",
     "set_my_toolbox_token", "clear_my_toolbox_token",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
+    // skills platform: grants, templates, catalog writes and admin decisions are persistent state
+    "add_channel_skills", "remove_channel_skills", "apply_skill_template",
+    "create_skill", "update_skill", "decide_skill_proposal", "sync_skill_sources",
   ]);
   const OPEN = new Set([
     // read-only
@@ -285,6 +288,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     // are never approval-gated. A schedule fires with origin "schedule" (cannot escalate — A2), in
     // this channel, as its creator, and stays inspectable/reversible via list_/delete_schedule.
     "create_schedule", "delete_schedule",
+    // skills platform reads/previews; a proposal only queues a review for an admin
+    "list_skills", "show_channel_skills", "list_skill_templates", "preview_skill_template",
+    "get_skill_file", "propose_skill_change", "list_skill_proposals", "skill_usage_report",
   ]);
   await withGateway({}, async (client) => {
     const { tools } = await client.listTools();

@@ -2392,6 +2392,71 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       (<image>)`, names the image, and says neither "unsandboxed" nor "as the daemon user". Both
       still require an admin-tier click, and the Deny refusal follows the same wording.
 
+### Skills platform (Core) — local catalog, profiles, templates, sources, authoring, usage
+
+- [x] Unit: the frontmatter reader handles quoted/folded scalars, block and inline lists, nested
+      maps, comments and `dependencies`/`requires` aliases, keeps the body verbatim and never
+      throws; the file-bundle rules refuse traversal/absolute/backslash/reserved paths and
+      duplicates, require a `SKILL.md`, classify text vs binary, and hash order-independently
+      (`test/skills-platform.test.js`).
+- [x] Unit: the catalog stores lossless revisions, dedupes by content hash, indexes the
+      frontmatter (unmodelled keys survive in `meta`), refuses cross-owner writes as conflicts,
+      stages revisions until approved, pins/rolls back, tombstones on source removal and restores a
+      returning skill without a new revision; removing a source tombstones its skills
+      (`test/skills-platform.test.js`).
+- [x] Unit: the profile resolver pulls `requires` dependencies, reports unknown names, missing
+      dependencies and cycles, estimates always-on context and warns above the soft cap
+      (`test/skills-platform.test.js`).
+- [x] Integration: `enableSkills` materializes real files from the catalog write-on-change
+      (manifest-guarded; nested references, executable scripts), keeps a project-owned folder,
+      replaces a Skills Manager stub, rewrites on a new revision dropping stale files, prunes only
+      managed copies when a grant ends, reports a staged-only skill as missing, and still copies a
+      host-folder skill the catalog does not know (`test/skills-platform.test.js`,
+      `test/folders-skills.test.js`).
+- [x] Integration: host-folder import keeps directory names as slugs (case kept), follows the
+      operator's symlinks, excludes nested skills, tombstones vanished folders and restores
+      returning ones; the bundled starter library imports once as `bundled`
+      (`test/skills-platform.test.js`).
+- [x] Integration: git sync parses plain/ssh/tree URLs, resolves a branch containing `/` against
+      the branch list, reads a synthetic tarball (own tar reader), discovers nested skills with
+      correct file ownership and executable bits, skips a manifest without name/description,
+      stages in review mode and activates in auto mode, tombstones upstream removals keeping
+      revisions, records a failing GitHub call without discarding last-good state, honours a
+      commit pin, and reports a slug held by another owner as a conflict
+      (`test/skills-platform.test.js`).
+- [x] Integration: templates seed once, resolve by category (case-insensitive) and explicit slug,
+      preview add/replace with dependencies, apply a snapshot into channel meta that later template
+      edits do not change (`test/skills-platform.test.js`, `test/skills-admin-api.test.js`).
+- [x] Integration: the usage recorder records Claude's `Skill` tool as exact and a `SKILL.md` read
+      (path, target or shell command) as inferred, dedupes per run, `toolTarget("Skill")` names the
+      skill, and the report lists never-used grants and off-catalog names
+      (`test/skills-platform.test.js`).
+- [x] Integration: authoring creates a local skill granted with its dependencies, refuses an
+      existing slug, merges partial files on update, refuses in-place edits of source-owned skills,
+      files proposals, approves a change into a pinned override that survives the next source
+      revision, rejects with a note, promotes organization-wide, and revokes by name or slug
+      (`test/skills-platform.test.js`).
+- [x] Admin API: catalog create/read/file/update/pin/remove/restore, path rejection (400), a folder
+      source imported in review mode → staged → approved, source validation/duplicates (400/409),
+      mode/enable updates, removal tombstoning, template preview/apply, grant/revoke per
+      conversation, profile and usage endpoints, proposals approve/reject, and the settings fields
+      (clamps 400; the GitHub token never rides a listing and is revealable only via the allowlist)
+      (`test/skills-admin-api.test.js`).
+- [x] Drift tripwires: every skills tool is classified gated/open in the control-plane inventory
+      (`test/mcp-control-plane-approval.test.js`) and present in the lockdown allowlist
+      (`test/folders-settings.test.js`); the Skills admin view has a canonical path
+      (`test/admin-navigation.test.js`).
+- [ ] Live (Claude + Codex): grant a catalog skill to a private test channel, ask for something its
+      description covers, and confirm the skill fires from the materialized folder with no Skills
+      Manager token configured (Claude: exact usage row; Codex: inferred row after it reads
+      `SKILL.md`); `show_channel_skills` shows the tier and context cost.
+- [ ] Live: add a public GitHub source in review mode from the admin UI, see its skills staged,
+      approve one, apply the Development template to a channel and verify the next message
+      materializes the approved skill; switch the source to auto and re-sync (unchanged).
+- [ ] Live: `create_skill` from a channel as a non-admin approved member (approval card), then
+      `propose_skill_change` on a synced skill and approve it in the admin UI → pinned override;
+      `skill_usage_report` after a few turns lists the never-used grants.
+
 ## Security checks
 - [ ] **Retired 2026-09-03 (Linux + containers only):** the sandbox wording — inside the container `~/.ssh` and sibling channel folders do not exist at
       all; the check itself stands. **Filesystem confinement:** inside a channel folder, `claude` cannot read/write outside it

@@ -4,8 +4,13 @@ import { mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile, lstat } fro
 import os from "node:os";
 import path from "node:path";
 
-import { ensureCodexSkillsLink } from "../src/gateway/library-skills.js";
-import { enableSkills } from "../src/gateway/folders.js";
+import { ensureTestEnv } from "./helpers.js";
+
+// The grant materializer resolves names against the skill catalog (SQLite), so the scratch
+// gateway root must be pinned BEFORE folders.js is imported — never the real ~/.channelgate.
+ensureTestEnv();
+const { ensureCodexSkillsLink } = await import("../src/gateway/library-skills.js");
+const { enableSkills } = await import("../src/gateway/folders.js");
 
 async function tempDir(t) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "cg-skills-"));
@@ -75,6 +80,7 @@ test("skill provisioning rejects path-traversal grant names at the filesystem si
 
   const result = await enableSkills(skills, ["../outside", "nested/skill", "nested\\skill"]);
 
-  assert.deepEqual(result, { enabled: [], missing: [] });
+  assert.deepEqual(result.enabled, []);
+  assert.deepEqual(result.missing, []);
   assert.equal(await readFile(path.join(outside, "SKILL.md"), "utf8"), "# Must remain outside grants\n");
 });

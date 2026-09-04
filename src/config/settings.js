@@ -514,6 +514,23 @@ export function getDefaultToolboxToken() {
   return typeof v === "string" ? v : "";
 }
 
+// Skills platform (src/gateway/skills). A GitHub token for private skill repositories and API
+// rate limits — daemon-side only, never in a channel folder or an MCP config; write-only via the
+// admin API. The sync interval in minutes (0 = off) and the always-on context estimate above
+// which a channel profile is flagged (resolve.js).
+export function getSkillsGithubToken() {
+  const v = getSettings().skillsGithubToken;
+  return typeof v === "string" ? v.trim() : "";
+}
+export function getSkillsSyncIntervalMinutes() {
+  const v = Number(getSettings().skillsSyncIntervalMinutes);
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, 24 * 60) : 60;
+}
+export function getSkillsContextWarnTokens() {
+  const v = Number(getSettings().skillsContextWarnTokens);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 6000;
+}
+
 // Organization-wide skill/connector grants. Unlike tokens these are not a fallback: they are the
 // first tier of a live org + channel + user union resolved on every run (access-grants.js).
 export function getOrgAccessGrants() {
@@ -708,6 +725,10 @@ export function settingsForApi() {
     hasDefaultToolboxToken: Boolean(getDefaultToolboxToken()),
     defaultToolboxTokenLast4: last4(getDefaultToolboxToken()),
     defaultToolboxTokenLabel: s.defaultToolboxTokenLabel || "",
+    hasSkillsGithubToken: Boolean(getSkillsGithubToken()),
+    skillsGithubTokenLast4: last4(getSkillsGithubToken()),
+    skillsSyncIntervalMinutes: getSkillsSyncIntervalMinutes(),
+    skillsContextWarnTokens: getSkillsContextWarnTokens(),
     // Google Chat + Teams credentials follow the same write-only rule as the Slack tokens: the
     // listing says whether a value EXISTS and its last four characters, never the value. A
     // service-account key is a private key — only its client_email is echoed, because that is the

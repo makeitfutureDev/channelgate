@@ -1726,6 +1726,82 @@ are retired, bullet by bullet; everything else stands.
   the folder with), and `clear_channel_drive_folder` (admins — unlink/turn off). `src/gateway/drivesync.js`,
   `src/mcp/gateway-server.js`. → TEST-PLAN: Google Drive sync.
 
+## Skills platform (Core) — the local skill catalog
+
+- **The gateway owns skill content.** A SQLite **catalog** (migration 14: `skills`,
+  `skill_revisions`, `skill_revision_files`, `skill_sources`, `skill_templates`, `skill_usage`,
+  `skill_proposals`) holds every skill a conversation can be granted as immutable, content-hashed
+  **revisions** of the exact bytes of every file — `SKILL.md` included, binaries base64-round-
+  tripped, 2 MB/file and 400 files/skill caps, traversal/absolute/reserved paths refused at the
+  boundary (`src/gateway/skills/files.js`). The parsed frontmatter columns (name, description,
+  category, tags, version, `requires`) are a DERIVED index rebuilt from the activated revision
+  (`frontmatter.js` — a YAML-subset reader that never rewrites), so an unmodelled key such as
+  `allowed-tools` is never lost. Ownership is explicit per slug (`bundled` / `folder` / `git` /
+  `local`); a write from another owner is a reported **conflict**, never an overwrite. Removal is a
+  **tombstone** (revisions kept, dependents readable, a returning source restores it).
+  → TEST-PLAN: Skills platform (Core).
+- **Channel profiles without tokens.** The existing organization → conversation → user grant union
+  resolves against the catalog on every message (`resolve.js`): `requires:` dependencies are
+  granted with a skill, missing links, tombstones, staged (unapproved) skills, dependency cycles
+  and near-duplicate trigger descriptions are reported, and the **always-on context** of the
+  profile (each active skill's name + description) is estimated and flagged above a soft cap
+  (`skillsContextWarnTokens`, default 6000). The materializer (`materialize.js`, wired into
+  `enableSkills`) writes the effective revision as REAL files under `.claude/skills/<slug>/`
+  (marker + `.gateway-skill.json` manifest, write-on-change, executables kept 0755), replaces a
+  Skills Manager stub of the same name, never touches a project-owned folder, prunes only what it
+  wrote, and falls back to the pre-catalog host-folder copy for a name the catalog does not know.
+  Claude receives the tree through its plugin, Codex through the `.agents/skills` link — no stub,
+  no mid-turn fetch, no token. → TEST-PLAN: Skills platform (Core).
+- **Bundled + host-folder import at boot** (`import-folder.js`, `index.js`): the starter library in
+  `src/gateway/skills/bundled/` (`skill-authoring`) imports as `bundled`; the operator's
+  `~/.claude/skills`, `~/.agents/skills` and `GATEWAY_SKILL_SOURCES` import as `folder`-owned
+  skills under their directory names (symlinks followed, nested skills excluded), so every stored
+  grant still resolves; a vanished folder tombstones its skill and a returning one restores it.
+  → TEST-PLAN: Skills platform (Core).
+- **GitHub sources** (`git-sync.js`, Skills Manager's tarball sync ported and hardened): one
+  repository per source with optional branch + subfolder (`/tree/<branch>/<path>` links; a branch
+  containing `/` resolves against the real branch list), head resolved via the commits API, the
+  whole repository fetched as ONE tarball (own ustar/pax reader, no dependency), every `SKILL.md`
+  directory a skill with its sibling files (a nested skill owns its own), lossless bytes,
+  **review** mode (default) staging every new/changed revision for an admin vs **auto** mode,
+  commit **pins**, enable/disable, per-source last-sync state + stats + error (never discarding
+  last-good), removals tombstoned, conflicts reported. Runs at boot, on a settings interval
+  (`skillsSyncIntervalMinutes`, default 60, 0 = off), from the admin UI and from chat
+  (`sync_skill_sources`, admins). An optional daemon-side GitHub token (`skillsGithubToken`,
+  write-only, revealable only through the secrets allowlist) serves private repositories; it never
+  enters a conversation folder or an MCP config. Folder sources import a host directory the same
+  way. → TEST-PLAN: Skills platform (Core).
+- **Templates as data** (`templates.js`): seeded **Development / Sales / Marketing / Management**
+  (categories + explicit slugs; admins edit or add templates), resolved live against the catalog
+  (category match case-insensitive), **preview** (add / keep / remove + resulting context cost) and
+  **apply** with `add` or `replace` — a SNAPSHOT copied into the conversation's grants with
+  dependencies, never a live link. → TEST-PLAN: Skills platform (Core).
+- **Chat verbs** (`src/mcp/tools/skills.js`, in the lockdown allowlist and the control-plane
+  approval map): `list_skills`, `show_channel_skills` (tiers, dependencies, missing/staged, context
+  cost), `get_skill_file`, `list_skill_templates`, `preview_skill_template` (open);
+  `add_channel_skills`, `remove_channel_skills`, `apply_skill_template` (managers, approval card);
+  `create_skill` (any approved member → a local skill granted in the conversation),
+  `update_skill` (author / manager / admin, local skills only, partial files merge over the current
+  revision), `propose_skill_change` (`change` with files, or `promote` organization-wide),
+  `list_skill_proposals` / `decide_skill_proposal` (admins; an approved change on a source-owned
+  skill becomes a **pinned local override** so the source keeps flowing and the pin holds until
+  unpinned; an approved promotion adds the skill to the organization tier), `skill_usage_report`,
+  `sync_skill_sources`. Documented for the model in `gateway-usage` → `references/skills.md`.
+  → TEST-PLAN: Skills platform (Core).
+- **Usage telemetry** (`usage.js`, on the run event stream in `run.js`): Claude's `Skill` tool call
+  is an **exact** signal (the stream parser now names the skill as the tool target); a Codex/shell
+  read of `…/skills/<slug>/SKILL.md` is **inferred** and labelled so; one row per run/skill/signal
+  with skill, revision, conversation, user, engine, session, run and origin — never prompt text or
+  content. Reports (chat + admin UI) list what fired and which granted skills **never** fired.
+  → TEST-PLAN: Skills platform (Core).
+- **Admin UI → Skills** (`public/admin-skills.js`, `src/web/routes/skills.js`): catalog (search,
+  owner filter, detail with files/frontmatter/revisions, pin/rollback, grant to a conversation,
+  remove/restore, create a local skill), **Review** (staged source revisions and proposals with
+  approve/reject), **Sources** (add/sync/pin/mode/enable/remove, re-import host folders, the GitHub
+  token and sync settings), **Templates** (edit, preview/apply to a conversation), **Usage**
+  (per-conversation report, never-used, and every conversation's profile + context cost).
+  → TEST-PLAN: Skills platform (Core).
+
 ## Licensing (`src/ee/` — proprietary, source-visible)
 - **Tiered license keys.** No key: 1 conversation per UTC month, 500 AI messages in it. Free key:
   every conversation, 500 AI messages per conversation per month. Enterprise key: unlimited.

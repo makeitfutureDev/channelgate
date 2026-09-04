@@ -18,6 +18,26 @@ product overview.
 
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
+### Added
+- **Skills platform (Core): the gateway owns its skill library.** A local catalog in the gateway
+  database stores every skill a conversation can be granted as immutable, content-hashed revisions
+  of the exact bytes of every file (`SKILL.md` included), with explicit ownership per slug
+  (bundled / host folder / git source / local), tombstones instead of deletes, pins for rollback,
+  and a review queue. Conversations get token-free skill profiles: the existing organization →
+  conversation → user grants resolve against the catalog with `requires:` dependencies, a context
+  cost estimate, and real files materialized write-on-change (Claude via its plugin, Codex via
+  `.agents/skills`) — the Skills Manager stub and its mid-turn fetch are no longer needed for
+  catalog skills. **GitHub sources** (Skills Manager's tarball sync ported and hardened: branch
+  names with `/` resolve correctly, review vs auto mode, commit pins, last-good state on failure)
+  and host folders feed the catalog; **templates** (Development / Sales / Marketing / Management,
+  editable) apply a snapshot of skills to a conversation; **chat verbs** cover listing, granting,
+  templates, `create_skill`, `update_skill`, proposals with admin approval (an approved change to a
+  source-owned skill becomes a pinned local override), usage reports and source sync; **usage
+  telemetry** records exact (Claude `Skill` tool) and inferred (Codex `SKILL.md` read) signals and
+  lists never-used grants; the admin UI gains a **Skills** view (catalog, review, sources,
+  templates, usage). `src/gateway/skills/`, `src/mcp/tools/skills.js`, `src/web/routes/skills.js`,
+  `public/admin-skills.js`, migration 14, `docs/SKILLS.md`, `gateway-usage` → `references/skills.md`.
+
 ### Changed
 - **Production license verification is live by default.** The gateway now ships the Ed25519 public
   key published by the ChannelGate licensing platform and uses `https://channelgate.vercel.app` as

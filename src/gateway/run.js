@@ -16,6 +16,7 @@ import {
 import { ensureChannelFolder } from "./folders.js";
 import { memorySnapshotPrefix } from "./channel-memory.js";
 import { applyLibrarySkills } from "./library-skills.js";
+import { createSkillUsageRecorder } from "./skills/usage.js";
 import { resolveSession, resetSession, getSession, saveSession, sessionGeneration } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
@@ -981,10 +982,27 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // arm it. Deliberately not forwarded to `onEvent`: it is control data for the daemon, not a row
   // for the Slack toolbox. Last call wins — a turn that schedules and then stops must end stopped.
   let loopWakeup = null;
+  // Skill usage telemetry (skills/usage.js): every tool_use on the stream passes through the
+  // recorder, which writes one row per skill fired in this run — exact for Claude's Skill tool,
+  // inferred for a read of a SKILL.md. Best-effort by construction; it never throws into the run.
+  const skillUsage = createSkillUsageRecorder({
+    channelSlug: entry.slug,
+    conversationId: channelId,
+    userId: untrustedPrincipal ? "" : authorId,
+    engine,
+    sessionId,
+    runId: randomUUID(),
+    origin,
+  });
   const scopedOnEvent = createScopedRunEventHandler((event) => {
     if (event?.kind === "loop_wakeup") {
       loopWakeup = event;
       return undefined;
+    }
+    try {
+      skillUsage.onEvent(event);
+    } catch {
+      /* telemetry must never affect the turn */
     }
     return onEvent?.(event);
   }, { progressReport, clean });

@@ -31,6 +31,7 @@ import { register as registerTokens } from "./tools/tokens.js";
 import { register as registerSlackNative } from "./tools/slack-native.js";
 import { register as registerLicense } from "./tools/license.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
+import { register as registerSkills } from "./tools/skills.js";
 
 export const text = (t) => ({ content: [{ type: "text", text: t }] });
 
@@ -204,6 +205,16 @@ export function buildControlPlane({ loadMeta }) {
     ["clear_channel_drive_folder", { authz: "admin", details: () => "Unlink this channel's Google Drive sync folder (sync off)." }],
     ["add_channel_mcps", { authz: "manage", details: ({ names }) => `Allow MCP server(s) in this channel: ${summarize((names || []).join(", "))}` }],
     ["remove_channel_mcps", { authz: "manage", details: ({ names }) => `Remove MCP server(s) from this channel: ${summarize((names || []).join(", "))}` }],
+    // Skills (src/mcp/tools/skills.js): a conversation's grant list and the shared catalog are
+    // persistent state. Reads, previews and proposals are open; grants, templates, authoring and
+    // admin decisions carry a card.
+    ["add_channel_skills", { authz: "manage", details: ({ slugs }) => `Grant skill(s) in this channel: ${summarize((slugs || []).join(", "))}` }],
+    ["remove_channel_skills", { authz: "manage", details: ({ slugs }) => `Remove skill grant(s) from this channel: ${summarize((slugs || []).join(", "))}` }],
+    ["apply_skill_template", { authz: "manage", details: ({ template, mode }) => `Apply the "${summarize(template)}" skill template to this channel (${mode === "replace" ? "REPLACE the current grants" : "add to the current grants"}).` }],
+    ["create_skill", { authz: "any", details: ({ slug, files }) => `Add a new skill to the shared catalog${slug ? ` (\`${summarize(slug)}\`)` : ""} with ${(files || []).length} file(s) and grant it here.` }],
+    ["update_skill", { authz: "any", details: ({ skill, files }) => `Publish a new revision of skill \`${summarize(skill)}\` (${(files || []).length} changed file(s)).` }],
+    ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => `${decision === "approve" ? "APPROVE" : "Reject"} skill proposal #${Number(id) || "?"}.` }],
+    ["sync_skill_sources", { authz: "admin", details: ({ id }) => `Sync ${id ? `skill source #${Number(id)}` : "every git skill source"} into the catalog now.` }],
     ["update_channel_instructions", { authz: "any", details: ({ mode, text: t }) => `${mode === "replace" ? "REPLACE" : "Append to"} this channel's standing instructions:\n${summarize(t, 600)}` }],
     ["update_gateway", {
       authz: "admin",
@@ -327,6 +338,7 @@ export function createGatewayMcpServer(ctx) {
     registerTokens(server, ctx);
     registerSlackNative(server, ctx);
     registerLicense(server, ctx);
+    registerSkills(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }

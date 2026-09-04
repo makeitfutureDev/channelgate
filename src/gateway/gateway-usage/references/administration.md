@@ -71,6 +71,12 @@ what needs approving if they seem unaware. Read-only tools (`list_*`, `get_*`) a
 - `list_channel_mcps` — what's allowed here now.
 - `add_channel_mcps` / `remove_channel_mcps` — allow/stop MCP servers here (by name).
 
+## Skills granted in this channel (managers)
+- `show_channel_skills` — what is active here, by tier, with the context cost.
+- `add_channel_skills` / `remove_channel_skills` — grant/revoke catalog skills here (by slug).
+- `apply_skill_template` — copy a template's skills (Development, Sales, …) into this channel.
+- Authoring, proposals, usage and source sync: `references/skills.md`.
+
 ## Channel modes (permissions)
 Modes are TOOL-permission presets. None of them changes what you can see: every run, whatever the
 mode and whoever the author, is confined to this channel's container.
