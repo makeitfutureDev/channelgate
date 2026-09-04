@@ -1738,7 +1738,8 @@ are retired, bullet by bullet; everything else stands.
   (`frontmatter.js` — a YAML-subset reader that never rewrites), so an unmodelled key such as
   `allowed-tools` is never lost. Ownership is explicit per slug (`bundled` / `folder` / `git` /
   `local`); a write from another owner is a reported **conflict**, never an overwrite. Removal is a
-  **tombstone** (revisions kept, dependents readable, a returning source restores it).
+  **tombstone** (revisions kept, dependents readable, a returning source restores it); an admin's
+  removal is a sticky **exclusion** (`excluded_at`) that no sync or import undoes until restored.
   → TEST-PLAN: Skills platform (Core).
 - **Channel profiles without tokens.** The existing organization → conversation → user grant union
   resolves against the catalog on every message (`resolve.js`): `requires:` dependencies are

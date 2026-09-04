@@ -8,7 +8,8 @@
 // ever changed by that source's next sync, a locally authored skill only through the authoring
 // paths, and a slug that is claimed by one owner is refused to every other (a conflict, reported,
 // never a silent overwrite). Removal is a tombstone (deleted_at), so a channel that still grants
-// the skill keeps a readable reason instead of a hole.
+// the skill keeps a readable reason instead of a hole. A source that delivers a tombstoned skill
+// again restores it — unless an operator EXCLUDED it (excluded_at), which sticks until restored.
 //
 // Everything here is synchronous SQLite (node:sqlite), like the rest of src/config; the daemon and
 // the spawned MCP server both open the same file, and the write transactions below serialize them.
@@ -90,6 +91,8 @@ function rowToSkill(r) {
     createdBy: r.created_by,
     deletedAt: r.deleted_at || "",
     deleted: Boolean(r.deleted_at),
+    excludedAt: r.excluded_at || "",
+    excluded: Boolean(r.excluded_at),
     visibility: r.visibility === "personal" ? "personal" : "org",
     stagedCount: Number(r.staged_count || 0),
   };
@@ -286,7 +289,7 @@ function activateRow(db, skillId, revisionId, now) {
   const md = skillMetadata(parsed.data);
   db.prepare("UPDATE skill_revisions SET status = 'active' WHERE id = ?").run(revisionId);
   db.prepare(
-    `UPDATE skills SET current_revision_id = ?, name = ?, description = ?, category = ?, tags = ?, requires = ?, version = ?, meta = ?, updated_at = ?, deleted_at = '' WHERE id = ?`,
+    `UPDATE skills SET current_revision_id = ?, name = ?, description = ?, category = ?, tags = ?, requires = ?, version = ?, meta = ?, updated_at = ?, deleted_at = CASE WHEN excluded_at <> '' THEN deleted_at ELSE '' END WHERE id = ?`,
   ).run(revisionId, md.name, md.description, md.category, toJson(md.tags), toJson(md.requires), md.version, toJson(parsed.data), now, skillId);
   return md;
 }
@@ -360,10 +363,11 @@ export function putSkillRevision({
       const latest = latestRevisionRow(db, skillId);
       if (latest && latest.content_hash === hash) {
         // Same bytes as the newest revision: nothing new to store. A staged copy that the source
-        // now delivers in auto mode activates; a tombstoned skill that reappears comes back.
+        // now delivers in auto mode activates; a tombstoned skill that reappears comes back (an
+        // operator-excluded one stays out).
         if (latest.status === "staged" && status === "active") {
           activateRow(db, skillId, latest.id, now);
-        } else if (existing.deleted_at && status === "active" && latest.status === "active") {
+        } else if (existing.deleted_at && !existing.excluded_at && status === "active" && latest.status === "active") {
           db.prepare("UPDATE skills SET deleted_at = '', updated_at = ? WHERE id = ?").run(now, skillId);
         }
         if (sourcePath && existing.source_path !== sourcePath) db.prepare("UPDATE skills SET source_path = ? WHERE id = ?").run(sourcePath, skillId);
@@ -431,8 +435,18 @@ export function tombstoneSkill(slug, { now = nowIso() } = {}) {
   return res.changes > 0;
 }
 
+// An operator's exclusion: tombstoned AND sticky. A sync, a host-folder import or any re-put that
+// delivers the skill again keeps it out (its revisions still update) until restoreSkill.
+export function excludeSkill(slug, { now = nowIso() } = {}) {
+  const res = getDb()
+    .prepare("UPDATE skills SET excluded_at = ?, deleted_at = CASE WHEN deleted_at = '' THEN ? ELSE deleted_at END, updated_at = ? WHERE slug = ? COLLATE NOCASE AND excluded_at = ''")
+    .run(now, now, now, String(slug));
+  return res.changes > 0;
+}
+
+// Bring a tombstoned or excluded skill back on its newest active revision.
 export function restoreSkill(slug, { now = nowIso() } = {}) {
-  const res = getDb().prepare("UPDATE skills SET deleted_at = '', updated_at = ? WHERE slug = ? COLLATE NOCASE AND deleted_at <> ''").run(now, String(slug));
+  const res = getDb().prepare("UPDATE skills SET deleted_at = '', excluded_at = '', updated_at = ? WHERE slug = ? COLLATE NOCASE AND (deleted_at <> '' OR excluded_at <> '')").run(now, String(slug));
   return res.changes > 0;
 }
 
@@ -721,7 +735,8 @@ export function catalogStats() {
   const one = (sql, ...args) => Number(db.prepare(sql).get(...args)?.n || 0);
   return {
     skills: one("SELECT COUNT(*) AS n FROM skills WHERE deleted_at = ''"),
-    tombstoned: one("SELECT COUNT(*) AS n FROM skills WHERE deleted_at <> ''"),
+    tombstoned: one("SELECT COUNT(*) AS n FROM skills WHERE deleted_at <> '' AND excluded_at = ''"),
+    excluded: one("SELECT COUNT(*) AS n FROM skills WHERE excluded_at <> ''"),
     byOwner: Object.fromEntries(db.prepare("SELECT owner_kind, COUNT(*) AS n FROM skills WHERE deleted_at = '' GROUP BY owner_kind").all().map((r) => [r.owner_kind, r.n])),
     staged: one("SELECT COUNT(*) AS n FROM skill_revisions WHERE status = 'staged'"),
     sources: one("SELECT COUNT(*) AS n FROM skill_sources"),

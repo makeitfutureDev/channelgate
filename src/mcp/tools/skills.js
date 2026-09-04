@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { getUser, isAdmin, isApproved } from "../../config/store.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine } from "../../config/settings.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
-import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, tombstoneSkill, restoreSkill, effectiveRevisionFor, listRevisions, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
+import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
@@ -522,14 +522,14 @@ export function register(server, ctx) {
 
   server.registerTool(
     "set_skill_excluded",
-    { description: "ADMINS. Exclude a synced/bundled skill from the catalog (tombstone; conversations drop it) or include it again.", inputSchema: { skill: z.string(), excluded: z.boolean() } },
+    { description: "ADMINS. Exclude a synced/bundled skill from the catalog (it stays out across syncs and imports; conversations drop it) or include it again.", inputSchema: { skill: z.string(), excluded: z.boolean() } },
     async ({ skill: key, excluded }) => {
       if (!(await requireAdmin())) return text("Only admins exclude skills.");
       const skill = getSkill(key);
       if (!skill) return text(`No catalog skill named "${key}".`);
-      if (excluded) tombstoneSkill(skill.slug);
+      if (excluded) excludeSkill(skill.slug);
       else restoreSkill(skill.slug);
-      return text(excluded ? `🚫 \`${skill.slug}\` excluded (tombstoned). Restore with excluded: false.` : `✅ \`${skill.slug}\` included again.`);
+      return text(excluded ? `🚫 \`${skill.slug}\` excluded — it stays out of the catalog across syncs. Include it again with excluded: false.` : `✅ \`${skill.slug}\` included again.`);
     },
   );
 

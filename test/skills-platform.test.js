@@ -143,6 +143,33 @@ test("catalog: staged revisions need approval, pins roll back, tombstones restor
   assert.equal(catalog.getSource(src.id), null);
 });
 
+test("catalog: an operator exclusion survives re-puts (syncs) until restored; a source drop still comes back", () => {
+  const src = catalog.addSource({ kind: "git", url: "https://github.com/example/sticky", mode: "auto" });
+  const put = (body) => catalog.putSkillRevision({ files: [md("Delta", "Delta skill", "", body)], ownerKind: "git", sourceId: src.id, sourcePath: "skills/delta", status: "active", sourceRef: "ccc" });
+  put("v1");
+  const before = catalog.catalogStats();
+  assert.equal(catalog.excludeSkill("delta"), true);
+  assert.equal(catalog.excludeSkill("delta"), false, "already excluded");
+  assert.deepEqual([catalog.getSkill("delta").deleted, catalog.getSkill("delta").excluded], [true, true]);
+  // Same bytes again — what every sync does: stays out (this is what undid the migrated exclusions).
+  assert.equal(put("v1").changed, false);
+  assert.equal(catalog.getSkill("delta").deleted, true, "a sync must not undo an exclusion");
+  // New bytes: the revision is stored (current when included again) but the skill stays out.
+  assert.equal(put("v2").changed, true);
+  assert.equal(catalog.getSkill("delta").deleted, true);
+  assert.equal(catalog.effectiveRevisionFor(catalog.getSkill("delta")).revisionNo, 2);
+  assert.equal(catalog.listSkills().some((s) => s.slug === "delta"), false);
+  assert.equal(catalog.listSkills({ includeDeleted: true }).find((s) => s.slug === "delta").excluded, true);
+  assert.equal(catalog.catalogStats().excluded, before.excluded + 1);
+  assert.equal(catalog.catalogStats().tombstoned, before.tombstoned, "an exclusion is not counted as a source removal");
+  assert.equal(catalog.tombstoneMissingSourceSkills(src.id, []), 0, "already out");
+  assert.equal(catalog.restoreSkill("delta"), true);
+  const back = catalog.getSkill("delta");
+  assert.deepEqual([back.deleted, back.excluded], [false, false]);
+  assert.equal(catalog.effectiveRevisionFor(back).revisionNo, 2, "included again on its newest revision");
+  assert.equal(catalog.catalogStats().excluded, before.excluded);
+});
+
 // ── resolver ─────────────────────────────────────────────────────────────────────────────────
 
 test("profile resolver pulls dependencies, reports missing links and cycles, and estimates context", () => {
@@ -272,6 +299,13 @@ test("host folder import keeps directory names as slugs, follows the operator's 
   assert.equal(catalog.getSkill("plain").deleted, true);
   const back = await importer.importHostSkillFolders([hostDir]);
   assert.equal(back.restored, 2);
+  // An operator's exclusion is not undone by the import, even though the folder is still there.
+  assert.equal(catalog.excludeSkill("plain"), true);
+  const still = await importer.importHostSkillFolders([hostDir]);
+  assert.equal(still.restored, 0);
+  assert.equal(catalog.getSkill("plain").excluded, true);
+  assert.equal(catalog.restoreSkill("plain"), true);
+  assert.equal(catalog.getSkill("plain").deleted, false);
 });
 
 test("bundled starter library imports as bundled skills", async () => {

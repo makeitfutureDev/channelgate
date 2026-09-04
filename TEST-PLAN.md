@@ -2404,6 +2404,11 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       stages revisions until approved, pins/rolls back, tombstones on source removal and restores a
       returning skill without a new revision; removing a source tombstones its skills
       (`test/skills-platform.test.js`).
+- [x] Unit: an admin's exclusion is sticky — a re-put of the same or new bytes (what a sync does)
+      and a host-folder re-import keep the skill out while still recording revisions; a plain
+      source drop still comes back; restore clears both and lands on the newest revision; stats
+      count exclusions apart from removals (`test/skills-platform.test.js`, admin API DELETE in
+      `test/skills-admin-api.test.js`).
 - [x] Unit: the profile resolver pulls `requires` dependencies, reports unknown names, missing
       dependencies and cycles, estimates always-on context and warns above the soft cap
       (`test/skills-platform.test.js`).

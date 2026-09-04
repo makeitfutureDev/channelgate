@@ -107,13 +107,13 @@ export async function importSkillTree(root, { ownerKind = "folder", sourceId = n
 
 // The operator's host skill folders (the pre-catalog grant sources). Folder-owned skills whose
 // directory is gone from every source dir are tombstoned; a returning one is restored by the
-// import itself.
+// import itself. An operator's exclusion is never undone here.
 export async function importHostSkillFolders(dirs = []) {
   const results = [];
   const present = new Set();
   // Tombstoned folder skills before the import: the ones that come back count as restored
   // whether the catalog restored them on re-import (same bytes) or this pass does.
-  const wasDeleted = new Set(listSkills({ includeDeleted: true, ownerKind: "folder" }).filter((s) => s.deleted && s.sourceId == null).map((s) => s.slug.toLowerCase()));
+  const wasDeleted = new Set(listSkills({ includeDeleted: true, ownerKind: "folder" }).filter((s) => s.deleted && !s.excluded && s.sourceId == null).map((s) => s.slug.toLowerCase()));
   for (const dir of dirs) {
     const r = await importSkillTree(dir, { ownerKind: "folder", sourceRef: dir });
     results.push(r);
@@ -128,7 +128,7 @@ export async function importHostSkillFolders(dirs = []) {
     if (!here && !skill.deleted) {
       tombstoneSkill(skill.slug);
       tombstoned++;
-    } else if (here && skill.deleted) {
+    } else if (here && skill.deleted && !skill.excluded) {
       restoreSkill(skill.slug);
       restored++;
     } else if (here && wasDeleted.has(key)) {

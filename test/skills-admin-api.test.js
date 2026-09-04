@@ -80,6 +80,7 @@ test("catalog: create a local skill, read it back with its files, update it, pin
   await request("/skills/catalog/api-skill/pin", { method: "POST", body: { revisionNo: null } });
 
   assert.equal((await request("/skills/catalog/api-skill", { method: "DELETE" })).status, 200);
+  assert.equal((await request("/skills/catalog?deleted=1")).json.skills.find((s) => s.slug === "api-skill").excluded, true, "an admin removal is a sticky exclusion");
   assert.equal((await request("/skills/catalog?q=api-skill")).json.skills.length, 0, "removed skills are hidden by default");
   assert.equal((await request("/skills/catalog?q=api-skill&deleted=1")).json.skills[0].deleted, true);
   assert.equal((await request("/skills/catalog/api-skill/restore", { method: "POST", body: {} })).json.skill.deleted, false);
