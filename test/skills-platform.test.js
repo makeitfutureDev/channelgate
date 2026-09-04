@@ -444,31 +444,31 @@ test("authoring: create grants here with dependencies, update merges files, sour
   assert.deepEqual(created.granted.added.sort(), ["auth-dep", "auth-new"]);
   await assert.rejects(authoring.createLocalSkill({ files: [md("Auth New", "dup")], createdBy: "U2" }), /already exists/);
 
-  const updated = authoring.updateLocalSkill({ skill: catalog.getSkill("auth-new"), files: [{ path: "references/more.md", content: "more" }], remove: ["references/r.md"], createdBy: "U_AUTHOR" });
+  const updated = await authoring.updateLocalSkill({ skill: catalog.getSkill("auth-new"), files: [{ path: "references/more.md", content: "more" }], remove: ["references/r.md"], createdBy: "U_AUTHOR" });
   assert.deepEqual(catalog.revisionFiles(updated.revision.id).map((f) => f.path), ["SKILL.md", "references/more.md"], "partial files merge over the current revision");
 
   const src = catalog.addSource({ kind: "git", url: "https://github.com/example/owned", mode: "auto" });
   catalog.putSkillRevision({ files: [md("Upstream", "upstream v1")], ownerKind: "git", sourceId: src.id, status: "active", sourceRef: "u1" });
-  assert.throws(() => authoring.updateLocalSkill({ skill: catalog.getSkill("upstream"), files: [md("Upstream", "hacked")] }), /proposal/);
+  await assert.rejects(authoring.updateLocalSkill({ skill: catalog.getSkill("upstream"), files: [md("Upstream", "hacked")] }), /proposal/);
   const { proposal } = authoring.proposeSkillChange({ skill: "upstream", files: [md("Upstream", "improved locally")], note: "typo fix", proposedBy: "U2", channelSlug: entry.slug });
   assert.equal(proposal.status, "pending");
   assert.throws(() => authoring.proposeSkillChange({ skill: "ghost", kind: "promote", note: "x" }), /not in the catalog/);
-  const decided = authoring.decideSkillProposal(proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
+  const decided = await authoring.decideSkillProposal(proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
   assert.equal(decided.pinned, true, "an approved change to a source-owned skill is a pinned override");
   assert.equal(decided.proposal.status, "approved");
   assert.equal(catalog.effectiveRevisionFor(catalog.getSkill("upstream")).id, decided.revision.id);
   // Upstream keeps flowing into new revisions, but the pin holds until an admin unpins.
   catalog.putSkillRevision({ files: [md("Upstream", "upstream v2")], ownerKind: "git", sourceId: src.id, status: "active", sourceRef: "u2" });
   assert.equal(catalog.effectiveRevisionFor(catalog.getSkill("upstream")).id, decided.revision.id);
-  assert.throws(() => authoring.decideSkillProposal(proposal.id, { decision: "reject" }), /already approved/);
+  await assert.rejects(authoring.decideSkillProposal(proposal.id, { decision: "reject" }), /already approved/);
 
   // Promotion grants organization-wide (settings accessGrants).
   saveSettings({ accessGrants: { skills: [] } });
   const promo = authoring.proposeSkillChange({ skill: "auth-new", kind: "promote", note: "everyone needs it", proposedBy: "U2" });
-  const promoted = authoring.decideSkillProposal(promo.proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
+  const promoted = await authoring.decideSkillProposal(promo.proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
   assert.equal(promoted.promoted, true);
   assert.ok(getOrgAccessGrants().skills.includes("auth-new") && getOrgAccessGrants().skills.includes("auth-dep"));
-  const rejected = authoring.decideSkillProposal(authoring.proposeSkillChange({ skill: "auth-new", files: [md("Auth New", "no")], note: "n", proposedBy: "U3" }).proposal.id, { decision: "reject", decidedBy: "U_ADMIN", note: "not needed" });
+  const rejected = await authoring.decideSkillProposal(authoring.proposeSkillChange({ skill: "auth-new", files: [md("Auth New", "no")], note: "n", proposedBy: "U3" }).proposal.id, { decision: "reject", decidedBy: "U_ADMIN", note: "not needed" });
   assert.equal(rejected.proposal.status, "rejected");
   assert.equal(rejected.proposal.decisionNote, "not needed");
   const revoked = await authoring.revokeSkillsFromChannel(entry.slug, ["Auth New"]);

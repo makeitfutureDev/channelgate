@@ -12,6 +12,8 @@ import { buildResumeCommand } from "../slack/footer.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { listChannels } from "../config/store.js";
 import { createAdminRouter } from "./routes/admin.js";
+import { mountSkillsPublicRoutes } from "./skills-mcp.js";
+import { triggerSourceSync } from "../gateway/skills/index.js";
 import { createRunsRouter } from "./routes/runs.js";
 import { createFileEditorRouter } from "./file-editor.js";
 import { createFileUploadRouter } from "./file-upload.js";
@@ -66,8 +68,13 @@ export function createWebApp({
   const instanceId = randomUUID();
   // The run API accepts inline base64 files, so its router parses its own (larger) body — skip the
   // small app-wide parser for /api/runs, which would otherwise reject those payloads up front.
+  // The skill catalog's own MCP endpoint (bearer access tokens) and the GitHub push webhook (HMAC
+  // over the raw body). Both authenticate themselves and are mounted before the admin session
+  // middleware and the shared JSON parser (the webhook needs the raw bytes).
+  mountSkillsPublicRoutes(app, { triggerSync: (id) => triggerSourceSync(id) });
+
   const jsonParser = express.json({ limit: "1mb" });
-  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") ? next() : jsonParser(req, res, next)));
+  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") || req.path === "/api/skills/webhook/github" || req.path === "/mcp/skills" ? next() : jsonParser(req, res, next)));
 
   // Auth: login/logout are always reachable; everything else is gated when ADMIN_PASSWORD is set.
   app.post("/api/login", handleLogin);

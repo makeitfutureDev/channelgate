@@ -25,6 +25,7 @@ const state = {
   applyTemplate: "",
   applyChannel: "",
   applyMode: "add",
+  newToken: null,
   message: "",
   error: "",
   wired: false,
@@ -107,6 +108,7 @@ function renderSummary() {
     stat(st.pendingProposals, "pending proposals", st.pendingProposals > 0),
     stat(st.usage30d, "uses in 30 days"),
     st.tombstoned ? stat(st.tombstoned, "removed") : "",
+    stat((state.overview?.orgSkills || []).length, "organization-wide"),
   ].join("");
 }
 
@@ -116,7 +118,7 @@ function renderCatalog() {
   const owners = ["", "bundled", "local", "folder", "git"];
   const rows = skills.map((s) => `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
-      <td><code>${esc(s.slug)}</code>${s.deleted ? ' <span class="pill">removed</span>' : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
+      <td><code>${esc(s.slug)}</code>${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.deleted ? ' <span class="pill">removed</span>' : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
       <td class="desc">${esc(s.description)}</td>
       <td>${esc(s.category || "—")}</td>
       <td><span class="muted">${esc(ownerLabel(s))}</span></td>
@@ -196,6 +198,9 @@ function renderDetail() {
           <select id="grant-channel">${channels.map((c) => `<option value="${esc(c.slug)}">${esc(c.name || c.slug)}${c.skills.includes(s.slug) ? " ✓" : ""}</option>`).join("")}</select>
           <button type="button" class="ghost" data-action="grant">Grant</button>
         </span>
+        ${s.ownerKind === "local" ? `<button type="button" class="ghost" data-action="toggle-visibility">${s.visibility === "personal" ? "Make organization skill" : "Make personal (author only)"}</button>` : ""}
+        ${(state.overview?.orgSkills || []).some((x) => x.toLowerCase() === s.slug.toLowerCase()) ? `<button type="button" class="ghost" data-action="org-revoke">Remove organization-wide grant</button>` : `<button type="button" class="ghost" data-action="org-grant">Grant organization-wide</button>`}
+        ${state.overview?.settings?.publish && s.ownerKind === "local" ? `<button type="button" class="ghost" data-action="publish-now">Publish to Git now</button>` : ""}
         ${s.deleted ? `<button type="button" class="ghost" data-action="restore">Restore</button>` : `<button type="button" class="ghost" data-action="remove">Remove from catalog</button>`}
         <button type="button" class="ghost" data-action="close-detail">Close</button>
       </div>
@@ -254,8 +259,9 @@ function renderSources() {
     <div class="card skills-detail">
       <h3>Add a source</h3>
       <div class="skills-form">
-        <label class="field"><span>Kind</span><select id="src-kind"><option value="git">GitHub repository</option><option value="folder">Folder on the gateway host</option></select></label>
-        <label class="field"><span>URL or path</span><input id="src-url" placeholder="https://github.com/anthropics/skills or /srv/skills" /></label>
+        <label class="field"><span>Kind</span><select id="src-kind"><option value="git">GitHub repository</option><option value="folder">Folder on the gateway host</option><option value="gateway">Another ChannelGate (peer gateway)</option></select></label>
+        <label class="field"><span>URL or path</span><input id="src-url" placeholder="https://github.com/anthropics/skills, /srv/skills, or http://peer-gateway:4748" /></label>
+        <label class="field"><span>Peer access token (gateway kind only; minted on the peer with the sync scope)</span><input id="src-secret" type="password" autocomplete="off" placeholder="cgs_…" /></label>
         <label class="field"><span>Label</span><input id="src-label" placeholder="Anthropic skills" /></label>
         <label class="field"><span>Branch / tag (git; empty = default, or use a /tree/ URL)</span><input id="src-ref" placeholder="main" /></label>
         <label class="field"><span>Subfolder (only discover skills below it)</span><input id="src-subpath" placeholder="skills" /></label>
@@ -271,6 +277,39 @@ function renderSources() {
         <label class="field"><span>Context soft cap (tokens of always-on skill descriptions per conversation)</span><input id="skills-warn" type="number" min="1" value="${Number(settings.contextWarnTokens ?? 6000)}" /></label>
       </div>
       <div class="skills-actions"><button type="button" data-action="save-settings">Save</button>${settings.hasGithubToken ? `<button type="button" class="ghost" data-action="clear-gh-token">Clear token</button>` : ""}</div>
+    </div>
+    <div class="card skills-detail">
+      <h3>Publishing to Git</h3>
+      <p class="skills-note">Skills authored or approved here are pushed to this repository (one commit per file, under the folder below) with the GitHub token above. When the repository is also a source, the published skill becomes that source's skill.</p>
+      <div class="skills-form">
+        <label class="field"><span>Repository (owner/repo or URL; empty = off)</span><input id="pub-repo" value="${esc(settings.publish?.repo ? `${settings.publish.owner}/${settings.publish.repo}` : "")}" placeholder="makeitfutureDev/makeitfuture-private-skills" /></label>
+        <label class="field"><span>Branch</span><input id="pub-branch" value="${esc(settings.publish?.branch || "main")}" /></label>
+        <label class="field"><span>Folder in the repository</span><input id="pub-subpath" value="${esc(settings.publish?.subpath || "skills")}" /></label>
+        <label class="field"><span>Mode</span><select id="pub-mode"><option value="commit"${settings.publish?.mode !== "off" ? " selected" : ""}>commit on create / update / approve</option><option value="off"${settings.publish?.mode === "off" ? " selected" : ""}>off</option></select></label>
+      </div>
+      <div class="skills-actions"><button type="button" data-action="save-publish">Save publishing</button>${settings.publishSourceId ? `<span class="skills-muted">Also source #${settings.publishSourceId} — published skills are adopted by it.</span>` : ""}</div>
+    </div>
+    <div class="card skills-detail">
+      <h3>GitHub webhook</h3>
+      <p class="skills-note">Add a webhook on each source repository (push events, JSON, secret below) pointing at ${settings.webhookUrl ? `<code>${esc(settings.webhookUrl)}</code>` : "<em>&lt;public URL&gt;/api/skills/webhook/github</em> (set the public URL in Settings)"} and pushes sync within seconds instead of on the interval.</p>
+      <div class="skills-form">
+        <label class="field"><span>Webhook secret — ${settings.hasWebhookSecret ? "set" : "not set"}</span><input id="hook-secret" type="password" autocomplete="off" placeholder="${settings.hasWebhookSecret ? "•••••••• (leave empty to keep)" : "a long random string"}" /></label>
+      </div>
+      <div class="skills-actions"><button type="button" data-action="save-webhook">Save secret</button>${settings.hasWebhookSecret ? `<button type="button" class="ghost" data-action="clear-webhook">Clear</button>` : ""}</div>
+    </div>
+    <div class="card skills-detail">
+      <h3>MCP endpoint &amp; access tokens</h3>
+      <p class="skills-note">Any MCP client — Claude Code on a laptop, Codex, another gateway — can use this catalog at ${settings.mcpUrl ? `<code>${esc(settings.mcpUrl)}</code>` : "<em>&lt;public URL&gt;/mcp/skills</em>"} with a bearer token minted here. Scopes: <strong>read</strong> (search/read), <strong>propose</strong> (suggest changes), <strong>manage</strong> (create/update local skills), <strong>sync</strong> (export, for a peer gateway). The value is shown once.</p>
+      <div class="skills-inline">
+        <input id="tok-name" placeholder="token name (e.g. Tiberiu's laptop)" />
+        <label><input type="checkbox" class="tok-scope" value="read" checked /> read</label>
+        <label><input type="checkbox" class="tok-scope" value="propose" /> propose</label>
+        <label><input type="checkbox" class="tok-scope" value="manage" /> manage</label>
+        <label><input type="checkbox" class="tok-scope" value="sync" /> sync</label>
+        <button type="button" data-action="create-token">Create token</button>
+      </div>
+      ${state.newToken ? `<p class="skills-ok">Token <strong>${esc(state.newToken.record.name)}</strong> — copy it now, it will not be shown again:</p><pre>${esc(state.newToken.token)}</pre><pre>claude mcp add --transport http channelgate-skills ${esc(settings.mcpUrl || "<public-url>/mcp/skills")} --header "Authorization: Bearer ${esc(state.newToken.token)}"</pre>` : ""}
+      <table class="skills-table"><thead><tr><th>Token</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody>${(state.overview?.tokens || []).map((t) => `<tr><td>${esc(t.name)} <span class="muted">${esc(t.prefix)}…</span>${t.revoked ? ' <span class="pill">revoked</span>' : ""}</td><td>${esc(t.scopes.join(", "))}</td><td class="muted">${fmtWhen(t.createdAt)}</td><td class="muted">${fmtWhen(t.lastUsedAt)}</td><td>${t.revoked ? `<button type="button" class="ghost" data-action="delete-token" data-id="${t.id}">delete</button>` : `<button type="button" class="ghost" data-action="revoke-token" data-id="${t.id}">revoke</button>`}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No tokens yet.</td></tr>'}</tbody></table>
     </div>`;
 }
 
@@ -467,7 +506,7 @@ async function act(action, el) {
       break;
     }
     case "add-source": {
-      const r = await withStatus(() => api("/api/skills/sources", { method: "POST", body: JSON.stringify({ kind: val("src-kind"), url: val("src-url").trim(), label: val("src-label").trim(), ref: val("src-ref").trim(), subpath: val("src-subpath").trim(), mode: val("src-mode") }) }));
+      const r = await withStatus(() => api("/api/skills/sources", { method: "POST", body: JSON.stringify({ kind: val("src-kind"), url: val("src-url").trim(), label: val("src-label").trim(), ref: val("src-ref").trim(), subpath: val("src-subpath").trim(), mode: val("src-mode"), ...(val("src-secret").trim() ? { secret: val("src-secret").trim() } : {}) }) }));
       if (r) setMessage(r.sync?.ok === false ? `Source added, but the first sync failed: ${r.sync.error}` : `Source added and synced (${r.sync?.discovered ?? r.sync?.presentSlugs?.length ?? 0} skill(s), ${r.sync?.staged ?? 0} staged).`, r.sync?.ok === false);
       await refreshAll();
       break;
@@ -483,6 +522,55 @@ async function act(action, el) {
       await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify({ clearSkillsGithubToken: true }) }), "GitHub token cleared.");
       await refreshAll();
       break;
+    case "save-publish":
+      await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify({ skillsPublishRepo: val("pub-repo").trim(), skillsPublishBranch: val("pub-branch").trim(), skillsPublishSubpath: val("pub-subpath").trim(), skillsPublishMode: val("pub-mode") }) }), val("pub-repo").trim() ? "Publishing configured." : "Publishing turned off.");
+      await refreshAll();
+      break;
+    case "save-webhook":
+      if (!val("hook-secret").trim()) { setMessage("Enter a secret first.", true); break; }
+      await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify({ skillsWebhookSecret: val("hook-secret").trim() }) }), "Webhook secret saved.");
+      await refreshAll();
+      break;
+    case "clear-webhook":
+      await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify({ clearSkillsWebhookSecret: true }) }), "Webhook secret cleared.");
+      await refreshAll();
+      break;
+    case "create-token": {
+      const scopes = [...body().querySelectorAll(".tok-scope:checked")].map((c) => c.value);
+      const r = await withStatus(() => api("/api/skills/tokens", { method: "POST", body: JSON.stringify({ name: val("tok-name").trim(), scopes }) }), "Token created — copy it now.");
+      if (r) state.newToken = r;
+      await refreshAll();
+      break;
+    }
+    case "revoke-token":
+      await withStatus(() => api(`/api/skills/tokens/${id}/revoke`, { method: "POST", body: "{}" }), "Token revoked.");
+      state.newToken = null;
+      await refreshAll();
+      break;
+    case "delete-token":
+      await withStatus(() => api(`/api/skills/tokens/${id}`, { method: "DELETE" }), "Token deleted.");
+      await refreshAll();
+      break;
+    case "toggle-visibility": {
+      const next = state.detail?.skill?.visibility === "personal" ? "org" : "personal";
+      await withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(state.selected)}/visibility`, { method: "POST", body: JSON.stringify({ visibility: next }) }), next === "personal" ? "Now a personal skill (author only)." : "Now an organization skill.");
+      await refreshAll();
+      break;
+    }
+    case "org-grant":
+      await withStatus(() => api("/api/skills/org/grant", { method: "POST", body: JSON.stringify({ slugs: [state.selected] }) }), `${state.selected} is granted organization-wide.`);
+      await refreshAll();
+      break;
+    case "org-revoke":
+      await withStatus(() => api("/api/skills/org/revoke", { method: "POST", body: JSON.stringify({ slugs: [state.selected] }) }), `${state.selected} is no longer granted organization-wide.`);
+      await refreshAll();
+      break;
+    case "publish-now": {
+      const r = await withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(state.selected)}/publish`, { method: "POST", body: "{}" }));
+      if (r) setMessage(r.result.published ? `Published to ${r.result.repo}@${r.result.branch} (${r.result.files.length} file(s))${r.result.adopted ? "; now owned by that source" : ""}.` : `Not published: ${r.result.reason}`, !r.result.published);
+      await refreshAll();
+      break;
+    }
     case "new-template":
       state.editTemplate = { isNew: true, name: "", slug: "", description: "", categories: [], skills: [] };
       break;

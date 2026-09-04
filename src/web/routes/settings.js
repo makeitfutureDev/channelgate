@@ -204,6 +204,17 @@ export function createSettingsRouter({
         if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: "skillsContextWarnTokens must be a positive number" });
         patch.skillsContextWarnTokens = Math.floor(n);
       }
+      // Git publishing target for authored/approved skills, and the GitHub webhook secret (write-only).
+      if (typeof body.skillsPublishRepo === "string") {
+        const repo = body.skillsPublishRepo.trim();
+        if (repo && !/^(https?:\/\/(www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?\/?|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.test(repo)) return res.status(400).json({ error: "skillsPublishRepo must be a GitHub repository (owner/repo or its URL)" });
+        patch.skillsPublishRepo = repo;
+      }
+      if (typeof body.skillsPublishBranch === "string") patch.skillsPublishBranch = body.skillsPublishBranch.trim();
+      if (typeof body.skillsPublishSubpath === "string") patch.skillsPublishSubpath = body.skillsPublishSubpath.trim().replace(/^\/+|\/+$/g, "");
+      if (typeof body.skillsPublishMode === "string" && ["commit", "off"].includes(body.skillsPublishMode)) patch.skillsPublishMode = body.skillsPublishMode;
+      if (typeof body.skillsWebhookSecret === "string" && body.skillsWebhookSecret.trim()) patch.skillsWebhookSecret = body.skillsWebhookSecret.trim();
+      if (body.clearSkillsWebhookSecret === true) patch.skillsWebhookSecret = "";
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))
         patch.accessGrants = cleanAccessGrants(body.accessGrants);
       // Per-harness on/off. Normalized to an explicit boolean per KNOWN engine (an unknown key is

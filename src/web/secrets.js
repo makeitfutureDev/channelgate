@@ -23,6 +23,7 @@ const READERS = {
     defaultToolboxToken: (s) => s.defaultToolboxToken,
     // The daemon's GitHub token for private skill sources (skills platform). Same terms.
     skillsGithubToken: (s) => s.skillsGithubToken,
+    skillsWebhookSecret: (s) => s.skillsWebhookSecret,
     composioSdkApiKey: (s) => s.composioSdkApiKey,
     apiKey: (s) => s.apiKey,
     driveSyncKeyJson: (s) => s.driveSyncKeyJson,

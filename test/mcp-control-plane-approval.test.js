@@ -270,6 +270,8 @@ test("every registered gateway tool is consciously classified as gated or open (
     // skills platform: grants, templates, catalog writes and admin decisions are persistent state
     "add_channel_skills", "remove_channel_skills", "apply_skill_template",
     "create_skill", "update_skill", "decide_skill_proposal", "sync_skill_sources",
+    "delete_skill", "publish_skill", "add_org_skills", "remove_org_skills",
+    "add_skill_source", "set_skill_source", "remove_skill_source", "set_skill_excluded",
   ]);
   const OPEN = new Set([
     // read-only
@@ -290,7 +292,11 @@ test("every registered gateway tool is consciously classified as gated or open (
     "create_schedule", "delete_schedule",
     // skills platform reads/previews; a proposal only queues a review for an admin
     "list_skills", "show_channel_skills", "list_skill_templates", "preview_skill_template",
-    "get_skill_file", "propose_skill_change", "list_skill_proposals", "skill_usage_report",
+    "get_skill_file", "get_skill_info", "propose_skill_change", "list_skill_proposals", "skill_usage_report",
+    "list_skill_sources", // admin read
+    // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
+    // self-service like starring in a skill library — reversible, affects nobody else, no card.
+    "add_my_skills", "remove_my_skills",
   ]);
   await withGateway({}, async (client) => {
     const { tools } = await client.listTools();

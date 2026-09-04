@@ -571,4 +571,36 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 15,
+    up(db) {
+      db.exec(`
+        -- Skills platform, round two (docs/SKILLS.md): personal skills, Git publishing, external
+        -- access tokens and gateway-to-gateway sources.
+        -- visibility: 'org' (every conversation may be granted it) | 'personal' (only its author's
+        -- own runs; listed only to the author and admins).
+        ALTER TABLE skills ADD COLUMN visibility TEXT NOT NULL DEFAULT 'org';
+        -- Where a revision was published to Git (the configured publish repository): the commit
+        -- sha of the last file write, and when. '' = never published.
+        ALTER TABLE skill_revisions ADD COLUMN published_ref TEXT NOT NULL DEFAULT '';
+        ALTER TABLE skill_revisions ADD COLUMN published_at TEXT NOT NULL DEFAULT '';
+        -- A gateway source (kind 'gateway') authenticates to its peer with an access token that
+        -- peer minted; write-only, never listed, never in a channel folder.
+        ALTER TABLE skill_sources ADD COLUMN secret TEXT NOT NULL DEFAULT '';
+        -- Access tokens for the catalog's own MCP endpoint (/mcp/skills): laptop Claude Code, Codex,
+        -- other MCP clients and peer gateways. Stored hashed; the value is shown exactly once.
+        CREATE TABLE skill_access_tokens (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          name         TEXT NOT NULL,
+          token_hash   TEXT NOT NULL UNIQUE,
+          token_prefix TEXT NOT NULL DEFAULT '',
+          scopes       TEXT NOT NULL DEFAULT '["read"]',  -- JSON string[]: read | propose | manage | sync
+          created_at   TEXT NOT NULL,
+          created_by   TEXT NOT NULL DEFAULT '',
+          last_used_at TEXT NOT NULL DEFAULT '',
+          revoked_at   TEXT NOT NULL DEFAULT ''
+        );
+      `);
+    },
+  },
 ];

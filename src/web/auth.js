@@ -84,7 +84,7 @@ function cookieAttrs(req) {
 }
 
 // Paths reachable without a session (so you can actually log in).
-const OPEN_PATHS = new Set(["/login", "/login.html", "/api/login", "/api/health"]);
+const OPEN_PATHS = new Set(["/login", "/login.html", "/api/login", "/api/health", "/api/skills/webhook/github", "/mcp/skills"]);
 
 // The HTTP run API accepts a bearer API key as an alternative to the admin session cookie, so an
 // automation can fire runs without logging in. Scoped to /api/runs only — the key is NOT a general
@@ -166,7 +166,7 @@ export function authMiddleware(req, res, next) {
 // passwordless gateway today is a legacy or half-configured one, and refusing is the safe reading.
 // Non-secret liveness stays reachable (/api/health, which volunteers nothing to an unauthenticated
 // caller) along with login/logout, and the static UI shell still loads so the operator sees why.
-const LOCKDOWN_OPEN = new Set(["/api/health", "/api/login", "/api/logout"]);
+const LOCKDOWN_OPEN = new Set(["/api/health", "/api/login", "/api/logout", "/api/skills/webhook/github", "/mcp/skills"]);
 
 export const NO_PASSWORD_ERROR =
   "Set an admin password first: privileged routes stay closed until one is configured — on every bind, " +

@@ -525,6 +525,23 @@ export function getSkillsContextWarnTokens() {
   const v = Number(getSettings().skillsContextWarnTokens);
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : 6000;
 }
+// Git publishing of authored/approved skills (src/gateway/skills/publish.js): the repository,
+// branch and folder, and whether publishing is on. Empty repo = off.
+export function getSkillsPublish() {
+  const s = getSettings();
+  const mode = s.skillsPublishMode === "off" ? "off" : "commit";
+  return {
+    repo: typeof s.skillsPublishRepo === "string" ? s.skillsPublishRepo.trim() : "",
+    branch: typeof s.skillsPublishBranch === "string" && s.skillsPublishBranch.trim() ? s.skillsPublishBranch.trim() : "main",
+    subpath: typeof s.skillsPublishSubpath === "string" ? s.skillsPublishSubpath.trim().replace(/^\/+|\/+$/g, "") : "skills",
+    mode,
+  };
+}
+// The shared secret GitHub signs push webhooks with (X-Hub-Signature-256). Write-only.
+export function getSkillsWebhookSecret() {
+  const v = getSettings().skillsWebhookSecret;
+  return typeof v === "string" ? v.trim() : "";
+}
 
 // Organization-wide skill/connector grants. Unlike tokens these are not a fallback: they are the
 // first tier of a live org + channel + user union resolved on every run (access-grants.js).
@@ -720,6 +737,12 @@ export function settingsForApi() {
     skillsGithubTokenLast4: last4(getSkillsGithubToken()),
     skillsSyncIntervalMinutes: getSkillsSyncIntervalMinutes(),
     skillsContextWarnTokens: getSkillsContextWarnTokens(),
+    skillsPublishRepo: getSkillsPublish().repo,
+    skillsPublishBranch: getSkillsPublish().branch,
+    skillsPublishSubpath: getSkillsPublish().subpath,
+    skillsPublishMode: getSkillsPublish().mode,
+    hasSkillsWebhookSecret: Boolean(getSkillsWebhookSecret()),
+    skillsWebhookSecretLast4: last4(getSkillsWebhookSecret()),
     // Google Chat + Teams credentials follow the same write-only rule as the Slack tokens: the
     // listing says whether a value EXISTS and its last four characters, never the value. A
     // service-account key is a private key — only its client_email is echoed, because that is the
