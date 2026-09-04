@@ -2716,7 +2716,8 @@ environment installs its own Ed25519 keypair through `CHANNELGATE_LICENSE_PUBLIC
 offline payload (`test/helpers.js` → `testLicenseEnv()`). Nothing is stubbed out inside `src/ee/`:
 the suite runs as an enterprise deployment because it holds a license it actually signed.
 
-- [x] Unit (production trust root): with no environment override, the compiled key is a valid
+- [x] Unit (production trust root): with no environment override, the platform defaults to
+      `https://channelgate.dev`, the compiled key is a valid
       Ed25519 public key, differs from the retired development placeholder, and does not raise the
       placeholder warning; an escaped-newline environment override still wins for staging and
       coordinated rotation (`test/license-public-key.test.js`).
