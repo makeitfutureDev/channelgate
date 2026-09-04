@@ -1270,6 +1270,19 @@ are retired, bullet by bullet; everything else stands.
   `destroy()` removes the container, and the HOME volume ONLY on channel deletion — never on a
   rollback or a reconfiguration, so a channel switched back to the host and later returned to a
   container finds its CLI logins where it left them. → TEST-PLAN: Container runtime (v0.8 P1).
+- **VS Code attaches to the channel, not a look-alike development container.** An operator runs
+  `npm run vscode -- <channel id, slug, or exact name>` to start the existing channel container and
+  open its identical mounted work directory through VS Code Dev Containers. The helper holds a
+  signed cross-process editor lease for the lifetime of the window (including across a daemon
+  restart), so neither the idle reaper nor
+  the max-running eviction can stop it; stale markers are rejected by Linux process start identity
+  and removed automatically. `/home/agent` is the same persistent volume the chat engines use, so
+  installed tools, dotfiles and CLI logins remain identical. Codex keeps the gateway's shared
+  read-write login mount. Claude keeps the safer no-copy design: the helper obtains the same normal
+  subscription access-token relay as a chat turn, refreshes it while the window is open, and places
+  it behind a channel-local `claude` wrapper which defers to any credential explicitly injected by
+  a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
+  → TEST-PLAN: Container runtime (v0.8 P1).
 - **Nothing a channel accumulates is ever lost — including its temp files.** A container is stopped
   as a matter of routine (the ten-minute idle sweep, the max-running cap) and recreated whenever its
   create-time fingerprint changes (an image rebuild, a limit change, a network-mode flip), so the

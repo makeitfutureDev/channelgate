@@ -2054,6 +2054,20 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       waits, announces once, then refuses with "all N container slots are busy" rather than killing
       a running job; `startTimer()` is idempotent so a second boot cannot double-sweep (automated:
       `test/container-reaper.test.js`).
+- [x] Unit: VS Code's attached-container URI hex-encodes the exact managed container name and opens
+      the identical mounted workdir; a signed external editor lease survives the daemon/process
+      boundary and a daemon restart, blocks idle stopping, cannot be confused with a reused PID, and disappears on
+      release; the Claude wrapper consumes the refreshed operator/setup-token relay only when the
+      gateway did not inject a credential; `code --wait` holds the lease and cleanup removes both
+      the marker and live token even on failure (automated: `test/vscode-container.test.js`).
+- [ ] LIVE (Claude): on a gateway host with VS Code + Dev Containers configured for Podman, run
+      `npm run vscode -- cg-testing-claude-bash`; in the attached terminal verify the cwd is the
+      channel's mounted workdir, `claude -p 'Reply with exactly VSCODE-CLAUDE-OK'` succeeds on the
+      gateway operator's normal subscription, and `/api/health` keeps the container leased past its
+      idle window. Close the window and verify the editor lease/token disappear.
+- [ ] LIVE (Codex): repeat with `cg-testing-codex-bash`; verify `codex exec 'Reply with exactly
+      VSCODE-CODEX-OK'` succeeds without another login, a marker written in `/home/agent` is visible
+      to the next chat turn, and closing VS Code releases the editor lease without removing HOME.
 - [x] Unit: credential modes and their remedies — a configured token is mode `token` with nothing
       copied or mounted; no token and no login anywhere is `missing`; a readable login settles to
       `relay` whether it is the OPERATOR's own `~/.claude` or one signed in to the gateway's engine

@@ -9,6 +9,7 @@
 // The cap works the same way round: before creating or starting a container we make room by
 // stopping the least-recently-used IDLE one. If every slot is leased we WAIT and say so — the
 // alternative, killing someone's running job to make room, is never the right answer.
+import { activeEditorLeases } from "./editor-lease.js";
 export const DEFAULT_SWEEP_MS = 60_000;
 export const DEFAULT_SLOT_POLL_MS = 2_000;
 export const DEFAULT_SLOT_WAIT_MS = 5 * 60_000;
@@ -65,7 +66,8 @@ export function createContainerReaper({
   }
 
   function leaseCount(name) {
-    return entries.get(name)?.leases.size || 0;
+    const entry = entries.get(name);
+    return (entry?.leases.size || 0) + (entry?.target ? activeEditorLeases(entry.target).length : 0);
   }
 
   // Contract: synchronous, returns { release() }. release() doubles as an activity record — the
@@ -93,7 +95,7 @@ export function createContainerReaper({
   }
 
   function isIdle(entry) {
-    return entry.running && entry.leases.size === 0 && idleFor(entry) >= entry.idleMinutes * 60_000;
+    return entry.running && leaseCount(entry.name) === 0 && idleFor(entry) >= entry.idleMinutes * 60_000;
   }
 
   async function stopEntry(entry, reason) {
@@ -131,7 +133,7 @@ export function createContainerReaper({
       const running = runningEntries().filter((entry) => entry.name !== name);
       if (running.length < Math.max(1, maxRunning)) return { waitedMs: now() - started, stopped };
       const victim = running
-        .filter((entry) => entry.leases.size === 0)
+        .filter((entry) => leaseCount(entry.name) === 0)
         .sort((a, b) => a.lastActivity - b.lastActivity)[0];
       if (victim) {
         if (await stopEntry(victim, reason)) {
@@ -178,7 +180,8 @@ export function createContainerReaper({
     return [...entries.values()].map((entry) => ({
       name: entry.name,
       running: entry.running,
-      leases: entry.leases.size,
+      leases: leaseCount(entry.name),
+      editorLeases: entry.target ? activeEditorLeases(entry.target).length : 0,
       idleMs: idleFor(entry),
       idleMinutes: entry.idleMinutes,
       slug: entry.target?.slug || "",

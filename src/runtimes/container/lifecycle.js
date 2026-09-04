@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
+import { channelArtifactDir } from "../../config/paths.js";
 import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_PLATFORM } from "./names.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
 import { CONTAINER_SOCKET_DIR } from "./image-paths.js";
@@ -433,7 +434,15 @@ export function createContainerLifecycle({ cli, image, reaper, log = () => {}, n
       const result = await cli.runWith(caps, ["exec", entry.name, "cg-sweep", ...sweepKinds], { timeoutMs: 60_000 });
       if (result.code === 0) swept.push({ name: entry.name, ids: String(result.stdout || "").trim().split("\n").filter(Boolean) });
       else log(`[container] boot sweep of ${entry.name} failed: ${String(result.stderr || "").trim()}`);
-      reaper.markRunning(entry.name, null, { lastActivity: now() });
+      // External editor leases survive a daemon restart. Reconstruct the narrow target facts the
+      // reaper needs from our authenticated container labels so it can still validate their signed
+      // markers rather than treating the attached editor as idle after boot.
+      const slug = entry.labels[LABEL_CHANNEL] || "";
+      const platform = entry.labels[LABEL_PLATFORM] || "";
+      const leaseTarget = slug ? {
+        slug, platform, artifactDir: channelArtifactDir(slug, platform), container: { name: entry.name },
+      } : null;
+      reaper.markRunning(entry.name, leaseTarget, { lastActivity: now() });
     }
     if (running.length) log(`[container] boot reconcile: ${running.length} running container(s) swept and registered idle`);
     return { ok: true, reason: "", running: running.map((entry) => entry.name), swept, containers };
