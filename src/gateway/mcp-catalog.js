@@ -10,8 +10,8 @@ export function composioUrl() {
 }
 
 // Reference data for the agent's own Composio (channel token, else org token), used when generating
-// the lockdown. Matched by serverName (not URL) so a global claude.ai Composio connector cannot
-// collide and load with the wrong auth. The name is self-describing on purpose: every tool the
+// the lockdown. Referenced by serverName, and — because Claude Code matches every REMOTE server by
+// URL once the allowlist carries any serverUrl entry (see injectedRemoteAllowMatches) — by URL too. The name is self-describing on purpose: every tool the
 // model calls reads `mcp__composio-agent__*` / `mcp__composio-user__*`, so whose account it is acting
 // as is visible in the call itself, not something it has to remember from the guide.
 export function composioRef() {
@@ -145,10 +145,30 @@ export function namespacesFor(allowed = []) {
   return [...out];
 }
 
+// Composio SDK mode connects to a per-session tool-router URL on a composio.dev host; the lockdown
+// cannot know the exact URL ahead of the run, so it admits the host pattern instead.
+const COMPOSIO_SDK_URL_PATTERN = "https://*.composio.dev/*";
+
+// The serverUrl allow entries for every REMOTE server the gateway injects, listed beside their
+// serverName entries. Claude Code matches a remote (http/sse) server against `allowedMcpServers` by
+// URL as soon as the list carries any serverUrl entry — and a channel's picked global server adds
+// exactly that — after which a serverName entry no longer admits it: the CLI drops the server as
+// "blocked by enterprise policy" before any connection attempt, with no log line, so the run config
+// still reports both Composio identities resolved while the model never sees composio-user /
+// composio-agent (#int-sales, 2026-09-04). Codex has no such allowlist and was never affected.
+export function injectedRemoteAllowMatches({ makeToolboxUrl = "", composioSdk = false } = {}) {
+  const urls = new Set([composioUrl(), skillsUrl(), toolboxUrl()]);
+  if (composioSdk) urls.add(COMPOSIO_SDK_URL_PATTERN);
+  const make = typeof makeToolboxUrl === "string" ? makeToolboxUrl.trim() : "";
+  if (/^https?:\/\//i.test(make)) urls.add(make);
+  return [...urls].map((serverUrl) => ({ serverUrl }));
+}
+
 // The allowedMcpServers match objects for the lockdown (+ both Composio identities, Skills
-// Manager, Toolbox & scheduler).
-export function allowMatchesFor(allowed = []) {
+// Manager, Toolbox & scheduler, each by name AND by URL — see injectedRemoteAllowMatches).
+export function allowMatchesFor(allowed = [], remote = {}) {
   const out = [composioUserRef().allowMatch, composioRef().allowMatch, skillsRef().allowMatch, toolboxRef().allowMatch, makeToolboxRef().allowMatch, gatewayRef().allowMatch];
+  out.push(...injectedRemoteAllowMatches(remote));
   for (const a of allowed) if (a?.match) out.push(a.match);
   return out;
 }

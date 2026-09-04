@@ -878,6 +878,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Both injected Composio MCP identities are pre-approved by default: Claude settings include
   `mcp__composio-user` and `mcp__composio-agent`; each emitted server sets
   `default_tools_approval_mode:"approve"`. Codex mirrors both named approval configurations.
+  The lockdown's `allowedMcpServers` names every injected server AND lists each remote one by URL
+  (Composio, Skills Manager, Toolbox, the channel's Make toolbox; `*.composio.dev` in SDK mode):
+  Claude Code matches remote servers by URL as soon as the list holds any `serverUrl` entry — a
+  picked global server adds one — and a name entry alone then no longer admits them (2026-09-04:
+  Composio silently "blocked by enterprise policy" in a channel with a picked server).
+  → TEST-PLAN: MCP injection & tokens.
 - Codex reasoning effort uses the same Runtime effort setting as Claude (set via the `/model`
   wizard or admin UI): effort options switch with the selected/inherited engine, and Codex runs
   receive `model_reasoning_effort`.

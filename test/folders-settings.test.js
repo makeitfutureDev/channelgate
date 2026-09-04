@@ -8,7 +8,7 @@ ensureTestEnv();
 
 const [
   { buildSettings, ensureChannelFolder },
-  { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs },
+  { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs, composioUrl, skillsUrl, toolboxUrl, injectedRemoteAllowMatches },
   { channelSettingsFile, channelAdminSettingsFile, gatewayRoot },
 ] = await Promise.all([
   import("../src/gateway/folders.js"),
@@ -160,4 +160,32 @@ test("gateway MCP channel controls use the active engine selection field", () =>
   assert.match(entry, /claims\.engine/);
   assert.match(source, /selectionFieldForEngine\(activeEngine\)/);
   assert.match(source, /persistedSelectionForEngine\(activeEngine, s\)/);
+});
+
+// Claude Code matches a REMOTE server against `allowedMcpServers` by URL as soon as the list has any
+// serverUrl entry — a channel's picked global server adds one — and a serverName entry then no
+// longer admits it: the CLI dropped composio-user / composio-agent as "blocked by enterprise policy"
+// and the model never saw them (#int-sales, 2026-09-04). Every injected remote server therefore
+// carries its URL beside its name, and clean mode still carries nothing.
+test("the lockdown admits the injected remote servers by URL next to a picked global server", async () => {
+  const picked = { name: "aioutreach", namespace: "mcp__aioutreach", match: { serverUrl: "https://mcp.example.test/aioutreach" } };
+  const settings = await buildSettings({ _slug: "claude-remote-allow", cleanMode: false, allowedMcps: [picked], makeToolboxUrl: "https://hook.eu2.make.com/mcp/example" });
+  const urls = settings.allowedMcpServers.filter((m) => m.serverUrl).map((m) => m.serverUrl);
+  for (const url of [composioUrl(), skillsUrl(), toolboxUrl(), "https://hook.eu2.make.com/mcp/example", picked.match.serverUrl]) {
+    assert.ok(urls.includes(url), `missing serverUrl entry for ${url}`);
+  }
+  assert.ok(settings.allowedMcpServers.some((m) => m.serverName === composioRef().name));
+  assert.ok(settings.allowedMcpServers.some((m) => m.serverName === composioUserRef().name));
+
+  const cleanSettings = await buildSettings({ _slug: "claude-remote-allow-clean", cleanMode: true, allowedMcps: [picked] });
+  assert.deepEqual(cleanSettings.allowedMcpServers, []);
+});
+
+test("SDK-mode Composio adds its tool-router host pattern; a malformed Make toolbox URL adds nothing", () => {
+  const sdk = injectedRemoteAllowMatches({ composioSdk: true }).map((m) => m.serverUrl);
+  assert.ok(sdk.includes("https://*.composio.dev/*"));
+  assert.ok(sdk.includes(composioUrl()));
+  const personal = injectedRemoteAllowMatches({}).map((m) => m.serverUrl);
+  assert.equal(personal.includes("https://*.composio.dev/*"), false);
+  assert.equal(injectedRemoteAllowMatches({ makeToolboxUrl: "not a url" }).some((m) => m.serverUrl === "not a url"), false);
 });

@@ -978,6 +978,11 @@ the bridge network and *Allow network* is only a switch the engines are told abo
 - [x] Unit: both injected Composio MCPs are pre-approved by default: Claude settings include
       `mcp__composio-user` + `mcp__composio-agent` outside clean mode, each Claude MCP config entry sets
       `default_tools_approval_mode:"approve"`, and Codex argv mirrors both named approvals.
+- [x] Unit: the lockdown's `allowedMcpServers` carries a `serverUrl` entry for every injected remote
+      server (Composio personal URL, Skills Manager, Toolbox, the channel's Make toolbox URL; the
+      `*.composio.dev` pattern in SDK mode) beside the `serverName` entries, and still does so when the
+      channel picks a global server — Claude Code matches remote servers by URL once any `serverUrl`
+      entry exists, which silently blocked Composio in #int-sales (2026-09-04). Clean mode stays empty.
 - [x] Unit: Codex JSONL `item.started` / `item.completed` events for MCP tool calls, shell command
       executions, and agent messages map to Slack progress callbacks (`tool_use` events + text
       deltas), so streaming/status modes can render Codex tool activity.
