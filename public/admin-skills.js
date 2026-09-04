@@ -22,6 +22,9 @@ const state = {
   usageDays: 30,
   usage: null,
   templatePreview: null,
+  applyTemplate: "",
+  applyChannel: "",
+  applyMode: "add",
   message: "",
   error: "",
   wired: false,
@@ -303,9 +306,9 @@ function renderTemplates() {
     <div class="card skills-detail">
       <h3>Apply a template to a conversation</h3>
       <div class="skills-inline">
-        <select id="apply-template">${templates.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join("")}</select>
-        <select id="apply-channel">${channels.map((c) => `<option value="${esc(c.slug)}">${esc(c.name || c.slug)} (${c.skills.length} skills)</option>`).join("")}</select>
-        <select id="apply-mode"><option value="add">add to current grants</option><option value="replace">replace current grants</option></select>
+        <select id="apply-template">${templates.map((t) => `<option value="${esc(t.slug)}"${t.slug === state.applyTemplate ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select>
+        <select id="apply-channel">${channels.map((c) => `<option value="${esc(c.slug)}"${c.slug === state.applyChannel ? " selected" : ""}>${esc(c.name || c.slug)} (${c.skills.length} skills)</option>`).join("")}</select>
+        <select id="apply-mode"><option value="add"${state.applyMode !== "replace" ? " selected" : ""}>add to current grants</option><option value="replace"${state.applyMode === "replace" ? " selected" : ""}>replace current grants</option></select>
         <button type="button" class="ghost" data-action="preview-template">Preview</button>
         <button type="button" data-action="apply-template">Apply</button>
       </div>
@@ -335,6 +338,14 @@ function renderUsage() {
 // ── actions ─────────────────────────────────────────────────────────────────────────────────
 
 const val = (id) => document.getElementById(id)?.value ?? "";
+
+// The apply controls survive a re-render (a preview re-renders the panel): what the user picked
+// is what Apply acts on, never the first option again.
+function rememberApplySelection() {
+  state.applyTemplate = val("apply-template");
+  state.applyChannel = val("apply-channel");
+  state.applyMode = val("apply-mode") === "replace" ? "replace" : "add";
+}
 
 async function act(action, el) {
   const id = el.dataset.id;
@@ -497,12 +508,14 @@ async function act(action, el) {
       }
       break;
     case "preview-template": {
-      const r = await withStatus(() => api(`/api/skills/templates/${encodeURIComponent(val("apply-template"))}/preview?channel=${encodeURIComponent(val("apply-channel"))}&mode=${val("apply-mode")}`));
+      rememberApplySelection();
+      const r = await withStatus(() => api(`/api/skills/templates/${encodeURIComponent(state.applyTemplate)}/preview?channel=${encodeURIComponent(state.applyChannel)}&mode=${state.applyMode}`));
       if (r) state.templatePreview = r.preview;
       break;
     }
     case "apply-template": {
-      const r = await withStatus(() => api(`/api/skills/templates/${encodeURIComponent(val("apply-template"))}/apply`, { method: "POST", body: JSON.stringify({ channel: val("apply-channel"), mode: val("apply-mode") }) }));
+      rememberApplySelection();
+      const r = await withStatus(() => api(`/api/skills/templates/${encodeURIComponent(state.applyTemplate)}/apply`, { method: "POST", body: JSON.stringify({ channel: state.applyChannel, mode: state.applyMode }) }));
       if (r) setMessage(`Applied ${r.applied.template.name}: +${r.applied.add.length} skill(s)${r.applied.remove.length ? `, −${r.applied.remove.length}` : ""} — ${r.applied.names.length} granted now.`);
       state.templatePreview = null;
       await refreshAll();
@@ -551,6 +564,10 @@ function wire() {
       state.owner = val("skills-owner");
       state.showRemoved = document.getElementById("skills-removed")?.checked || false;
       refreshAll().then(render).catch((err) => { setMessage(err.message, true); render(); });
+      return;
+    }
+    if (el.id === "apply-template" || el.id === "apply-channel" || el.id === "apply-mode") {
+      rememberApplySelection();
       return;
     }
     if (el.dataset.action === "source-mode" || el.dataset.action === "source-enabled") {
