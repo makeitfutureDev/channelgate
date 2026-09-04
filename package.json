@@ -42,7 +42,8 @@
     "release:artifacts": "node scripts/release-artifacts.mjs",
     "with-landing-lock": "node scripts/with-landing-lock.mjs --",
     "whisper:install": "node scripts/install-whisper.mjs",
-    "build:image": "node scripts/build-image.mjs"
+    "build:image": "node scripts/build-image.mjs",
+    "vscode": "node scripts/open-vscode.mjs"
   },
   "engines": {
     "node": ">=22.13"

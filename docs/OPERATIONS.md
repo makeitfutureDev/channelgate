@@ -422,6 +422,34 @@ engine's own working state (compaction summaries, tool results, subagent transcr
 
 **Inspect and debug.**
 
+**Attach VS Code to the same channel container.** Install VS Code's **Dev Containers** extension;
+when the gateway uses Podman, set `dev.containers.dockerPath` to `podman`. From the gateway checkout
+as the daemon's Linux user, run:
+
+```bash
+npm run vscode -- <channel-id-or-slug-or-exact-name>
+```
+
+The helper starts the managed container if necessary and opens the channel's real mounted workdir,
+not a newly created dev container. Keep the helper terminal open: `code --wait` holds a signed
+editor lease until that VS Code window closes, preventing idle or capacity eviction. The attached
+terminal is user `agent` with the same persistent `/home/agent`, so its installed tools, GitHub and
+provider CLI logins, Claude history, and Codex history are the channel's own existing state.
+
+Codex uses the same shared login file already mounted for chat turns. Claude's rotating credential
+file is still never copied or mounted: the helper refreshes the gateway's normal subscription
+access-token relay every 20 minutes and exposes only that access token to interactive `claude`
+commands. Closing VS Code removes the live token and releases the lease; an interrupted helper is
+detected by PID start identity and its stale lease is discarded automatically. A daemon configured
+only with `ANTHROPIC_API_KEY` cannot currently export that key to an interactive editor terminal;
+use the normal operator subscription login or a configured `claude setup-token` for this workflow.
+
+This is deliberately an operator command, not a remotely callable channel tool: VS Code provides a
+full shell inside the container and bypasses chat tool presets. The container boundary remains the
+same—only this channel's mounts exist, there is no `sudo`, and no gateway database, host home, or
+other channel is exposed. Per-channel environment secrets remain write-only and are not exported
+to the editor terminal.
+
 ```bash
 podman ps --filter label=channelgate=1                 # every ChannelGate container on this host
 podman ps -a --filter label=cg.install=<install id>    # only THIS gateway's (see /api/health)
