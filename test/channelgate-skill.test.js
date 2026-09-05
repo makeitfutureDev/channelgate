@@ -64,12 +64,21 @@ test("the ChannelGate skill defines deterministic Composio identity discovery", 
 
   assert.match(guide, /`composio-user`.*active requester's personal account/is);
   assert.match(guide, /`composio-agent`.*shared agent account/is);
-  assert.match(guide, /both identities have an app such as Gmail.*ambiguous, ask/is);
+  // Ambiguity is a MUST-ask hard stop with the privacy reason stated, not a soft preference.
+  assert.match(guide, /both identities have an app such as Gmail.*MUST ask which account and MUST NOT call a tool first/is);
+  assert.match(guide, /not even a read-only look/i);
+  assert.match(guide, /exposes the\s+requester's own private data, or a third party's/is);
   assert.match(guide, /Never substitute or silently fall back/is);
   assert.match(guide, /mcp__composio_user__/);
-  assert.match(guide, /COMPOSIO_SEARCH_TOOLS.*toolkit_connection_statuses/is);
-  assert.match(guide, /COMPOSIO_MANAGE_CONNECTIONS.*action: "list"/is);
-  assert.match(guide, /must not initiate connections/is);
+  // The search tool is the only side-effect-free existence check.
+  assert.match(guide, /COMPOSIO_SEARCH_TOOLS.*toolkit_connection_statuses\[\]\.has_active_connection/is);
+  assert.match(guide, /only side-effect-free existence check/i);
+  // MANAGE_CONNECTIONS list initiates a pending connection, so it is never an inventory step.
+  assert.match(guide, /COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"` must\s+never be used for discovery or inventory/is);
+  assert.match(guide, /creates a pending authorization \(`status: "initiated"`\)/i);
+  assert.match(guide, /inventory request never authorizes initiating connections/i);
+  // The retired instruction is gone: nothing confirms a toolkit through MANAGE_CONNECTIONS.
+  assert.doesNotMatch(guide, /(confirm|verify|inspect|check)[^.]{0,160}COMPOSIO_MANAGE_CONNECTIONS/is);
 });
 
 test("both bundled skills keep device-code login in one live assistant turn", async () => {

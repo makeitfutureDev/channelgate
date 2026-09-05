@@ -36,10 +36,18 @@ test("gateway operating guide frames the two Composio accounts as YOURS vs the r
   // Tool registries normalize punctuation; one spelling is not evidence of absence.
   assert.match(skill, /`composio-user` can appear as `composio_user`/is);
   assert.match(skill, /never declare an identity absent.*only one spelling/is);
-  // Discovery checks the selected identity and remains read-only.
-  assert.match(skill, /COMPOSIO_SEARCH_TOOLS.*`toolkit_connection_statuses`/is);
-  assert.match(skill, /COMPOSIO_MANAGE_CONNECTIONS.*action: "list"/is);
-  assert.match(skill, /inventory request is not permission to initiate connections/is);
+  // Discovery checks the selected identity and remains read-only: the search tool is the ONLY
+  // side-effect-free existence check, and `has_active_connection` is what makes a toolkit present.
+  assert.match(skill, /`COMPOSIO_SEARCH_TOOLS` is the ONLY side-effect-free way/i);
+  assert.match(skill, /COMPOSIO_SEARCH_TOOLS.*`toolkit_connection_statuses/is);
+  assert.match(skill, /`has_active_connection` is true/i);
+  assert.match(skill, /`accounts\[\]`.*account aliases/is);
+  // MANAGE_CONNECTIONS list is NOT an inventory route — on an unconnected toolkit it initiates.
+  assert.match(skill, /Never call `COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"` during discovery or inventory/i);
+  assert.match(skill, /NOT read-only.*CREATES a\s+pending authorization request/is);
+  assert.match(skill, /status: "initiated"/);
+  assert.match(skill, /only for a toolkit the\s+search tool has already shown as connected/is);
+  assert.match(skill, /inventory request is never permission to initiate connections/is);
   assert.match(skill, /never substitute.*silently fall back/is);
   // DMs: no agent account at all.
   assert.match(skill, /In a DM you have no account of your own/i);
@@ -50,7 +58,41 @@ test("the operating guide makes dual Gmail identity selection explicit", async (
 
   assert.match(skill, /“my[^”]*”.*requester's Gmail/is);
   assert.match(skill, /“your[^”]*”.*your\* Gmail/is);
-  assert.match(skill, /BOTH have the app.*ask which account before calling a tool/is);
+  assert.match(skill, /BOTH have the app.*MUST ask which account.*no tool call/is);
+});
+
+test("the ambiguous identity case is a MUST-ask hard stop with a stated privacy reason", async () => {
+  const skill = await read("SKILL.md");
+
+  assert.match(skill, /Ambiguity is a hard stop, not a preference/i);
+  // The first response is the question, never a tool call — not even a read-only peek.
+  assert.match(skill, /first response MUST be the question.*MUST NOT be\s+a tool call/is);
+  assert.match(skill, /no read-only peek/i);
+  // The one-line rationale: private data of the requester or a third party.
+  assert.match(skill, /exposes the requester's own private data, or a\s+third party's/is);
+  assert.match(skill, /never send, schedule or\s+post from a guessed account/is);
+});
+
+test("no guide file still routes connection inventory through COMPOSIO_MANAGE_CONNECTIONS", async () => {
+  for (const file of await allGuideFiles()) {
+    const text = await readFile(file, "utf8");
+    const rel = path.relative(guideDir, file);
+    // The retired instruction — "confirm/verify/check ... through MANAGE_CONNECTIONS (list)".
+    assert.doesNotMatch(
+      text,
+      /(confirm|verify|inspect|check)[^.]{0,160}COMPOSIO_MANAGE_CONNECTIONS/is,
+      `${rel} still treats MANAGE_CONNECTIONS as an inventory/confirmation step`,
+    );
+    // Any remaining mention must carry the warning that the call is not side-effect-free.
+    for (const match of text.matchAll(/COMPOSIO_MANAGE_CONNECTIONS/g)) {
+      const around = text.slice(Math.max(0, match.index - 240), match.index + 240);
+      assert.match(
+        around,
+        /never|do not use|not read-only|initiat/i,
+        `${rel} names MANAGE_CONNECTIONS without saying it initiates a connection`,
+      );
+    }
+  }
 });
 
 test("the references defer to SKILL.md and use the self-describing account names", async () => {

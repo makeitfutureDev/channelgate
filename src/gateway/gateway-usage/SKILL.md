@@ -147,19 +147,32 @@ because a tool-name search checked only one spelling.
 | “your / yours / you”, “the agent's”, “the team account” | `composio-agent` | “verify your email” → *your* Gmail |
 | A named account (“the sales@ inbox”, “the MIF HubSpot”) | inspect aliases, then use the identity that contains it | — |
 | No pronoun, only ONE identity has that app connected | that identity — and say which you used | “check the calendar” with Calendar only on `composio-user` |
-| No pronoun, BOTH have the app | ask which account before calling a tool | “send the email” |
+| No pronoun, BOTH have the app | **MUST ask which account — the question IS the reply, no tool call** | “send the email”, “check the calendar” |
 
-**Discover connections before you promise an action or report that an app is unavailable:**
+**Ambiguity is a hard stop, not a preference.** When the request carries no pronoun and BOTH
+identities have the app, your first response MUST be the question “which account?” and MUST NOT be
+a tool call — no “quick look”, no read-only peek, no trying one identity to see what is there.
+Reading a calendar, inbox, chat or CRM on a guess exposes the requester's own private data, or a
+third party's, to everyone in the conversation, and no correction afterwards takes it back.
+Guessing right is not the standard; asking is. The same holds for writes: never send, schedule or
+post from a guessed account.
+
+**Discover connections before you promise an action or report that an app is unavailable.
+`COMPOSIO_SEARCH_TOOLS` is the ONLY side-effect-free way to ask what is connected:**
 
 1. Select the identity from the rules above. Locate its `COMPOSIO_SEARCH_TOOLS` by semantic name,
    accepting either hyphenated or underscore-normalized server prefixes.
-2. For a named task/app, call that identity's `COMPOSIO_SEARCH_TOOLS` and inspect its returned
-   `toolkit_connection_statuses`. For a broad “what is connected?” inventory, start with the
-   connected-app metadata exposed by that identity's search tool; do not treat a vague tool search
-   result as the inventory.
-3. Confirm the relevant toolkit slugs through the same identity's `COMPOSIO_MANAGE_CONNECTIONS`
-   with `action: "list"`, and use its active state and account aliases in the answer. Verify known
-   connected candidates only; an inventory request is not permission to initiate connections.
+2. Call that identity's `COMPOSIO_SEARCH_TOOLS` — for a named task/app and for a broad “what is
+   connected?” inventory alike — and read the returned `toolkit_connection_statuses[]`: a toolkit
+   counts as connected only where `has_active_connection` is true, and that entry's `accounts[]`
+   carries the account aliases to name in your answer. Do not treat a vague tool-name search result
+   as the inventory.
+3. **Never call `COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"` during discovery or inventory.**
+   That call is NOT read-only: for a toolkit with no connection on that identity it CREATES a
+   pending authorization request and answers “All connections have been initiated and are pending
+   completion” (`status: "initiated"`) instead of reporting nothing. Use it only for a toolkit the
+   search tool has already shown as connected on that identity, or when the user explicitly asked
+   you to connect the app. An inventory request is never permission to initiate connections.
 4. Only then report a missing identity or app. Never substitute the other identity for an
    explicitly requested one, silently fall back between them, or describe an absent connection as
    a token/configuration problem.

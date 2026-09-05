@@ -12,7 +12,8 @@ identity rules in `SKILL.md` → “Tool identities”:
 
 - “my Slack” → `composio-user` (`mcp__composio-user__*`), the requester's own account.
 - “your Slack” → `composio-agent` (`mcp__composio-agent__*`), YOUR own account.
-- No pronoun → the only account with Slack connected (say which); ask if both have it.
+- No pronoun → the only account with Slack connected (say which). If BOTH have Slack you MUST ask
+  which account first — the question is the whole reply, and you call no tool until it is answered.
 - In a DM only `composio-user` exists.
 
 - Find the right Slack action through Composio (e.g. its search/execute tools surface actions like
@@ -23,10 +24,12 @@ identity rules in `SKILL.md` → “Tool identities”:
   that runs as you, in this channel), use `create_schedule` instead — see `references/reminders.md`.
 
 ## Prerequisite: the selected account has Slack connected
-An account exposes Slack actions only if Slack is connected inside it — check its
-`COMPOSIO_SEARCH_TOOLS` description or `COMPOSIO_MANAGE_CONNECTIONS` (`list`). If the requested
-account or action is unavailable, explain that exact prerequisite; do not silently act as the
-other account. A requester can connect their personal account from the App Home tab → "Connect my
+An account exposes Slack actions only if Slack is connected inside it — call that account's
+`COMPOSIO_SEARCH_TOOLS` and look for its `slack` entry in `toolkit_connection_statuses[]` with
+`has_active_connection` true. Never use `COMPOSIO_MANAGE_CONNECTIONS` (`list`) for that check: on
+an account with no Slack connection it starts a pending authorization instead of answering. If the
+requested account or action is unavailable, explain that exact prerequisite; do not silently act
+as the other account. A requester can connect their personal account from the App Home tab → "Connect my
 Composio key" (or `set_my_composio_token` in a DM); YOUR account is set up by an admin
 (`references/administration.md`). There is no separate Slack login beyond these paths.
 

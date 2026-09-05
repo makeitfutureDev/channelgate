@@ -15,16 +15,22 @@ External apps come from two deliberately distinct identities when configured:
 
 Personal and SDK provisioning modes preserve this semantic split. Pronouns select the identity;
 for a named account, inspect connection aliases. When both identities have an app such as Gmail
-and the request is ambiguous, ask which account. Never substitute or silently fall back between
-them.
+and the request is ambiguous, the agent MUST ask which account and MUST NOT call a tool first —
+not even a read-only look. Reading a calendar, inbox, chat or CRM on a guess exposes the
+requester's own private data, or a third party's, to everyone in the conversation, and no later
+correction takes it back. Never substitute or silently fall back between them.
 
 The MCP server ids are hyphenated, but harness registries may expose callable prefixes with
 normalized underscores (`mcp__composio_user__*` / `mcp__composio_agent__*`). Determine presence by
 the semantic server identity and `COMPOSIO_*` tool suffix, not by matching only one spelling.
-Before declaring an app unavailable, use the selected identity's `COMPOSIO_SEARCH_TOOLS`, inspect
-its `toolkit_connection_statuses`, and confirm the relevant toolkit through
-`COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"`. A broad inventory starts from the search
-tool's connected-app metadata and verifies those candidates; it must not initiate connections.
+Before declaring an app unavailable, use the selected identity's `COMPOSIO_SEARCH_TOOLS` and read
+`toolkit_connection_statuses[].has_active_connection` together with that entry's `accounts[]`
+aliases. That search call is the only side-effect-free existence check, and it answers both a
+named-app question and a broad inventory. `COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"` must
+never be used for discovery or inventory: on a toolkit with no connection on that identity it
+creates a pending authorization (`status: "initiated"`) instead of reporting nothing, so it is
+reserved for a toolkit the search tool already shows as connected there, or for a connection the
+user explicitly asked for. An inventory request never authorizes initiating connections.
 
 The gateway may also inject the privileged MakeItFuture toolbox according to its channel → user →
 organization token precedence. Clean runs and reduced-tool memory reviews omit optional identities.
