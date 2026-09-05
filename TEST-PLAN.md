@@ -7,12 +7,15 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 
 Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 `test/memory-snapshot-run.test.js`, `test/channel-members-ui.test.js`,
-`test/access-grants.test.js`, `test/gateway-mcp-authz.test.js`.
+`test/access-grants.test.js`, `test/gateway-mcp-authz.test.js`,
+`test/mcp-control-plane-approval.test.js`.
 
 - [x] Large MEMORY.md and topic writes succeed without a character-capacity failure.
 - [x] A fresh run receives only the compact memory catalog; stored fact bodies are absent.
 - [x] FTS5 search ranks matching Markdown passages, rebuilds after hand edits, and read rejects
       traversal or any source outside MEMORY.md / memory/*.md.
+- [x] The registered search and read MCP handlers return formatted content through their injected
+      response helper (regression: neither can fail with `text is not defined`).
 - [x] Untrusted/API-spoofed principals cannot call memory retrieval tools.
 - [x] Conversation Tools exposes four focused categories and no channel Grant Tier selector;
       enabled skills appear first.
