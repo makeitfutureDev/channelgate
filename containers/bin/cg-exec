@@ -13,11 +13,15 @@ id="$1"
 [ -n "$id" ] || { echo "cg-exec: missing run id" >&2; exit 64; }
 shift
 [ $# -gt 0 ] || { echo "cg-exec: missing command" >&2; exit 64; }
-mkdir -p /run/cg 2>/dev/null || true
-rm -f "/run/cg/$id.rc" 2>/dev/null || true
-# $0 inside `sh -c` is the run id; $@ is the command. $$ is that shell — setsid made it the session
-# and group leader, and `exec` keeps its pid, so the recorded pid IS the group leader (-pid works).
-setsid -w /bin/sh -c 'echo $$ > "/run/cg/$0.pid"; exec "$@"' "$id" "$@"
+# Where the pidfiles live. Always /run/cg inside the image; overridable so the helpers can be
+# exercised for real (cg-exec + cg-signal against the kernel's own /proc) from a test.
+dir="${CG_RUN_DIR:-/run/cg}"
+mkdir -p "$dir" 2>/dev/null || true
+rm -f "$dir/$id.rc" 2>/dev/null || true
+# $0 inside `sh -c` is the run id and $1 the pidfile directory; what is left after the shift is the
+# command. $$ is that shell — setsid made it the SESSION and group leader, and `exec` keeps its
+# pid, so the recorded pid IS both the group leader (-pid works) and the session id.
+setsid -w /bin/sh -c 'd="$1"; shift; echo $$ > "$d/$0.pid"; exec "$@"' "$id" "$dir" "$@"
 rc=$?
-printf '%s\n' "$rc" > "/run/cg/$id.rc" 2>/dev/null || true
+printf '%s\n' "$rc" > "$dir/$id.rc" 2>/dev/null || true
 exit "$rc"

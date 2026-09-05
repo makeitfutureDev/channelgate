@@ -148,12 +148,114 @@ test("the container-side helper scripts are present, executable and POSIX-sh cle
   // The run wrapper is what makes probe/signal reach a whole process tree from a separate exec.
   const cgExec = readFileSync(path.join(binDir, "cg-exec"), "utf8");
   assert.match(cgExec, /setsid -w/, "cg-exec must keep the run in the foreground so exit codes and stdio stay the engine's");
-  assert.match(cgExec, /\/run\/cg\/\$0\.pid/, "cg-exec must record the group leader's pid for cg-probe/cg-signal");
-  assert.match(readFileSync(path.join(binDir, "cg-signal"), "utf8"), /-\$pid/, "cg-signal must address the whole process group");
+  assert.match(cgExec, /\$d\/\$0\.pid/, "cg-exec must record the group leader's pid for cg-probe/cg-signal");
+  const cgSignal = readFileSync(path.join(binDir, "cg-signal"), "utf8");
+  assert.match(cgSignal, /-\$pid/, "cg-signal must address the whole process group");
+  assert.match(cgSignal, /\/proc\/\[0-9\]\*/, "cg-signal must walk /proc to find what escaped the run's group");
+  // A sweep must reach exactly what a stop reaches, so it goes through cg-signal rather than
+  // repeating the walk — two copies of this would drift.
+  assert.match(readFileSync(path.join(binDir, "cg-sweep"), "utf8"), /cg-signal/, "cg-sweep must sweep through cg-signal");
+  for (const name of ["cg-exec", "cg-probe", "cg-signal", "cg-sweep"]) {
+    assert.match(readFileSync(path.join(binDir, name), "utf8"), /CG_RUN_DIR:-\/run\/cg/, `containers/bin/${name} must read the pidfile dir from CG_RUN_DIR, defaulting to /run/cg`);
+  }
   const init = readFileSync(path.join(binDir, "cg-init"), "utf8");
   assert.doesNotMatch(init, /cp .*\.credentials\.json/, "cg-init must never copy a Claude login into the container (2026-09-02 incident)");
   assert.match(init, /setup-token/, "cg-init documents the token-only rule");
 });
+
+// ── The stop path, executed for real ──────────────────────────────────────────────────────────
+// A run's process GROUP is not the whole run: Claude Code's Bash tool puts its shell in a new
+// session AND a new process group, so `kill -- -<leader>` reported success while the tool's shell
+// kept going and its command ran to completion minutes after the turn was reported stopped (live,
+// CTR-11). Reading the scripts cannot catch that, so this runs the real `cg-exec` and `cg-signal`
+// against the kernel's own /proc, with the pidfile directory pointed at a temp dir so no root and
+// no container are needed. `setsid <cmd> &` from the run's shell reproduces the escape exactly:
+// same parent, new session, new process group.
+test(
+  "cg-signal stops a child that escaped the run's process group and session",
+  { skip: process.platform === "linux" ? false : "the container-side helpers are Linux-only" },
+  async () => {
+    const { spawn, spawnSync } = await import("node:child_process");
+    const { tempDir } = await import("./helpers.js");
+
+    const stat = (pid) => {
+      let raw;
+      try {
+        raw = readFileSync(`/proc/${pid}/stat`, "utf8");
+      } catch {
+        return null;
+      }
+      // `comm` is unquoted and may hold spaces and parentheses: the fields start after the LAST ")".
+      const fields = raw.slice(raw.lastIndexOf(") ") + 2).split(" ");
+      return { state: fields[0], ppid: Number(fields[1]), pgrp: Number(fields[2]), session: Number(fields[3]) };
+    };
+    const alive = (pid) => {
+      const s = stat(pid);
+      return Boolean(s) && s.state !== "Z";
+    };
+    const readPid = (file) => {
+      try {
+        const value = Number(readFileSync(file, "utf8").trim());
+        return Number.isInteger(value) && value > 0 ? value : null;
+      } catch {
+        return null;
+      }
+    };
+    const waitFor = async (fn, ms = 5000) => {
+      const deadline = Date.now() + ms;
+      for (;;) {
+        const value = fn();
+        if (value) return value;
+        if (Date.now() > deadline) return null;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    };
+
+    const runDir = tempDir("cg-run-");
+    const runId = `run-escape-${process.pid}`;
+    const escapedFile = path.join(runDir, "escaped.pid");
+    const env = { ...process.env, CG_RUN_DIR: runDir };
+    const bin = (name) => path.join(repoRoot, "containers", "bin", name);
+
+    const client = spawn(
+      bin("cg-exec"),
+      [runId, "/bin/sh", "-c", 'setsid sleep 300 & echo $! > "$1"; wait', "cg-test", escapedFile],
+      { env, stdio: "ignore" },
+    );
+    let leader = null;
+    let escaped = null;
+    try {
+      leader = await waitFor(() => readPid(path.join(runDir, `${runId}.pid`)));
+      assert.ok(leader, "cg-exec never recorded the run leader's pid");
+      escaped = await waitFor(() => readPid(escapedFile));
+      assert.ok(escaped, "the run never started the escaping child");
+      const escapedStat = await waitFor(() => stat(escaped));
+      const leaderStat = stat(leader);
+      assert.ok(leaderStat && escapedStat, "both processes must be running before the stop");
+      assert.equal(leaderStat.session, leader, "cg-exec must make the run leader a session leader");
+      assert.equal(escapedStat.ppid, leader, "the escapee must still be the leader's child when the stop arrives");
+      assert.notEqual(escapedStat.pgrp, leaderStat.pgrp, "the child must have left the run's process group, or this proves nothing");
+      assert.notEqual(escapedStat.session, leaderStat.session, "the child must have left the run's session, or this proves nothing");
+
+      const signalled = spawnSync(bin("cg-signal"), [runId, "TERM"], { env, encoding: "utf8" });
+      assert.equal(signalled.status, 0, `cg-signal must report delivery: ${signalled.stderr}`);
+      assert.equal(signalled.stderr, "", "cg-signal must stay quiet on stderr");
+
+      const stopped = await waitFor(() => (!alive(leader) && !alive(escaped) ? true : null));
+      assert.ok(stopped, `a stop must leave nothing behind (leader alive=${alive(leader)}, escapee alive=${alive(escaped)})`);
+    } finally {
+      for (const pid of [escaped, leader]) {
+        if (!pid || !alive(pid)) continue;
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+      client.kill("SIGKILL");
+    }
+  },
+);
 
 function readdirSyncSafe(dir) {
   try {

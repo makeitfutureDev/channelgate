@@ -2223,6 +2223,11 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       probe/signal address the run by its runId (`cg-probe` / `cg-signal`), and probe semantics are
       three-valued — exit 0 alive, exit 1 dead, "no such container" dead, and a TIMEOUT still alive,
       because an inconclusive probe must not end a turn (automated).
+- [x] Unit: the stop path is EXECUTED, not string-matched: `cg-exec` starts a run whose child
+      escapes into its own session and process group (`setsid <cmd> &`, the shape Claude Code's
+      Bash tool has), and `cg-signal` — pointed at a temp pidfile dir through `CG_RUN_DIR` — leaves
+      neither the leader nor the escapee alive, with the escape asserted as a precondition so the
+      test cannot pass vacuously; Linux-only (automated: `test/container-image.test.js`).
 - [x] Unit: the image contract is asserted against the Containerfile and the build script rather
       than trusted — every `IMAGE_HELPERS` path is one the build actually stages; the bundle is the
       import closure of the three engine-spawned helpers and stays under a dozen modules with

@@ -1,10 +1,18 @@
 #!/bin/sh
-# cg-sweep [prefix…] — kill every recorded run group, SIGTERM then SIGKILL after 5s, and delete the
+# cg-sweep [prefix…] — kill every recorded run, SIGTERM then SIGKILL after 5s, and delete the
 # pidfiles. The daemon runs this on a RUNNING container at boot: every engine process inside it
 # belonged to the previous daemon, which can no longer read their stdout, and restart recovery
 # replays those turns. With prefixes it sweeps only matching run ids (`cg-sweep run warm` leaves
 # detached background jobs — which are meant to outlive a daemon restart — running).
-[ -d /run/cg ] || exit 0
+#
+# Both passes go through `cg-signal`, so a sweep reaches exactly what a stop reaches: the run's
+# process group PLUS the processes that escaped it into their own session or group (Claude Code's
+# Bash tool shell). Duplicating the walk here would let the two paths drift.
+dir="${CG_RUN_DIR:-/run/cg}"
+[ -d "$dir" ] || exit 0
+case "$0" in */*) bindir=${0%/*} ;; *) bindir=. ;; esac
+signal="$bindir/cg-signal"
+[ -x "$signal" ] || signal=cg-signal
 matches() {
   [ $# -eq 1 ] && return 0
   name="$1"; shift
@@ -14,21 +22,20 @@ matches() {
   return 1
 }
 swept=""
-for f in /run/cg/*.pid; do
+for f in "$dir"/*.pid; do
   [ -e "$f" ] || continue
   base=${f##*/}; base=${base%.pid}
   matches "$base" "$@" || continue
   pid=$(cat "$f" 2>/dev/null) || continue
   [ -n "$pid" ] || continue
-  kill -s TERM -- "-$pid" 2>/dev/null || kill -s TERM "$pid" 2>/dev/null || true
-  swept="$swept $f:$pid"
+  "$signal" "$base" TERM >/dev/null 2>&1 || true
+  swept="$swept $base"
   echo "$base"
 done
 [ -n "$swept" ] || exit 0
 sleep 5
-for entry in $swept; do
-  f=${entry%:*}; pid=${entry##*:}
-  kill -s KILL -- "-$pid" 2>/dev/null || kill -s KILL "$pid" 2>/dev/null || true
-  rm -f "$f" "${f%.pid}.rc" 2>/dev/null || true
+for base in $swept; do
+  "$signal" "$base" KILL >/dev/null 2>&1 || true
+  rm -f "$dir/$base.pid" "$dir/$base.rc" 2>/dev/null || true
 done
 exit 0

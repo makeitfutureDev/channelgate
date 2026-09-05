@@ -1,5 +1,5 @@
 {
-  "imageSpecVersion": "1.2.0",
+  "imageSpecVersion": "1.2.1",
   "comment": "Pinned toolchain for the channel image. Keep `claude` and `codex` at the versions the gateway host runs, so a channel behaves identically on either runtime backend; bump deliberately, rebuild, and let the image-id fingerprint recreate the containers. `imageSpecVersion` is the image CONTRACT (paths, PATH, baked-in packages), not the pins: bump it when the image gains or moves something the daemon relies on, keep it equal to IMAGE_SPEC_VERSION in src/runtimes/container/image-paths.js (a test pins them together), and the daemon will tell an operator at boot when the built image is older.",
   "base": "node:22-bookworm-slim",
   "npm": {
