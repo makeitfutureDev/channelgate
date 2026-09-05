@@ -26,6 +26,12 @@ product overview.
   *Section* control or the admin API move a skill either way — files move in the repository, and a
   promoted skill stays with its former channel as an explicit grant. `.` as the publish folder
   means the repository root.
+- **The bundled ChannelGate skill now matches the product.** Its small entrypoint routes to focused
+  references for containers/security, write-only secrets and durable CLI/device logins,
+  Claude/Codex credentials, MCP identities and the local skill platform, catalog-first channel
+  memory, conversation operations, and manual folder/headless configuration. Package validation
+  guards frontmatter and progressive-disclosure links. Memory search/read registration also keeps
+  the gateway text-response adapter in scope, fixing the live `text is not defined` failure.
 - **Video understanding is part of the main gateway skill.** `gateway-usage` now ships the complete
   synchronized visual/audio workflow, sampling and dependency guidance, and local analyzer script
   to every conversation. The former standalone catalog skill is excluded and removed from durable
