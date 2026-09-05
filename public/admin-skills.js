@@ -1,5 +1,5 @@
 // The Skills view of the admin UI: the local skill catalog (browse, read, author, pin/rollback,
-// remove), the review queue (staged source revisions + proposals), sources (GitHub / folder,
+// remove), the review queue (staged source revisions + proposals), sources (GitHub / gateway,
 // sync, settings), templates (edit, preview and apply to a conversation) and usage. Talks to
 // src/web/routes/skills.js. No framework — one delegated click handler per panel.
 import { api } from "./admin-api.js";
@@ -270,7 +270,8 @@ function renderSources() {
     const st = s.lastSyncStats || {};
     return `
     <tr>
-      <td><span class="pill">${esc(s.kind)}</span> ${esc(s.label || "")}<br/><code>${esc(s.url)}</code>${s.ref ? `<br/><span class="muted">ref ${esc(s.ref)}</span>` : ""}${s.subpath ? `<span class="muted"> · ${esc(s.subpath)}</span>` : ""}</td>
+      <td><span class="pill">${esc(s.kind)}</span> ${esc(s.label || "")}<br/><code>${esc(s.url)}</code>${s.ref ? `<br/><span class="muted">ref ${esc(s.ref)}</span>` : ""}${s.subpath ? `<span class="muted"> · ${esc(s.subpath)}</span>` : ""}
+        ${s.kind !== "folder" ? `<div class="skills-inline" style="margin-top:6px"><input id="source-secret-${s.id}" type="password" autocomplete="off" placeholder="${s.hasSecret ? "•••••••• (leave empty to keep)" : s.kind === "git" ? "optional GitHub token" : "peer access token"}" style="width:190px"/><button type="button" class="ghost" data-action="save-source-secret" data-id="${s.id}">Save token</button>${s.hasSecret ? `<button type="button" class="ghost" data-action="clear-source-secret" data-id="${s.id}">Clear</button>` : ""}</div>` : ""}</td>
       <td><span class="skills-inline"><select data-action="source-mode" data-id="${s.id}"><option value="review"${s.mode === "review" ? " selected" : ""}>review</option><option value="auto"${s.mode === "auto" ? " selected" : ""}>auto</option></select>
         <label><input type="checkbox" data-action="source-enabled" data-id="${s.id}"${s.enabled ? " checked" : ""}/> enabled</label></span>
         ${s.kind === "git" ? `<div class="skills-inline" style="margin-top:6px"><input placeholder="pin to commit sha" value="${esc(s.pinnedRef)}" data-field="pinnedRef" data-id="${s.id}" style="width:150px"/><button type="button" class="ghost" data-action="source-pin" data-id="${s.id}">pin</button></div>` : ""}</td>
@@ -279,18 +280,18 @@ function renderSources() {
     </tr>`;
   }).join("");
   return `
-    <div class="skills-section-head"><div><h3>Sources</h3><p class="skills-note">Repositories, host folders, and peer gateways that feed this catalog.</p></div><button type="button" data-action="open-source">+ Add source</button></div>
+    <div class="skills-section-head"><div><h3>Sources</h3><p class="skills-note">GitHub repositories and other ChannelGate catalogs that feed this catalog.</p></div><button type="button" data-action="open-source">+ Add source</button></div>
     <table class="skills-table"><thead><tr><th>Source</th><th>Mode</th><th>Last sync</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No sources yet.</td></tr>'}</tbody></table>
     <p class="skills-note">Host folders imported at boot (folder-owned skills, kept in sync by content): ${(o.hostFolders || []).map((d) => `<code>${esc(d)}</code>`).join(", ") || "none"}</p>
     ${state.sourceModal ? `<div class="skills-modal" data-action="close-source"><div class="card skills-modal-card" role="dialog" aria-modal="true" aria-labelledby="add-source-title" data-modal-card>
       <div class="skills-section-head"><h3 id="add-source-title">Add a source</h3><button type="button" class="ghost" data-action="close-source" aria-label="Close">✕</button></div>
       <div class="skills-form">
-        <label class="field"><span>Kind</span><select id="src-kind"><option value="git">GitHub repository</option><option value="folder">Folder on the gateway host</option><option value="gateway">Another ChannelGate (peer gateway)</option></select></label>
-        <label class="field"><span>URL or path</span><input id="src-url" placeholder="https://github.com/anthropics/skills, /srv/skills, or http://peer-gateway:4748" /></label>
-        <label class="field"><span>Peer access token (gateway kind only; minted on the peer with the sync scope)</span><input id="src-secret" type="password" autocomplete="off" placeholder="cgs_…" /></label>
+        <label class="field"><span>Source type</span><select id="src-kind"><option value="git">GitHub repository</option><option value="gateway">Other ChannelGate</option></select></label>
         <label class="field"><span>Label</span><input id="src-label" placeholder="Anthropic skills" /></label>
-        <label class="field"><span>Branch / tag (git; empty = default, or use a /tree/ URL)</span><input id="src-ref" placeholder="main" /></label>
-        <label class="field"><span>Subfolder (only discover skills below it)</span><input id="src-subpath" placeholder="skills" /></label>
+        <label class="field" data-source-kind="git"><span>GitHub repository URL</span><input id="src-git-url" placeholder="https://github.com/owner/repo or …/tree/main/skills" /></label>
+        <label class="field" data-source-kind="git"><span>Token (optional, for a private repository)</span><input id="src-git-secret" type="password" autocomplete="off" placeholder="github_pat_…" /></label>
+        <label class="field" data-source-kind="gateway" hidden><span>ChannelGate URL</span><input id="src-gateway-url" placeholder="https://gateway.example.com" /></label>
+        <label class="field" data-source-kind="gateway" hidden><span>Access token (minted on the other gateway with sync scope)</span><input id="src-gateway-secret" type="password" autocomplete="off" placeholder="cgs_…" /></label>
         <label class="field"><span>Mode</span><select id="src-mode"><option value="review">review — stage every change for approval</option><option value="auto">auto — activate on sync</option></select></label>
       </div>
       <div class="skills-actions"><span class="spacer"></span><button type="button" class="ghost" data-action="close-source">Cancel</button><button type="button" data-action="add-source">Add and sync</button></div>
@@ -303,24 +304,23 @@ function renderSyncSettings() {
   return `
     <div class="skills-section-head"><div><h3>Synchronization</h3><p class="skills-note">Run imports and configure how external sources stay current.</p></div><div class="skills-inline"><button type="button" data-action="sync-all">Sync all Git sources</button><button type="button" class="ghost" data-action="refresh-host">Re-import host folders</button></div></div>
     <div class="card skills-detail">
-      <h3>Sync settings</h3>
+      <h3>Catalog settings</h3>
       <div class="skills-form">
-        <label class="field"><span>GitHub token (private repositories, rate limits) — ${settings.hasGithubToken ? "set" : "not set"}</span><input id="skills-gh-token" type="password" placeholder="${settings.hasGithubToken ? "•••••••• (leave empty to keep)" : "ghp_… (optional)"}" autocomplete="off" /></label>
         <label class="field"><span>Sync interval (minutes, 0 = off)</span><input id="skills-interval" type="number" min="0" value="${Number(settings.syncIntervalMinutes ?? 60)}" /></label>
         <label class="field"><span>Context soft cap (tokens of always-on skill descriptions per conversation)</span><input id="skills-warn" type="number" min="1" value="${Number(settings.contextWarnTokens ?? 6000)}" /></label>
       </div>
-      <div class="skills-actions"><button type="button" data-action="save-settings">Save</button>${settings.hasGithubToken ? `<button type="button" class="ghost" data-action="clear-gh-token">Clear token</button>` : ""}</div>
+      <div class="skills-actions"><button type="button" data-action="save-settings">Save</button></div>
     </div>
     <div class="card skills-detail">
       <h3>Publishing to Git</h3>
-      <p class="skills-note">Skills authored or approved here are pushed to this repository (one commit per file, under the folder below) with the GitHub token above. When the repository is also a source, the published skill becomes that source's skill.</p>
+      <p class="skills-note">Skills authored or approved here are pushed to this repository (one commit per file, under the folder below). When the repository is also a source, the published skill becomes that source's skill.</p>
       <div class="skills-form">
         <label class="field"><span>Repository (owner/repo or URL; empty = off)</span><input id="pub-repo" value="${esc(settings.publish?.repo ? `${settings.publish.owner}/${settings.publish.repo}` : "")}" placeholder="makeitfutureDev/makeitfuture-private-skills" /></label>
-        <label class="field"><span>Branch</span><input id="pub-branch" value="${esc(settings.publish?.branch || "main")}" /></label>
+        <label class="field"><span>GitHub token — ${settings.hasPublishGithubToken ? "set" : "not set"}</span><input id="pub-token" type="password" autocomplete="off" placeholder="${settings.hasPublishGithubToken ? "•••••••• (leave empty to keep)" : "github_pat_…"}" /></label>
         <label class="field"><span>Folder in the repository</span><input id="pub-subpath" value="${esc(settings.publish?.subpath || "skills")}" /></label>
         <label class="field"><span>Mode</span><select id="pub-mode"><option value="commit"${settings.publish?.mode !== "off" ? " selected" : ""}>commit on create / update / approve</option><option value="off"${settings.publish?.mode === "off" ? " selected" : ""}>off</option></select></label>
       </div>
-      <div class="skills-actions"><button type="button" data-action="save-publish">Save publishing</button>${settings.publishSourceId ? `<span class="skills-muted">Also source #${settings.publishSourceId} — published skills are adopted by it.</span>` : ""}</div>
+      <div class="skills-actions"><button type="button" data-action="save-publish">Save publishing</button>${settings.hasPublishGithubToken ? `<button type="button" class="ghost" data-action="clear-publish-token">Clear token</button>` : ""}${settings.publishSourceId ? `<span class="skills-muted">Also source #${settings.publishSourceId} — published skills are adopted by it.</span>` : ""}</div>
     </div>
     <div class="card skills-detail">
       <h3>GitHub webhook</h3>
@@ -554,8 +554,22 @@ async function act(action, el) {
       await refreshAll();
       break;
     }
+    case "save-source-secret": {
+      const secret = val(`source-secret-${id}`).trim();
+      if (!secret) { setMessage("Enter a token first.", true); break; }
+      await withStatus(() => api(`/api/skills/sources/${id}`, { method: "PUT", body: JSON.stringify({ secret }) }), "Source token saved.");
+      await refreshAll();
+      break;
+    }
+    case "clear-source-secret":
+      await withStatus(() => api(`/api/skills/sources/${id}`, { method: "PUT", body: JSON.stringify({ clearSecret: true }) }), "Source token cleared.");
+      await refreshAll();
+      break;
     case "add-source": {
-      const r = await withStatus(() => api("/api/skills/sources", { method: "POST", body: JSON.stringify({ kind: val("src-kind"), url: val("src-url").trim(), label: val("src-label").trim(), ref: val("src-ref").trim(), subpath: val("src-subpath").trim(), mode: val("src-mode"), ...(val("src-secret").trim() ? { secret: val("src-secret").trim() } : {}) }) }));
+      const kind = val("src-kind");
+      const url = val(kind === "git" ? "src-git-url" : "src-gateway-url").trim();
+      const secret = val(kind === "git" ? "src-git-secret" : "src-gateway-secret").trim();
+      const r = await withStatus(() => api("/api/skills/sources", { method: "POST", body: JSON.stringify({ kind, url, label: val("src-label").trim(), mode: val("src-mode"), ...(secret ? { secret } : {}) }) }));
       if (r) setMessage(r.sync?.ok === false ? `Source added, but the first sync failed: ${r.sync.error}` : `Source added and synced (${r.sync?.discovered ?? r.sync?.presentSlugs?.length ?? 0} skill(s), ${r.sync?.staged ?? 0} staged).`, r.sync?.ok === false);
       if (r) state.sourceModal = false;
       await refreshAll();
@@ -563,17 +577,19 @@ async function act(action, el) {
     }
     case "save-settings": {
       const patch = { skillsSyncIntervalMinutes: Number(val("skills-interval")), skillsContextWarnTokens: Number(val("skills-warn")) };
-      if (val("skills-gh-token").trim()) patch.skillsGithubToken = val("skills-gh-token").trim();
       await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify(patch) }), "Settings saved (the sync interval applies after the next restart).");
       await refreshAll();
       break;
     }
-    case "clear-gh-token":
-      await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify({ clearSkillsGithubToken: true }) }), "GitHub token cleared.");
+    case "save-publish": {
+      const patch = { skillsPublishRepo: val("pub-repo").trim(), skillsPublishBranch: "main", skillsPublishSubpath: val("pub-subpath").trim(), skillsPublishMode: val("pub-mode") };
+      if (val("pub-token").trim()) patch.skillsPublishGithubToken = val("pub-token").trim();
+      await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify(patch) }), val("pub-repo").trim() ? "Publishing configured." : "Publishing turned off.");
       await refreshAll();
       break;
-    case "save-publish":
-      await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify({ skillsPublishRepo: val("pub-repo").trim(), skillsPublishBranch: val("pub-branch").trim(), skillsPublishSubpath: val("pub-subpath").trim(), skillsPublishMode: val("pub-mode") }) }), val("pub-repo").trim() ? "Publishing configured." : "Publishing turned off.");
+    }
+    case "clear-publish-token":
+      await withStatus(() => api("/api/settings", { method: "PUT", body: JSON.stringify({ clearSkillsPublishGithubToken: true }) }), "Publishing token cleared.");
       await refreshAll();
       break;
     case "save-webhook":
@@ -720,6 +736,10 @@ function wire() {
   });
   root.addEventListener("change", (event) => {
     const el = event.target;
+    if (el.id === "src-kind") {
+      for (const field of root.querySelectorAll("[data-source-kind]")) field.hidden = field.dataset.sourceKind !== el.value;
+      return;
+    }
     if (el.id === "skills-q" || el.id === "skills-owner" || el.id === "skills-category" || el.id === "skills-source" || el.id === "skills-removed") {
       state.query = val("skills-q");
       state.owner = val("skills-owner");

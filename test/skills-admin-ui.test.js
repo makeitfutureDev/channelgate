@@ -5,6 +5,16 @@ import { readFile } from "node:fs/promises";
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
 const js = await readFile(new URL("../public/admin-skills.js", import.meta.url), "utf8");
 
+test("source dialog offers only GitHub and ChannelGate with kind-specific fields", () => {
+  assert.match(js, /<option value="git">GitHub repository<\/option><option value="gateway">Other ChannelGate<\/option>/);
+  assert.doesNotMatch(js, /<option value="folder">Folder on the gateway host<\/option>/);
+  assert.match(js, /data-source-kind="git"/);
+  assert.match(js, /data-source-kind="gateway" hidden/);
+  assert.doesNotMatch(js, /id="src-ref"|id="src-subpath"/);
+  assert.match(js, /skillsPublishBranch: "main"/);
+  assert.match(js, /data-action="save-source-secret"/);
+});
+
 test("Skills admin navigation separates sources, synchronization and MCP", () => {
   assert.match(html, /data-tab="sources"[^>]*>Sources/);
   assert.match(html, /data-tab="sync"[^>]*>Sync settings/);

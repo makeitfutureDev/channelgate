@@ -32,7 +32,7 @@ const server = await new Promise((resolve) => {
 const base = `http://127.0.0.1:${server.address().port}`;
 after(() => {
   server.close();
-  saveSettings({ skillsGithubToken: "", accessGrants: { skills: [] } });
+  saveSettings({ skillsGithubToken: "", skillsPublishGithubToken: "", accessGrants: { skills: [] } });
 });
 
 async function request(p, { method = "GET", body } = {}) {
@@ -206,24 +206,36 @@ test("proposals: list pending, approve into a revision, reject with a note", asy
   assert.equal(rejected.json.proposal.decisionNote, "no");
 });
 
-test("settings: the skills fields save, clamp, and the GitHub token is write-only + revealable through the allowlist", async () => {
-  const saved = await request("/settings", { method: "PUT", body: { skillsGithubToken: "ghp_secret_value_1234", skillsSyncIntervalMinutes: 15, skillsContextWarnTokens: 4000 } });
+test("settings: catalog settings save and the publishing token is write-only + revealable", async () => {
+  const saved = await request("/settings", { method: "PUT", body: { skillsPublishGithubToken: "ghp_publish_value_1234", skillsSyncIntervalMinutes: 15, skillsContextWarnTokens: 4000 } });
   assert.equal(saved.status, 200, JSON.stringify(saved.json));
   const api = settingsForApi();
-  assert.equal(api.hasSkillsGithubToken, true);
-  assert.equal(api.skillsGithubTokenLast4, "1234");
+  assert.equal(api.hasSkillsPublishGithubToken, true);
+  assert.equal(api.skillsPublishGithubTokenLast4, "1234");
   assert.equal(api.skillsSyncIntervalMinutes, 15);
   assert.equal(api.skillsContextWarnTokens, 4000);
-  assert.equal(JSON.stringify(api).includes("ghp_secret_value"), false, "the token never rides a listing");
-  assert.ok(revealableFields("settings").includes("skillsGithubToken"));
-  assert.equal(await readSecret({ scope: "settings", field: "skillsGithubToken" }), "ghp_secret_value_1234");
+  assert.equal(JSON.stringify(api).includes("ghp_publish_value"), false, "the token never rides a listing");
+  assert.ok(revealableFields("settings").includes("skillsPublishGithubToken"));
+  assert.equal(await readSecret({ scope: "settings", field: "skillsPublishGithubToken" }), "ghp_publish_value_1234");
   const overview = await request("/skills/overview");
-  assert.equal(overview.json.settings.hasGithubToken, true);
+  assert.equal(overview.json.settings.hasPublishGithubToken, true);
   assert.equal(overview.json.settings.syncIntervalMinutes, 15);
   assert.equal((await request("/settings", { method: "PUT", body: { skillsSyncIntervalMinutes: -1 } })).status, 400);
   assert.equal((await request("/settings", { method: "PUT", body: { skillsContextWarnTokens: 0 } })).status, 400);
-  await request("/settings", { method: "PUT", body: { clearSkillsGithubToken: true } });
-  assert.equal(settingsForApi().hasSkillsGithubToken, false);
+  await request("/settings", { method: "PUT", body: { clearSkillsPublishGithubToken: true } });
+  assert.equal(settingsForApi().hasSkillsPublishGithubToken, false);
+});
+
+test("sources: the admin fixes UI-created GitHub sources to main and keeps their token write-only", async () => {
+  const github = await request("/skills/sources", { method: "POST", body: { kind: "git", url: "https://github.com/example/private/tree/main/skills", secret: "ghp_source_secret", syncNow: false } });
+  assert.equal(github.status, 201, JSON.stringify(github.json));
+  assert.equal(github.json.source.ref, "main");
+  assert.equal(github.json.source.subpath, "");
+  assert.equal(github.json.source.hasSecret, true);
+  assert.equal(JSON.stringify(github.json).includes("ghp_source_secret"), false);
+  const branch = await request("/skills/sources", { method: "POST", body: { kind: "git", url: "https://github.com/example/private/tree/develop/skills", syncNow: false } });
+  assert.equal(branch.status, 400);
+  catalog.removeSource(github.json.source.id);
 });
 
 test("catalog: the section endpoint scopes a local skill to a channel (granted by the rule) and promotes it back with the grant kept", async () => {

@@ -1835,16 +1835,16 @@ are retired, bullet by bullet; everything else stands.
   grant still resolves; a vanished folder tombstones its skill and a returning one restores it.
   → TEST-PLAN: Skills platform (Core).
 - **GitHub sources** (`git-sync.js`, Skills Manager's tarball sync ported and hardened): one
-  repository per source with optional branch + subfolder (`/tree/<branch>/<path>` links; a branch
-  containing `/` resolves against the real branch list), head resolved via the commits API, the
+  repository per source, following `main`, with an optional subfolder encoded in its
+  `/tree/main/<path>` URL; head resolved via the commits API, the
   whole repository fetched as ONE tarball (own ustar/pax reader, no dependency), every `SKILL.md`
   directory a skill with its sibling files (a nested skill owns its own), lossless bytes,
   **review** mode (default) staging every new/changed revision for an admin vs **auto** mode,
   commit **pins**, enable/disable, per-source last-sync state + stats + error (never discarding
   last-good), removals tombstoned, conflicts reported. Runs at boot, on a settings interval
   (`skillsSyncIntervalMinutes`, default 60, 0 = off), from the admin UI and from chat
-  (`sync_skill_sources`, admins). An optional daemon-side GitHub token (`skillsGithubToken`,
-  write-only, revealable only through the secrets allowlist) serves private repositories; it never
+  (`sync_skill_sources`, admins). Each source carries its own optional write-only GitHub token for
+  private repositories or API rate limits; it never
   enters a conversation folder or an MCP config. Folder sources import a host directory the same
   way. → TEST-PLAN: Skills platform (Core).
 - **Templates as data, followed live** (`templates.js`): seeded **Development / Sales /
@@ -1878,8 +1878,9 @@ are retired, bullet by bullet; everything else stands.
 - **Admin UI → Skills** (`public/admin-skills.js`, `src/web/routes/skills.js`): catalog (search,
   owner filter, detail with files/frontmatter/revisions, pin/rollback, grant to a conversation,
   remove/restore, create a local skill), **Review** (staged source revisions and proposals with
-  approve/reject), focused **Sources** (scannable list + Add source modal), separate **Sync
-  settings** (imports, GitHub credential, publishing, webhook) and **MCP** (endpoint + tokens),
+  approve/reject), focused **Sources** (scannable list + Add source modal offering only GitHub or
+  another ChannelGate, with kind-specific inputs), separate **Sync settings** (catalog timing,
+  publishing, webhook) and **MCP** (endpoint + tokens),
   selection-first **Templates** with searchable skill/category controls and assignment preview,
   and searchable/alphabetic **Usage** with By skill / By channel rollups, compact comparison bars,
   detection provenance and explained context warnings instead of every profile's full skill dump.
@@ -1900,7 +1901,7 @@ are retired, bullet by bullet; everything else stands.
   sources (`list_skill_sources`, `add_skill_source`, `set_skill_source`, `remove_skill_source`),
   exclusions (`set_skill_excluded`) and `get_skill_info`. → TEST-PLAN: Skills platform (round two).
 - **Git publishing** (`src/gateway/skills/publish.js`): with a publish repository configured
-  (Settings via the Skills view: repository, branch, folder, mode) and the daemon's GitHub token,
+  (Settings via the Skills view: repository, folder, mode, fixed `main`) and its own write-only GitHub token,
   every new revision of a local skill — create, update, approved change, promotion — is pushed
   through the GitHub Contents API (one commit per file under `<folder>/<slug>/`, dropped files
   deleted) and the revision records the commit. When the publish repository is also a git source,
