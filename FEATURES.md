@@ -1214,7 +1214,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   read-only tools, bash = shell + file writes, auto = prompts auto-approved, admin =
   `--dangerously-skip-permissions` for an admin author), and none of them changes what the channel's
   container can see. Four channel **modes** (set with `/mode`): `read` (Read/Glob/Grep only, every
-  other tool asks for approval), `bash` (Bash + file writes, sandboxed to the folder), `auto`
+  other tool asks for approval — the shell is named in the lockdown's `permissions.ask`, not merely
+  left out of `permissions.allow`: Claude Code answers a simple command whose argv head is on its
+  own built-in read-only list (`id`, `cat`, `head`, `strings`, …) BEFORE consulting
+  `--permission-prompt-tool`, so omission alone let a read-mode turn run `id -un` with no approval
+  card; an `ask` rule outranks that layer and routes every command — simple or compound — to the
+  approval card), `bash` (Bash + file writes, sandboxed to the folder), `auto`
   (autonomous — permission prompts auto-approve, still fully sandboxed), and `admin` (full tools,
   sandbox off — requires an **admin author** as well). `admin` is org-admin-only to select; the safe
   modes honor the channel's "who can manage" policy. → TEST-PLAN: Modes & approvals.
@@ -1505,7 +1510,8 @@ are retired, bullet by bullet; everything else stands.
   even read; Landlock gives the same posture in-container (reads succeed, writes get "Permission
   denied"). The flag is deprecated-but-functional in the pinned CLI (`containers/versions.json`) and
   is re-checked on every Codex bump; the admin bypass has no sandbox and states no mechanism. Everything that is
-  POLICY rather than confinement is unchanged on both backends: `permissions.allow`, the mode →
+  POLICY rather than confinement is unchanged on both backends: `permissions.allow` +
+  `permissions.ask` (the shell for any channel that did not grant it), the mode →
   tool/approval mapping, `disableBypassPermissionsMode`, `autoMemoryEnabled`/`autoDreamEnabled` off,
   the MCP allowlist, `--ignore-user-config`, and the admin-only bypass. The Stop hook and every
   helper an engine spawns come from the image's `/opt/channelgate` bundle, asked for through the

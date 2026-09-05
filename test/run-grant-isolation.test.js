@@ -107,6 +107,37 @@ test("escalated run artifact settings omit the bypass key; ordinary artifacts pi
   }
 });
 
+// The per-run copy is what a Claude spawn actually loads, so the read-mode "no shell without an
+// approval card" rule has to hold in the artifact, not just in the channel file. It is
+// content-addressed, so flipping the shell grant must also move it to a different digest — a warm
+// process cannot keep reading yesterday's permissions.
+test("the per-run settings copy carries the Bash ask rule, and granting the shell changes its digest", async (t) => {
+  const slug = `ask-bash-artifact-${Date.now()}`;
+  const workspace = await ensureChannelFolder(slug, {});
+  const base = {
+    slug,
+    userSkills: [],
+    sharedSkills: [],
+    workspaceSkillsDir: path.join(workspace.cwd, ".claude", "skills"),
+    needsClaudeSettings: true,
+  };
+
+  const readRun = await grants({ ...base, meta: {} });
+  t.after(() => readRun.cleanup());
+  const readSettings = JSON.parse(await readFile(readRun.settingsFile, "utf8"));
+  assert.ok(readSettings.permissions.ask.includes("Bash"));
+  assert.equal(readSettings.permissions.allow.includes("Bash"), false);
+
+  const bashRun = await grants({ ...base, meta: { allowBash: true } });
+  t.after(() => bashRun.cleanup());
+  const bashSettings = JSON.parse(await readFile(bashRun.settingsFile, "utf8"));
+  assert.ok(bashSettings.permissions.allow.includes("Bash"));
+  assert.equal((bashSettings.permissions.ask || []).includes("Bash"), false);
+
+  // Different permissions ⇒ different content ⇒ a different content-addressed file.
+  assert.notEqual(path.basename(readRun.settingsFile), path.basename(bashRun.settingsFile));
+});
+
 test("concurrent users get private settings/plugins without mutating the shared channel tree", async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "cg-run-grants-"));
   t.after(() => rm(temp, { recursive: true, force: true }));
