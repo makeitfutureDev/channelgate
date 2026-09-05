@@ -17,7 +17,7 @@ if (major < 22 || (major === 22 && minor < 13)) {
 import { ensureRoot } from "./config/store.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
-import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, saveSettings, getContainerRuntime } from "./config/settings.js";
+import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
@@ -32,13 +32,13 @@ import { startNudgeSweep } from "./gateway/nudges.js";
 import { startClaudeLoginWatch } from "./gateway/login-watch.js";
 import { startFollowupDigest } from "./gateway/followups.js";
 import { startDriveSync } from "./gateway/drivesync.js";
-import { configDir, settingsFile } from "./config/paths.js";
-import { hardenRuntimeFiles, ensureAdminPasswordOnFirstBoot, assertRuntimeHardening } from "./config/harden.js";
+import { configDir } from "./config/paths.js";
+import { hardenRuntimeFiles, ensureAdminPasswordOnFirstBoot, isOperatorConfigured, assertRuntimeHardening } from "./config/harden.js";
 import { acquireSingletonLock } from "./util/singleton.js";
 import { requestShutdown } from "./gateway/shutdown.js";
 import { RestartCoordinator } from "./gateway/restart.js";
 import { randomUUID, randomBytes } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { installConsoleRedaction } from "./util/redact.js";
 import { autoRepairCodexUsageHistory } from "./gateway/usage-repair.js";
@@ -166,11 +166,12 @@ async function main() {
   const { failed: hardenFailed } = hardenRuntimeFiles();
   assertRuntimeHardening({ failed: hardenFailed });
 
-  // Brand-new install (no settings file at all) → mint an admin password rather than leaving the
-  // whole API open. Printed once here because it is stored hashed and can't be read back. An
-  // existing install is never touched: generating one there would lock the operator out.
+  // Brand-new install (nothing an operator wrote in settings.json — the installer's own
+  // pre-boot keys don't count) → mint an admin password rather than leaving the whole API open.
+  // Printed once here because it is stored hashed and can't be read back. An existing install is
+  // never touched: generating one there would lock the operator out.
   const generated = await ensureAdminPasswordOnFirstBoot({
-    settingsExist: existsSync(settingsFile()),
+    configured: isOperatorConfigured(getSettings()),
     hasPassword: Boolean(getAdminPassword()),
     generate: () => randomBytes(12).toString("base64url"),
     save: async (pw) => saveSettings({ adminPassword: await hashPassword(pw) }),

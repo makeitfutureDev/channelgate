@@ -61,16 +61,38 @@ function secretPaths() {
 // convenience, but it means any other process or user on the host can read every stored token and
 // start runs — not a defensible default for a product. Refusing to boot, or generating a password
 // on an existing install, would lock out operators mid-flight, so this fires only when the gateway
-// has never been configured: no settings file at all. Existing installs are untouched and keep
-// whatever posture they already had.
+// has never been configured by an OPERATOR. Existing installs are untouched and keep whatever
+// posture they already had.
+//
+// "Configured" is decided by what settings.json HOLDS, not by whether it exists: `npm run setup`
+// answers the voice-transcription question before the daemon has ever booted, and that answer is
+// saved through the same settings writer — so a brand-new install already has a settings file
+// (`{"whisperEnabled": …}`) at first boot. Keying on existence made every fresh install skip the
+// password and come up with the whole privileged API refused (`WARNING: no admin password`), the
+// exact posture this exists to prevent. A settings file holding nothing but what the installer
+// wrote is still an unconfigured install.
 //
 // Returns the generated password once, so the caller can print it — it is stored hashed and cannot
 // be recovered afterwards.
-export async function ensureAdminPasswordOnFirstBoot({ settingsExist, hasPassword, save, generate }) {
-  if (settingsExist || hasPassword) return "";
+export async function ensureAdminPasswordOnFirstBoot({ configured, hasPassword, save, generate }) {
+  if (configured || hasPassword) return "";
   const password = generate();
   await save(password);
   return password;
+}
+
+// Settings keys the INSTALLER writes before the first boot (scripts/install.sh). Their presence
+// says nothing about an operator having been here; anything else in settings.json does. Keep this
+// in step with the scripts: a new pre-boot writer that is not listed here silently re-introduces
+// the skipped first-boot password.
+export const INSTALLER_SETTINGS_KEYS = Object.freeze(["whisperEnabled"]);
+
+// Has an operator configured this gateway? True when settings.json holds any key the installer
+// does not write. A missing/empty file, or one holding only installer keys, is an untouched install.
+export function isOperatorConfigured(settings, installerKeys = INSTALLER_SETTINGS_KEYS) {
+  if (!settings || typeof settings !== "object") return false;
+  const skip = new Set(installerKeys);
+  return Object.keys(settings).some((k) => !skip.has(k));
 }
 
 // Tighten the runtime root and its secret-bearing files. Callers MUST treat any returned failure

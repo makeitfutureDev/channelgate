@@ -140,6 +140,15 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **Fresh installs get their first-boot admin password again.** `npm run setup` answers the
+  voice-transcription question before the daemon has ever booted and saves it through the settings
+  writer, so a brand-new install already had a `settings.json` at first boot — and the first-boot
+  check, keyed on that file's existence, treated it as a configured install and never minted the
+  password. Every fresh install came up with `WARNING: no admin password` and the whole privileged
+  API refused. The decision now keys on what the file holds: the installer's own keys
+  (`whisperEnabled`) do not count as configuration; any operator-written key still does, so an
+  existing install is never handed a password behind its operator's back. Found while installing a
+  third gateway on the development host.
 - **The daemon boots on the documented Node floor again.** Migration 17 created the channel-memory
   search index as an FTS5 virtual table; Node 22.13's bundled SQLite has no FTS5, so the migration
   threw and the whole database refused to open. The index is now optional per engine build

@@ -2057,7 +2057,9 @@ are retired, bullet by bullet; everything else stands.
   current channel. SQLite enforces globally unique channel slugs, allocated under a write
   transaction (with a v8 duplicate repair). Revoked managed skills remove only marker-owned
   gateway copies, never project skills or symlinks. Runtime-secret chmod/cleanup failures and a
-  failed first-boot password write abort startup instead of opening the daemon insecurely.
+  failed first-boot password write abort startup instead of opening the daemon insecurely. The
+  first-boot password is minted whenever no OPERATOR key is in `settings.json` — the installer's
+  own pre-boot `whisperEnabled` answer does not count, so `npm run setup` never skips it.
   → TEST-PLAN: A7 boundary hardening.
 - Dashboard admin tab (default landing view): usage overview for a selectable **date range** —
   Today, Last 7 days, Last 30 days, This month, Last month, This year, Last year
