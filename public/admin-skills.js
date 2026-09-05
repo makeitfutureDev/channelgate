@@ -9,6 +9,7 @@ const state = {
   tab: "catalog",
   overview: null,
   catalog: null,
+  catalogAll: null,
   profiles: null,
   selected: "",
   detail: null,
@@ -17,10 +18,14 @@ const state = {
   owner: "",
   showRemoved: false,
   newSkill: false,
+  sourceModal: false,
   editTemplate: null,
+  templateSkillQuery: "",
   usageChannel: "",
   usageDays: 30,
   usage: null,
+  usageQuery: "",
+  usageView: "skill",
   templatePreview: null,
   applyTemplate: "",
   applyChannel: "",
@@ -54,13 +59,15 @@ async function withStatus(fn, okMessage = "") {
 // ── data ────────────────────────────────────────────────────────────────────────────────────
 
 async function refreshAll() {
-  const [overview, catalog, profiles] = await Promise.all([
+  const [overview, catalog, catalogAll, profiles] = await Promise.all([
     api("/api/skills/overview"),
     api(`/api/skills/catalog?q=${encodeURIComponent(state.query)}${state.owner ? `&owner=${encodeURIComponent(state.owner)}` : ""}${state.showRemoved ? "&deleted=1" : ""}`),
+    api("/api/skills/catalog"),
     api("/api/skills/profiles"),
   ]);
   state.overview = overview;
   state.catalog = catalog;
+  state.catalogAll = catalogAll;
   state.profiles = profiles.profiles;
   if (state.selected) await loadDetail(state.selected).catch(() => { state.selected = ""; state.detail = null; });
 }
@@ -92,7 +99,7 @@ function render() {
   badge.textContent = String(pending);
   for (const b of document.querySelectorAll(".skills-tab")) b.classList.toggle("active", b.dataset.tab === state.tab);
   const status = state.error ? `<p class="skills-error">${esc(state.error)}</p>` : state.message ? `<p class="skills-ok">${esc(state.message)}</p>` : "";
-  const panel = { catalog: renderCatalog, review: renderReview, sources: renderSources, templates: renderTemplates, usage: renderUsage }[state.tab] || renderCatalog;
+  const panel = { catalog: renderCatalog, review: renderReview, sources: renderSources, sync: renderSyncSettings, mcp: renderMcp, templates: renderTemplates, usage: renderUsage }[state.tab] || renderCatalog;
   body().innerHTML = status + panel();
 }
 
@@ -252,13 +259,12 @@ function renderSources() {
       <td><span class="skills-inline"><button type="button" class="ghost" data-action="sync-source" data-id="${s.id}">Sync now</button><button type="button" class="ghost" data-action="remove-source" data-id="${s.id}">Remove</button></span></td>
     </tr>`;
   }).join("");
-  const settings = o.settings || {};
   return `
-    <div class="skills-toolbar"><button type="button" data-action="sync-all">Sync all git sources</button><button type="button" class="ghost" data-action="refresh-host">Re-import host folders</button><span class="spacer"></span></div>
+    <div class="skills-section-head"><div><h3>Sources</h3><p class="skills-note">Repositories, host folders, and peer gateways that feed this catalog.</p></div><button type="button" data-action="open-source">+ Add source</button></div>
     <table class="skills-table"><thead><tr><th>Source</th><th>Mode</th><th>Last sync</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No sources yet.</td></tr>'}</tbody></table>
     <p class="skills-note">Host folders imported at boot (folder-owned skills, kept in sync by content): ${(o.hostFolders || []).map((d) => `<code>${esc(d)}</code>`).join(", ") || "none"}</p>
-    <div class="card skills-detail">
-      <h3>Add a source</h3>
+    ${state.sourceModal ? `<div class="skills-modal" data-action="close-source"><div class="card skills-modal-card" role="dialog" aria-modal="true" aria-labelledby="add-source-title" data-modal-card>
+      <div class="skills-section-head"><h3 id="add-source-title">Add a source</h3><button type="button" class="ghost" data-action="close-source" aria-label="Close">✕</button></div>
       <div class="skills-form">
         <label class="field"><span>Kind</span><select id="src-kind"><option value="git">GitHub repository</option><option value="folder">Folder on the gateway host</option><option value="gateway">Another ChannelGate (peer gateway)</option></select></label>
         <label class="field"><span>URL or path</span><input id="src-url" placeholder="https://github.com/anthropics/skills, /srv/skills, or http://peer-gateway:4748" /></label>
@@ -268,8 +274,15 @@ function renderSources() {
         <label class="field"><span>Subfolder (only discover skills below it)</span><input id="src-subpath" placeholder="skills" /></label>
         <label class="field"><span>Mode</span><select id="src-mode"><option value="review">review — stage every change for approval</option><option value="auto">auto — activate on sync</option></select></label>
       </div>
-      <div class="skills-actions"><button type="button" data-action="add-source">Add and sync</button></div>
-    </div>
+      <div class="skills-actions"><span class="spacer"></span><button type="button" class="ghost" data-action="close-source">Cancel</button><button type="button" data-action="add-source">Add and sync</button></div>
+    </div></div>` : ""}`;
+}
+
+function renderSyncSettings() {
+  const o = state.overview || {};
+  const settings = o.settings || {};
+  return `
+    <div class="skills-section-head"><div><h3>Synchronization</h3><p class="skills-note">Run imports and configure how external sources stay current.</p></div><div class="skills-inline"><button type="button" data-action="sync-all">Sync all Git sources</button><button type="button" class="ghost" data-action="refresh-host">Re-import host folders</button></div></div>
     <div class="card skills-detail">
       <h3>Sync settings</h3>
       <div class="skills-form">
@@ -297,7 +310,13 @@ function renderSources() {
         <label class="field"><span>Webhook secret — ${settings.hasWebhookSecret ? "set" : "not set"}</span><input id="hook-secret" type="password" autocomplete="off" placeholder="${settings.hasWebhookSecret ? "•••••••• (leave empty to keep)" : "a long random string"}" /></label>
       </div>
       <div class="skills-actions"><button type="button" data-action="save-webhook">Save secret</button>${settings.hasWebhookSecret ? `<button type="button" class="ghost" data-action="clear-webhook">Clear</button>` : ""}</div>
-    </div>
+    </div>`;
+}
+
+function renderMcp() {
+  const settings = state.overview?.settings || {};
+  return `
+    <div class="skills-section-head"><div><h3>MCP access</h3><p class="skills-note">Connect external assistants or another ChannelGate to this catalog.</p></div></div>
     <div class="card skills-detail">
       <h3>MCP endpoint &amp; access tokens</h3>
       <p class="skills-note">Any MCP client — Claude Code on a laptop, Codex, another gateway — can use this catalog at ${settings.mcpUrl ? `<code>${esc(settings.mcpUrl)}</code>` : "<em>&lt;public URL&gt;/mcp/skills</em>"} with a bearer token minted here. Scopes: <strong>read</strong> (search/read), <strong>propose</strong> (suggest changes), <strong>manage</strong> (create/update local skills), <strong>sync</strong> (export, for a peer gateway). The value is shown once.</p>
@@ -317,15 +336,13 @@ function renderSources() {
 function renderTemplates() {
   const templates = state.overview?.templates || [];
   const channels = state.profiles || [];
-  const cards = templates.map((t) => `
-    <div class="card">
-      <h4>${esc(t.name)} <span class="muted">(${esc(t.slug)})</span>${t.builtin ? ' <span class="pill">built-in</span>' : ""}</h4>
-      <p>${esc(t.description || "")}</p>
-      <p class="who">categories: ${esc(t.categories.join(", ") || "—")}<br/>explicit: ${esc(t.skills.join(", ") || "—")}</p>
-      <p>${t.resolved.length ? `${t.resolved.length} skill(s): ${t.resolved.map((s) => `<code>${esc(s)}</code>`).join(" ")}` : '<span class="muted">resolves to no skills yet</span>'}${t.missing.length ? `<br/><span class="skills-error">missing: ${esc(t.missing.join(", "))}</span>` : ""}</p>
-      <div class="skills-actions"><button type="button" class="ghost" data-action="edit-template" data-slug="${esc(t.slug)}">Edit</button>${t.builtin ? "" : `<button type="button" class="ghost" data-action="delete-template" data-slug="${esc(t.slug)}">Delete</button>`}</div>
-    </div>`).join("");
   const e = state.editTemplate;
+  const skills = (state.catalogAll?.skills || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const categories = [...new Set(skills.map((s) => s.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const selected = new Set(e?.skills || []);
+  const selectedChips = [...selected].sort().map((slug) => `<span class="skills-picker-chip"><code>${esc(slug)}</code><button type="button" data-action="toggle-template-skill" data-slug="${esc(slug)}" aria-label="Remove ${esc(slug)}">×</button></span>`).join("");
+  const pickerQuery = state.templateSkillQuery.trim().toLowerCase();
+  const skillOptions = skills.filter((s) => !pickerQuery || `${s.name} ${s.slug} ${s.description}`.toLowerCase().includes(pickerQuery)).map((s) => `<button type="button" class="skills-picker-row${selected.has(s.slug) ? " selected" : ""}" data-action="toggle-template-skill" data-slug="${esc(s.slug)}" data-search="${esc(`${s.name} ${s.slug} ${s.description}`.toLowerCase())}"><span><strong>${esc(s.name)}</strong><code>${esc(s.slug)}</code></span><span>${selected.has(s.slug) ? "Selected" : "Add"}</span></button>`).join("");
   const form = e ? `
     <div class="card skills-detail">
       <h3>${e.isNew ? "New template" : `Edit ${esc(e.name)}`}</h3>
@@ -333,17 +350,20 @@ function renderTemplates() {
         <label class="field"><span>Name</span><input id="tpl-name" value="${esc(e.name || "")}" /></label>
         <label class="field"><span>Slug</span><input id="tpl-slug" value="${esc(e.slug || "")}"${e.isNew ? "" : " readonly"} /></label>
         <label class="field wide"><span>Description</span><input id="tpl-desc" value="${esc(e.description || "")}" /></label>
-        <label class="field"><span>Categories (comma-separated; every skill in these categories)</span><input id="tpl-cats" value="${esc((e.categories || []).join(", "))}" /></label>
-        <label class="field"><span>Explicit skills (comma-separated slugs)</span><input id="tpl-skills" value="${esc((e.skills || []).join(", "))}" /></label>
+        <fieldset class="field wide skills-category-picker"><legend>Whole categories <span class="muted">(optional)</span></legend>${categories.map((c) => `<label><input type="checkbox" class="tpl-category" value="${esc(c)}"${(e.categories || []).includes(c) ? " checked" : ""}/> ${esc(c)}</label>`).join("") || '<span class="muted">No categories in the catalog.</span>'}</fieldset>
+      </div>
+      <div class="skills-picker">
+        <label class="field"><span>Selected skills (${selected.size})</span><input id="template-skill-q" type="search" placeholder="Search skills to add…" value="${esc(state.templateSkillQuery)}" /></label>
+        <div class="skills-picker-selected">${selectedChips || '<span class="muted">No explicit skills selected.</span>'}</div>
+        <div class="skills-picker-results">${skillOptions || '<span class="muted">No skills in the catalog.</span>'}</div>
       </div>
       <div class="skills-actions"><button type="button" data-action="save-template">Save</button><button type="button" class="ghost" data-action="cancel-template">Cancel</button></div>
     </div>` : "";
   const preview = state.templatePreview;
   return `
-    <p class="skills-note">Templates are edited under <a href="/settings#set-templates">Settings → Access Templates</a>. A conversation <strong>follows</strong> its template live and adds its own skills on top.</p>
-    <div class="skills-toolbar"><button type="button" class="ghost" data-action="new-template">+ New template</button><span class="spacer"></span></div>
+    <div class="skills-section-head"><div><h3>Templates</h3><p class="skills-note">Select a template to inspect or edit. Conversations follow it live and keep their own additional skills.</p></div><button type="button" data-action="new-template">+ New template</button></div>
+    <div class="skills-toolbar"><select id="template-select"><option value="">Select a template…</option>${templates.map((t) => `<option value="${esc(t.slug)}"${e?.slug === t.slug ? " selected" : ""}>${esc(t.name)}${t.builtin ? " · built-in" : ""} · ${t.resolved.length} skills</option>`).join("")}</select>${e && !e.isNew ? `<button type="button" class="ghost" data-action="delete-template" data-slug="${esc(e.slug)}"${e.builtin ? " disabled" : ""}>Delete</button>` : ""}</div>
     ${form}
-    <div class="skills-cards">${cards || '<p class="muted">No templates.</p>'}</div>
     <div class="card skills-detail">
       <h3>Assign a template to a conversation</h3>
       <div class="skills-inline">
@@ -359,20 +379,29 @@ function renderTemplates() {
 function renderUsage() {
   const channels = state.profiles || [];
   const r = state.usage;
-  const rows = (r?.used || []).map((u) => `<tr><td><code>${esc(u.slug)}</code>${u.inCatalog ? "" : ' <span class="pill">not in catalog</span>'}</td><td class="num">${u.total}</td><td class="num">${u.exact}</td><td class="num">${u.inferred}</td><td class="num">${u.users}</td><td class="num">${u.channels}</td><td class="muted">${fmtWhen(u.lastTs)}</td></tr>`).join("");
+  const query = state.usageQuery.trim().toLowerCase();
+  const byName = new Map(channels.map((c) => [c.slug, c]));
+  const used = (r?.used || []).filter((u) => !query || `${u.name} ${u.slug}`.toLowerCase().includes(query)).sort((a, b) => a.name.localeCompare(b.name));
+  const channelUsage = (r?.channels || []).filter((u) => { const c = byName.get(u.channelSlug); return !query || `${c?.name || ""} ${u.channelSlug}`.toLowerCase().includes(query); }).sort((a, b) => (byName.get(a.channelSlug)?.name || a.channelSlug).localeCompare(byName.get(b.channelSlug)?.name || b.channelSlug));
+  const max = Math.max(1, ...(state.usageView === "skill" ? used : channelUsage).map((u) => u.total));
+  const warnings = channels.filter((c) => c.warnings > 0 && (!query || `${c.name || ""} ${c.slug}`.toLowerCase().includes(query))).sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug));
+  const skillRows = used.map((u) => `<tr><td><code>${esc(u.slug)}</code>${u.inCatalog ? "" : ' <span class="pill">not in catalog</span>'}<div class="skills-usage-bar"><i style="width:${Math.max(3, Math.round(u.total / max * 100))}%"></i></div></td><td class="num">${u.total}</td><td class="num">${u.exact}</td><td class="num">${u.inferred}</td><td class="num">${u.users}</td><td class="num">${u.channels}</td><td class="muted">${fmtWhen(u.lastTs)}</td></tr>`).join("");
+  const channelRows = channelUsage.map((u) => { const c = byName.get(u.channelSlug); return `<tr><td>${esc(c?.name || u.channelSlug)} <span class="muted">${esc(u.channelSlug)}</span><div class="skills-usage-bar"><i style="width:${Math.max(3, Math.round(u.total / max * 100))}%"></i></div></td><td class="num">${u.total}</td><td class="num">${u.skills}</td><td class="num">${u.exact}</td><td class="num">${u.inferred}</td><td class="muted">${fmtWhen(u.lastTs)}</td></tr>`; }).join("");
   return `
     <div class="skills-toolbar">
+      <div class="skills-segmented"><button type="button" data-action="usage-view" data-view="skill" class="${state.usageView === "skill" ? "active" : ""}">By skill</button><button type="button" data-action="usage-view" data-view="channel" class="${state.usageView === "channel" ? "active" : ""}">By channel</button></div>
+      <input type="search" id="usage-q" placeholder="Search ${state.usageView === "skill" ? "skills" : "conversations"}…" value="${esc(state.usageQuery)}" />
       <select id="usage-channel"><option value="">every conversation</option>${channels.map((c) => `<option value="${esc(c.slug)}"${c.slug === state.usageChannel ? " selected" : ""}>${esc(c.name || c.slug)}</option>`).join("")}</select>
       <select id="usage-days">${[7, 30, 90, 365].map((d) => `<option value="${d}"${d === state.usageDays ? " selected" : ""}>last ${d} days</option>`).join("")}</select>
       <button type="button" data-action="load-usage">Load</button>
       <span class="spacer"></span>
     </div>
     ${r ? `
-    <table class="skills-table"><thead><tr><th>Skill</th><th>Uses</th><th>Exact</th><th>Inferred</th><th>Users</th><th>Conversations</th><th>Last</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="muted">No skill use recorded in this range.</td></tr>'}</tbody></table>
+    <div class="skills-usage-help"><strong>How usage is detected</strong><span>Rows come from completed runs in the selected date range. <b>Exact</b> means Claude explicitly opened a skill with its Skill tool. <b>Inferred</b> means Codex or a shell read that skill's <code>SKILL.md</code>; this is best-effort and can miss uses. Usage before telemetry was enabled is not reconstructed.</span></div>
+    ${state.usageView === "skill" ? `<table class="skills-table"><thead><tr><th>Skill</th><th>Uses</th><th>Exact</th><th>Inferred</th><th>Users</th><th>Conversations</th><th>Last</th></tr></thead><tbody>${skillRows || '<tr><td colspan="7" class="muted">No matching skill use in this range.</td></tr>'}</tbody></table>` : `<table class="skills-table"><thead><tr><th>Conversation</th><th>Uses</th><th>Skills used</th><th>Exact</th><th>Inferred</th><th>Last</th></tr></thead><tbody>${channelRows || '<tr><td colspan="6" class="muted">No matching conversation use in this range.</td></tr>'}</tbody></table>`}
     ${r.channelSlug ? `<p class="skills-note"><strong>Granted but never fired</strong> (${r.neverUsed.length}): ${r.neverUsed.map((n) => `<code>${esc(n.slug)}</code>`).join(" ") || "none"}${r.contextTokens != null ? ` · always-on context ~${r.contextTokens} tokens` : ""}</p>` : ""}
-    <p class="skills-muted">${esc(r.notes[0])}</p>` : '<p class="skills-note">Pick a conversation (or all) and a range.</p>'}
-    <h3 style="margin-top:18px">Profiles</h3>
-    <table class="skills-table"><thead><tr><th>Conversation</th><th>Skills</th><th>Always-on tokens</th><th>Warnings</th></tr></thead><tbody>${channels.map((c) => `<tr><td>${esc(c.name || c.slug)} <span class="muted">${esc(c.platform || "")}${c.isDM ? " · DM" : ""}</span></td><td class="desc">${c.skills.map((s) => `<code>${esc(s)}</code>`).join(" ") || '<span class="muted">none</span>'}</td><td class="num">${c.contextTokens}</td><td class="num">${c.warnings || ""}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">No conversations.</td></tr>'}</tbody></table>`;
+    ${warnings.length ? `<details class="skills-context-warnings"><summary>${warnings.length} conversation${warnings.length === 1 ? "" : "s"} over the skills context soft cap</summary><p>The warning means the always-loaded skill descriptions consume more context than the limit configured in Sync settings. It does not mean a skill failed.</p>${warnings.map((c) => `<div><strong>${esc(c.name || c.slug)}</strong> · ~${c.contextTokens} tokens<br/><span>${esc((c.warningMessages || []).join(" · "))}</span></div>`).join("")}</details>` : ""}
+    ` : '<p class="skills-note">Choose a range, then load usage.</p>'}`;
 }
 
 // ── actions ─────────────────────────────────────────────────────────────────────────────────
@@ -385,6 +414,14 @@ function rememberApplySelection() {
   state.applyTemplate = val("apply-template");
   state.applyChannel = val("apply-channel");
   state.applyMode = val("apply-mode") === "replace" ? "replace" : "add";
+}
+
+function rememberTemplateDraft() {
+  if (!state.editTemplate) return;
+  state.editTemplate.name = val("tpl-name");
+  state.editTemplate.slug = val("tpl-slug");
+  state.editTemplate.description = val("tpl-desc");
+  state.editTemplate.categories = [...body().querySelectorAll(".tpl-category:checked")].map((el) => el.value);
 }
 
 async function act(action, el) {
@@ -482,6 +519,12 @@ async function act(action, el) {
       await refreshAll();
       break;
     }
+    case "open-source":
+      state.sourceModal = true;
+      break;
+    case "close-source":
+      state.sourceModal = false;
+      break;
     case "sync-all": {
       const r = await withStatus(() => api("/api/skills/sources/sync-all", { method: "POST", body: "{}" }));
       if (r) setMessage(`${r.results.length} source(s) synced; ${r.results.filter((x) => !x.ok).length} failed.`);
@@ -509,6 +552,7 @@ async function act(action, el) {
     case "add-source": {
       const r = await withStatus(() => api("/api/skills/sources", { method: "POST", body: JSON.stringify({ kind: val("src-kind"), url: val("src-url").trim(), label: val("src-label").trim(), ref: val("src-ref").trim(), subpath: val("src-subpath").trim(), mode: val("src-mode"), ...(val("src-secret").trim() ? { secret: val("src-secret").trim() } : {}) }) }));
       if (r) setMessage(r.sync?.ok === false ? `Source added, but the first sync failed: ${r.sync.error}` : `Source added and synced (${r.sync?.discovered ?? r.sync?.presentSlugs?.length ?? 0} skill(s), ${r.sync?.staged ?? 0} staged).`, r.sync?.ok === false);
+      if (r) state.sourceModal = false;
       await refreshAll();
       break;
     }
@@ -574,16 +618,26 @@ async function act(action, el) {
     }
     case "new-template":
       state.editTemplate = { isNew: true, name: "", slug: "", description: "", categories: [], skills: [] };
+      state.templateSkillQuery = "";
       break;
     case "edit-template":
       state.editTemplate = { ...(state.overview.templates.find((t) => t.slug === slug) || {}), isNew: false };
+      state.templateSkillQuery = "";
       break;
+    case "toggle-template-skill": {
+      rememberTemplateDraft();
+      const selected = new Set(state.editTemplate?.skills || []);
+      if (selected.has(slug)) selected.delete(slug); else selected.add(slug);
+      state.editTemplate.skills = [...selected];
+      break;
+    }
     case "cancel-template":
       state.editTemplate = null;
       break;
     case "save-template": {
-      const split = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
-      const r = await withStatus(() => api("/api/skills/templates", { method: "POST", body: JSON.stringify({ slug: val("tpl-slug").trim(), name: val("tpl-name").trim(), description: val("tpl-desc").trim(), categories: split(val("tpl-cats")), skills: split(val("tpl-skills")) }) }), "Template saved.");
+      rememberTemplateDraft();
+      const draft = state.editTemplate;
+      const r = await withStatus(() => api("/api/skills/templates", { method: "POST", body: JSON.stringify({ slug: draft.slug.trim(), name: draft.name.trim(), description: draft.description.trim(), categories: draft.categories, skills: draft.skills }) }), "Template saved.");
       if (r) {
         state.editTemplate = null;
         await refreshAll();
@@ -617,6 +671,9 @@ async function act(action, el) {
       if (r) state.usage = r.report;
       break;
     }
+    case "usage-view":
+      state.usageView = el.dataset.view === "channel" ? "channel" : "skill";
+      break;
     default:
       return;
   }
@@ -639,6 +696,7 @@ function wire() {
   root.addEventListener("click", (event) => {
     const el = event.target.closest("[data-action]");
     if (!el || !root.contains(el)) return;
+    if (el.classList.contains("skills-modal") && event.target !== el) return;
     if (el.tagName === "SELECT" || el.tagName === "INPUT") return; // change events handle these
     event.preventDefault();
     act(el.dataset.action, el).catch((err) => {
@@ -659,6 +717,13 @@ function wire() {
       rememberApplySelection();
       return;
     }
+    if (el.id === "template-select") {
+      const template = state.overview?.templates?.find((t) => t.slug === el.value);
+      state.editTemplate = template ? { ...template, isNew: false } : null;
+      state.templateSkillQuery = "";
+      render();
+      return;
+    }
     if (el.dataset.action === "source-mode" || el.dataset.action === "source-enabled") {
       const patch = el.dataset.action === "source-mode" ? { mode: el.value } : { enabled: el.checked };
       withStatus(() => api(`/api/skills/sources/${el.dataset.id}`, { method: "PUT", body: JSON.stringify(patch) }), "Source updated.").then(refreshAll).then(render);
@@ -669,6 +734,19 @@ function wire() {
       event.preventDefault();
       state.query = val("skills-q");
       refreshAll().then(render).catch((err) => { setMessage(err.message, true); render(); });
+    }
+  });
+  root.addEventListener("input", (event) => {
+    if (event.target.id === "usage-q") {
+      state.usageQuery = event.target.value;
+      render();
+      document.getElementById("usage-q")?.focus();
+      return;
+    }
+    if (event.target.id === "template-skill-q") {
+      state.templateSkillQuery = event.target.value;
+      const q = event.target.value.trim().toLowerCase();
+      for (const row of root.querySelectorAll(".skills-picker-row")) row.hidden = Boolean(q) && !row.dataset.search.includes(q);
     }
   });
 }

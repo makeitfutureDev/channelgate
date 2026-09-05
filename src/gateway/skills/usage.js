@@ -3,7 +3,7 @@
 // SKILL.md file with a shell or file tool — so a read of `…/skills/<slug>/SKILL.md` is an
 // INFERRED signal and is labelled that way everywhere it is shown. One row per (run, skill,
 // signal); the recorder dedupes inside a run. Nothing here stores prompt text or skill content.
-import { recordSkillUsage, getSkill, usageSummary, effectiveRevisionFor } from "./catalog.js";
+import { recordSkillUsage, getSkill, usageSummary, usageByChannel, effectiveRevisionFor } from "./catalog.js";
 import { resolveSkillProfile } from "./resolve.js";
 
 // `.claude/skills/<slug>/SKILL.md`, `.agents/skills/<slug>/SKILL.md`, or a plugin's
@@ -111,6 +111,7 @@ export function skillUsageReport({ channelSlug = "", days = 30, grants = null, l
     days: d,
     channelSlug,
     used,
+    channels: usageByChannel({ channelSlug, since, limit }),
     neverUsed,
     notes: [
       "exact = Claude's Skill tool fired the skill; inferred = a Codex (or shell) read of the skill's SKILL.md — best effort, may miss uses.",

@@ -334,7 +334,7 @@ export function createSkillsRouter() {
     for (const ch of await listChannels()) {
       const grants = ch.meta ? resolveAccessGrants({ organization: getOrgAccessGrants(), channel: withTemplateSkills(ch.meta) }) : { skills: [] };
       const profile = resolveSkillProfile(grants.skills, { warnTokens: getSkillsContextWarnTokens() });
-      out.push({ slug: ch.slug, name: ch.name, platform: ch.platform, isDM: ch.isDM, skillTemplate: ch.meta?.skillTemplate || "", own: ch.meta?.skills || [], skills: profile.slugs, contextTokens: profile.contextTokens, warnings: profile.warnings.length });
+      out.push({ slug: ch.slug, name: ch.name, platform: ch.platform, isDM: ch.isDM, skillTemplate: ch.meta?.skillTemplate || "", own: ch.meta?.skills || [], skills: profile.slugs, contextTokens: profile.contextTokens, warnings: profile.warnings.length, warningMessages: profile.warnings });
     }
     res.json({ profiles: out });
   }));

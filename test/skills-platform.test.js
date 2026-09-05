@@ -466,6 +466,8 @@ test("usage recorder: Claude's Skill tool is exact, a SKILL.md read is inferred,
   assert.equal(used.inferred, 1, "the first (inferred) read and the later exact call are both kept — different signals");
   assert.deepEqual(report.neverUsed.map((n) => n.slug), ["idle-skill"]);
   assert.equal(report.used.find((u) => u.slug === "project-only").inCatalog, false);
+  assert.deepEqual(report.channels.map((c) => c.channelSlug), ["usage-ch"]);
+  assert.equal(report.channels[0].total, 3, "channel rollups preserve both exact and inferred signals");
 });
 
 // ── authoring + proposals ────────────────────────────────────────────────────────────────────

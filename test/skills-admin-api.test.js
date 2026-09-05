@@ -169,8 +169,10 @@ test("templates: preview and assign to a conversation, grant/revoke, profile and
   catalog.recordSkillUsage({ slug: "tpl-sales-skill", channelSlug: entry.slug, engine: "claude", signal: "exact", userId: "U1" });
   const usage = await request(`/skills/usage?channel=${entry.slug}&days=7`);
   assert.equal(usage.json.report.used[0].slug, "tpl-sales-skill");
+  assert.equal(usage.json.report.channels[0].channelSlug, entry.slug);
   const profiles = await request("/skills/profiles");
   assert.ok(profiles.json.profiles.some((p) => p.slug === entry.slug && p.skills.includes("tpl-sales-skill") && p.skillTemplate === "sales"));
+  assert.ok(Array.isArray(profiles.json.profiles[0].warningMessages), "the UI can explain profile warnings instead of exposing only a count");
   await request(`/skills/profile/${entry.slug}/template`, { method: "POST", body: { template: "none" } });
 });
 
