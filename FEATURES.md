@@ -1836,9 +1836,11 @@ are retired, bullet by bullet; everything else stands.
 - **Admin UI → Skills** (`public/admin-skills.js`, `src/web/routes/skills.js`): catalog (search,
   owner filter, detail with files/frontmatter/revisions, pin/rollback, grant to a conversation,
   remove/restore, create a local skill), **Review** (staged source revisions and proposals with
-  approve/reject), **Sources** (add/sync/pin/mode/enable/remove, re-import host folders, the GitHub
-  token and sync settings), **Templates** (edit, preview/apply to a conversation), **Usage**
-  (per-conversation report, never-used, and every conversation's profile + context cost).
+  approve/reject), focused **Sources** (scannable list + Add source modal), separate **Sync
+  settings** (imports, GitHub credential, publishing, webhook) and **MCP** (endpoint + tokens),
+  selection-first **Templates** with searchable skill/category controls and assignment preview,
+  and searchable/alphabetic **Usage** with By skill / By channel rollups, compact comparison bars,
+  detection provenance and explained context warnings instead of every profile's full skill dump.
   → TEST-PLAN: Skills platform (Core).
 - **Personal skills and self-service grants.** A skill created with `personal: true` (or switched in
   the admin UI) is visible and grantable only to its author (admins see everything) and is never

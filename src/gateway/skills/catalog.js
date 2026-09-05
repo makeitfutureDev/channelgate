@@ -674,6 +674,30 @@ export function usageSummary({ channelSlug = "", since = "", limit = 500 } = {})
     .map((r) => ({ slug: r.slug, exact: r.exact, inferred: r.inferred, total: r.total, lastTs: r.last_ts, users: r.users, channels: r.channels, byEngine: { claude: r.claude, codex: r.codex } }));
 }
 
+export function usageByChannel({ channelSlug = "", since = "", limit = 500 } = {}) {
+  const where = ["channel_slug <> ''"];
+  const args = [];
+  if (channelSlug) {
+    where.push("channel_slug = ?");
+    args.push(channelSlug);
+  }
+  if (since) {
+    where.push("ts >= ?");
+    args.push(since);
+  }
+  const sql = `SELECT channel_slug,
+      COUNT(*) AS total,
+      SUM(CASE WHEN signal = 'exact' THEN 1 ELSE 0 END) AS exact,
+      SUM(CASE WHEN signal = 'inferred' THEN 1 ELSE 0 END) AS inferred,
+      COUNT(DISTINCT slug) AS skills, MAX(ts) AS last_ts
+    FROM skill_usage WHERE ${where.join(" AND ")}
+    GROUP BY channel_slug ORDER BY total DESC, channel_slug LIMIT ${Number(limit) || 500}`;
+  return getDb().prepare(sql).all(...args).map((r) => ({
+    channelSlug: r.channel_slug, total: r.total, exact: r.exact, inferred: r.inferred,
+    skills: r.skills, lastTs: r.last_ts,
+  }));
+}
+
 export function usageCountsBySlug({ since = "" } = {}) {
   const out = new Map();
   for (const row of usageSummary({ since, limit: 100000 })) out.set(row.slug.toLowerCase(), row);

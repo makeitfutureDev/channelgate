@@ -19,6 +19,10 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **The Skills admin workflow is organized around the operator's task.** Sources use an Add source
+  modal; synchronization/publishing and MCP access have separate tabs; templates have a searchable
+  selection editor; and Usage has searchable By skill / By channel views, compact bars, detection
+  provenance, and plain-language context-warning explanations.
 - **Organization-wide local video analysis.** The shared conversation-container image now includes
   `ffmpeg`/`ffprobe`, pinned OpenCV and faster-whisper, plus a pre-cached Whisper `small` model, so
   the `video-understanding` skill works without per-channel installs or first-use downloads (image

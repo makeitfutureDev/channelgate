@@ -2484,7 +2484,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `test/skills-platform.test.js`, `test/skills-admin-api.test.js`).
 - [x] Integration: the usage recorder records Claude's `Skill` tool as exact and a `SKILL.md` read
       (path, target or shell command) as inferred, dedupes per run, `toolTarget("Skill")` names the
-      skill, and the report lists never-used grants and off-catalog names
+      skill, and the report lists never-used grants, off-catalog names and per-conversation rollups
       (`test/skills-platform.test.js`).
 - [x] Integration: authoring creates a local skill granted with its dependencies, refuses an
       existing slug, merges partial files on update, refuses in-place edits of source-owned skills,
@@ -2501,6 +2501,11 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       (`test/mcp-control-plane-approval.test.js`) and present in the lockdown allowlist
       (`test/folders-settings.test.js`); the Skills admin view has a canonical path
       (`test/admin-navigation.test.js`).
+- [x] Admin UI: Sources, Sync settings and MCP are separate tabs; adding a source is modal;
+      templates are selection-first with searchable explicit-skill/category controls; Usage is
+      searchable and alphabetic with By skill / By channel rollups, compact bars, exact/inferred
+      provenance, and context-warning explanations. The profile API supplies warning text rather
+      than only a count (`test/skills-admin-ui.test.js`, `test/skills-admin-api.test.js`).
 - [ ] Live (Claude + Codex): grant a catalog skill to a private test channel, ask for something its
       description covers, and confirm the skill fires from the materialized folder with no Skills
       Manager token configured (Claude: exact usage row; Codex: inferred row after it reads
