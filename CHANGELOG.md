@@ -19,6 +19,11 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Deterministic personal/shared Composio discovery.** Both bundled skills now define
+  `composio-user` as the active requester's identity and `composio-agent` as the shared agent
+  identity, select them by pronoun or connection alias, ask when an app is connected to both,
+  recognize underscore-normalized MCP tool prefixes, and verify connection status before reporting
+  an app unavailable—without silent fallback or initiating a connection during inventory.
 - **Source-specific Skills Git credentials.** GitHub catalog sources now use their own optional
   write-only token, while publishing has a separate write-only token and follows `main`. The Add
   source dialog offers only GitHub or Other ChannelGate, reveals type-specific fields, and takes a

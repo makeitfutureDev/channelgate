@@ -9,13 +9,25 @@ artifacts, file retrieval, and channel administration.
 External apps come from two deliberately distinct identities when configured:
 
 - `composio-user`: the active requester's personal account — “my inbox/calendar/account”.
-- `composio-agent`: the agent/shared account resolved from the conversation and then organization
-  configuration — “your/the agent's/team account”. DMs do not receive this shared identity.
+- `composio-agent`: the shared agent account — “your/the agent's/team account”. Its credential may
+  resolve from conversation and then organization configuration, but that plumbing never changes
+  its user-facing meaning. DMs do not receive this shared identity.
 
-Personal and SDK provisioning modes preserve this semantic split. Never substitute one for the
-other. When both identities have an app and the request is ambiguous, ask. The gateway may also
-inject the privileged MakeItFuture toolbox according to its channel → user → organization token
-precedence. Clean runs and reduced-tool memory reviews omit optional identities.
+Personal and SDK provisioning modes preserve this semantic split. Pronouns select the identity;
+for a named account, inspect connection aliases. When both identities have an app such as Gmail
+and the request is ambiguous, ask which account. Never substitute or silently fall back between
+them.
+
+The MCP server ids are hyphenated, but harness registries may expose callable prefixes with
+normalized underscores (`mcp__composio_user__*` / `mcp__composio_agent__*`). Determine presence by
+the semantic server identity and `COMPOSIO_*` tool suffix, not by matching only one spelling.
+Before declaring an app unavailable, use the selected identity's `COMPOSIO_SEARCH_TOOLS`, inspect
+its `toolkit_connection_statuses`, and confirm the relevant toolkit through
+`COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"`. A broad inventory starts from the search
+tool's connected-app metadata and verifies those candidates; it must not initiate connections.
+
+The gateway may also inject the privileged MakeItFuture toolbox according to its channel → user →
+organization token precedence. Clean runs and reduced-tool memory reviews omit optional identities.
 
 The daemon builds a fresh explicit MCP config for each spawn and uses strict MCP mode. A channel's
 selected MCPs plus daemon-injected servers are the whole set; locally configured host MCPs are not
@@ -56,4 +68,3 @@ follow the active `skill-authoring`/skill-creator guidance: precise trigger desc
 progressive disclosure, preserved user scope, reviewed sources, and validation of every referenced
 resource. The former Skills Manager runtime injection and favorites stubs are retired; the local
 catalog is authoritative.
-

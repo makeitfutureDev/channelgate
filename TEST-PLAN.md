@@ -3,6 +3,20 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Composio identity and connection discovery
+
+- [x] Automated: both bundled skills define `composio-user` as the active requester's personal
+      identity and `composio-agent` as the shared agent identity; recognize hyphenated and
+      underscore-normalized callable prefixes; select named accounts by alias; ask when Gmail or
+      another app exists on both identities; inspect `toolkit_connection_statuses`; confirm through
+      `COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"`; and prohibit silent fallback or starting
+      connections during inventory (`test/composio-guide.test.js`, `test/channelgate-skill.test.js`).
+- [ ] Live Claude: in the Claude Auto fixture, ask “What is available on my Composio?” and then
+      ask “Check Gmail” while Gmail exists on both identities. Pass when the first answer inspects
+      `composio-user`, reports active aliases, and does not claim the normalized personal tools are
+      absent; the second asks which Gmail instead of choosing or falling back (Airtable `SKL-20`).
+- [ ] Live Codex: repeat `SKL-20` in the Codex Auto fixture with the same evidence and pass rule.
+
 ## Conversation settings + on-demand memory
 
 Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,

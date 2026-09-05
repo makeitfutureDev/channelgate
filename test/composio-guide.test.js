@@ -29,14 +29,28 @@ test("gateway operating guide frames the two Composio accounts as YOURS vs the r
   assert.match(skill, /“your[^”]*”.*`composio-agent`/is);
   assert.match(skill, /verify my email.*requester's Gmail/is);
   assert.match(skill, /verify your email.*your\* Gmail/is);
+  assert.match(skill, /named account.*inspect aliases/is);
   // Tie-breakers: single-connected app is used (and named), both-connected asks.
   assert.match(skill, /only ONE identity has that app connected.*say which/is);
   assert.match(skill, /BOTH have the app.*ask/is);
-  // Where to look before promising an action.
-  assert.match(skill, /COMPOSIO_SEARCH_TOOLS.*lists the apps connected/is);
-  assert.match(skill, /never substitute/i);
+  // Tool registries normalize punctuation; one spelling is not evidence of absence.
+  assert.match(skill, /`composio-user` can appear as `composio_user`/is);
+  assert.match(skill, /never declare an identity absent.*only one spelling/is);
+  // Discovery checks the selected identity and remains read-only.
+  assert.match(skill, /COMPOSIO_SEARCH_TOOLS.*`toolkit_connection_statuses`/is);
+  assert.match(skill, /COMPOSIO_MANAGE_CONNECTIONS.*action: "list"/is);
+  assert.match(skill, /inventory request is not permission to initiate connections/is);
+  assert.match(skill, /never substitute.*silently fall back/is);
   // DMs: no agent account at all.
   assert.match(skill, /In a DM you have no account of your own/i);
+});
+
+test("the operating guide makes dual Gmail identity selection explicit", async () => {
+  const skill = await read("SKILL.md");
+
+  assert.match(skill, /“my[^”]*”.*requester's Gmail/is);
+  assert.match(skill, /“your[^”]*”.*your\* Gmail/is);
+  assert.match(skill, /BOTH have the app.*ask which account before calling a tool/is);
 });
 
 test("the references defer to SKILL.md and use the self-describing account names", async () => {
