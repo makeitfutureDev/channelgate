@@ -50,7 +50,11 @@ removed (the Skills view, `set_skill_excluded`, a migrated Skills Manager exclus
 A conversation's active skills are the union of three grant tiers, resolved on every message:
 the mandatory organization tier, the conversation's own grants
 (Conversations → Skills, or the chat verbs), and the requester's personal grants. Dependencies
-named in `requires:` are granted with a skill automatically. The resolver reports what is
+named in `requires:` load with the skill that requires them, on every message — they are resolved,
+never stored: a grant list holds only what was explicitly granted, so a dependency stays reported
+as *required by* its parent rather than as a grant of that tier, and revoking the parent takes it
+along instead of stranding it. Granting a dependency on its own is an ordinary grant and outlives
+its parent. The resolver reports what is
 missing, what is still awaiting review, dependency cycles, near-duplicate trigger descriptions,
 and an estimate of the **always-on context** (every active skill's name + description rides in
 every prompt; the bodies do not). A soft cap (default 6000 tokens, Settings) flags heavy profiles.

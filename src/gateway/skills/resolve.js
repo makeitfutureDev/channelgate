@@ -197,8 +197,12 @@ export function checkCompatibility(skill, { engine = "", platform = "", gatewayV
   return issues;
 }
 
-// The names a grant list should carry so every dependency is included: the input names plus the
-// resolved dependency slugs, in a stable order. Used when a template is applied or a skill added.
+// The names a MATERIALIZATION should carry so every dependency is included: the input names plus
+// the resolved dependency slugs, in a stable order. This is a resolution, never a grant list:
+// dependencies are resolved fresh on every run (folders.js) and in every profile, so a stored
+// grant list keeps only what was explicitly granted and a dependency stays attributed to the
+// skill that requires it. Never write the result of this back into `channel_meta.skills`, a
+// user's `skills` or the organization tier — see the grant helpers in authoring.js.
 export function withDependencies(grantNames = [], opts = {}) {
   const profile = resolveSkillProfile(grantNames, opts);
   const out = [...new Set([...(grantNames || []).map(String), ...profile.active.filter((e) => e.via === "dependency").map((e) => e.slug)])];

@@ -104,7 +104,9 @@ export function skillUsageReport({ channelSlug = "", days = 30, grants = null, l
   if (Array.isArray(grants)) {
     profile = resolveSkillProfile(grants);
     const fired = new Set(used.map((u) => u.slug.toLowerCase()));
-    neverUsed = profile.active.filter((e) => !fired.has(e.slug.toLowerCase())).map((e) => ({ slug: e.slug, name: e.name, via: e.via }));
+    // `via`/`requiredBy` keep a dependency's provenance in the report: it was never granted here,
+    // it loads because something granted requires it.
+    neverUsed = profile.active.filter((e) => !fired.has(e.slug.toLowerCase())).map((e) => ({ slug: e.slug, name: e.name, via: e.via, requiredBy: [...e.requiredBy] }));
   }
   return {
     since,

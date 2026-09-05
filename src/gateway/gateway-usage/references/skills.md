@@ -27,8 +27,9 @@ when a skill fires. No token or network call is involved.
 ## Changing this channel's skills (managers, or an admin)
 
 - `add_channel_skills` / `remove_channel_skills` — grant or revoke skills here by slug.
-  Dependencies (`requires:` in a skill's frontmatter) are added with the skill. Active on the
-  next message.
+  Whatever a skill requires (`requires:` in its frontmatter) loads with it as a dependency, not as
+  a grant of its own: it is listed as *required by* that skill and goes away with it. Grant it by
+  name to keep it in its own right. Active on the next message.
 - `list_skill_templates` / `preview_skill_template` / `set_channel_skill_template` — templates
   such as **Development**, **Sales**, **Marketing**, **Management** are named skill sets. A
   channel FOLLOWS its template live: it gets the template's current skills, and

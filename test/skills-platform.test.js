@@ -519,7 +519,9 @@ test("authoring: create grants here with dependencies, update merges files, sour
   catalog.putSkillRevision({ files: [md("Auth Dep", "a dependency")], ownerKind: "local" });
   const created = await authoring.createLocalSkill({ files: [md("Auth New", "new skill", "requires: [auth-dep]\n"), { path: "references/r.md", content: "r" }], createdBy: "U_AUTHOR", grantTo: entry.slug });
   assert.equal(created.skill.slug, "auth-new");
-  assert.deepEqual(created.granted.added.sort(), ["auth-dep", "auth-new"]);
+  assert.deepEqual(created.granted.added, ["auth-new"], "only the skill itself is stored as a grant");
+  assert.deepEqual(created.granted.dependencies, [{ slug: "auth-dep", requiredBy: ["auth-new"] }], "its dependency is reported, not stored");
+  assert.deepEqual((await getChannelMeta(entry.slug)).skills, ["auth-new"]);
   await assert.rejects(authoring.createLocalSkill({ files: [md("Auth New", "dup")], createdBy: "U2" }), /already exists/);
 
   const updated = await authoring.updateLocalSkill({ skill: catalog.getSkill("auth-new"), files: [{ path: "references/more.md", content: "more" }], remove: ["references/r.md"], createdBy: "U_AUTHOR" });
@@ -545,10 +547,76 @@ test("authoring: create grants here with dependencies, update merges files, sour
   const promo = authoring.proposeSkillChange({ skill: "auth-new", kind: "promote", note: "everyone needs it", proposedBy: "U2" });
   const promoted = await authoring.decideSkillProposal(promo.proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
   assert.equal(promoted.promoted, true);
-  assert.ok(getOrgAccessGrants().skills.includes("auth-new") && getOrgAccessGrants().skills.includes("auth-dep"));
+  assert.deepEqual(getOrgAccessGrants().skills, ["auth-new"], "the organization tier holds the promoted skill, not its dependency");
+  assert.deepEqual(resolve.resolveSkillProfile(getOrgAccessGrants().skills).slugs, ["auth-new", "auth-dep"], "the dependency still resolves into the profile");
   const rejected = await authoring.decideSkillProposal(authoring.proposeSkillChange({ skill: "auth-new", files: [md("Auth New", "no")], note: "n", proposedBy: "U3" }).proposal.id, { decision: "reject", decidedBy: "U_ADMIN", note: "not needed" });
   assert.equal(rejected.proposal.status, "rejected");
   assert.equal(rejected.proposal.decisionNote, "not needed");
   const revoked = await authoring.revokeSkillsFromChannel(entry.slug, ["Auth New"]);
   assert.deepEqual(revoked.removed, ["auth-new"], "revoke resolves a name to its slug");
+});
+
+// A grant list is a list of GRANTS. `requires:` dependencies are resolved at materialization and
+// in every profile (docs/SKILLS.md), so they must never be written into a stored grant list: doing
+// so turned a dependency into a direct channel/user/organization grant, lost the "required by …"
+// attribution in the skills and usage views, and stranded the dependency when its parent was
+// revoked.
+test("granting stores only what was granted: a dependency keeps its provenance, materializes with its parent and leaves with it", async () => {
+  const root = tempDir("cg-skills-prov-");
+  const skillsDir = path.join(root, ".claude", "skills");
+  await mkdir(skillsDir, { recursive: true });
+  const entry = await upsertChannelEntry("C_GRANT_PROV", { name: "grant-prov", type: "channel", isDM: false });
+  await saveChannelMeta(entry.slug, defaultChannelMeta({ channelId: "C_GRANT_PROV", name: "grant-prov", type: "channel", isDM: false }));
+  catalog.putSkillRevision({ files: [md("Prov Parent", "the granted skill", "requires: [prov-dep]\n")], ownerKind: "local" });
+  catalog.putSkillRevision({ files: [md("Prov Dep", "what it requires")], ownerKind: "local" });
+
+  // The chat-verb / admin-API path (grantSkillsToChannel is what both call).
+  const granted = await authoring.grantSkillsToChannel(entry.slug, ["Prov Parent"]);
+  assert.deepEqual(granted.added, ["prov-parent"], "the name resolves to its slug");
+  assert.deepEqual(granted.dependencies, [{ slug: "prov-dep", requiredBy: ["prov-parent"] }], "the dependency is reported to the caller");
+  assert.deepEqual(granted.names, ["prov-parent"]);
+  const meta = await getChannelMeta(entry.slug);
+  assert.deepEqual(meta.skills, ["prov-parent"], "and never written into channel_meta.skills");
+  assert.deepEqual(templates.channelSkillGrants(meta), ["prov-parent"], "nor into the channel tier the grant union takes");
+
+  // So the profile still attributes it — "required by prov-parent", not "added to this channel".
+  const profile = resolve.resolveSkillProfile(templates.channelSkillGrants(meta));
+  assert.deepEqual(profile.slugs, ["prov-parent", "prov-dep"]);
+  assert.equal(profile.active.find((e) => e.slug === "prov-dep").via, "dependency");
+  assert.deepEqual(profile.active.find((e) => e.slug === "prov-dep").requiredBy, ["prov-parent"]);
+  const report = usage.skillUsageReport({ channelSlug: entry.slug, grants: templates.channelSkillGrants(meta) });
+  assert.deepEqual(report.neverUsed.find((n) => n.slug === "prov-dep"), { slug: "prov-dep", name: "Prov Dep", via: "dependency", requiredBy: ["prov-parent"] }, "the usage view keeps the attribution too");
+
+  // Materialization resolves the dependency anyway: nothing that used to be written stops being written.
+  assert.deepEqual((await enableSkills(skillsDir, meta.skills)).enabled.sort(), ["prov-dep", "prov-parent"]);
+
+  // Removing the dependency is not a removal: it is required by a skill that stays granted.
+  const dropDep = await authoring.revokeSkillsFromChannel(entry.slug, ["prov-dep"]);
+  assert.deepEqual(dropDep.removed, []);
+  assert.deepEqual(dropDep.stillRequired, [{ slug: "prov-dep", requiredBy: ["prov-parent"] }]);
+  assert.deepEqual(dropDep.names, ["prov-parent"]);
+
+  // Removing the parent takes the dependency with it — no stranded grant, and the folder is pruned.
+  const dropParent = await authoring.revokeSkillsFromChannel(entry.slug, ["prov-parent"]);
+  assert.deepEqual(dropParent.removed, ["prov-parent"]);
+  assert.deepEqual(dropParent.names, []);
+  assert.deepEqual((await getChannelMeta(entry.slug)).skills, [], "the dependency is not left behind as a channel grant");
+  assert.deepEqual((await enableSkills(skillsDir, (await getChannelMeta(entry.slug)).skills)).enabled, []);
+  await assert.rejects(lstat(path.join(skillsDir, "prov-dep")), { code: "ENOENT" });
+
+  // An EXPLICIT grant of the dependency is a grant like any other and survives its parent's removal.
+  await authoring.grantSkillsToChannel(entry.slug, ["prov-dep", "prov-parent"]);
+  assert.deepEqual((await getChannelMeta(entry.slug)).skills, ["prov-dep", "prov-parent"]);
+  await authoring.revokeSkillsFromChannel(entry.slug, ["prov-parent"]);
+  assert.deepEqual((await getChannelMeta(entry.slug)).skills, ["prov-dep"], "what was granted on its own stays granted");
+
+  // The user and organization tiers use the same helper and behave the same way.
+  await setUser("U_PROV", { name: "Prov", skills: [] });
+  const mine = await authoring.grantSkillsToUser("U_PROV", ["prov-parent"]);
+  assert.deepEqual(mine.names, ["prov-parent"]);
+  assert.deepEqual(mine.dependencies.map((d) => d.slug), ["prov-dep"]);
+  assert.deepEqual((await getUser("U_PROV")).skills, ["prov-parent"]);
+  saveSettings({ accessGrants: { skills: [] } });
+  assert.deepEqual(authoring.grantSkillsToOrg(["prov-parent"]).names, ["prov-parent"]);
+  assert.deepEqual(getOrgAccessGrants().skills, ["prov-parent"]);
 });

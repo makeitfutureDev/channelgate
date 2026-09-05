@@ -57,8 +57,9 @@ export function canSeeSkill(skill, { userId = "", isAdmin = false, active = fals
   return isAdmin || (Boolean(userId) && skill.createdBy === userId);
 }
 
-// Add a new locally authored skill. `grantTo` (a channel slug) grants it there at once, with its
-// dependencies; `personal` keeps it private to the author (granted to the author's own tier);
+// Add a new locally authored skill. `grantTo` (a channel slug) grants it there at once (its
+// `requires:` dependencies come along at materialization, they are not grants of their own);
+// `personal` keeps it private to the author (granted to the author's own tier);
 // `channelId` scopes it to that channel's section of the skills repository (granted there
 // automatically, published under channels/<id>/) — the default is the shared library.
 export async function createLocalSkill({ slug = "", files, note = "", createdBy = "", grantTo = "", personal = false, publish = true, channelId = "" } = {}) {
@@ -135,18 +136,42 @@ export function deleteOwnSkill({ skill, userId = "", isAdmin = false } = {}) {
 }
 
 // ── Grant helpers (organization / conversation / user tiers) ────────────────────────────────
+//
+// A stored grant list holds EXPLICIT grants only. A `requires:` dependency is never written into
+// it: it is resolved on every materialization (folders.js → withDependencies) and in every
+// effective profile (resolve.js), so it stays attributed as "required by <parent>" instead of
+// masquerading as a direct grant of that tier — and revoking the parent takes the dependency with
+// it instead of stranding it as a grant nobody asked for. The helpers below still REPORT the
+// dependencies a grant pulls in, so the chat verbs and the admin API can name them.
+
+// The dependencies a grant list resolves to, as { slug, requiredBy } — never stored, only shown.
+// Never let a catalog hiccup break a grant write: reporting is best effort.
+function dependencyEntries(names) {
+  if (!names.length) return [];
+  try {
+    const { profile } = withDependencies(names);
+    return profile.active.filter((e) => e.via === "dependency").map((e) => ({ slug: e.slug, requiredBy: [...e.requiredBy] }));
+  } catch {
+    return [];
+  }
+}
 
 function resolveGrantSlugs(slugs, current) {
   const have = new Set(current.map((s) => s.toLowerCase()));
-  const wanted = [];
+  const added = [];
   for (const s of sanitizeSkillGrantNames(slugs)) {
     // Store the catalog slug for a catalog skill (a name or a differently-cased folder name
     // resolves to it); a name the catalog does not know is kept as given (a host-folder grant).
     const resolved = getSkill(s)?.slug || s;
-    if (!have.has(resolved.toLowerCase()) && !wanted.some((w) => w.toLowerCase() === resolved.toLowerCase())) wanted.push(resolved);
+    if (!have.has(resolved.toLowerCase()) && !added.some((w) => w.toLowerCase() === resolved.toLowerCase())) added.push(resolved);
   }
-  const { names } = withDependencies([...current, ...wanted]);
-  return { names, added: names.filter((s) => !have.has(s.toLowerCase())) };
+  const names = [...current, ...added];
+  let dependencies = [];
+  if (added.length) {
+    const before = new Set(dependencyEntries(current).map((e) => e.slug.toLowerCase()));
+    dependencies = dependencyEntries(names).filter((e) => !before.has(e.slug.toLowerCase()));
+  }
+  return { names, added, dependencies };
 }
 
 function dropGrantSlugs(slugs, current) {
@@ -163,11 +188,15 @@ function dropGrantSlugs(slugs, current) {
     if (hit) removed.push(s);
     return !hit;
   });
-  return { names: kept, removed };
+  // A name that is no grant of this tier can still be active because something else requires it;
+  // say so rather than reporting a removal that changes nothing.
+  const stillRequired = dependencyEntries(kept).filter((e) => drop.has(e.slug.toLowerCase()));
+  return { names: kept, removed, stillRequired };
 }
 
-// Grant slugs (plus their dependencies) to a conversation. Returns { added, names } or null when
-// the conversation is unknown.
+// Grant slugs to a conversation. Returns { added, dependencies, names } — `names` is the stored
+// (explicit) list, `dependencies` what those grants pull in at materialization — or null when the
+// conversation is unknown.
 export async function grantSkillsToChannel(channelSlug, slugs) {
   let result = null;
   const next = await patchChannelMeta(channelSlug, (meta) => {
@@ -175,7 +204,7 @@ export async function grantSkillsToChannel(channelSlug, slugs) {
     result = resolveGrantSlugs(slugs, sanitizeSkillGrantNames(meta.skills || []));
     return { skills: result.names };
   });
-  return next ? { added: result.added, names: next.skills } : null;
+  return next ? { added: result.added, dependencies: result.dependencies, names: next.skills } : null;
 }
 
 export async function revokeSkillsFromChannel(channelSlug, slugs) {
@@ -185,7 +214,7 @@ export async function revokeSkillsFromChannel(channelSlug, slugs) {
     result = dropGrantSlugs(slugs, sanitizeSkillGrantNames(meta.skills || []));
     return { skills: result.names };
   });
-  return next ? { removed: result.removed, names: next.skills } : null;
+  return next ? { removed: result.removed, stillRequired: result.stillRequired, names: next.skills } : null;
 }
 
 // A user's own tier: skills only that user's runs carry (Skills Manager's "stars").
@@ -193,14 +222,14 @@ export async function grantSkillsToUser(userId, slugs) {
   const user = (await getUser(userId)) || {};
   const result = resolveGrantSlugs(slugs, sanitizeSkillGrantNames(user.skills || []));
   await setUser(userId, { skills: result.names });
-  return { added: result.added, names: result.names };
+  return { added: result.added, dependencies: result.dependencies, names: result.names };
 }
 
 export async function revokeSkillsFromUser(userId, slugs) {
   const user = (await getUser(userId)) || {};
   const result = dropGrantSlugs(slugs, sanitizeSkillGrantNames(user.skills || []));
   await setUser(userId, { skills: result.names });
-  return { removed: result.removed, names: result.names };
+  return { removed: result.removed, stillRequired: result.stillRequired, names: result.names };
 }
 
 // The organization tier: every conversation.
@@ -208,14 +237,14 @@ export function grantSkillsToOrg(slugs) {
   const grants = getOrgAccessGrants();
   const result = resolveGrantSlugs(slugs, sanitizeSkillGrantNames(grants.skills || []));
   if (result.added.length) saveSettings({ accessGrants: { ...grants, skills: result.names } });
-  return { added: result.added, names: result.names };
+  return { added: result.added, dependencies: result.dependencies, names: result.names };
 }
 
 export function revokeSkillsFromOrg(slugs) {
   const grants = getOrgAccessGrants();
   const result = dropGrantSlugs(slugs, sanitizeSkillGrantNames(grants.skills || []));
   if (result.removed.length) saveSettings({ accessGrants: { ...grants, skills: result.names } });
-  return { removed: result.removed, names: result.names };
+  return { removed: result.removed, stillRequired: result.stillRequired, names: result.names };
 }
 
 // Kept for callers of the previous name: grant one skill organization-wide.

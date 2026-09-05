@@ -89,16 +89,22 @@ test("self-service and organization tiers: add/remove for a user, grant/revoke o
   catalog.putSkillRevision({ files: [md("Tier Dep", "dep")], ownerKind: "local" });
   await setUser("U_SELF", { name: "Self", approved: true, skills: [] });
   const added = await authoring.grantSkillsToUser("U_SELF", ["Tier Skill"]);
-  assert.deepEqual(added.added, ["tier-skill", "tier-dep"], "the name resolves and the dependency comes along");
+  assert.deepEqual(added.added, ["tier-skill"], "the name resolves to the slug; the dependency is not a grant of its own");
+  assert.deepEqual(added.dependencies, [{ slug: "tier-dep", requiredBy: ["tier-skill"] }], "the dependency is reported");
+  assert.deepEqual((await getUser("U_SELF")).skills, ["tier-skill"]);
   const removed = await authoring.revokeSkillsFromUser("U_SELF", ["tier-skill"]);
   assert.deepEqual(removed.removed, ["tier-skill"]);
-  assert.deepEqual((await getUser("U_SELF")).skills, ["tier-dep"]);
+  assert.deepEqual((await getUser("U_SELF")).skills, [], "removing the parent leaves no stranded dependency");
 
   saveSettings({ accessGrants: { skills: [] } });
   const org = authoring.grantSkillsToOrg(["tier-skill"]);
-  assert.deepEqual(org.added, ["tier-skill", "tier-dep"]);
-  assert.deepEqual(getOrgAccessGrants().skills, ["tier-skill", "tier-dep"]);
-  assert.deepEqual(authoring.revokeSkillsFromOrg(["tier-dep"]).names, ["tier-skill"]);
+  assert.deepEqual(org.added, ["tier-skill"]);
+  assert.deepEqual(org.dependencies.map((d) => d.slug), ["tier-dep"]);
+  assert.deepEqual(getOrgAccessGrants().skills, ["tier-skill"]);
+  const orgDrop = authoring.revokeSkillsFromOrg(["tier-dep"]);
+  assert.deepEqual(orgDrop.removed, [], "a dependency is no organization grant, so there is nothing to remove");
+  assert.deepEqual(orgDrop.stillRequired, [{ slug: "tier-dep", requiredBy: ["tier-skill"] }], "and the caller is told why it stays active");
+  assert.deepEqual(orgDrop.names, ["tier-skill"]);
 
   const own = await authoring.createLocalSkill({ files: [md("Delete Me", "mine")], createdBy: "U_SELF", publish: false });
   assert.throws(() => authoring.deleteOwnSkill({ skill: own.skill, userId: "U_OTHER" }), /only the author/);

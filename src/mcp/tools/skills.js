@@ -62,6 +62,20 @@ function skillLine(skill, { detail = true } = {}) {
   return `• \`${skill.slug}\`${detail ? ` (${bits.join(", ")})` : ""}${desc}`;
 }
 
+// Dependencies a grant pulls in are NOT grants of that tier: name them as what they are so this
+// reads the same way `show_channel_skills` will ("required by …").
+function dependencyLine(deps) {
+  if (!deps?.length) return "";
+  return `\nLoading with them as dependencies (not grants of their own, so they leave with the skill that needs them): ${deps.map((d) => `\`${d.slug}\`${d.requiredBy?.length ? ` (required by ${d.requiredBy.join(", ")})` : ""}`).join(", ")}`;
+}
+
+// Something asked to be removed that is no grant here at all — it loads because another skill
+// requires it, and it goes when that skill goes.
+function stillRequiredLine(entries) {
+  if (!entries?.length) return "";
+  return `\nNot a grant here, so nothing to remove: ${entries.map((e) => `\`${e.slug}\` loads because ${e.requiredBy.join(" and ")} requires it`).join("; ")}.`;
+}
+
 function publishLine(p) {
   if (!p) return "";
   if (p.published) return `\nPublished to ${p.repo}@${p.branch} under ${p.path}${p.adopted ? " (now owned by that source)" : ""}.`;
@@ -209,7 +223,7 @@ export function register(server, ctx) {
   server.registerTool(
     "add_channel_skills",
     {
-      description: "ADMINS / CHANNEL MANAGERS. Grant one or more catalog skills in this conversation (by slug from list_skills). Their dependencies are granted with them. Takes effect on the next message.",
+      description: "ADMINS / CHANNEL MANAGERS. Grant one or more catalog skills in this conversation (by slug from list_skills). Whatever they require loads with them (as a dependency, not as a separate grant). Takes effect on the next message.",
       inputSchema: { slugs: z.array(z.string()).min(1) },
     },
     async ({ slugs }) => {
@@ -225,14 +239,14 @@ export function register(server, ctx) {
       const r = await grantSkillsToChannel(slug, known);
       if (!r) return text("Channel isn't set up yet — send a normal message first.");
       const profile = resolveSkillProfile(r.names, { warnTokens: getSkillsContextWarnTokens() });
-      return text(`✅ Granted here: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.`);
+      return text(`✅ Granted here: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.`);
     },
   );
 
   server.registerTool(
     "remove_channel_skills",
     {
-      description: "ADMINS / CHANNEL MANAGERS. Stop granting one or more skills in this conversation (by slug). Organization-wide grants cannot be removed here. Takes effect on the next message.",
+      description: "ADMINS / CHANNEL MANAGERS. Stop granting one or more skills in this conversation (by slug). Organization-wide grants — and skills that load only because another granted skill requires them — cannot be removed here. Takes effect on the next message.",
       inputSchema: { slugs: z.array(z.string()).min(1) },
     },
     async ({ slugs }) => {
@@ -241,7 +255,7 @@ export function register(server, ctx) {
       if (!r) return text("Channel isn't set up yet.");
       const org = new Set((getOrgAccessGrants().skills || []).map((s) => String(s).toLowerCase()));
       const stillOrg = slugs.filter((s) => org.has(String(s).toLowerCase()));
-      return text(`🗑️ Removed ${r.removed.length} grant(s)${r.removed.length ? `: ${r.removed.map((s) => `\`${s}\``).join(", ")}` : ""}.${stillOrg.length ? `\nStill active from the organization tier (an admin changes that with remove_org_skills): ${stillOrg.join(", ")}` : ""}\nNow granted here: ${r.names.join(", ") || "(none)"}. Active on the next message.`);
+      return text(`🗑️ Removed ${r.removed.length} grant(s)${r.removed.length ? `: ${r.removed.map((s) => `\`${s}\``).join(", ")}` : ""}.${stillOrg.length ? `\nStill active from the organization tier (an admin changes that with remove_org_skills): ${stillOrg.join(", ")}` : ""}${stillRequiredLine(r.stillRequired)}\nNow granted here: ${r.names.join(", ") || "(none)"}. Active on the next message.`);
     },
   );
 
@@ -249,7 +263,7 @@ export function register(server, ctx) {
 
   server.registerTool(
     "add_my_skills",
-    { description: "Add catalog skills to YOUR OWN grants — they load in your runs in every conversation (like starring in a skill library). Dependencies come along. No approval needed; only your own context changes.", inputSchema: { slugs: z.array(z.string()).min(1) } },
+    { description: "Add catalog skills to YOUR OWN grants — they load in your runs in every conversation (like starring in a skill library). Whatever they require loads with them (as a dependency, not as a separate grant). No approval needed; only your own context changes.", inputSchema: { slugs: z.array(z.string()).min(1) } },
     async ({ slugs }) => {
       if (!(await approvedAuthor())) return text("Only approved members have personal skill grants.");
       const known = [];
@@ -261,7 +275,7 @@ export function register(server, ctx) {
       }
       if (!known.length) return text(`None of those are catalog skills you can see: ${unknown.join(", ")}.`);
       const r = await grantSkillsToUser(createdBy, known);
-      return text(`✅ Added to your skills: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${unknown.length ? `\nUnknown (ignored): ${unknown.join(", ")}` : ""}\nYours now (${r.names.length}): ${r.names.join(", ")}. Active on your next message.`);
+      return text(`✅ Added to your skills: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown (ignored): ${unknown.join(", ")}` : ""}\nYours now (${r.names.length}): ${r.names.join(", ")}. Active on your next message.`);
     },
   );
 
@@ -271,7 +285,7 @@ export function register(server, ctx) {
     async ({ slugs }) => {
       if (!createdBy) return text("No user context.");
       const r = await revokeSkillsFromUser(createdBy, slugs);
-      return text(`🗑️ Removed ${r.removed.length} of your grant(s)${r.removed.length ? `: ${r.removed.join(", ")}` : ""}. Yours now: ${r.names.join(", ") || "(none)"}.`);
+      return text(`🗑️ Removed ${r.removed.length} of your grant(s)${r.removed.length ? `: ${r.removed.join(", ")}` : ""}. Yours now: ${r.names.join(", ") || "(none)"}.${stillRequiredLine(r.stillRequired)}`);
     },
   );
 
@@ -337,7 +351,7 @@ export function register(server, ctx) {
       if (scope === "channel" && (!channelId || scopeMeta.isDM)) return text("A channel-scoped skill needs a channel: create it from the customer's channel, or use scope library.");
       try {
         const r = await createLocalSkill({ slug: wanted, files, note, createdBy, grantTo: grant_here ? slug : "", personal, channelId: scope === "channel" ? channelId : "" });
-        const where = personal ? "granted to your own runs" : scope === "channel" ? "kept in this channel's section (granted here automatically)" : r.granted ? `granted here${r.granted.added.length > 1 ? ` with ${r.granted.added.filter((s) => s !== r.skill.slug).join(", ")}` : ""}` : "not granted anywhere yet";
+        const where = personal ? "granted to your own runs" : scope === "channel" ? "kept in this channel's section (granted here automatically)" : r.granted ? `granted here${r.granted.dependencies?.length ? ` (it requires ${r.granted.dependencies.map((d) => d.slug).join(", ")}, which load with it)` : ""}` : "not granted anywhere yet";
         return text(`✅ Created \`${r.skill.slug}\` (revision ${r.revision.revisionNo}, ${r.revision.fileCount} file(s), ${personal ? "personal" : "organization"} skill), ${where} — active on the next message.${publishLine(r.published)}\n${personal ? "Promote it to the organization later with propose_skill_change (kind promote)." : "Other channels can add it with add_channel_skills; an admin can add it to a template or grant it organization-wide."}`);
       } catch (err) {
         return text(`🚫 Could not create the skill: ${err?.message || err}`);
@@ -486,7 +500,7 @@ export function register(server, ctx) {
       const { shared } = await channelProfile();
       const r = skillUsageReport({ channelSlug: slug, days, grants: shared.skills });
       const used = r.used.length ? r.used.map((u) => `• \`${u.slug}\` — ${u.total}× (${u.exact} exact, ${u.inferred} inferred), last ${u.lastTs.slice(0, 10)}`).join("\n") : "• (no skill use recorded)";
-      const never = r.neverUsed.length ? r.neverUsed.map((n) => `\`${n.slug}\``).join(", ") : "(none)";
+      const never = r.neverUsed.length ? r.neverUsed.map((n) => `\`${n.slug}\`${n.via === "dependency" ? ` (required by ${n.requiredBy.join(", ")})` : ""}`).join(", ") : "(none)";
       return text(clipText(`Skill use here in the last ${r.days} days:\n${used}\n\nGranted but never fired: ${never}\n_${r.notes[0]}_`));
     },
   );
@@ -495,13 +509,13 @@ export function register(server, ctx) {
 
   server.registerTool(
     "add_org_skills",
-    { description: "ADMINS. Grant skills organization-wide (every conversation). Dependencies come along.", inputSchema: { slugs: z.array(z.string()).min(1) } },
+    { description: "ADMINS. Grant skills organization-wide (every conversation). Whatever they require loads with them (as a dependency, not as a separate grant).", inputSchema: { slugs: z.array(z.string()).min(1) } },
     async ({ slugs }) => {
       if (!(await requireAdmin())) return text("Only admins change the organization tier.");
       const known = slugs.map((s) => getSkill(s)).filter((s) => s && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
       if (!known.length) return text("None of those are grantable catalog skills.");
       const r = grantSkillsToOrg(known);
-      return text(`✅ Organization-wide now: +${r.added.length} (${r.added.join(", ") || "nothing new"}). Total ${r.names.length}: ${r.names.join(", ")}. Every conversation gets them on its next message.`);
+      return text(`✅ Organization-wide now: +${r.added.length} (${r.added.join(", ") || "nothing new"}). Total ${r.names.length}: ${r.names.join(", ")}. Every conversation gets them on its next message.${dependencyLine(r.dependencies)}`);
     },
   );
 
@@ -511,7 +525,7 @@ export function register(server, ctx) {
     async ({ slugs }) => {
       if (!(await requireAdmin())) return text("Only admins change the organization tier.");
       const r = revokeSkillsFromOrg(slugs);
-      return text(`🗑️ Removed ${r.removed.length} organization grant(s)${r.removed.length ? `: ${r.removed.join(", ")}` : ""}. Organization-wide now: ${r.names.join(", ") || "(none)"}.`);
+      return text(`🗑️ Removed ${r.removed.length} organization grant(s)${r.removed.length ? `: ${r.removed.join(", ")}` : ""}. Organization-wide now: ${r.names.join(", ") || "(none)"}.${stillRequiredLine(r.stillRequired)}`);
     },
   );
 

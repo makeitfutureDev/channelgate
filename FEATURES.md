@@ -1886,8 +1886,10 @@ are retired, bullet by bullet; everything else stands.
   files move in the repository (`moveSkillFiles`), promotion leaves the channel an explicit grant.
   → TEST-PLAN: Skills platform (round two).
 - **Channel profiles without tokens.** The existing organization → conversation → user grant union
-  resolves against the catalog on every message (`resolve.js`): `requires:` dependencies are
-  granted with a skill, missing links, tombstones, staged (unapproved) skills, dependency cycles
+  resolves against the catalog on every message (`resolve.js`): `requires:` dependencies load with
+  the skill that requires them (resolved every message, never stored as grants of their own, so
+  they stay attributed to their parent and leave with it), missing links, tombstones, staged
+  (unapproved) skills, dependency cycles
   and near-duplicate trigger descriptions are reported, and the **always-on context** of the
   profile (each active skill's name + description) is estimated and flagged above a soft cap
   (`skillsContextWarnTokens`, default 6000). The materializer (`materialize.js`, wired into
