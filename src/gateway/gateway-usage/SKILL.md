@@ -6,7 +6,7 @@ description: >-
   conversation. Also use whenever a request involves formatting a reply or @mention, an
   inline Markdown table, sortable/filterable data table, CSV/TSV export, list,
   chart, graph, data visualization, trend, comparison, canvas, message, reminder, scheduled
-  task, history/search, channel memory or rules, background job, approval, or channel/gateway
+  task, history/search, attached video or screen recording, channel memory or rules, background job, approval, or channel/gateway
   administration — and whenever the working folder is a git repository and the task will edit,
   commit, branch, merge, or push code or docs. Open the matching reference before acting.
 ---
@@ -98,6 +98,7 @@ the tool that does it.
 | Create / edit a canvas document                | `references/canvases.md`          | chosen Composio account (`composio-agent` / `composio-user`) |
 | Catch up / summarize / read a thread           | `references/reading.md`           | `gateway` → `slack_channel_history`, `slack_thread_replies`; cross-channel via Composio Slack |
 | Get a file shared earlier in this channel/thread ("download it", "try again with the video") | `references/reading.md` | `gateway` → `slack_download_file` (local path back; this channel only, ≤ 500 MB) |
+| Understand / summarize an attached video or screen recording | `references/video-understanding.md` | built-in local analyzer at `scripts/analyze_video.py` + Read/image inspection |
 | Remember a fact or add a standing rule         | `references/memory-and-rules.md`  | `gateway` → `update_channel_memory`, `update_channel_instructions` |
 | Orchestrate long/high-volume work with visible agents and progress | `references/progress-report.md` | in-turn subagents + `gateway` → `report_progress` |
 | Edit code/docs in a git repository             | `references/git-repos.md`         | `git worktree` per task; merge + push to land |

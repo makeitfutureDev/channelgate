@@ -2169,10 +2169,16 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       pre-creates `/home/agent/.claude` and `/home/agent/.codex` owned by `agent` (so the Codex file
       mount cannot land in a root-owned directory); and all six container-side helper scripts exist,
       are executable, and pass `sh -n` (automated: `test/container-image.test.js`).
-- [x] Unit: the video-understanding image contract pins the OpenCV and faster-whisper versions,
+- [x] Unit: the built-in gateway video-understanding contract pins the OpenCV and faster-whisper versions,
       installs distro `ffmpeg`/`ffprobe`, preloads Whisper `small` under the shared read-only model
       cache, passes every pin through the image builder, and bumps the daemon/image spec in lockstep
       (automated: `test/container-image.test.js`).
+- [x] Unit: `gateway-usage` materializes its video workflow, dependency reference, and analyzer
+      script into every surface; the former standalone slug is rejected at the grant boundary,
+      excluded from the catalog, removed from organization/template/channel/personal grants at
+      boot, and stale gateway-managed workspace copies are pruned (automated:
+      `test/access-grants.test.js`, `test/managed-write-symlinks.test.js`,
+      `test/skills-platform.test.js`).
 - [x] Unit: `npm run setup` builds the channel image as part of the install (`scripts/install.sh`
       runs `scripts/build-image.mjs`), accepts `--skip-image` / `CG_BUILD_IMAGE` to defer it, and
       names `npm run build:image` as the remedy when skipped or failed (automated:

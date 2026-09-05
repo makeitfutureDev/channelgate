@@ -29,11 +29,11 @@ export function overrideGuideDir() {
   return path.join(gatewayRoot(), "config", "gateway-usage");
 }
 
-// A guide file path is valid iff it's SKILL.md, references/<slug>.md, or
-// platforms/<platformId>/<slug>.md — no traversal, .md only. The platform segment is checked
+// A guide file path is valid iff it's SKILL.md, references/<slug>.md, scripts/<slug>.py, or
+// platforms/<platformId>/<slug>.md — no traversal. The platform segment is checked
 // against the registry, so an admin cannot create a directory for a platform that does not exist
 // (it would silently never be read, which reads as "my edit was ignored").
-const FILE_RE = /^(SKILL\.md|references\/[A-Za-z0-9._-]+\.md|platforms\/([a-z0-9]+)\/[A-Za-z0-9._-]+\.md)$/;
+const FILE_RE = /^(SKILL\.md|references\/[A-Za-z0-9._-]+\.md|scripts\/[A-Za-z0-9._-]+\.py|platforms\/([a-z0-9]+)\/[A-Za-z0-9._-]+\.md)$/;
 export function validGuideFile(file) {
   const f = String(file || "").trim().replace(/^\.\//, "");
   const m = FILE_RE.exec(f);
@@ -59,8 +59,8 @@ async function exists(p) {
   }
 }
 
-// Relative .md paths under a guide dir: SKILL.md at the root, references/*.md, and
-// platforms/<id>/*.md. Missing dir → [].
+// Relative source paths under a guide dir: SKILL.md at the root, references/*.md,
+// scripts/*.py, and platforms/<id>/*.md. Missing dir → [].
 async function listGuideFiles(dir) {
   const out = [];
   if (await exists(path.join(dir, "SKILL.md"))) out.push("SKILL.md");
@@ -70,6 +70,13 @@ async function listGuideFiles(dir) {
     }
   } catch {
     /* no references dir */
+  }
+  try {
+    for (const e of await readdir(path.join(dir, "scripts"), { withFileTypes: true })) {
+      if (e.isFile() && e.name.endsWith(".py")) out.push(`scripts/${e.name}`);
+    }
+  } catch {
+    /* no scripts dir */
   }
   try {
     for (const platform of await readdir(path.join(dir, "platforms"), { withFileTypes: true })) {
@@ -142,7 +149,7 @@ export async function guideIsOverridden() {
   return (await listGuideFiles(overrideGuideDir())).length > 0;
 }
 
-// All existing .md files under a materialized skill folder, as relative paths (for pruning).
+// All existing managed-content files under a materialized skill folder, as relative paths.
 async function listSkillFolderFiles(skillDir) {
   const out = [];
   try {
@@ -155,6 +162,13 @@ async function listSkillFolderFiles(skillDir) {
   try {
     for (const e of await readdir(path.join(skillDir, "references"), { withFileTypes: true })) {
       if (e.isFile() && e.name.endsWith(".md")) out.push(`references/${e.name}`);
+    }
+  } catch {
+    /* none */
+  }
+  try {
+    for (const e of await readdir(path.join(skillDir, "scripts"), { withFileTypes: true })) {
+      if (e.isFile() && e.name.endsWith(".py")) out.push(`scripts/${e.name}`);
     }
   } catch {
     /* none */
@@ -212,7 +226,7 @@ export async function applyGatewayGuide(cwd, { platform = DEFAULT_PLATFORM } = {
 // Overwrite one guide file's content in the override overlay. Propagates on the next message.
 export async function updateGatewayGuide({ file, content }) {
   const f = validGuideFile(file);
-  if (!f) throw new Error(`Invalid guide file "${file}" — use "SKILL.md", "references/<name>.md", or "platforms/<platform>/<name>.md".`);
+  if (!f) throw new Error(`Invalid guide file "${file}" — use "SKILL.md", "references/<name>.md", "scripts/<name>.py", or "platforms/<platform>/<name>.md".`);
   const body = String(content ?? "");
   if (!body.trim()) throw new Error("Refusing to write empty content — pass the new file body.");
   const dest = path.join(overrideGuideDir(), f);
@@ -227,7 +241,7 @@ export async function resetGatewayGuide({ file } = {}) {
   const ovr = overrideGuideDir();
   if (file) {
     const f = validGuideFile(file);
-    if (!f) throw new Error(`Invalid guide file "${file}" — use "SKILL.md", "references/<name>.md", or "platforms/<platform>/<name>.md".`);
+    if (!f) throw new Error(`Invalid guide file "${file}" — use "SKILL.md", "references/<name>.md", "scripts/<name>.py", or "platforms/<platform>/<name>.md".`);
     await rm(path.join(ovr, f), { force: true });
     // If that emptied the overlay, remove the (now-stale) override dir entirely.
     if (!(await guideIsOverridden())) await rm(ovr, { recursive: true, force: true });

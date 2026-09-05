@@ -19,6 +19,10 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Video understanding is part of the main gateway skill.** `gateway-usage` now ships the complete
+  synchronized visual/audio workflow, sampling and dependency guidance, and local analyzer script
+  to every conversation. The former standalone catalog skill is excluded and removed from durable
+  grants at boot, while stale gateway-managed copies are pruned on the channel's next turn.
 - **Live Slack progress no longer splits the answer.** Native task/tool/thinking rows stream in a
   dedicated first message, while the Markdown answer streams contiguously in a separate message
   beneath it. Both streams retain their independent long-run rollover and terminal/fallback
@@ -29,7 +33,7 @@ product overview.
   provenance, and plain-language context-warning explanations.
 - **Organization-wide local video analysis.** The shared conversation-container image now includes
   `ffmpeg`/`ffprobe`, pinned OpenCV and faster-whisper, plus a pre-cached Whisper `small` model, so
-  the `video-understanding` skill works without per-channel installs or first-use downloads (image
+  the built-in `gateway-usage` video workflow works without per-channel installs or first-use downloads (image
   spec 1.2.0).
 - **`slack_download_file` — an agent can fetch a file shared earlier in this channel.** The pre-run
   downloader only ever delivered the files on the triggering message, so a recording posted on a

@@ -1526,14 +1526,15 @@ are retired, bullet by bullet; everything else stands.
   instead of leaving channels on yesterday's toolchain. The image is never built inside a turn: a
   missing image fails the run closed with the one command that fixes it. → TEST-PLAN: Container
   runtime (v0.8 P1).
-- **Organization-wide local video understanding toolchain (image spec 1.2.0).** Every conversation
+- **Built-in local video understanding (image spec 1.2.0).** Every conversation
   image includes `ffmpeg`/`ffprobe`, pinned `opencv-python-headless` + `faster-whisper`, and a
-  root-owned pre-cached Whisper `small` model. The organization-granted `video-understanding` skill
-  can therefore extract representative frames, build contact sheets and transcribe timestamped
+  root-owned pre-cached Whisper `small` model. The always-present `gateway-usage` skill owns the
+  video workflow, sampling guidance, dependency diagnostics, and analyzer script, so it can extract representative frames, build contact sheets and transcribe timestamped
   speech without a per-channel install or first-use model download. `npm run setup` builds the
   image as part of a fresh install (`--skip-image` / `CG_BUILD_IMAGE=no` defers it and names
   `npm run build:image` as the remedy; a failed build never aborts the install), so a new gateway
-  never reaches its first message without the toolchain. → TEST-PLAN: Container runtime (v0.8 P1).
+  never reaches its first message without the toolchain. The former standalone catalog skill is
+  excluded and removed from all durable grant tiers at boot. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Retired 2026-09-03 (Linux + containers only):** the daemon refuses every platform but Linux
   (`src/platform-gate.js`) and refuses to boot without a usable container CLI — Linux with rootless
   Podman is the only deployment target, so there is no "everywhere" left. **The daemon still runs

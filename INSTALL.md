@@ -49,7 +49,7 @@ is missing.
 
 The channel image is where every conversation's shared toolchain lives — the pinned engine CLIs,
 `ffmpeg`/`ffprobe`, OpenCV, `faster-whisper` and its pre-cached `small` speech model for the
-`video-understanding` skill — so building it is part of the install, not a step to remember later.
+video workflow built into `gateway-usage` — so building it is part of the install, not a step to remember later.
 It takes several minutes on a cold cache and is run as the daemon user. Pass `--skip-image` (or set
 `CG_BUILD_IMAGE=no`) to defer it, and run `npm run build:image` before the first message; a build
 that fails is reported with that same remedy and never aborts the rest of the install.

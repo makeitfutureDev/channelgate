@@ -16,8 +16,8 @@ For "catch me up" / "summarize this channel" / "what did the thread say":
   delivered to your run — "download it yourself", "try again with the video". Pass the `file_id`
   (from the metadata above, or a pasted Slack file link). Files up to 500 MB; a file already in the
   folder is reused without a second download. A file not shared in this channel is refused. Read
-  the returned path with your Read tool (images render visually; a video goes through the
-  `video-understanding` skill). Never ask the person to re-upload a file that is already in the
+  the returned path with your Read tool (images render visually; for video, follow the built-in
+  `references/video-understanding.md` workflow). Never ask the person to re-upload a file that is already in the
   thread — download it.
 
 These are **scoped to the current channel only** — they can't read other channels. The thread

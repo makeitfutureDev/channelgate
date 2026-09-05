@@ -233,6 +233,8 @@ test("the gateway-usage refresh replaces planted symlinks inside its own skill f
 
   await assertReplacedNode(path.join(skillDir, "SKILL.md"), skillVictim);
   assert.match(await readFile(path.join(skillDir, "SKILL.md"), "utf8"), /name: gateway-usage/);
+  assert.match(await readFile(path.join(skillDir, "references", "video-understanding.md"), "utf8"), /two synchronized evidence streams/);
+  assert.match(await readFile(path.join(skillDir, "scripts", "analyze_video.py"), "utf8"), /timestamped visual\/audio evidence pack/);
 });
 
 test("the gateway-usage refresh rebuilds a symlinked .claude/skills path as real directories", async (t) => {
