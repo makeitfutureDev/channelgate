@@ -190,8 +190,8 @@ export function createSettingsRouter({
       // string that always round-trips; an empty string clears it.
       if (typeof body.defaultComposioTokenLabel === "string") patch.defaultComposioTokenLabel = body.defaultComposioTokenLabel.trim();
       if (typeof body.defaultToolboxTokenLabel === "string") patch.defaultToolboxTokenLabel = body.defaultToolboxTokenLabel.trim();
-      // Skills platform: the daemon's GitHub token (write-only), the source sync interval and the
-      // context-cost soft cap. Numbers are clamped in the getters; a blank string means "default".
+      // Legacy shared GitHub credential stays readable for rollback compatibility, but source
+      // sync no longer consumes it. New source credentials live on each source row.
       if (typeof body.skillsGithubToken === "string" && body.skillsGithubToken.trim()) patch.skillsGithubToken = body.skillsGithubToken.trim();
       if (body.clearSkillsGithubToken === true) patch.skillsGithubToken = "";
       if (body.skillsSyncIntervalMinutes !== undefined && body.skillsSyncIntervalMinutes !== "") {
@@ -204,7 +204,7 @@ export function createSettingsRouter({
         if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: "skillsContextWarnTokens must be a positive number" });
         patch.skillsContextWarnTokens = Math.floor(n);
       }
-      // Git publishing target for authored/approved skills, and the GitHub webhook secret (write-only).
+      // Git publishing target and its independent write credential, plus the webhook secret.
       if (typeof body.skillsPublishRepo === "string") {
         const repo = body.skillsPublishRepo.trim();
         if (repo && !/^(https?:\/\/(www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?\/?|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.test(repo)) return res.status(400).json({ error: "skillsPublishRepo must be a GitHub repository (owner/repo or its URL)" });
@@ -213,6 +213,8 @@ export function createSettingsRouter({
       if (typeof body.skillsPublishBranch === "string") patch.skillsPublishBranch = body.skillsPublishBranch.trim();
       if (typeof body.skillsPublishSubpath === "string") patch.skillsPublishSubpath = body.skillsPublishSubpath.trim().replace(/^\/+|\/+$/g, "");
       if (typeof body.skillsPublishMode === "string" && ["commit", "off"].includes(body.skillsPublishMode)) patch.skillsPublishMode = body.skillsPublishMode;
+      if (typeof body.skillsPublishGithubToken === "string" && body.skillsPublishGithubToken.trim()) patch.skillsPublishGithubToken = body.skillsPublishGithubToken.trim();
+      if (body.clearSkillsPublishGithubToken === true) patch.skillsPublishGithubToken = "";
       if (typeof body.skillsWebhookSecret === "string" && body.skillsWebhookSecret.trim()) patch.skillsWebhookSecret = body.skillsWebhookSecret.trim();
       if (body.clearSkillsWebhookSecret === true) patch.skillsWebhookSecret = "";
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))

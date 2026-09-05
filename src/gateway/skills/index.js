@@ -7,9 +7,9 @@ import { importBundledSkills, importHostSkillFolders, importSkillTree } from "./
 import { seedBuiltinTemplates } from "./templates.js";
 import { syncGitSource } from "./git-sync.js";
 import { syncGatewaySource } from "./peer-sync.js";
-import { listSources, getSource, catalogStats, recordSourceSync } from "./catalog.js";
+import { listSources, getSource, sourceSecret, catalogStats, recordSourceSync } from "./catalog.js";
 import { skillSourceDirs } from "../folders.js";
-import { getSkillsGithubToken, getSkillsSyncIntervalMinutes } from "../../config/settings.js";
+import { getSkillsSyncIntervalMinutes } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
 import { retireStandaloneGatewaySkills } from "./retire.js";
 
@@ -82,7 +82,7 @@ export async function syncOneSource(id, { log = console.log, fetchImpl = fetch }
   const src = getSource(Number(id));
   if (!src) throw new Error(`source #${id} not found`);
   let r;
-  if (src.kind === "git") r = await syncGitSource(src, { token: getSkillsGithubToken(), fetchImpl, log });
+  if (src.kind === "git") r = await syncGitSource(src, { token: sourceSecret(src.id), fetchImpl, log });
   else if (src.kind === "gateway") r = await syncGatewaySource(src, { log });
   else r = await syncFolderSource(src);
   if (r.ok) log(`[skills] synced ${src.url}: ${r.discovered} skills (${r.created} new, ${r.updated} updated, ${r.staged} staged, ${r.unchanged} unchanged${r.tombstoned ? `, ${r.tombstoned} removed` : ""}${r.conflicts?.length ? `, ${r.conflicts.length} conflicts` : ""})`);

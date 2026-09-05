@@ -2539,6 +2539,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       revisions, records a failing GitHub call without discarding last-good state, honours a
       commit pin, and reports a slug held by another owner as a conflict
       (`test/skills-platform.test.js`).
+- [x] Integration: scheduled/manual Git sync reads only the selected source row's optional token;
+      it does not reuse the publishing or legacy global credential (`test/skills-platform.test.js`).
 - [x] Integration: templates seed once, resolve explicit slugs,
       preview with dependencies, and are FOLLOWED live: assigning stores only the template slug on
       the conversation, the channel tier is template + own additions, a template edit reaches the
@@ -2559,13 +2561,15 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       source imported in review mode → staged → approved, source validation/duplicates (400/409),
       mode/enable updates, removal tombstoning, template preview/apply, grant/revoke per
       conversation, profile and usage endpoints, proposals approve/reject, and the settings fields
-      (clamps 400; the GitHub token never rides a listing and is revealable only via the allowlist)
+      (clamps 400; the publishing token never rides a listing and is revealable only via the allowlist)
       (`test/skills-admin-api.test.js`).
 - [x] Drift tripwires: every skills tool is classified gated/open in the control-plane inventory
       (`test/mcp-control-plane-approval.test.js`) and present in the lockdown allowlist
       (`test/folders-settings.test.js`); the Skills admin view has a canonical path
       (`test/admin-navigation.test.js`).
-- [x] Admin UI: Sources, Sync settings and MCP are separate tabs; adding a source is modal;
+- [x] Admin UI: Sources, Sync settings and MCP are separate tabs; adding a source is modal with
+      only GitHub / Other ChannelGate choices and reveals only kind-relevant fields; GitHub branch
+      and subfolder controls are absent (main is fixed and a subfolder belongs in the URL);
       templates are selection-first with searchable explicit-skill controls; Usage is
       searchable and usage-descending with By skill / By channel rollups, compact bars,
       and context-warning explanations. The profile API supplies warning text rather

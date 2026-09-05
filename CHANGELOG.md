@@ -19,6 +19,10 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Source-specific Skills Git credentials.** GitHub catalog sources now use their own optional
+  write-only token, while publishing has a separate write-only token and follows `main`. The Add
+  source dialog offers only GitHub or Other ChannelGate, reveals type-specific fields, and takes a
+  `/tree/main/<path>` URL instead of separate branch/subfolder controls.
 - **Usage-led skill governance.** Skills now opens on the top 20 skills used in the last 30 days,
   Templates is second, usage displays one harness-neutral total, and Catalog defaults to usage
   order with category/source filters plus source-aware description search. Per-skill Enabled,

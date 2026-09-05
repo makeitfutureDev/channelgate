@@ -17,6 +17,7 @@ const resolve = await import("../src/gateway/skills/resolve.js");
 const materialize = await import("../src/gateway/skills/materialize.js");
 const importer = await import("../src/gateway/skills/import-folder.js");
 const gitSync = await import("../src/gateway/skills/git-sync.js");
+const skillsPlatform = await import("../src/gateway/skills/index.js");
 const templates = await import("../src/gateway/skills/templates.js");
 const usage = await import("../src/gateway/skills/usage.js");
 const authoring = await import("../src/gateway/skills/authoring.js");
@@ -370,8 +371,8 @@ function repoTarball(entries) {
 
 function fakeGitHub({ branches = ["main"], sha = "0123456789abcdef", tarball }) {
   const calls = [];
-  const fetchImpl = async (url) => {
-    calls.push(url);
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, init });
     if (url.includes("/branches")) return { ok: true, json: async () => branches.map((name) => ({ name })) };
     if (url.includes("/commits/")) return { ok: true, json: async () => ({ sha }) };
     if (url.includes("/tarball/")) return { ok: true, arrayBuffer: async () => tarball };
@@ -386,6 +387,17 @@ test("git sync: tree URLs with a slash in the branch resolve against the branch 
   assert.deepEqual(gitSync.splitTreePath("feat/x/skills", []), { ref: "feat", subpath: "x/skills" }, "no branch list → the old first-segment behaviour");
   assert.deepEqual(gitSync.parseRepoUrl("git@github.com:o/r.git"), { owner: "o", repo: "r", treePath: "", ref: "", subpath: "" });
   assert.throws(() => gitSync.parseRepoUrl("https://gitlab.com/o/r"), /cannot parse/);
+});
+
+test("git source sync authenticates with that source's own optional token", async () => {
+  const tarball = repoTarball([["r-sha/skill/SKILL.md", md("Source Auth", "private source").content]]);
+  const gh = fakeGitHub({ tarball });
+  const src = catalog.addSource({ kind: "git", url: "https://github.com/example/source-auth", ref: "main", mode: "auto", secret: "ghp_source_only" });
+  const result = await skillsPlatform.syncOneSource(src.id, { fetchImpl: gh.fetchImpl, log: () => {} });
+  assert.equal(result.ok, true);
+  assert.ok(gh.calls.length > 0);
+  assert.ok(gh.calls.every((c) => c.init.headers.Authorization === "Bearer ghp_source_only"));
+  catalog.removeSource(src.id);
 });
 
 test("git sync discovers nested skills from a tarball, stages in review mode, activates in auto mode, tombstones removals", async () => {
@@ -406,7 +418,7 @@ test("git sync discovers nested skills from a tarball, stages in review mode, ac
   assert.equal(r.discovered, 3, "docx, nested, broken — 'other' is outside the subpath");
   assert.equal(r.staged, 2);
   assert.equal(r.skipped.length, 1, "the manifest without name/description is skipped, not fatal");
-  assert.ok(gh.calls.some((u) => /commits\/feat%2Fskills-v2$/.test(u) || /commits\/feat\/skills-v2$/.test(u)), "the head is resolved for the real branch");
+  assert.ok(gh.calls.some(({ url }) => /commits\/feat%2Fskills-v2$/.test(url) || /commits\/feat\/skills-v2$/.test(url)), "the head is resolved for the real branch");
   assert.equal(catalog.getSkill("docx").currentRevisionId, null, "review mode: nothing active yet");
   const docxFiles = catalog.revisionFiles(catalog.listStagedRevisions().find((x) => x.slug === "docx").id).map((f) => `${f.path}${f.executable ? "*" : ""}`);
   assert.deepEqual(docxFiles, ["SKILL.md", "references/x.md", "scripts/run.sh*"], "nested skill's files belong to the nested skill; executable bit kept");
@@ -433,8 +445,8 @@ test("git sync discovers nested skills from a tarball, stages in review mode, ac
   catalog.updateSource(src.id, { pinnedRef: "fedcba" });
   const pinned = fakeGitHub({ branches: ["main", "feat/skills-v2"], tarball: smaller });
   await gitSync.syncGitSource(src, { fetchImpl: pinned.fetchImpl });
-  assert.ok(!pinned.calls.some((u) => u.includes("/commits/")), "pinned ref skips head resolution");
-  assert.ok(pinned.calls.some((u) => u.includes("/tarball/fedcba")));
+  assert.ok(!pinned.calls.some(({ url }) => url.includes("/commits/")), "pinned ref skips head resolution");
+  assert.ok(pinned.calls.some(({ url }) => url.includes("/tarball/fedcba")));
 });
 
 test("git sync refuses a slug another owner holds and reports it as a conflict", async () => {

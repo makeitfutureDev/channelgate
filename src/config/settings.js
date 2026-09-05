@@ -517,6 +517,13 @@ export function getSkillsGithubToken() {
   const v = getSettings().skillsGithubToken;
   return typeof v === "string" ? v.trim() : "";
 }
+// Write credential for the one configured Git publishing destination. Source credentials live
+// on their own skill_sources rows; keeping this separate prevents an unrelated private source
+// from silently receiving a token with write access to the publishing repository.
+export function getSkillsPublishGithubToken() {
+  const v = getSettings().skillsPublishGithubToken;
+  return typeof v === "string" ? v.trim() : "";
+}
 export function getSkillsSyncIntervalMinutes() {
   const v = Number(getSettings().skillsSyncIntervalMinutes);
   return Number.isFinite(v) && v >= 0 ? Math.min(v, 24 * 60) : 60;
@@ -735,6 +742,8 @@ export function settingsForApi() {
     defaultToolboxTokenLabel: s.defaultToolboxTokenLabel || "",
     hasSkillsGithubToken: Boolean(getSkillsGithubToken()),
     skillsGithubTokenLast4: last4(getSkillsGithubToken()),
+    hasSkillsPublishGithubToken: Boolean(getSkillsPublishGithubToken()),
+    skillsPublishGithubTokenLast4: last4(getSkillsPublishGithubToken()),
     skillsSyncIntervalMinutes: getSkillsSyncIntervalMinutes(),
     skillsContextWarnTokens: getSkillsContextWarnTokens(),
     skillsPublishRepo: getSkillsPublish().repo,

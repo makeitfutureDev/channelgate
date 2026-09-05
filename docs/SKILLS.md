@@ -120,8 +120,9 @@ skipped and reported. A **folder** source is a directory on the gateway host.
 - A skill removed upstream is tombstoned, never deleted, and comes back when upstream delivers it
   again; a skill an admin excluded does not. Sync errors are shown on the source and never discard
   the last-good revisions.
-- A **GitHub token** (Settings, write-only) is only needed for private repositories or API rate
-  limits; it never enters a conversation folder or an MCP config.
+- A GitHub source follows `main`; append `/tree/main/<path>` to its URL to limit discovery to a
+  subfolder. Its optional **source token** is write-only and is used only for that repository
+  (private repositories or API rate limits); it never enters a conversation folder or MCP config.
 
 Existing host folders (`~/.claude/skills`, `~/.agents/skills`, `GATEWAY_SKILL_SOURCES`) keep
 working exactly as before: they are imported at boot as folder-owned skills under their directory
@@ -167,8 +168,8 @@ publishes it). Any approved member can also carry organization skills in their o
 
 ## Publishing to Git
 
-Admin UI → Skills → Sources → *Publishing to Git*: a GitHub repository (owner/repo), branch and
-folder. With the daemon's GitHub token set, every new revision of a local skill — created,
+Admin UI → Skills → Sync settings → *Publishing to Git*: a GitHub repository, folder and its own
+write-only token. Publishing follows `main`. Every new revision of a local skill — created,
 updated, an approved change, an approved promotion — is pushed with the GitHub Contents API, one
 commit per file under `<folder>/<slug>/` (`.` as the folder = the repository root) — or under
 `channels/<channel id>/<slug>/` for a channel-scoped skill, with a README naming the channel — and

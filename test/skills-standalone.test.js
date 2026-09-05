@@ -183,7 +183,7 @@ function fakeGitHub() {
 }
 
 test("publishing writes every file of a revision to the configured repository, deletes dropped files, and adopts into a matching source", async () => {
-  saveSettings({ skillsGithubToken: "ghp_test", skillsPublishRepo: "example/skills-repo", skillsPublishBranch: "main", skillsPublishSubpath: "skills", skillsPublishMode: "commit" });
+  saveSettings({ skillsPublishGithubToken: "ghp_test", skillsPublishRepo: "example/skills-repo", skillsPublishBranch: "main", skillsPublishSubpath: "skills", skillsPublishMode: "commit" });
   assert.deepEqual(publish.publishTarget(), { owner: "example", repo: "skills-repo", branch: "main", subpath: "skills", mode: "commit", url: "https://github.com/example/skills-repo" });
   const gh = fakeGitHub();
   const created = await authoring.createLocalSkill({ files: [md("Pub Skill", "published"), { path: "references/r.md", content: "r" }], createdBy: "U_P", publish: false });
@@ -210,7 +210,7 @@ test("publishing writes every file of a revision to the configured repository, d
   assert.equal(adopted.sourceId, src.id);
   assert.equal(adopted.sourcePath, "skills/pub-skill");
   // Without a token or a repo, publishing reports why instead of throwing.
-  saveSettings({ skillsGithubToken: "" });
+  saveSettings({ skillsPublishGithubToken: "" });
   assert.equal((await publish.publishQuietly({ slug: "pub-skill" })).published, false);
   saveSettings({ skillsPublishRepo: "" });
   assert.equal(publish.publishTarget(), null);
@@ -375,7 +375,7 @@ test("admin API: tokens (value once), visibility, org grants, gateway sources wi
 // ── Repository sections ─────────────────────────────────────────────────────────────────────
 
 test("repository sections: a channel-scoped skill publishes under channels/<id>/, the channel tier includes it, and a move promotes it with the grant kept", async () => {
-  saveSettings({ skillsGithubToken: "ghp_test", skillsPublishRepo: "example/sections-repo", skillsPublishBranch: "main", skillsPublishSubpath: ".", skillsPublishMode: "commit" });
+  saveSettings({ skillsPublishGithubToken: "ghp_test", skillsPublishRepo: "example/sections-repo", skillsPublishBranch: "main", skillsPublishSubpath: ".", skillsPublishMode: "commit" });
   assert.equal(publish.publishTarget().subpath, "", "'.' means the repository root");
   const gh = fakeGitHub();
   const entry = await upsertChannelEntry("C_SECTION_1", { name: "acme-ops", type: "channel", isDM: false });

@@ -44,10 +44,11 @@ import { skillUsageReport } from "../../gateway/skills/usage.js";
 import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, revokeSkillsFromOrg, moveSkillScope } from "../../gateway/skills/authoring.js";
 import { importHostSkillFolders } from "../../gateway/skills/import-folder.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
+import { parseRepoUrl } from "../../gateway/skills/git-sync.js";
 import { publishRevision, publishTarget, publishSource } from "../../gateway/skills/publish.js";
 import { createAccessToken, listAccessTokens, revokeAccessToken, deleteAccessToken, TOKEN_SCOPES } from "../../gateway/skills/tokens.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
-import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsGithubToken, getSkillsWebhookSecret, getPublicUrl } from "../../config/settings.js";
+import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsPublishGithubToken, getSkillsWebhookSecret, getPublicUrl } from "../../config/settings.js";
 import { getChannelMeta, listChannels } from "../../config/store.js";
 import { skillSourceDirs } from "../../gateway/folders.js";
 import { logEvent } from "../../util/logger.js";
@@ -97,7 +98,7 @@ export function createSkillsRouter() {
       settings: {
         syncIntervalMinutes: getSkillsSyncIntervalMinutes(),
         contextWarnTokens: getSkillsContextWarnTokens(),
-        hasGithubToken: Boolean(getSkillsGithubToken()),
+        hasPublishGithubToken: Boolean(getSkillsPublishGithubToken()),
         hasWebhookSecret: Boolean(getSkillsWebhookSecret()),
         webhookUrl: getPublicUrl() ? `${getPublicUrl()}/api/skills/webhook/github` : "",
         mcpUrl: getPublicUrl() ? `${getPublicUrl()}/mcp/skills` : "",
@@ -247,7 +248,11 @@ export function createSkillsRouter() {
     const b = req.body || {};
     if (!SOURCE_KINDS.includes(b.kind)) return res.status(400).json({ error: `kind must be one of ${SOURCE_KINDS.join(", ")}` });
     if (b.mode && !SOURCE_MODES.includes(b.mode)) return res.status(400).json({ error: `mode must be one of ${SOURCE_MODES.join(", ")}` });
-    const source = addSource({ kind: b.kind, label: b.label || "", url: b.url, ref: b.ref || "", subpath: b.subpath || "", pinnedRef: b.pinnedRef || "", mode: b.mode || "review", enabled: b.enabled !== false, secret: typeof b.secret === "string" ? b.secret : "", createdBy: ADMIN_UI });
+    if (b.kind === "git") {
+      const parsed = parseRepoUrl(b.url);
+      if (parsed.treePath && parsed.treePath !== "main" && !parsed.treePath.startsWith("main/")) return res.status(400).json({ error: "GitHub skill sources follow main; use a /tree/main/<subfolder> URL" });
+    }
+    const source = addSource({ kind: b.kind, label: b.label || "", url: b.url, ref: b.kind === "git" ? "main" : b.ref || "", subpath: b.kind === "git" ? "" : b.subpath || "", pinnedRef: b.pinnedRef || "", mode: b.mode || "review", enabled: b.enabled !== false, secret: typeof b.secret === "string" ? b.secret : "", createdBy: ADMIN_UI });
     logEvent("skill_source_added", { source: source.id, kind: source.kind, author: ADMIN_UI });
     let sync = null;
     if (b.syncNow !== false) sync = await syncOneSource(source.id, { log: () => {} });

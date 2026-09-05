@@ -21,8 +21,9 @@ const READERS = {
     slackAdminUserToken: (s) => s.slackAdminUserToken,
     defaultComposioToken: (s) => s.defaultComposioToken,
     defaultToolboxToken: (s) => s.defaultToolboxToken,
-    // The daemon's GitHub token for private skill sources (skills platform). Same terms.
+    // Legacy shared Skills GitHub token (kept revealable for rollback/export only).
     skillsGithubToken: (s) => s.skillsGithubToken,
+    skillsPublishGithubToken: (s) => s.skillsPublishGithubToken,
     skillsWebhookSecret: (s) => s.skillsWebhookSecret,
     composioSdkApiKey: (s) => s.composioSdkApiKey,
     apiKey: (s) => s.apiKey,

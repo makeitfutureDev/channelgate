@@ -607,7 +607,7 @@ export function updateSource(id, patch = {}) {
       toJson(next.lastSyncStats || {}),
       cur.id,
     );
-  // The peer credential is write-only: set on a non-empty value, cleared explicitly, never read back.
+  // GitHub and peer credentials are write-only: set non-empty, clear explicitly, never read back.
   if (typeof patch.secret === "string" && patch.secret) getDb().prepare("UPDATE skill_sources SET secret = ? WHERE id = ?").run(patch.secret, cur.id);
   if (patch.clearSecret === true) getDb().prepare("UPDATE skill_sources SET secret = '' WHERE id = ?").run(cur.id);
   return getSource(cur.id);

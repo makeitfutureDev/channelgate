@@ -10,7 +10,7 @@
 // closes the loop.
 import { getSkill, getRevision, revisionFiles, listSources, adoptSkillIntoSource, markRevisionPublished, SkillCatalogError } from "./catalog.js";
 import { parseRepoUrl } from "./git-sync.js";
-import { getSkillsGithubToken, getSkillsPublish } from "../../config/settings.js";
+import { getSkillsPublishGithubToken, getSkillsPublish } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
 import { CHANNEL_SECTION_DIR, normalizeChannelScope, setSkillChannelScope } from "./catalog.js";
 import { getChannelEntry } from "../../config/store.js";
@@ -122,7 +122,7 @@ async function ensureSectionReadme(fetchImpl, token, target, channelId, message)
 export async function publishRevision({ slug, revisionId = null, message = "", actor = "", fetchImpl = fetch } = {}) {
   const target = publishTarget();
   if (!target || target.mode === "off") return { published: false, reason: "publishing is not configured" };
-  const token = getSkillsGithubToken();
+  const token = getSkillsPublishGithubToken();
   if (!token) return { published: false, reason: "no GitHub token is configured for the skills platform" };
   const skill = getSkill(slug);
   if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
@@ -163,7 +163,7 @@ export async function publishRevision({ slug, revisionId = null, message = "", a
 export async function moveSkillFiles({ slug, channelId = "", actor = "", fetchImpl = fetch } = {}) {
   const target = publishTarget();
   if (!target || target.mode === "off") throw new SkillCatalogError("publishing is not configured (Admin → Skills → Sources → Publishing)", { status: 409 });
-  const token = getSkillsGithubToken();
+  const token = getSkillsPublishGithubToken();
   if (!token) throw new SkillCatalogError("no GitHub token is configured for the skills platform", { status: 409 });
   const skill = getSkill(slug);
   if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
