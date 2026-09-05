@@ -9,6 +9,7 @@ import { open, lstat, mkdir, realpath, rename, rm, stat } from "node:fs/promises
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { oversizeMessage } from "../util/bounded-bytes.js";
 
 // The failures that mean "there is no managed FILE here", all of which callers already treat like
 // a missing file: ENOENT (absent), the two spellings of "O_NOFOLLOW refused a symlink" (ELOOP on
@@ -56,6 +57,78 @@ export async function writeNoFollow(file, content, { mode = 0o644 } = {}) {
     await rm(temporary, { force: true }).catch(() => {});
     throw error;
   }
+}
+
+// Stream a body into a managed file with the same discipline as writeNoFollow — exclusive
+// no-follow temp in the destination directory, rename over the target — but WITHOUT ever holding
+// the whole body in memory: chunks go to the temp file as they arrive and the running total is
+// checked against `maxBytes` per chunk. `source` is a fetch Response (its web-stream body), a bare
+// ReadableStream, or a Buffer (small bodies and test doubles take the same path). A declared
+// Content-Length above the cap is rejected before a byte is read; a body that then overruns the
+// cap is cut off, the temp removed, and the error says so — the destination is never touched.
+// `inspect(head)` sees the first chunk (up to 64 bytes) BEFORE anything is committed; throwing
+// from it aborts the write, so a caller can refuse a body that turns out to be an HTML sign-in
+// page instead of the file. Resolves { bytes } written.
+export async function writeStreamNoFollow(file, source, { maxBytes = Infinity, mode = 0o644, inspect = null } = {}) {
+  const fail = (actual) => {
+    const err = new Error(`downloaded file ${oversizeMessage(actual, maxBytes)}`);
+    err.code = "ETOOLARGE";
+    return err;
+  };
+  const declared = Number(source?.headers?.get?.("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) throw fail(declared);
+
+  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
+  const fh = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode);
+  let reader = null;
+  let total = 0;
+  let inspected = false;
+  const check = async (chunk) => {
+    if (!inspected && inspect) {
+      inspected = true;
+      await inspect(chunk.subarray(0, 64));
+    }
+    total += chunk.byteLength;
+    if (total > maxBytes) throw fail(null);
+  };
+  try {
+    if (Buffer.isBuffer(source) || source instanceof Uint8Array) {
+      const chunk = Buffer.from(source);
+      await check(chunk);
+      await fh.writeFile(chunk);
+    } else {
+      const stream = typeof source?.getReader === "function" ? source : source?.body;
+      if (!stream?.getReader) {
+        // A Response whose body is already buffered by the runtime (or a test double without a
+        // web stream): the only remaining option is arrayBuffer(), still capped before the write.
+        const chunk = Buffer.from(await source.arrayBuffer());
+        await check(chunk);
+        await fh.writeFile(chunk);
+      } else {
+        reader = stream.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = Buffer.from(value);
+          await check(chunk);
+          await fh.write(chunk);
+        }
+      }
+    }
+  } catch (error) {
+    await reader?.cancel().catch(() => {});
+    await fh.close().catch(() => {});
+    await rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
+  await fh.close();
+  try {
+    await rename(temporary, file);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
+  return { bytes: total };
 }
 
 // Create a NEW managed file exclusively. O_EXCL fails on ANY existing node at the path —

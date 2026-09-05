@@ -187,6 +187,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   folder and enter the engine prompt as local paths (images render visually via the Read tool).
   Canonical/read failures preserve usable event files and text prompts, while missing download URLs
   produce an explicit skipped-file note.
+- **Attachments up to 500 MB, never held in memory.** One shared ceiling
+  (`ATTACHMENT_MAX_BYTES`, `src/util/bounded-bytes.js`) governs every inbound attachment — Slack,
+  Google Chat, Teams and a Run API `fileUrl` — and every sink streams the body straight into the
+  channel folder through `writeStreamNoFollow` (exclusive no-follow temp + rename, the running
+  total checked per chunk, a declared Content-Length over the cap refused before a byte is read, an
+  over-running body cut off with its temp removed and the destination untouched). A refusal names
+  the size and the limit (`263.4 MB exceeds the 500 MB attachment limit`) so the person knows what
+  to shrink; a Slack download above 8 MB announces itself in the assistant status while it runs. A
+  body that turns out to be Slack's HTML sign-in page is refused from its first chunk, before
+  anything is committed. → TEST-PLAN: Slack gateway (Slice 4).
   Current-channel history/thread tools expose only safe file id/name/MIME/size metadata—never
   private Slack URLs. → TEST-PLAN: Slack gateway.
 - Optional local voice prompts with Slack fallback: after the normal trigger/auth gates accept a

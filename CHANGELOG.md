@@ -23,6 +23,14 @@ product overview.
   `ffmpeg`/`ffprobe`, pinned OpenCV and faster-whisper, plus a pre-cached Whisper `small` model, so
   the `video-understanding` skill works without per-channel installs or first-use downloads (image
   spec 1.2.0).
+- **Inbound attachments up to 500 MB, streamed to disk.** A Slack, Google Chat, Teams or Run API
+  (`fileUrl`) attachment may now be up to 500 MB (was 30 MB, or 25 MB for the Run API); the one
+  shared cap lives in `src/util/bounded-bytes.js`. The bytes no longer pass through the daemon's
+  memory: every sink streams the body straight into the channel's `uploads/` folder through an
+  exclusive no-follow temp file with the running total checked per chunk, and renames it into
+  place only when complete. A refusal names the actual size against the limit (`263.4 MB exceeds
+  the 500 MB attachment limit`) instead of `too large`; a large Slack download announces itself
+  in the assistant status before the run starts.
 - **The installer builds the channel image.** `npm run setup` now runs `npm run build:image` after
   the dependencies and the Whisper step, so a fresh gateway has the whole shared toolchain
   (engine CLIs, `ffmpeg`, OpenCV, `faster-whisper` + model) before its first message instead of

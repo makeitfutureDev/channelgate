@@ -7,13 +7,14 @@
 // a pre-authenticated URL — which is why each transport hands us a `download()` and this file never
 // touches the network itself.
 import path from "node:path";
-import { ensureRealDir, writeNoFollow } from "../gateway/safe-fs.js";
+import { ensureRealDir, writeStreamNoFollow } from "../gateway/safe-fs.js";
 import { effectiveWorkDir } from "../gateway/folders.js";
+import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
 
-// Same ceiling the Slack path uses. The bytes have already been read by the transport's download(),
-// so this is a post-hoc guard rather than a streaming bound — worth keeping so one enormous file
-// cannot be written into a channel folder.
-const MAX_FILE_BYTES = 30 * 1024 * 1024;
+// Same ceiling the Slack path uses, enforced the same way: a transport's download() hands back the
+// fetch Response (or a bare web stream) and the bytes stream straight into the channel folder with
+// the running total checked per chunk — a Buffer is accepted too, for a small body or a test
+// double, and gets the same cap. `maxBytes` exists for tests; production uses the shared constant.
 
 export function safeFileName(name, index = 0) {
   const base = path.basename(String(name || ""))
@@ -25,7 +26,7 @@ export function safeFileName(name, index = 0) {
 
 // Returns { paths, skipped } — `paths` are absolute files to hand the model, `skipped` are names we
 // could not fetch, so the caller can SAY so instead of dropping the user's file silently.
-export async function saveInboundAttachments(message, { slug, meta, log = console } = {}) {
+export async function saveInboundAttachments(message, { slug, meta, log = console, maxBytes = ATTACHMENT_MAX_BYTES } = {}) {
   const paths = [];
   const skipped = [];
   if (!message.attachments?.length) return { paths, skipped };
@@ -43,16 +44,17 @@ export async function saveInboundAttachments(message, { slug, meta, log = consol
       continue;
     }
     try {
-      const buf = await attachment.download();
-      if (!buf?.length) { skipped.push(name); continue; }
-      if (buf.length > MAX_FILE_BYTES) { skipped.push(`${name} (too large)`); continue; }
+      const source = await attachment.download();
+      if (!source || (Buffer.isBuffer(source) && !source.length)) { skipped.push(name); continue; }
       destDir ||= await ensureRealDir(root, "uploads", sub);
       const dest = path.join(destDir, `${index + 1}-${name}`);
-      await writeNoFollow(dest, buf);
+      const { bytes } = await writeStreamNoFollow(dest, source, { maxBytes });
+      if (!bytes) { skipped.push(name); continue; }
       paths.push(dest);
     } catch (err) {
       log.warn?.(`[${message.platform}] attachment ${name} failed: ${err?.message || err}`);
-      skipped.push(name);
+      // The caller relays `skipped` to the user verbatim, so an oversize refusal carries its reason.
+      skipped.push(err?.code === "ETOOLARGE" ? `${name} (${String(err.message).replace(/^downloaded file /, "")})` : name);
     }
   }
   return { paths, skipped };

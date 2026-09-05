@@ -50,8 +50,8 @@ import { claimMessageTrigger, runQueue } from "./message-lifecycle.js";
 export { runQueue } from "./message-lifecycle.js";
 
 import path from "node:path";
-import { readBoundedBytes } from "../util/bounded-bytes.js";
-import { ensureRealDir, writeNoFollow } from "../gateway/safe-fs.js";
+import { ATTACHMENT_MAX_BYTES, formatBytes, oversizeMessage } from "../util/bounded-bytes.js";
+import { ensureRealDir, writeStreamNoFollow } from "../gateway/safe-fs.js";
 
 import { buildResumeCommand, resumeButton, footerButtons, footerText } from "./footer.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
@@ -239,7 +239,9 @@ function threadTitleFrom(text, fileCount = 0) {
   return fileCount ? "Shared a file" : "New conversation";
 }
 
-const MAX_FILE_BYTES = 30 * 1024 * 1024;
+// A download this large gets its own pre-run status line, so a person watching the thread can
+// tell the gateway is fetching their file rather than sitting idle.
+const ANNOUNCE_DOWNLOAD_BYTES = 8 * 1024 * 1024;
 
 // On-disk name for one Slack attachment: the Slack file id (globally unique) in front of the
 // sanitized original name. Two messages in the same thread that attach "report.pdf" would
@@ -260,7 +262,13 @@ function attachmentFileName(f) {
 // beneath it is agent-writable, so uploads/<sub> is recreated as REAL directories and each file is
 // published via an exclusive no-follow temp + rename — a symlink planted at any of those paths is
 // replaced as a node, never written through.
-export async function downloadSlackFiles(files, botToken, { root, sub }) {
+//
+// The bytes never sit in the daemon's memory: each file streams into an exclusive temp file in
+// `uploads/<sub>` with the cap (ATTACHMENT_MAX_BYTES, or `maxBytes` for a test) enforced per chunk,
+// and is renamed into place only when complete. A refusal names the actual size and the limit.
+const HTML_HEAD = "Slack returned HTML instead of the file — the bot is missing the files:read scope (update the app manifest and reinstall)";
+
+export async function downloadSlackFiles(files, botToken, { root, sub, maxBytes = ATTACHMENT_MAX_BYTES }) {
   const saved = [];
   let destDir = "";
   for (const f of files) {
@@ -273,8 +281,8 @@ export async function downloadSlackFiles(files, botToken, { root, sub }) {
       continue;
     }
     // A declared size is only an early reject — the real cap is enforced while streaming below.
-    if (f.size && f.size > MAX_FILE_BYTES) {
-      saved.push({ name: f.name, skipped: "too large" });
+    if (f.size && f.size > maxBytes) {
+      saved.push({ name: f.name, skipped: oversizeMessage(f.size, maxBytes) });
       continue;
     }
     try {
@@ -283,29 +291,41 @@ export async function downloadSlackFiles(files, botToken, { root, sub }) {
         saved.push({ name: f.name, skipped: `HTTP ${res.status}` });
         continue;
       }
-      const ct = res.headers.get("content-type") || "";
-      const buf = await readBoundedBytes(res, MAX_FILE_BYTES);
       // Slack hands back an HTML sign-in/redirect page (not the file bytes) when the bot lacks
       // the files:read scope or can't access the file. Detect it via content-type AND a byte
-      // sniff so we never save bogus markup and let Claude "read" a web page.
-      const head = buf.subarray(0, 64).toString("latin1").trimStart().toLowerCase();
-      if (ct.includes("text/html") || head.startsWith("<!doctype") || head.startsWith("<html")) {
-        saved.push({
-          name: f.name,
-          skipped: "Slack returned HTML instead of the file — the bot is missing the files:read scope (update the app manifest and reinstall)",
-        });
+      // sniff of the first chunk so we never save bogus markup and let Claude "read" a web page.
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("text/html")) {
+        await res.body?.cancel?.().catch(() => {});
+        saved.push({ name: f.name, skipped: HTML_HEAD });
         continue;
       }
       const safeName = attachmentFileName(f);
       destDir ||= await ensureRealDir(root, "uploads", sub);
       const dest = path.join(destDir, safeName);
-      await writeNoFollow(dest, buf);
-      saved.push({ name: safeName, path: dest, mimetype: f.mimetype });
+      const { bytes } = await writeStreamNoFollow(dest, res, {
+        maxBytes,
+        inspect(head) {
+          const text = head.toString("latin1").trimStart().toLowerCase();
+          if (text.startsWith("<!doctype") || text.startsWith("<html")) {
+            const err = new Error(HTML_HEAD);
+            err.code = "EHTMLBODY";
+            throw err;
+          }
+        },
+      });
+      saved.push({ name: safeName, path: dest, mimetype: f.mimetype, bytes });
     } catch (e) {
       saved.push({ name: f.name, skipped: e.message });
     }
   }
   return saved;
+}
+
+// True when the declared sizes are large enough that a person should be told the gateway is
+// downloading — a 250 MB screen recording takes long enough to look like nothing is happening.
+export function shouldAnnounceDownload(files, threshold = ANNOUNCE_DOWNLOAD_BYTES) {
+  return files.reduce((sum, f) => sum + (Number(f?.size) || 0), 0) >= threshold;
 }
 
 // Resolve a Slack user id → display name, cached across calls (best-effort; falls back to the id).
@@ -1070,7 +1090,21 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       const botToken = resolveSlackConfig().botToken;
       const audio = files.filter(isAudioFile);
       const ordinaryFiles = files.filter((file) => !isAudioFile(file));
-      const saved = ordinaryFiles.length ? await downloadSlackFiles(ordinaryFiles, botToken, dest) : [];
+      let saved = [];
+      if (ordinaryFiles.length) {
+        // A large download is a waiting state, and every waiting state announces itself: the
+        // assistant status names what is being fetched (it no-ops outside assistant threads).
+        const announce = shouldAnnounceDownload(ordinaryFiles);
+        if (announce) {
+          const total = formatBytes(ordinaryFiles.reduce((sum, f) => sum + (Number(f?.size) || 0), 0));
+          setAssistantStatus(client, event.channel, threadKey, `is downloading ${ordinaryFiles.length} attachment(s) (${total})…`, [`Downloading ${total} of attachments…`]);
+        }
+        try {
+          saved = await downloadSlackFiles(ordinaryFiles, botToken, dest);
+        } finally {
+          if (announce) setAssistantStatus(client, event.channel, threadKey, "");
+        }
+      }
       const ordinary = saved.filter((s) => s.path);
       attachmentPaths = ordinary.map((s) => s.path);
       const failed = saved.filter((s) => s.skipped);
