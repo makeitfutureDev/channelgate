@@ -22,6 +22,9 @@ ARG CODEX_VERSION
 ARG MCP_REMOTE_VERSION
 ARG VERCEL_VERSION
 ARG SUPABASE_VERSION
+ARG OPENCV_VERSION
+ARG FASTER_WHISPER_VERSION
+ARG WHISPER_MODEL=small
 ARG IMAGE_SPEC_VERSION=0.0.0
 
 LABEL channelgate="1"
@@ -36,7 +39,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ~/.local, which is inside the per-channel HOME volume and therefore permanent.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq less openssh-client pipx postgresql-client procps python3 python3-pip python3-venv ripgrep tini unzip \
+      ca-certificates curl ffmpeg git jq less openssh-client pipx postgresql-client procps python3 python3-pip python3-venv ripgrep tini unzip \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
@@ -68,6 +71,16 @@ RUN npm install -g --no-fund --no-audit \
       "vercel@${VERCEL_VERSION}" \
       "supabase@${SUPABASE_VERSION}" \
  && npm cache clean --force
+
+# Organization-wide local video analysis. These packages are root-owned and pinned just like the
+# engine CLIs above; channels use them but cannot replace them. Preload the default speech model so
+# the first video in a network-restricted channel does not wait for or depend on a download.
+ENV HF_HOME=/opt/channelgate/models/huggingface
+RUN pip3 install --break-system-packages --no-cache-dir \
+      "opencv-python-headless==${OPENCV_VERSION}" \
+      "faster-whisper==${FASTER_WHISPER_VERSION}" \
+ && python3 -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')" \
+ && chmod -R a+rX /opt/channelgate/models
 
 # The gateway's own in-container bundle: the process helpers plus the minimal set of daemon modules
 # an ENGINE spawns during a run (the MCP bridges and the Stop hook), resolved as an import closure

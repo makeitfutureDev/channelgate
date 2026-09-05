@@ -8,7 +8,7 @@
 // pins the two together. The daemon COMPARES it at boot: an image built from an older spec still
 // runs, but the operator is told to rebuild rather than left wondering why a channel is missing
 // this build's toolchain.
-export const IMAGE_SPEC_VERSION = "1.1.1";
+export const IMAGE_SPEC_VERSION = "1.2.0";
 
 export const CONTAINER_HOME = "/home/agent";
 // Where a channel's OWN installs land, in precedence order, ahead of the image's root-owned

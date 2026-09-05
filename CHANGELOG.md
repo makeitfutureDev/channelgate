@@ -19,6 +19,10 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Organization-wide local video analysis.** The shared conversation-container image now includes
+  `ffmpeg`/`ffprobe`, pinned OpenCV and faster-whisper, plus a pre-cached Whisper `small` model, so
+  the `video-understanding` skill works without per-channel installs or first-use downloads (image
+  spec 1.2.0).
 - **Skill templates are followed live, and edited in Settings.** A conversation is assigned a
   template (Conversations → Tools → *Skill template*, the Skills view, `set_channel_skill_template`,
   or a DM template) and gets the template's current skills plus whatever is added to the

@@ -2127,6 +2127,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       pre-creates `/home/agent/.claude` and `/home/agent/.codex` owned by `agent` (so the Codex file
       mount cannot land in a root-owned directory); and all six container-side helper scripts exist,
       are executable, and pass `sh -n` (automated: `test/container-image.test.js`).
+- [x] Unit: the video-understanding image contract pins the OpenCV and faster-whisper versions,
+      installs distro `ffmpeg`/`ffprobe`, preloads Whisper `small` under the shared read-only model
+      cache, passes every pin through the image builder, and bumps the daemon/image spec in lockstep
+      (automated: `test/container-image.test.js`).
 - [x] Unit: durability — the mount contract keeps `/tmp` and `/var/tmp` as rw BIND mounts of
       `<artifactDir>/{tmp,var-tmp}` and leaves `/run` as the only tmpfs, and both appear on the
       create argv beside `--userns=keep-id` (rootless) / `--user uid:gid` (docker), so files in the
@@ -2166,6 +2170,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       recreated) → all four still there; change a create-time-immutable field to force a recreate →
       a genuinely new container id, the same HOME volume in `inspect`, and all four still there;
       then `destroy(target, { volumes: true })` removes the throwaway (automated:
+      `test/container-durability.live.test.js`).
+- [ ] Live (same opt-in case): inside the real built image resolve `ffmpeg` and `ffprobe`, import
+      OpenCV and faster-whisper, and instantiate Whisper `small` with Hugging Face forced offline,
+      proving the model is pre-cached rather than downloaded on first use (automated:
       `test/container-durability.live.test.js`).
 - [ ] Manual: in a real container channel, `npm i -g cowsay`, `pip install cowsay` and a `curl`
       installer each put a working command on PATH; leave a file in `/tmp`; wait past
