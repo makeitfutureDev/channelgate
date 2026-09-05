@@ -1820,6 +1820,10 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [x] Any runtime-root/credential chmod or stranded-token cleanup failure aborts startup. A new
       install whose generated admin password cannot be persisted also rejects startup; existing
       configured installs retain their prior password posture.
+- [x] A fresh install that ran `npm run setup` (so `settings.json` already holds the installer's
+      `whisperEnabled` answer) still mints the first-boot admin password: the decision keys on
+      operator-written keys, not on the file's existence; a file with any non-installer key
+      (a token, a password, even an empty `publicUrl`) is an existing install and is left alone.
 
 ### Native Slack data tables (inbound + control MCP)
 - [ ] Paste a native Slack `table` block with an `@gateway` request: the agent receives every row

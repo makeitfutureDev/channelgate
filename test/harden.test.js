@@ -78,7 +78,7 @@ test("a brand-new install gets a generated admin password", async () => {
   const { ensureAdminPasswordOnFirstBoot } = await import("../src/config/harden.js");
   let saved = "";
   const generated = await ensureAdminPasswordOnFirstBoot({
-    settingsExist: false,
+    configured: false,
     hasPassword: false,
     generate: () => "fresh-secret",
     save: async (pw) => { saved = pw; },
@@ -93,7 +93,7 @@ test("an EXISTING install is never given a password behind the operator's back",
   // The dangerous case: a configured gateway deliberately running open on loopback. Generating
   // here would lock its operator out of their own admin UI on the next restart.
   const generated = await ensureAdminPasswordOnFirstBoot({
-    settingsExist: true,
+    configured: true,
     hasPassword: false,
     generate: () => "must-not-happen",
     save: async (pw) => { saved = pw; },
@@ -106,7 +106,7 @@ test("an install that already has a password is left alone", async () => {
   const { ensureAdminPasswordOnFirstBoot } = await import("../src/config/harden.js");
   let saved = null;
   const generated = await ensureAdminPasswordOnFirstBoot({
-    settingsExist: false,
+    configured: false,
     hasPassword: true,
     generate: () => "must-not-happen",
     save: async (pw) => { saved = pw; },
@@ -119,11 +119,52 @@ test("a first-boot password persistence failure rejects instead of leaving the A
   const { ensureAdminPasswordOnFirstBoot } = await import("../src/config/harden.js");
   await assert.rejects(
     ensureAdminPasswordOnFirstBoot({
-      settingsExist: false,
+      configured: false,
       hasPassword: false,
       generate: () => "fresh-secret",
       save: async () => { throw new Error("disk is read-only"); },
     }),
     /disk is read-only/
   );
+});
+
+// The regression: `npm run setup` answers the Whisper question BEFORE the daemon ever boots and
+// saves it through the settings writer, so a fresh install reaches first boot with a settings
+// file already on disk. Keying the first-boot password on the file's EXISTENCE skipped it on
+// every fresh install (the daemon came up with the whole privileged API refused). What the file
+// holds decides, and the installer's own keys do not count as configuration.
+test("a settings file holding only the installer's whisper choice is still a brand-new install", async () => {
+  const { isOperatorConfigured, INSTALLER_SETTINGS_KEYS, ensureAdminPasswordOnFirstBoot } = await import("../src/config/harden.js");
+  assert.deepEqual([...INSTALLER_SETTINGS_KEYS], ["whisperEnabled"], "keep in step with scripts/configure-whisper.mjs");
+
+  assert.equal(isOperatorConfigured(undefined), false, "no settings file");
+  assert.equal(isOperatorConfigured({}), false, "an empty settings file");
+  assert.equal(isOperatorConfigured({ whisperEnabled: false }), false, "what scripts/install.sh writes");
+  assert.equal(isOperatorConfigured({ whisperEnabled: true }), false);
+  assert.equal(isOperatorConfigured({ whisperEnabled: false, slackBotToken: "xoxb-x" }), true, "an operator pasted a token");
+  assert.equal(isOperatorConfigured({ adminPassword: "scrypt$…" }), true);
+  assert.equal(isOperatorConfigured({ publicUrl: "" }), true, "any non-installer key counts, whatever its value");
+
+  let saved = "";
+  const generated = await ensureAdminPasswordOnFirstBoot({
+    configured: isOperatorConfigured({ whisperEnabled: false }),
+    hasPassword: false,
+    generate: () => "minted-after-setup",
+    save: async (pw) => { saved = pw; },
+  });
+  assert.equal(generated, "minted-after-setup", "the install that ran `npm run setup` still gets its password");
+  assert.equal(saved, "minted-after-setup");
+});
+
+test("an operator-configured install without a password is never given one (the lockout guard)", async () => {
+  const { isOperatorConfigured, ensureAdminPasswordOnFirstBoot } = await import("../src/config/harden.js");
+  let saved = null;
+  const generated = await ensureAdminPasswordOnFirstBoot({
+    configured: isOperatorConfigured({ whisperEnabled: true, slackBotToken: "xoxb-x", slackAppToken: "xapp-x", slackSigningSecret: "s" }),
+    hasPassword: false,
+    generate: () => "must-not-happen",
+    save: async (pw) => { saved = pw; },
+  });
+  assert.equal(generated, "");
+  assert.equal(saved, null);
 });
