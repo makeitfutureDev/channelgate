@@ -85,6 +85,10 @@ function toolLabel(name, target) {
 // heartbeat spinner for Slack to later turn into "Something went wrong".
 const HEARTBEAT_ROW_ROTATE_MS = 4 * 60_000;
 const isHeartbeatRow = (id) => String(id || "").startsWith("heartbeat-");
+// Everything except a liveness pulse is work the reader actually asked about: a tool, a subagent,
+// a TodoWrite item, a notice, a progress-report stage or its plan title. Only that is worth
+// creating a card for once the answer has started (see pushTimeline).
+const isSubstantiveChunk = (chunk) => chunk?.type !== "task_update" || !isHeartbeatRow(chunk?.id);
 
 // Slack's client also red-flags the MESSAGE itself: one that stays in the streaming state for
 // roughly five minutes renders a "Something went wrong" banner even while appends keep succeeding
@@ -286,8 +290,34 @@ function createTaskTimeline(push) {
     const r = rows.get(id);
     return { type: "task_update", id, ...r };
   };
+  // Slack REPLACES a task row's title and status on every chunk for that id, but APPENDS its rich
+  // `details`/`output` — so re-sending an unchanged value renders the same paragraph again. A
+  // progress-report stage carries its output on the chunk that publishes it, again on the chunk
+  // that flips it to complete, and a third time when snapshot() seals the card, which is exactly
+  // the two-to-three duplicates seen in a finished plan. Remember what each row has already
+  // rendered IN THE CURRENT MESSAGE and send only what is new: nothing when the value is
+  // unchanged, and just the added tail when it grew (an interrupted step's note appended to the
+  // output it already had). A genuinely rewritten value still goes whole — the streaming API has
+  // no replace operation for rich fields.
+  const delivered = new Map(); // row id → { details, output } already rendered in the live card
+  const RICH_FIELDS = ["details", "output"];
+  const deliverable = (chunk) => {
+    if (chunk.type !== "task_update") return chunk;
+    const seen = delivered.get(chunk.id) || {};
+    const next = { ...chunk };
+    const sent = { ...seen };
+    for (const field of RICH_FIELDS) {
+      const value = chunk[field];
+      sent[field] = value; // what the card shows for this field once this chunk lands
+      if (value === undefined || seen[field] === undefined) continue;
+      if (seen[field] === value) delete next[field];
+      else if (value.startsWith(seen[field])) next[field] = value.slice(seen[field].length);
+    }
+    delivered.set(chunk.id, sent);
+    return next;
+  };
   const emit = (ids) => {
-    if (ids.length) push(ids.map(chunkFor));
+    if (ids.length) push(ids.map((id) => deliverable(chunkFor(id))));
   };
   const compactCount = (value) => {
     const count = Number(value);
@@ -315,8 +345,13 @@ function createTaskTimeline(push) {
     snapshot() {
       return [
         ...(reportTitle ? [{ type: "plan_update", title: reportTitle }] : []),
-        ...[...rows.keys()].map(chunkFor),
+        ...[...rows.keys()].map((id) => deliverable(chunkFor(id))),
       ];
+    },
+    // The card has moved to a FRESH message (a rollover) that has rendered nothing yet, so every
+    // row's rich fields must be re-sent there in full. Call this before reseeding the successor.
+    resetDelivered() {
+      delivered.clear();
     },
     // A stream rollover closes one durable message while the run continues in another. Seal the
     // fallback copy without mutating the live timeline: active rows become terminal there, then
@@ -325,7 +360,7 @@ function createTaskTimeline(push) {
       return [
         ...(reportTitle ? [{ type: "plan_update", title: reportTitle }] : []),
         ...[...rows.keys()].map((id) => {
-          const chunk = chunkFor(id);
+          const chunk = deliverable(chunkFor(id));
           return chunk.status === "in_progress" ? { ...chunk, status: "complete" } : chunk;
         }),
       ];
@@ -453,7 +488,7 @@ function createTaskTimeline(push) {
         };
         if (JSON.stringify(rows.get(id)) === JSON.stringify(next)) continue;
         rows.set(id, next);
-        chunks.push(chunkFor(id));
+        chunks.push(deliverable(chunkFor(id)));
       }
       if (chunks.length) push(chunks);
     },
@@ -612,6 +647,21 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       }
     }
   };
+  // A native stop that FAILED (Slack rate-limiting `chat.stopStream`, say) leaves its message in
+  // the thread: truncated mid-sentence, without a footer, and about to be duplicated by the
+  // complete answer the classic fallback posts below it. Remove that partial copy first so the
+  // reader is left with exactly one answer. Best-effort, like every other cleanup here — a failed
+  // delete only means both copies stay readable, and only a sanitized API code is logged.
+  const discardPartialAnswer = async () => {
+    const ts = streamStartedAt === null ? "" : answerStreamer?.ts;
+    if (!ts || typeof client.chat?.delete !== "function") return;
+    try {
+      await client.chat.delete({ channel, ts });
+      streamStartedAt = null;
+    } catch (error) {
+      reportStreamFailure("partial answer cleanup", error);
+    }
+  };
   // All append sites use this wrapper so the rollover clock follows the actual Slack message,
   // not the earlier construction of the SDK ChatStreamer. Capture the current helper at execution
   // time: the shared promise chain decides whether an append belongs before or after a rollover.
@@ -647,6 +697,9 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // the SAME chain as answer text, which guarantees the first card write reaches Slack before the
   // first answer delta. A card failure disables only the card — never answer delivery.
   let timelineOff = false;
+  // Answer text has started streaming, so a card that does not exist yet can only be created
+  // BELOW the answer (Slack posts each stream as its own message, in creation order).
+  let answerStarted = false;
   const appendTimeline = async (chunks) => {
     timelineRequested = true;
     if (!timelineStreamer) timelineStreamer = client.chatStream(streamArgs);
@@ -656,6 +709,13 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   };
   const pushTimeline = (chunks) => {
     if (timelineOff) return;
+    // The ordering contract is "card first, answer beneath it", and a card created after the
+    // answer began lands underneath it instead. That is worth doing for real work — a model that
+    // writes one preamble sentence before its first tool call must not lose its whole toolbox —
+    // but never for a bare liveness pulse, which would turn a text-only turn into two messages
+    // whose second one says only "⏳ Working". Rows the reader asked about therefore start (or
+    // keep) the card at any point in the turn; heartbeats only ever join a card that exists.
+    if (!timelineRequested && answerStarted && !chunks.some(isSubstantiveChunk)) return;
     timelineRequested = true;
     // Serialized on the shared chain, so a flushActive() enqueued during finalize still lands
     // before timelineStreamer.stop() closes the message.
@@ -764,6 +824,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         shimmer?.afterMessageActivity?.({ immediate: true });
         timelineStreamer = client.chatStream(streamArgs);
         timelineStartedAt = null;
+        timeline.resetDelivered(); // the successor has rendered nothing yet
         await appendTimeline(timeline.snapshot());
         if (retiringTs && timelineStreamer.ts) {
           retiredStreamTs.add(retiringTs);
@@ -805,10 +866,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     onDelta: (t) => {
       shimmer.onDelta?.(t);
       if (!t || stopped || failed || truncated) return;
-      // A progress card may only be created before the answer. If a text-only turn starts writing
-      // first, keep it text-only: creating a later heartbeat card would put progress underneath
-      // the answer and violate the ordering contract.
-      if (!timelineRequested) timelineOff = true;
+      // The answer is being written. A card that has not been created yet would now be posted
+      // underneath it, so a text-only turn stays text-only — pushTimeline() drops liveness pulses
+      // from here on, while a tool, subagent, notice or progress-report row still opens the card.
+      answerStarted = true;
       // The model is writing the answer now → the last tool row is done.
       if (t.trim()) timeline.flushActive();
       if (rawLen + t.length > MAX_SLACK_CHARS) {
@@ -967,9 +1028,19 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           failed = true;
         }
       }
-      // Fallback: streaming unavailable — post the whole answer the classic way (chunked).
+      // Fallback: streaming unavailable — post the whole answer the classic way (chunked). The
+      // footer rides the answer message itself so the recovery never adds a stats-only message.
       try {
-        await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(full), dir).trim() + tag, footerText(result), footerButtons(result, { channel, threadTs, authorId }));
+        await discardPartialAnswer();
+        await postChunkedReply(
+          client,
+          channel,
+          threadTs,
+          resolveMentions(mdToMrkdwn(full), dir).trim() + tag,
+          footerText(result),
+          footerButtons(result, { channel, threadTs, authorId }),
+          { footerBlocks: footerBlocks(result, { channel, threadTs, authorId }) },
+        );
         await stopTimeline();
       } catch (error) {
         // Both delivery surfaces failed. The outer run handler will call stop(), but this finalize

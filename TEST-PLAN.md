@@ -544,6 +544,14 @@ shape is asserted, not reviewed by eye.
 ### Observability (Slice 6)
 - [ ] Slack shows a live progress card as the first thread message, then an uninterrupted final
       answer beneath it with a token/cost line; expanding “Thinking completed” does not split text.
+- [ ] Live (SLK-204/SLK-202, both engines): a turn whose model writes a preamble sentence BEFORE its
+      first tool call still shows the toolbox with every tool/subagent row (the card may sit under
+      the answer when text came first); a `report_progress` plan shows each stage's details/output
+      exactly once in the finished card. A plain text answer still arrives as a single message with
+      no card.
+- [ ] Live (SLK-206): force a rate-limited/failed `stopStream` on a long turn — the thread ends with
+      the progress card plus exactly one complete answer message carrying the footer, with no
+      truncated partial copy and no stats-only message.
 - [ ] Native Slack streaming: on a routine turn, the reply is written live
       (chat.startStream/appendStream), the footer appears as a block at stopStream, and no extra
       activity-log/Plan messages are posted; a run with progress has one separate first task-card
@@ -593,6 +601,18 @@ shape is asserted, not reviewed by eye.
       `TodoWrite` snapshot maps completed→complete / in_progress and re-uses stable row ids across
       snapshots; a task-chunk append failure disables the card without dropping the streamed answer
       or forcing the plain-post fallback (`test/slack-progress.test.js`).
+- [x] Unit: a tool, failed tool or subagent event that arrives AFTER the first answer delta still
+      opens the toolbox (its rows render, in a card message separate from the answer text), while a
+      text-only turn that runs long enough to beat twice never opens a card just to show the
+      liveness pulse (`test/slack-progress.test.js`).
+- [x] Unit: a task row's rich fields are delivered once — exactly one chunk carries a stage's
+      `details`/`output`, the status flip and the terminal seal omit an unchanged value, a grown
+      output is sent as its added tail only, and the reconstructed card (title/status replaced,
+      output appended) renders each stage output exactly once (`test/slack-progress.test.js`).
+- [x] Unit: a rate-limited `chat.stopStream` deletes only the partial answer message, posts exactly
+      one classic answer carrying the run-stats footer and its controls in the same message (never a
+      stats-only trailer), and still seals the progress card
+      (`test/slack-progress.test.js`).
 - [x] Unit: a run beyond five minutes emits completed heartbeat pulses every 20 seconds and rotates
       task IDs before Slack's five-minute threshold; finish, stop, and failure paths relabel the
       newest pulse, abrupt restart leaves no open row, and no text recap is appended after the answer

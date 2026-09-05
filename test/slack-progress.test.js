@@ -103,6 +103,24 @@ function heartbeatUpdates(calls) {
   return taskUpdates(calls).filter((chunk) => chunk.id.startsWith("heartbeat-"));
 }
 
+// What Slack actually SHOWS after a stream of task chunks: a row's title/status are replaced in
+// place, while its rich `details`/`output` are APPENDED to whatever that row already renders.
+// Asserting on this reconstruction is what proves a stage's output appears exactly once instead
+// of two or three times (published live, again on the status flip, again in the terminal seal).
+function renderedRows(calls) {
+  const rendered = new Map();
+  for (const chunk of taskUpdates(calls)) {
+    const row = rendered.get(chunk.id) || { id: chunk.id, details: "", output: "" };
+    if (chunk.title !== undefined) row.title = chunk.title;
+    if (chunk.status !== undefined) row.status = chunk.status;
+    if (chunk.details !== undefined) row.details += chunk.details;
+    if (chunk.output !== undefined) row.output += chunk.output;
+    if (chunk.sources !== undefined) row.sources = chunk.sources;
+    rendered.set(chunk.id, row);
+  }
+  return rendered;
+}
+
 // Some card tests model an ordinary channel thread where Slack refuses
 // assistant.threads.setStatus. The toolbox is independent of that temporary status surface and
 // must remain live/persistent either way. Unique channel ids keep the module-level "setStatus
@@ -1016,16 +1034,23 @@ test("progress report joins rich semantic stages and tool history in one durable
     "Prepare customer launch",
   ], "the plan title streams once live and is sealed once in the terminal snapshot");
 
+  // Slack appends rich output, so the stage's details/output ride the chunk that first publishes
+  // them and are never repeated — not on the status flip, not in the terminal seal.
+  const collectRows = liveReportRows.filter((task) => task.id === "report-collect-context");
+  assert.equal(collectRows[0].output, "Three meetings found.", "the stage publishes its output once");
+  assert.equal("output" in collectRows[1], false, "an unchanged output is not re-sent when the status flips");
+  assert.equal("details" in collectRows[1], false, "an unchanged detail is not re-sent either");
+  assert.equal(renderedRows(calls).get("report-collect-context").output, "Three meetings found.",
+    "the finished card must render the stage output exactly once");
+
   const terminal = new Map(terminalTaskUpdates(calls).map((task) => [task.id, task]));
   assert.deepEqual(terminal.get("report-collect-context"), {
     type: "task_update",
     id: "report-collect-context",
     title: "Collect context",
     status: "complete",
-    details: "Read the customer record.",
-    output: "Three meetings found.",
     sources: [{ type: "url", url: "https://example.com/customer", text: "CRM record" }],
-  });
+  }, "the seal replaces the row's title/status without appending its output a third time");
   assert.deepEqual(terminal.get("report-draft"), {
     type: "task_update",
     id: "report-draft",
@@ -1160,7 +1185,9 @@ test("progress-report title revisions stay in the same toolbox with stable task 
   const reportRows = terminalTaskUpdates(calls).filter((task) => task.id === "report-tests");
   assert.equal(reportRows.length, 1, "the terminal toolbox should contain one stable row per progress-report step");
   assert.equal(reportRows[0].status, "complete");
-  assert.equal(reportRows[0].output, "Passed.");
+  assert.equal("output" in reportRows[0], false, "the seal must not append the output the live chunk already carried");
+  assert.equal(renderedRows(calls).get("report-tests").output, "Passed.",
+    "the finished card renders the stage output exactly once");
   assert.ok(terminalTaskUpdates(calls).some((task) => /Bash/.test(task.title)));
   assert.ok(calls.some((call) => call[0] === "append" && /Checks passed/.test(call[1]?.markdown_text || "")));
   assert.ok(calls.some((call) => call[0] === "stopStream"));
@@ -1211,8 +1238,9 @@ test("progress-report revisions remove stale rich fields from the terminal toolb
     id: "report-tests",
     title: "Run tests",
     status: "complete",
-    output: "Passed.",
-  }, "the authoritative snapshot should remove details and sources it no longer contains");
+  }, "the authoritative snapshot drops details/sources it no longer contains and never repeats a delivered output");
+  assert.equal(renderedRows(calls).get("report-tests").output, "Running.Passed.",
+    "each authoritative output is appended once — the revision, never the seal, changes what the row shows");
   assert.ok(terminalTaskUpdates(calls).some((task) => /Bash/.test(task.title)));
   assert.ok(calls.some((call) => call[0] === "append" && /Checks passed/.test(call[1]?.markdown_text || "")));
   assert.ok(calls.some((call) => call[0] === "stopStream"));
@@ -1267,8 +1295,11 @@ test("stopping a run drains progress-report chunks then seals only its active st
   // that did exactly what was asked. The interruption is carried by the row's own title/output.
   assert.deepEqual(tasks.map((task) => task.status), ["complete", "complete", "pending"]);
   assert.match(tasks[1].title, /^⚠️ /, "the interrupted step stays visually distinct from a clean finish");
-  assert.match(tasks[1].output, /interrupt/i);
-  assert.equal(tasks[0].output, "Built.", "completed output is preserved");
+  const sealed = renderedRows(calls);
+  assert.match(sealed.get("report-active").output, /interrupt/i);
+  assert.equal(sealed.get("report-done").output, "Built.",
+    "a completed output is preserved and rendered exactly once, not repeated by the seal");
+  assert.equal("output" in tasks[0], false, "the seal must not append an output the live chunk already carried");
 
   const appendsBeforeLateEvent = calls.filter((call) => call[0] === "append").length;
   progress.onEvent({
@@ -1385,7 +1416,8 @@ test("failed native and classic final delivery interrupts an active in-stream pr
     "the failed final delivery should emit exactly one interrupted progress-report transition");
   assert.ok(interruptedRows.every((row) => row.status === "complete"),
     "the live transition and terminal snapshot both close the row without a card-wide error");
-  assert.match(reportRows.at(-1).output, /interrupt/i);
+  assert.match(renderedRows(calls).get("report-ship").output, /interrupt/i,
+    "the card renders the interruption once, from the live transition rather than the seal");
   assert.equal(nativeStopAttempts, 1, "the outer stop path must not retry native finalization");
   assert.equal(postAttempts, 1, "only one classic fallback attempt should run");
   assert.ok(heartbeatUpdates(calls).length > 0, "precondition — delivery failed after liveness became visible");
@@ -2150,4 +2182,224 @@ test("a finalize after a stop is suppressed, and the partial text that landed sa
   assert.equal(calls.some((call) => call[0] === "postMessage"), false, "nor may the classic fallback deliver it");
   assert.match(written, /Stopped — partial answer/, "truncated text must never read as a finished answer");
   assert.equal(calls.filter((call) => call[0] === "stopStream").length, 1, "the answer stream closes exactly once");
+});
+
+// SLK-204. A model that writes one preamble sentence ("Let me check the tests first…") before its
+// first tool call used to lose its whole toolbox: the answer-started guard latched the card OFF
+// for the rest of the turn, so every later tool, failed tool and subagent row was dropped. Only
+// the content-free liveness pulse is worth suppressing once the answer is under way.
+test("a preamble sentence before the first tool call still opens the toolbox", async () => {
+  const calls = [];
+  let sequence = 0;
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => {
+      const id = `stream-${++sequence}`;
+      const stream = {
+        id,
+        ts: undefined,
+        append: async (payload) => {
+          stream.ts ??= `111.22${sequence}`;
+          calls.push(["append", payload, id]);
+        },
+        stop: async (payload) => calls.push(["stopStream", payload, id]),
+      };
+      return stream;
+    },
+    chat: { postMessage: async (payload) => calls.push(["postMessage", payload]), update: async () => {} },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+
+  progress.onDelta("Let me check the tests first. ");
+  progress.onEvent({ kind: "tool_use", id: "t1", name: "Bash", target: "npm test" });
+  progress.onEvent({ kind: "tool_result", id: "t1", name: "Bash", target: "npm test", status: "failed" });
+  progress.onEvent({ kind: "agent_activity", id: "a1", name: "reviewer", description: "review the diff", status: "running" });
+  progress.onEvent({ kind: "agent_activity", id: "a1", status: "completed" });
+  progress.onDelta("They pass now.");
+  await progress.finalize({ content: "Let me check the tests first. They pass now." });
+
+  const rows = [...renderedRows(calls).values()];
+  const bash = rows.find((row) => /Bash\(npm test\)/.test(row.title));
+  assert.ok(bash, "a tool that runs after the first answer delta must still get its toolbox row");
+  assert.equal(bash.status, "complete", "the row still closes terminally");
+  assert.match(bash.title, /^⚠️ .* · failed$/, "a failed tool keeps its own failure label");
+  assert.ok(rows.some((row) => /🤖 reviewer/.test(row.title)), "subagent rows are not dropped either");
+  assert.equal(calls.some((call) => call[0] === "postMessage"), false, "the toolbox stays inside the streams");
+  // The card is its own message, so a card opened after the answer began simply lands beneath it —
+  // that is strictly better than losing every row for the rest of the turn.
+  const cardWrites = calls.filter((call) => call[0] === "append" && call[1]?.chunks);
+  const answerWrites = calls.filter((call) => call[0] === "append" && call[1]?.markdown_text);
+  assert.ok(cardWrites.length > 0, "the toolbox is streamed");
+  assert.notEqual(cardWrites[0][2], answerWrites[0][2], "task chunks and answer text keep separate messages");
+});
+
+// The other half of the same guard: a plain text answer must NOT grow a second message whose only
+// content is the "⏳ Working" liveness pulse.
+test("a text-only turn never opens a card just to show a liveness pulse", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"] });
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => streamer,
+    chat: { postMessage: async () => {}, update: async () => {} },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+
+  progress.onDelta("A long answer that takes a while to write. ");
+  t.mock.timers.tick(20_000);
+  t.mock.timers.tick(20_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  progress.onDelta("Done.");
+  await progress.finalize({ content: "A long answer that takes a while to write. Done." });
+
+  assert.equal(taskUpdates(calls).length, 0, "a text-only turn stays one message with no toolbox");
+});
+
+// SLK-202. Slack APPENDS a task row's rich output, so a stage whose output rides the publishing
+// chunk, the status flip and the terminal seal is rendered two or three times over.
+test("a stage output is delivered once and never re-sent when the card is sealed", async () => {
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => streamer,
+    chat: { postMessage: async (payload) => calls.push(["postMessage", payload]), update: async () => {} },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+
+  const step = (status) => ({
+    kind: "report_progress",
+    title: "Prepare release",
+    steps: [{
+      id: "collect",
+      title: "Collect context",
+      status,
+      details: "Read the customer record.",
+      output: "Three meetings found.",
+      sources: [],
+    }],
+  });
+  progress.onEvent(step("in_progress"));
+  progress.onEvent(step("complete")); // same rich fields, only the status moved
+  progress.onDelta("Ready.");
+  await progress.finalize({ content: "Ready.", durationMs: 5, usage: { input_tokens: 1, output_tokens: 1 } });
+
+  const carried = taskUpdates(calls).filter((task) => task.id === "report-collect" && task.output !== undefined);
+  assert.equal(carried.length, 1, "exactly one chunk may carry the stage output");
+  assert.equal(carried[0].output, "Three meetings found.");
+  assert.equal(taskUpdates(calls).filter((task) => task.id === "report-collect" && task.details !== undefined).length, 1,
+    "the same holds for the stage's details");
+  const sealed = terminalTaskUpdates(calls).find((task) => task.id === "report-collect");
+  assert.equal(sealed.status, "complete", "the seal still carries the row's terminal title/status");
+  assert.equal("output" in sealed, false, "the seal must not append an already-delivered output");
+  assert.equal(renderedRows(calls).get("report-collect").output, "Three meetings found.",
+    "the finished card shows the output exactly once");
+});
+
+// A stage whose output GROWS (the stop path appends an interruption note to what the step already
+// published) must send only the added tail — resending the whole value would render the original
+// paragraph twice under Slack's append semantics.
+test("a stage output that grows is delivered as the added tail only", async () => {
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => streamer,
+    chat: { postMessage: async (payload) => calls.push(["postMessage", payload]), update: async () => {} },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+
+  progress.onEvent({
+    kind: "report_progress",
+    title: "Prepare release",
+    steps: [{ id: "deploy", title: "Deploy", status: "in_progress", details: "", output: "Deployed 3 services.", sources: [] }],
+  });
+  await progress.stop(); // interruptReport appends its note to the output already published
+
+  const outputs = taskUpdates(calls)
+    .filter((task) => task.id === "report-deploy" && task.output !== undefined)
+    .map((task) => task.output);
+  assert.equal(outputs[0], "Deployed 3 services.");
+  assert.equal(outputs.length, 2, "only the publishing chunk and the growth carry an output");
+  assert.match(outputs[1], /^\nInterrupted/, "the growth chunk carries only the appended tail");
+  assert.equal(renderedRows(calls).get("report-deploy").output, "Deployed 3 services.\nInterrupted before completion.",
+    "the card renders the published output once, with the interruption note appended to it");
+});
+
+// SLK-206. Slack rate-limited `chat.stopStream` ("Will retry in 30 seconds"). The classic fallback
+// then posted the complete answer as a NEW message while the partial streamed one stayed in the
+// thread — truncated mid-sentence, no footer — and the footer arrived as yet another message:
+// four bot replies for one turn. The recovery now removes the partial copy and puts the footer on
+// the answer it posts.
+test("a rate-limited stopStream leaves exactly one answer message, with its footer", async () => {
+  const calls = [];
+  let streamSeq = 0;
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => {
+      const id = ++streamSeq;
+      const stream = {
+        ts: `1720000000.00010${id}`,
+        append: async (payload) => calls.push(["append", payload, id]),
+        stop: async (payload) => {
+          calls.push(["stopStream", payload, id]);
+          if (id === 2) {
+            throw Object.assign(new Error("A rate limit was exceeded. Will retry in 30 seconds"), {
+              data: { error: "ratelimited" },
+            });
+          }
+        },
+      };
+      return stream;
+    },
+    chat: {
+      postMessage: async (payload) => {
+        calls.push(["postMessage", payload]);
+        return { ts: "1720000000.000900" };
+      },
+      update: async (payload) => calls.push(["update", payload]),
+      delete: async (payload) => calls.push(["delete", payload]),
+    },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+
+  progress.onEvent({ kind: "tool_use", name: "Bash", target: "npm test" });
+  progress.onDelta("The answer that was still stream");
+  await progress.finalize({
+    content: "The answer that was still streaming when Slack said no.",
+    durationMs: 5,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
+
+  const deletes = calls.filter((call) => call[0] === "delete");
+  assert.deepEqual(deletes.map((call) => call[1].ts), ["1720000000.000102"],
+    "only the partial answer message is removed — never the progress card");
+  const posts = calls.filter((call) => call[0] === "postMessage").map((call) => call[1]);
+  assert.equal(posts.length, 1, "the classic recovery posts exactly one answer message");
+  assert.ok(posts[0].text.startsWith("The answer that was still streaming when Slack said no."),
+    "the surviving message carries the complete authoritative answer");
+  assert.equal(posts[0].blocks[0].text.text, posts[0].text, "the answer rides the message as its own block");
+  assert.deepEqual(posts[0].blocks.slice(1).map((block) => block.type), ["context", "actions"],
+    "the run-stats footer and its controls ride the same message instead of a stats-only one");
+  assert.ok(calls.some((call) => call[0] === "stopStream" && call[2] === 1 && call[1]?.chunks?.length),
+    "the toolbox card is still sealed");
+  assert.equal(calls.some((call) => call[0] === "update"), false, "no partial message is left to patch up");
 });

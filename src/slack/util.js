@@ -21,7 +21,10 @@ export function isSlackInvalidBlocksError(error) {
 // flood the thread. Used by the interactive path AND the unattended ones (scheduler, background
 // jobs) so every model-output post gets the same escaping + chunking treatment.
 const MAX_REPLY_CHUNKS = 6;
-export async function postChunkedReply(client, channel, threadTs, md, footer = "", buttonOrButtons = null) {
+// Slack's hard limit on one section block's text. A chunk longer than this cannot carry the footer
+// in the same message and keeps the separate trailer below it.
+const MAX_SECTION_CHARS = 3000;
+export async function postChunkedReply(client, channel, threadTs, md, footer = "", buttonOrButtons = null, { footerBlocks = null } = {}) {
   const buttons = (Array.isArray(buttonOrButtons) ? buttonOrButtons : [buttonOrButtons]).filter(Boolean);
   let chunks = chunkMrkdwn(md || "", MAX_SLACK_CHARS).filter((c) => c.trim());
   if (!chunks.length) chunks = ["_(no output)_"];
@@ -31,6 +34,26 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
   }
   for (let i = 0; i < chunks.length; i++) {
     const last = i === chunks.length - 1;
+    // A caller RECOVERING a failed streamed reply (progress.js, when Slack rejects stopStream)
+    // asks for the footer to ride the answer itself, so the thread never ends on a message that
+    // carries nothing but stats and buttons. One Slack message renders either `text` or `blocks`,
+    // so the chunk becomes a section block — possible only while it fits the section limit; a
+    // longer answer keeps the plain chunk and the trailer below it.
+    if (last && footerBlocks?.length && chunks[i].length <= MAX_SECTION_CHARS) {
+      try {
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: chunks[i],
+          blocks: [{ type: "section", text: { type: "mrkdwn", text: chunks[i] } }, ...footerBlocks],
+        });
+        return;
+      } catch (error) {
+        // Cosmetic Block Kit trouble must never cost a completed answer: post the chunk plainly
+        // and let the trailer below carry the stats.
+        if (!isSlackInvalidBlocksError(error)) throw error;
+      }
+    }
     await client.chat.postMessage({
       channel,
       thread_ts: threadTs,
