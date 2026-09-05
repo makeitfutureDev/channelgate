@@ -183,6 +183,9 @@ function main() {
     "--build-arg", `MCP_REMOTE_VERSION=${npmPins["mcp-remote"]}`,
     "--build-arg", `VERCEL_VERSION=${npmPins.vercel}`,
     "--build-arg", `SUPABASE_VERSION=${npmPins.supabase}`,
+    "--build-arg", `OPENCV_VERSION=${versions.python?.["opencv-python-headless"]}`,
+    "--build-arg", `FASTER_WHISPER_VERSION=${versions.python?.["faster-whisper"]}`,
+    "--build-arg", `WHISPER_MODEL=${versions.whisperModel}`,
     "--build-arg", `IMAGE_SPEC_VERSION=${specVersion}`,
   ];
   if (options.noCache) args.push("--no-cache");

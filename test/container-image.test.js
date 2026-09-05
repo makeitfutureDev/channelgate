@@ -87,11 +87,24 @@ test("pins: the image installs the same mcp-remote the daemon depends on, and ev
   for (const [name, pin] of Object.entries(versions.npm)) {
     assert.match(pin, /^\d+\.\d+\.\d+/, `${name} must be pinned to an exact version, got "${pin}"`);
   }
+  for (const [name, pin] of Object.entries(versions.python)) {
+    assert.match(pin, /^\d+(?:\.\d+){2,3}$/, `${name} must be pinned to an exact version, got "${pin}"`);
+  }
+  assert.equal(versions.whisperModel, "small");
   assert.match(String(versions.imageSpecVersion), /^\d+\.\d+\.\d+$/);
-  for (const arg of ["UID", "GID", "CLAUDE_VERSION", "CODEX_VERSION", "MCP_REMOTE_VERSION", "VERCEL_VERSION", "SUPABASE_VERSION", "IMAGE_SPEC_VERSION"]) {
+  for (const arg of ["UID", "GID", "CLAUDE_VERSION", "CODEX_VERSION", "MCP_REMOTE_VERSION", "VERCEL_VERSION", "SUPABASE_VERSION", "OPENCV_VERSION", "FASTER_WHISPER_VERSION", "WHISPER_MODEL", "IMAGE_SPEC_VERSION"]) {
     assert.ok(new RegExp(`ARG ${arg}\\b`).test(containerfile), `containers/Containerfile is missing ARG ${arg}`);
     assert.ok(buildScript.includes(`${arg}=`), `scripts/build-image.mjs never passes --build-arg ${arg}`);
   }
+});
+
+test("the image ships the complete local video-understanding toolchain", () => {
+  assert.match(containerfile, /\bffmpeg\b/, "ffmpeg/ffprobe must be installed from the distro");
+  assert.match(containerfile, /opencv-python-headless==\$\{OPENCV_VERSION\}/);
+  assert.match(containerfile, /faster-whisper==\$\{FASTER_WHISPER_VERSION\}/);
+  assert.match(containerfile, /WhisperModel\('\$\{WHISPER_MODEL\}'/);
+  assert.match(containerfile, /HF_HOME=\/opt\/channelgate\/models\/huggingface/);
+  assert.match(containerfile, /chmod -R a\+rX \/opt\/channelgate\/models/);
 });
 
 test("the Containerfile bakes in exactly the paths the backend declares", () => {

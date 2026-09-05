@@ -1494,6 +1494,12 @@ are retired, bullet by bullet; everything else stands.
   instead of leaving channels on yesterday's toolchain. The image is never built inside a turn: a
   missing image fails the run closed with the one command that fixes it. → TEST-PLAN: Container
   runtime (v0.8 P1).
+- **Organization-wide local video understanding toolchain (image spec 1.2.0).** Every conversation
+  image includes `ffmpeg`/`ffprobe`, pinned `opencv-python-headless` + `faster-whisper`, and a
+  root-owned pre-cached Whisper `small` model. The organization-granted `video-understanding` skill
+  can therefore extract representative frames, build contact sheets and transcribe timestamped
+  speech without a per-channel install or first-use model download. → TEST-PLAN: Container runtime
+  (v0.8 P1).
 - **Retired 2026-09-03 (Linux + containers only):** the daemon refuses every platform but Linux
   (`src/platform-gate.js`) and refuses to boot without a usable container CLI — Linux with rootless
   Podman is the only deployment target, so there is no "everywhere" left. **The daemon still runs

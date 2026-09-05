@@ -71,6 +71,15 @@ test("live: a channel keeps its HOME, its installed CLIs and both temp trees acr
     const first = await containerBackend.ensureUp(target, {});
     assert.equal(first.created, true, "the throwaway channel had no container yet");
 
+    assert.equal((await sh("command -v ffmpeg")).out, "/usr/bin/ffmpeg");
+    assert.equal((await sh("command -v ffprobe")).out, "/usr/bin/ffprobe");
+    assert.equal((await sh("python3 -c \"import cv2, faster_whisper; print('video-python-ok')\"")).out, "video-python-ok");
+    assert.equal(
+      (await sh("HF_HUB_OFFLINE=1 python3 -c \"from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8'); print('whisper-small-ok')\"")).out,
+      "whisper-small-ok",
+      "the default model must already be cached in the image",
+    );
+
     await sh([
       "set -e",
       `mkdir -p "$(dirname ${HOME_MARKER})" "$(dirname ${FAKE_CLI})"`,
