@@ -27,10 +27,19 @@ additional directories empty, and never add a `sandbox` block.
     "disableAutoMode": "disable",
     "additionalDirectories": [],
     "allow": ["mcp__claude_ai_HubSpot", "mcp__trigger"],
+    "ask": ["Bash"],
     "deny": ["mcp__claude-in-chrome"]
   }
 }
 ```
+
+A folder that is not meant to have a shell must name `Bash` in `ask`, not merely leave it out of
+`allow`: for a simple command whose argv head is on Claude Code's built-in read-only list (`id`,
+`cat`, `head`, `strings`, `uname`, …) the CLI answers "allowed" before it consults
+`--permission-prompt-tool`, so omission alone lets those commands run unapproved. An `ask` rule is
+evaluated ahead of that layer. Never list `Bash` there when the folder DOES grant the shell (`ask`
+outranks `allow`), and keep `Write`/`Edit` out of `deny` (`deny` outranks `allow` and would void a
+narrow `Write(MEMORY.md)` grant).
 
 Claude.ai cloud connectors are global account state. At project scope, match remote connectors by
 their exact `serverUrl` (wildcards are allowed) and local stdio servers by `serverName`. A deny rule

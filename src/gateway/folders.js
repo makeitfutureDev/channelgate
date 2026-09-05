@@ -367,6 +367,16 @@ const SAFE_BUILTIN_TOOLS = ["Read", "Glob", "Grep"];
 // or another channel's. This is a capability grant, NOT the full escalation of admin mode.
 const SHELL_TOOLS = ["Bash", "Write", "Edit", "MultiEdit"];
 
+// The shell tools a channel WITHOUT `allowBash`/`autoMode` must route through an approval card.
+// Leaving Bash out of `allow` is not enough on its own: Claude Code answers a simple command whose
+// argv head sits on its own built-in read-only list (`id`, `cat`, `head`, `tail`, `wc`, `strings`,
+// `uname`, …) before it ever consults --permission-prompt-tool, so a read-mode turn executed
+// `id -un` with no card and no approval row (QA, 2026-09-05) — arbitrary read-only shell inside the
+// channel's container, sidestepping the Read tool's folder scoping. An `ask` rule is evaluated
+// ahead of that layer, so naming Bash here sends EVERY command — simple or compound — to the
+// permission prompt tool, i.e. the Slack approval card, which is what Read mode promises.
+const ASK_WITHOUT_SHELL = ["Bash"];
+
 // Where to look for a skill by name when a channel grants it. First match wins; copy is
 // skipped if the destination already exists (preserves per-folder customization).
 export function skillSourceDirs() {
@@ -462,6 +472,12 @@ export async function buildSettings(meta, { allowBypass = false } = {}) {
       disableAutoMode: "disable",
       additionalDirectories: [],
       allow: [...SAFE_BUILTIN_TOOLS, ...(bashy ? SHELL_TOOLS : []), ...memTools, ...namespaces, ...gatewayTools],
+      // Everything the mode did not grant asks (see ASK_WITHOUT_SHELL). Only when the shell is NOT
+      // granted: `ask` outranks `allow`, so listing Bash here for a bash/auto channel would put an
+      // approval card in front of every command it is meant to run unattended.
+      ...(bashy ? {} : { ask: [...ASK_WITHOUT_SHELL] }),
+      // Never Write/Edit: `deny` outranks `allow`, and it would void the narrow
+      // Write(MEMORY.md)/Edit(MEMORY.md) grant above that folder-scoped memory depends on.
       deny: ["mcp__claude-in-chrome", "mcp__computer-use"],
     },
 

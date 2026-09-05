@@ -1254,6 +1254,22 @@ the bridge network and *Allow network* is only a switch the engines are told abo
 - [ ] read-mode + non-admin: a non-allowlisted tool posts Approve once / for-thread / forever / Deny;
       each behaves correctly and "forever" persists to `meta.approvedTools`. No click in 4 min → deny.
 - [ ] Only the author / an admin / an approved user can click an approval; others get an ephemeral no.
+- [x] Unit (`test/folders-settings.test.js`, `test/run-grant-isolation.test.js`): a channel that does
+      NOT grant the shell (read, clean, and an admin channel's shared file) names `Bash` in the
+      lockdown's `permissions.ask` — in the generated object, in both on-disk files, and in the
+      per-run content-addressed copy — while a bash/auto channel keeps `Bash` in `allow` and out of
+      `ask`; flipping the grant moves the per-run copy to a different digest, and `Write`/`Edit`
+      (including the narrow `MEMORY.md` grant) never appear in `deny`. Regression: expressing "no
+      shell" by OMISSION alone was not enough — Claude Code answers a simple command whose argv head
+      is on its built-in read-only list (`id`, `cat`, `head`, `strings`, …) before it consults
+      `--permission-prompt-tool`, so a read-mode turn executed `id -un` with no card.
+- [ ] LIVE: in a Claude read channel, `@bot run id -un` raises an approval card and does not execute.
+- [x] Probe against the PINNED CLI (`containers/versions.json`, Claude Code 2.1.258) — repeat on
+      every Claude bump, the way the Codex Landlock flag is re-checked: a headless turn in a folder
+      whose settings merely OMIT `Bash` executed `id -un` with ZERO `--permission-prompt-tool`
+      calls; the same turn with `"ask": ["Bash"]` routed the call to the permission-prompt tool
+      (`tool_name: "Bash"`, the command in `input`) and the command never ran; with no prompt tool
+      at all (clean mode's shape) the ask failed closed as a denial.
 - [ ] **Retired 2026-09-03 (Linux + containers only):** the sandbox wording — escalation is the bypass flag inside the channel's container, and auto mode
       stays inside it too. admin-mode escalation needs BOTH: admin author + adminMode channel → sandbox off; a non-admin in
       an admin-mode channel still gets prompted. auto-mode auto-approves but stays sandboxed.

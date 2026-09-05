@@ -53,6 +53,78 @@ test("admin-mode channels get an admin settings file the CLI will honour", async
   assert.ok(admin.hooks && Object.keys(admin.hooks).length > 0);
 });
 
+// Read mode's contract is "Read/Glob/Grep only — every other tool asks for approval". Expressing
+// that by merely OMITTING Bash from `allow` did not hold: Claude Code answers a simple command
+// whose argv head is on its own built-in read-only list (`id`, `cat`, `head`, `strings`, …) before
+// it consults --permission-prompt-tool, and a read-mode turn ran `id -un` in the channel's
+// container with no card and no approval row (QA, 2026-09-05). An `ask` rule is evaluated ahead of
+// that layer, so every mode that does NOT grant the shell must name Bash there.
+test("a channel without the shell grants sends every Bash command to the approval card", async () => {
+  const askless = [
+    { label: "read", meta: {} },
+    { label: "read, memory off", meta: { memory: false } },
+    { label: "clean", meta: { cleanMode: true } },
+    // An admin channel's SHARED file is what a non-admin author runs under (the bypass variant is
+    // handed only to an admin author), so it must ask too.
+    { label: "admin", meta: { adminMode: true } },
+  ];
+  for (const { label, meta } of askless) {
+    for (const allowBypass of [false, true]) {
+      const settings = await buildSettings({ _slug: "claude-ask-bash", ...meta, allowedMcps: [] }, { allowBypass });
+      assert.ok(settings.permissions.ask.includes("Bash"), `${label}: Bash must ask`);
+      assert.equal(settings.permissions.allow.includes("Bash"), false, `${label}: Bash must not be pre-approved`);
+      // `deny` outranks `allow`, so the shell must never be denied outright here: that would also
+      // be the wrong contract (approval is possible), and the same mistake applied to Write/Edit
+      // would void the narrow MEMORY.md grant below.
+      assert.equal(settings.permissions.deny.includes("Bash"), false, `${label}: ask, never deny`);
+      for (const tool of ["Write", "Edit", "MultiEdit", "Write(MEMORY.md)", "Edit(MEMORY.md)"]) {
+        assert.equal(settings.permissions.deny.includes(tool), false, `${label}: ${tool} must stay out of deny`);
+      }
+    }
+  }
+
+  // The narrow folder-scoped memory grant survives the ask rule (it is an allow on a scoped
+  // Write/Edit, which the Bash ask never touches).
+  const readSettings = await buildSettings({ _slug: "claude-ask-bash-memory", allowedMcps: [] });
+  assert.ok(readSettings.permissions.allow.includes("Write(MEMORY.md)"));
+  assert.ok(readSettings.permissions.allow.includes("Edit(MEMORY.md)"));
+});
+
+// `ask` outranks `allow`: naming Bash there for a channel that GRANTED the shell would put an
+// approval card in front of every command a bash/auto channel exists to run.
+test("granting the shell leaves Bash out of the ask list", async () => {
+  for (const { label, meta } of [
+    { label: "bash", meta: { allowBash: true } },
+    { label: "auto", meta: { autoMode: true } },
+    { label: "admin + bash", meta: { adminMode: true, allowBash: true } },
+    { label: "clean + bash", meta: { cleanMode: true, allowBash: true } },
+  ]) {
+    const settings = await buildSettings({ _slug: "claude-ask-bash-granted", ...meta, allowedMcps: [] });
+    assert.ok(settings.permissions.allow.includes("Bash"), `${label}: shell granted`);
+    assert.equal((settings.permissions.ask || []).includes("Bash"), false, `${label}: granted shell must not ask`);
+  }
+});
+
+test("the on-disk lockdown files carry the ask rule for a channel without the shell", async () => {
+  const slug = "ask-bash-files";
+  await ensureChannelFolder(slug, { adminMode: true, allowedMcps: [] });
+
+  const shared = JSON.parse(readFileSync(channelSettingsFile(slug), "utf8"));
+  const admin = JSON.parse(readFileSync(channelAdminSettingsFile(slug), "utf8"));
+  // The admin variant is a clone with ONE delta (the bypass key), so the ask rule rides along:
+  // an escalated turn ignores it via --dangerously-skip-permissions, and nothing else can.
+  for (const [label, settings] of [["shared", shared], ["admin", admin]]) {
+    assert.ok(settings.permissions.ask.includes("Bash"), `${label}: Bash asks on disk`);
+    assert.equal(settings.permissions.allow.includes("Bash"), false, `${label}: Bash not pre-approved on disk`);
+  }
+
+  const bashSlug = "ask-bash-files-shell";
+  await ensureChannelFolder(bashSlug, { allowBash: true, allowedMcps: [] });
+  const bashSettings = JSON.parse(readFileSync(channelSettingsFile(bashSlug), "utf8"));
+  assert.ok(bashSettings.permissions.allow.includes("Bash"));
+  assert.equal((bashSettings.permissions.ask || []).includes("Bash"), false);
+});
+
 test("Claude settings explicitly pre-approve embedded gateway MCP tools", async () => {
   const settings = await buildSettings({ _slug: "claude-gateway-tools", cleanMode: false, allowedMcps: [] });
   const allow = settings.permissions.allow;

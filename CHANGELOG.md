@@ -149,6 +149,20 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **Read-only conversations no longer run shell commands without asking.** A read-mode channel said
+  "no shell" only by leaving `Bash` out of the lockdown file's `permissions.allow`, and that is not
+  what Claude Code enforces: for a simple command whose argv head is on the CLI's own built-in
+  read-only list (`id`, `cat`, `head`, `tail`, `wc`, `stat`, `strings`, `readlink`, `uname`, `df`,
+  `diff`, …) it answers "allowed" before it ever consults `--permission-prompt-tool`. So a cold
+  read-mode turn executed `id -un` inside the conversation's container in a tenth of a second — no
+  approval card, no approval record — and could read any file that container user can read,
+  sidestepping the folder scoping the Read tool applies. Every conversation that does not grant the
+  shell (read, lean, and the shared file an admin conversation's non-admin authors run under) now
+  names `Bash` in `permissions.ask`, which is evaluated ahead of that layer: every command, simple
+  or compound, routes to the approval card, which is what Read mode always promised. Conversations
+  that DO grant the shell are untouched (an `ask` rule outranks `allow`, so listing it there would
+  card every command they exist to run), the narrow `MEMORY.md` write grant is untouched, and an
+  admin author's escalated turn still bypasses prompts through its own settings variant.
 - **Codex subagent work is visible on the task card again.** The mapping built child rows only from
   a collab tool call's `agents_states`, and Codex's multi-agent v2 mode reports children somewhere
   else entirely: the spawn arrives as a `collaboration` function call, the child's start and finish
