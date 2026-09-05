@@ -5,11 +5,14 @@
 // helper it launches is the image's baked bundle.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { rm, writeFile } from "node:fs/promises";
+import { ensureTestEnv, tempDir } from "./helpers.js";
 import { createFakeRuntime } from "./fixtures/fake-runtime-backend.js";
 
 const scratch = ensureTestEnv();
-const { buildCodexArgs, buildCodexEnv, createCodexProgressState, progressFromCodexEvent } = await import("../src/engines/codex.js");
+const { buildCodexArgs, buildCodexEnv, createCodexProgressState, headerHelperPath, headerHelperSource, progressFromCodexEvent } = await import("../src/engines/codex.js");
 const { CONTAINER_HOME, CONTAINER_PATH, localRuntimeTarget } = await import("../src/engines/runtime-target.js");
 const { workspaceRoot } = await import("../src/config/paths.js");
 const { allowedFsRoot } = await import("../src/web/security.js");
@@ -295,22 +298,90 @@ test("Codex gateway MCP exposes progress report only for opted-in foreground run
 test("Codex runs inject personal and shared Composio MCPs outside clean mode", () => {
   const userToken = "ck_user_secret";
   const sharedToken = "ck_shared_secret";
-  const args = argsFor({ composioUserToken: userToken, composioToken: sharedToken, secretBundlePath: `${target.artifactDir}/run/codex-secrets.json` });
+  const bundle = `${target.artifactDir}/run/codex-secrets.json`;
+  const headerHelpers = [];
+  const args = argsFor({ composioUserToken: userToken, composioToken: sharedToken, secretBundlePath: bundle, headerHelpers });
   const joined = args.join("\n");
 
-  assert.match(joined, /mcp_servers\.composio-user\.command=/);
-  assert.match(joined, /remote-secret-bridge\.js/);
-  assert.match(joined, /codex-secrets\.json/);
-  assert.ok(args.includes(`mcp_servers.composio-user.default_tools_approval_mode="approve"`));
+  // Codex dials both identities itself over its native streamable-HTTP transport. The old
+  // `mcp-remote` stdio bridge cost ~2.4s to answer tools/list and lost the race against a resumed
+  // turn's much shorter MCP startup window — the warm turn saw no Composio family at all.
+  assert.ok(args.includes(`mcp_servers.composio-user.url="https://connect.composio.dev/mcp"`));
+  assert.ok(args.includes(`mcp_servers.composio-agent.url="https://connect.composio.dev/mcp"`));
+  assert.doesNotMatch(joined, /remote-secret-bridge\.js|mcp-remote/, "no stdio bridge stands between Codex and a remote MCP any more");
+  assert.ok(!args.some((arg) => /^mcp_servers\.composio-(user|agent)\.command=/.test(arg)), "an http server has no command");
 
-  assert.match(joined, /mcp_servers\.composio-agent\.command=/);
+  // The credential still comes from the 0600 bundle, resolved by the run's own headers helper.
+  assert.ok(args.includes(`mcp_servers.composio-user.http_headers_helper=${JSON.stringify(headerHelperPath(bundle, "composio-user"))}`));
+  assert.ok(args.includes(`mcp_servers.composio-agent.http_headers_helper=${JSON.stringify(headerHelperPath(bundle, "composio-agent"))}`));
+  assert.ok(args.includes(`mcp_servers.composio-user.default_tools_approval_mode="approve"`));
   assert.ok(args.includes(`mcp_servers.composio-agent.default_tools_approval_mode="approve"`));
   assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.composio.")), "the bare legacy name is never emitted");
   assert.doesNotMatch(joined, new RegExp(`${userToken}|${sharedToken}`));
 
+  assert.deepEqual(headerHelpers.map((spec) => [spec.secretName, spec.headerName, spec.prefix]), [
+    ["composioUserToken", "x-consumer-api-key", ""],
+    ["composioToken", "x-consumer-api-key", ""],
+  ]);
+
   const cleanArgs = argsFor({ clean: true, composioUserToken: userToken, composioToken: sharedToken });
   assert.ok(!cleanArgs.some((arg) => arg.startsWith("mcp_servers.composio-user.")));
   assert.ok(!cleanArgs.some((arg) => arg.startsWith("mcp_servers.composio-agent.")));
+});
+
+// WB-10. `codex exec resume` honours `-c mcp_servers.*` exactly like a fresh `exec`, so the two
+// argvs must describe the SAME servers — anything a resume drops here is a tool family the second
+// turn of a thread silently loses.
+test("a resumed Codex run configures exactly the MCP servers a fresh one does", () => {
+  const shared = {
+    composioUserToken: "ck_user_secret",
+    composioToken: "ck_shared_secret",
+    toolboxToken: "tb_secret",
+    makeToolboxUrl: "https://eu1.make.com/mcp/server/abc",
+    makeToolboxKey: "make_secret",
+    gatewayCapability: "signed-capability",
+    secretBundlePath: `${target.artifactDir}/run/codex-secrets.json`,
+    writable: true,
+  };
+  const mcpOverrides = (args) => cfgValues(args).filter((value) => value.startsWith("mcp_servers.")).sort();
+
+  const fresh = argsFor({ ...shared, isNewSession: true });
+  const resumed = argsFor({ ...shared, isNewSession: false, sessionId: "thread-1" });
+
+  assert.deepEqual(resumed.slice(0, 3), ["exec", "resume", "thread-1"]);
+  assert.deepEqual(mcpOverrides(resumed), mcpOverrides(fresh));
+  for (const name of ["gateway", "composio-user", "composio-agent", "makeitfuture-toolbox", "make-toolbox"]) {
+    assert.ok(mcpOverrides(resumed).some((value) => value.startsWith(`mcp_servers.${name}.`)), `${name} is missing from the resumed run`);
+  }
+});
+
+// The generated helper is the only thing that ever touches the credential, and it must read it
+// from the bundle — not from an argument or an environment variable Codex would persist into
+// `.codex/shell_snapshots/*.sh`.
+test("the per-run headers helper resolves its credential from the run bundle alone", async () => {
+  const dir = tempDir("cg-codex-headers-");
+  try {
+    const bundlePath = path.join(dir, "cg-codex-secrets-1.json");
+    await writeFile(bundlePath, JSON.stringify({ toolboxToken: "tb-super-secret" }), { mode: 0o600 });
+    const helperPath = headerHelperPath(bundlePath, "makeitfuture-toolbox");
+    const source = headerHelperSource({ secretName: "toolboxToken", headerName: "Authorization", prefix: "Bearer ", bundlePath });
+    await writeFile(helperPath, source, { mode: 0o700 });
+
+    assert.doesNotMatch(source, /tb-super-secret/, "the helper script carries no credential of its own");
+    assert.match(helperPath, /\.cjs$/, "written outside any package, so the extension fixes the module system");
+
+    const ok = spawnSync(process.execPath, [helperPath], { encoding: "utf8", env: { PATH: process.env.PATH } });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.deepEqual(JSON.parse(ok.stdout), { Authorization: "Bearer tb-super-secret" });
+
+    // A cleaned-up (or never written) bundle must fail the server, not emit an empty header.
+    await rm(bundlePath, { force: true });
+    const gone = spawnSync(process.execPath, [helperPath], { encoding: "utf8" });
+    assert.equal(gone.status, 2);
+    assert.match(gone.stderr, /credential is unavailable/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("Codex bridges SDK sessions without putting the organization key on argv", () => {
@@ -344,8 +415,8 @@ test("Codex injects a Make toolbox through a bearer environment variable hidden 
   const joined = args.join("\n");
   const env = buildCodexEnv({ target }, {});
 
-  assert.match(joined, /remote-secret-bridge\.js/);
-  assert.match(joined, /makeToolboxKey/);
+  assert.ok(args.includes(`mcp_servers.make-toolbox.url="https://eu1.make.celonis.com/mcp/server/abc-123"`));
+  assert.match(joined, /make-toolbox\.headers\.cjs/);
   assert.ok(args.includes(`mcp_servers.make-toolbox.default_tools_approval_mode="approve"`));
   assert.equal(env.CG_MAKE_TOOLBOX_KEY, undefined);
   assert.doesNotMatch(joined, new RegExp(key));
@@ -389,6 +460,9 @@ test("every connector secret stays out of Codex argv and child env", () => {
   assert.equal(env.OPENAI_API_KEY, "engine-auth-only");
   assert.match(argv, /secret-env-bridge\.js/);
   assert.match(argv, /gatewayCapability/);
+  // Every remote MCP names a headers helper instead of a header value.
+  assert.match(argv, /composio-user\.headers\.cjs/);
+  assert.match(argv, /makeitfuture-toolbox\.headers\.cjs/);
 });
 
 test("full-access Codex runs keep the deliberate bypass and no sandbox mode", () => {

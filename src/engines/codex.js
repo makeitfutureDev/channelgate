@@ -9,8 +9,12 @@
 //     is the only non-profile path (--dangerously-bypass-approvals-and-sandbox).
 //     NOTE: the `exec resume` subcommand dropped -C/--cd and -s/--sandbox; profiles are plain
 //     config overrides, so the same flags work on fresh and resumed runs — see buildCodexArgs.
-//   - MCP injected with `-c mcp_servers.*` overrides. Composio (HTTP+header) is bridged to stdio
-//     via `npx mcp-remote` so it works regardless of Codex's HTTP-MCP support.
+//   - MCP injected with `-c mcp_servers.*` overrides — identical on a fresh run and on a resume,
+//     because `exec resume` reads them the same way. Header-bearing remote MCPs (Composio, the
+//     toolboxes) use Codex's native streamable-HTTP transport with a per-run `http_headers_helper`
+//     script, NOT a stdio bridge: Codex takes whichever MCP servers finished starting by the time
+//     it builds the first request, and a resumed turn reaches that point far sooner than a fresh
+//     one (see addSecretRemote).
 //   - JSONL events (`--json`): thread.started carries the session id; the authoritative final
 //     message is read from the `-o` file. Token usage comes from turn.completed; no dollar cost.
 //   - timeoutMs is an inactivity watchdog, not a wall-clock runtime cap: a busy Codex turn may run
@@ -48,15 +52,50 @@ const NOTE_INTERVAL_MS = 15_000; // floor between stderr diagnostics shown to th
 // helper is a SCRIPT path, not a command: take the helper's args when it has any, else its bare
 // command. On the host that is exactly today's `[<src>/mcp/gateway-server.js]`.
 //
-// Two requirements this places on an isolated backend's helper table, because Codex reaches these
-// helpers THROUGH the secret bridge rather than launching them itself:
-//   · "gateway-mcp" must be node + a script path the bridge will accept (it validates a .js
-//     suffix), not a bare wrapper executable;
-//   · "mcp-remote" must be the image's twin of src/mcp/remote-secret-bridge.js — the broker that
-//     reads the 0600 bundle and only then starts mcp-remote — not the raw mcp-remote binary,
-//     whose argv is entirely different and which would take the bundle path for a URL.
+// One requirement this places on an isolated backend's helper table, because Codex reaches that
+// helper THROUGH the secret bridge rather than launching it itself: "gateway-mcp" must be node +
+// a script path the bridge will accept (it validates a .js suffix), not a bare wrapper executable.
+// The image's "mcp-remote" helper is no longer part of a Codex run — remote MCPs are dialled by
+// Codex itself now (see addSecretRemote) — but it stays in the table for the image contract and
+// for any backend that still bridges one.
 function helperScriptArgv(helper) {
   return helper.args?.length ? [...helper.args] : [helper.command];
+}
+
+// Where the per-run `http_headers_helper` for one remote MCP server lives: beside the run's secret
+// bundle, in the artifact dir both sides of the container name identically. `.cjs` on purpose —
+// the file is written outside any package, and the extension is what fixes the module system.
+export function headerHelperPath(secretBundlePath, serverName) {
+  return `${String(secretBundlePath).replace(/\.json$/, "")}-${serverName}.headers.cjs`;
+}
+
+// The helper itself. Codex executes it at MCP startup and reads a JSON header map from stdout, so
+// this is where the credential is resolved: out of the run's 0600 bundle, never from argv or the
+// environment (which Codex persists into `.codex/shell_snapshots/*.sh`). Nothing secret is written
+// into the script — only the bundle path and which entry to read.
+export function headerHelperSource({ secretName, headerName, prefix = "", bundlePath }) {
+  const literal = (value) => JSON.stringify(String(value));
+  return `#!/usr/bin/env node
+"use strict";
+// Generated per run by the gateway. Prints ONE HTTP header for one remote MCP server.
+const BUNDLE = ${literal(bundlePath)};
+const SECRET = ${literal(secretName)};
+const HEADER = ${literal(headerName)};
+const PREFIX = ${literal(prefix)};
+let bundle;
+try {
+  bundle = JSON.parse(require("node:fs").readFileSync(BUNDLE, "utf8"));
+} catch {
+  process.stderr.write("Remote MCP credential is unavailable\\n");
+  process.exit(2);
+}
+const value = Object.prototype.hasOwnProperty.call(bundle, SECRET) ? bundle[SECRET] : "";
+if (typeof value !== "string" || !value) {
+  process.stderr.write("Remote MCP credential is unavailable\\n");
+  process.exit(2);
+}
+process.stdout.write(JSON.stringify({ [HEADER]: PREFIX + value }));
+`;
 }
 // Names that can ride in a `-c` dotted key path. TOML bare keys are exactly [A-Za-z0-9_-]; anything
 // else needs quoting, and quoting a `-c` segment does not mean what it means in a TOML file.
@@ -539,7 +578,7 @@ export function progressFromCodexEvent(p, state = null) {
 }
 
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", attachments = [], target = null, outFile }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", attachments = [], target = null, outFile, headerHelpers = [] }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
   // The CONTAINER is the confinement boundary, so Codex's own sandbox is switched off: no
   // permission profiles, no network_proxy — egress is the container's network mode.
@@ -655,16 +694,28 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     args.push("-c", `mcp_servers.gateway.startup_timeout_sec=60`);
   }
 
+  // A header-bearing remote MCP (both Composio identities, the toolboxes) is reached over Codex's
+  // OWN streamable-HTTP transport, and the header value is produced by a per-run helper script
+  // (`http_headers_helper`) that reads the 0600 bundle — so the credential is still absent from
+  // Codex's argv and environment. It used to be bridged to stdio through `mcp-remote` instead,
+  // which cost ~2.4s to answer `tools/list` (two Node bootstraps, mcp-remote's OAuth discovery
+  // round trip, then a duplicated initialize). Codex does not BLOCK a turn on MCP startup — it
+  // takes whichever servers finished by the time it builds the first request, and
+  // `startup_timeout_sec` only caps the handshake, it does not extend that wait. A fresh `exec`
+  // assembles more context first (~2-5s of room); `exec resume` reaches the request in ~2s, so the
+  // bridged servers made the cold window and missed every warm one: the second turn of a Codex
+  // thread saw `gateway` and no `composio-user`/`composio-agent` at all. The native transport
+  // answers in ~1.2s, inside both.
   const addSecretRemote = (name, url, secretName, headerName, prefix = "") => {
     if (clean || !secretBundlePath || !secretName || !url) return;
-    const remote = helper("mcp-remote");
-    args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(remote.command)}`);
-    args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(remote.args || []), secretBundlePath, secretName, url, headerName, prefix])}`);
+    const helperPath = headerHelperPath(secretBundlePath, name);
+    args.push("-c", `mcp_servers.${name}.url=${JSON.stringify(url)}`);
+    args.push("-c", `mcp_servers.${name}.http_headers_helper=${JSON.stringify(helperPath)}`);
     args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
-    // Cold spawns start several bridges at once and the remote endpoint may be slow to answer the
-    // first initialize; Codex's default startup window (10s) intermittently dropped a server —
-    // observed as composio-user tools "absent" in background runs while its twin survived.
+    // Still a ceiling on the handshake itself: the remote endpoint can be slow to answer the first
+    // initialize, and Codex's default window (10s) intermittently dropped a server outright.
     args.push("-c", `mcp_servers.${name}.startup_timeout_sec=120`);
+    headerHelpers.push({ path: helperPath, secretName, headerName, prefix });
   };
 
   const addComposio = (name, endpoint, legacyToken, secretName) => {
@@ -685,9 +736,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
   addComposio("composio-user", composioUserEndpoint, composioUserToken, "composioUserToken");
   addComposio("composio-agent", composioEndpoint, composioToken, "composioToken");
 
-  // Skills Manager MCP, same HTTP→stdio bridge, carrying this run's token as a Bearer header.
-
-  // Toolbox MCP, same HTTP→stdio bridge, carrying this run's token as a Bearer header.
+  // Toolbox MCP, same native transport, carrying this run's token as a Bearer header.
   if (!clean && toolboxToken) {
     addSecretRemote("makeitfuture-toolbox", toolboxUrl(), "toolboxToken", "Authorization", "Bearer ");
   }
@@ -836,7 +885,15 @@ export async function runCodex({
     await mkdir(secretDir, { recursive: true, mode: 0o700 });
     await writeFile(secretBundlePath, JSON.stringify({ gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey }), { mode: 0o600 });
   }
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, attachments, target: runtime, outFile });
+  // The `http_headers_helper` scripts the argv names: written here because buildCodexArgs stays a
+  // pure argv builder. They carry no credential of their own — each one reads its entry out of the
+  // 0600 bundle above — but they are still per-run files, created and removed with it.
+  const headerHelpers = [];
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, attachments, target: runtime, outFile, headerHelpers });
+  for (const spec of headerHelpers) {
+    await writeFile(spec.path, headerHelperSource({ ...spec, bundlePath: secretBundlePath }), { mode: 0o700 });
+  }
+  const removeRunSecrets = () => [secretBundlePath, ...headerHelpers.map((spec) => spec.path)].filter(Boolean);
 
   return await new Promise((resolve, reject) => {
     // Minimal allowlisted env — the sandbox can't hide the child's own environment (see child-env.js).
@@ -996,7 +1053,7 @@ export async function runCodex({
     child.on("error", (err) => {
       watchdog.stop();
       rm(scratchDir, { recursive: true, force: true }).catch(() => {});
-      if (secretBundlePath) rm(secretBundlePath, { force: true }).catch(() => {});
+      for (const file of removeRunSecrets()) rm(file, { force: true }).catch(() => {});
       reject(commandError(processFailureMessage("Codex", { spawnError: err, diagnostic: stderr }), {
         stderr: stderr.slice(0, 4000),
         exitCode: null,
@@ -1017,7 +1074,7 @@ export async function runCodex({
         /* no file (failed turn) */
       }
       await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
-      if (secretBundlePath) await rm(secretBundlePath, { force: true }).catch(() => {});
+      for (const file of removeRunSecrets()) await rm(file, { force: true }).catch(() => {});
 
       // A turn that attempted ANY tool, or already streamed text, may have mutated something — it
       // is never replayed, whatever the provider said. `didWork` is the single proof every failure

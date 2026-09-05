@@ -149,6 +149,24 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **A Codex thread keeps its Composio tools on every turn, not just the first.** The second message
+  in a Codex thread came back without `composio-user` or `composio-agent` at all — the registry
+  showed only the `gateway` family, so Workbench and every connected app vanished mid-conversation
+  while the cold turn had them. Neither the argv nor the CLI was at fault: `codex exec resume`
+  carries and honours the same `-c mcp_servers.*` overrides a fresh `codex exec` does. Codex simply
+  does not BLOCK a turn on MCP startup — it takes whichever servers have finished by the time it
+  builds the first request, and `startup_timeout_sec` only caps the handshake instead of extending
+  that wait. A fresh run assembles instructions, skills and workspace state first and leaves
+  roughly two to five seconds of room; a resumed run reaches the request in about two. The two
+  Composio servers were bridged to stdio through `mcp-remote`, which needed ~2.4s to answer
+  `tools/list` (two Node bootstraps, an OAuth-discovery round trip that a static-header server
+  never needs, then a duplicated initialize) — inside the cold window, outside every warm one,
+  while the local gateway server always made both. Header-bearing remote MCP servers (both Composio
+  identities and both toolboxes) are now dialled by Codex itself over its native streamable-HTTP
+  transport, which answers in about 1.2s, and their credential is produced by a per-run
+  `http_headers_helper` script that reads the run's existing 0600 secret bundle — so the token is
+  still absent from Codex's argv and environment, and never reaches the shell snapshots Codex
+  writes into the channel's home volume.
 - **Read-only conversations no longer run shell commands without asking.** A read-mode channel said
   "no shell" only by leaving `Bash` out of the lockdown file's `permissions.allow`, and that is not
   what Claude Code enforces: for a simple command whose argv head is on the CLI's own built-in
