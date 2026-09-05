@@ -11,6 +11,7 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 `test/mcp-control-plane-approval.test.js`.
 
 - [x] Large MEMORY.md and topic writes succeed without a character-capacity failure.
+- [x] On an engine without FTS5 (Node 22.13) the database opens, migration 17 is skipped with a warning, and `search_channel_memory` answers from the plain scan with AND semantics, diacritic folding and bracketed excerpts; `ensureMemoryFtsTable` is idempotent and creates the index the moment the engine supports it.
 - [x] A fresh run receives only the compact memory catalog; stored fact bodies are absent.
 - [x] FTS5 search ranks matching Markdown passages, rebuilds after hand edits, and read rejects
       traversal or any source outside MEMORY.md / memory/*.md.

@@ -11,6 +11,8 @@
 // (filter by channel, enabled, etc.) are indexable. The two dashboard tables (usage, events) use
 // fully typed columns + indexes because they're aggregated by day/week/month/channel/user.
 
+import { ensureMemoryFtsTable } from "./fts.js";
+
 export const migrations = [
   {
     version: 1,
@@ -618,17 +620,14 @@ export const migrations = [
   {
     version: 17,
     up(db) {
-      db.exec(`
-        -- Derived, rebuildable search index for channel-owned Markdown memory. The files in each
-        -- channel work folder remain the source of truth; this table contains no unique state.
-        CREATE VIRTUAL TABLE channel_memory_fts USING fts5(
-          channel_slug UNINDEXED,
-          source UNINDEXED,
-          title,
-          body,
-          tokenize = 'unicode61 remove_diacritics 2'
-        );
-      `);
+      // Derived, rebuildable search index for channel-owned Markdown memory. The files in each
+      // channel work folder remain the source of truth; this table contains no unique state — so
+      // an engine without FTS5 (Node 22.13's bundled SQLite) skips it instead of failing the
+      // migration and with it the whole database open. src/db/index.js re-attempts the creation
+      // after every open, and memory search falls back to a plain scan meanwhile.
+      if (!ensureMemoryFtsTable(db)) {
+        console.warn("[db] SQLite FTS5 is unavailable in this Node build; channel memory search uses a plain scan");
+      }
     },
   },
   {
