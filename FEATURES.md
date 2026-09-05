@@ -1498,8 +1498,10 @@ are retired, bullet by bullet; everything else stands.
   image includes `ffmpeg`/`ffprobe`, pinned `opencv-python-headless` + `faster-whisper`, and a
   root-owned pre-cached Whisper `small` model. The organization-granted `video-understanding` skill
   can therefore extract representative frames, build contact sheets and transcribe timestamped
-  speech without a per-channel install or first-use model download. → TEST-PLAN: Container runtime
-  (v0.8 P1).
+  speech without a per-channel install or first-use model download. `npm run setup` builds the
+  image as part of a fresh install (`--skip-image` / `CG_BUILD_IMAGE=no` defers it and names
+  `npm run build:image` as the remedy; a failed build never aborts the install), so a new gateway
+  never reaches its first message without the toolchain. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Retired 2026-09-03 (Linux + containers only):** the daemon refuses every platform but Linux
   (`src/platform-gate.js`) and refuses to boot without a usable container CLI — Linux with rootless
   Podman is the only deployment target, so there is no "everywhere" left. **The daemon still runs

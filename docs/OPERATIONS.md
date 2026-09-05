@@ -289,7 +289,8 @@ Everything below is run **as the user the daemon runs as** — a rootless store 
 and two gateways on one host (each under its own account) get entirely separate stores.
 
 **Build the image.** Nothing runs until the channel image exists; the daemon never builds one inside
-a turn, because a build takes minutes and would look like a hung answer.
+a turn, because a build takes minutes and would look like a hung answer. `npm run setup` builds it
+as part of a fresh install (skip with `--skip-image` / `CG_BUILD_IMAGE=no`); by hand:
 
 ```bash
 npm run build:image                        # channelgate/runtime:<spec version> + :latest

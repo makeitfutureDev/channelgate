@@ -22,10 +22,10 @@ see [README.md](./README.md).
   codex login           # or set OPENAI_API_KEY
   ```
 - **Rootless Podman** — required: every channel runs its engines in a container of its
-  own, and the daemon refuses to boot without a container CLI. `sudo apt install podman uidmap`,
-  confirm the daemon user has `/etc/subuid` + `/etc/subgid` ranges, then build the channel image
-  with `npm run build:image`. Setup, settings and caveats are in
-  [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime).
+  own, and the daemon refuses to boot without a container CLI. `sudo apt install podman uidmap`
+  and confirm the daemon user has `/etc/subuid` + `/etc/subgid` ranges; the installer then builds
+  the channel image itself (`npm run build:image` is the manual equivalent). Setup, settings and
+  caveats are in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime).
 - A **Slack workspace** where you can create an app.
 
 ## 2. Get the code
@@ -42,9 +42,17 @@ npm run setup
 ```
 
 This checks the Linux/Node/CLI/Podman prerequisites, installs dependencies, asks whether to
-provision pinned `whisper.cpp` plus the multilingual `large-v3-turbo` model, and creates `.env`.
-Choosing Whisper downloads about 1.5 GiB; the installer uses the available package manager for a
-missing `ffmpeg` when permitted, or explains which prerequisite is missing.
+provision pinned `whisper.cpp` plus the multilingual `large-v3-turbo` model, **builds the channel
+container image**, and creates `.env`. Choosing Whisper downloads about 1.5 GiB; the installer uses
+the available package manager for a missing `ffmpeg` when permitted, or explains which prerequisite
+is missing.
+
+The channel image is where every conversation's shared toolchain lives — the pinned engine CLIs,
+`ffmpeg`/`ffprobe`, OpenCV, `faster-whisper` and its pre-cached `small` speech model for the
+`video-understanding` skill — so building it is part of the install, not a step to remember later.
+It takes several minutes on a cold cache and is run as the daemon user. Pass `--skip-image` (or set
+`CG_BUILD_IMAGE=no`) to defer it, and run `npm run build:image` before the first message; a build
+that fails is reported with that same remedy and never aborts the rest of the install.
 
 The runtime and model are reused on subsequent setup/update runs. A no-Whisper install skips them
 on later updates too. For unattended installs, make the choice explicit:

@@ -23,6 +23,11 @@ product overview.
   `ffmpeg`/`ffprobe`, pinned OpenCV and faster-whisper, plus a pre-cached Whisper `small` model, so
   the `video-understanding` skill works without per-channel installs or first-use downloads (image
   spec 1.2.0).
+- **The installer builds the channel image.** `npm run setup` now runs `npm run build:image` after
+  the dependencies and the Whisper step, so a fresh gateway has the whole shared toolchain
+  (engine CLIs, `ffmpeg`, OpenCV, `faster-whisper` + model) before its first message instead of
+  failing the first run closed. `--skip-image` / `CG_BUILD_IMAGE=no` defers it; a failed build is
+  reported with the manual remedy and never aborts the install.
 - **Skill templates are followed live, and edited in Settings.** A conversation is assigned a
   template (Conversations → Tools → *Skill template*, the Skills view, `set_channel_skill_template`,
   or a DM template) and gets the template's current skills plus whatever is added to the
