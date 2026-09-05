@@ -66,6 +66,13 @@ export const OPTIONAL_METHODS = Object.freeze([
   // orchestrator skips the carry instead of failing the turn.
   "copyIn",
   "copyOut",
+  // inspectState(target, { globs, maxLines, maxBytes }) → Promise<[{ path, mtimeMs, head }]> — READ
+  // engine state where it lies, without moving it. The read-only twin of the carry pair, and the
+  // only way to answer "does this session exist in this channel, and where was it started?" for a
+  // runtime whose persistent HOME the daemon cannot open: rootless Podman maps a named volume
+  // behind a user namespace, so `<volume>/_data` is unreachable from the daemon even though the
+  // files inside belong to it. See src/gateway/session-adopt.js.
+  "inspectState",
 ]);
 
 // Whether a backend can move engine state in and out of itself. Both halves or neither: a backend
@@ -73,6 +80,13 @@ export const OPTIONAL_METHODS = Object.freeze([
 export function runtimeCanCarry(backendOrTarget) {
   const backend = backendOrTarget?.runtime || backendOrTarget;
   return typeof backend?.copyIn === "function" && typeof backend?.copyOut === "function";
+}
+
+// Whether a backend can be ASKED about the engine state it holds. A backend that cannot simply
+// contributes no candidate store, and the caller falls back to the dirs it can read itself.
+export function runtimeCanInspectState(backendOrTarget) {
+  const backend = backendOrTarget?.runtime || backendOrTarget;
+  return typeof backend?.inspectState === "function";
 }
 
 // The daemon-side helpers an ENGINE spawns during a run (not the daemon): the gateway control MCP
@@ -179,6 +193,11 @@ export const HELPER_COMMANDS = Object.freeze([
  *                                  into place; the staging dir is removed either way.
  * copyOut(target, entries)       → Promise<{ copied }> — the same in reverse. Overwrite, never delete, and a
  *                                  missing source is 0 copied rather than an error.
+ * inspectState(target, request)  → Promise<[{ path, mtimeMs, head }]> — the files inside this runtime that
+ *                                  match `request.globs` (carry-style: `*` inside a segment, never across
+ *                                  one), each with its mtime and the first `maxLines` lines / `maxBytes`
+ *                                  bytes of it. Reads only; moves nothing. Container: one `sh -c` inside,
+ *                                  because a rootless HOME volume is unreadable from the daemon.
  */
 export function validateRuntimeBackend(backend) {
   if (!backend || typeof backend !== "object") throw new TypeError("RuntimeBackend must be an object");

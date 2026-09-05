@@ -13,6 +13,7 @@ import { createContainerImage } from "./image.js";
 import { createContainerLifecycle, buildMounts, containerFingerprint, volumeHostPath } from "./lifecycle.js";
 import { createContainerExec } from "./exec.js";
 import { createContainerCarry, shellQuote } from "./carry.js";
+import { createContainerState } from "./state.js";
 import { createContainerReaper } from "./reaper.js";
 import { codexAuthCandidates, codexAuthIdentity, credentialError, credentialNotes, intendedCredentialModes } from "./credentials.js";
 import { containerImagePaths, IMAGE_HELPERS, IMAGE_SPEC_VERSION } from "./image-paths.js";
@@ -41,6 +42,7 @@ function buildContext({ exec = undefined, now = undefined, pollMs = undefined, s
   holder.lifecycle = createContainerLifecycle({ cli: holder.cli, image: holder.image, reaper: holder.reaper, log, now });
   holder.exec = createContainerExec({ cli: holder.cli, lifecycle: holder.lifecycle, reaper: holder.reaper, log, pollMs });
   holder.carry = createContainerCarry({ exec: holder.exec, lifecycle: holder.lifecycle, log });
+  holder.state = createContainerState({ exec: holder.exec, lifecycle: holder.lifecycle, log });
   return holder;
 }
 
@@ -243,6 +245,13 @@ export const containerBackend = Object.freeze({
 
   async copyOut(target, entries) {
     return runtime().carry.copyOut(target, entries);
+  },
+
+  // The read-only twin (contract.js OPTIONAL_METHODS): which engine state files this channel's
+  // container holds, and the first lines of each. `/resume` adoption asks this because the HOME
+  // volume itself is unreachable from the daemon — see ./state.js.
+  async inspectState(target, request) {
+    return runtime().state.inspectState(target, request);
   },
 });
 

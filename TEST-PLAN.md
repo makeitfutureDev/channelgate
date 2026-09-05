@@ -1167,6 +1167,20 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       each refused with their own message. Adopt an id already bound to another thread → refused;
       `/clear` that thread, then adopt → accepted. `/resume <id>` during a live run → "This thread
       is mid-run"; bare `/resume` still prints the terminal command.
+- [ ] **Adoption finds a CONTAINERIZED session (regression, CMD-203):** in a live channel on both
+      engines, run a turn, then bare `/resume` and paste the printed container command
+      (`podman exec -it -w <cwd> cg-… claude --resume <id>` / `… codex exec resume <id>`) straight
+      back as `/resume <command>` in the same channel → "🔁 This thread now continues …", a
+      `session_adopted` row in `events`, and the next message continues that conversation. Before
+      the fix this was always refused with "I can't find … on the gateway machine", because only
+      the daemon's own state dirs were searched while the transcripts live in the channel's HOME
+      volume — which rootless Podman leaves unreadable from the daemon (`<volume>/` is 0700 and
+      owned by the mapped sub-uid), so the container itself has to be asked. Paste the same command
+      in a DIFFERENT channel → still refused by the same-channel rule. Paste a `claude --resume`
+      line into a Codex thread with an unknown id → the refusal says "Claude session", not "Codex
+      session", and names where it looked. Automated: `test/session-adopt.test.js` (both stores,
+      Claude + Codex, the foreign-channel refusal and the wording) and
+      `test/container-state.test.js` (the generated `sh -c`, executed by a real /bin/sh).
 - [ ] **Global footer-cost visibility:** on a legacy/missing setting and with Settings → Behavior →
       Slack replies → “Show exact/estimated cost…” checked, Claude and Codex Slack footers include
       `$x.xx`. Uncheck and Save: subsequent interactive and API-triggered Slack replies omit only

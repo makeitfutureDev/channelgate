@@ -11,14 +11,25 @@
 // a session id. Adoption is refused in every other channel, and refused outright when the id is
 // already bound to a different thread (two threads resuming one session would interleave turns in
 // the same cwd).
+//
+// WHERE that session file is depends on where the channel runs. Under the container runtime a
+// thread's transcripts live in the channel's own HOME volume, not in the daemon's engine dirs — and
+// rootless Podman puts that volume behind a user-namespace mapping, so the daemon usually cannot
+// even traverse into it. So a lookup walks candidate STORES, cheapest first: the daemon's own state
+// dirs (a legacy, pre-container session), the HOME volume read directly where a host leaves it
+// readable, and otherwise the container itself, asked through the runtime's read-only
+// `inspectState`. Whichever store answers, the same-channel rule below is applied to the cwd the
+// transcript itself recorded.
 import path from "node:path";
 import os from "node:os";
 import { createReadStream } from "node:fs";
-import { readdir, realpath, stat } from "node:fs/promises";
+import { access, constants, realpath, stat } from "node:fs/promises";
 import readline from "node:readline";
 import { getDb } from "../db/index.js";
 import { findCodexRollout } from "../engines/codex-usage.js";
-import { engineLabel, ENGINE_IDS } from "../engines/registry.js";
+import { engineLabel, engineStateDir, ENGINE_IDS } from "../engines/registry.js";
+import { runtimeCanInspectState } from "../runtimes/contract.js";
+import { expandCarryEntry } from "../runtimes/copy.js";
 import { listChannels } from "../config/store.js";
 import { effectiveWorkDir } from "./folders.js";
 
@@ -96,38 +107,171 @@ export function parseResumeRequest(text) {
   return null;
 }
 
-// Read the first line of a JSONL session file that satisfies `pick`, stopping as soon as it does.
 // Session transcripts grow to megabytes; the fields we need (cwd, start time) are in the opening
-// records, so this must never read the whole file.
-async function firstRecord(file, pick, maxLines = 50) {
+// records, so a lookup must never read the whole file. Both stores below cap at the same number of
+// lines, and the container store additionally caps the bytes — a truncated last line simply fails
+// to parse, which is already how a corrupt record is treated.
+const HEAD_LINES = 50;
+// …and the same in bytes, because a single record can be a megabyte on its own (a large tool
+// result), so a line count alone is not a bound. Measured against live transcripts: a Codex
+// rollout's `session_meta` (which carries the cwd) is one ~19 KB line, and a Claude transcript's
+// first record naming a cwd sat around byte 25 K — this leaves an order of magnitude of headroom
+// and still bounds what a lookup reads.
+const HEAD_BYTES = 512_000;
+
+// The opening lines of a JSONL transcript on the daemon's filesystem.
+async function readHeadLines(file, { maxLines = HEAD_LINES, maxBytes = HEAD_BYTES } = {}) {
   let input;
   try {
     input = createReadStream(file, { encoding: "utf8" });
   } catch {
-    return null;
+    return [];
   }
-  const lines = readline.createInterface({ input, crlfDelay: Infinity });
-  let seen = 0;
+  const reader = readline.createInterface({ input, crlfDelay: Infinity });
+  const out = [];
+  let read = 0;
   try {
-    for await (const line of lines) {
-      if (++seen > maxLines) break;
-      if (!line.trim()) continue;
-      let parsed;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      const value = pick(parsed);
-      if (value) return value;
+    for await (const line of reader) {
+      out.push(line);
+      read += line.length + 1;
+      if (out.length >= maxLines || read >= maxBytes) break;
     }
   } catch {
-    /* unreadable/truncated transcript — treat as "no cwd recorded" */
+    /* unreadable/truncated transcript — whatever was read still gets parsed */
   } finally {
-    lines.close();
+    reader.close();
     input.destroy();
   }
+  return out;
+}
+
+// The first parsed record that satisfies `pick`.
+function firstRecord(lines, pick) {
+  for (const line of lines || []) {
+    if (!String(line || "").trim()) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const value = pick(parsed);
+    if (value) return value;
+  }
   return null;
+}
+
+// ── Where a transcript can be read from ───────────────────────────────────────────────────────
+// A store answers two questions and nothing else: which files match a pattern (with their mtime),
+// and what a matched file's opening lines say. `dir` is set only when the store is a directory this
+// process can open — Codex's own rollout index is a SQLite file in its state dir, and only a
+// directory store can consult it.
+//
+// The pattern is a carry pattern (src/runtimes/copy.js): `*` inside a segment, never across one, so
+// the same expression drives a node:fs expansion here and a shell glob inside a container.
+
+// A directory on the daemon's filesystem: the gateway's own engine state dirs, and — where a host
+// leaves the HOME volume traversable — the channel's volume.
+function directoryStore(kind, dir) {
+  return {
+    kind,
+    dir,
+    async matches(rel) {
+      if (!dir) return [];
+      const from = path.join(dir, rel);
+      const out = [];
+      for (const pair of expandCarryEntry({ rel, from, to: from, kind: "file" })) {
+        let info;
+        try {
+          info = await stat(pair.from);
+        } catch {
+          continue;
+        }
+        if (!info.isFile()) continue;
+        out.push({ file: pair.from, mtimeMs: info.mtimeMs, head: null });
+      }
+      return out;
+    },
+    async head(file) {
+      return readHeadLines(file);
+    },
+  };
+}
+
+// The channel's own container, through the runtime's read-only `inspectState`. One call brings back
+// every match WITH its opening lines, so `head()` never crosses the boundary a second time.
+function runtimeStore(target, stateDir) {
+  const heads = new Map();
+  return {
+    kind: "container",
+    dir: "",
+    async matches(rel) {
+      const found = await target.runtime.inspectState(target, { globs: [path.posix.join(stateDir, rel)], maxLines: HEAD_LINES, maxBytes: HEAD_BYTES });
+      const out = [];
+      for (const entry of found || []) {
+        const file = String(entry?.path || "");
+        if (!file) continue;
+        const head = Array.isArray(entry?.head) ? entry.head : [];
+        heads.set(file, head);
+        out.push({ file, mtimeMs: Number(entry?.mtimeMs) || 0, head });
+      }
+      return out;
+    },
+    async head(file) {
+      return heads.get(file) || [];
+    },
+  };
+}
+
+async function readableDir(dir) {
+  try {
+    await access(dir, constants.R_OK | constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// This engine's state dir INSIDE the channel's container. engineStateDir() answers with the host
+// dir when the target names none, so the container's answer is only trusted when it actually
+// differs from the no-target one.
+function containerStateDir(engine, target) {
+  if (!target?.container) return "";
+  const inside = engineStateDir(engine, target);
+  return inside && inside !== engineStateDir(engine, null) ? inside : "";
+}
+
+// The daemon's view of an in-container path, when the backend can name where the HOME volume's data
+// dir sits on this filesystem (`homeVolumeHostPath`, settled by the container lifecycle). Usually
+// unusable: rootless Podman owns the volume's own directory as the mapped sub-uid with mode 0700,
+// so the files inside are unreachable even though they belong to the daemon's uid. That is why
+// readableDir() decides whether this store is used, not whether the path can be composed.
+function volumeView(target, inside) {
+  const home = String(target?.container?.home || "");
+  const volume = String(target?.container?.homeVolumeHostPath || "");
+  if (!home || !volume || !inside) return "";
+  const rel = path.posix.relative(home, inside);
+  if (!rel || rel.startsWith("..") || path.posix.isAbsolute(rel)) return "";
+  return path.join(volume, rel);
+}
+
+// The stores to search for this engine, cheapest first. The daemon's own dirs cost a readdir; the
+// container costs a container start, so it is asked last and only when the first two say nothing.
+async function storesFor(engine, { dirs = {}, target = null } = {}) {
+  const stores = [];
+  const hostDir = engine === "claude" ? dirs.claude || claudeStateDir() : dirs.codex || codexStateDir();
+  if (hostDir) stores.push(directoryStore("host", hostDir));
+  const inside = containerStateDir(engine, target);
+  if (!inside) return stores;
+  const onHost = volumeView(target, inside);
+  if (onHost && (await readableDir(onHost))) stores.push(directoryStore("volume", onHost));
+  else if (runtimeCanInspectState(target)) stores.push(runtimeStore(target, inside));
+  return stores;
+}
+
+// The most recently written match. A session id is unique, so this normally picks the only one.
+function newest(matches = []) {
+  return matches.reduce((best, entry) => (!best || entry.mtimeMs > best.mtimeMs ? entry : best), null);
 }
 
 // Claude encodes a session's cwd into its project directory name by replacing every non
@@ -138,51 +282,85 @@ export function claudeProjectDirName(dir) {
   return String(dir || "").replace(/[^a-zA-Z0-9]/g, "-");
 }
 
-// Find a Claude session id anywhere in the local project store. Scanning every project directory
+// Find a Claude session id anywhere in a store's project tree. Matching every project directory
 // (rather than computing the encoded name for one) keeps this independent of that encoding, and
 // makes "not found" a fact rather than a guess about the naming scheme.
-async function locateClaudeSession(sessionId, stateDir) {
-  const projects = path.join(stateDir, "projects");
-  let entries = [];
-  try {
-    entries = await readdir(projects, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const file = path.join(projects, entry.name, `${sessionId}.jsonl`);
-    let info;
+async function locateClaudeSession(sessionId, store) {
+  const match = newest(await store.matches(`projects/*/${sessionId}.jsonl`));
+  if (!match) return null;
+  const head = match.head || (await store.head(match.file));
+  const cwd = firstRecord(head, (r) => (typeof r?.cwd === "string" && r.cwd ? r.cwd : null));
+  return {
+    file: match.file,
+    cwd: cwd || "",
+    // Both sides are POSIX (the daemon and every container run on Linux — src/runtimes/copy.js).
+    projectDir: path.basename(path.dirname(match.file)),
+    lastActivity: match.mtimeMs,
+    store: store.kind,
+  };
+}
+
+async function locateCodexSession(sessionId, store) {
+  // A rollout's filename carries a timestamp nobody can recompute, so it is found by pattern —
+  // `sessions/YYYY/MM/DD/rollout-<timestamp>-<id>.jsonl`, the same tree the carry moves. Codex also
+  // keeps its own index (a SQLite state db beside that tree); only a directory store can open one,
+  // so it is a shortcut and never the requirement.
+  let file = store.dir ? await findCodexRollout(store.dir, sessionId).catch(() => "") : "";
+  let lastActivity = 0;
+  let head = null;
+  if (file) {
     try {
-      info = await stat(file);
+      lastActivity = (await stat(file)).mtimeMs;
     } catch {
+      file = "";
+    }
+  }
+  if (!file) {
+    const match = newest(await store.matches(`sessions/*/*/*/*${sessionId}*.jsonl`));
+    if (!match) return null;
+    file = match.file;
+    lastActivity = match.mtimeMs;
+    head = match.head;
+  }
+  const lines = head || (await store.head(file));
+  const cwd = firstRecord(lines, (r) => (r?.type === "session_meta" && typeof r?.payload?.cwd === "string" ? r.payload.cwd : null));
+  return { file, cwd: cwd || "", projectDir: "", lastActivity, store: store.kind };
+}
+
+/**
+ * Locate a session in the stores this channel can reach. Returns null when the id doesn't exist
+ * anywhere the gateway can see — the gateway resumes sessions, it never invents them.
+ *
+ * @param {string} engine
+ * @param {string} sessionId
+ * @param {object} [options]
+ * @param {object} [options.dirs]    override the daemon-side state dirs (tests)
+ * @param {object} [options.target]  the channel's RuntimeTarget, so a containerized session is found
+ * @param {Function} [options.log]
+ */
+export async function locateSession(engine, sessionId, options = {}) {
+  const id = String(sessionId || "");
+  // The id goes into a glob on both sides of the container boundary; SESSION_ID_RE is what keeps a
+  // path fragment or a wildcard from ever reaching one.
+  if (!SESSION_ID_RE.test(id) || !ADOPTABLE.has(engine)) return null;
+  const log = options.log || (() => {});
+  for (const store of await storesFor(engine, options)) {
+    let found = null;
+    try {
+      found = engine === "claude" ? await locateClaudeSession(id, store) : await locateCodexSession(id, store);
+    } catch (error) {
+      // A container that will not start, a CLI that is gone: the remaining stores still answer, and
+      // "not found" stays a fact about this machine rather than a swallowed crash.
+      log(`[gateway] could not read ${engine} sessions from the ${store.kind} store: ${error?.message || error}`);
       continue;
     }
-    const cwd = await firstRecord(file, (r) => (typeof r?.cwd === "string" && r.cwd ? r.cwd : null));
-    return { file, cwd: cwd || "", projectDir: entry.name, lastActivity: info.mtimeMs };
+    if (found) {
+      // WHICH store answered is the fact that was missing while adoption was quietly impossible for
+      // every containerized channel; one log line makes it visible in the journal.
+      if (store.kind !== "host") log(`[gateway] found ${engine} session ${id} in this channel's ${store.kind === "container" ? "container" : "HOME volume"}`);
+      return found;
+    }
   }
-  return null;
-}
-
-async function locateCodexSession(sessionId, stateDir) {
-  const file = await findCodexRollout(stateDir, sessionId).catch(() => "");
-  if (!file) return null;
-  let info = null;
-  try {
-    info = await stat(file);
-  } catch {
-    return null;
-  }
-  const cwd = await firstRecord(file, (r) => (r?.type === "session_meta" && typeof r?.payload?.cwd === "string" ? r.payload.cwd : null));
-  return { file, cwd: cwd || "", projectDir: "", lastActivity: info.mtimeMs };
-}
-
-// Locate a session in the local engine store. Returns null when the id doesn't exist on this
-// machine — the gateway resumes sessions, it never invents them.
-export async function locateSession(engine, sessionId, dirs = {}) {
-  if (!sessionId) return null;
-  if (engine === "claude") return locateClaudeSession(sessionId, dirs.claude || claudeStateDir());
-  if (engine === "codex") return locateCodexSession(sessionId, dirs.codex || codexStateDir());
   return null;
 }
 
@@ -264,8 +442,11 @@ function ago(ms) {
 // Pure decision + lookups: it performs NO writes, so the caller owns session/pool mutation and can
 // order it against its own run-safety checks.
 //
+// `target` is the channel's RuntimeTarget — without it only the daemon's own state dirs are
+// searched, which under the container runtime means every live session is invisible.
+//
 // Returns { ok:true, sessionId, engine, cwd, replacing, message } or { ok:false, message }.
-export async function planSessionAdoption({ arg, slug, threadKey, workDir, threadEngine = "", currentSessionId = "", dirs = {} }) {
+export async function planSessionAdoption({ arg, slug, threadKey, workDir, threadEngine = "", currentSessionId = "", dirs = {}, target = null, log = () => {} }) {
   const parsed = parseResumeRequest(arg);
   if (!parsed) {
     return {
@@ -286,12 +467,13 @@ export async function planSessionAdoption({ arg, slug, threadKey, workDir, threa
   // When the text named no harness, the thread's engine is only a first guess — Claude and Codex
   // both mint uuids, so a pasted bare id says nothing about who owns it. Try the other adoptable
   // stores before declaring the session missing.
-  let located = await locateSession(engine, parsed.sessionId, dirs);
+  const lookup = { dirs, target, log };
+  let located = await locateSession(engine, parsed.sessionId, lookup);
   let resolvedEngine = engine;
   if (!located && !parsed.engine) {
     for (const candidate of ADOPTABLE) {
       if (candidate === engine) continue;
-      located = await locateSession(candidate, parsed.sessionId, dirs);
+      located = await locateSession(candidate, parsed.sessionId, lookup);
       if (located) {
         resolvedEngine = candidate;
         break;
@@ -299,11 +481,19 @@ export async function planSessionAdoption({ arg, slug, threadKey, workDir, threa
     }
   }
   if (!located) {
+    // Name the harness the PASTED TEXT named, never the thread's: a `claude --resume` line pasted
+    // into a Codex thread used to come back as a missing "Codex session", which sends people
+    // hunting for the wrong id. With no harness in the text BOTH stores were searched, so the
+    // refusal claims neither.
+    const missing = parsed.engine
+      ? `${engineLabel(parsed.engine)} session \`${parsed.sessionId}\``
+      : `session \`${parsed.sessionId}\` in Claude's or Codex's history`;
+    const searched = target?.container ? "this channel's container and the gateway's own history" : "the gateway's own history";
     return {
       ok: false,
       message:
-        `I can't find ${engineLabel(engine)} session \`${parsed.sessionId}\` on the gateway machine. ` +
-        "Check the id, and make sure the session was created on THIS machine — sessions from your laptop aren't here.",
+        `I can't find ${missing} — I looked in ${searched}. ` +
+        "Check the id, and make sure the session was created in THIS channel: another channel's sessions stay in its own container, and sessions from your laptop aren't here.",
     };
   }
 
