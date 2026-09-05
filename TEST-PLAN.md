@@ -2535,7 +2535,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       revisions, records a failing GitHub call without discarding last-good state, honours a
       commit pin, and reports a slug held by another owner as a conflict
       (`test/skills-platform.test.js`).
-- [x] Integration: templates seed once, resolve by category (case-insensitive) and explicit slug,
+- [x] Integration: templates seed once, resolve explicit slugs,
       preview with dependencies, and are FOLLOWED live: assigning stores only the template slug on
       the conversation, the channel tier is template + own additions, a template edit reaches the
       follower, clearing keeps the additions, DM templates carry a template through `effectiveMeta`,
@@ -2562,9 +2562,9 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       (`test/folders-settings.test.js`); the Skills admin view has a canonical path
       (`test/admin-navigation.test.js`).
 - [x] Admin UI: Sources, Sync settings and MCP are separate tabs; adding a source is modal;
-      templates are selection-first with searchable explicit-skill/category controls; Usage is
-      searchable and alphabetic with By skill / By channel rollups, compact bars, exact/inferred
-      provenance, and context-warning explanations. The profile API supplies warning text rather
+      templates are selection-first with searchable explicit-skill controls; Usage is
+      searchable and usage-descending with By skill / By channel rollups, compact bars,
+      and context-warning explanations. The profile API supplies warning text rather
       than only a count (`test/skills-admin-ui.test.js`, `test/skills-admin-api.test.js`).
 - [ ] Live (Claude + Codex): grant a catalog skill to a private test channel, ask for something its
       description covers, and confirm the skill fires from the materialized folder with no Skills
@@ -2705,6 +2705,22 @@ Manual checks for the daemon-level behavior:
       results to that same thread without another top-level banner, a daemon restart preserves the
       anchor, and tomorrow's first run creates a new anchor. Repeat with Claude and Codex and prove
       each execution still receives a fresh engine session.
+### Skills platform (governance and usage)
+
+- [x] Unit/API: migration 19 preserves existing discoverability; catalog search covers source
+      label and filters by source/category; Enabled, Discoverable and Mandatory transitions enforce
+      Mandatory ⇒ Enabled + Discoverable, while disabling removes the mandatory grant.
+- [x] UI: Usage is the first tab and auto-loads the top 20 for 30 days, Templates is second and has
+      no category or conversation-assignment controls, Catalog exposes category/source filters and
+      the three governance checkboxes, all usage lists sort descending, and user-facing tables have
+      one Usage column.
+- [x] MCP: ordinary users search discoverable skills plus skills already active here by query,
+      category or source; managers change channel skills/templates; only admins may call
+      `set_skill_governance`.
+- [ ] Live engine-independent: verify Catalog filtering/governance and the Overview top-ten chart.
+- [ ] Live Claude + Codex: search for a discoverable skill, grant/revoke it in the channel, change
+      the template, and confirm a mandatory skill materializes on the next turn in both harnesses.
+
 ### Transactional self-update
 
 - [x] Unit: exclusive reservation, live-owner refusal, dead/abandoned-owner recovery, ownership

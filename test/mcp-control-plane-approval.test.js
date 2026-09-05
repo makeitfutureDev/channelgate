@@ -286,7 +286,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "add_channel_skills", "remove_channel_skills", "set_channel_skill_template",
     "create_skill", "update_skill", "decide_skill_proposal", "sync_skill_sources",
     "delete_skill", "publish_skill", "add_org_skills", "remove_org_skills",
-    "add_skill_source", "set_skill_source", "remove_skill_source", "set_skill_excluded", "set_skill_scope",
+    "add_skill_source", "set_skill_source", "remove_skill_source", "set_skill_excluded", "set_skill_governance", "set_skill_scope",
   ]);
   const OPEN = new Set([
     // read-only

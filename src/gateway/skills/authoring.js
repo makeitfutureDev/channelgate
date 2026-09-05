@@ -51,9 +51,9 @@ export function describeOwner(skill) {
 }
 
 // May `userId` see this skill at all? Personal skills are their author's (admins see everything).
-export function canSeeSkill(skill, { userId = "", isAdmin = false } = {}) {
+export function canSeeSkill(skill, { userId = "", isAdmin = false, active = false } = {}) {
   if (!skill) return false;
-  if (skill.visibility !== "personal") return true;
+  if (skill.visibility !== "personal") return isAdmin || skill.discoverable || active;
   return isAdmin || (Boolean(userId) && skill.createdBy === userId);
 }
 

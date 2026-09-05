@@ -20,6 +20,11 @@ test("templates and usage expose searchable selection and understandable views",
   assert.match(js, /data-view="skill"/);
   assert.match(js, /data-view="channel"/);
   assert.match(js, /id="usage-q"/);
-  assert.match(js, /Exact<\/b> means Claude explicitly opened a skill/);
+  assert.doesNotMatch(js, /Whole categories/);
+  assert.doesNotMatch(js, /Assign a template to a conversation/);
+  assert.match(js, /<th>Usage<\/th>/);
+  assert.doesNotMatch(js, /<th>Exact<\/th>/);
+  assert.match(js, /skill-discoverable/);
+  assert.match(js, /skill-mandatory/);
   assert.match(js, /does not mean a skill failed/);
 });

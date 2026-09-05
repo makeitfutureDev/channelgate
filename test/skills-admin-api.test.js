@@ -113,6 +113,8 @@ test("sources: a folder source imports in review mode, the review queue approves
   const approved = await request(`/skills/revisions/${rev.id}/approve`, { method: "POST", body: {} });
   assert.equal(approved.status, 200);
   assert.ok((await request("/skills/catalog/folder-skill")).json.skill.currentRevisionId);
+  assert.ok((await request(`/skills/catalog?q=${encodeURIComponent("test folder")}`)).json.skills.some((s) => s.slug === "folder-skill"), "search includes source label");
+  assert.ok((await request(`/skills/catalog?source=${sourceId}`)).json.skills.some((s) => s.slug === "folder-skill"), "source filter is backend-backed");
   assert.equal((await request("/skills/overview")).json.staged.length, 0);
 
   const bad = await request("/skills/sources", { method: "POST", body: { kind: "svn", url: "x" } });
@@ -129,9 +131,23 @@ test("sources: a folder source imports in review mode, the review queue approves
   assert.equal((await request("/skills/catalog/folder-skill")).json.skill.deleted, true);
 });
 
+test("catalog governance controls enabled, discoverable and mandatory invariants", async () => {
+  await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Governed Skill", "governance test") }], publish: false } });
+  let changed = await request("/skills/catalog/governed-skill/governance", { method: "POST", body: { discoverable: false } });
+  assert.equal(changed.json.skill.discoverable, false);
+  changed = await request("/skills/catalog/governed-skill/governance", { method: "POST", body: { mandatory: true } });
+  assert.equal(changed.json.skill.mandatory, true);
+  assert.equal(changed.json.skill.discoverable, true);
+  assert.equal(changed.json.skill.enabled, true);
+  changed = await request("/skills/catalog/governed-skill/governance", { method: "POST", body: { enabled: false } });
+  assert.equal(changed.json.skill.enabled, false);
+  assert.equal(changed.json.skill.mandatory, false);
+});
+
 test("templates: preview and assign to a conversation, grant/revoke, profile and usage endpoints", async () => {
   await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Tpl Sales Skill", "sales via template", "category: Sales\nrequires: [tpl-dep]\n") }], publish: false } });
   await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Tpl Dep", "a dependency") }], publish: false } });
+  await request("/skills/templates", { method: "POST", body: { slug: "sales", name: "Sales", skills: ["tpl-sales-skill"] } });
   const templates = await request("/skills/templates");
   const sales = templates.json.templates.find((t) => t.slug === "sales");
   assert.ok(sales.resolved.includes("tpl-sales-skill"));

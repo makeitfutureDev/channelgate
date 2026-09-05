@@ -53,13 +53,16 @@ export function buildSkillsMcpServer(token) {
 
   server.registerTool(
     "library_search_skills",
-    { description: "Search the gateway's skill catalog. Returns items with facets (categories) and pagination.", inputSchema: { query: z.string().optional(), category: z.string().optional(), limit: z.number().int().min(1).max(200).optional(), offset: z.number().int().min(0).optional() } },
-    async ({ query = "", category = "", limit = 50, offset = 0 }) => {
+    { description: "Search the gateway's discoverable skill catalog by name, description, category, tags or source. Returns facets and pagination.", inputSchema: { query: z.string().optional(), category: z.string().optional(), source: z.string().optional(), limit: z.number().int().min(1).max(200).optional(), offset: z.number().int().min(0).optional() } },
+    async ({ query = "", category = "", source = "", limit = 50, offset = 0 }) => {
       const denied = need("read");
       if (denied) return denied;
-      const all = listSkills({ query, category, viewer }).map(summary);
+      const sources = listSources();
+      const sourceRow = source ? sources.find((s) => String(s.id) === source || s.label.toLowerCase() === source.toLowerCase()) : null;
+      if (source && !sourceRow) return json({ total: 0, count: 0, offset, has_more: false, next_offset: null, items: [], facets: { categories: [], sources: sources.map((s) => ({ id: s.id, name: s.label || s.url })) } });
+      const all = listSkills({ query, category, sourceId: sourceRow?.id ?? null, viewer, discoverable: true }).map(summary);
       const items = all.slice(offset, offset + limit);
-      return json({ total: all.length, count: items.length, offset, has_more: offset + items.length < all.length, next_offset: offset + items.length < all.length ? offset + items.length : null, items, facets: { categories: listCategories().map((c) => ({ name: c.category, count: c.count })) } });
+      return json({ total: all.length, count: items.length, offset, has_more: offset + items.length < all.length, next_offset: offset + items.length < all.length ? offset + items.length : null, items, facets: { categories: listCategories().map((c) => ({ name: c.category, count: c.count })), sources: sources.map((s) => ({ id: s.id, name: s.label || s.url })) } });
     },
   );
 
@@ -70,7 +73,7 @@ export function buildSkillsMcpServer(token) {
       const denied = need("read");
       if (denied) return denied;
       const skill = getSkill(name);
-      if (!skill || skill.deleted || (skill.visibility === "personal")) return text(`Unknown skill "${name}".`);
+      if (!skill || skill.deleted || !skill.discoverable || (skill.visibility === "personal")) return text(`Unknown skill "${name}".`);
       const rev = effectiveRevisionFor(skill);
       return json({ ...summary(skill), revision: rev?.revisionNo ?? null, files: rev ? revisionFiles(rev.id).map((f) => f.path) : [] });
     },
@@ -83,7 +86,7 @@ export function buildSkillsMcpServer(token) {
       const denied = need("read");
       if (denied) return denied;
       const skill = getSkill(name);
-      if (!skill || skill.deleted || skill.visibility === "personal") return text(`Unknown skill "${name}".`);
+      if (!skill || skill.deleted || !skill.discoverable || skill.visibility === "personal") return text(`Unknown skill "${name}".`);
       const bundle = skillBundle(skill);
       if (!bundle) return text(`"${skill.slug}" has no approved revision yet.`);
       const f = revisionFile(bundle.revision.id, file);

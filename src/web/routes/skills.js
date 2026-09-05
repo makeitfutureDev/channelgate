@@ -8,6 +8,7 @@ import {
   listSkills,
   getSkill,
   listCategories,
+  listCatalogSources,
   listRevisions,
   revisionFiles,
   revisionFile,
@@ -29,6 +30,7 @@ import {
   listProposals,
   usageCountsBySlug,
   setSkillVisibility,
+  setSkillDiscoverable,
   VISIBILITIES,
   catalogStats,
   SOURCE_KINDS,
@@ -65,10 +67,13 @@ function guard(fn) {
 
 function skillToApi(skill, usage = null) {
   const u = usage?.get(skill.slug.toLowerCase());
+  const mandatory = (getOrgAccessGrants().skills || []).some((s) => String(s).toLowerCase() === skill.slug.toLowerCase());
   return {
     ...skill,
     meta: undefined,
     owner: describeOwner(skill),
+    enabled: !skill.deleted,
+    mandatory,
     usage30d: u ? { total: u.total, exact: u.exact, inferred: u.inferred, lastTs: u.lastTs } : { total: 0, exact: 0, inferred: 0, lastTs: "" },
   };
 }
@@ -110,10 +115,31 @@ export function createSkillsRouter() {
     const skills = listSkills({
       includeDeleted: req.query.deleted === "1",
       ownerKind: typeof req.query.owner === "string" ? req.query.owner : "",
+      sourceId: req.query.source ? Number(req.query.source) : null,
       category: typeof req.query.category === "string" ? req.query.category : "",
       query: typeof req.query.q === "string" ? req.query.q : "",
-    }).map((s) => skillToApi(s, usage));
-    res.json({ skills, categories: listCategories() });
+    }).map((s) => skillToApi(s, usage)).sort((a, b) => b.usage30d.total - a.usage30d.total || a.slug.localeCompare(b.slug));
+    res.json({ skills, categories: listCategories(), sources: listCatalogSources() });
+  }));
+
+  router.post("/skills/catalog/:slug/governance", guard(async (req, res) => {
+    const skill = getSkill(req.params.slug);
+    if (!skill) return res.status(404).json({ error: "skill not found" });
+    const b = req.body || {};
+    if (b.enabled === false) {
+      revokeSkillsFromOrg([skill.slug]);
+      excludeSkill(skill.slug);
+    } else if (b.enabled === true) restoreSkill(skill.slug);
+    const mandatoryNow = (getOrgAccessGrants().skills || []).some((s) => String(s).toLowerCase() === skill.slug.toLowerCase());
+    if (typeof b.discoverable === "boolean" && !(mandatoryNow && b.discoverable === false && b.mandatory !== false)) setSkillDiscoverable(skill.slug, b.discoverable);
+    if (typeof b.mandatory === "boolean") {
+      if (b.mandatory) {
+        restoreSkill(skill.slug);
+        setSkillDiscoverable(skill.slug, true);
+        grantSkillsToOrg([skill.slug]);
+      } else revokeSkillsFromOrg([skill.slug]);
+    }
+    res.json({ ok: true, skill: skillToApi(getSkill(skill.slug)) });
   }));
 
   router.get("/skills/catalog/:slug", guard(async (req, res) => {
@@ -268,7 +294,7 @@ export function createSkillsRouter() {
   router.post("/skills/templates", guard(async (req, res) => {
     const b = req.body || {};
     const existing = b.slug ? getTemplate(b.slug) : null;
-    const t = upsertTemplate({ slug: b.slug, name: b.name, description: b.description || "", skills: b.skills || [], categories: b.categories || [], builtin: existing ? existing.builtin : false });
+    const t = upsertTemplate({ slug: b.slug, name: b.name, description: b.description || "", skills: b.skills || [], categories: [], builtin: existing ? existing.builtin : false });
     res.json({ ok: true, template: templateSummary(t) });
   }));
 

@@ -127,6 +127,7 @@ export const GATEWAY_TOOL_NAMES = [
   "set_skill_source",
   "remove_skill_source",
   "set_skill_excluded",
+  "set_skill_governance",
   "set_skill_scope",
   "report_progress",
   "slack_list_create",

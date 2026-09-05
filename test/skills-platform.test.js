@@ -448,13 +448,14 @@ test("git sync refuses a slug another owner holds and reports it as a conflict",
 
 // ── templates ────────────────────────────────────────────────────────────────────────────────
 
-test("templates resolve by category and explicit slug, preview against a conversation, and are followed live", async () => {
+test("templates resolve explicit skills, preview against a conversation, and are followed live", async () => {
   templates.seedBuiltinTemplates();
   assert.equal(templates.seedBuiltinTemplates().length, 0, "seeding is idempotent");
   catalog.putSkillRevision({ files: [md("Sales Play", "A sales skill", "category: sales\nrequires: [crm-base]\n")], ownerKind: "local" });
   catalog.putSkillRevision({ files: [md("CRM Base", "Base CRM skill", "category: Internal\n")], ownerKind: "local" });
+  catalog.upsertTemplate({ slug: "sales", name: "Sales", skills: ["sales-play"] });
   const sales = templates.templateSummary(catalog.getTemplate("Sales"));
-  assert.ok(sales.resolved.includes("sales-play"), "category match is case-insensitive");
+  assert.ok(sales.resolved.includes("sales-play"), "explicit selection resolves");
   const preview = templates.previewTemplate("sales", { skills: ["existing-grant"] });
   assert.deepEqual(preview.keep, ["existing-grant"]);
   assert.ok(preview.add.includes("sales-play") && preview.add.includes("crm-base"), "the dependency rides along");

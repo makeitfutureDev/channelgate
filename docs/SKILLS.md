@@ -48,7 +48,7 @@ removed (the Skills view, `set_skill_excluded`, a migrated Skills Manager exclus
 ## Channel profiles (no tokens)
 
 A conversation's active skills are the union of three grant tiers, resolved on every message:
-the organization tier (Settings → Skills & connectors), the conversation's own grants
+the mandatory organization tier, the conversation's own grants
 (Conversations → Skills, or the chat verbs), and the requester's personal grants. Dependencies
 named in `requires:` are granted with a skill automatically. The resolver reports what is
 missing, what is still awaiting review, dependency cycles, near-duplicate trigger descriptions,
@@ -88,14 +88,15 @@ set — explicit catalog skills (a checklist) plus every catalog skill in its ca
 under Settings → Access Templates → *Skill templates*, where admins add more (Support, Legal, …).
 
 A conversation **follows** one template: Conversations → Tools → *Skill template* (or
-`set_channel_skill_template` from chat, or Skills → Templates → *Assign*). Its channel tier is the
+`set_channel_skill_template` from chat). Its channel tier is the
 template's **current** skills plus the skills added to the conversation itself, so a template
 edit reaches every conversation that follows it, and "add this skill to the channel" always adds
 on top. The organization and personal tiers union in as before. `template: none` stops
 following; the conversation's own additions stay. DM templates (User / Admin) can name a skill
 template too. Preview first to see what a conversation would gain, keep or drop.
 
-From chat (managers, or an admin): `list_skill_templates`, `preview_skill_template`,
+Templates store explicit skill selections; category is catalog metadata used for filtering, not a
+bulk template selector. From chat (managers, or an admin): `list_skill_templates`, `preview_skill_template`,
 `set_channel_skill_template`, `add_channel_skills`, `remove_channel_skills`,
 `show_channel_skills` (which names the template and marks which skills come from it). These
 change persistent state and show an Approve/Deny card unless the conversation is in auto mode.
@@ -151,7 +152,7 @@ Every run records which skills fired. Claude's `Skill` tool gives an **exact** s
 no such tool and reads the `SKILL.md` file, so a read or shell command touching
 `…/skills/<slug>/SKILL.md` is recorded as **inferred** and labelled so. Rows carry
 skill/revision/conversation/user/engine/session/run and the signal — never prompt text or skill
-content. `skill_usage_report` in chat and Skills → Usage in the admin UI show what fired and,
+content. `skill_usage_report` in chat and Skills → Usage in the admin UI show one usage total and,
 more usefully, which granted skills **never** fired; the per-conversation profile table shows
 each conversation's always-on context cost.
 

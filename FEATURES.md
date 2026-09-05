@@ -1884,6 +1884,12 @@ are retired, bullet by bullet; everything else stands.
   and searchable/alphabetic **Usage** with By skill / By channel rollups, compact comparison bars,
   detection provenance and explained context warnings instead of every profile's full skill dump.
   → TEST-PLAN: Skills platform (Core).
+- **Governed skill discovery and mandatory loading**: every catalog row can be disabled without
+  disabling its source, approved for member/agent discovery, or made mandatory in every
+  conversation. Mandatory implies enabled + discoverable; effective profiles remain mandatory ∪
+  template ∪ channel ∪ personal ∪ dependencies. Catalog search includes source labels, category
+  and source filters; usage-led screens sort descending and Overview charts the top ten skills.
+  Templates select explicit skills only. → TEST-PLAN: Skills platform (governance and usage).
 - **Personal skills and self-service grants.** A skill created with `personal: true` (or switched in
   the admin UI) is visible and grantable only to its author (admins see everything) and is never
   published or exported; a `promote` proposal, once approved, makes it an organization skill.

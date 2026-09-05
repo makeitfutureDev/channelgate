@@ -95,6 +95,7 @@ function rowToSkill(r) {
     excludedAt: r.excluded_at || "",
     excluded: Boolean(r.excluded_at),
     visibility: r.visibility === "personal" ? "personal" : "org",
+    discoverable: r.discoverable !== 0,
     stagedCount: Number(r.staged_count || 0),
   };
 }
@@ -209,7 +210,7 @@ export function getSkillById(id) {
 
 // `viewer` narrows personal skills: "" (nobody) hides every personal skill, a user id shows that
 // user's own, "*" (an admin surface) shows all.
-export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = null, category = "", query = "", limit = 0, viewer = "*", visibility = "", channelScope = null } = {}) {
+export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = null, category = "", query = "", limit = 0, viewer = "*", visibility = "", channelScope = null, discoverable = null } = {}) {
   const where = [];
   const args = [];
   if (!includeDeleted) where.push("s.deleted_at = ''");
@@ -220,6 +221,10 @@ export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = 
   if (visibility) {
     where.push("s.visibility = ?");
     args.push(visibility);
+  }
+  if (discoverable != null) {
+    where.push("s.discoverable = ?");
+    args.push(discoverable ? 1 : 0);
   }
   if (viewer !== "*") {
     where.push("(s.visibility <> 'personal' OR s.created_by = ?)");
@@ -239,11 +244,18 @@ export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = 
   }
   if (query) {
     const q = `%${String(query).trim().toLowerCase()}%`;
-    where.push("(lower(s.slug) LIKE ? OR lower(s.name) LIKE ? OR lower(s.description) LIKE ? OR lower(s.tags) LIKE ? OR lower(s.category) LIKE ?)");
-    args.push(q, q, q, q, q);
+    where.push("(lower(s.slug) LIKE ? OR lower(s.name) LIKE ? OR lower(s.description) LIKE ? OR lower(s.tags) LIKE ? OR lower(s.category) LIKE ? OR EXISTS (SELECT 1 FROM skill_sources src WHERE src.id = s.source_id AND lower(src.label || ' ' || src.url) LIKE ?))");
+    args.push(q, q, q, q, q, q);
   }
   const sql = `${SKILL_SELECT}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY s.slug${limit > 0 ? ` LIMIT ${Number(limit)}` : ""}`;
   return getDb().prepare(sql).all(...args).map(rowToSkill);
+}
+
+export function setSkillDiscoverable(key, discoverable) {
+  const skill = getSkill(key);
+  if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
+  getDb().prepare("UPDATE skills SET discoverable = ?, updated_at = ? WHERE id = ?").run(discoverable ? 1 : 0, nowIso(), skill.id);
+  return getSkill(skill.slug);
 }
 
 export function listCategories() {
@@ -251,6 +263,10 @@ export function listCategories() {
     .prepare("SELECT category, COUNT(*) AS n FROM skills WHERE deleted_at = '' AND category <> '' GROUP BY category COLLATE NOCASE ORDER BY n DESC, category")
     .all()
     .map((r) => ({ category: r.category, count: r.n }));
+}
+
+export function listCatalogSources() {
+  return getDb().prepare("SELECT id, label, url FROM skill_sources ORDER BY lower(CASE WHEN label = '' THEN url ELSE label END)").all();
 }
 
 export function getRevision(id) {
@@ -644,7 +660,7 @@ export function upsertTemplate({ slug, name, description = "", skills = [], cate
   const s = normalizeSlug(slug || name);
   if (!isValidSlug(s)) throw new SkillCatalogError("a template needs a valid slug");
   const cleanSkills = [...new Set((Array.isArray(skills) ? skills : []).map((x) => normalizeSlug(x)).filter(isValidSlug))];
-  const cleanCategories = [...new Set((Array.isArray(categories) ? categories : []).map((x) => String(x || "").trim()).filter(Boolean))];
+  const cleanCategories = [];
   getDb()
     .prepare(
       `INSERT INTO skill_templates(slug, name, description, skills, categories, builtin, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
@@ -658,8 +674,7 @@ export function deleteTemplate(slug) {
   return getDb().prepare("DELETE FROM skill_templates WHERE slug = ? COLLATE NOCASE").run(String(slug)).changes > 0;
 }
 
-// The live skill list a template stands for: its explicit slugs plus every live skill whose
-// category matches one of the template's categories (case-insensitive). Slugs that name a
+// The live skill list a template stands for: its explicit slugs. Slugs that name a
 // missing or tombstoned skill are reported separately, never silently dropped.
 export function resolveTemplateSkills(template) {
   const resolved = new Map();
@@ -668,12 +683,6 @@ export function resolveTemplateSkills(template) {
     const skill = getSkill(slug);
     if (skill && !skill.deleted) resolved.set(skill.slug, { slug: skill.slug, via: "template" });
     else missing.push(slug);
-  }
-  if (template?.categories?.length) {
-    const wanted = new Set(template.categories.map((c) => c.toLowerCase()));
-    for (const skill of listSkills()) {
-      if (skill.category && wanted.has(skill.category.toLowerCase()) && !resolved.has(skill.slug)) resolved.set(skill.slug, { slug: skill.slug, via: `category:${skill.category}` });
-    }
   }
   return { skills: [...resolved.values()], missing };
 }

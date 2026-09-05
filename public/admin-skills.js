@@ -6,7 +6,7 @@ import { api } from "./admin-api.js";
 import { confirmDialog, escapeHtml as esc } from "./admin-view.js";
 
 const state = {
-  tab: "catalog",
+  tab: "usage",
   overview: null,
   catalog: null,
   catalogAll: null,
@@ -16,6 +16,8 @@ const state = {
   fileView: null,
   query: "",
   owner: "",
+  category: "",
+  source: "",
   showRemoved: false,
   newSkill: false,
   sourceModal: false,
@@ -61,7 +63,7 @@ async function withStatus(fn, okMessage = "") {
 async function refreshAll() {
   const [overview, catalog, catalogAll, profiles] = await Promise.all([
     api("/api/skills/overview"),
-    api(`/api/skills/catalog?q=${encodeURIComponent(state.query)}${state.owner ? `&owner=${encodeURIComponent(state.owner)}` : ""}${state.showRemoved ? "&deleted=1" : ""}`),
+    api(`/api/skills/catalog?q=${encodeURIComponent(state.query)}${state.owner ? `&owner=${encodeURIComponent(state.owner)}` : ""}${state.category ? `&category=${encodeURIComponent(state.category)}` : ""}${state.source ? `&source=${encodeURIComponent(state.source)}` : ""}${state.showRemoved ? "&deleted=1" : ""}`),
     api("/api/skills/catalog"),
     api("/api/skills/profiles"),
   ]);
@@ -69,6 +71,7 @@ async function refreshAll() {
   state.catalog = catalog;
   state.catalogAll = catalogAll;
   state.profiles = profiles.profiles;
+  if (!state.usage) state.usage = (await api("/api/skills/usage?days=30")).report;
   if (state.selected) await loadDetail(state.selected).catch(() => { state.selected = ""; state.detail = null; });
 }
 
@@ -130,6 +133,7 @@ function renderCatalog() {
   const skills = state.catalog?.skills || [];
   const cats = state.catalog?.categories || [];
   const owners = ["", "bundled", "local", "folder", "git"];
+  const sources = state.catalog?.sources || [];
   const rows = skills.map((s) => `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
       <td><code>${esc(s.slug)}</code>${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
@@ -137,12 +141,17 @@ function renderCatalog() {
       <td>${esc(s.category || "—")}</td>
       <td><span class="muted">${esc(ownerLabel(s))}</span></td>
       <td>${esc(s.version || "—")}</td>
+      <td><label title="Available in the catalog"><input type="checkbox" data-action="skill-enabled" data-slug="${esc(s.slug)}"${s.enabled ? " checked" : ""}/> Enabled</label></td>
+      <td><label title="Approved members and agents may find and grant it"><input type="checkbox" data-action="skill-discoverable" data-slug="${esc(s.slug)}"${s.discoverable ? " checked" : ""}${s.mandatory ? " disabled" : ""}/> Discoverable</label></td>
+      <td><label title="Loaded in every conversation"><input type="checkbox" data-action="skill-mandatory" data-slug="${esc(s.slug)}"${s.mandatory ? " checked" : ""}/> Mandatory</label></td>
       <td class="num">${s.usage30d?.total || 0}</td>
     </tr>`).join("");
   return `
     <div class="skills-toolbar">
       <input type="search" id="skills-q" placeholder="Search slug, name, description, tags…" value="${esc(state.query)}" />
       <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(o) : "every owner"}</option>`).join("")}</select>
+      <select id="skills-category"><option value="">every category</option>${cats.map((c) => `<option value="${esc(c.category)}"${c.category === state.category ? " selected" : ""}>${esc(c.category)} (${c.count})</option>`).join("")}</select>
+      <select id="skills-source"><option value="">every source</option>${sources.map((s) => `<option value="${s.id}"${String(s.id) === state.source ? " selected" : ""}>${esc(s.label || s.url)}</option>`).join("")}</select>
       <label class="skills-inline"><input type="checkbox" id="skills-removed"${state.showRemoved ? " checked" : ""}/> show removed</label>
       <span class="spacer"></span>
       <button type="button" class="ghost" data-action="new-skill">+ New skill</button>
@@ -150,8 +159,8 @@ function renderCatalog() {
     ${cats.length ? `<p class="skills-note">Categories: ${cats.map((c) => `${esc(c.category)} (${c.count})`).join(", ")}</p>` : ""}
     ${state.newSkill ? renderNewSkillForm() : ""}
     <table class="skills-table">
-      <thead><tr><th>Skill</th><th>Description</th><th>Category</th><th>Owner</th><th>Version</th><th>Uses 30d</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="6" class="muted">No skills yet. Add a GitHub source under Sources, re-import the host folders, or create one here.</td></tr>`}</tbody>
+      <thead><tr><th>Skill</th><th>Description</th><th>Category</th><th>Owner</th><th>Version</th><th>Enabled</th><th>Discoverable</th><th>Mandatory</th><th>Usage 30d</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="9" class="muted">No skills yet. Add a GitHub source under Sources, re-import the host folders, or create one here.</td></tr>`}</tbody>
     </table>
     ${state.detail && state.detail.skill.slug === state.selected ? renderDetail() : ""}`;
 }
@@ -195,7 +204,7 @@ function renderDetail() {
       ${r.status === "staged" ? `<button type="button" data-action="approve-rev" data-id="${r.id}">approve</button><button type="button" data-action="reject-rev" data-id="${r.id}">reject</button>` : ""}
     </span>`;
   }).join("");
-  const usage = d.usage ? `${d.usage.total} use(s) in 90 days (${d.usage.exact} exact, ${d.usage.inferred} inferred), last ${fmtWhen(d.usage.lastTs)}` : "no use recorded in 90 days";
+  const usage = d.usage ? `${d.usage.total} use(s) in 90 days, last ${fmtWhen(d.usage.lastTs)}` : "no use recorded in 90 days";
   return `
     <div class="card skills-detail">
       <div class="card-head"><h3><code>${esc(s.slug)}</code> ${esc(s.name !== s.slug ? s.name : "")}</h3><span class="badge">${esc(s.owner)}</span>${s.excluded ? '<span class="badge" title="Excluded by an admin; stays out across syncs until restored">excluded</span>' : s.deleted ? '<span class="badge" title="Dropped by its source; comes back if the source delivers it again">removed</span>' : ""}</div>
@@ -348,7 +357,6 @@ function renderTemplates() {
   const channels = state.profiles || [];
   const e = state.editTemplate;
   const skills = (state.catalogAll?.skills || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-  const categories = [...new Set(skills.map((s) => s.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const selected = new Set(e?.skills || []);
   const selectedChips = [...selected].sort().map((slug) => `<span class="skills-picker-chip"><code>${esc(slug)}</code><button type="button" data-action="toggle-template-skill" data-slug="${esc(slug)}" aria-label="Remove ${esc(slug)}">×</button></span>`).join("");
   const pickerQuery = state.templateSkillQuery.trim().toLowerCase();
@@ -360,7 +368,6 @@ function renderTemplates() {
         <label class="field"><span>Name</span><input id="tpl-name" value="${esc(e.name || "")}" /></label>
         <label class="field"><span>Slug</span><input id="tpl-slug" value="${esc(e.slug || "")}"${e.isNew ? "" : " readonly"} /></label>
         <label class="field wide"><span>Description</span><input id="tpl-desc" value="${esc(e.description || "")}" /></label>
-        <fieldset class="field wide skills-category-picker"><legend>Whole categories <span class="muted">(optional)</span></legend>${categories.map((c) => `<label><input type="checkbox" class="tpl-category" value="${esc(c)}"${(e.categories || []).includes(c) ? " checked" : ""}/> ${esc(c)}</label>`).join("") || '<span class="muted">No categories in the catalog.</span>'}</fieldset>
       </div>
       <div class="skills-picker">
         <label class="field"><span>Selected skills (${selected.size})</span><input id="template-skill-q" type="search" placeholder="Search skills to add…" value="${esc(state.templateSkillQuery)}" /></label>
@@ -369,21 +376,10 @@ function renderTemplates() {
       </div>
       <div class="skills-actions"><button type="button" data-action="save-template">Save</button><button type="button" class="ghost" data-action="cancel-template">Cancel</button></div>
     </div>` : "";
-  const preview = state.templatePreview;
   return `
     <div class="skills-section-head"><div><h3>Templates</h3><p class="skills-note">Select a template to inspect or edit. Conversations follow it live and keep their own additional skills.</p></div><button type="button" data-action="new-template">+ New template</button></div>
     <div class="skills-toolbar"><select id="template-select"><option value="">Select a template…</option>${templates.map((t) => `<option value="${esc(t.slug)}"${e?.slug === t.slug ? " selected" : ""}>${esc(t.name)}${t.builtin ? " · built-in" : ""} · ${t.resolved.length} skills</option>`).join("")}</select>${e && !e.isNew ? `<button type="button" class="ghost" data-action="delete-template" data-slug="${esc(e.slug)}"${e.builtin ? " disabled" : ""}>Delete</button>` : ""}</div>
-    ${form}
-    <div class="card skills-detail">
-      <h3>Assign a template to a conversation</h3>
-      <div class="skills-inline">
-        <select id="apply-template"><option value="none"${state.applyTemplate === "none" ? " selected" : ""}>none (stop following)</option>${templates.map((t) => `<option value="${esc(t.slug)}"${t.slug === state.applyTemplate ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select>
-        <select id="apply-channel">${channels.map((c) => `<option value="${esc(c.slug)}"${c.slug === state.applyChannel ? " selected" : ""}>${esc(c.name || c.slug)}${c.skillTemplate ? ` — follows ${esc(c.skillTemplate)}` : ""} (${c.skills.length} skills)</option>`).join("")}</select>
-        <button type="button" class="ghost" data-action="preview-template">Preview</button>
-        <button type="button" data-action="apply-template">Assign</button>
-      </div>
-      ${preview ? `<p class="skills-note"><strong>${esc(preview.template ? preview.template.name : "no template")}</strong> → gain ${esc(preview.add.join(", ") || "nothing")}; keep ${esc(preview.keep.join(", ") || "nothing")}; drop ${esc(preview.remove.join(", ") || "nothing")}. Channel tier: ${preview.names.length} skill(s), ~${preview.profile.contextTokens} always-on tokens.${preview.profile.warnings.length ? `<br/><span class="skills-error">${esc(preview.profile.warnings.join(" · "))}</span>` : ""}</p>` : ""}
-    </div>`;
+    ${form}`;
 }
 
 function renderUsage() {
@@ -391,12 +387,12 @@ function renderUsage() {
   const r = state.usage;
   const query = state.usageQuery.trim().toLowerCase();
   const byName = new Map(channels.map((c) => [c.slug, c]));
-  const used = (r?.used || []).filter((u) => !query || `${u.name} ${u.slug}`.toLowerCase().includes(query)).sort((a, b) => a.name.localeCompare(b.name));
+  const used = (r?.used || []).filter((u) => !query || `${u.name} ${u.slug}`.toLowerCase().includes(query)).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)).slice(0, state.usageChannel ? undefined : 20);
   const channelUsage = (r?.channels || []).filter((u) => { const c = byName.get(u.channelSlug); return !query || `${c?.name || ""} ${u.channelSlug}`.toLowerCase().includes(query); }).sort((a, b) => (byName.get(a.channelSlug)?.name || a.channelSlug).localeCompare(byName.get(b.channelSlug)?.name || b.channelSlug));
   const max = Math.max(1, ...(state.usageView === "skill" ? used : channelUsage).map((u) => u.total));
   const warnings = channels.filter((c) => c.warnings > 0 && (!query || `${c.name || ""} ${c.slug}`.toLowerCase().includes(query))).sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug));
-  const skillRows = used.map((u) => `<tr><td><code>${esc(u.slug)}</code>${u.inCatalog ? "" : ' <span class="pill">not in catalog</span>'}<div class="skills-usage-bar"><i style="width:${Math.max(3, Math.round(u.total / max * 100))}%"></i></div></td><td class="num">${u.total}</td><td class="num">${u.exact}</td><td class="num">${u.inferred}</td><td class="num">${u.users}</td><td class="num">${u.channels}</td><td class="muted">${fmtWhen(u.lastTs)}</td></tr>`).join("");
-  const channelRows = channelUsage.map((u) => { const c = byName.get(u.channelSlug); return `<tr><td>${esc(c?.name || u.channelSlug)} <span class="muted">${esc(u.channelSlug)}</span><div class="skills-usage-bar"><i style="width:${Math.max(3, Math.round(u.total / max * 100))}%"></i></div></td><td class="num">${u.total}</td><td class="num">${u.skills}</td><td class="num">${u.exact}</td><td class="num">${u.inferred}</td><td class="muted">${fmtWhen(u.lastTs)}</td></tr>`; }).join("");
+  const skillRows = used.map((u) => `<tr><td><code>${esc(u.slug)}</code>${u.inCatalog ? "" : ' <span class="pill">not in catalog</span>'}<div class="skills-usage-bar"><i style="width:${Math.max(3, Math.round(u.total / max * 100))}%"></i></div></td><td class="num">${u.total}</td><td class="num">${u.users}</td><td class="num">${u.channels}</td><td class="muted">${fmtWhen(u.lastTs)}</td></tr>`).join("");
+  const channelRows = channelUsage.map((u) => { const c = byName.get(u.channelSlug); return `<tr><td>${esc(c?.name || u.channelSlug)} <span class="muted">${esc(u.channelSlug)}</span><div class="skills-usage-bar"><i style="width:${Math.max(3, Math.round(u.total / max * 100))}%"></i></div></td><td class="num">${u.total}</td><td class="num">${u.skills}</td><td class="muted">${fmtWhen(u.lastTs)}</td></tr>`; }).join("");
   return `
     <div class="skills-toolbar">
       <div class="skills-segmented"><button type="button" data-action="usage-view" data-view="skill" class="${state.usageView === "skill" ? "active" : ""}">By skill</button><button type="button" data-action="usage-view" data-view="channel" class="${state.usageView === "channel" ? "active" : ""}">By channel</button></div>
@@ -407,8 +403,7 @@ function renderUsage() {
       <span class="spacer"></span>
     </div>
     ${r ? `
-    <div class="skills-usage-help"><strong>How usage is detected</strong><span>Rows come from completed runs in the selected date range. <b>Exact</b> means Claude explicitly opened a skill with its Skill tool. <b>Inferred</b> means Codex or a shell read that skill's <code>SKILL.md</code>; this is best-effort and can miss uses. Usage before telemetry was enabled is not reconstructed.</span></div>
-    ${state.usageView === "skill" ? `<table class="skills-table"><thead><tr><th>Skill</th><th>Uses</th><th>Exact</th><th>Inferred</th><th>Users</th><th>Conversations</th><th>Last</th></tr></thead><tbody>${skillRows || '<tr><td colspan="7" class="muted">No matching skill use in this range.</td></tr>'}</tbody></table>` : `<table class="skills-table"><thead><tr><th>Conversation</th><th>Uses</th><th>Skills used</th><th>Exact</th><th>Inferred</th><th>Last</th></tr></thead><tbody>${channelRows || '<tr><td colspan="6" class="muted">No matching conversation use in this range.</td></tr>'}</tbody></table>`}
+    ${state.usageView === "skill" ? `<table class="skills-table"><thead><tr><th>Skill</th><th>Usage</th><th>Users</th><th>Conversations</th><th>Last</th></tr></thead><tbody>${skillRows || '<tr><td colspan="5" class="muted">No matching skill use in this range.</td></tr>'}</tbody></table>` : `<table class="skills-table"><thead><tr><th>Conversation</th><th>Usage</th><th>Skills used</th><th>Last</th></tr></thead><tbody>${channelRows || '<tr><td colspan="4" class="muted">No matching conversation use in this range.</td></tr>'}</tbody></table>`}
     ${r.channelSlug ? `<p class="skills-note"><strong>Granted but never fired</strong> (${r.neverUsed.length}): ${r.neverUsed.map((n) => `<code>${esc(n.slug)}</code>`).join(" ") || "none"}${r.contextTokens != null ? ` · always-on context ~${r.contextTokens} tokens` : ""}</p>` : ""}
     ${warnings.length ? `<details class="skills-context-warnings"><summary>${warnings.length} conversation${warnings.length === 1 ? "" : "s"} over the skills context soft cap</summary><p>The warning means the always-loaded skill descriptions consume more context than the limit configured in Sync settings. It does not mean a skill failed.</p>${warnings.map((c) => `<div><strong>${esc(c.name || c.slug)}</strong> · ~${c.contextTokens} tokens<br/><span>${esc((c.warningMessages || []).join(" · "))}</span></div>`).join("")}</details>` : ""}
     ` : '<p class="skills-note">Choose a range, then load usage.</p>'}`;
@@ -431,7 +426,7 @@ function rememberTemplateDraft() {
   state.editTemplate.name = val("tpl-name");
   state.editTemplate.slug = val("tpl-slug");
   state.editTemplate.description = val("tpl-desc");
-  state.editTemplate.categories = [...body().querySelectorAll(".tpl-category:checked")].map((el) => el.value);
+  state.editTemplate.categories = [];
 }
 
 async function act(action, el) {
@@ -725,11 +720,18 @@ function wire() {
   });
   root.addEventListener("change", (event) => {
     const el = event.target;
-    if (el.id === "skills-q" || el.id === "skills-owner" || el.id === "skills-removed") {
+    if (el.id === "skills-q" || el.id === "skills-owner" || el.id === "skills-category" || el.id === "skills-source" || el.id === "skills-removed") {
       state.query = val("skills-q");
       state.owner = val("skills-owner");
+      state.category = val("skills-category");
+      state.source = val("skills-source");
       state.showRemoved = document.getElementById("skills-removed")?.checked || false;
       refreshAll().then(render).catch((err) => { setMessage(err.message, true); render(); });
+      return;
+    }
+    if (["skill-enabled", "skill-discoverable", "skill-mandatory"].includes(el.dataset.action)) {
+      const key = el.dataset.action.replace("skill-", "");
+      withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(el.dataset.slug)}/governance`, { method: "POST", body: JSON.stringify({ [key]: el.checked }) }), "Skill governance updated.").then(refreshAll).then(render);
       return;
     }
     if (el.id === "apply-template" || el.id === "apply-channel" || el.id === "apply-mode") {

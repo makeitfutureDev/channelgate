@@ -23,6 +23,8 @@ catalog.putSkillRevision({ files: [md("CRM Base", "crm", "category: Internal\n")
 catalog.putSkillRevision({ files: [md("Outreach", "outreach", "category: Sales\n")], ownerKind: "local" });
 catalog.putSkillRevision({ files: [md("Extra Tool", "an addition")], ownerKind: "local" });
 templates.seedBuiltinTemplates();
+catalog.upsertTemplate({ slug: "sales", name: "Sales", skills: ["sales-play", "outreach"], builtin: true });
+catalog.upsertTemplate({ slug: "development", name: "Development", skills: [], builtin: true });
 
 const entry = await upsertChannelEntry("C_TPL_ASSIGN", { name: "tpl-assign", type: "channel", isDM: false });
 await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: "C_TPL_ASSIGN", name: "tpl-assign", type: "channel", isDM: false }), skills: ["extra-tool"] });
@@ -58,6 +60,7 @@ test("the channel tier is the assigned template's current skills plus the conver
 
   // Editing the template reaches the follower without touching the conversation.
   catalog.putSkillRevision({ files: [md("New Sales Skill", "just added", "category: Sales\n")], ownerKind: "local" });
+  catalog.upsertTemplate({ slug: "sales", name: "Sales", skills: ["sales-play", "outreach", "new-sales-skill"], builtin: true });
   assert.ok(templates.channelSkillGrants(await getChannelMeta(entry.slug)).includes("new-sales-skill"), "a live link, not a copy");
   // Clearing keeps the additions.
   const cleared = await templates.assignTemplateToChannel(entry.slug, "none");

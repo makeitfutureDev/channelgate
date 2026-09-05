@@ -10,8 +10,9 @@ when a skill fires. No token or network call is involved.
 - `show_channel_skills` — the skills granted here (organization tier + this channel + the
   requester's personal grants), dependencies that were pulled in automatically, anything
   missing or awaiting review, and the estimated always-on context cost.
-- `list_skills` (optional `query`, `category`) — everything in the catalog, with owner
-  (bundled / local / folder / git source), version and category.
+- `list_skills` (optional `query`, `category`, `source`) — search discoverable skills by slug,
+  name, description, tags, category and source. Admins see all; an ordinary member also sees
+  non-discoverable skills already active in this conversation.
 - `get_skill_file` — read a catalog skill's `SKILL.md` or one of its files without granting it.
 - `skill_usage_report` (optional `days`) — which skills fired here and which granted ones never
   did. Claude's Skill tool gives exact counts; Codex reads the file, so those counts are
@@ -66,7 +67,9 @@ channel is in auto mode.
   revisions for approval in the admin UI; *auto* activates them).
 - `list_skill_sources` / `add_skill_source` / `set_skill_source` / `remove_skill_source` — the
   sources: GitHub repositories, host folders, or a peer gateway (URL + a token minted there).
-- `add_org_skills` / `remove_org_skills` — the organization tier (every conversation).
+- `add_org_skills` / `remove_org_skills` — mandatory skills loaded in every conversation.
+- `set_skill_governance` — enable/disable a catalog skill, approve it for organization-wide
+  discovery, or make it mandatory. Mandatory implies enabled and discoverable.
 - `set_skill_excluded` — hide a synced/bundled skill from the catalog (it stays hidden across syncs) or bring it back.
 - `publish_skill` (managers too) — push a local skill to the configured Git repository now.
 - `set_skill_scope` (managers) — move a skill between the shared library and a channel's section

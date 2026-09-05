@@ -224,6 +224,7 @@ export function buildControlPlane({ loadMeta }) {
     ["set_skill_source", { authz: "admin", details: ({ id }) => `Change skill source #${Number(id) || "?"} (mode / enabled / pin / label).` }],
     ["remove_skill_source", { authz: "admin", details: ({ id }) => `REMOVE skill source #${Number(id) || "?"} and tombstone its skills.` }],
     ["set_skill_excluded", { authz: "admin", details: ({ skill, excluded }) => `${excluded ? "EXCLUDE" : "Include"} skill \`${summarize(skill)}\` in the catalog.` }],
+    ["set_skill_governance", { authz: "admin", details: ({ skill, enabled, discoverable, mandatory }) => `Change skill governance for \`${summarize(skill)}\`: enabled=${enabled ?? "unchanged"}, discoverable=${discoverable ?? "unchanged"}, mandatory=${mandatory ?? "unchanged"}.` }],
     ["update_channel_instructions", { authz: "any", details: ({ mode, text: t }) => `${mode === "replace" ? "REPLACE" : "Append to"} this channel's standing instructions:\n${summarize(t, 600)}` }],
     ["update_gateway", {
       authz: "admin",

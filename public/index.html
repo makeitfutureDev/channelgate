@@ -112,13 +112,13 @@
           </div>
           <div id="skills-summary" class="skills-summary"></div>
           <div class="skills-tabs" role="tablist">
-            <button type="button" class="skills-tab active" data-tab="catalog" role="tab">Catalog</button>
+            <button type="button" class="skills-tab active" data-tab="usage" role="tab">Usage</button>
+            <button type="button" class="skills-tab" data-tab="templates" role="tab">Templates</button>
+            <button type="button" class="skills-tab" data-tab="catalog" role="tab">Catalog</button>
             <button type="button" class="skills-tab" data-tab="review" role="tab">Review <span class="badge" id="skills-review-badge" hidden></span></button>
             <button type="button" class="skills-tab" data-tab="sources" role="tab">Sources</button>
             <button type="button" class="skills-tab" data-tab="sync" role="tab">Sync settings</button>
             <button type="button" class="skills-tab" data-tab="mcp" role="tab">MCP</button>
-            <button type="button" class="skills-tab" data-tab="templates" role="tab">Templates</button>
-            <button type="button" class="skills-tab" data-tab="usage" role="tab">Usage</button>
           </div>
           <div id="skills-body">Loading…</div>
         </section>
@@ -630,7 +630,7 @@
                 </header>
                 <div class="setcard" id="skill-templates-card">
                   <h4>Skill templates <em class="state">· Development, Sales, Marketing, Management, …</em></h4>
-                  <p class="desc">A named set of skills from the catalog. Assign one to a conversation (Conversations → Tools → Skill template, or the <code>set_channel_skill_template</code> verb) and the conversation follows it live: edits here reach every conversation that uses the template, and skills added to a conversation come on top. A template is its explicit skills plus every catalog skill in its categories.</p>
+                  <p class="desc">A named, explicit set of skills from the catalog. Assign one to a conversation under Conversations → Tools or with <code>set_channel_skill_template</code>; edits reach every conversation that follows it, and channel-specific skills come on top.</p>
                   <div id="skill-templates-editor">Loading…</div>
                 </div>
                 <div class="setcard">

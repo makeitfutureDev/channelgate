@@ -718,6 +718,7 @@ async function loadDashboard() {
   });
   const moreUsers = (d.byUser || []).length - users.length;
   const moreChannels = (d.byChannel || []).length - channels.length;
+  const skills = (d.topSkills || []).slice(0, 10);
 
   body.innerHTML = `
     <div class="kpi-row">${kpiHtml}</div>
@@ -734,6 +735,10 @@ async function loadDashboard() {
         </div>
         ${channelBars(channels)}
         ${moreChannels > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreChannels} more</p>` : ""}
+      </div>
+      <div class="chart-card">
+        <div class="chart-title"><h3>Top skills — usage</h3><span class="chart-peak">last 30 days</span></div>
+        ${barList(skills, (s) => s.uses, (s) => `${fmtNum(s.uses)} uses`, "#6ea6a1", "No skill usage yet.")}
       </div>
     </div>`;
 
@@ -3739,7 +3744,7 @@ async function renderSkillTemplatesSettings() {
   const rows = SKILL_TEMPLATES.map((t) => `
     <tr>
       <td><strong>${escapeHtml(t.name)}</strong> <span class="skills-muted">${escapeHtml(t.slug)}</span>${t.builtin ? ' <span class="pill">built-in</span>' : ""}<br/><span class="skills-muted">${escapeHtml(t.description || "")}</span></td>
-      <td>${(t.resolved || []).length} skill(s)<br/><span class="skills-muted">${escapeHtml((t.categories || []).length ? `categories: ${t.categories.join(", ")}` : "")}${(t.missing || []).length ? ` · <span class="skills-error">missing: ${escapeHtml(t.missing.join(", "))}</span>` : ""}</span></td>
+      <td>${(t.resolved || []).length} skill(s)<br/><span class="skills-muted">${(t.missing || []).length ? `<span class="skills-error">missing: ${escapeHtml(t.missing.join(", "))}</span>` : ""}</span></td>
       <td>${(t.channels || []).length ? t.channels.map((c) => escapeHtml(c.name)).join(", ") : '<span class="skills-muted">no conversation yet</span>'}</td>
       <td><button type="button" class="ghost" data-tpl-edit="${escapeHtml(t.slug)}">Edit</button></td>
     </tr>`).join("");
@@ -3758,7 +3763,6 @@ function renderSkillTemplateEditor(mount, slug) {
       <label class="field"><span>Name</span><input class="tpl-name" value="${escapeHtml(t.name)}" placeholder="Support" /></label>
       <label class="field"><span>Slug</span><input class="tpl-slug" value="${escapeHtml(t.slug)}" placeholder="support"${isNew ? "" : " readonly"} /></label>
       <label class="field wide"><span>Description</span><input class="tpl-desc" value="${escapeHtml(t.description || "")}" /></label>
-      <label class="field wide"><span>Categories (comma-separated) — every catalog skill in these categories is part of the template</span><input class="tpl-cats" value="${escapeHtml((t.categories || []).join(", "))}" placeholder="Sales, CRM" /></label>
     </div>
     <div class="col tools-col">
       <div class="checks-head"><h4>Explicit skills</h4><span class="checks-count tpl-skills-count"></span></div>
@@ -3785,7 +3789,7 @@ function renderSkillTemplateEditor(mount, slug) {
         slug: mount.querySelector(".tpl-slug").value.trim(),
         name: mount.querySelector(".tpl-name").value.trim(),
         description: mount.querySelector(".tpl-desc").value.trim(),
-        categories: mount.querySelector(".tpl-cats").value.split(",").map((x) => x.trim()).filter(Boolean),
+        categories: [],
         skills: checkedValues(box),
       };
       const r = await api("/api/skills/templates", { method: "POST", body: JSON.stringify(body) });

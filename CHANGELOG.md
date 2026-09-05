@@ -19,6 +19,12 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Usage-led skill governance.** Skills now opens on the top 20 skills used in the last 30 days,
+  Templates is second, usage displays one harness-neutral total, and Catalog defaults to usage
+  order with category/source filters plus source-aware description search. Per-skill Enabled,
+  Discoverable, and Mandatory controls govern source imports; mandatory skills load everywhere.
+  Templates contain explicit skills only, agents can search by source and admins can change the
+  governance flags through `set_skill_governance`, and Overview charts the top ten skills.
 - **Skill repository sections.** The skills repository is one shared library plus one folder per
   channel (`channels/<channel id>/`); a skill in a channel's section is granted to that channel
   automatically. New skills go to the library by default; `create_skill` takes `scope: "channel"`

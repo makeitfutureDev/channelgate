@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { getUser, isAdmin, isApproved, getChannelMeta } from "../../config/store.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine } from "../../config/settings.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
-import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
+import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
@@ -74,10 +74,15 @@ export function register(server, ctx) {
 
   const isAdminUser = async () => Boolean(createdBy) && (await isAdmin(createdBy));
   const approvedAuthor = async () => Boolean(createdBy) && ((await isAdminUser()) || (await isApproved(createdBy)));
+  const activeSkillSlugs = async () => {
+    const stored = (await loadMeta()) || {};
+    const user = createdBy ? (await getUser(createdBy)) || {} : {};
+    return new Set(resolveAccessGrants({ organization: getOrgAccessGrants(), channel: withTemplateSkills(stored), user }).skills.map((s) => String(s).toLowerCase()));
+  };
   const visibleSkill = async (key) => {
     const skill = getSkill(key);
     if (!skill) return null;
-    return canSeeSkill(skill, { userId: createdBy, isAdmin: await isAdminUser() }) ? skill : null;
+    return canSeeSkill(skill, { userId: createdBy, isAdmin: await isAdminUser(), active: (await activeSkillSlugs()).has(skill.slug.toLowerCase()) }) ? skill : null;
   };
 
   // The conversation's profile: organization + channel grants (durable) plus the requester's own.
@@ -110,11 +115,19 @@ export function register(server, ctx) {
   server.registerTool(
     "list_skills",
     {
-      description: "List the skills in the gateway's catalog (bundled, locally authored, imported host folders, synced sources; your own personal skills too). Optional text query and category filter. Use show_channel_skills for what is active HERE.",
-      inputSchema: { query: z.string().optional(), category: z.string().optional(), limit: z.number().int().min(1).max(200).optional() },
+      description: "Search the governed skills catalog by slug, name, description, tags, category, or source. Ordinary members see discoverable skills plus skills already active here; admins see all. Use show_channel_skills for what is active HERE.",
+      inputSchema: { query: z.string().optional(), category: z.string().optional(), source: z.string().optional().describe("Source id or label"), limit: z.number().int().min(1).max(200).optional() },
     },
-    async ({ query = "", category = "", limit = 60 }) => {
-      const skills = listSkills({ query, category, limit, viewer: (await isAdminUser()) ? "*" : createdBy || "" });
+    async ({ query = "", category = "", source = "", limit = 60 }) => {
+      const admin = await isAdminUser();
+      const active = admin ? new Set() : await activeSkillSlugs();
+      const sourceRow = source ? listSources().find((s) => String(s.id) === source || s.label.toLowerCase() === source.toLowerCase()) : null;
+      if (source && !sourceRow) return text(`No skill source named "${source}".`);
+      const usage = usageCountsBySlug({ since: new Date(Date.now() - 30 * 86400000).toISOString() });
+      const skills = listSkills({ query, category, sourceId: sourceRow?.id ?? null, viewer: admin ? "*" : createdBy || "" })
+        .filter((s) => admin || s.discoverable || active.has(s.slug.toLowerCase()))
+        .sort((a, b) => (usage.get(b.slug.toLowerCase())?.total || 0) - (usage.get(a.slug.toLowerCase())?.total || 0) || a.slug.localeCompare(b.slug))
+        .slice(0, limit);
       if (!skills.length) return text(query || category ? "No catalog skill matches that." : "The catalog is empty — an admin adds sources or skills in the admin UI under Skills, or create one here with create_skill.");
       const cats = listCategories().slice(0, 12).map((c) => `${c.category} (${c.count})`).join(", ");
       return text(clipText(`${skills.length} skill(s)${query ? ` matching "${query}"` : ""}${category ? ` in ${category}` : ""}:\n${skills.map((s) => skillLine(s)).join("\n")}${cats ? `\n\nCategories: ${cats}` : ""}\nRead one with get_skill_file; grant here with add_channel_skills (managers) or for yourself with add_my_skills.`));
@@ -204,7 +217,7 @@ export function register(server, ctx) {
       const known = [];
       const unknown = [];
       for (const s of slugs) {
-        const skill = getSkill(s);
+        const skill = await visibleSkill(s);
         if (skill && !skill.deleted && skill.visibility !== "personal") known.push(skill.slug);
         else unknown.push(s);
       }
@@ -499,6 +512,35 @@ export function register(server, ctx) {
       if (!(await requireAdmin())) return text("Only admins change the organization tier.");
       const r = revokeSkillsFromOrg(slugs);
       return text(`🗑️ Removed ${r.removed.length} organization grant(s)${r.removed.length ? `: ${r.removed.join(", ")}` : ""}. Organization-wide now: ${r.names.join(", ") || "(none)"}.`);
+    },
+  );
+
+  server.registerTool(
+    "set_skill_governance",
+    {
+      description: "ADMINS. Enable/disable a catalog skill, approve/revoke organization-wide discoverability, or make/unmake it mandatory in every conversation. Mandatory implies enabled and discoverable.",
+      inputSchema: { skill: z.string(), enabled: z.boolean().optional(), discoverable: z.boolean().optional(), mandatory: z.boolean().optional() },
+    },
+    async ({ skill: key, enabled, discoverable, mandatory }) => {
+      if (!(await requireAdmin())) return text("Only admins change catalog governance.");
+      const skill = getSkill(key);
+      if (!skill) return text(`No catalog skill named "${key}".`);
+      if (enabled === false) {
+        revokeSkillsFromOrg([skill.slug]);
+        excludeSkill(skill.slug);
+      } else if (enabled === true) restoreSkill(skill.slug);
+      const mandatoryNow = (getOrgAccessGrants().skills || []).some((s) => String(s).toLowerCase() === skill.slug.toLowerCase());
+      if (typeof discoverable === "boolean" && !(mandatoryNow && discoverable === false && mandatory !== false)) setSkillDiscoverable(skill.slug, discoverable);
+      if (typeof mandatory === "boolean") {
+        if (mandatory) {
+          restoreSkill(skill.slug);
+          setSkillDiscoverable(skill.slug, true);
+          grantSkillsToOrg([skill.slug]);
+        } else revokeSkillsFromOrg([skill.slug]);
+      }
+      const next = getSkill(skill.slug);
+      const isMandatory = (getOrgAccessGrants().skills || []).some((s) => String(s).toLowerCase() === next.slug.toLowerCase());
+      return text(`✅ \`${next.slug}\`: ${next.deleted ? "disabled" : "enabled"}, ${next.discoverable ? "discoverable" : "admin/current-channel only"}, ${isMandatory ? "mandatory in every conversation" : "optional"}. Active on the next message.`);
     },
   );
 

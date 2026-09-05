@@ -6,6 +6,7 @@ import { readUsage, usageSummary, usageDashboard } from "../../gateway/usage.js"
 import { activeRunForApi, listActiveRuns, onActiveRunsChanged } from "../../gateway/active-runs.js";
 import { readEvents } from "../../util/logger.js";
 import { getChannelsIndex, getUsers } from "../../config/store.js";
+import { usageCountsBySlug } from "../../gateway/skills/catalog.js";
 
 export function createObservabilityRouter() {
   const router = Router();
@@ -116,6 +117,10 @@ export function createObservabilityRouter() {
       const users = await getUsers();
       data.byUser = data.byUser.map((u) => ({ ...u, name: users[u.userId]?.name || u.userId }));
       data.byChannel = data.byChannel.map((c) => ({ ...c, name: index[c.channelId]?.name || c.slug || c.channelId }));
+      data.topSkills = [...usageCountsBySlug({ since: data.start }).values()]
+        .sort((a, b) => b.total - a.total || a.slug.localeCompare(b.slug))
+        .slice(0, 10)
+        .map((s) => ({ name: s.name || s.slug, slug: s.slug, uses: s.total }));
       res.json(data);
     } catch (e) {
       next(e);

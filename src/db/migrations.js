@@ -643,4 +643,40 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 19,
+    up(db) {
+      // Templates used to select whole categories dynamically. Freeze their currently resolved
+      // members into explicit slugs before retiring that behavior, so an upgrade never empties an
+      // existing template or silently changes it when a source later adds a category peer.
+      const templates = db.prepare("SELECT id, skills, categories FROM skill_templates").all();
+      const liveSkills = db.prepare("SELECT slug, category FROM skills WHERE deleted_at = ''").all();
+      const parseList = (raw) => {
+        try {
+          const v = JSON.parse(raw || "[]");
+          return Array.isArray(v) ? v.map(String) : [];
+        } catch {
+          return [];
+        }
+      };
+      const save = db.prepare("UPDATE skill_templates SET skills = ?, categories = '[]' WHERE id = ?");
+      for (const template of templates) {
+        const explicit = parseList(template.skills);
+        const categories = new Set(parseList(template.categories).map((c) => c.toLowerCase()));
+        const seen = new Set(explicit.map((s) => s.toLowerCase()));
+        for (const skill of liveSkills) {
+          if (!skill.category || !categories.has(skill.category.toLowerCase()) || seen.has(skill.slug.toLowerCase())) continue;
+          explicit.push(skill.slug);
+          seen.add(skill.slug.toLowerCase());
+        }
+        save.run(JSON.stringify(explicit), template.id);
+      }
+      db.exec(`
+        -- Catalog governance: ordinary members may discover only approved skills. Existing
+        -- catalogs keep their current behavior on upgrade; admins can withdraw discoverability
+        -- without removing an already-granted skill from its conversations.
+        ALTER TABLE skills ADD COLUMN discoverable INTEGER NOT NULL DEFAULT 1;
+      `);
+    },
+  },
 ];
