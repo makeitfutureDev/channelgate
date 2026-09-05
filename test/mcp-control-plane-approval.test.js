@@ -283,6 +283,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "slack_post_chart", "slack_post_table", "slack_upload_snippet",
     "slack_list_create", "slack_list_add_item", "slack_list_update_item", "slack_list_info", "slack_list_items",
     "slack_channel_history", "slack_thread_replies",
+    "slack_download_file", // lands only in this thread's uploads/ folder, this channel's files only
     "run_in_background", "run_agent_in_background", // shell kind has its own admin-click gate in background.js
     "request_approval", "permission_prompt", "report_progress",
     "update_channel_memory", // operator decision 2026-08-07: memory is agent-owned, never approval-gated

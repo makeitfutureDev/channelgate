@@ -136,6 +136,7 @@ export const GATEWAY_TOOL_NAMES = [
   "slack_post_chart",
   "slack_channel_history",
   "slack_thread_replies",
+  "slack_download_file",
   "permission_prompt",
 ];
 

@@ -10,9 +10,22 @@ For "catch me up" / "summarize this channel" / "what did the thread say":
   parent message's ts, e.g. from `slack_channel_history`). `limit` defaults to 50 (max 200).
   Shared files include the same safe metadata; private Slack file URLs are never returned.
 
+- `slack_download_file` — fetch a file that was shared in THIS channel into this thread's
+  `uploads/` folder and get its LOCAL path back. Use it when a file you can see in history (the
+  thread's first message, a file posted before you were mentioned, one refused earlier) was never
+  delivered to your run — "download it yourself", "try again with the video". Pass the `file_id`
+  (from the metadata above, or a pasted Slack file link). Files up to 500 MB; a file already in the
+  folder is reused without a second download. A file not shared in this channel is refused. Read
+  the returned path with your Read tool (images render visually; a video goes through the
+  `video-understanding` skill). Never ask the person to re-upload a file that is already in the
+  thread — download it.
+
 These are **scoped to the current channel only** — they can't read other channels. The thread
 you're actively replying in is already in your context, so you usually only need these to look
-further back or at a different thread in this channel.
+further back or at a different thread in this channel. Files attached to the message that
+triggered your run are downloaded for you before the run starts (their paths are in your prompt);
+a thread's FIRST-message attachment is retried automatically on a later reply while it is still
+missing from the folder.
 
 ## Other channels / workspace search — select the account
 To search or read **beyond this channel**, choose the Composio account per `SKILL.md` → “Tool

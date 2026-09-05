@@ -8,6 +8,9 @@ import { uploadSnippet } from "../../slack/upload.js";
 import { postTable } from "../../slack/tables.js";
 import { postChart } from "../../slack/charts.js";
 import { channelHistory, threadReplies } from "../../slack/read.js";
+import { downloadChannelFile, formatBytes, uploadsSubFor } from "../../slack/download.js";
+import { resolveSlackConfig } from "../../config/settings.js";
+import { effectiveWorkDir } from "../../gateway/folders.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
 
 // ctx.threadKey is the RUN's session key, not necessarily a Slack thread_ts: a scheduled run uses
@@ -16,7 +19,7 @@ import { slackThreadFor } from "../../slack/thread-keys.js";
 // failed. Resolve it to the launching thread when there is one, or "" to post top-level.
 
 export function register(server, ctx) {
-  const { channelId, text, threadKey } = ctx;
+  const { channelId, text, threadKey, slug, loadMeta } = ctx;
   const currentThreadTs = () => slackThreadFor(threadKey) || "";
 
   // ── Slack Lists (any allowed user) ──────────────────────────────────────────────
@@ -345,6 +348,48 @@ export function register(server, ctx) {
         return text(rows.length ? fmtMessages(rows) : "No messages in that thread.");
       } catch (e) {
         return text(`Couldn't read that thread: ${e.message}`);
+      }
+    }
+  );
+
+  // ── On-demand attachment download (this channel only) ──────────────────────────
+  // The pre-run downloader delivers the files on the TRIGGERING message. A file the person posted
+  // earlier in the thread, or elsewhere in this channel, is visible in history (id + name + size)
+  // but was never handed to a run — this fetches it by id with the bot token into the current
+  // thread's uploads/ folder, under the same 500 MB cap and the same no-follow streaming writer.
+  // Fail-closed scope: Slack must report the file as shared in THIS channel; the model gets a
+  // local path, never a private URL or the token.
+  server.registerTool(
+    "slack_download_file",
+    {
+      description:
+        "Download a Slack file that was shared in THIS channel into this thread's uploads/ folder and " +
+        "return its local path — for an attachment on an earlier message (the thread's first message, " +
+        "a file shared before you were mentioned) that no run delivered to you. Pass the `file_id` " +
+        "(an id like F0BV4TU6T5L, from slack_channel_history / slack_thread_replies, or a pasted Slack " +
+        "file link). Scoped to this channel: a file not shared here is refused. Files up to 500 MB; a " +
+        "file already in the folder is reused without downloading again.",
+      inputSchema: { file_id: z.string() },
+    },
+    async ({ file_id }) => {
+      if (!channelId || !slug) return text("No channel context here.");
+      const botToken = resolveSlackConfig().botToken;
+      if (!botToken) return text("Slack bot token isn't configured — an admin must set it in the gateway Settings (admin UI).");
+      try {
+        const meta = await loadMeta();
+        const root = effectiveWorkDir(slug, { ...(meta || {}), _slug: slug });
+        const sub = uploadsSubFor(currentThreadTs() || threadKey);
+        const result = await downloadChannelFile({ channelId, fileId: file_id, root, sub, botToken });
+        if (result.skipped) {
+          return text(`Couldn't download ${result.name}: ${result.skipped}. Do NOT pretend to have seen it — tell the user this reason verbatim.`);
+        }
+        const kind = result.mimetype ? ` (${result.mimetype})` : "";
+        return text(
+          `${result.reused ? "Already in the folder" : "Downloaded"}: ${result.path}${kind}, ${formatBytes(result.bytes)}. ` +
+          "Read it with your Read tool (images render visually; a video goes through the video-understanding skill)."
+        );
+      } catch (e) {
+        return text(`Couldn't download that file: ${e.message}`);
       }
     }
   );

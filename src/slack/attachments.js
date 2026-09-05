@@ -130,11 +130,22 @@ async function canonicalMessage(event, client) {
     inclusive: true,
     limit: 200,
   });
-  const previous = (Array.isArray(context?.messages) ? context.messages : [])
+  const thread = Array.isArray(context?.messages) ? context.messages : [];
+  const previous = thread
     .filter((message) => Number(message?.ts) < Number(event.ts))
     .sort((a, b) => Number(b.ts) - Number(a.ts))[0];
   const previousFiles = collectSlackFiles(previous);
-  return previousFiles.length ? { ...exact, files: previousFiles } : exact;
+  if (previousFiles.length) return { ...exact, files: previousFiles };
+
+  // The thread ROOT's attachments are the thread's subject: a person who posts a recording and
+  // later replies "try again" or "download it yourself" means THAT file. Carry the root's files
+  // into the reply, marked `carriedFrom:"root"` — the pipeline downloads such a file only when
+  // its bytes are not already in the thread folder and its declared size fits the cap, so this
+  // is a retry of a delivery that never happened, not a re-attachment on every reply.
+  const root = thread.find((message) => String(message?.ts) === String(event.thread_ts));
+  if (!root || (previous && String(previous.ts) === String(root.ts))) return exact;
+  const rootFiles = collectSlackFiles(root).map((file) => ({ ...file, carriedFrom: "root" }));
+  return rootFiles.length ? { ...exact, files: rootFiles } : exact;
 }
 
 function mergeMessage(event, canonical) {

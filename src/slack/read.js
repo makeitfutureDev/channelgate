@@ -14,6 +14,11 @@ function botToken() {
   return resolveSlackConfig().botToken || "";
 }
 
+// Exported for the download path (files.info); every caller still pins the channel id itself.
+export async function botApiCall(method, params) {
+  return callForm(method, params);
+}
+
 async function callForm(method, params) {
   const token = botToken();
   if (!token) throw new Error("Slack bot token isn't configured — an admin must set it in the gateway Settings (admin UI).");
