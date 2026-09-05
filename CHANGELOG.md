@@ -19,6 +19,10 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Live Slack progress no longer splits the answer.** Native task/tool/thinking rows stream in a
+  dedicated first message, while the Markdown answer streams contiguously in a separate message
+  beneath it. Both streams retain their independent long-run rollover and terminal/fallback
+  handling; text-only turns still remain a single answer message.
 - **The Skills admin workflow is organized around the operator's task.** Sources use an Add source
   modal; synchronization/publishing and MCP access have separate tabs; templates have a searchable
   selection editor; and Usage has searchable By skill / By channel views, compact bars, detection

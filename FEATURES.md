@@ -128,6 +128,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 ## Conversation gateway
 - Slack Socket Mode listener across DM / group DM / public channel / private channel
   (`@slack/bolt`). → TEST-PLAN: Slack gateway.
+- Native Slack progress and answer isolation: when a run emits task/tool/thinking progress before
+  its answer,
+  its collapsible live card is posted as the first thread message and updated there; the Markdown
+  answer streams into a separate later message, so expanding “Thinking completed” can never split
+  a sentence. A shared queue preserves creation order, each stream rolls independently before
+  Slack's age limit, and answer footer/fallback behavior stays on the answer only. Text-only turns
+  keep their single-message shape. → TEST-PLAN: Observability (Slice 6).
 - Mention gating: DM = no mention; channel/group/private = require `@bot`. → TEST-PLAN: Slack gateway.
 - Thread-scoped Claude sessions — new thread = new session, replies resume. → TEST-PLAN: Foundation.
 - Subagent completion contract (mechanical) — every generated channel settings file installs a
