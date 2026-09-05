@@ -615,4 +615,20 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 17,
+    up(db) {
+      db.exec(`
+        -- Derived, rebuildable search index for channel-owned Markdown memory. The files in each
+        -- channel work folder remain the source of truth; this table contains no unique state.
+        CREATE VIRTUAL TABLE channel_memory_fts USING fts5(
+          channel_slug UNINDEXED,
+          source UNINDEXED,
+          title,
+          body,
+          tokenize = 'unicode61 remove_diacritics 2'
+        );
+      `);
+    },
+  },
 ];

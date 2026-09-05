@@ -114,8 +114,8 @@ test("channel members endpoint returns only the selected conversation's current 
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.json, {
     members: [
-      { id: "U_EXTERNAL", name: "External Person", isExternal: true },
-      { id: "U_MEMBER", name: "Member Person", isExternal: false },
+      { id: "U_EXTERNAL", name: "External Person", isExternal: true, approved: false, admin: false },
+      { id: "U_MEMBER", name: "Member Person", isExternal: false, approved: false, admin: false },
     ],
   });
 });

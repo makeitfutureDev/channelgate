@@ -3,6 +3,27 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Conversation settings + on-demand memory
+
+Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
+`test/memory-snapshot-run.test.js`, `test/channel-members-ui.test.js`,
+`test/access-grants.test.js`, `test/gateway-mcp-authz.test.js`.
+
+- [x] Large MEMORY.md and topic writes succeed without a character-capacity failure.
+- [x] A fresh run receives only the compact memory catalog; stored fact bodies are absent.
+- [x] FTS5 search ranks matching Markdown passages, rebuilds after hand edits, and read rejects
+      traversal or any source outside MEMORY.md / memory/*.md.
+- [x] Untrusted/API-spoofed principals cannot call memory retrieval tools.
+- [x] Conversation Tools exposes four focused categories and no channel Grant Tier selector;
+      enabled skills appear first.
+- [x] Approved channel members render selected, admins render selected and locked, and inherited
+      access is not persisted as an explicit guest grant.
+- [ ] Live Claude: start a fresh test thread, ask a question whose answer exists only in a topic
+      file, and verify search → one-source read → correct answer without bulk memory injection.
+- [ ] Live Codex: repeat the same retrieval proof in the Codex Auto fixture.
+- [ ] Admin browser: verify Access special-mode boxes, all four Tool tabs, guest lock state, and
+      the uncapped Memory explanation/save behavior at desktop and narrow widths.
+
 ## Chat-platform adapter kernel (multi-platform seam)
 
 Automated: `test/platforms.test.js` (32 checks). Existing `test/format.test.js` (45) is the
@@ -1528,19 +1549,17 @@ release, no egress cut-off — so the network entry has no container equivalent 
       folder, never under ephemeral engine state (`test/mcp-config.test.js`, `test/codex-args.test.js`,
       `test/run-engine-mcp.test.js`, `test/secret-env-bridge.test.js`,
       `test/mcp-control-plane-approval.test.js`).
-- [x] Budget: with a small `meta.memoryBudget`, an over-budget batch FAILS with "consolidate in the
-      SAME call" advice and leaves BOTH the index and any topic file in the batch untouched; the
-      same add fits when the batch also removes/replaces stale lines (`test/channel-memory.test.js`).
+- [x] Uncapped store: content well beyond the former character limit persists atomically in
+      Markdown; validation failures leave both index and topic files untouched
+      (`test/channel-memory.test.js`).
 - [x] Batch semantics: `add` lands inside its named `section` (case-insensitive) or at the end;
       an exact duplicate add is a no-op with a note; `replace` swaps the whole line and rejects a
       substring matching two lines; headers/seed note are never replace/remove targets;
       instruction-shaped (`ignore previous instructions`, `[system]`), token-shaped (`xoxb-…`)
       and invisible-Unicode content is refused before any write (`test/channel-memory.test.js`).
-- [x] Snapshot injection: a fresh session's prompt starts with `[Channel memory — snapshot at
-      session start; index N% of its 8000-char budget …]` + the index + the topic-file list, and
-      ends with `[End of channel memory.]`; nothing is injected for an empty index, a clean run,
-      or memory off; an over-budget hand-edited index is trimmed at 1.5× budget and an embedded
-      copy of the sentinel is neutralized (`test/channel-memory.test.js`).
+- [x] Catalog injection: a fresh session gets only source/topic names, counts, and directions to
+      bounded search/read tools—not the memory body. Nothing is injected for an empty store, a
+      clean run, or memory off (`test/channel-memory.test.js`, `test/memory-snapshot-run.test.js`).
 - [ ] Live: in a channel with a saved fact, start a NEW thread and ask about it without hinting —
       the answer comes from the injected snapshot with no Read of MEMORY.md in the activity log.
 - [x] Background review trigger: trivial prompts/slash commands never review; every N non-trivial
@@ -1563,9 +1582,8 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [ ] Live save loop: tell the bot a durable preference ("remember: reports go out Fridays") →
       it calls `update_channel_memory`; a NEW thread (fresh session) asked about report timing
       reads MEMORY.md / triggers the channel-memory skill and answers from memory.
-- [ ] Admin UI Memory tab reflects the index model: hint shows the budget meter ("index N% of
-      budget") and lists `memory/<topic>.md` files; saving an over-budget index is allowed but
-      flagged "saved — over budget"; the meter refreshes after save.
+- [ ] Admin UI Memory tab describes uncapped Markdown storage plus the derived SQLite FTS index,
+      shows stored characters/facts and topic files, and refreshes those counts after save.
 - [ ] Overview is the default landing view: 5 KPI tiles (Est. API value in orange, Runs with avg value,
       Active users, live Active sessions, Tokens with in/out sub), the orange hero cost chart
       (gridlines + dated peak) and runs/tokens sparklines, runs-per-user bars (descending,

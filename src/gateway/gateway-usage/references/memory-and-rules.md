@@ -5,9 +5,12 @@ Claude memory is OFF in gateway folders — these are the sanctioned way to reme
 
 ## Facts → channel memory (`update_channel_memory`)
 Durable FACTS future sessions must know (preferences, decisions, environment facts, gotchas).
-Backed by a budgeted `MEMORY.md` index (one declarative line per fact, grouped under
+Backed by uncapped Markdown: `MEMORY.md` for durable facts and references, grouped under
 `People & preferences · Decisions · Environment & gotchas · Project state`) plus
-`memory/<topic>.md` topic files for depth, linked from index lines as `[[topic]]`.
+`memory/<topic>.md` topic files for depth, linked as `[[topic]]`. Fresh sessions receive only a
+compact catalog. Use `search_channel_memory`, then `read_channel_memory`, to load relevant content;
+never load the whole library preemptively. SQLite FTS5 is a derived search index, not a second
+source of truth.
 
 **You already have it:** the index is injected at the start of every session as the
 `[Channel memory …]` block. Read a `memory/<topic>.md` file when the task touches that topic.
@@ -18,8 +21,7 @@ gotcha or working technique. Also do a final check before your last reply — di
 something durable? (A background reviewer runs after some turns as a backstop, but a save you make
 yourself is immediate and precise.)
 
-Make ALL changes in ONE call with `operations` — the batch applies atomically and the budget is
-checked on the final result, so you can free room and add in the same call:
+Make ALL changes in ONE call with `operations`; the batch applies atomically and storage is uncapped:
 - `add` — one concise line (`text`; optional `section`).
 - `replace` — `old` (a unique substring of an existing line) → the whole line becomes `text`.
   Prefer this over near-duplicate adds.

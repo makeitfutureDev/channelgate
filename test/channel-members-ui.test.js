@@ -12,15 +12,15 @@ test("guest options load only from the selected channel's encoded member endpoin
     paths.push(path);
     return {
       members: [
-        { id: "U_INTERNAL", name: "Internal Person", isExternal: false },
-        { id: "U_EXTERNAL", name: "External Person", isExternal: true },
+        { id: "U_INTERNAL", name: "Internal Person", isExternal: false, approved: true, admin: true },
+        { id: "U_EXTERNAL", name: "External Person", isExternal: true, approved: false, admin: false },
       ],
     };
   };
 
   assert.deepEqual(await loadChannelGuestOptions(request, "C/SELECTED"), [
-    { value: "U_INTERNAL", label: "Internal Person (U_INTERNAL)" },
-    { value: "U_EXTERNAL", label: "External Person (U_EXTERNAL) · external" },
+    { value: "U_INTERNAL", label: "Internal Person (U_INTERNAL) · admin", inherited: true, locked: true },
+    { value: "U_EXTERNAL", label: "External Person (U_EXTERNAL) · external", inherited: false, locked: false },
   ]);
   assert.deepEqual(paths, ["/api/channels/C%2FSELECTED/members"]);
 });

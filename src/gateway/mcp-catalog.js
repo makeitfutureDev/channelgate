@@ -88,6 +88,8 @@ export const GATEWAY_TOOL_NAMES = [
   "set_channel_drive_folder",
   "clear_channel_drive_folder",
   "update_channel_instructions",
+  "search_channel_memory",
+  "read_channel_memory",
   "update_channel_memory",
   "update_gateway",
   "restart_gateway",

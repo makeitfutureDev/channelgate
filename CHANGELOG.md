@@ -27,6 +27,12 @@ product overview.
   dedicated first message, while the Markdown answer streams contiguously in a separate message
   beneath it. Both streams retain their independent long-run rollover and terminal/fallback
   handling; text-only turns still remain a single answer message.
+- **Uncapped channel memory with on-demand local recall.** Markdown remains canonical, fresh
+  sessions receive only a compact catalog, and new channel-scoped search/read tools use a derived
+  SQLite FTS5 index. The former 8,000-character write ceiling and prompt-body injection are gone.
+- **Conversation Settings now follows the operator workflow.** Access emphasizes the three normal
+  modes and separates Full access/Lean; Tools has Connections, MCP servers, Environment tokens,
+  and Skills categories; inherited guest access is visible; enabled skills sort first.
 - **The Skills admin workflow is organized around the operator's task.** Sources use an Add source
   modal; synchronization/publishing and MCP access have separate tabs; templates have a searchable
   selection editor; and Usage has searchable By skill / By channel views, compact bars, detection

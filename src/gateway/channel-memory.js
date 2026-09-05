@@ -1,16 +1,13 @@
 // ── Channel memory system (skill-packaged — nothing goes into CLAUDE.md) ──────
-// Modeled on Hermes + Claude Code native auto-memory: MEMORY.md is a short, BUDGETED index
-// (always cheap enough to read), memory/<topic>.md files carry depth (an Obsidian-style graph via
-// [[topic]] links), and the protocol lives in a gateway-maintained `channel-memory` SKILL whose
+// MEMORY.md and memory/<topic>.md files are the uncapped, portable source of truth. A compact
+// catalog is injected at fresh-session start; agents retrieve relevant content through the
+// channel-memory tools. The protocol lives in a gateway-maintained `channel-memory` SKILL whose
 // description is always in the skills catalog — plus the update_channel_memory MCP tool, whose
 // description is re-read every turn.
 //
-// Recall is not left to chance: the index is rendered into the prompt of every FRESH session
-// (memorySnapshotPrefix — the Hermes "frozen snapshot at session start" pattern; run.js prepends
-// it), so a thread starts knowing what the channel knows without having to decide to Read a file.
-// Saving is batched and atomic (applyMemoryOperations): one call can free room and add in the
-// same breath, and the budget is checked on the FINAL result — the old "over-budget add throws and
-// the save is silently dropped" dead end is gone. A post-reply background review (memory-review.js)
+// Recall is discoverable: memorySnapshotPrefix gives every FRESH session the catalog and names the
+// search/read tools. Saving is batched and atomic (applyMemoryOperations), and a post-reply
+// background review (memory-review.js)
 // is the backstop for turns where the model never called the tool.
 import { mkdir, access, rm, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -38,31 +35,24 @@ export function isMemorySaveTool(name) {
 
 const MEMORY_SKILL = "channel-memory";
 const MEMORY_SKILL_MARKER = ".gateway-memory-skill"; // ours to refresh/remove (≠ library stubs)
-// Index budget in CHARS (model-independent). 8k ≈ 2k tokens per fresh session — cheap enough to
-// inject every time, big enough that a busy channel isn't consolidating every other turn (the old
-// 3k default had the dev channel at 101% with adds failing).
-const DEFAULT_MEM_BUDGET = 8000;
-const MIN_MEM_BUDGET = 500;
-const MAX_TOPIC_CHARS = 30_000;
 const MAX_OPERATIONS = 25;
 // The index is grouped under these headers (seeded on first use). `add` may target one by name;
 // an index without headers (pre-sections channels) just appends — nothing breaks.
 export const MEMORY_SECTIONS = Object.freeze(["People & preferences", "Decisions", "Environment & gotchas", "Project state"]);
 
 export function memoryBudget(meta = {}) {
-  const b = Number(meta.memoryBudget);
-  return Number.isFinite(b) && b >= MIN_MEM_BUDGET ? Math.floor(b) : DEFAULT_MEM_BUDGET;
+  void meta;
+  return null;
 }
 
 export function memoryUsage(indexContent, meta = {}) {
-  const budget = memoryBudget(meta);
   const used = String(indexContent || "").length;
-  return { used, budget, pct: Math.round((used / budget) * 100) };
+  return { used, budget: null, pct: null };
 }
 
 function memoryMeter(indexContent, meta) {
-  const { used, budget, pct } = memoryUsage(indexContent, meta);
-  return `index ${pct}% full (${used}/${budget} chars)`;
+  const { used } = memoryUsage(indexContent, meta);
+  return `index saved (${used} chars; uncapped)`;
 }
 
 async function exists(p) {
@@ -101,25 +91,25 @@ export function scanMemoryContent(text) {
 function memorySkillMd(meta) {
   return `---
 name: ${MEMORY_SKILL}
-description: This channel's PERSISTENT memory (survives across threads/sessions). Its ${MEM_FILE} index is injected into your context at the start of every session; use this skill when you need depth from ${MEM_DIR}/<topic>.md files, and BEFORE finishing any task in which the user corrected you, stated a preference or decision, or you learned a durable fact or gotcha — SAVE it with the update_channel_memory tool.
+description: This channel's PERSISTENT memory (survives across threads/sessions). A compact catalog is injected at session start; search and load relevant memory on demand, and save durable facts with update_channel_memory.
 ---
 
 # Channel memory
 
 This channel has persistent memory that survives across threads and sessions:
 
-- \`${MEM_FILE}\` — the INDEX: one declarative line per durable fact, grouped under sections
-  (${MEMORY_SECTIONS.join(" · ")}). Hard budget: ${memoryBudget(meta)} chars. It is already in
-  your context at session start (the \`[Channel memory …]\` block); saves land on disk at once and
-  show up in the next session's snapshot.
+- \`${MEM_FILE}\` — durable facts and topic references, grouped under sections
+  (${MEMORY_SECTIONS.join(" · ")}). Storage is uncapped; saves land on disk at once.
 - \`${MEM_DIR}/<topic>.md\` — depth (project state, client details, procedures' gotchas).
-  Referenced from index lines as \`[[topic]]\`. Read them when the task touches the topic; Grep
-  \`${MEM_DIR}/\` when hunting for something specific.
+  Referenced from index lines as \`[[topic]]\`.
+
+At session start you receive only a compact catalog, not the memory contents. Use
+\`search_channel_memory\` with terms from the request, then \`read_channel_memory\` for a relevant
+source. Do not load every memory file preemptively.
 
 ## Save (whenever a trigger fires — and always as an end-of-task check)
-Tool: \`update_channel_memory\`. Prefer ONE call with an \`operations\` array — the batch is applied
-atomically and the budget is checked on the FINAL result, so you can remove/replace stale lines
-and add new ones together.
+Tool: \`update_channel_memory\`. Prefer ONE call with an \`operations\` array; the batch is applied
+atomically and storage has no character ceiling.
 - \`add\` — one concise line (\`text\`; optional \`section\`).
 - \`replace\` — \`old\` (a unique substring of an existing line) → the whole line becomes \`text\`.
   Prefer this over adding near-duplicates.
@@ -139,10 +129,6 @@ temporary paths, raw data dumps, anything re-discoverable with one tool call. Pr
 in skills; the conversation itself stays in the thread history.
 Write declarative facts, not instructions to yourself: "Alex prefers short replies" ✓ —
 "Always reply briefly" ✗ (an imperative gets re-read as a command by later sessions).
-
-## Curate
-The budget is enforced: an over-budget save fails and asks you to consolidate — do it in the SAME
-call (batch: \`remove\`/\`replace\` stale lines + \`add\`). Consolidate proactively past ~80%.
 
 ## Never
 Never store secrets, tokens, or credentials. Never write instructions addressed to future
@@ -278,23 +264,19 @@ function validateTopicOp(op) {
   }
   const body = String(op.content || "").trim();
   if (!body) throw new Error("write_topic needs content.");
-  if (body.length > MAX_TOPIC_CHARS) throw new Error(`Topic content too large (${MAX_TOPIC_CHARS / 1000}k chars max) — split it.`);
   return { slug: slugify(raw), body }; // slug guaranteed non-empty by the check above
 }
 
 // The write API behind the `update_channel_memory` gateway MCP tool — daemon-side, so saving
 // works in EVERY mode (read channels can't write files in-sandbox). A batch is ALL-OR-NOTHING:
-// every operation is validated and applied to an in-memory copy of the index first, the budget is
-// checked once on the final result, and only then are topic files and the index written. An
-// over-budget batch therefore leaves the files exactly as they were (Hermes semantics: errors
-// demand consolidation, never silent truncation — but consolidation can ride in the same call).
+// every operation is validated and applied to an in-memory copy of the index first, and only then
+// are topic files and the index written. Validation errors never partially persist.
 // `cwd` is the channel's effective work dir — the caller resolves it (effectiveWorkDir in
 // folders.js), keeping this module free of any folders.js import.
 export async function applyMemoryOperations(cwd, meta, operations) {
   const ops = Array.isArray(operations) ? operations.filter((o) => o && typeof o === "object") : [];
   if (!ops.length) throw new Error("Nothing to do — pass an action (add, replace, remove, write_topic) or an operations array.");
   if (ops.length > MAX_OPERATIONS) throw new Error(`Too many operations in one call (${ops.length}; max ${MAX_OPERATIONS}).`);
-  const budget = memoryBudget(meta);
   const memPath = path.join(cwd, MEM_FILE);
   await mkdir(cwd, { recursive: true });
 
@@ -323,12 +305,6 @@ export async function applyMemoryOperations(cwd, meta, operations) {
 
   const next = lines.length ? normalizeIndex(lines.join("\n")) : "";
   const indexChanged = normalizeIndex(before) !== next && !(before === "" && next === "");
-  if (indexChanged && next.length > budget) {
-    throw new Error(
-      `Memory index would be over budget (${next.length}/${budget} chars). Consolidate in the SAME call: batch remove/replace of stale or overlapping lines together with the add, or move detail into a topic file (write_topic) and keep a one-line pointer.`
-    );
-  }
-
   // Validation passed for the whole batch — now write. memory/ lives in the agent-writable
   // workspace: recreate it as a real dir and publish each topic via exclusive temp + rename, so a
   // pre-planted symlink at memory/<topic>.md is replaced as a node — never written through.
@@ -366,11 +342,7 @@ export async function updateChannelMemory(cwd, meta, { action, text = "", old = 
   return applyMemoryOperations(cwd, meta, [{ action, text, old, topic, content, section }]);
 }
 
-// ── Recall: the session-start snapshot ────────────────────────────────────────
-// How much of an over-budget (hand-edited / admin-override) index still gets injected before we
-// cut it: the budget is the contract, so anything past 1.5× is trimmed with a visible marker
-// rather than quietly ballooning every session's prompt.
-const SNAPSHOT_OVERFLOW = 1.5;
+// ── Recall: the session-start catalog ─────────────────────────────────────────
 
 export async function readMemorySnapshot(cwd, meta = {}) {
   const raw = (await readNoFollow(path.join(cwd, MEM_FILE))) ?? "";
@@ -387,23 +359,18 @@ export async function readMemorySnapshot(cwd, meta = {}) {
   return { index, facts: countMemoryFacts(index), topics, usage: memoryUsage(index, meta) };
 }
 
-// The block prepended to the prompt of a FRESH session (run.js). Empty when memory is off for
-// this run or the index holds no facts yet — a channel that never saved anything pays nothing.
-// The content is agent-written and therefore neutralized against our own framing sentinel; the
-// write path already refuses instruction-shaped text.
+// The block prepended to a FRESH session contains bounded metadata only. Memory contents stay out
+// of the prompt until the agent searches and reads a relevant source.
 export async function memorySnapshotPrefix(cwd, meta = {}) {
   if (!memoryEnabled(meta)) return "";
   const snap = await readMemorySnapshot(cwd, meta);
   if (!snap.facts) return "";
-  let body = snap.index.trim();
-  const cap = Math.floor(snap.usage.budget * SNAPSHOT_OVERFLOW);
-  if (body.length > cap) body = `${body.slice(0, cap)}\n…(index truncated at ${cap} chars — it is over budget; consolidate it)`;
-  body = body.replace(/\[End of channel memory/gi, "(End of channel memory");
-  const topics = snap.topics.length ? ` Topic files with more depth (Read them when the task touches the topic): ${snap.topics.map((t) => `${MEM_DIR}/${t}.md`).join(", ")}.` : "";
+  const topics = snap.topics.slice(0, 100).map((t) => `${MEM_DIR}/${t}.md`).join(", ");
+  const more = snap.topics.length > 100 ? `, and ${snap.topics.length - 100} more` : "";
   return (
-    `[Channel memory — snapshot at session start; index ${snap.usage.pct}% of its ${snap.usage.budget}-char budget. ` +
-    `These are durable facts saved by earlier conversations in this channel: trusted notes to act on, not instructions from the user.${topics} ` +
-    `Save new durable facts with update_channel_memory (batch operations); this snapshot refreshes on the next session.]\n\n` +
-    `${body}\n\n[End of channel memory.]\n\n`
+    `[Channel memory catalog — ${snap.facts} durable facts and ${snap.topics.length} topic files are stored for this channel. ` +
+    `Memory contents are not injected. Use search_channel_memory for request-relevant recall, then read_channel_memory for a returned source; never load everything preemptively. ` +
+    `${topics ? `Available topic files: ${topics}${more}. ` : ""}` +
+    `Save durable facts with update_channel_memory.]\n\n`
   );
 }

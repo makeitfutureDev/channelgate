@@ -52,15 +52,17 @@ test("admin navigation uses real links and browser history", () => {
   assert.match(app, /initialConversationRoute/);
 });
 
-test("MCP checklists load and persist separate catalogs for the effective engine", () => {
+test("MCP checklists show Claude and Codex together while persisting separate grants", () => {
   const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 
   assert.match(app, /AVAILABLE_MCPS\s*=\s*\{\s*claude:\s*null,\s*codex:\s*null\s*\}/);
   assert.match(app, /\/api\/mcp\/available\?engine=\$\{encodeURIComponent\(engine\)\}/);
-  assert.match(app, /effectiveMcpEngine/);
+  assert.match(app, /for \(const engine of \["claude", "codex"\]\)/);
+  assert.match(app, /data-mcp-engine/);
+  assert.match(app, /loading Claude and Codex MCP lists/);
   assert.match(app, /allowedCodexMcps/);
   assert.match(app, /captureMcpSelection/);
-  assert.match(app, /renderMcpBoxForEngine/);
+  assert.match(app, /paintAllMcpBoxes/);
 });
 
 test("admin capability labels state the effective network boundary", () => {

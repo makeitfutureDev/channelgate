@@ -154,7 +154,9 @@ function checkboxList(container, items, selected, valueKey = "value", labelKey =
     const wrap = document.createElement("label");
     // escapeHtml on the value for the same reason the label below is textContent: these names come
     // from `claude mcp list` / skill folder names, so a quote in one would break out of the attribute.
-    wrap.innerHTML = `<input type="checkbox" value="${escapeHtml(value)}" ${selected.includes(value) ? "checked" : ""}/> <span></span>`;
+    const inherited = Boolean(item && typeof item === "object" && item.inherited);
+    const locked = Boolean(item && typeof item === "object" && item.locked);
+    wrap.innerHTML = `<input type="checkbox" value="${escapeHtml(value)}" ${selected.includes(value) || inherited ? "checked" : ""} ${locked ? "disabled" : ""} ${inherited ? 'data-inherited="1"' : ""}/> <span></span>`;
     // labelHtml lets a caller inject markup (e.g. the "offline" badge span); plain labels stay
     // textContent so arbitrary names can't inject HTML.
     const span = wrap.querySelector("span");
@@ -166,6 +168,10 @@ function checkboxList(container, items, selected, valueKey = "value", labelKey =
 
 function checkedValues(container) {
   return [...container.querySelectorAll("input:checked")].map((i) => i.value);
+}
+
+function explicitCheckedValues(container) {
+  return [...container.querySelectorAll('input:checked:not([data-inherited="1"])')].map((i) => i.value);
 }
 
 // Channel "mode" — a friendly name over the flags (kept in sync with src/gateway/modes.js).
@@ -214,7 +220,7 @@ const MANAGE_HELP = {
   members: "Any approved member of this channel can change the safe settings (capability up to Autonomous, skills, connectors) — but never Full access, network or work-dir.",
 };
 function channelProfileOf(m = {}) {
-  if (m.profile && (PROFILE_FLAGS[m.profile] || m.profile === "custom")) return m.profile;
+  if (m.profile && PROFILE_FLAGS[m.profile]) return m.profile;
   if (m.cleanMode) return "lean";
   if (m.adminMode) return "full";
   if (m.autoMode) return "auto";
@@ -983,6 +989,15 @@ function initializeMcpBox(box, { claude = [], codex = [] } = {}) {
 }
 
 function captureMcpSelection(box) {
+  if (box.dataset.engine === "both") {
+    const state = mcpBoxState(box);
+    for (const engine of ["claude", "codex"]) {
+      state[engine] = [...box.querySelectorAll(`input[type="checkbox"][data-mcp-engine="${engine}"]:checked`)]
+        .map((input) => input.value);
+    }
+    box.dataset.mcpSelections = JSON.stringify(state);
+    return;
+  }
   const engine = box.dataset.engine;
   if (!engine || !["claude", "codex"].includes(engine)) return;
   const state = captureGrantMcpSelection(
@@ -1019,6 +1034,25 @@ function paintMcpBox(box, engine) {
   checkboxList(box, items, selected, "value", "label");
 }
 
+function paintAllMcpBoxes(box) {
+  box.replaceChildren();
+  box.classList.remove("empty");
+  for (const engine of ["claude", "codex"]) {
+    const section = document.createElement("section");
+    section.className = "mcp-engine-group";
+    section.innerHTML = `<h5>${engine === "claude" ? "Claude" : "Codex"}</h5>`;
+    const list = document.createElement("div");
+    const selected = mcpBoxState(box)[engine];
+    const items = catalogWithSavedEntries(box, engine).map((entry) => entry.connected
+      ? { value: mcpEntryId(entry), label: entry.name }
+      : { value: mcpEntryId(entry), labelHtml: `${escapeHtml(entry.name)} <span class="off-badge">offline</span>` });
+    checkboxList(list, items, selected, "value", "label");
+    for (const input of list.querySelectorAll('input[type="checkbox"]')) input.dataset.mcpEngine = engine;
+    section.appendChild(list);
+    box.appendChild(section);
+  }
+}
+
 async function loadMcpCatalog(engine) {
   if (Array.isArray(AVAILABLE_MCPS[engine])) return AVAILABLE_MCPS[engine];
   if (!MCP_CATALOG_LOADS[engine]) {
@@ -1036,29 +1070,20 @@ async function loadMcpCatalog(engine) {
 
 async function renderMcpBoxForEngine(box, engineValue, countEl) {
   captureMcpSelection(box);
-  const engine = effectiveMcpEngine(engineValue);
-  box.dataset.engine = engine;
-  if (!engine) {
-    delete box.dataset.mcpLoading;
+  box.dataset.engine = "both";
+  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine]));
+  if (missing.length) {
+    box.dataset.mcpLoading = "both";
     box.classList.add("empty");
-    box.textContent = "MCP is unavailable for this engine's security profile.";
+    box.textContent = "loading Claude and Codex MCP lists…";
     updateChecksCount(box, countEl);
-    return;
+    await Promise.all(missing.map(async (engine) => {
+      try { await loadMcpCatalog(engine); } catch { AVAILABLE_MCPS[engine] = []; }
+    }));
+    if (!box.isConnected) return;
   }
-  if (!Array.isArray(AVAILABLE_MCPS[engine])) {
-    box.dataset.mcpLoading = engine;
-    box.classList.add("empty");
-    box.textContent = `loading ${engine} MCP list…`;
-    updateChecksCount(box, countEl);
-    try {
-      await loadMcpCatalog(engine);
-    } catch {
-      AVAILABLE_MCPS[engine] = [];
-    }
-    if (!box.isConnected || box.dataset.engine !== engine) return;
-  }
-  if (box.dataset.mcpLoading === engine) delete box.dataset.mcpLoading;
-  paintMcpBox(box, engine);
+  delete box.dataset.mcpLoading;
+  paintAllMcpBoxes(box);
   updateChecksCount(box, countEl);
 }
 
@@ -1175,7 +1200,26 @@ function renderChannelDetail(ch) {
   const meta = ch.meta || { allowedUsers: [], allowedMcps: [], skills: [], adminMode: false };
   const node = document.getElementById("channel-card").content.cloneNode(true);
   const card = node.querySelector(".conv-detail");
-  wireGrantTierNavigation(card.querySelector(".ch-grant-tier"), "channel");
+  const toolsPane = card.querySelector('[data-pane="tools"]');
+  const toolSections = Object.fromEntries(["connections", "mcps", "environment", "skills"].map((name) => {
+    const section = document.createElement("div");
+    section.className = "tool-section";
+    section.dataset.toolSection = name;
+    toolsPane.appendChild(section);
+    return [name, section];
+  }));
+  const toolGrid = toolsPane.querySelector(".grid.grid-2");
+  const toolColumns = toolGrid ? [...toolGrid.children] : [];
+  if (toolColumns[0]) toolSections.mcps.appendChild(toolColumns[0]);
+  if (toolColumns[1]) toolSections.skills.appendChild(toolColumns[1]);
+  toolGrid?.remove();
+  for (const selector of [".tok-fields", ".make-toolbox-card"]) {
+    const el = toolsPane.querySelector(selector);
+    if (el) toolSections.connections.appendChild(el);
+  }
+  const envCard = toolsPane.querySelector(".channel-env-card");
+  if (envCard) toolSections.environment.appendChild(envCard);
+  for (const [name, section] of Object.entries(toolSections)) section.hidden = name !== "connections";
   card.querySelector(".ch-name").textContent = hashName(ch.name || ch.slug);
   card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "");
   card.querySelector(".ch-slug").textContent = ch.slug;
@@ -1260,15 +1304,17 @@ function renderChannelDetail(ch) {
   // Picking a preset flips the hidden flag checkboxes; "Custom" reveals them for hand-editing.
   const profSel = card.querySelector(".ch-profile");
   const profHelp = card.querySelector(".ch-profile-help");
-  const customBox = card.querySelector(".ch-custom-flags");
   const capCards = [...card.querySelectorAll(".cap-card")];
   const liveMeta = () => ({ adminMode: flagEls.adminMode.checked, allowBash: flagEls.allowBash.checked, autoMode: flagEls.autoMode.checked, cleanMode: flagEls.cleanMode.checked, allowNetwork: networkBox.checked });
   const applyProfileUI = (p) => {
     profSel.value = p;
     profHelp.textContent = PROFILE_HELP[p] || "";
-    customBox.hidden = p !== "custom";
     for (const c of capCards) c.classList.toggle("sel", c.dataset.cap === p);
-    if (p !== "custom" && PROFILE_FLAGS[p]) {
+    for (const c of capCards) {
+      const mark = c.querySelector(".box-mark");
+      if (mark) mark.textContent = c.dataset.cap === p ? "☑" : "□";
+    }
+    if (PROFILE_FLAGS[p]) {
       const f = PROFILE_FLAGS[p];
       flagEls.adminMode.checked = f.adminMode;
       flagEls.allowBash.checked = f.allowBash;
@@ -1282,6 +1328,15 @@ function renderChannelDetail(ch) {
   // Editing a custom flag directly re-paints the header pill (mode may change).
   for (const el of Object.values(flagEls)) el.addEventListener("change", () => paintModePill(liveMeta()));
   networkBox.addEventListener("change", () => paintModePill(liveMeta()));
+
+  // Tool categories are intentionally explicit even while the legacy controls remain one save
+  // surface. The active category is highlighted; the content grouping is progressively enhanced
+  // as each pane is split without changing the persisted channel schema.
+  const toolTabs = [...card.querySelectorAll(".tool-subtab")];
+  for (const tab of toolTabs) tab.addEventListener("click", () => {
+    for (const item of toolTabs) item.classList.toggle("active", item === tab);
+    for (const section of Object.values(toolSections)) section.hidden = section.dataset.toolSection !== tab.dataset.toolPane;
+  });
 
   // Access: who can USE + who can MANAGE, each with a live description of the selected option.
   const accessSel = card.querySelector(".ch-access");
@@ -1508,7 +1563,7 @@ function renderChannelDetail(ch) {
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
         method: "PUT",
         body: JSON.stringify({
-          ...channelGuestSavePatch(usersBox.dataset.ready === "1", checkedValues(usersBox)),
+          ...channelGuestSavePatch(usersBox.dataset.ready === "1", explicitCheckedValues(usersBox)),
           allowedMcps: selectedMcpEntries(mcpsBox, "claude")
             .map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
           allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
@@ -1573,19 +1628,13 @@ function renderChannelDetail(ch) {
   // Discard: re-render the detail from the cached ch object (clears dirty + hides the savebar).
   savebar.querySelector(".discard").addEventListener("click", () => renderChannelDetail(ch));
 
-  // Memory tab — MEMORY.md is the channel's budgeted memory INDEX (the agent maintains it via
-  // the update_channel_memory tool; memory/<topic>.md files carry depth). Loads lazily and has
-  // its own Save. Saving over budget is allowed (admin override) but warned — agent adds fail
-  // until the index is consolidated back under budget.
+  // Memory tab — uncapped Markdown storage with bounded, on-demand recall. MEMORY.md and topic
+  // files are indexed into derived SQLite FTS when the agent searches them; no body is injected.
   const memText = card.querySelector(".ch-memory-text");
   const memHint = card.querySelector(".ch-memory-hint");
   const memSaved = card.querySelector(".ch-memory-saved");
   let memLoaded = false;
-  const memMeter = (used, budget) => {
-    if (!budget) return "";
-    const pct = Math.round((used / budget) * 100);
-    return ` Index <strong>${pct}%</strong> of budget (${used}/${budget} chars)${used > budget ? " — <strong>over budget: agent adds will fail until consolidated</strong>" : ""}.`;
-  };
+  const memMeter = (facts, used) => ` <strong>${facts || 0}</strong> durable facts · ${used || 0} index characters · uncapped storage.`;
   const memTopics = (topics) =>
     topics && topics.length ? ` Topic files: ${topics.map((t) => `<code>memory/${escapeHtml(t)}</code>`).join(" ")}.` : "";
   const loadMemory = async () => {
@@ -1594,9 +1643,9 @@ function renderChannelDetail(ch) {
     try {
       const r = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/memory`);
       memText.value = r.content || "";
-      const extras = memMeter(r.used || 0, r.budget || 0) + memTopics(r.topics);
+      const extras = memMeter(r.facts || 0, r.used || 0) + memTopics(r.topics);
       memHint.innerHTML = r.enabled
-        ? `The memory <strong>index</strong> — one line per durable fact; depth lives in <code>memory/&lt;topic&gt;.md</code> files linked as [[topic]]. The agent maintains it via <code>update_channel_memory</code>.${extras} <code>${escapeHtml(r.path)}</code>`
+        ? `Markdown is the portable source of truth. Fresh sessions receive only a compact catalog; the agent uses <code>search_channel_memory</code> and <code>read_channel_memory</code> to load relevant passages through a derived SQLite FTS5 index.${extras} <code>${escapeHtml(r.path)}</code>`
         : `Folder memory is <strong>off</strong> for this channel (turn it on in Runtime to have the agent use it). You can still edit the file here.${extras} <code>${escapeHtml(r.path)}</code>`;
     } catch (e) {
       memLoaded = false; // let a later tab click retry
@@ -1610,7 +1659,7 @@ function renderChannelDetail(ch) {
         method: "PUT",
         body: JSON.stringify({ content: memText.value }),
       });
-      memSaved.textContent = r.budget && r.used > r.budget ? "✓ saved — over budget" : "✓ saved";
+      memSaved.textContent = "✓ saved";
       setTimeout(() => (memSaved.textContent = ""), 4000);
       memLoaded = false; // refresh meter/topics on next open
       loadMemory();
@@ -1710,21 +1759,18 @@ function buildConfigEditor(cfg = {}) {
       <div class="cap-card" data-cap="read"><h5><i style="background:var(--cap-read)"></i>Read-only</h5><p>Answers &amp; reads files. Can't edit or run commands.</p></div>
       <div class="cap-card" data-cap="worker"><h5><i style="background:var(--cap-worker)"></i>Worker</h5><p>Runs commands &amp; edits files, sandboxed to this folder.</p></div>
       <div class="cap-card" data-cap="auto"><h5><i style="background:var(--cap-auto)"></i>Autonomous</h5><p>Worker that doesn't stop to ask. Still sandboxed.</p></div>
-      <div class="cap-card danger" data-cap="full"><h5><i style="background:var(--cap-full)"></i>Full access</h5><p>No sandbox — full machine. Admin authors only.</p><span class="tag">admin</span></div>
-      <div class="cap-card" data-cap="lean"><h5><i style="background:var(--cap-lean)"></i>Lean</h5><p>Bare model — no tools, no skills. Cheapest.</p></div>
-      <div class="cap-card" data-cap="custom"><h5><i style="background:var(--faint)"></i>Custom</h5><p>Set every capability yourself, below.</p></div>
+    </div>
+    <p class="fldlab">Special modes</p>
+    <div class="cap-cards cap-options">
+      <div class="cap-card danger" data-cap="full"><h5><i style="background:var(--cap-full)"></i>Full access <span class="box-mark">□</span></h5><p>Admin authors bypass prompts; the container remains the boundary.</p><span class="tag">admin</span></div>
+      <div class="cap-card" data-cap="lean"><h5><i style="background:var(--cap-lean)"></i>Lean <span class="box-mark">□</span></h5><p>Bare testing mode with no MCP servers or skills.</p></div>
     </div>
     <select class="cfg-profile" hidden aria-hidden="true">
-      <option value="read">Read-only</option><option value="worker">Worker</option><option value="auto">Autonomous</option><option value="full">Full access</option><option value="lean">Lean</option><option value="custom">Custom…</option>
+      <option value="read">Read-only</option><option value="worker">Worker</option><option value="auto">Autonomous</option><option value="full">Full access</option><option value="lean">Lean</option>
     </select>
     <em class="state cfg-profile-help" style="display:block;margin:0 0 16px"></em>
-    <div class="cfg-custom-flags" hidden style="margin:0 0 18px;padding:12px 14px;border:1px solid var(--line);border-radius:8px">
-      <div class="hint" style="margin:0 0 8px;color:var(--muted)"><strong>Custom</strong> — turn on exactly the capabilities you want. A preset above just flips these for you.</div>
-      <label class="toggle"><input type="checkbox" class="cfg-admin" /> Admin mode — FULL ACCESS: no sandbox, full filesystem + network, runs anything (admin authors only)</label>
-      <label class="toggle"><input type="checkbox" class="cfg-bash" /> Allow Bash + file writes — reads stay confined to the folder; secrets, gateway config &amp; other channels are write-protected; no network (not full admin)</label>
-      <label class="toggle"><input type="checkbox" class="cfg-auto" /> Auto mode — work autonomously: auto-approve permission prompts (no buttons) + writable folder. Still sandboxed; not full admin.</label>
-      <label class="toggle"><input type="checkbox" class="cfg-clean" /> Clean mode — load bare for the lowest token cost: NO MCP servers, NO skills, NO favorites block, runs in the bare gateway folder. Closest to the model's base prompt; the conversation's own short instructions still apply.</label>
-    </div>
+    <input type="checkbox" class="cfg-admin" hidden /><input type="checkbox" class="cfg-bash" hidden />
+    <input type="checkbox" class="cfg-auto" hidden /><input type="checkbox" class="cfg-clean" hidden />
     <label class="togglerow cfg-network-wrap">
       <input type="checkbox" class="cfg-network" />
       <span class="switch"></span>
@@ -1815,14 +1861,16 @@ function buildConfigEditor(cfg = {}) {
   networkBox.checked = !!cfg.allowNetwork;
   const profSel = el.querySelector(".cfg-profile");
   const profHelp = el.querySelector(".cfg-profile-help");
-  const customBox = el.querySelector(".cfg-custom-flags");
   const capCards = [...el.querySelectorAll(".cap-card")];
   const applyProfileUI = (p) => {
     profSel.value = p;
     profHelp.textContent = PROFILE_HELP[p] || "";
-    customBox.hidden = p !== "custom";
     for (const c of capCards) c.classList.toggle("sel", c.dataset.cap === p);
-    if (p !== "custom" && PROFILE_FLAGS[p]) {
+    for (const c of capCards) {
+      const mark = c.querySelector(".box-mark");
+      if (mark) mark.textContent = c.dataset.cap === p ? "☑" : "□";
+    }
+    if (PROFILE_FLAGS[p]) {
       const f = PROFILE_FLAGS[p];
       flags.adminMode.checked = f.adminMode;
       flags.allowBash.checked = f.allowBash;
@@ -3623,9 +3671,8 @@ async function init() {
   if (initialConversationRoute) await selectConv(initialConversationRoute.key, { history: "none", canonicalize: true });
   loadView(initialView);
 
-  // Warm the global engine's catalog off the critical path. Every editor independently requests
-  // and paints its effective engine, so a channel/template override never inherits the wrong list.
-  loadMcpCatalog(effectiveMcpEngine("")).catch(() => {});
+  // Warm both catalogs off the critical path; every grant editor shows Claude and Codex together.
+  for (const engine of ["claude", "codex"]) loadMcpCatalog(engine).catch(() => {});
 }
 // A failed boot used to end in console.error, so the page just sat on "Loading…" forever and the
 // only clue was the devtools console. Paint it instead. The Host/Origin refusal gets its own copy

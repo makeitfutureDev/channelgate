@@ -24,7 +24,9 @@ export async function loadChannelGuestOptions(request, channelId) {
   if (!Array.isArray(result?.members)) throw new Error("Slack did not return a valid member roster.");
   return result.members.map((member) => ({
     value: String(member.id),
-    label: `${member.name || member.id} (${member.id})${member.isExternal ? " · external" : ""}`,
+    label: `${member.name || member.id} (${member.id})${member.admin ? " · admin" : member.approved ? " · approved" : ""}${member.isExternal ? " · external" : ""}`,
+    inherited: Boolean(member.approved),
+    locked: Boolean(member.admin),
   }));
 }
 
@@ -62,8 +64,11 @@ export function accessGrantSkillOptions(available = [], saved = []) {
   const availableNames = [...new Set((available || []).filter((name) => typeof name === "string").map((name) => name.trim()).filter(Boolean))];
   const savedNames = [...new Set((saved || []).filter((name) => typeof name === "string").map((name) => name.trim()).filter(Boolean))];
   const known = new Set(availableNames);
+  const enabled = new Set(savedNames);
   return [
-    ...availableNames.map((name) => ({ value: name, label: name })),
+    ...availableNames
+      .map((name) => ({ value: name, label: name, enabled: enabled.has(name) }))
+      .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.label.localeCompare(b.label)),
     ...savedNames.filter((name) => !known.has(name)).map((name) => ({ value: name, label: `${name} · unavailable` })),
   ];
 }

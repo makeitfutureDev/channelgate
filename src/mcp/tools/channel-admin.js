@@ -9,6 +9,7 @@ import path from "node:path";
 import { getChannelMeta, patchChannelMeta } from "../../config/store.js";
 import { effectiveWorkDir, updateChannelInstructions } from "../../gateway/folders.js";
 import { memoryEnabled, applyMemoryOperations, MEMORY_SECTIONS } from "../../gateway/channel-memory.js";
+import { searchChannelMemory, readChannelMemorySource } from "../../gateway/memory-search.js";
 import { logEvent } from "../../util/logger.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../../gateway/mcp-discovery.js";
 import { engineLabel, requireAdapter } from "../../engines/registry.js";
@@ -407,6 +408,7 @@ export function register(server, ctx) {
   );
 
   registerMemoryTool(server, ctx);
+  registerMemoryReadTools(server, ctx);
 
   // ── Update the gateway (admins only) ─────────────────────────────────────────────
   server.registerTool(
@@ -560,13 +562,54 @@ export function register(server, ctx) {
   );
 }
 
+export function registerMemoryReadTools(server, ctx) {
+  const { slug } = ctx;
+  server.registerTool(
+    "search_channel_memory",
+    {
+      description: "Search THIS channel's uncapped persistent memory. Use request-relevant terms; returns ranked source paths and excerpts without loading the whole memory library.",
+      inputSchema: { query: z.string(), limit: z.number().int().min(1).max(20).optional() },
+    },
+    async ({ query, limit }) => {
+      if (!slug) return text("No channel context — can't search memory here.");
+      const meta = (await getChannelMeta(slug)) || {};
+      if (!memoryEnabled(meta)) return text("Channel memory is disabled here.");
+      try {
+        const hits = await searchChannelMemory(effectiveWorkDir(slug, meta), slug, query, limit);
+        if (!hits.length) return text(`No channel memory matched “${String(query).slice(0, 120)}”.`);
+        return text(hits.map((hit) => `• ${hit.source} — ${hit.excerpt}`).join("\n"));
+      } catch (error) {
+        return text(`Couldn't search channel memory: ${error.message}`);
+      }
+    }
+  );
+  server.registerTool(
+    "read_channel_memory",
+    {
+      description: "Read one source returned by search_channel_memory. Accepts MEMORY.md or memory/<topic>.md; never use it to load every source preemptively.",
+      inputSchema: { source: z.string() },
+    },
+    async ({ source }) => {
+      if (!slug) return text("No channel context — can't read memory here.");
+      const meta = (await getChannelMeta(slug)) || {};
+      if (!memoryEnabled(meta)) return text("Channel memory is disabled here.");
+      try {
+        const body = await readChannelMemorySource(effectiveWorkDir(slug, meta), source);
+        return body == null ? text(`Memory source not found: ${source}`) : text(body);
+      } catch (error) {
+        return text(`Couldn't read channel memory: ${error.message}`);
+      }
+    }
+  );
+}
+
 // ── Channel memory (any allowed user) ────────────────────────────────────────────
 // Registered on its own so the background memory review (CG_TOOLSET=memory-review, see
 // gateway/memory-review.js) can expose ONLY this tool. Never approval-gated (policy 2026-08-07).
 //
 // After a few failed saves in a row this process stops asking for a retry and tells the model to
 // move on (Hermes' consolidation-failure cap): a fragile replace/add must never loop a turn to
-// budget exhaustion and swallow the user's reply.
+// repeated validation failures and swallow the user's reply.
 const MAX_MEMORY_FAILURES = 3;
 let memoryFailures = 0;
 const MEMORY_ACTIONS = ["add", "replace", "remove", "write_topic"];
@@ -585,11 +628,10 @@ export function registerMemoryTool(server, ctx) {
     {
       description:
         "Save to THIS channel's PERSISTENT memory — durable facts future sessions must know. The " +
-        "MEMORY.md index is injected at the start of every session, so keep it compact and " +
-        "high-signal; memory/<topic>.md files carry depth, referenced from index lines as [[topic]].\n" +
+        "memory is stored as uncapped Markdown and is retrieved on demand; memory/<topic>.md files " +
+        "carry depth, referenced from MEMORY.md as [[topic]].\n" +
         "HOW: make ALL changes in ONE call via `operations` (each {action, text?, old?, section?, " +
-        "topic?, content?}). The batch applies atomically and the budget is checked only on the FINAL " +
-        "result — so one call can remove/replace stale lines to make room AND add new ones. The bare " +
+        "topic?, content?}). The batch applies atomically and has no character ceiling. The bare " +
         "action/text/old fields are for a single change. Actions: 'add' (one concise declarative " +
         "line in `text`; optional `section`: " + MEMORY_SECTIONS.join(" | ") + "), 'replace' (a " +
         "unique `old` substring → the WHOLE line becomes `text`; prefer this over near-duplicate " +
@@ -628,7 +670,7 @@ export function registerMemoryTool(server, ctx) {
         memoryFailures = 0;
         // The save itself is the metric: the Audit feed reads these rows to show how much memory
         // activity a channel really has (review-driven saves are labelled).
-        await logEvent("memory_saved", { channel: channelId, author: createdBy, slug, actions: r.counts, review: origin === "memory_review", indexChars: r.usage.used, indexBudget: r.usage.budget });
+        await logEvent("memory_saved", { channel: channelId, author: createdBy, slug, actions: r.counts, review: origin === "memory_review", indexChars: r.usage.used });
         const what = r.indexChanged && r.topics.length ? "updated (index + topic)" : r.topics.length ? "topic saved" : r.indexChanged ? "updated" : "unchanged";
         const meter = r.meter ? ` — ${r.meter}` : "";
         return text(`✅ Memory ${what} (${r.path})${meter}. ${r.note || ""}`.trim());

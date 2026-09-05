@@ -169,18 +169,19 @@ test("frontend skill options preserve saved names missing from discovery", () =>
   assert.deepEqual(
     accessGrantSkillOptions(["available", "shared", "shared"], ["shared", "offline-skill", "offline-skill"]),
     [
-      { value: "available", label: "available" },
-      { value: "shared", label: "shared" },
+      { value: "shared", label: "shared", enabled: true },
+      { value: "available", label: "available", enabled: false },
       { value: "offline-skill", label: "offline-skill · unavailable" },
     ],
   );
 });
 
-test("admin UI exposes organization, channel, and user grant tiers", () => {
+test("conversation tools remove the grant-tier switch and expose focused sub-tabs", () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(html, /id="org-grant-tier"[\s\S]*Organization[\s\S]*Channel[\s\S]*Individual user/);
-  assert.match(html, /class="ch-grant-tier"/);
+  assert.doesNotMatch(html, /class="ch-grant-tier"/);
+  for (const label of ["Connections", "MCP servers", "Environment tokens", "Skills"]) assert.match(html, new RegExp(`>${label}<`));
   assert.match(html, /class="ud-row ud-grants"/);
   assert.match(client, /function buildAccessGrantsEditor/);
   assert.match(client, /captureGrantMcpSelection\(/, "the executable loading-state helper must drive the editor");

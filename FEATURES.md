@@ -7,6 +7,20 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   and pass rule; engine-independent cases require a genuine engine-independent boundary.
   → TEST-PLAN: Development acceptance policy.
 
+## Conversation settings and persistent memory
+
+- **Focused conversation settings:** Access presents Read-only, Worker, and Autonomous as the
+  primary modes, with Full access and Lean as clearly separated special-mode boxes; Custom is no
+  longer offered. Tools is split into Connections, MCP servers, Environment tokens, and Skills;
+  enabled skills sort first and the channel-level Grant Tier switch is gone.
+- **Truthful guest access:** approved members appear selected because they already have access;
+  admins are selected and locked, while explicit guest grants remain independently editable.
+- **Uncapped, on-demand channel memory:** Markdown remains the portable source of truth. Fresh
+  sessions receive only a bounded catalog (counts, topic names, retrieval contract), never the
+  memory body. `search_channel_memory` rebuilds and queries a derived SQLite FTS5 index and
+  `read_channel_memory` loads one validated source. Writes no longer fail on a character budget.
+  → TEST-PLAN: Conversation settings + on-demand memory.
+
 ## Maintainable module and persistence boundaries
 - **No-build admin modules**: the browser entrypoint delegates same-origin/CSRF-aware requests to
   `admin-api.js`, reusable DOM/dialog/secret-field rendering to `admin-view.js`, and pure save
@@ -1067,24 +1081,23 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   triggering the bot through Slack: the bot's member ID and the Make IDs, saved explicit mention, approved bot-user and
   trusted app/bot requirements, shared channel membership, Markdown settings, and root-thread
   timestamp fallback. README points operators to the canonical example. → TEST-PLAN: Trusted bot apps.
-- Folder-scoped agent memory, **skill-packaged** (modeled on Hermes + Claude Code auto-memory;
-  design in the memory-improvement note (internal repo)): `MEMORY.md` is a short **budgeted index** (default
-  8,000 chars, `meta.memoryBudget` override; one declarative line per fact under
+- Folder-scoped agent memory, **skill-packaged** (informed by Hermes + Claude Code auto-memory;
+  design in the memory-improvement note (internal repo)): uncapped `MEMORY.md` and topic files are
+  the portable canonical store, with one declarative fact per line under
   `People & preferences · Decisions · Environment & gotchas · Project state`) and
   `memory/<topic>.md` files carry depth, linked from index lines as `[[topic]]` — an
   Obsidian-style graph inside the sandbox, no cross-channel bleed, Claude's GLOBAL auto-memory
-  stays off. **Recall is injected, not requested:** every FRESH session (first turn of a thread, a
-  heal, a cross-engine fallback) gets the index as a `[Channel memory …]` block in front of its
-  first message (Hermes' frozen-snapshot pattern; empty when memory is off, the run is clean, or
-  nothing was saved). Nothing memory-related is injected into `CLAUDE.md`: the protocol lives in a
+  stays off. A derived SQLite FTS5 index is rebuilt from Markdown for bounded retrieval.
+  **Recall is catalogued, then requested:** each FRESH session gets source/topic names and directions
+  to `search_channel_memory` and `read_channel_memory`, never the full memory body. Nothing
+  memory-related is injected into `CLAUDE.md`: the protocol lives in a
   gateway-maintained **`channel-memory` skill** in each folder (what is in context, concrete save
   triggers, end-of-task checkpoint, the "stale in a week ⇒ not memory / declarative facts, not
   imperatives" rule, consolidation ritual — refreshed write-on-change, pruned when memory is off)
   and in the **`update_channel_memory`** gateway MCP tool, whose description re-states the save
   triggers every turn. **Saves are batched and atomic:** one call takes an `operations` array
   (`add` with optional `section`, whole-line `replace` on a unique substring, `remove`,
-  `write_topic`), applied all-or-nothing with the budget checked on the FINAL result — freeing
-  room and adding ride in the same call; duplicate adds are no-ops; instruction-shaped or
+  `write_topic`), applied all-or-nothing with no storage cap; duplicate adds are no-ops; instruction-shaped or
   secret-shaped content is refused; after three failed saves in a row the tool tells the model to
   move on. The tool writes daemon-side, so saving works in EVERY mode — including `read` channels
   (which also keep the narrow direct `Write(MEMORY.md)` grant). Responses show a usage meter.
@@ -1098,7 +1111,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   measured: `memory_saved` (with a review flag), `memory_review`, `memory_review_error` audit
   events and usage rows with `task_kind = memory_review`. Memory saves never
   require an approval card, including when the channel uses a custom project working folder; signed
-  capability/trusted-principal, allowed-root, action/path, enablement, and budget checks still apply.
+  capability/trusted-principal, allowed-root, action/path, and enablement checks still apply.
   The daemon injects its resolved filesystem + workspace roots into both Claude and Codex gateway
   MCP subprocesses (through Codex's secret broker too), so their isolated `HOME` directories cannot
   redirect default or custom-folder memory into disposable per-run state.

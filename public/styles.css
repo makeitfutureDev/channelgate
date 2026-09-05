@@ -551,6 +551,10 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .togglerow .t small { color: var(--faint); font-size: 11px; }
 
 /* Tools tab: checklist header (title + count) + a filter box above each list. */
+.tool-subtabs{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 20px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.tool-subtab{border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:7px 13px;cursor:pointer}
+.tool-subtab.active{border-color:var(--accent);color:var(--text);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.tool-section[hidden]{display:none!important}.tool-section>.tools-col{max-width:760px}.mcp-engine-group+.mcp-engine-group{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}.mcp-engine-group h5{margin:0 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.cap-options{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:18px}.box-mark{float:right;color:var(--accent);font-size:18px}
 .tools-col .checks-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .tools-col .checks-head h4 { margin: 0; }
 .checks-count { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }

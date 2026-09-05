@@ -25,7 +25,7 @@ import {
   getUsers,
 } from "../../config/store.js";
 import { ensureChannelFolder, effectiveWorkDir, gatewayInstructionsBlock, splitGatewayBlock, channelSeed } from "../../gateway/folders.js";
-import { memoryEnabled, memoryBudget, MEM_FILE, MEM_DIR } from "../../gateway/channel-memory.js";
+import { memoryEnabled, countMemoryFacts, MEM_FILE, MEM_DIR } from "../../gateway/channel-memory.js";
 import {
   ENGINES,
   CHANNEL_ACCESS_MODES,
@@ -251,7 +251,14 @@ export function createChannelsRouter({
       if (!entry || entry.isDM || entry.type === "im") {
         return res.status(404).json({ error: "unknown channel" });
       }
-      res.json({ members: await currentChannelRoster(req.params.channelId) });
+      const [members, users] = await Promise.all([currentChannelRoster(req.params.channelId), getUsers()]);
+      res.json({
+        members: members.map((member) => ({
+          ...member,
+          approved: Boolean(users[member.id]?.approved || users[member.id]?.isAdmin),
+          admin: Boolean(users[member.id]?.isAdmin),
+        })),
+      });
     } catch (error) {
       if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
       next(error);
@@ -573,11 +580,8 @@ export function createChannelsRouter({
   });
 
   // ── Channel memory (MEMORY.md index + memory/ topic files) ──────────────────
-  // MEMORY.md is the channel's budgeted memory INDEX (the agent maintains it via the
-  // update_channel_memory tool); memory/<topic>.md files carry depth. The admin UI edits the
-  // index directly and lists the topic files read-only. Saving over budget is allowed here
-  // (admin override) — the response carries used/budget so the UI can warn that agent adds will
-  // fail until it's consolidated. Paths come from the trusted slug + fixed names (no traversal).
+  // Markdown is the source of truth; SQLite FTS is a derived cache rebuilt on search. The UI
+  // edits MEMORY.md directly and lists topic files. Storage is uncapped; prompt recall is not.
   router.get("/channels/:channelId/memory", async (req, res, next) => {
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
@@ -597,8 +601,8 @@ export function createChannelsRouter({
         exists,
         path: file,
         enabled: memoryEnabled(ctx.meta),
-        budget: memoryBudget(ctx.meta),
         used: content.length,
+        facts: countMemoryFacts(content),
         topics,
       });
     } catch (e) {
@@ -614,7 +618,7 @@ export function createChannelsRouter({
       const file = path.join(ctx.workDir, MEM_FILE);
       await ensureRealDir(path.dirname(file));
       await writeNoFollow(file, content);
-      res.json({ ok: true, path: file, used: content.length, budget: memoryBudget(ctx.meta) });
+      res.json({ ok: true, path: file, used: content.length, facts: countMemoryFacts(content) });
     } catch (e) {
       next(e);
     }

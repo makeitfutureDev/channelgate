@@ -33,15 +33,16 @@ async function channel(id, name) {
   return { entry, meta, cwd };
 }
 
-test("a fresh session gets the memory snapshot in front of its message; the resumed turn does not", async () => {
+test("a fresh session gets only the memory catalog; the resumed turn does not repeat it", async () => {
   saveSettings({ engine: "claude", agentMemory: true, memoryReviewEvery: 0, composioMode: "personal" });
   const { entry, meta, cwd } = await channel("C_SNAPSHOT_RUN", "snapshot-run");
   await applyMemoryOperations(cwd, meta, [{ action: "add", text: "Reports go out on Fridays.", section: "Decisions" }]);
 
   const first = await runMessage({ channelId: "C_SNAPSHOT_RUN", authorId: "U_SNAPSHOT", text: "when do reports go out?", threadKey: "8000.001", origin: "slack_foreground", preferCold: true });
-  assert.match(first.content, /^\[Channel memory — snapshot at session start; index \d+% of its 8000-char budget/);
-  assert.match(first.content, /Reports go out on Fridays\./);
-  assert.match(first.content, /\[End of channel memory\.\]\n\nwhen do reports go out\?$/);
+  assert.match(first.content, /^\[Channel memory catalog — 1 durable facts/);
+  assert.doesNotMatch(first.content, /Reports go out on Fridays\./);
+  assert.match(first.content, /search_channel_memory/);
+  assert.match(first.content, /\]\n\nwhen do reports go out\?$/);
 
   const second = await runMessage({ channelId: "C_SNAPSHOT_RUN", authorId: "U_SNAPSHOT", text: "and the second one?", threadKey: "8000.001", origin: "slack_foreground", preferCold: true });
   assert.doesNotMatch(second.content, /Channel memory/, "a resumed session already carries the snapshot in its history");

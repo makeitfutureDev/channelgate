@@ -101,7 +101,7 @@ export function resetMemoryReviewState() {
 export function buildMemoryReviewPrompt({ snapshot, transcript, channelName = "" }) {
   const index = snapshot?.index?.trim() ? snapshot.index.trim() : "(empty — nothing saved yet)";
   const topics = snapshot?.topics?.length ? snapshot.topics.map((t) => `${MEM_DIR}/${t}.md`).join(", ") : "(none)";
-  const usage = snapshot?.usage ? `${snapshot.usage.pct}% of ${snapshot.usage.budget} chars` : "";
+  const usage = snapshot?.usage ? `${snapshot.usage.used} chars; uncapped storage` : "uncapped storage";
   let body = String(transcript || "").trim();
   if (body.length > TRANSCRIPT_MAX_CHARS) body = `…(earlier messages omitted)\n${body.slice(-TRANSCRIPT_MAX_CHARS)}`;
   return (
@@ -117,7 +117,7 @@ export function buildMemoryReviewPrompt({ snapshot, transcript, channelName = ""
     `Sections available for add: ${MEMORY_SECTIONS.join(" | ")}.\n` +
     `Rules: write declarative facts ("Alex prefers …"), never imperatives. Skip task progress, completed-work logs, commit SHAs, PR numbers, ` +
     `temporary paths, and anything that will be stale in a week. If a fact is already in the index, refine it with replace instead of adding a near-duplicate. ` +
-    `If the index is near its budget, consolidate in the same call. Never save secrets or tokens. ` +
+    `Consolidate stale or overlapping facts when useful for retrieval quality, never merely to meet a size limit. Never save secrets or tokens. ` +
     `Most conversations teach nothing durable — prefer "Nothing to save." over noise.`
   );
 }

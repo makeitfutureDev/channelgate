@@ -278,6 +278,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "list_available_mcps", "list_channel_mcps", "list_schedules", "list_folders",
     "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
     "workspace_list", "workspace_read", "workspace_search",
+    "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
     "get_license_status", // read-only; exposes the tier/limits and the key's last 4, never the key
     // writes that land visibly in the current thread, or run inside normal confinement
     "slack_post_chart", "slack_post_table", "slack_upload_snippet",
@@ -310,4 +311,3 @@ test("every registered gateway tool is consciously classified as gated or open (
     }
   });
 });
-

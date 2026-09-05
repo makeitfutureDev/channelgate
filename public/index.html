@@ -542,7 +542,7 @@
                     <span>Instructions (CLAUDE.md content, applied to all channels)</span>
                     <textarea id="set-agents-instructions" rows="4" placeholder="e.g. You are Acme's assistant. Be concise and cite sources…"></textarea>
                   </label>
-                  <label class="toggle"><input type="checkbox" id="set-agentmemory" /> <strong>Folder-scoped memory</strong> — each channel gets a budgeted <code>MEMORY.md</code> index + <code>memory/</code> topic files, maintained by the agent via the <code>channel-memory</code> skill and <code>update_channel_memory</code> tool (stays inside the folder; Claude's global memory remains off). Per-channel override available.</label>
+                  <label class="toggle"><input type="checkbox" id="set-agentmemory" /> <strong>Folder-scoped memory</strong> — each channel gets uncapped Markdown memory, searched on demand through a derived local FTS index. Fresh sessions receive only a compact catalog; the memory body stays in the channel folder. Per-channel override available.</label>
                   <label class="field">
                     <span>Background memory review — every N turns per channel (0 = off). A turn that looks like a correction or decision is reviewed regardless; the reviewer reads the thread after the reply is delivered and saves what the model itself did not.</span>
                     <input id="set-memory-review-every" type="number" min="0" step="1" placeholder="5" />
@@ -1001,9 +1001,11 @@
             <div class="cap-card" data-cap="read"><h5><i style="background:var(--cap-read)"></i>Read-only</h5><p>Answers &amp; reads files. Can't edit or run commands.</p></div>
             <div class="cap-card" data-cap="worker"><h5><i style="background:var(--cap-worker)"></i>Worker</h5><p>Runs commands &amp; edits files, sandboxed to this folder.</p></div>
             <div class="cap-card" data-cap="auto"><h5><i style="background:var(--cap-auto)"></i>Autonomous</h5><p>Worker that doesn't stop to ask. Still sandboxed.</p></div>
-            <div class="cap-card danger" data-cap="full"><h5><i style="background:var(--cap-full)"></i>Full access</h5><p>No sandbox — full machine. Admin authors only.</p><span class="tag">admin</span></div>
-            <div class="cap-card" data-cap="lean"><h5><i style="background:var(--cap-lean)"></i>Lean</h5><p>Bare model — no tools, no skills. Cheapest.</p></div>
-            <div class="cap-card" data-cap="custom"><h5><i style="background:var(--faint)"></i>Custom</h5><p>Set every capability yourself, below.</p></div>
+          </div>
+          <p class="fldlab">Special modes</p>
+          <div class="cap-cards cap-options">
+            <div class="cap-card danger" data-cap="full"><h5><i style="background:var(--cap-full)"></i>Full access <span class="box-mark">□</span></h5><p>Admin authors bypass permission prompts. The channel container remains the boundary.</p><span class="tag">admin</span></div>
+            <div class="cap-card" data-cap="lean"><h5><i style="background:var(--cap-lean)"></i>Lean <span class="box-mark">□</span></h5><p>Testing mode: bare model with no MCP servers or skills, minimizing loaded context.</p></div>
           </div>
           <select class="ch-profile" hidden aria-hidden="true">
             <option value="read">Read-only</option>
@@ -1011,18 +1013,11 @@
             <option value="auto">Autonomous</option>
             <option value="full">Full access</option>
             <option value="lean">Lean</option>
-            <option value="custom">Custom…</option>
           </select>
           <em class="state ch-profile-help" style="display:block;margin:0 0 16px"></em>
 
-          <!-- Individual capability flags — revealed when the profile is Custom. -->
-          <div class="ch-custom-flags" hidden style="margin:0 0 18px;padding:12px 14px;border:1px solid var(--line);border-radius:8px">
-            <div class="hint" style="margin:0 0 8px;color:var(--muted)"><strong>Custom</strong> — turn on exactly the capabilities you want. A preset above just flips these for you.</div>
-            <label class="toggle"><input type="checkbox" class="ch-admin" /> Admin mode — FULL ACCESS: no sandbox, full filesystem + network, runs anything (admin authors only)</label>
-            <label class="toggle"><input type="checkbox" class="ch-bash" /> Allow Bash + file writes — reads stay confined to the folder; secrets, gateway config &amp; other channels are write-protected; no network (not full admin)</label>
-            <label class="toggle"><input type="checkbox" class="ch-auto" /> Auto mode — work autonomously: auto-approve permission prompts (no buttons) + writable folder. Still sandboxed; not full admin.</label>
-            <label class="toggle"><input type="checkbox" class="ch-clean" /> Clean mode — load bare for the lowest token cost: NO MCP servers (gateway, Composio, skills), NO skills, NO favorites block, and runs in the bare gateway folder (the working folder below is ignored, so a project's AGENTS.md isn't loaded). Closest to the model's base prompt; the channel's own short instructions still apply.</label>
-          </div>
+          <input type="checkbox" class="ch-admin" hidden /><input type="checkbox" class="ch-bash" hidden />
+          <input type="checkbox" class="ch-auto" hidden /><input type="checkbox" class="ch-clean" hidden />
 
           <div class="grid grid-2">
             <label class="field">
@@ -1060,15 +1055,12 @@
 
         <!-- ── TOOLS ──────────────────────────────────────────────────────── -->
         <div class="subpane" data-pane="tools">
-          <label class="field" style="max-width:420px">
-            <span>Grant tier</span>
-            <select class="ch-grant-tier">
-              <option value="organization">Organization — applies everywhere</option>
-              <option value="channel" selected>This channel</option>
-              <option value="user">Individual user</option>
-            </select>
-            <em class="state">The effective run gets the live union of all three tiers.</em>
-          </label>
+          <div class="tool-subtabs" role="tablist" aria-label="Tool settings">
+            <button type="button" class="tool-subtab active" data-tool-pane="connections">Connections</button>
+            <button type="button" class="tool-subtab" data-tool-pane="mcps">MCP servers</button>
+            <button type="button" class="tool-subtab" data-tool-pane="environment">Environment tokens</button>
+            <button type="button" class="tool-subtab" data-tool-pane="skills">Skills</button>
+          </div>
           <div class="grid grid-2">
             <div class="col tools-col">
               <div class="checks-head"><h4>MCP servers</h4><span class="checks-count ch-mcps-count"></span></div>
@@ -1171,7 +1163,7 @@
             <span class="hint ch-synctest-result"></span>
           </label>
           <div class="ch-toggles" style="margin-top:8px">
-            <label class="toggle"><input type="checkbox" class="ch-memory" /> Folder memory — a budgeted <code>MEMORY.md</code> index + <code>memory/</code> topic files the agent maintains across this channel's threads via the <code>channel-memory</code> skill (overrides the global default)</label>
+                <label class="toggle"><input type="checkbox" class="ch-memory" /> Folder memory — uncapped <code>MEMORY.md</code> + <code>memory/</code> topic files, with compact catalog injection and on-demand FTS retrieval (overrides the global default)</label>
             <label class="toggle"><input type="checkbox" class="ch-nudges" /> No-response nudges — if a thread goes quiet, post one gentle reminder after the configured window</label>
             <label class="toggle"><input type="checkbox" class="ch-nodefaulttokens" /> Refuse org-default tokens — don't fall back to the gateway-wide Composio/Skills/Toolbox tokens here (channel/user tokens still apply)</label>
           </div>
