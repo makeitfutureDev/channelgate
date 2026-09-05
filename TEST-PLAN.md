@@ -462,11 +462,18 @@ shape is asserted, not reviewed by eye.
       still loading (`test/access-grants.test.js`).
 
 ### Observability (Slice 6)
-- [ ] Slack shows progress then the final answer with a token/cost line.
+- [ ] Slack shows a live progress card as the first thread message, then an uninterrupted final
+      answer beneath it with a token/cost line; expanding “Thinking completed” does not split text.
 - [ ] Native Slack streaming: on a routine turn, the reply is written live
       (chat.startStream/appendStream), the footer appears as a block at stopStream, and no extra
-      task-card/activity-log/Plan messages are posted; exactly one answer message appears (no
-      duplicate final post). Falls back to a plain reply if streaming errors.
+      activity-log/Plan messages are posted; a run with progress has one separate first task-card
+      message plus exactly one answer message (no duplicate final post), while a text-only turn has
+      only the answer. Falls back to a plain answer if answer streaming errors.
+- [x] Unit: tool/thinking chunks and Markdown use distinct native streams on one serialized queue;
+      the card's first append precedes the answer's first append, neither payload type crosses into
+      the other stream, and both terminal snapshots close without losing footer, requester mention,
+      fallback, stop, or rollover behavior (`test/slack-progress.test.js`,
+      `test/slack-requester-tag.test.js`).
 - [ ] A small GFM pipe table written in the answer renders as a styled table in native
       `markdown_text` streaming (including inline code/bold cells); if streaming fails, the classic
       reply fallback preserves the same rows as an aligned monospace grid.
@@ -511,7 +518,8 @@ shape is asserted, not reviewed by eye.
       newest pulse, abrupt restart leaves no open row, and no text recap is appended after the answer
       (`test/slack-progress.test.js`).
 - [x] Unit: message-level native-stream rollover starts its age clock only after Slack creates the
-      message; a long pre-answer card rolls repeatedly before five minutes and seeds each successor
+      message; the progress card and answer keep independent age clocks, a long pre-answer card
+      rolls repeatedly before five minutes and seeds each successor
       with the full completed/live toolbox; a long answer copies its exact compiled Markdown into
       the successor before deleting the retired bot message. Cleanup failure keeps both safe copies,
       successor-seed failure delivers the complete classic fallback, and final delivery closes only

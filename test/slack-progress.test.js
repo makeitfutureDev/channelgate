@@ -94,7 +94,8 @@ function planUpdates(calls) {
 }
 
 function terminalTaskUpdates(calls) {
-  const stop = [...calls].reverse().find((call) => call[0] === "stopStream");
+  const stop = [...calls].reverse().find((call) =>
+    call[0] === "stopStream" && call[1]?.chunks?.some((chunk) => chunk.type === "task_update"));
   return (stop?.[1]?.chunks || []).filter((chunk) => chunk.type === "task_update");
 }
 
@@ -193,6 +194,45 @@ test("stream progress keeps a persistent toolbox while assistant status stays te
     .filter((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus")
     .map((c) => c[2].status);
   assert.equal(statuses.at(-1), "", "the temporary assistant status must clear after finalization");
+});
+
+test("live progress is posted in a separate first message and never splits the answer", async () => {
+  const calls = [];
+  let sequence = 0;
+  const client = {
+    apiCall: async () => {},
+    chatStream: () => {
+      const id = `stream-${++sequence}`;
+      const stream = {
+        id,
+        ts: undefined,
+        append: async (payload) => {
+          stream.ts ??= `111.22${sequence}`;
+          calls.push(["append", id, payload]);
+        },
+        stop: async (payload) => calls.push(["stopStream", id, payload]),
+      };
+      return stream;
+    },
+    chat: { postMessage: async () => {}, update: async () => {} },
+  };
+  const progress = startProgress("stream", client, "C_ORDER", "111.222", { authorId: "U1", teamId: "T1" });
+
+  progress.onEvent({ kind: "tool_use", id: "tool-1", name: "Read", target: "message.js" });
+  progress.onDelta("The uninterrupted answer begins ");
+  progress.onEvent({ kind: "thinking", summary: "checking the result" });
+  progress.onDelta("and ends here.");
+  await progress.finalize({ content: "The uninterrupted answer begins and ends here." });
+
+  const cardWrites = calls.filter((call) => call[0] === "append" && call[2]?.chunks);
+  const answerWrites = calls.filter((call) => call[0] === "append" && call[2]?.markdown_text);
+  assert.ok(cardWrites.length > 0, "the progress card stays live during the run");
+  assert.equal(cardWrites[0][1], "stream-1", "the first helper is the dedicated progress stream");
+  assert.equal(answerWrites[0][1], "stream-2", "the second helper is the dedicated answer stream");
+  assert.ok(calls.indexOf(cardWrites[0]) < calls.indexOf(answerWrites[0]), "the card is posted before answer text");
+  assert.equal(answerWrites.some((call) => call[2]?.chunks), false, "task chunks never enter the answer message");
+  assert.equal(cardWrites.some((call) => call[2]?.markdown_text), false, "answer Markdown never enters the card message");
+  assert.equal(answerWrites.map((call) => call[2].markdown_text).join(""), "The uninterrupted answer begins and ends here.\n\n<@U1>");
 });
 
 test("persistent toolbox appends immediately restore the temporary assistant status", async () => {
@@ -572,22 +612,29 @@ test("completed-run footer adds one direct-preview button per referenced workspa
 test("invalid footer blocks finalize the existing stream without duplicating the answer", async () => {
   const calls = [];
   let stopAttempts = 0;
-  const streamer = {
-    ts: "1720000000.000100",
-    append: async (payload) => calls.push(["append", payload]),
-    stop: async (payload) => {
-      stopAttempts += 1;
-      calls.push(["stopStream", payload]);
-      if (stopAttempts === 1) {
-        throw Object.assign(new Error("An API error occurred: invalid_blocks"), {
-          data: { error: "invalid_blocks" },
-        });
-      }
-    },
-  };
+  let streamCount = 0;
   const client = {
     apiCall: async () => {},
-    chatStream: () => streamer,
+    chatStream: () => {
+      const isAnswer = ++streamCount === 2;
+      return {
+        ts: `1720000000.00010${streamCount}`,
+        append: async (payload) => calls.push(["append", payload]),
+        stop: async (payload) => {
+          if (!isAnswer) {
+            calls.push(["progressStop", payload]);
+            return;
+          }
+          stopAttempts += 1;
+          calls.push(["stopStream", payload]);
+          if (stopAttempts === 1) {
+            throw Object.assign(new Error("An API error occurred: invalid_blocks"), {
+              data: { error: "invalid_blocks" },
+            });
+          }
+        },
+      };
+    },
     chat: { postMessage: async (payload) => calls.push(["postMessage", payload]) },
   };
   const progress = startProgress("stream", client, "C_FOOTER_RECOVERY", "111.222", {
@@ -601,14 +648,15 @@ test("invalid footer blocks finalize the existing stream without duplicating the
 
   const stops = calls.filter((call) => call[0] === "stopStream");
   assert.equal(stops.length, 2);
-  assert.ok(stops[0][1].blocks, "the normal footer is attempted first");
+  assert.ok(stops[0][1]?.blocks, "the normal footer is attempted first");
   assert.match(stops[0][1].markdown_text, /Completed answer/,
     "a tool-only turn buffers its answer in the first terminal request");
-  assert.equal(stops[1][1].blocks, undefined, "the retry drops the rejected footer blocks");
-  assert.equal(stops[1][1].markdown_text, undefined,
+  assert.equal(stops[1][1]?.blocks, undefined, "the retry drops the rejected footer blocks");
+  assert.equal(stops[1][1]?.markdown_text, undefined,
     "the retry must not append markdown already retained in ChatStreamer's buffer");
-  const recoveredTool = stops[1][1].chunks.find((chunk) => chunk.type === "task_update" && /Read/.test(chunk.title));
-  assert.equal(recoveredTool?.status, "complete", "the footer retry must still seal the durable toolbox snapshot");
+  const recoveredTool = calls.find((call) => call[0] === "progressStop")?.[1]?.chunks
+    ?.find((chunk) => chunk.type === "task_update" && /Read/.test(chunk.title));
+  assert.equal(recoveredTool?.status, "complete", "the separate progress stream seals the durable toolbox snapshot");
   assert.equal(calls.some((call) => call[0] === "postMessage"), false,
     "the authoritative streamed answer must not be duplicated through classic fallback");
 });
@@ -1274,7 +1322,8 @@ test("finalize closes in-stream progress-report intake without changing declared
 
   assert.equal(calls.filter((call) => call[0] === "postMessage" || call[0] === "update").length, 0,
     "progress-report state must stay inside the answer stream");
-  assert.equal(calls.filter((call) => call[0] === "stopStream").length, 1);
+  assert.equal(calls.filter((call) => call[0] === "stopStream").length, 2,
+    "the separate progress and answer streams both close exactly once");
   assert.equal(terminalTaskUpdates(calls).find((task) => task.id === "report-ship")?.status, "pending",
     "finalize must not invent a terminal task status");
 });
@@ -1284,18 +1333,23 @@ test("failed native and classic final delivery interrupts an active in-stream pr
   const calls = [];
   let nativeStopAttempts = 0;
   let postAttempts = 0;
-  const streamer = {
-    ts: "1720000000.000100",
-    append: async (payload) => calls.push(["append", payload]),
-    stop: async (payload) => {
-      nativeStopAttempts += 1;
-      calls.push(["stopStream", payload]);
-      throw new Error("native finalization failed");
-    },
-  };
+  let streamSeq = 0;
   const client = {
     apiCall: refuseStatus(),
-    chatStream: () => streamer,
+    chatStream: () => {
+      const id = ++streamSeq;
+      return {
+        ts: `1720000000.00010${id}`,
+        append: async (payload) => calls.push(["append", payload, id]),
+        stop: async (payload) => {
+          calls.push(["stopStream", payload, id]);
+          if (id === 2) {
+            nativeStopAttempts += 1;
+            throw new Error("native finalization failed");
+          }
+        },
+      };
+    },
     chat: {
       postMessage: async (payload) => {
         postAttempts += 1;
@@ -1325,9 +1379,12 @@ test("failed native and classic final delivery interrupts an active in-stream pr
 
   const reportRows = taskUpdates(calls).filter((task) => task.id === "report-ship");
   const interruptedRows = reportRows.filter((task) => /interrupt/i.test(task.output || ""));
-  assert.equal(interruptedRows.length, 1,
-    "the failed final delivery should force exactly one interrupted progress-report update");
-  assert.equal(interruptedRows[0].status, "complete", "an interrupted step closes terminal, never as a card-wide error");
+  const interruptedAppends = calls.filter((call) =>
+    call[0] === "append" && taskUpdates([call]).some((task) => task.id === "report-ship" && /interrupt/i.test(task.output || "")));
+  assert.equal(interruptedAppends.length, 1,
+    "the failed final delivery should emit exactly one interrupted progress-report transition");
+  assert.ok(interruptedRows.every((row) => row.status === "complete"),
+    "the live transition and terminal snapshot both close the row without a card-wide error");
   assert.match(reportRows.at(-1).output, /interrupt/i);
   assert.equal(nativeStopAttempts, 1, "the outer stop path must not retry native finalization");
   assert.equal(postAttempts, 1, "only one classic fallback attempt should run");
@@ -1460,7 +1517,8 @@ test("a long pre-answer card rolls to a fresh Slack stream before five minutes",
 
   assert.equal(streams.length, 2, "the old message must not remain in streaming state for five minutes");
   const retired = calls.find((call) => call[0] === "stopStream" && call[2] === "stream-1");
-  assert.match(retired?.[1]?.markdown_text || "", /refreshing|replaced below/i);
+  assert.equal(retired?.[1]?.markdown_text, undefined,
+    "the retired progress message contains task chunks only, never answer text");
   assert.equal(retired?.[1]?.chunks?.find((chunk) => chunk.type === "plan_update")?.title, "Long audit run",
     "the retired message must retain its semantic progress-report title");
   assert.equal(retired?.[1]?.chunks?.find((chunk) => chunk.id === "report-audit")?.status, "complete",
@@ -1506,7 +1564,9 @@ test("a long pre-answer card rolls to a fresh Slack stream before five minutes",
   await progress.finalize({ content: "Audit complete." });
   assert.equal(calls.filter((call) => call[0] === "stopStream" && call[2] === "stream-1").length, 1);
   assert.equal(calls.filter((call) => call[0] === "stopStream" && call[2] === "stream-3").length, 1,
-    "final delivery must close the successor stream, not the retired one");
+    "finalization closes the current progress-card successor");
+  assert.equal(calls.filter((call) => call[0] === "stopStream" && call[2] === "stream-4").length, 1,
+    "final delivery closes the separate answer stream");
 });
 
 test("a long streamed answer also rolls before its message reaches five minutes", async (t) => {
@@ -1694,22 +1754,25 @@ test("the rollover age starts when Slack creates the message, not when chatStrea
     teamId: "T123",
   });
 
-  // The SDK helper exists, but no append has flushed and therefore no Slack message exists yet.
+  // Before answer text exists, only the independently live progress stream may be created/rolled.
   for (let i = 0; i < 16; i += 1) t.mock.timers.tick(20_000);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(streams.length, 1);
-  assert.equal(calls.filter((call) => call[0] === "stopStream").length, 0,
-    "an unstarted helper must not create a fake continuation message");
+  assert.equal(calls.some((call) => call[0] === "append" && call[1]?.markdown_text), false,
+    "progress activity must not create a fake answer message");
 
   progress.onDelta("B".repeat(300));
   await new Promise((resolve) => setImmediate(resolve));
+  const answerStreamId = calls.find((call) => call[0] === "append" && call[1]?.markdown_text)?.[2];
+  assert.ok(answerStreamId, "the first text delta creates the answer stream lazily");
   for (let i = 0; i < 13; i += 1) t.mock.timers.tick(20_000);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(streams.length, 1, "the helper's earlier idle time must not count toward message age");
+  assert.equal(calls.some((call) => call[0] === "stopStream" && call[2] === answerStreamId), false,
+    "the progress stream's earlier age must not count toward the answer message");
 
   t.mock.timers.tick(20_000);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(streams.length, 2, "the real message rolls once its own age reaches the threshold");
+  assert.ok(calls.some((call) => call[0] === "stopStream" && call[2] === answerStreamId),
+    "the answer rolls once its own age reaches the threshold");
   await progress.finalize({ content: "B".repeat(300) });
 });
 

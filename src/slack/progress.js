@@ -529,10 +529,11 @@ function createTaskTimeline(push) {
 }
 
 // NATIVE STREAMING mode. Instead of posting a placeholder and editing it (the "log" path Slack
-// now recommends migrating away from), this writes the answer LIVE via the streaming API:
-// chat.startStream → appendStream(markdown_text) → stopStream. The run-stats footer is appended as
-// a block at stop. Unlike the other progress modes this OWNS the final message (ownsFinal:true), so
-// the caller must NOT post its own reply — it calls finalize(result) instead.
+// now recommends migrating away from), this uses TWO native streams: a live task/progress card
+// first, then the uninterrupted Markdown answer below it. Slack chooses where task chunks render
+// inside a message, so sharing one stream lets an expanded card split the answer visually.
+// The run-stats footer belongs only to the answer stream. This mode OWNS the final reply
+// (ownsFinal:true), so the caller must NOT post its own reply — it calls finalize(result) instead.
 //
 // The ChatStreamer buffers markdown in-memory and only calls the API every ~buffer_size chars (or
 // when a chunk forces a flush), which is how Slack expects streaming to stay under rate limits.
@@ -561,10 +562,15 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     ...(authorId ? { recipient_user_id: authorId } : {}),
     ...(teamId ? { recipient_team_id: teamId } : {}),
   };
-  // `let`, not `const`: a long run ROLLS OVER to a fresh streaming message before
-  // Slack's client red-flags this one (see STREAM_ROLLOVER_MS below). Closures always read the
-  // current streamer, so queued appends after a rollover land in the new message.
-  let streamer = client.chatStream(streamArgs);
+  // Both helpers are replaceable: a long run ROLLS each live message over before Slack's client
+  // red-flags it (see STREAM_ROLLOVER_MS below). Closures always read the current helper.
+  let answerStreamer = null;
+  // Created lazily on the first durable row. A fast text-only answer therefore remains one
+  // message, while any real progress is posted first and stays live in its own message.
+  let timelineStreamer = null;
+  let timelineRequested = false;
+  let timelineStartedAt = null;
+  let timelineRolloverQueued = false;
   // `chatStream()` only constructs the SDK helper; Slack does not create a message until an append
   // flushes (or stop is called). Start the age clock only after the helper exposes a real `ts`.
   let streamStartedAt = null;
@@ -610,9 +616,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // not the earlier construction of the SDK ChatStreamer. Capture the current helper at execution
   // time: the shared promise chain decides whether an append belongs before or after a rollover.
   const appendCurrent = async (payload) => {
-    const target = streamer;
+    if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
+    const target = answerStreamer;
     const response = await target.append(payload);
-    if (target === streamer) {
+    if (target === answerStreamer) {
       if (typeof payload?.markdown_text === "string") streamMarkdown += payload.markdown_text;
       if (target.ts && streamStartedAt === null) streamStartedAt = Date.now();
     }
@@ -630,22 +637,35 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     return chain;
   };
 
-  // Native tool-call / task-planner card, streamed into the same message as the answer. Its
-  // appends ride the SAME chain (so a task_update never races the answer text), but a failure only
-  // disables the card — never the answer: some workspaces/apps can't render task chunks, and we
-  // degrade to plain streamed text there instead of falling back off streaming entirely.
+  // Native tool-call / task-planner card, streamed into its own FIRST message. Its appends ride
+  // the SAME chain as answer text, which guarantees the first card write reaches Slack before the
+  // first answer delta. A card failure disables only the card — never answer delivery.
   let timelineOff = false;
-  // Slack renders the plan card where its FIRST chunk lands, so keep it live above the answer:
-  // deferring it would cost every live signal (heartbeat, quiet reports, subagent tracking).
-  const DEFER_CARD = false;
+  const appendTimeline = async (chunks) => {
+    timelineRequested = true;
+    if (!timelineStreamer) timelineStreamer = client.chatStream(streamArgs);
+    await timelineStreamer.append({ chunks });
+    if (timelineStreamer.ts && timelineStartedAt === null) timelineStartedAt = Date.now();
+    shimmer?.afterMessageActivity?.({ immediate: true });
+  };
   const pushTimeline = (chunks) => {
-    if (timelineOff || DEFER_CARD) return;
+    if (timelineOff) return;
+    timelineRequested = true;
     // Serialized on the shared chain, so a flushActive() enqueued during finalize still lands
-    // before streamer.stop() closes the message; a post-stop append would just throw and disable.
-    chain = chain.then(() => appendCurrent({ chunks })).catch((error) => {
+    // before timelineStreamer.stop() closes the message.
+    chain = chain.then(() => appendTimeline(chunks)).catch((error) => {
       reportStreamFailure("task-card append", error);
       timelineOff = true;
     });
+  };
+  const stopTimeline = async (site = "task-card stop") => {
+    if (!timelineStreamer) return;
+    try {
+      const terminalChunks = timelineOff ? [] : timeline.snapshot();
+      await timelineStreamer.stop(terminalChunks.length ? { chunks: terminalChunks } : undefined);
+    } catch (error) {
+      reportStreamFailure(site, error);
+    }
   };
   // The toolbox is durable message content regardless of whether the thread supports the
   // temporary assistant status. Every tool/plan/subagent row therefore streams immediately and
@@ -676,11 +696,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       : lastActivity;
     return `⏳ Working — ${elapsed}${runtimeSuffix} · ${detail}`;
   };
-  // Replace the current streaming message before Slack's ~5-minute client flag. The successor is
-  // a COMPLETE copy of the compiled answer and toolbox, not a continuation fragment: once it is
-  // durable the retired message is deleted. The user therefore sees one authoritative reply while
-  // every individual native stream remains younger than Slack's undocumented client-side limit.
-  const maybeRollover = () => {
+  // Replace the answer message before Slack's ~5-minute client flag. The successor is a COMPLETE
+  // copy of the compiled answer, not a continuation fragment; the separate progress stream has its
+  // own rollover below. Once a successor is durable, the retired message is deleted.
+  const maybeRolloverAnswer = () => {
     if (terminal || failed || stopped || rolloverQueued || streamStartedAt === null) return;
     if (Date.now() - streamStartedAt < STREAM_ROLLOVER_MS) return;
     rolloverQueued = true;
@@ -688,17 +707,15 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     chain = chain
       .then(async () => {
         if (terminal || failed || stopped) return;
-        const retiring = streamer;
+        const retiring = answerStreamer;
         const retiringTs = retiring.ts;
         const compiledMarkdown = streamMarkdown;
         const fence = hadAnswer ? activeMarkdownFence(streamMarkdown) : null;
-        const terminalChunks = timelineOff ? [] : timeline.retirementSnapshot();
         try {
           await retiring.stop({
             markdown_text: hadAnswer
               ? `${fence ? `\n${fence.marker}` : ""}\n\n_⏳ Refreshing the live reply below…_`
               : "_⏳ Refreshing live progress below…_",
-            ...(terminalChunks.length ? { chunks: terminalChunks } : {}),
           });
           shimmer?.afterMessageActivity?.({ immediate: true });
         } catch (error) {
@@ -706,17 +723,15 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           // a healthy engine run into a failed answer delivery.
           reportStreamFailure("rollover stop", error);
         }
-        streamer = client.chatStream(streamArgs);
+        answerStreamer = client.chatStream(streamArgs);
         streamStartedAt = null;
         streamMarkdown = "";
-        const chunks = timelineOff ? [] : timeline.snapshot();
         await appendCurrent({
           ...(compiledMarkdown ? { markdown_text: compiledMarkdown } : {}),
-          ...(chunks.length ? { chunks } : {}),
         });
         // appendCurrent() must expose a real successor ts before deletion; if a nonstandard client
         // buffers without starting, leave the retired copy intact and retry on the next rollover.
-        if (retiringTs && streamer.ts) {
+        if (retiringTs && answerStreamer.ts) {
           retiredStreamTs.add(retiringTs);
           await cleanupRetiredStreams();
         }
@@ -730,9 +745,35 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       })
       .finally(() => { rolloverQueued = false; });
   };
+  const maybeRolloverTimeline = () => {
+    if (terminal || timelineOff || stopped || timelineRolloverQueued || timelineStartedAt === null) return;
+    if (Date.now() - timelineStartedAt < STREAM_ROLLOVER_MS) return;
+    timelineRolloverQueued = true;
+    chain = chain
+      .then(async () => {
+        if (terminal || timelineOff || stopped || !timelineStreamer) return;
+        const retiring = timelineStreamer;
+        const retiringTs = retiring.ts;
+        await retiring.stop({ chunks: timeline.retirementSnapshot() });
+        shimmer?.afterMessageActivity?.({ immediate: true });
+        timelineStreamer = client.chatStream(streamArgs);
+        timelineStartedAt = null;
+        await appendTimeline(timeline.snapshot());
+        if (retiringTs && timelineStreamer.ts) {
+          retiredStreamTs.add(retiringTs);
+          await cleanupRetiredStreams();
+        }
+      })
+      .catch((error) => {
+        reportStreamFailure("task-card rollover", error);
+        timelineOff = true;
+      })
+      .finally(() => { timelineRolloverQueued = false; });
+  };
   const beat = () => {
     if (stopped || failed || terminal) return;
-    maybeRollover();
+    maybeRolloverAnswer();
+    maybeRolloverTimeline();
     const slot = Math.floor((Date.now() - runStartedAt) / HEARTBEAT_ROW_ROTATE_MS);
     timeline.heartbeat(heartbeatLabel(), slot);
   };
@@ -744,15 +785,6 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // Heartbeat pulses are complete from the moment they are emitted, so success, delivery
   // failure, or an abrupt restart cannot strand an in_progress row. The terminal path still
   // relabels the latest pulse for a clear successful/stopped final state.
-  let cardFlushed = false;
-  const flushCard = () => {
-    if (cardFlushed) return;
-    cardFlushed = true;
-    if (!DEFER_CARD) return;
-    const chunks = timeline.snapshot();
-    if (chunks.length) chain = chain.then(() => appendCurrent({ chunks })).catch((error) => { reportStreamFailure("task-card append", error); timelineOff = true; });
-  };
-
   const stopHeartbeat = (label) => {
     clearInterval(heartbeatTimer);
     timeline.heartbeatDone(label || "✅ Done");
@@ -767,6 +799,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     onDelta: (t) => {
       shimmer.onDelta?.(t);
       if (!t || stopped || failed || truncated) return;
+      // A progress card may only be created before the answer. If a text-only turn starts writing
+      // first, keep it text-only: creating a later heartbeat card would put progress underneath
+      // the answer and violate the ordering contract.
+      if (!timelineRequested) timelineOff = true;
       // The model is writing the answer now → the last tool row is done.
       if (t.trim()) timeline.flushActive();
       if (rawLen + t.length > MAX_SLACK_CHARS) {
@@ -845,7 +881,6 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       terminal = "finalize";
       stopped = true;
       stopHeartbeat();
-      flushCard();
       await shimmer.stop?.();
       const fullRaw = result?.content || "";
       const full = fullRaw.trim();
@@ -883,9 +918,6 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       timeline.flushActive(); // check off the last tool row before the stream closes
       await chain; // drain queued appends (incl. the timeline, the remainder + trailing mention)
       if (!failed) {
-        // Seal the card into the terminal API call as well as its live appends so Slack history keeps
-        // the final snapshot after the streaming state is gone. Stable row ids update, not duplicate.
-        const terminalChunks = timelineOff ? [] : timeline.snapshot();
         const fence = rawLen > 0 ? activeMarkdownFence(streamMarkdown) : null;
         const terminalPayload = {
           // If nothing was streamed live, send the answer's first part now so the stream never
@@ -893,14 +925,15 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           // requester tag rides here when there's no overflow to carry it.
           ...(rawLen === 0 ? { markdown_text: resolveMentions(oneShot, dir) + (hasOverflow ? "" : tag) } : {}),
           ...(rawLen > 0 && fence ? { markdown_text: `\n${fence.marker}` } : {}),
-          ...(terminalChunks.length ? { chunks: terminalChunks } : {}),
         };
         try {
-          await streamer.stop({
+          if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
+          await answerStreamer.stop({
             ...terminalPayload,
             blocks: footerBlocks(result, { channel, threadTs, authorId }),
           });
-          if (streamer.ts) {
+          if (answerStreamer.ts) {
+            await stopTimeline();
             await cleanupRetiredStreams();
             // The streamed message IS the reply; deliver any overflow beneath it (with the tag).
             if (hasOverflow) await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag);
@@ -914,9 +947,9 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
               // terminal write without cosmetic footer blocks. Re-send the toolbox snapshot, which
               // the helper does not retain, but do not append terminal markdown a second time: that
               // text is still in ChatStreamer's buffer from the rejected request.
-              const footerlessPayload = terminalChunks.length ? { chunks: terminalChunks } : undefined;
-              await streamer.stop(footerlessPayload);
-              if (streamer.ts) {
+              await answerStreamer.stop();
+              if (answerStreamer.ts) {
+                await stopTimeline();
                 await cleanupRetiredStreams();
                 if (hasOverflow) await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag);
                 return;
@@ -931,12 +964,14 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       // Fallback: streaming unavailable — post the whole answer the classic way (chunked).
       try {
         await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(full), dir).trim() + tag, footerText(result), footerButtons(result, { channel, threadTs, authorId }));
+        await stopTimeline();
       } catch (error) {
         // Both delivery surfaces failed. The outer run handler will call stop(), but this finalize
         // already owns the terminal state, so close and drain the Plan here before rethrowing.
         // A later stop() only awaits the settled shared chain and cannot duplicate this update.
         timeline.interruptReport();
         await chain;
+        await stopTimeline();
         throw error;
       }
     },
@@ -950,25 +985,16 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       terminal = "stop";
       stopped = true;
       stopHeartbeat("⏹️ Stopped");
-      flushCard();
       timeline.interruptReport();
       timeline.finishAgents("stopped");
       timeline.flushActive(); // close off the running tool row before we stop the stream
       await shimmer.stop?.();
       await chain;
-      if (!failed) {
-        // The controlled stop path has the same lifecycle contract: toolbox stays, shimmer is gone.
-        const terminalChunks = timelineOff ? [] : timeline.snapshot();
+      await stopTimeline("task-card abort stop");
+      if (!failed && streamStartedAt !== null) {
         try {
           const fence = activeMarkdownFence(streamMarkdown);
-          await streamer.stop(
-            fence || terminalChunks.length
-              ? {
-                  ...(fence ? { markdown_text: `\n${fence.marker}` } : {}),
-                  ...(terminalChunks.length ? { chunks: terminalChunks } : {}),
-                }
-              : undefined,
-          );
+          await answerStreamer.stop(fence ? { markdown_text: `\n${fence.marker}` } : undefined);
           await cleanupRetiredStreams();
         } catch (error) {
           reportStreamFailure("abort stop", error);
