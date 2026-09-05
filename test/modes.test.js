@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { MODE_FLAGS, MODES, channelMode, modeLabel, PROFILE_FLAGS, PROFILES, channelProfile, canManage } =
+const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage } =
   await import("../src/gateway/modes.js");
+const { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } = await import("../src/engines/network-policy.js");
 
 // modes.js is the mode/profile → capability-flag mapping plus the "who may manage a channel"
 // authz check. Both feed directly into what a spawned engine is allowed to do, so the exact
@@ -26,17 +27,41 @@ test("every mode round-trips through its own flags", () => {
   }
 });
 
-test("modeLabel reports the engine's real network capability", () => {
-  assert.equal(modeLabel({}), "Read-only");
+test("modeLabel states the network in BOTH directions, never by omission", () => {
+  // The bug this pins: the suffix used to appear only when the switch was ON, so "off" and "no
+  // one ever configured it" rendered identically — in the label, in /mode, and in the app-home
+  // channel list. Every state now has a word.
+  assert.equal(modeLabel({}), "Read-only · network off");
+  assert.equal(modeLabel({ allowBash: true, engine: "claude" }), "Bash · network off");
   // The network is a switch on the channel's container; both container engines support "on".
   assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "claude" }), "Bash · network on");
   assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "codex" }), "Bash · network on");
   // An engine that only declares "off" is told so rather than promised a network it will not get.
   assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }), "Bash · network unsupported");
-  // Admin mode lifts the engine's own sandbox, not the network switch: with the switch off the
-  // label says nothing about the network — there is no "unrestricted" tier any more.
-  assert.equal(modeLabel({ adminMode: true, engine: "codex" }), "Admin");
+  // Admin mode lifts the engine's own sandbox, not the network switch.
+  assert.equal(modeLabel({ adminMode: true, engine: "codex" }), "Admin · network off");
   assert.equal(modeLabel({ adminMode: true, allowNetwork: true, engine: "codex" }), "Admin · network on");
+});
+
+test("the detailed label admits the switch is advisory, and only where it matters", () => {
+  assert.equal(NETWORK_POLICY_ENFORCED, false, "flip this only when a container-side egress proxy actually enforces the switch");
+  // OFF is the state people misread as a boundary, so that is the one that carries the caveat.
+  assert.equal(modeLabel({}, { detail: true }), `Read-only · network off (${NETWORK_ADVISORY_NOTE})`);
+  assert.match(NETWORK_ADVISORY_NOTE, /not enforced/i);
+  // ON is simply true — the container is on the bridge network — so it gains nothing.
+  assert.equal(modeLabel({ allowNetwork: true, engine: "claude" }, { detail: true }), "Read-only · network on");
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }, { detail: true }), "Bash · network unsupported");
+  // The compact form is the default: it rides the app-home channel list.
+  assert.equal(modeLabel({}), "Read-only · network off");
+});
+
+test("networkState/networkLabel are the one derivation every surface shares", () => {
+  assert.equal(networkState({}), "off");
+  assert.equal(networkState({ allowNetwork: true, engine: "claude" }), "on");
+  assert.equal(networkState({ allowNetwork: true, engine: "opencode" }), "unsupported");
+  assert.equal(networkLabel({}), "network off");
+  assert.equal(networkLabel({ allowNetwork: true, engine: "codex" }), "network on");
+  assert.equal(networkLabel({}, { detail: true }), `network off (${NETWORK_ADVISORY_NOTE})`);
 });
 
 test("channelProfile: explicit stored profile wins; invalid ones fall back to flag derivation", () => {

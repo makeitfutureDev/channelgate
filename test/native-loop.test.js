@@ -272,6 +272,14 @@ test("the gateway guide routes looping work to the native tools and states the r
 
   const reminders = readFileSync(new URL("../src/gateway/gateway-usage/references/reminders.md", import.meta.url), "utf8");
   assert.match(reminders, /references\/loops\.md/, "scheduling must point at loops for in-thread iteration");
+
+  // A model with no bridged pacing tool reached for sequential sleeps instead and narrated a loop
+  // it was not running (live QA, CTO-04). Sleeping inside the turn is not a loop: the process ends
+  // with the reply either way.
+  assert.match(loops, /Never fake a loop inside one turn/i);
+  assert.match(loops, /run_in_background: true/, "the harness's own backgrounding is named as a dead end");
+  assert.match(loops, /dies with\s+it/i);
+  assert.match(loops, /I'll keep checking and let you know/, "the exact promise to never make");
 });
 
 test("a channel-wide stop ends every loop in the channel and names their threads", () => {

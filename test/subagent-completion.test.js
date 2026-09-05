@@ -154,3 +154,31 @@ test("gateway-usage guide routes outliving work to the daemon tools", () => {
   assert.match(jobs, /Never restart the gateway with a background/);
   assert.match(jobs, /restart_gateway/);
 });
+
+// Live QA (ART-005 / CTO-04): the harness's OWN backgrounding is reachable inside a gateway turn,
+// and both engines used it — Claude ran Bash(run_in_background: true) and said "I'll report back
+// when it finishes"; Codex faked a watch loop with sequential sleeps. Both processes die with the
+// headless turn, so the promised report never arrives and the user waits for a message that does
+// not exist. The guide has to name the dead ends and the three durable mechanisms.
+test("the guide names the harness's own backgrounding as a dead end and forbids promising a follow-up with it", () => {
+  const skill = readFileSync(new URL("../src/gateway/gateway-usage/SKILL.md", import.meta.url), "utf8");
+  const jobs = readFileSync(new URL("../src/gateway/gateway-usage/references/background-jobs.md", import.meta.url), "utf8");
+  const loops = readFileSync(new URL("../src/gateway/gateway-usage/references/loops.md", import.meta.url), "utf8");
+
+  // The exact mechanism a model reaches for, named so it is recognizable.
+  for (const text of [skill, jobs, loops]) assert.match(text, /run_in_background: true/);
+  assert.match(jobs, /dead ends/i);
+  assert.match(jobs, /killed with it the moment your reply is posted/i);
+  assert.match(jobs, /I'll report back when it finishes.*only these three can keep/is);
+  assert.match(loops, /Never fake a loop inside one turn/i);
+  assert.match(loops, /burns the turn's silence budget/i);
+
+  // The only three things that actually survive the turn.
+  for (const durable of [/run_shell_in_background|run_in_background/, /run_agent_in_background/, /create_schedule/]) {
+    assert.match(jobs, durable);
+  }
+  // And the honest fallback when the channel's mode allows none of them.
+  assert.match(jobs, /say that plainly/i);
+  assert.match(skill, /say so plainly instead of promising/i);
+  assert.match(loops, /instead of pretending to loop/i);
+});

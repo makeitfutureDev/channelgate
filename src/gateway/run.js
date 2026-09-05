@@ -29,6 +29,7 @@ import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort } from "./thread-engine.js";
 import { PROFILE_FLAGS, canManage } from "./modes.js";
+import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
 import { resolveSdkSession } from "./composio-sdk.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
@@ -1173,6 +1174,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     allowBash: Boolean(meta.allowBash),
     allowNetwork: Boolean(meta.allowNetwork),
     networkPolicy: networkPolicy.mode,
+    // The compiled mode is what the engines are TOLD, not a boundary anything applies: the
+    // container sits on the bridge network and no egress is policed per channel. Recorded next to
+    // the mode so an operator reading `run_config` after an incident cannot mistake
+    // `networkPolicy: "off"` for "this turn could not reach the internet".
+    networkEnforced: NETWORK_POLICY_ENFORCED,
     dangerouslySkip,
     adminUnattended,
     codexWritable,

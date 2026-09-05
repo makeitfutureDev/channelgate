@@ -96,10 +96,12 @@ following; the conversation's own additions stay. DM templates (User / Admin) ca
 template too. Preview first to see what a conversation would gain, keep or drop.
 
 Templates store explicit skill selections; category is catalog metadata used for filtering, not a
-bulk template selector. From chat (managers, or an admin): `list_skill_templates`, `preview_skill_template`,
-`set_channel_skill_template`, `add_channel_skills`, `remove_channel_skills`,
-`show_channel_skills` (which names the template and marks which skills come from it). These
-change persistent state and show an Approve/Deny card unless the conversation is in auto mode.
+bulk template selector. From chat: `list_skill_templates`, `preview_skill_template` and
+`show_channel_skills` (which names the template and marks which skills come from it) are open
+reads. `set_channel_skill_template`, `add_channel_skills` and `remove_channel_skills` (managers, or
+an admin) change persistent state, so they **always** post an Approve/Deny card and block until
+someone eligible clicks. Auto mode does not bypass it: auto-approval applies to tool permission
+prompts only, never to control-plane changes.
 
 ## Sources (GitHub and host folders)
 

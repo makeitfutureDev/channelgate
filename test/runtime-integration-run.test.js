@@ -191,6 +191,12 @@ test("the session row and the run_config event both record where the turn ran", 
   assert.equal(config.runtime, "container");
   // There is exactly one backend, and the record says so rather than pretending a choice was made.
   assert.equal(config.runtimeReason, "only-runtime");
+  // The compiled network policy is what the engine was TOLD, never a boundary anything applied:
+  // the container is on the bridge network and no egress is policed per channel. Recorded next to
+  // the mode so an operator reading the event after an incident cannot mistake `"off"` for "this
+  // turn could not reach the internet".
+  assert.equal(config.networkPolicy, "off");
+  assert.equal(config.networkEnforced, false);
 });
 
 test("a slow cold start announces itself once; a fast one stays silent", async () => {

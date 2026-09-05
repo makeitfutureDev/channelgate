@@ -487,7 +487,12 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   the per-channel *Allow network* switch does not cut it — it only tells the engines whether the
   channel is meant to have network. The per-domain allow-list of the retired host sandbox has no
   container equivalent; the container-side egress proxy that will enforce the switch is a later
-  slice.
+  slice. Because it is advisory, the switch is now STATED rather than inferred: the mode label
+  carries it in both directions (`Bash · network off`), `/mode` and `/status` add
+  "advisory — not enforced by the container yet", the gateway-managed block at the top of each
+  conversation's `CLAUDE.md` tells the engine the same thing, and every `run_config` event records
+  `networkEnforced: false` beside `networkPolicy`. `NETWORK_POLICY_ENFORCED` in
+  `src/engines/network-policy.js` is the single flag to flip when the proxy lands.
 
 **Claude login in containers:** with no `containerClaudeOauthToken`, each container Claude run
 receives a RELAY of the gateway's resolved login — normally the host user's own `~/.claude` — as a
