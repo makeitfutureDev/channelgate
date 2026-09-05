@@ -9,7 +9,7 @@
 // slugify(), and YAML quoting of the remote library description.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, writeFile, symlink, lstat, rm } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, stat, writeFile, symlink, lstat, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ensureTestEnv } from "./helpers.js";
@@ -19,7 +19,7 @@ ensureTestEnv();
 // test ever provisions a folder in the operator's real ~/Slack Agent.
 process.env.CG_WORKSPACE_DIR ||= await mkdtemp(path.join(os.tmpdir(), "cg-ws-"));
 
-const [{ readNoFollow, writeNoFollow, createExclusive, ensureRealDir }, memory, guide, folders, librarySkills, apiRuns, pipeline, paths] =
+const [{ readNoFollow, writeNoFollow, writeStreamNoFollow, createExclusive, ensureRealDir }, memory, guide, folders, librarySkills, apiRuns, pipeline, paths, attachments, { ATTACHMENT_MAX_BYTES }] =
   await Promise.all([
     import("../src/gateway/safe-fs.js"),
     import("../src/gateway/channel-memory.js"),
@@ -29,6 +29,8 @@ const [{ readNoFollow, writeNoFollow, createExclusive, ensureRealDir }, memory, 
     import("../src/gateway/api-runs.js"),
     import("../src/slack/message-pipeline.js"),
     import("../src/config/paths.js"),
+    import("../src/platforms/attachments.js"),
+    import("../src/util/bounded-bytes.js"),
   ]);
 
 const SECRET = "SECRET-HOST-BYTES\n";
@@ -355,24 +357,131 @@ test("Slack attachment downloads never write through a planted uploads symlink",
 
 test("Slack attachment downloads enforce the byte cap on the STREAM, not the declared size", async (t) => {
   const { cwd } = await scratch(t);
-  const huge = Buffer.alloc(31 * 1024 * 1024, 0x41);
-  // Slack (or a compromised URL) declares a tiny body and then streams 31MB.
-  stubFetch(t, async () => slackResponse(huge, { contentLength: 12 }));
+  const oversized = Buffer.alloc(3 * 1024 * 1024, 0x41);
+  // Slack (or a compromised URL) declares a tiny body and then streams 3 MB past a 2 MB cap.
+  stubFetch(t, async () => slackResponse(oversized, { contentLength: 12 }));
 
   const [saved] = await pipeline.downloadSlackFiles(
     [{ id: "F010", name: "huge.bin", size: 12, url_private_download: "https://files.slack.test/F010" }],
     "xoxb-test",
-    { root: cwd, sub: "1700000000.000300" },
+    { root: cwd, sub: "1700000000.000300", maxBytes: 2 * 1024 * 1024 },
   );
 
   assert.equal(saved.path, undefined);
-  assert.match(saved.skipped, /exceeds the 30MB limit/);
-  await assert.rejects(readdir(path.join(cwd, "uploads", "1700000000.000300")), { code: "ENOENT" });
+  assert.match(saved.skipped, /exceeds the 2 MB attachment limit/);
+  // The partial temp file is gone: nothing of the cut-off body survives in the thread folder.
+  assert.deepEqual(await readdir(path.join(cwd, "uploads", "1700000000.000300")), []);
+});
+
+test("an attachment Slack declares over the cap is refused by NAME and SIZE before any bytes move", async (t) => {
+  const { cwd } = await scratch(t);
+  let fetched = 0;
+  stubFetch(t, async () => { fetched += 1; return slackResponse(Buffer.alloc(16)); });
+
+  const [saved] = await pipeline.downloadSlackFiles(
+    [{ id: "F011", name: "CleanShot.mp4", size: 263.4 * 1024 * 1024, url_private_download: "https://files.slack.test/F011" }],
+    "xoxb-test",
+    { root: cwd, sub: "1700000000.000301", maxBytes: 100 * 1024 * 1024 },
+  );
+
+  assert.equal(fetched, 0, "a declared oversize is an early reject — no request is made");
+  assert.equal(saved.skipped, "263.4 MB exceeds the 100 MB attachment limit");
+  // The production cap is the shared constant: 500 MB, and a 263 MB recording fits under it.
+  assert.equal(ATTACHMENT_MAX_BYTES, 500 * 1024 * 1024);
+  assert.equal(pipeline.shouldAnnounceDownload([{ size: 9 * 1024 * 1024 }]), true);
+  assert.equal(pipeline.shouldAnnounceDownload([{ size: 1024 }, { name: "x" }]), false);
+});
+
+test("Slack attachments stream to disk in chunks — the file is complete and never buffered whole", async (t) => {
+  const { cwd } = await scratch(t);
+  const chunks = [Buffer.alloc(1024 * 1024, 0x61), Buffer.alloc(1024 * 1024, 0x62), Buffer.from("tail")];
+  let handedOut = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (handedOut < chunks.length) controller.enqueue(chunks[handedOut++]);
+      else controller.close();
+    },
+  });
+  stubFetch(t, async () => new Response(body, { status: 200, headers: { "content-type": "video/mp4" } }));
+
+  const [saved] = await pipeline.downloadSlackFiles(
+    [{ id: "F012", name: "clip.mp4", size: 2 * 1024 * 1024 + 4, url_private_download: "https://files.slack.test/F012" }],
+    "xoxb-test",
+    { root: cwd, sub: "1700000000.000302" },
+  );
+
+  assert.equal(handedOut, chunks.length, "every chunk was pulled through the stream");
+  assert.equal(saved.bytes, 2 * 1024 * 1024 + 4);
+  assert.equal((await stat(saved.path)).size, 2 * 1024 * 1024 + 4);
+  assert.deepEqual(await readdir(path.dirname(saved.path)), ["F012-clip.mp4"], "no temp file is left behind");
+});
+
+test("a streamed body that turns out to be Slack's HTML sign-in page is refused before it is committed", async (t) => {
+  const { cwd } = await scratch(t);
+  stubFetch(t, async () => slackResponse(Buffer.from("<!DOCTYPE html><html><body>sign in</body></html>"), { contentType: "application/octet-stream" }));
+
+  const [saved] = await pipeline.downloadSlackFiles(
+    [{ id: "F013", name: "report.pdf", url_private_download: "https://files.slack.test/F013" }],
+    "xoxb-test",
+    { root: cwd, sub: "1700000000.000303" },
+  );
+
+  assert.equal(saved.path, undefined);
+  assert.match(saved.skipped, /files:read scope/);
+  assert.deepEqual(await readdir(path.join(cwd, "uploads", "1700000000.000303")), []);
+});
+
+test("the platform attachment sink streams a Response under the cap and names an oversize refusal", async () => {
+  const message = {
+    platform: "teams",
+    threadKey: "19:thread@thread.tacv2",
+    attachments: [
+      { name: "plan.pdf", download: async () => new Response(Buffer.from("plan bytes\n"), { status: 200 }) },
+      { name: "huge.mov", download: async () => new Response(Buffer.alloc(3 * 1024 * 1024), { status: 200, headers: { "content-length": String(3 * 1024 * 1024) } }) },
+      { name: "buffered.txt", download: async () => Buffer.from("buffer bytes\n") },
+    ],
+  };
+  const { paths: got, skipped } = await attachments.saveInboundAttachments(message, {
+    slug: "teams-fixture",
+    meta: { platform: "teams" }, // the default folder for the slug lives under the scratch workspace root
+    log: { warn() {} },
+    maxBytes: 2 * 1024 * 1024,
+  });
+
+  assert.equal(got.length, 2);
+  assert.equal(await readFile(got[0], "utf8"), "plan bytes\n");
+  assert.equal(await readFile(got[1], "utf8"), "buffer bytes\n");
+  assert.deepEqual(skipped, ["huge.mov (3 MB exceeds the 2 MB attachment limit)"]);
+  assert.deepEqual((await readdir(path.dirname(got[0]))).sort(), ["1-plan.pdf", "3-buffered.txt"]);
 });
 
 test("boundedResponseBytes stops an oversized body that under-declares content-length", async () => {
   const oversized = slackResponse(Buffer.alloc(64, 0x42), { contentLength: 4 });
   await assert.rejects(apiRuns.boundedResponseBytes(oversized, 16), /exceeds/);
+});
+
+test("writeStreamNoFollow cuts an over-cap stream, removes its temp file and never touches the destination", async (t) => {
+  const { cwd } = await scratch(t);
+  const dest = path.join(cwd, "keep.bin");
+  await writeFile(dest, "previous content\n");
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(6));
+      controller.enqueue(new Uint8Array(6));
+    },
+    cancel() { cancelled = true; },
+  });
+  await assert.rejects(writeStreamNoFollow(dest, new Response(body), { maxBytes: 10 }), (err) => err.code === "ETOOLARGE" && /exceeds the 10 B attachment limit/.test(err.message));
+  assert.equal(cancelled, true, "the connection is cancelled the moment the cap is passed");
+  assert.equal(await readFile(dest, "utf8"), "previous content\n");
+  assert.deepEqual(await readdir(cwd), ["keep.bin"], "no temp file remains");
+
+  // A declared Content-Length over the cap is refused before a byte is read.
+  let bodyTouched = false;
+  const declared = { headers: new Headers({ "content-length": "11" }), get body() { bodyTouched = true; throw new Error("no"); } };
+  await assert.rejects(writeStreamNoFollow(dest, declared, { maxBytes: 10 }), /11 B exceeds the 10 B attachment limit/);
+  assert.equal(bodyTouched, false);
 });
 
 test("the API attachment sink rebuilds a symlinked uploads path and writes a real file", async (t) => {

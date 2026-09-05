@@ -28,8 +28,8 @@ import {
   defaultChannelMeta,
 } from "../config/store.js";
 import { runMessage, effectiveMeta } from "./run.js";
-import { readBoundedBytes } from "../util/bounded-bytes.js";
-import { ensureRealDir, writeNoFollow } from "./safe-fs.js";
+import { ATTACHMENT_MAX_BYTES, oversizeMessage, readBoundedBytes } from "../util/bounded-bytes.js";
+import { ensureRealDir, writeNoFollow, writeStreamNoFollow } from "./safe-fs.js";
 import { assertPublicHttpUrl, resolvePublicHttpUrl } from "../web/security.js";
 import { resumeCommandFor } from "../engines/registry.js";
 import { ensureChannelFolder, effectiveWorkDir } from "./folders.js";
@@ -51,7 +51,10 @@ export const API_CHANNEL_ID = "cg-api";
 export const API_SLUG = "api";
 
 const MAX_INFLIGHT = 25; // reject new starts past this many concurrently-running API jobs (429)
-const MAX_FILE_BYTES = 25 * 1024 * 1024; // cap for inline base64 / downloaded webhook-supplied files
+// Cap for an inline base64 payload or a downloaded webhook-supplied fileUrl — the same ceiling every
+// inbound attachment gets (util/bounded-bytes.js). A fileUrl body streams to disk under it; an
+// inline payload is in practice bounded far lower by the JSON body limit of the admin app.
+const MAX_FILE_BYTES = ATTACHMENT_MAX_BYTES;
 const WEBHOOK_TIMEOUT_MS = 10_000;
 const MEM_CAP = 500; // most-recent jobs kept in memory (terminal ones evicted first past this)
 const DB_TTL_MS = 7 * 24 * 60 * 60 * 1000; // prune persisted jobs older than this on each start
@@ -404,7 +407,7 @@ export async function saveAttachment({ cwd, jobId, file, fileUrl, fileName }) {
   if (inlineB64) {
     const buf = Buffer.from(inlineB64, "base64");
     if (!buf.length) throw new Error("file.dataBase64 did not decode to any bytes");
-    if (buf.length > MAX_FILE_BYTES) throw new Error(`file exceeds the ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB limit`);
+    if (buf.length > MAX_FILE_BYTES) throw new Error(`file ${oversizeMessage(buf.length, MAX_FILE_BYTES)}`);
     const dest = path.join(destDir, safeName(file?.name || fileName || "upload"));
     await writeNoFollow(dest, buf);
     return dest;
@@ -425,10 +428,10 @@ export async function saveAttachment({ cwd, jobId, file, fileUrl, fileName }) {
     try {
       const { res } = await fetchPublicUrl(url, { signal: controller.signal });
       if (!res.ok) throw new Error(`fileUrl fetch failed: HTTP ${res.status}`);
-      const buf = await boundedResponseBytes(res);
       const base = fileName || decodeURIComponent(url.pathname.split("/").pop() || "") || "download";
       const dest = path.join(destDir, safeName(base));
-      await writeNoFollow(dest, buf);
+      // Streams under the cap straight into the folder — the body never sits in memory whole.
+      await writeStreamNoFollow(dest, res, { maxBytes: MAX_FILE_BYTES });
       return dest;
     } catch (e) {
       if (/^fileUrl /.test(e.message)) throw e;

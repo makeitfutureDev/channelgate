@@ -330,6 +330,20 @@ shape is asserted, not reviewed by eye.
       past intervening text; canonical-read fallback; requester preservation for 🤖 triggers; no
       retry for ordinary message events; authorization before recovery API calls; multiple generic
       file types; and safe history/thread id/name/MIME/size projection without private Slack URLs.
+- [x] Unit: inbound attachment sinks share one 500 MB cap and stream to disk — a Slack download
+      declared over the cap is refused by name and size before any request is made; a body that
+      overruns the cap mid-stream is cut off, its temp file removed and nothing left in the thread
+      folder; a multi-chunk body arrives complete with no temp left behind; an HTML sign-in page is
+      refused from its first chunk; the Chat/Teams sink accepts a Response, a stream or a Buffer
+      under the same cap and names an oversize refusal; `writeStreamNoFollow` cancels the
+      connection, keeps the destination untouched and refuses a declared Content-Length over the
+      cap without touching the body (`test/managed-write-symlinks.test.js`, `test/api-boundaries.test.js`).
+- [ ] Live: attach a ~250 MB screen recording (MP4) with an `@bot` mention in a container channel →
+      the assistant status reads `is downloading 1 attachment(s) (… MB)…` while it fetches, the file
+      lands under `uploads/<thread>/` with its full size, the daemon's RSS does not grow by the file
+      size (`systemctl --user status` memory line before/after), and the `video-understanding` skill
+      analyzes it. Attach a >500 MB file → the reply says `<size> exceeds the 500 MB attachment
+      limit` and `events.attachment_failed` carries the same reason. Both engines (QA: ATT-01).
 - [ ] Live attachment smoke: upload XLSX, PDF, image, and multiple files with an `@bot` mention in
       both a root and a reply; edit a file message to add the mention; and confirm each turn receives
       the local path under the same thread folder exactly once. Then read the thread with

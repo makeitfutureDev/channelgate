@@ -49,7 +49,9 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
-      if (res.ok) return raw ? Buffer.from(await res.arrayBuffer()) : await res.json().catch(() => ({}));
+      // `raw` hands back the Response itself (its body still unread) so an attachment can stream
+      // into the channel folder under the shared cap instead of being buffered here.
+      if (res.ok) return raw ? res : await res.json().catch(() => ({}));
 
       const text = await res.text().catch(() => "");
       const err = new Error(`Google Chat ${method} ${path} failed (${res.status}): ${text.slice(0, 300)}`);

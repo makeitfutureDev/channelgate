@@ -115,8 +115,10 @@ function normalizeAttachments(list, fetchImpl) {
   return out;
 }
 
+// Hands back the Response itself, not its bytes: the attachment sink streams the body into the
+// channel folder under the shared cap, so a large upload never sits in the daemon's memory.
 async function fetchBytes(url, fetchImpl) {
   const res = await fetchImpl(url);
   if (!res.ok) throw new Error(`Teams attachment download failed (${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
+  return res;
 }
