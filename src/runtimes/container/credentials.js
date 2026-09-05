@@ -23,6 +23,7 @@ import { accessSync, constants, mkdirSync, readFileSync, realpathSync, statSync,
 import os from "node:os";
 import path from "node:path";
 import { codexEngineHome } from "../../config/paths.js";
+import { daemonTimeZone } from "../../util/timezone.js";
 // The login resolver lives in src/gateway/ because it is a GATEWAY-wide fact (host runs use the
 // very same login), not a container one; src/runtimes/ already reaches into src/gateway/ for the
 // folder contract, and this direction never reverses.
@@ -195,11 +196,19 @@ export function codexAuthIdentity(file) {
 // The container-fixed environment every exec inherits. HOME and the two engine state dirs point
 // INTO the per-channel HOME volume in every credential mode — that is what keeps transcripts,
 // history and todos from leaking between channels.
+//
+// TZ is the DAEMON's zone, not the image's. The image is built on Etc/UTC while the daemon matches
+// cron schedules against its own local clock, so without this an agent reading `date` inside the
+// container answered "09:15 UTC" for a schedule that fires 09:15 in the daemon's zone. It rides in
+// both places a container gets an environment — create (`-e TZ=…`, for anything not exec'd) and
+// every exec's env-file — so the engines and the daemon read the same wall clock. Empty when the
+// platform has no zone data, and then simply not passed (the image's UTC stands).
 export function containerEnvDefaults(target) {
   return {
     HOME: AGENT_HOME,
     CLAUDE_CONFIG_DIR: CLAUDE_CONTAINER_CONFIG_DIR,
     CODEX_HOME: CODEX_CONTAINER_HOME,
+    TZ: daemonTimeZone(),
     CG_RUNTIME: "container",
     CG_CHANNEL: String(target?.slug || ""),
     CG_PLATFORM: String(target?.platform || ""),

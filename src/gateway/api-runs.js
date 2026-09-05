@@ -480,6 +480,7 @@ async function fireWebhook(job) {
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     costUSD: job.costUSD ?? null,
+    costEstimated: Boolean(job.costEstimated),
     durationMs: job.durationMs ?? null,
     error: job.error || null,
     result: job.result ? { content: job.result.content } : null,
@@ -669,6 +670,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     startedMs: now,
     completedMs: null,
     costUSD: null,
+    costEstimated: false,
     durationMs: null,
     result: null,
     error: null,
@@ -685,6 +687,18 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   driver(job, { textForRun, attachmentPath, client: slackThread ? client : null, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal });
 
   return startShape(job);
+}
+
+// What this run COST, for the caller-facing surfaces (GET /api/runs/:id, the `api_run_done` event
+// and the webhook). Claude reports a real dollar amount; Codex reports none at all, and publishing
+// `null` for it told API callers a run was free while the usage ledger was independently storing a
+// priced estimate for the very same run (QA API-001). So: the engine's own figure when there is
+// one, otherwise the figure the ledger just settled on — flagged `estimated`, the same distinction
+// the ledger keeps. `null` survives only when nothing anywhere knows.
+export function settleRunCost(result = {}, ledger = null) {
+  if (result?.costUSD != null) return { costUSD: result.costUSD, estimated: false };
+  if (ledger?.costUSD != null) return { costUSD: ledger.costUSD, estimated: Boolean(ledger.costEstimated) };
+  return { costUSD: null, estimated: false };
 }
 
 // The floating driver: run, record the outcome, post to Slack (thread runs only), fire the webhook.
@@ -736,9 +750,13 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     if (job.stopRequested) {
       job.status = "stopped";
       job.completedMs = Date.now();
+      const ledger = await recordUsage({ channelId: job.channelId, slug: job.slug, authorId: job.author, engine: result.engine, taskKind: "api", result }).catch(() => null);
+      const cost = settleRunCost(result, ledger);
+      job.costUSD = cost.costUSD;
+      job.costEstimated = cost.estimated;
+      job.durationMs = result.durationMs ?? null;
       persist(job);
-      await recordUsage({ channelId: job.channelId, slug: job.slug, authorId: job.author, engine: result.engine, taskKind: "api", result }).catch(() => {});
-      await logEvent("api_run_stopped", { id: job.id, slug: job.slug });
+      await logEvent("api_run_stopped", { id: job.id, slug: job.slug, costUSD: cost.costUSD, costEstimated: cost.estimated });
       await status?.stop?.();
       return;
     }
@@ -751,13 +769,17 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     if (result.sessionId) job.sessionId = result.sessionId;
     if (result.cwd) job.cwd = result.cwd;
     job.resumeCommand = buildResumeCommand({ cwd: job.cwd, sessionId: job.sessionId, engine: job.engine });
-    job.costUSD = result.costUSD ?? null;
+    // Bank the usage BEFORE persisting the job: the ledger is what prices a Codex run, and its
+    // answer is the cost this job publishes (see settleRunCost).
+    const ledger = await recordUsage({ channelId: job.channelId, slug: job.slug, authorId: job.author, engine: result.engine, taskKind: "api", result }).catch(() => null);
+    const cost = settleRunCost(result, ledger);
+    job.costUSD = cost.costUSD;
+    job.costEstimated = cost.estimated;
     job.durationMs = result.durationMs ?? null;
-    job.result = { content: result.content || "", costUSD: result.costUSD ?? null, durationMs: result.durationMs ?? null, usage: result.usage || null };
+    job.result = { content: result.content || "", costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs ?? null, usage: result.usage || null };
     persist(job);
 
-    await recordUsage({ channelId: job.channelId, slug: job.slug, authorId: job.author, engine: result.engine, taskKind: "api", result }).catch(() => {});
-    await logEvent("api_run_done", { id: job.id, slug: job.slug, costUSD: result.costUSD, durationMs: result.durationMs });
+    await logEvent("api_run_done", { id: job.id, slug: job.slug, costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs });
 
     if (client) {
       try {

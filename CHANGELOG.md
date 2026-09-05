@@ -210,6 +210,29 @@ product overview.
   the cwd the transcript itself recorded. A refusal now also names the harness the PASTED command
   named rather than the thread's (a `claude --resume` line pasted into a Codex thread was reported
   as a missing "Codex session") and says where the gateway looked.
+- **Schedules are stated in a named time zone, and containers run on the gateway's clock.** The
+  daemon matches cron schedules against its own local time while a channel container was built on
+  `Etc/UTC`, and nothing carried the daemon's zone across that boundary — so an agent asked what
+  `15 9 * * 1-5` means read its own clock and answered "9:15 UTC" for a schedule that fires 09:15
+  local. The container runtime now exports the daemon's IANA zone as `TZ` into every container and
+  every exec (`process.env.TZ` first, otherwise the platform's resolved zone), so `date` and both
+  engines see the same wall clock as the scheduler. `create_schedule` and `list_schedules` also
+  NAME the zone rather than trusting any clock: a one-time schedule reports
+  "2026-09-08 09:15 Europe/Bucharest (06:15 UTC)", a recurring one adds the resolved next fire
+  time, and the bundled reminder guidance tells the agent to quote that zone back instead of
+  converting it.
+- **A reminder no longer stutters its own label.** A reminder whose text already began
+  "Reminder: …" rendered as "⏰ *Reminder:* Reminder: review the QA results". One leading label is
+  now stripped before the renderer adds its own — in the posted message, the unacknowledged 2nd
+  notice and the creator's DM alike; a deliberate double, or a sentence that merely mentions the
+  word, is left alone.
+- **API runs report what a Codex run cost instead of "free".** `GET /api/runs/:id`, the
+  `api_run_done` event and the completion webhook published `costUSD: null` whenever the engine
+  reported no dollar amount — which Codex never does — while the usage ledger was independently
+  storing a priced estimate for the very same run. The run now publishes the figure the ledger
+  settled on (the canonical component rollup where a run reported one, so the API and the Audit
+  view cannot quote two different costs), marked with a new `costEstimated` flag, and keeps `null`
+  only when nothing anywhere knows. A stopped-mid-flight run is billed the same way.
 - **Fresh installs get their first-boot admin password again.** `npm run setup` answers the
   voice-transcription question before the daemon has ever booted and saves it through the settings
   writer, so a brand-new install already had a `settings.json` at first boot — and the first-boot

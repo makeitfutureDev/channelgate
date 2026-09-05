@@ -413,7 +413,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   stop, and completion webhooks. Channel-backed API runs post the full request in Slack and use the
   same visible progress/streaming path as interactive turns; headless API runs stay silent and
   finish through status/webhook. Running/queued API jobs in `api_jobs` are recovered after daemon
-  restart for both Slack-backed and headless requests, with an attempt cap.
+  restart for both Slack-backed and headless requests, with an attempt cap. Every settled run
+  publishes a cost: the engine's own dollar amount when it reports one, otherwise the usage
+  ledger's priced estimate for that same run (Codex reports none), flagged `costEstimated` in the
+  status response and the webhook — `null` only when nothing anywhere knows.
   → TEST-PLAN: Automation.
 - Codex JSONL progress: Codex `item.started` / `item.completed` events for MCP tool calls, shell
   commands, and final agent messages feed the same Slack status/log stream as Claude, so Codex
@@ -576,6 +579,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - One-time ("run at") schedules: `create_schedule` accepts `in_minutes`/`run_at` to fire once and
   auto-delete (e.g. "remind this channel in 2h") alongside recurring cron; recurring crons are held
   to a minimum interval (default 60 min) with per-channel + concurrency caps.
+- Schedule times are the GATEWAY's local zone, and they say so. Crons are matched against the
+  daemon's own clock, so every container receives the daemon's IANA zone as `TZ` (at create and on
+  every exec) instead of the image's `Etc/UTC` — `date` and both engines read the same wall time as
+  the scheduler. The tool replies name the zone rather than relying on that: a one-time schedule is
+  confirmed as "2026-09-08 09:15 Europe/Bucharest (06:15 UTC)", a recurring one adds its resolved
+  next fire time, `list_schedules` repeats the zone, and the bundled reminder guidance tells the
+  agent to quote it back instead of converting. → TEST-PLAN: Scheduling & reminders.
 - Recurring task schedules can opt into `delivery:"daily-thread"`: the first run of each
   server-local day creates one top-level “Running” anchor and every result that day lands beneath
   it. The durable anchor survives daemon restarts, the next day starts a new thread, and agent
@@ -597,7 +607,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   than running a session. With `ack:true` the reminder requires a ✅ — if nobody reacts within
   `ack_escalate_minutes` (default 120) the bot posts a 2nd notice, then after `ack_dm_minutes`
   (default 60) more it DMs the schedule's creator and closes the chain; a ✅ at any time resolves it.
-  Pending acks persist in `config/acks.json` so the chain survives a daemon restart.
+  Pending acks persist in `config/acks.json` so the chain survives a daemon restart. The renderer
+  owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
+  the posted message, the 2nd notice and the DM, so the line never stutters.
 - Opt-in no-response nudge: a channel can have the bot post one gentle reminder in a thread that has
   gone quiet past a window (default 24h). Strictly single-thread; never scans other channels. An
   org-level default (Settings → Schedules & nudges, `defaultNudges`) decides whether NEW channels &

@@ -789,6 +789,13 @@ shape is asserted, not reviewed by eye.
       mid-run posts the restart note then completes in the same thread.
 - [ ] Live: start a headless `POST /api/runs` with a webhook, restart the daemon mid-run, and verify
       the job resumes silently, `/api/runs/:id` reaches `completed`, and the webhook fires once.
+- [x] Unit: a settled run publishes the engine's own cost when there is one, otherwise the figure
+      the usage ledger settled on for the same run — the canonical component rollup where a run
+      reported components — flagged `costEstimated`; `null` survives only when nothing knows, and a
+      known zero is not treated as unknown (`test/api-runs-cost.test.js`).
+- [ ] Live: run a Codex job through `POST /api/runs` and confirm `GET /api/runs/:id`, the
+      `api_run_done` event and the webhook all carry the same non-null `costUSD` with
+      `costEstimated: true` — and that it matches the Audit view's cost for that run.
 - [x] Unit: controlled shutdown tracks cold engine children (including Codex), sends SIGTERM to the
       detached process group, escalates to SIGKILL, and untracks the child when it exits.
 - [x] Unit: restart recovery joins the shared per-thread FIFO with progress report enabled, forwards
@@ -1839,9 +1846,29 @@ release, no egress cut-off — so the network entry has no container equivalent 
       digest would DM (same `pendingForUser` query + shared formatter) — no divergence between the
       two surfaces.
 
-### Scheduling & reminders — acknowledgment + escalation (Slice 8.9)
+### Scheduling & reminders — time zone, label, acknowledgment + escalation (Slice 8.9)
+- [x] Unit: the daemon's zone is resolved from `TZ` (POSIX `:Zone` spelling included) or the
+      platform, `zonedStamp` renders "2026-09-08 09:15 Europe/Bucharest (06:15 UTC)" (full UTC date
+      when the two calendars disagree, no parenthetical on a UTC daemon, no throw on an unusable
+      zone), and `nextCronRun` resolves the next fire in daemon-local time — null rather than a spin
+      for an impossible cron (`test/schedule-timezone.test.js`).
+- [x] Unit: `create_schedule` names the zone for a one-time schedule and adds the resolved next run
+      for a cron, `list_schedules` repeats it, and the hint is silent on a UTC daemon
+      (`test/schedule-timezone.test.js`).
+- [x] Unit: the daemon's zone reaches a container as `TZ` at create (`-e TZ=…`) and in every exec's
+      env-file, overriding a stale host value and read per run rather than frozen at import
+      (`test/container-lifecycle.test.js`, `test/container-credentials.test.js`).
+- [ ] Live (both engines): ask the agent to schedule "every weekday at 9:15" and then to say when it
+      will run. Pass when the reply names the gateway's zone (not UTC) and `date` inside the channel
+      container prints that same zone.
 - [ ] `create_schedule kind:"reminder"` posts ONE "⏰ Reminder:" message (no "Running:" announce,
       no Claude run / token footer).
+- [x] Unit: a reminder whose text already starts with "Reminder:" posts exactly one label; a
+      deliberate double, a sentence that merely mentions the word, and a label-only prompt are left
+      readable (`test/schedule-reminder-prefix.test.js`).
+- [ ] Live: `create_schedule kind:"reminder" prompt:"Reminder: review the QA results"` posts
+      "⏰ *Reminder:* review the QA results" — and the unacknowledged 2nd notice and creator DM
+      carry the same single label.
 - [ ] With `ack:true`, the message shows "React ✅ to acknowledge" and an ack entry is recorded.
 - [ ] No ✅ within `ack_escalate_minutes` → a 2nd notice is posted (in-thread by default).
 - [ ] Still no ✅ within `ack_dm_minutes` more → the creator gets a DM with a permalink and the
