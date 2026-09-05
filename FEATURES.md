@@ -197,6 +197,21 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   to shrink; a Slack download above 8 MB announces itself in the assistant status while it runs. A
   body that turns out to be Slack's HTML sign-in page is refused from its first chunk, before
   anything is committed. → TEST-PLAN: Slack gateway (Slice 4).
+- **On-demand attachment download, this channel only (`slack_download_file`).** The pre-run path
+  delivers the files on the triggering message; anything the person shared earlier — the thread's
+  first-message recording, a file posted before the mention — is visible in history (id, name,
+  size) but was never in a run's prompt, and the bot could only ask for a re-upload. The gateway
+  tool takes a `file_id` (or a pasted Slack file link), asks Slack for the descriptor with the bot
+  token, refuses it unless Slack reports it shared in THIS channel (`listChannelIds`, the same scope
+  rule as Slack Lists), streams it through `downloadSlackFiles` into `uploads/<thread ts>/` under the
+  shared cap, and hands the model a LOCAL path — never a private URL or the token. A file already
+  in the folder is reused. Un-gated (it lands only in this thread's folder). The hydration step
+  also carries a thread ROOT's attachments into a later reply marked `carriedFrom:"root"`, and the
+  pipeline downloads such a file only while it is missing from the folder and its declared size
+  fits the cap — a retry of a delivery that never happened, not a re-attachment on every reply;
+  files behind intervening text elsewhere in the thread are still never reached. The
+  `gateway-usage` reading reference tells agents to download rather than ask for a re-upload.
+  → TEST-PLAN: Slack gateway (Slice 4).
   Current-channel history/thread tools expose only safe file id/name/MIME/size metadata—never
   private Slack URLs. → TEST-PLAN: Slack gateway.
 - Optional local voice prompts with Slack fallback: after the normal trigger/auth gates accept a

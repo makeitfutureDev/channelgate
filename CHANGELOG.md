@@ -23,6 +23,16 @@ product overview.
   `ffmpeg`/`ffprobe`, pinned OpenCV and faster-whisper, plus a pre-cached Whisper `small` model, so
   the `video-understanding` skill works without per-channel installs or first-use downloads (image
   spec 1.2.0).
+- **`slack_download_file` — an agent can fetch a file shared earlier in this channel.** The pre-run
+  downloader only ever delivered the files on the triggering message, so a recording posted on a
+  thread's first message was unreachable from a later "try again" reply and the bot could only ask
+  for a re-upload. The new gateway tool fetches a file by id (from `slack_channel_history` /
+  `slack_thread_replies` metadata or a pasted Slack link) with the bot token into the current
+  thread's `uploads/` folder and returns the local path — fail-closed to files Slack reports as
+  shared in THIS channel, the same 500 MB cap and streaming writer, a file already in the folder
+  reused. Alongside it, a thread ROOT's attachment is carried into a later reply automatically and
+  downloaded while its bytes are still missing from the folder (never re-attempted when its
+  declared size is over the cap — that refusal was already reported at the root).
 - **Inbound attachments up to 500 MB, streamed to disk.** A Slack, Google Chat, Teams or Run API
   (`fileUrl`) attachment may now be up to 500 MB (was 30 MB, or 25 MB for the Run API); the one
   shared cap lives in `src/util/bounded-bytes.js`. The bytes no longer pass through the daemon's

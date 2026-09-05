@@ -338,6 +338,26 @@ shape is asserted, not reviewed by eye.
       under the same cap and names an oversize refusal; `writeStreamNoFollow` cancels the
       connection, keeps the destination untouched and refuses a declared Content-Length over the
       cap without touching the body (`test/managed-write-symlinks.test.js`, `test/api-boundaries.test.js`).
+- [x] Unit: `slack_download_file` — `parseSlackFileId` accepts a bare id or a Slack file link and
+      refuses paths/channel ids; `fetchChannelFile` refuses a file Slack does not report as shared in
+      the current channel (`ENOTINCHANNEL`), an empty channel context, and a non-id; the download
+      lands at `uploads/<thread>/<id>-<name>` with the bot token as Bearer and is reused on the
+      second call without a fetch; an oversize descriptor is refused by size with nothing written;
+      through the MCP server the tool exposes only `file_id`, stays pinned to the signed channel and
+      leaks no URL; it is listed un-gated (`test/slack-download-file.test.js`,
+      `test/gateway-mcp-authz.test.js`, `test/mcp-control-plane-approval.test.js`).
+- [x] Unit: thread-root retry — hydration carries the ROOT's file into a later reply marked
+      `carriedFrom:"root"` past intervening text while a mid-thread file behind text is still not
+      reached, and leaves a reply alone when the root has no file; `filterCarriedRootFiles` keeps a
+      missing root file that fits the cap, drops one already on disk and one declared over the cap,
+      and always keeps files attached to the reply itself (`test/slack-attachment-recovery.test.js`,
+      `test/slack-download-file.test.js`).
+- [ ] Live: post a recording on a thread's first message, then reply `@bot try again` (no file) →
+      the reply turn downloads the root's file (status line, `uploads/<thread>/` populated) and
+      analyzes it; reply again → no second download (already on disk). In another thread say
+      `@bot download F… yourself` with the id of a file shared earlier in the channel → the tool
+      returns the local path and the agent reads it; with the id of a file from ANOTHER channel →
+      `not shared in this channel`. Both engines (QA: ATT-02).
 - [ ] Live: attach a ~250 MB screen recording (MP4) with an `@bot` mention in a container channel →
       the assistant status reads `is downloading 1 attachment(s) (… MB)…` while it fetches, the file
       lands under `uploads/<thread>/` with its full size, the daemon's RSS does not grow by the file

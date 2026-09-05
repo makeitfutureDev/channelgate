@@ -50,8 +50,8 @@ import { claimMessageTrigger, runQueue } from "./message-lifecycle.js";
 export { runQueue } from "./message-lifecycle.js";
 
 import path from "node:path";
-import { ATTACHMENT_MAX_BYTES, formatBytes, oversizeMessage } from "../util/bounded-bytes.js";
-import { ensureRealDir, writeStreamNoFollow } from "../gateway/safe-fs.js";
+import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
+import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor } from "./download.js";
 
 import { buildResumeCommand, resumeButton, footerButtons, footerText } from "./footer.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
@@ -239,93 +239,25 @@ function threadTitleFrom(text, fileCount = 0) {
   return fileCount ? "Shared a file" : "New conversation";
 }
 
-// A download this large gets its own pre-run status line, so a person watching the thread can
-// tell the gateway is fetching their file rather than sitting idle.
-const ANNOUNCE_DOWNLOAD_BYTES = 8 * 1024 * 1024;
+// The downloader itself lives in ./download.js (shared with the on-demand `slack_download_file`
+// tool); re-exported here so the pipeline stays the documented home of the pre-run path.
+export { downloadSlackFiles, shouldAnnounceDownload, attachmentFileName };
 
-// On-disk name for one Slack attachment: the Slack file id (globally unique) in front of the
-// sanitized original name. Two messages in the same thread that attach "report.pdf" would
-// otherwise land on the same path and the second would silently overwrite the first — and the
-// agent would then read the wrong bytes for the older message. The original extension survives,
-// which the local transcriber relies on.
-function attachmentFileName(f) {
-  const id = String(f?.id || "").replace(/[^A-Za-z0-9]/g, "");
-  const base = path.basename(String(f?.name || "")).replace(/[^a-zA-Z0-9._\- ]/g, "_").replace(/^\.+/, "").trim();
-  return `${id || "file"}${base ? `-${base}` : ""}`;
-}
-
-// Download Slack-attached files into the channel's gated folder so Claude can read them with
-// its Read tool (which renders images visually). Slack file URLs are private — they require the
-// bot token as a Bearer header. Returns the saved file descriptors.
-//
-// `root` is the channel's work dir (daemon-derived); `sub` the per-thread subfolder. The workspace
-// beneath it is agent-writable, so uploads/<sub> is recreated as REAL directories and each file is
-// published via an exclusive no-follow temp + rename — a symlink planted at any of those paths is
-// replaced as a node, never written through.
-//
-// The bytes never sit in the daemon's memory: each file streams into an exclusive temp file in
-// `uploads/<sub>` with the cap (ATTACHMENT_MAX_BYTES, or `maxBytes` for a test) enforced per chunk,
-// and is renamed into place only when complete. A refusal names the actual size and the limit.
-const HTML_HEAD = "Slack returned HTML instead of the file — the bot is missing the files:read scope (update the app manifest and reinstall)";
-
-export async function downloadSlackFiles(files, botToken, { root, sub, maxBytes = ATTACHMENT_MAX_BYTES }) {
-  const saved = [];
-  let destDir = "";
+// A file carried into a reply from the thread ROOT (attachments.js marks it `carriedFrom:"root"`)
+// is a RETRY of a delivery that never happened — the root turn refused it (an old cap, a Slack
+// hiccup) and the person is asking again in the thread. It is downloaded only when its bytes are
+// not already in the thread folder, and never re-attempted when Slack's declared size is still
+// over the cap: that refusal was already reported at the root, and repeating it on every reply
+// would turn one oversize file into a nag. Files attached to the reply itself always go through.
+export async function filterCarriedRootFiles(files, { root, sub, maxBytes = ATTACHMENT_MAX_BYTES } = {}) {
+  const out = [];
   for (const f of files) {
-    const url = f.url_private_download || f.url_private;
-    if (!url) {
-      saved.push({
-        name: f.name || f.id || "file",
-        skipped: "Slack did not provide a private download URL after canonical message and files.info recovery",
-      });
-      continue;
-    }
-    // A declared size is only an early reject — the real cap is enforced while streaming below.
-    if (f.size && f.size > maxBytes) {
-      saved.push({ name: f.name, skipped: oversizeMessage(f.size, maxBytes) });
-      continue;
-    }
-    try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${botToken}` }, redirect: "follow" });
-      if (!res.ok) {
-        saved.push({ name: f.name, skipped: `HTTP ${res.status}` });
-        continue;
-      }
-      // Slack hands back an HTML sign-in/redirect page (not the file bytes) when the bot lacks
-      // the files:read scope or can't access the file. Detect it via content-type AND a byte
-      // sniff of the first chunk so we never save bogus markup and let Claude "read" a web page.
-      const ct = res.headers.get("content-type") || "";
-      if (ct.includes("text/html")) {
-        await res.body?.cancel?.().catch(() => {});
-        saved.push({ name: f.name, skipped: HTML_HEAD });
-        continue;
-      }
-      const safeName = attachmentFileName(f);
-      destDir ||= await ensureRealDir(root, "uploads", sub);
-      const dest = path.join(destDir, safeName);
-      const { bytes } = await writeStreamNoFollow(dest, res, {
-        maxBytes,
-        inspect(head) {
-          const text = head.toString("latin1").trimStart().toLowerCase();
-          if (text.startsWith("<!doctype") || text.startsWith("<html")) {
-            const err = new Error(HTML_HEAD);
-            err.code = "EHTMLBODY";
-            throw err;
-          }
-        },
-      });
-      saved.push({ name: safeName, path: dest, mimetype: f.mimetype, bytes });
-    } catch (e) {
-      saved.push({ name: f.name, skipped: e.message });
-    }
+    if (f?.carriedFrom !== "root") { out.push(f); continue; }
+    if (f.size && f.size > maxBytes) continue;
+    if (await isAttachmentOnDisk(root, sub, f)) continue;
+    out.push(f);
   }
-  return saved;
-}
-
-// True when the declared sizes are large enough that a person should be told the gateway is
-// downloading — a 250 MB screen recording takes long enough to look like nothing is happening.
-export function shouldAnnounceDownload(files, threshold = ANNOUNCE_DOWNLOAD_BYTES) {
-  return files.reduce((sum, f) => sum + (Number(f?.size) || 0), 0) >= threshold;
+  return out;
 }
 
 // Resolve a Slack user id → display name, cached across calls (best-effort; falls back to the id).
@@ -1075,19 +1007,24 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // Download accepted ordinary attachments into the gated folder. Audio is resolved local-first
     // when Whisper is enabled, then through a completed Slack transcript. Raw audio never becomes
     // an engine attachment; disabled mode does not download it at all.
+    // uploads/<thread ts>/<slack file id>-<name>: the thread ts groups a conversation's files,
+    // the file id keeps same-named attachments from different messages apart. A file carried in
+    // from the thread root is wanted only while its bytes are missing from that folder.
+    const dest = { root: effectiveWorkDir(entry.slug, meta), sub: uploadsSubFor(threadKey) };
+    const wantedFiles = files.length ? await filterCarriedRootFiles(files, dest) : [];
     let promptForClaude = prompt || (
-      files.length && slackTables.length
+      wantedFiles.length && slackTables.length
         ? "Please review the attached file(s) and pasted Slack table(s), then respond."
         : slackTables.length
           ? "Please read the pasted Slack table(s) and respond."
-          : "Please look at the attached file(s) and respond."
+          : wantedFiles.length
+            ? "Please look at the attached file(s) and respond."
+            : "Please look at this thread and respond."
     );
     let attachmentPaths = [];
-    if (files.length) {
-      // uploads/<thread ts>/<slack file id>-<name>: the thread ts groups a conversation's files,
-      // the file id keeps same-named attachments from different messages apart.
-      const dest = { root: effectiveWorkDir(entry.slug, meta), sub: String(threadKey).replace(/[^0-9.]/g, "_") || "thread" };
+    if (wantedFiles.length) {
       const botToken = resolveSlackConfig().botToken;
+      const files = wantedFiles; // the deliverable set — carried root files already filtered above
       const audio = files.filter(isAudioFile);
       const ordinaryFiles = files.filter((file) => !isAudioFile(file));
       let saved = [];

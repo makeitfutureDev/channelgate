@@ -239,28 +239,35 @@ test("hydrateSlackMessage recovers the nearest earlier thread file when the ment
   assert.equal(hydrated.files[0].name, "price-list.xlsx");
 });
 
-test("hydrateSlackMessage does not reach past an intervening text reply for an old thread file", async () => {
+test("hydrateSlackMessage carries only the thread ROOT's file past intervening text, marked as a retry", async () => {
   const { hydrateSlackMessage } = await attachmentModule();
   const client = {
     conversations: {
       replies: async (args) => {
         if (args.oldest) {
-          return { messages: [{ ts: "103.1", user: "U1", text: "<@B1> summarize the discussion" }] };
+          return { messages: [{ ts: "104.1", user: "U1", text: "<@B1> try again" }] };
         }
         return {
           messages: [
             {
               ts: "100.1",
               user: "U1",
-              text: "",
+              text: "<@B1> improve this",
               files: [{
-                id: "FOLD",
-                name: "old.xlsx",
-                url_private_download: "https://files.slack.test/FOLD/download",
+                id: "FROOTVID",
+                name: "recording.mp4",
+                size: 253445073,
+                url_private_download: "https://files.slack.test/FROOTVID/download",
               }],
             },
+            {
+              ts: "101.1",
+              user: "U2",
+              text: "",
+              files: [{ id: "FMID", name: "mid.xlsx", url_private_download: "https://files.slack.test/FMID/download" }],
+            },
             { ts: "102.1", user: "U2", text: "unrelated follow-up" },
-            { ts: "103.1", user: "U1", text: "<@B1> summarize the discussion" },
+            { ts: "104.1", user: "U1", text: "<@B1> try again" },
           ],
         };
       },
@@ -272,13 +279,41 @@ test("hydrateSlackMessage does not reach past an intervening text reply for an o
     channel: "C1",
     channel_type: "channel",
     user: "U1",
-    text: "<@B1> summarize the discussion",
-    ts: "103.1",
+    text: "<@B1> try again",
+    ts: "104.1",
     thread_ts: "100.1",
   }, client, {
     maxAttempts: 1,
   });
 
+  // The root's recording is the thread's subject and comes along as a RETRY (the pipeline skips it
+  // once its bytes are on disk); the mid-thread file behind intervening text is still not reached.
+  assert.equal(hydrated.files.length, 1);
+  assert.equal(hydrated.files[0].id, "FROOTVID");
+  assert.equal(hydrated.files[0].carriedFrom, "root");
+  assert.equal(hydrated.files[0].size, 253445073);
+});
+
+test("hydrateSlackMessage leaves a reply alone when the thread root has no file either", async () => {
+  const { hydrateSlackMessage } = await attachmentModule();
+  const client = {
+    conversations: {
+      replies: async (args) => {
+        if (args.oldest) return { messages: [{ ts: "103.1", user: "U1", text: "<@B1> summarize" }] };
+        return {
+          messages: [
+            { ts: "100.1", user: "U1", text: "kickoff notes" },
+            { ts: "101.1", user: "U2", text: "", files: [{ id: "FOLD", name: "old.xlsx", url_private_download: "https://files.slack.test/FOLD/download" }] },
+            { ts: "102.1", user: "U2", text: "unrelated follow-up" },
+            { ts: "103.1", user: "U1", text: "<@B1> summarize" },
+          ],
+        };
+      },
+    },
+  };
+  const hydrated = await hydrateSlackMessage({
+    type: "app_mention", channel: "C1", channel_type: "channel", user: "U1", text: "<@B1> summarize", ts: "103.1", thread_ts: "100.1",
+  }, client, { maxAttempts: 1 });
   assert.deepEqual(hydrated.files, []);
 });
 

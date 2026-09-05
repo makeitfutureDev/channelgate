@@ -97,6 +97,7 @@ the tool that does it.
 | Make a tracker people edit over time           | `references/tables.md`            | `gateway` → `slack_list_create`, `…_add_item`, `…_update_item`, `…_items`, `…_info` |
 | Create / edit a canvas document                | `references/canvases.md`          | chosen Composio account (`composio-agent` / `composio-user`) |
 | Catch up / summarize / read a thread           | `references/reading.md`           | `gateway` → `slack_channel_history`, `slack_thread_replies`; cross-channel via Composio Slack |
+| Get a file shared earlier in this channel/thread ("download it", "try again with the video") | `references/reading.md` | `gateway` → `slack_download_file` (local path back; this channel only, ≤ 500 MB) |
 | Remember a fact or add a standing rule         | `references/memory-and-rules.md`  | `gateway` → `update_channel_memory`, `update_channel_instructions` |
 | Orchestrate long/high-volume work with visible agents and progress | `references/progress-report.md` | in-turn subagents + `gateway` → `report_progress` |
 | Edit code/docs in a git repository             | `references/git-repos.md`         | `git worktree` per task; merge + push to land |

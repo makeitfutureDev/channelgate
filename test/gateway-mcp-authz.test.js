@@ -81,6 +81,25 @@ test("Slack history MCP exposes no foreign-channel input and remains pinned to t
   });
 });
 
+test("slack_download_file takes only a file id, stays pinned to the signed channel, and never leaks a URL", async () => {
+  await withGateway({}, async (client) => {
+    const tools = await client.listTools();
+    const tool = tools.tools.find((entry) => entry.name === "slack_download_file");
+    assert.ok(tool, "the on-demand download tool is registered in the full toolset");
+    assert.deepEqual(Object.keys(tool.inputSchema.properties), ["file_id"]);
+    assert.match(tool.description, /THIS channel/);
+
+    // No bot token in the test scratch: the refusal names the remedy and nothing else — no
+    // channel id from the arguments, no private Slack URL.
+    const result = await client.callTool({
+      name: "slack_download_file",
+      arguments: { file_id: "F0BV4TU6T5L", channel_id: "C_FOREIGN" },
+    });
+    assert.match(resultText(result), /Slack bot token isn't configured/i);
+    assert.doesNotMatch(resultText(result), /C_FOREIGN|files\.slack\.com|url_private/);
+  });
+});
+
 test("admin-only MCP tools refuse a non-admin signed principal", async () => {
   await setUser("U_MCP_NONADMIN", { approved: true, isAdmin: false });
   await withGateway({ author: "U_MCP_NONADMIN" }, async (client) => {
