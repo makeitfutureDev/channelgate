@@ -9,6 +9,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
 ## Conversation settings and persistent memory
 
+- **Deterministic Composio identity selection:** `composio-user` is always the active requester's
+  personal account; `composio-agent` is the shared agent account. Pronouns and named connection
+  aliases select between them, ambiguous apps connected to both require a question, and connection
+  discovery recognizes normalized MCP names and verifies active aliases without silent fallback.
+  → TEST-PLAN: Composio identity and connection discovery.
+
 - **Focused conversation settings:** Access presents Read-only, Worker, and Autonomous as the
   primary modes, with Full access and Lean as clearly separated special-mode boxes; Custom is no
   longer offered. Tools is split into Connections, MCP servers, Environment tokens, and Skills;

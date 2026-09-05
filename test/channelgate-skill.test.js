@@ -58,3 +58,16 @@ test("the memory retrieval tools retain the gateway text response adapter", asyn
     text("No channel context — can't read memory here."),
   );
 });
+
+test("the ChannelGate skill defines deterministic Composio identity discovery", async () => {
+  const guide = await readFile(path.join(root, "references/mcp-skills.md"), "utf8");
+
+  assert.match(guide, /`composio-user`.*active requester's personal account/is);
+  assert.match(guide, /`composio-agent`.*shared agent account/is);
+  assert.match(guide, /both identities have an app such as Gmail.*ambiguous, ask/is);
+  assert.match(guide, /Never substitute or silently fall back/is);
+  assert.match(guide, /mcp__composio_user__/);
+  assert.match(guide, /COMPOSIO_SEARCH_TOOLS.*toolkit_connection_statuses/is);
+  assert.match(guide, /COMPOSIO_MANAGE_CONNECTIONS.*action: "list"/is);
+  assert.match(guide, /must not initiate connections/is);
+});
