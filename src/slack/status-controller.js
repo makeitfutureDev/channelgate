@@ -2,6 +2,7 @@ import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { listForChannel as listSchedulesForChannel } from "../config/schedules.js";
 import { poolStats } from "../engines/session-pool.js";
 import { getChannelMeta } from "../config/store.js";
+import { modeLabel } from "../gateway/modes.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { claudeLoginExpiryWarning, describeClaudeLogin, resolveClaudeLogin } from "../gateway/claude-login.js";
 import { runQueue } from "./message-lifecycle.js";
@@ -31,6 +32,24 @@ export function formatRuntimeLine(info) {
   if (info.warm) parts.push("warm");
   if (info.reason) parts.push(info.reason);
   return `*📦 Runtime*: ${backend}${parts.length ? ` — ${parts.join(" · ")}` : ""}`;
+}
+
+// One line naming what this channel is ALLOWED to do — its mode AND, in both directions, the
+// Allow-network switch. /status listed jobs, schedules, runtime and login but never the channel's
+// own capabilities, so "can I reach the internet from here?" had no answer anywhere in chat: the
+// mode label said nothing when the switch was off, and an off switch reads exactly like a switch
+// nobody ever touched. Detailed form, because this IS the place someone comes to ask.
+export function formatCapabilityLine(meta = {}) {
+  return `*🎚️ Mode*: ${modeLabel(meta, { detail: true })}`;
+}
+
+// Never let it be the thing that breaks /status — same rule as the runtime line below.
+async function capabilityStatusLine(slug) {
+  try {
+    return formatCapabilityLine((await getChannelMeta(slug)) || {});
+  } catch (error) {
+    return `*🎚️ Mode*: unavailable — ${error.message}`;
+  }
 }
 
 // Never let the runtime line be the thing that breaks /status: an unavailable or misconfigured
@@ -91,9 +110,10 @@ export async function buildStatusReport(slug, channelId) {
     .filter((key) => key.startsWith(`${slug}::`))
     .reduce((count, key) => count + runQueue.count(key), 0);
   parts.push(`*⚡ Now*: ${liveRuns} run${liveRuns === 1 ? "" : "s"} in flight · ${warmKeys.length} warm session${warmKeys.length === 1 ? "" : "s"}`);
+  const capabilityLine = await capabilityStatusLine(slug);
   const runtimeLine = await runtimeStatusLine(slug);
   const loginLine = claudeLoginStatusLine();
-  if (!jobs.length && !schedules.length && !liveRuns) return `Nothing is running or scheduled in this channel right now. ✨\n${runtimeLine}\n${loginLine}`;
-  parts.push(runtimeLine, loginLine);
+  if (!jobs.length && !schedules.length && !liveRuns) return `Nothing is running or scheduled in this channel right now. ✨\n${capabilityLine}\n${runtimeLine}\n${loginLine}`;
+  parts.push(capabilityLine, runtimeLine, loginLine);
   return parts.join("\n");
 }

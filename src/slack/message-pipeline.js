@@ -804,13 +804,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         const arg = (sc.arg || "").trim().toLowerCase();
         if (!arg) {
           await reply(
-            `Current mode: *${modeLabel(meta)}*.\n` +
+            `Current mode: *${modeLabel(meta, { detail: true })}*.\n` +
               "Set with `/mode read|bash|auto|admin` (admin):\n" +
               "• *read* — read-only; other tools ask for approval\n" +
               "• *bash* — Bash + file writes, sandboxed to the folder\n" +
               "• *auto* — autonomous: prompts auto-approved, sandboxed\n" +
               "• *admin* — full tools, sandbox off (admin authors only)\n" +
-              "_Network is separate — toggle it in the channel's settings._"
+              "_Network is a separate switch (channel settings, or `set_channel_network`). It tells the agent whether this channel is meant to use the internet; the container is not cut off yet, so it is an instruction, not a boundary._"
           );
           return;
         }

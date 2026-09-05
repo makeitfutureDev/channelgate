@@ -36,8 +36,10 @@ when a skill fires. No token or network call is involved.
   `add_channel_skills` adds on top; `template: "none"` stops following (the channel's own
   additions stay). Preview shows what the channel would gain, keep or drop.
 
-These change persistent state, so they show an Approve/Deny card in the conversation unless the
-channel is in auto mode.
+These change persistent state, so they **always** show an Approve/Deny card in the conversation and
+block until someone eligible clicks. Auto mode and admin mode do NOT skip it — auto-approval covers
+tool permissions, never control-plane changes (`references/administration.md`). Call the tool once
+and wait; don't retry a refusal.
 
 ## Authoring (anyone approved to use the channel)
 

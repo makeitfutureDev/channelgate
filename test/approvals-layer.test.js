@@ -6,6 +6,7 @@
 // a job never escalates anything. ensureTestEnv() runs first so the lazy DB opens scratch state.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
@@ -177,4 +178,30 @@ test("a resolved approval cannot be replayed — a second click reports it expir
   await click(client, "cg_approve", id, ADMIN); // replay
   assert.equal(client.updates.length, updatesAfterResolve + 1, "replay must be answered, not resolved");
   assert.match(JSON.stringify(client.updates.at(-1)), /expired or was already handled/i);
+});
+
+// Doc vs gate (live QA, SKL-02): the skills docs claimed the chat verbs "show an Approve/Deny card
+// unless the conversation is in auto mode", but approvals.js applies the auto-mode shortcut only to
+// approvalType "permission" — control-plane verbs always post a card, which is the product contract
+// (Auto never bypasses control-plane approvals). The behaviour is right; the sentence was wrong, and
+// a wrong sentence in a shipped guide is what the agent tells the user.
+test("no shipped doc claims auto mode skips a control-plane skills approval", () => {
+  const files = [
+    "../docs/SKILLS.md",
+    "../src/gateway/gateway-usage/references/skills.md",
+    "../src/gateway/gateway-usage/references/administration.md",
+  ].map((rel) => [rel, readFileSync(new URL(rel, import.meta.url), "utf8")]);
+
+  for (const [rel, text] of files) {
+    assert.doesNotMatch(text, /card unless[^.]*auto mode/i, `${rel} still promises an auto-mode bypass`);
+    assert.doesNotMatch(text, /unless the (conversation|channel) is in auto mode/i, `${rel} still promises an auto-mode bypass`);
+  }
+
+  const [, docs] = files[0];
+  const [, guide] = files[1];
+  // Both must state the positive rule, not merely omit the wrong one.
+  assert.match(docs, /\*\*always\*\* post an Approve\/Deny card/i);
+  assert.match(docs, /Auto mode does not bypass it/i);
+  assert.match(guide, /\*\*always\*\* show an Approve\/Deny card/i);
+  assert.match(guide, /Auto mode and admin mode do NOT skip it/i);
 });

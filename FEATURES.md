@@ -1283,13 +1283,26 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `gateway-usage` skill (`references/approvals.md`). → TEST-PLAN: Modes & approvals.
 - Admin-only dangerous permissions (admin author **and** adminMode channel); non-admins run the
   folder allowlist. → TEST-PLAN: Security (dangerous perms).
-- **Retired 2026-09-03 (Linux + containers only):** the deny lists and the allowlisted domain set — inside the container the gateway root, the
-  sensitive home paths and other channels' folders are simply not mounted, and **Allow Network** is
-  now only a per-channel switch the engines are told about (no domain filtering and, in this
-  release, no egress cut-off). Per-channel **Allow Bash**: unlocks Bash + Write/Edit, with writes kept away from the gateway root,
-  sensitive home paths (`.ssh`, `.aws`, `.config`, `.claude`, keychains, …) and every other channel's
-  folder. **Allow Network**: sandbox egress to an allowlisted domain set (default: GitHub) — with Bash
-  on, git credentials become readable so `git push` / `gh` work. → TEST-PLAN: Sandbox boundaries.
+- **Retired 2026-09-03 (Linux + containers only):** the deny lists and the allowlisted domain set,
+  and with them the sandbox-egress meaning of **Allow Network** (formerly: "sandbox egress to an
+  allowlisted domain set, default GitHub" — that filtering no longer exists and is not coming back
+  in this shape). Inside the container the gateway root, the sensitive home paths and other
+  channels' folders are simply not mounted, and the former per-channel **Allow Bash** deny-list
+  (Bash + Write/Edit with writes kept away from the gateway root, `.ssh`, `.aws`, `.config`,
+  `.claude`, keychains and every other channel's folder) is the container boundary instead.
+  → TEST-PLAN: Sandbox boundaries.
+- **Allow Network is an ADVISORY per-channel switch, not an egress boundary.** Every channel's
+  container runs on the default bridge network and the gateway polices no egress per channel, so
+  "off" does not cut the container off — it states the channel's intent. That intent is now said
+  out loud everywhere instead of being inferred from a missing suffix: the mode label carries the
+  state in BOTH directions (`Read-only · network off` / `Bash · network on`), `/mode` and `/status`
+  add the caveat (`network off (advisory — not enforced by the container yet)`), the gateway-managed
+  block at the top of every conversation's instruction file states the mode and the network switch
+  to the engine itself, and the `run_config` event records `networkEnforced: false` beside
+  `networkPolicy` so an operator reading it after an incident cannot mistake `"off"` for "this turn
+  could not reach the internet". A container-side egress proxy that actually enforces the switch is
+  a later slice; `NETWORK_POLICY_ENFORCED` in `src/engines/network-policy.js` is the one flag every
+  surface reads. → TEST-PLAN: Sandbox boundaries.
 - **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — with no host sandbox there is no user namespace for AppArmor to restrict,
   and rootless Podman brings its own uid mapping (`--userns=keep-id`, `/etc/subuid`). **Linux hosts keep their Bash sandbox under Ubuntu's AppArmor userns restriction**: Ubuntu 23.10+
   (24.04 LTS included) stacks any unconfined process that creates a user namespace into a

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileNetworkPolicy, requestedNetworkPolicy, NETWORK_MODES } from "../src/engines/network-policy.js";
+import { compileNetworkPolicy, requestedNetworkPolicy, NETWORK_MODES, NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../src/engines/network-policy.js";
+import { readFileSync } from "node:fs";
 import { adapterFor } from "../src/engines/registry.js";
 
 // Since the container runtime is the only runtime, a channel's network is a SWITCH: the container
@@ -58,4 +59,18 @@ test("an explicit admin bypass is reported honestly by the adapter, and the netw
     assert.equal(on.writable, true);
     assert.deepEqual(on.network, { mode: NETWORK_MODES.ON, supported: true });
   }
+});
+
+test("the module says out loud that the compiled policy is NOT enforced, and its header no longer claims otherwise", () => {
+  // The header used to promise that "off" runs the container with no network at all. It never did:
+  // every container is on the bridge network and no egress is policed per channel, so the switch is
+  // what the engines are TOLD. A stale comment here is how the misreading spread to the label, to
+  // /status and to the run_config event.
+  assert.equal(NETWORK_POLICY_ENFORCED, false);
+  assert.match(NETWORK_ADVISORY_NOTE, /advisory/i);
+  assert.match(NETWORK_ADVISORY_NOTE, /not enforced/i);
+  const source = readFileSync(new URL("../src/engines/network-policy.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /runs the container with no\s+network at all/, "the retired claim must not come back");
+  assert.match(source, /ADVISORY/);
+  assert.match(source, /bridge network/);
 });

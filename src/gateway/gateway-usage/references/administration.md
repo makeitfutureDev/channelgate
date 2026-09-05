@@ -93,8 +93,11 @@ mode and whoever the author, is confined to this channel's container.
 - `set_channel_network` (admin) — record whether this channel is meant to have network access
   (needs Bash on to be useful) so `git`/`gh`/`curl` and deploy CLIs may be used; the engines are
   told the answer (Codex read mode refuses network on its own). There is no per-domain allow-list
-  to add to. If the switch is off and a task needs the network, ask an admin to turn it on
-  (effective on the NEXT message) rather than working around it.
+  to add to. The switch is *advisory*: the container is not actually cut off, so a request may
+  succeed while the switch is off — that is not permission. If the switch is off and a task needs
+  the network, say so and ask an admin to turn it on (effective on the NEXT message) rather than
+  working around it. The current value is in the gateway-managed block at the top of this
+  conversation's instruction file.
 
 ## Admin access & the container (read this before diagnosing "file not found")
 

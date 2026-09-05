@@ -13,7 +13,7 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 
 const [
-  { effectiveWorkDir, updateChannelInstructions, listAvailableSkills, skillSourceDirs, enableSkills, splitGatewayBlock },
+  { effectiveWorkDir, updateChannelInstructions, listAvailableSkills, skillSourceDirs, enableSkills, splitGatewayBlock, gatewayInstructionsBlock, channelSwitchesNote },
   { workspaceFolder, cleanWorkspaceFolder },
   { allowedFsRoot },
 ] = await Promise.all([
@@ -149,4 +149,39 @@ test("a custom project folder gets a real CLAUDE.md with AGENTS.md mirrored, and
   await ensureChannelFolder(slug, { name: "Custom project", workDir: custom, allowedMcps: [] });
   assert.equal(existsSync(path.join(skillsDir, "claude-gateway")), false, "the old managed folder is gone");
   assert.ok(existsSync(path.join(skillsDir, "hand-made", "SKILL.md")), "a project-owned folder survives");
+});
+
+// ── What the ENGINE is told about its own channel ─────────────────────────────
+// Live QA (both engines): asked whether it was allowed on the network, a run answered that
+// "nothing in my system context, channel instructions, or session config mentions it either way"
+// — and it was right. CLAUDE.md is the file both harnesses read (Claude via
+// --append-system-prompt-file, Codex via the AGENTS.md symlink), so the channel's own switches
+// belong in its gateway-managed block.
+test("the managed block states this conversation's mode and network switch, in both directions", async () => {
+  const { NETWORK_ADVISORY_NOTE } = await import("../src/engines/network-policy.js");
+
+  const off = channelSwitchesNote({ allowBash: true });
+  assert.match(off, /Mode: \*\*bash\*\*/);
+  assert.match(off, /Network: \*\*off\*\*/, "an off switch is SAID, not implied by silence");
+  assert.match(off, /NOT meant to use the internet/);
+  // Honest, not a lie the first successful request would expose: the container is not cut off.
+  assert.ok(off.includes(NETWORK_ADVISORY_NOTE), "the advisory caveat is the shared phrase");
+  assert.match(off, /that is not permission/i);
+
+  const on = channelSwitchesNote({ autoMode: true, allowNetwork: true, engine: "claude" });
+  assert.match(on, /Mode: \*\*auto\*\*/);
+  assert.match(on, /Network: \*\*on\*\*/);
+  assert.doesNotMatch(on, /NOT meant to use the internet/);
+
+  // An engine that cannot run with the network on is told that, not promised the switch.
+  assert.match(channelSwitchesNote({ allowNetwork: true, engine: "opencode" }), /cannot run with the network on/);
+
+  // And it actually rides the block every channel folder receives — clean mode included, since a
+  // lean channel still has to know what it may do.
+  for (const meta of [{ allowBash: true }, { allowBash: true, cleanMode: true }]) {
+    const block = gatewayInstructionsBlock(meta);
+    assert.equal(splitGatewayBlock(block).found, true);
+    assert.match(block, /This conversation's switches/);
+    assert.match(block, /Network: \*\*off\*\*/);
+  }
 });

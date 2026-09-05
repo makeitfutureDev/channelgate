@@ -20,7 +20,8 @@ process.env.CG_WORKSPACE_DIR ||= path.join(scratch, "workspace");
   writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat01-surfaces", expiresAt: Date.now() + 4 * 3600_000, refreshTokenExpiresAt: Date.now() + 20 * 24 * 3600_000 } }), { mode: 0o600 });
 }
 
-const { formatRuntimeLine, buildStatusReport } = await import("../src/slack/status-controller.js");
+const { formatRuntimeLine, formatCapabilityLine, buildStatusReport } = await import("../src/slack/status-controller.js");
+const { NETWORK_ADVISORY_NOTE } = await import("../src/engines/network-policy.js");
 const { buildResumeCommand, footerText } = await import("../src/slack/footer.js");
 const { getDb } = await import("../src/db/index.js");
 const { saveSession, resolveSession, getSessionRuntime, clearSession } = await import("../src/gateway/sessions.js");
@@ -42,11 +43,29 @@ test("/status names the whole environment: the container, its image, state and u
   assert.match(line, /up 1m|up 2m|up 9\ds/);
 });
 
+test("/status names the channel's own switches, network included, in both directions", async () => {
+  // The gap this closes: /status listed jobs, schedules, runtime and login but never said what the
+  // channel was allowed to DO, and the mode label said nothing at all when the network was off —
+  // so "can I reach the internet from here?" had no answer anywhere in chat.
+  assert.equal(formatCapabilityLine({}), `*🎚️ Mode*: Read-only · network off (${NETWORK_ADVISORY_NOTE})`);
+  assert.equal(formatCapabilityLine({ allowBash: true, allowNetwork: true, engine: "claude" }), "*🎚️ Mode*: Bash · network on");
+
+  const entry = await upsertChannelEntry("C_RT_NETSTATE", { name: "rt-netstate", type: "channel" });
+  await saveChannelMeta(entry.slug, { channelId: "C_RT_NETSTATE", platform: "slack", name: "rt-netstate", allowBash: true });
+  const off = await buildStatusReport(entry.slug, "C_RT_NETSTATE");
+  assert.match(off, /Mode\*: Bash · network off/, "an off switch is stated, not left to inference");
+  assert.match(off, new RegExp(NETWORK_ADVISORY_NOTE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "and it is honest about not being enforced");
+
+  await saveChannelMeta(entry.slug, { channelId: "C_RT_NETSTATE", platform: "slack", name: "rt-netstate", allowBash: true, allowNetwork: true });
+  assert.match(await buildStatusReport(entry.slug, "C_RT_NETSTATE"), /Mode\*: Bash · network on/);
+});
+
 test("a quiet channel's /status still says where its turns run", async () => {
   const entry = await upsertChannelEntry("C_RT_STATUS", { name: "rt-status-line", type: "channel" });
   await saveChannelMeta(entry.slug, { channelId: "C_RT_STATUS", platform: "slack", name: "rt-status-line" });
   const report = await buildStatusReport(entry.slug, "C_RT_STATUS");
   assert.match(report, /Nothing is running or scheduled/);
+  assert.match(report, /Mode\*: Read-only · network off/, "even the empty report carries the switches");
   // Through the REAL resolver: a channel that has never run still resolves to its container, and
   // the line names it even when the container CLI is missing on this machine (the state then says
   // so — an unavailable backend is exactly when someone types /status).

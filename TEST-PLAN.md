@@ -759,6 +759,20 @@ shape is asserted, not reviewed by eye.
 - [x] Unit: the injected guide routes looping work to the NATIVE tools and states the three things
       the model cannot infer — `CronList` is not bridged, loops are finite, and how a loop ends
       (`test/native-loop.test.js`).
+- [x] Unit (ART-005 / CTO-04 regression): the guide names the harness's OWN backgrounding as a dead
+      end. `SKILL.md`, `references/background-jobs.md` and `references/loops.md` all name
+      `run_in_background: true` (plus `nohup`/`at`/`screen`/`tmux` and in-turn sleep loops), state
+      that those processes are killed when the reply is posted and can never report back, list the
+      only three durable mechanisms (`run_in_background`, `run_agent_in_background`,
+      `create_schedule`/loops), and require the agent to say so plainly instead of promising a
+      follow-up when the channel's mode allows none of them
+      (`test/subagent-completion.test.js`, `test/native-loop.test.js`).
+- [ ] Live (Claude): in a read/worker channel, ask for something long ("run the full suite and tell
+      me when it's done"). Pass when the reply either runs it inline or names the mode gate and
+      offers `run_agent_in_background`/`create_schedule`; fail on any "I'll report back when it
+      finishes" that follows a harness background shell.
+- [ ] Live (Codex): the same prompt. Pass when it offers `create_schedule` (or a bounded inline run)
+      instead of narrating a sleep-and-check loop it cannot finish.
 - [x] Unit: shell background jobs are mode-gated (the 2026-08 update plan (internal repo) A1) — refused before any
       approval request in a non-auto/non-admin channel; fail closed ("no approval channel") even in
       auto mode when no approver is wired; a deny (with reason) or an approval-layer error refuses
@@ -1293,6 +1307,31 @@ release, no egress cut-off — so the network entry has no container equivalent 
       sibling channel folder is denied; reading the home root / gateway root is denied.
 - [ ] Network off by default; allow-network + allow-bash → `gh`/`git push` succeed, a non-allowlisted
       domain fails.
+- [x] Unit (CTO-04 regression): `modeLabel` states the network switch in BOTH directions — a channel
+      with it off renders `Read-only · network off`, not a bare `Read-only`, so "off" is no longer
+      indistinguishable from "never configured"; `{ detail: true }` adds
+      `(advisory — not enforced by the container yet)` for the off state only, and an engine that
+      does not declare the `on` mode still reads `network unsupported`
+      (`test/modes.test.js`).
+- [x] Unit (CTO-04 regression): `/status` carries the channel's own switches — `formatCapabilityLine`
+      and the full report render `*🎚️ Mode*: Bash · network off (advisory — …)` and flip to
+      `network on` when the switch is set, including on the "nothing running" report
+      (`test/runtime-integration-surfaces.test.js`).
+- [x] Unit (CTO-04 regression): the ENGINE is told. The gateway-managed block at the top of every
+      conversation's `CLAUDE.md` (read by Claude via `--append-system-prompt-file` and by Codex via
+      the `AGENTS.md` symlink) names the mode and the network switch in both directions, says an
+      off switch means "NOT meant to use the internet", and admits the switch is advisory so a
+      request that still succeeds is not read as permission — clean mode included
+      (`test/folders-generator-paths.test.js`).
+- [x] Unit (CTO-04 regression): the policy module says out loud that nothing enforces the switch —
+      `NETWORK_POLICY_ENFORCED` is `false`, `NETWORK_ADVISORY_NOTE` is the one shared phrase, and
+      the retired "off runs the container with no network at all" header claim cannot come back
+      (`test/network-policy.test.js`); every `run_config` event records `networkEnforced: false`
+      beside `networkPolicy` (`test/runtime-integration-run.test.js`).
+- [ ] Live (either engine): in a channel with *Allow network* OFF, ask "are you allowed to use the
+      network here?". Pass when the answer names the switch as off and says it is advisory rather
+      than reporting that nothing tells it either way; then turn the switch on and confirm the next
+      turn says on. `/status` and `/mode` must agree with the answer.
 
 ### In-thread commands & stop
 - [ ] `/context` shows tokens + % of the context window from the last turn.
@@ -2734,6 +2773,14 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] Live: `create_skill` from a channel as a non-admin approved member (approval card), then
       `propose_skill_change` on a synced skill and approve it in the admin UI → pinned override;
       `skill_usage_report` after a few turns lists the never-used grants.
+- [x] Unit (SKL-02 regression): no shipped doc claims auto mode skips a control-plane skills
+      approval. `docs/SKILLS.md` and the guide's `references/skills.md` state that
+      `add_channel_skills` / `remove_channel_skills` / `set_channel_skill_template` ALWAYS post an
+      Approve/Deny card and block for a click (auto-approval covers tool permissions only), the
+      reads are described as open, and the retired "unless the conversation is in auto mode"
+      phrasing cannot come back in either file or in `references/administration.md`
+      (`test/approvals-layer.test.js`, behaviour proven in the same file and
+      `test/mcp-control-plane-approval.test.js`).
 
 ### Skills platform (round two) — personal skills, publishing, webhook, MCP endpoint, peers, migration
 

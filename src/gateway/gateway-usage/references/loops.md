@@ -33,6 +33,24 @@ Consequences worth knowing:
 - **This is Claude Code's mechanism.** If you are not running on Claude Code, the pacing tools above
   do not exist for you: say so plainly and offer `create_schedule` instead of pretending to loop.
 
+## Never fake a loop inside one turn
+
+There is no way to keep watching something after your reply is posted. `sleep`, a `while` loop, a
+chain of "wait 30 seconds and check again" commands, `Bash` with `run_in_background: true`,
+`nohup`, `at`, `screen`/`tmux` — every one of them is a child of this turn's process and dies with
+it, and none of them can post anything into the thread. A sequence of sleeps inside the turn is not
+a loop either: it just burns the turn's silence budget and ends where it would have ended anyway.
+
+So never write “I'll keep checking and let you know.” Either:
+
+- arm a real tick with the pacing tools above (the daemon re-arms the thread), or
+- use `create_schedule` for a check that repeats in the CHANNEL on a clock, or
+- say plainly that you cannot watch it after this turn, and name what you would need.
+
+If neither mechanism is available to you, say that instead of pretending to loop. An honest “I
+can't watch this after this reply — want me to schedule a check?” is correct; a promise nothing
+will deliver is not.
+
 ## Stopping
 
 - **You** stop it by calling the stop form of the wake-up (`stop: true`) on the iteration where the

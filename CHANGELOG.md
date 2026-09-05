@@ -182,6 +182,37 @@ product overview.
   outlives its parent. The grant surfaces now report the dependencies a grant pulls in, and a
   revoke of something that is only a dependency says which skill keeps it active instead of
   claiming a removal that changed nothing.
+- **The Allow-network switch is now a two-state fact everywhere, and honest about being advisory.**
+  The mode label appended a network suffix only when the switch was ON, so "off" and "nobody ever
+  configured it" rendered identically — in `/mode`, in the channel list, everywhere. `/status`
+  carried no network state at all, and the engines were told nothing either way: asked whether it
+  was allowed on the network, a run could truthfully answer that neither its system context nor its
+  channel instructions nor its session config mentioned it. The label now states the switch in both
+  directions (`Bash · network off` / `Bash · network on`), `/mode` and `/status` add the caveat
+  (`network off (advisory — not enforced by the container yet)`), and the gateway-managed block at
+  the top of every conversation's instruction file — the file both harnesses read — states the mode
+  and the network switch to the engine itself. The honesty matters: under the container runtime the
+  switch is advisory (every container is on the bridge network and no egress is policed per
+  channel), so a run told "you have no network" would call the switch broken the first time a
+  request succeeded. The stale header in `src/engines/network-policy.js` claiming "off" ran the
+  container with no network at all is gone, and every `run_config` event now records
+  `networkEnforced: false` beside `networkPolicy` so an operator reading it after an incident
+  cannot mistake `"off"` for "this turn could not reach the internet".
+- **The agent no longer promises follow-ups nothing will deliver.** Claude Code's own
+  `Bash(run_in_background: true)` is reachable inside a gateway turn and was being used to say
+  "I'll report back when it finishes"; Codex faked a watch loop with sequential sleeps. Both die
+  with the headless turn, so the report never came. The bundled `gateway-usage` guide now names the
+  harness's own backgrounding (`run_in_background: true`, `nohup`, `at`, `screen`/`tmux`) and
+  in-turn sleep loops as dead ends, states that only `run_in_background`, `run_agent_in_background`
+  and `create_schedule`/loops survive the turn, and requires the agent to say plainly that it
+  cannot follow up when the channel's mode allows none of them.
+- **The skills docs no longer promise an auto-mode bypass that does not exist.** `docs/SKILLS.md`
+  and the guide's skills reference said the skill chat verbs show an approval card "unless the
+  conversation is in auto mode". Auto-approval covers tool permission prompts only: control-plane
+  changes (`add_channel_skills`, `set_channel_skill_template`, …) always post a card and block for
+  a click, which is the product contract. Both now say so, and the reads
+  (`list_skill_templates`, `preview_skill_template`, `show_channel_skills`) are correctly
+  described as open.
 - **Stopping a turn now stops everything the turn started.** A container run was signalled by
   process GROUP, and Claude Code's Bash tool puts its shell in a session and a process group of its
   own — so `kill -- -<leader>` reported success, the tool's shell survived, and a loop it was

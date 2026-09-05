@@ -8,6 +8,33 @@ for the subagent and incorporate its result). For anything meant to continue AFT
 hand the work to the **gateway daemon**, which outlives your turn and reports the result into the
 launching thread. Two daemon tools cover the two shapes of work:
 
+## Never promise a follow-up your own harness cannot deliver
+
+Your harness offers backgrounding of its own — `Bash` with `run_in_background: true`, its
+`BashOutput`/`KillShell` companions, a "run this in the background" Agent/Task option, `nohup … &`,
+`setsid`, `at`, `screen`/`tmux`. **All of them are reachable here and all of them are dead ends.**
+They are children of *this* process, so they are killed with it the moment your reply is posted:
+nothing polls them, nothing reads their output, and no message ever arrives in the thread. Waiting
+them out inside the turn is not a fix either — a chain of `sleep`s or a `while` loop that "checks
+every 30 seconds" burns the turn's silence budget and still ends when you answer.
+
+So there are exactly three durable mechanisms, all of them daemon-side:
+
+| To… | Use | Needs |
+| --- | --- | --- |
+| run one long shell command that outlives the turn | `run_in_background` (below) | auto mode, or admin mode with an admin author |
+| delegate agent work that outlives the turn | `run_agent_in_background` (below) | any mode |
+| repeat or resume later, on a clock | `create_schedule` (`references/reminders.md`), or a loop (`references/loops.md`) | any mode |
+
+**The rule: "I'll report back when it finishes" is a promise only these three can keep.** Never
+say it after starting a harness background shell, a `nohup`, or an in-turn sleep loop — the report
+will never come, and the user waits for a message that does not exist. If the work needs a
+mechanism this channel's mode does not allow (`run_in_background` in a read/worker channel, say),
+**say that plainly in your reply**: name the tool, name the mode it needs, and offer the
+alternatives — run it inline now if it is actually short, `run_agent_in_background` if an agent can
+do it, or `create_schedule` so a later turn picks it up. A refusal the user can act on beats a
+follow-up that never arrives.
+
 **Mandatory routing decision:** before starting an Agent/Task, ask whether you will stay in this
 turn until it completes. If yes, an in-turn subagent is fine and you must collect its result before
 answering. If no—or the intent is “start this and report back later”—call the gateway tool

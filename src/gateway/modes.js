@@ -1,4 +1,5 @@
 import { adapterFor } from "../engines/registry.js";
+import { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
 
 // A channel's capability "mode" is a friendly name over the underlying flags (adminMode,
 // allowBash, autoMode). One mode = one canonical flag combination. `allowNetwork` is orthogonal
@@ -28,12 +29,28 @@ export function channelMode(meta = {}) {
   return "read";
 }
 
-export function modeLabel(meta = {}) {
-  const base = LABELS[channelMode(meta)];
+// The channel's Allow-network switch as one of three honest words. "off" is a real state and must
+// be SAID: the old label appended a suffix only when the switch was on, so every surface rendered
+// "off" and "nobody ever configured it" identically — the one thing an operator (or the engine)
+// cannot afford to guess about the network.
+export function networkState(meta = {}) {
+  if (!meta.allowNetwork) return "off";
   const engine = String(meta.engine || "claude");
-  if (!meta.allowNetwork) return base;
-  const on = (adapterFor(engine)?.supports?.networkModes || []).includes("on");
-  return `${base} · ${on ? "network on" : "network unsupported"}`;
+  return (adapterFor(engine)?.supports?.networkModes || []).includes("on") ? "on" : "unsupported";
+}
+
+// `detail` adds the honest caveat for the OFF state: under the container runtime the switch is
+// advisory (see engines/network-policy.js), so "off" is an instruction the engines are given, not
+// a wall that stops them. Compact by default — this rides the channel list — and detailed where
+// someone is actually asking about the setting (`/mode`, `/status`).
+export function networkLabel(meta = {}, { detail = false } = {}) {
+  const state = networkState(meta);
+  if (state === "off" && detail && !NETWORK_POLICY_ENFORCED) return `network off (${NETWORK_ADVISORY_NOTE})`;
+  return `network ${state}`;
+}
+
+export function modeLabel(meta = {}, opts = {}) {
+  return `${LABELS[channelMode(meta)]} · ${networkLabel(meta, opts)}`;
 }
 
 // ── Capability profiles ───────────────────────────────────────────────────────

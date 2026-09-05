@@ -50,6 +50,8 @@ export function effectiveWorkDir(slug, meta = {}) {
 import { allowMatchesFor, gatewayToolRefs, namespacesFor } from "./mcp-catalog.js";
 import { applyGatewayGuide } from "./guide.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
+import { channelMode, networkState } from "./modes.js";
+import { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
 import { getAgentsFile, getAgentsInstructions, getComposioMode } from "../config/settings.js";
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
 import { isLibraryStub, splitFavorites, ensureCodexSkillsLink, pruneLegacyLibraryStubs } from "./library-skills.js";
@@ -96,19 +98,56 @@ function stripBlock(content, start, end) {
 const GW_START = "<!-- GATEWAY-INSTRUCTIONS:START -->";
 const GW_END = "<!-- GATEWAY-INSTRUCTIONS:END -->";
 const GW_NOTE = `> ⚙️ Gateway-managed block — do NOT edit between these markers; the gateway refreshes this
-> section automatically (the admin's global instructions). Everything BELOW the end
-> marker is this channel's own standing instructions: it persists across sessions and is never
-> overwritten. To add a durable channel rule when asked, use the gateway tool
+> section automatically (this conversation's switches + the admin's global instructions). Everything
+> BELOW the end marker is this channel's own standing instructions: it persists across sessions and
+> is never overwritten. To add a durable channel rule when asked, use the gateway tool
 > \`update_channel_instructions\` (or edit the file where file writes are allowed).`;
 
-// Compose the managed block for a channel. Clean mode drops the global instructions (bare run),
-// leaving just the do-not-edit note. Deliberately nothing about memory or Slack usage here — the
-// memory system ships as the `channel-memory` skill (+ update_channel_memory tool) and the Slack
-// operating manual as the `gateway-usage` skill, so CLAUDE.md stays free of that plumbing.
+// What each mode actually grants, in the agent's own terms — the label alone ("Bash") does not
+// tell a model what it may do.
+const MODE_NOTE = {
+  read: "read-only tools; anything else asks this conversation for approval first",
+  bash: "shell commands and file writes inside this conversation's container",
+  auto: "autonomous — permission prompts are auto-approved, so nothing stops to ask",
+  admin: "every tool with permission prompts bypassed, for an admin author's live turns",
+};
+
+// The conversation's OWN switches, stated to the engine. Nothing used to: a run could read the
+// operating manual, its channel instructions and its session config and still find no statement of
+// whether this channel was meant to use the network — so it guessed, and guessed differently each
+// turn. Both switches are named in both directions.
+//
+// The network line is deliberately honest about being ADVISORY (see engines/network-policy.js):
+// the container is on the bridge network and no egress is policed per channel, so "off" is an
+// instruction to obey, not a wall that will stop a request. A model told "you have no network"
+// would call the switch broken the first time curl succeeded; a model told the truth respects it.
+export function channelSwitchesNote(meta = {}) {
+  const mode = channelMode(meta);
+  const network = networkState(meta);
+  const networkLine =
+    network === "on"
+      ? "**on** — this conversation is meant to use the internet. There is no per-domain allow-list."
+      : network === "unsupported"
+        ? "requested **on**, but this conversation's engine cannot run with the network on — treat it as off."
+        : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out, and say the switch is off instead of trying. ${NETWORK_POLICY_ENFORCED ? "" : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
+  return [
+    "**This conversation's switches** (an admin sets them; they apply from the next message):",
+    `- Mode: **${mode}** — ${MODE_NOTE[mode]}.`,
+    `- Network: ${networkLine}`,
+  ].join("\n");
+}
+
+// Compose the managed block for a channel: the do-not-edit note, this conversation's switches, and
+// (outside clean mode) the admin's global instructions. Deliberately nothing about memory or Slack
+// usage here — the memory system ships as the `channel-memory` skill (+ update_channel_memory tool)
+// and the Slack operating manual as the `gateway-usage` skill, so CLAUDE.md stays free of that
+// plumbing. The switches are the exception: they are per-conversation FACTS, not a manual, and the
+// guide (one shared copy for every channel) has nowhere to put them.
 export function gatewayInstructionsBlock(meta = {}) {
   const g = meta.cleanMode ? "" : getAgentsInstructions().trim();
-  const body = g ? `${GW_NOTE}\n\n${g}` : GW_NOTE;
-  return `${GW_START}\n${body}\n${GW_END}`;
+  const parts = [GW_NOTE, channelSwitchesNote(meta)];
+  if (g) parts.push(g);
+  return `${GW_START}\n${parts.join("\n\n")}\n${GW_END}`;
 }
 
 // Split a file into { rest } with the gateway block removed. Self-repairing: with both markers
