@@ -1359,23 +1359,31 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       if (isEmptyResult(result)) {
         throw new Error("Claude returned an empty result — 0 tokens, no output; the thread's session may be in a bad state. Try again, or `/clear` to start fresh.");
       }
-      if (handle.aborted) {
-        // Stopped mid-run but the subprocess still completed — the stop handler already posted
-        // "🛑 Stopped.", so don't post the answer on top of it. Its cost is already banked.
+      // Stopped mid-run but the subprocess still completed — the stop handler already posted
+      // "🛑 Stopped.", so don't post the answer on top of it. Its cost is already banked.
+      // Sampled again immediately before EVERY delivery call rather than once for all of them: a
+      // stop lands asynchronously, and each await in between (usage bookkeeping, the indicator's
+      // own Slack round-trips) is a window in which one early sample goes stale — which is how a
+      // stopped run still posted its whole answer underneath the stop card.
+      const stopSuppressedDelivery = async () => {
+        if (!handle.aborted) return false;
         markTerminal();
         await status.stop();
-        return;
-      }
+        return true;
+      };
       if (status.ownsFinal) {
         // Native streaming mode already wrote the answer live; close the stream with the footer.
+        if (await stopSuppressedDelivery()) return;
         await status.finalize(result);
       } else {
+        if (await stopSuppressedDelivery()) return;
         await status.stop();
         // Post the reply as plain mrkdwn messages (NOT Block Kit sections — those get folded
         // behind Slack's "Show more" much more eagerly). We still convert the agent's Markdown to
         // Slack mrkdwn (tables → code blocks, ## → bold, links, bullets) and append the stats
         // footer; a long answer is split into multiple threaded messages instead of truncated.
         const md = resolveMentions(mdToMrkdwn(result.content || ""), dir).trim() || "_(no output)_";
+        if (await stopSuppressedDelivery()) return;
         await postChunkedReply(client, event.channel, threadKey, md, footerText(result), footerButtons(result, { channel: event.channel, threadTs: threadKey, authorId: event.user }));
       }
       // User-visible delivery is the durable terminal boundary. If force-stop begins while usage

@@ -616,6 +616,12 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // not the earlier construction of the SDK ChatStreamer. Capture the current helper at execution
   // time: the shared promise chain decides whether an append belongs before or after a rollover.
   const appendCurrent = async (payload) => {
+    // A STOPPED run adds nothing more to Slack. The lazy creation below means a delta still
+    // queued on the chain — held back by Slack rate-limit back-pressure — would otherwise be
+    // flushed by stop()'s own `await chain`, creating the answer message and posting the whole
+    // buffered answer UNDER the "🛑 Stopped." card. Whatever already reached Slack is
+    // finalized (and marked partial) by stop() instead.
+    if (terminal === "stop") return null;
     if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
     const target = answerStreamer;
     const response = await target.append(payload);
@@ -993,8 +999,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       await stopTimeline("task-card abort stop");
       if (!failed && streamStartedAt !== null) {
         try {
+          // Text already reached Slack, so the message stays — but a stream cut mid-answer must
+          // never read as a finished one. Close any open fence, then mark what landed as partial.
           const fence = activeMarkdownFence(streamMarkdown);
-          await answerStreamer.stop(fence ? { markdown_text: `\n${fence.marker}` } : undefined);
+          await answerStreamer.stop({ markdown_text: `${fence ? `\n${fence.marker}` : ""}\n\n🛑 _Stopped — partial answer._` });
           await cleanupRetiredStreams();
         } catch (error) {
           reportStreamFailure("abort stop", error);

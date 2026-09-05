@@ -174,6 +174,27 @@ product overview.
   reading a calendar, inbox, chat or CRM on a guess exposes the requester's or a third party's
   private data to the whole conversation — a bare "check the calendar" had gone straight to a
   personal calendar read.
+- **A stopped run stops answering.** "🛑 Stopped." is now the last thing the thread receives.
+  The live answer message is created lazily by the first append that Slack accepts, so answer text
+  still queued behind the rate limiter was created and posted by the stop path's own drain — the
+  full reply landed underneath the stop card, unmarked, on both engines. Queued text is now dropped
+  once a run is stopped, and the stop flag is re-read immediately before every delivery call (the
+  streamed finalize and the chunked fallback) instead of being sampled once several awaits earlier.
+  Text that had already reached Slack stays, closed with a `🛑 _Stopped — partial answer._` marker so a
+  cut-off stream is never mistaken for a finished answer.
+- **Codex Read mode works inside a container again.** Codex's default sandbox mechanism is
+  bubblewrap, which cannot start under the container's `--cap-drop ALL` + no-new-privileges
+  (`bwrap: Unexpected capabilities but not setuid`) and failed EVERY command — so a Read-mode
+  channel could not even read. Runs that state a sandbox mode now also state
+  `features.use_legacy_landlock=true`, the mechanism that does work under those caps: reads
+  succeed, writes get "Permission denied". The admin bypass, which has no sandbox, is unchanged.
+  The flag is deprecated-but-functional in the pinned CLI (`containers/versions.json`) and is
+  re-checked on every Codex bump.
+- **`/context` and reply footers report the real window for 1M models.** The `[1m]` suffix names a
+  configured variant the CLI does not echo back (an `opus[1m]` run reports plain `claude-opus-5`),
+  and the window was read off the runtime id alone — so a 1M run was measured against 200,000, five
+  times too small, inflating every context percentage by the same factor. The suffix is now read
+  from the configured model as well as the runtime one, and ahead of any runtime-reported window.
 - **Fresh installs get their first-boot admin password again.** `npm run setup` answers the
   voice-transcription question before the daemon has ever booted and saves it through the settings
   writer, so a brand-new install already had a `settings.json` at first boot — and the first-boot

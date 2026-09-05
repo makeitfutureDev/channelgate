@@ -2079,3 +2079,75 @@ test("a plain answer with no steps gets no toolbox recap line", async () => {
   const texts = calls.filter((c) => c[0] === "append" && c[1]?.markdown_text).map((c) => c[1].markdown_text);
   assert.ok(!texts.some((text) => /details in the card above/i.test(text)), "a plain reply shouldn't carry run bookkeeping");
 });
+
+// CMD-207: a stopped run posted its full answer, unmarked, beneath the "🛑 Stopped." card. The
+// answer message is created LAZILY by the first append that flushes, so deltas still queued behind
+// Slack rate-limit back-pressure were created and posted by the stop path's own chain drain.
+test("a stop before anything flushes creates no answer message at all", async () => {
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: (payload) => {
+      calls.push(["chatStream", payload]);
+      return streamer;
+    },
+    chat: { postMessage: async (payload) => calls.push(["postMessage", payload]), update: async () => {} },
+  };
+
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U1", teamId: "T1", dir: null });
+  // Queue the whole answer WITHOUT draining: this is the back-pressure case — Slack has not
+  // accepted a single append when the user stops the run.
+  progress.onDelta("The answer the user stopped");
+  progress.onDelta(" before any of it was posted.");
+  await progress.stop();
+
+  const answerText = calls
+    .filter((call) => (call[0] === "append" || call[0] === "stopStream") && typeof call[1]?.markdown_text === "string")
+    .map((call) => call[1].markdown_text)
+    .join("");
+  assert.equal(answerText, "", "a stopped run must not post the buffered answer under the stop card");
+  assert.equal(calls.some((call) => call[0] === "chatStream"), false, "no answer message may be created by the stop path");
+  assert.equal(calls.some((call) => call[0] === "postMessage"), false, "and no classic fallback may deliver it either");
+});
+
+// The other half of CMD-207: the run's own finalize() racing the stop. Whatever already reached
+// Slack stays (and is marked partial); the rest of the answer must not arrive afterwards.
+test("a finalize after a stop is suppressed, and the partial text that landed says so", async () => {
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: (payload) => {
+      calls.push(["chatStream", payload]);
+      return streamer;
+    },
+    chat: { postMessage: async (payload) => calls.push(["postMessage", payload]), update: async () => {} },
+  };
+
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U1", teamId: "T1", dir: null });
+  progress.onDelta("Half the answer");
+  await cardReady();
+  assert.ok(calls.some((call) => call[0] === "append" && /Half the answer/.test(call[1]?.markdown_text || "")),
+    "precondition — the first half really reached Slack");
+
+  await progress.stop();
+  await progress.finalize({ content: "Half the answer and the rest of it.", durationMs: 5, usage: { input_tokens: 1, output_tokens: 1 } });
+
+  const written = calls
+    .filter((call) => (call[0] === "append" || call[0] === "stopStream") && typeof call[1]?.markdown_text === "string")
+    .map((call) => call[1].markdown_text)
+    .join("");
+  assert.equal(/and the rest of it/.test(written), false, "the finalize must not deliver the answer the stop cut off");
+  assert.equal(calls.some((call) => call[0] === "postMessage"), false, "nor may the classic fallback deliver it");
+  assert.match(written, /Stopped — partial answer/, "truncated text must never read as a finished answer");
+  assert.equal(calls.filter((call) => call[0] === "stopStream").length, 1, "the answer stream closes exactly once");
+});
