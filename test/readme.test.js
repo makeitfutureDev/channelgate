@@ -73,16 +73,16 @@ test("the single Makeitfuture CTA carries the mailto and both UTM-tagged links",
     "the discovery-call mailto (URL-encoded subject) is missing",
   );
   assert.ok(
-    readme.includes(`https://makeitfuture.com/channelgate/?${UTM}`),
+    readme.includes(`https://channelgate.dev/?${UTM}`),
     "the product-page link must carry the README UTM triple",
   );
   assert.ok(
-    readme.includes(`https://makeitfuture.com/channelgate/partners.html?${UTM}`),
-    "the partner link must be partners.html on the same base, with the same UTM triple",
+    readme.includes(`https://channelgate.dev/partners?${UTM}`),
+    "the partner link must be /partners on the same base, with the same UTM triple",
   );
   // Attribution is only useful if it is unambiguous: one campaign, one CTA block.
   assert.equal(countOf(readme, /utm_campaign=channelgate/g), 2);
-  assert.equal(countOf(readme, /makeitfuture\.com\/channelgate\/(?!partners)/g), 1);
+  assert.equal(countOf(readme, /https:\/\/channelgate\.dev\/(?!partners)/g), 1);
 });
 
 test("every relative link in the README resolves to a file that exists", async () => {
@@ -206,7 +206,7 @@ test("the GitHub repo metadata file carries the About text, topics, and the appl
   const about = metadata.match(/## About description[^\n]*\n+```text\n([\s\S]*?)\n```/);
   assert.ok(about, "the About description block is missing");
   assert.ok(about[1].length <= 350, `the GitHub About box truncates past 350 characters (got ${about[1].length})`);
-  assert.ok(metadata.includes("https://makeitfuture.com/channelgate/"), "the website URL is missing");
+  assert.ok(metadata.includes("https://channelgate.dev"), "the website URL is missing");
   for (const topic of [
     "slack-bot", "microsoft-teams", "google-chat", "claude-code", "codex",
     "mcp", "ai-agents", "self-hosted", "fair-code", "agent-gateway",

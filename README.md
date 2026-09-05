@@ -168,11 +168,11 @@ Worked examples — including the agency and managed-service cases — are in th
 containers, the tool allowlist and the admin handover, on infrastructure you own.
 [**Book a discovery call**](mailto:contact@makeitfuture.com?subject=ChannelGate%20discovery%20call)
 or read the product pages at
-[makeitfuture.com/channelgate](https://makeitfuture.com/channelgate/?utm_source=github&utm_medium=readme&utm_campaign=channelgate).
+[channelgate.dev](https://channelgate.dev/?utm_source=github&utm_medium=readme&utm_campaign=channelgate).
 
 Agency or MSP deploying it for clients? The partner lanes — listing, co-marketing, reseller and
 white-label — are described at
-[makeitfuture.com/channelgate/partners](https://makeitfuture.com/channelgate/partners.html?utm_source=github&utm_medium=readme&utm_campaign=channelgate).
+[channelgate.dev/partners](https://channelgate.dev/partners?utm_source=github&utm_medium=readme&utm_campaign=channelgate).
 
 ## Documentation
 
