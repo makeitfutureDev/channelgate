@@ -209,3 +209,25 @@ test("settings: the skills fields save, clamp, and the GitHub token is write-onl
   await request("/settings", { method: "PUT", body: { clearSkillsGithubToken: true } });
   assert.equal(settingsForApi().hasSkillsGithubToken, false);
 });
+
+test("catalog: the section endpoint scopes a local skill to a channel (granted by the rule) and promotes it back with the grant kept", async () => {
+  const created = await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Scoped Api", "channel-specific over the API") }], publish: false } });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  assert.equal(created.json.skill.channelScope, "", "the library by default");
+  const moved = await request("/skills/catalog/scoped-api/scope", { method: "POST", body: { channelId: CHANNEL } });
+  assert.equal(moved.status, 200, JSON.stringify(moved.json));
+  assert.equal(moved.json.skill.channelScope, CHANNEL);
+  assert.equal(moved.json.repo, null, "never published: nothing to move in the repository");
+  const mine = (await request("/skills/profiles")).json.profiles.find((p) => p.slug === entry.slug);
+  assert.equal(mine.channelId, CHANNEL);
+  assert.deepEqual(mine.section, ["scoped-api"]);
+  assert.ok(mine.skills.includes("scoped-api"), "in the channel's profile without an explicit grant");
+  assert.ok(!mine.own.includes("scoped-api"));
+  const back = await request("/skills/catalog/scoped-api/scope", { method: "POST", body: { channelId: "" } });
+  assert.equal(back.status, 200, JSON.stringify(back.json));
+  assert.equal(back.json.skill.channelScope, "");
+  assert.deepEqual(back.json.kept.added, ["scoped-api"], "the channel keeps it as an explicit grant");
+  assert.ok((await getChannelMeta(entry.slug)).skills.includes("scoped-api"));
+  assert.equal((await request("/skills/catalog/scoped-api/scope", { method: "POST", body: { channelId: "C_NO_SUCH" } })).status, 404);
+  assert.equal((await request("/skills/catalog/scoped-api/scope", { method: "POST", body: { channelId: "../etc" } })).status, 400);
+});

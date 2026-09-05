@@ -16,11 +16,12 @@ const catalog = await import("../src/gateway/skills/catalog.js");
 const authoring = await import("../src/gateway/skills/authoring.js");
 const tokens = await import("../src/gateway/skills/tokens.js");
 const publish = await import("../src/gateway/skills/publish.js");
+const templates = await import("../src/gateway/skills/templates.js");
 const peer = await import("../src/gateway/skills/peer-sync.js");
 const { checkCompatibility, resolveSkillProfile } = await import("../src/gateway/skills/resolve.js");
 const { mountSkillsPublicRoutes } = await import("../src/web/skills-mcp.js");
 const { saveSettings, getOrgAccessGrants } = await import("../src/config/settings.js");
-const { setUser, getUser, upsertChannelEntry, saveChannelMeta, defaultChannelMeta } = await import("../src/config/store.js");
+const { setUser, getUser, upsertChannelEntry, saveChannelMeta, defaultChannelMeta, getChannelMeta } = await import("../src/config/store.js");
 const { createAdminRouter } = await import("../src/web/routes/admin.js");
 
 const md = (name, description, extra = "") => ({ path: "SKILL.md", content: `---\nname: ${name}\ndescription: ${description}\n${extra}---\n\n# ${name}\n` });
@@ -369,4 +370,71 @@ test("admin API: tokens (value once), visibility, org grants, gateway sources wi
   assert.equal(overview.json.settings.publish.subpath, "library");
   assert.equal(overview.json.settings.hasWebhookSecret, true);
   assert.equal((await request("/api/settings", { method: "PUT", body: { skillsPublishRepo: "not a repo" } })).status, 400);
+});
+
+// ── Repository sections ─────────────────────────────────────────────────────────────────────
+
+test("repository sections: a channel-scoped skill publishes under channels/<id>/, the channel tier includes it, and a move promotes it with the grant kept", async () => {
+  saveSettings({ skillsGithubToken: "ghp_test", skillsPublishRepo: "example/sections-repo", skillsPublishBranch: "main", skillsPublishSubpath: ".", skillsPublishMode: "commit" });
+  assert.equal(publish.publishTarget().subpath, "", "'.' means the repository root");
+  const gh = fakeGitHub();
+  const entry = await upsertChannelEntry("C_SECTION_1", { name: "acme-ops", type: "channel", isDM: false });
+  await saveChannelMeta(entry.slug, defaultChannelMeta({ channelId: "C_SECTION_1", name: "acme-ops", type: "channel", isDM: false }));
+  const src = catalog.addSource({ kind: "git", url: "https://github.com/example/sections-repo", mode: "auto" });
+  // The section is derived from a synced path; anything outside channels/<id>/ is the library.
+  assert.equal(catalog.channelScopeOfPath("channels/C_SECTION_1/acme-synced"), "C_SECTION_1");
+  assert.equal(catalog.channelScopeOfPath("acme-synced"), "");
+  assert.equal(catalog.channelScopeOfPath("skills/channels/x/y"), "");
+  const synced = catalog.putSkillRevision({ files: [md("Acme Synced", "synced into a section")], ownerKind: "git", sourceId: src.id, sourcePath: "channels/C_SECTION_1/acme-synced", sourceRef: "abc" });
+  assert.equal(synced.skill.channelScope, "C_SECTION_1");
+  // Created with a channel scope: no explicit grant needed, the tier rule covers it.
+  const created = await authoring.createLocalSkill({ files: [md("Acme Check", "acme only")], createdBy: "U_S", channelId: "C_SECTION_1", grantTo: entry.slug, publish: false });
+  assert.equal(created.skill.channelScope, "C_SECTION_1");
+  assert.equal(created.granted, null);
+  assert.deepEqual(templates.channelSkillGrants({ channelId: "C_SECTION_1", skills: ["extra"] }).sort(), ["acme-check", "acme-synced", "extra"]);
+  assert.deepEqual(templates.channelSkillGrants({ channelId: "C_ELSEWHERE", skills: [] }), []);
+  assert.ok(templates.withTemplateSkills({ channelId: "C_SECTION_1", skills: [] }).skills.includes("acme-check"));
+  await assert.rejects(authoring.createLocalSkill({ files: [md("Acme Private", "x")], createdBy: "U_S", channelId: "C_SECTION_1", personal: true }), /personal/);
+  // Publishing writes the section folder plus its README, and adoption keeps the scope.
+  const r = await publish.publishRevision({ slug: "acme-check", fetchImpl: gh.fetchImpl });
+  assert.deepEqual(r.files, ["channels/C_SECTION_1/acme-check/SKILL.md"]);
+  assert.ok(gh.store.has("channels/C_SECTION_1/README.md"), "the section README names the channel");
+  assert.match(Buffer.from(gh.store.get("channels/C_SECTION_1/README.md").content, "base64").toString("utf8"), /#acme-ops/);
+  assert.equal(r.adopted, true);
+  assert.equal(catalog.getSkill("acme-check").sourcePath, "channels/C_SECTION_1/acme-check");
+  assert.equal(catalog.getSkill("acme-check").channelScope, "C_SECTION_1");
+  // A skill the publish repository already owns is written back to its own folder, not the publish folder.
+  catalog.putSkillRevision({ files: [md("Lib Root", "root skill")], ownerKind: "git", sourceId: src.id, sourcePath: "lib-root", sourceRef: "abc" });
+  assert.deepEqual((await publish.publishRevision({ slug: "lib-root", fetchImpl: gh.fetchImpl })).files, ["lib-root/SKILL.md"]);
+  // Promote to the library: files move, the channel keeps an explicit grant, the tier still has it.
+  const moved = await authoring.moveSkillScope({ slug: "acme-check", channelId: "", actor: "U_S", fetchImpl: gh.fetchImpl });
+  assert.equal(moved.moved, true);
+  assert.equal(moved.repo.path, "acme-check");
+  assert.ok(gh.store.has("acme-check/SKILL.md"));
+  assert.ok(!gh.store.has("channels/C_SECTION_1/acme-check/SKILL.md"), "the old folder is gone");
+  assert.equal(catalog.getSkill("acme-check").channelScope, "");
+  assert.equal(catalog.getSkill("acme-check").sourcePath, "acme-check");
+  assert.deepEqual(moved.kept.added, ["acme-check"]);
+  assert.ok(templates.channelSkillGrants(await getChannelMeta(entry.slug)).includes("acme-check"), "still active there through the explicit grant");
+  assert.equal(templates.channelSkillGrants({ channelId: "C_SECTION_1", skills: [] }).includes("acme-check"), false);
+  assert.equal((await authoring.moveSkillScope({ slug: "acme-check", channelId: "", fetchImpl: gh.fetchImpl })).moved, false, "already there");
+  // Back into the section (nothing to keep), a foreign source's skill and an unknown channel are refused.
+  const back = await authoring.moveSkillScope({ slug: "acme-check", channelId: "C_SECTION_1", actor: "U_S", fetchImpl: gh.fetchImpl });
+  assert.equal(back.repo.path, "channels/C_SECTION_1/acme-check");
+  assert.equal(back.kept, null);
+  assert.equal(catalog.getSkill("acme-check").channelScope, "C_SECTION_1");
+  const other = catalog.addSource({ kind: "git", url: "https://github.com/example/other-repo", mode: "auto" });
+  catalog.putSkillRevision({ files: [md("Other Skill", "elsewhere")], ownerKind: "git", sourceId: other.id, sourcePath: "other-skill", sourceRef: "x" });
+  await assert.rejects(authoring.moveSkillScope({ slug: "other-skill", channelId: "C_SECTION_1", fetchImpl: gh.fetchImpl }), /only skills in the publish repository/);
+  await assert.rejects(authoring.moveSkillScope({ slug: "acme-check", channelId: "C_NOPE", fetchImpl: gh.fetchImpl }), /no channel with id/);
+  // A never-published local skill just changes scope; a sync that finds the skill elsewhere follows the path.
+  await authoring.createLocalSkill({ files: [md("Local Only", "not published")], createdBy: "U_S", publish: false });
+  const m2 = await authoring.moveSkillScope({ slug: "local-only", channelId: "C_SECTION_1", fetchImpl: gh.fetchImpl });
+  assert.equal(m2.repo, null);
+  assert.equal(catalog.getSkill("local-only").channelScope, "C_SECTION_1");
+  const resynced = catalog.putSkillRevision({ files: [md("Acme Synced", "synced into a section")], ownerKind: "git", sourceId: src.id, sourcePath: "acme-synced", sourceRef: "def" });
+  assert.equal(resynced.changed, false);
+  assert.equal(catalog.getSkill("acme-synced").channelScope, "", "same bytes at a library path: the scope follows the path");
+  assert.ok(catalog.catalogStats().scoped >= 2);
+  saveSettings({ skillsPublishRepo: "", skillsPublishSubpath: "skills" });
 });

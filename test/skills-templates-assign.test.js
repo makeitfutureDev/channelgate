@@ -119,3 +119,12 @@ test("admin API: assign from the template side and the conversation side, valida
   assert.equal(clear.status, 200);
   assert.equal((await getChannelMeta(entry.slug)).skillTemplate, "");
 });
+
+test("the channel tier includes the channel's own repository section", async () => {
+  catalog.putSkillRevision({ files: [md("Section Skill", "kept in the channel section")], ownerKind: "local", channelScope: "C_TPL_ASSIGN" });
+  const meta = await getChannelMeta(entry.slug);
+  assert.ok(templates.channelSkillGrants(meta).includes("section-skill"));
+  assert.ok(templates.withTemplateSkills(meta).skills.includes("section-skill"));
+  assert.equal(templates.channelSkillGrants({ ...meta, channelId: "C_OTHER_CHANNEL" }).includes("section-skill"), false, "another channel's tier does not see it");
+  assert.ok(resolveAccessGrants({ organization: { skills: [] }, channel: templates.withTemplateSkills(meta) }).skills.includes("section-skill"), "and the grant union carries it");
+});

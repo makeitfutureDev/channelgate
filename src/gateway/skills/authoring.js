@@ -14,9 +14,10 @@ import { getSkill, putSkillRevision, skillBundle, pinSkill, getProposal, decideP
 import { normalizeSkillFiles, decodeInputFile, isSkillManifestPath } from "./files.js";
 import { parseFrontmatter, skillMetadata, slugFromName } from "./frontmatter.js";
 import { withDependencies } from "./resolve.js";
-import { publishQuietly } from "./publish.js";
+import { publishQuietly, publishTarget, publishSource, moveSkillFiles } from "./publish.js";
+import { normalizeChannelScope, setSkillChannelScope, listRevisions } from "./catalog.js";
 import { getOrgAccessGrants, saveSettings } from "../../config/settings.js";
-import { patchChannelMeta, getUser, setUser } from "../../config/store.js";
+import { patchChannelMeta, getUser, setUser, getChannelEntry } from "../../config/store.js";
 import { sanitizeSkillGrantNames } from "../access-grants.js";
 import { logEvent } from "../../util/logger.js";
 
@@ -57,8 +58,12 @@ export function canSeeSkill(skill, { userId = "", isAdmin = false } = {}) {
 }
 
 // Add a new locally authored skill. `grantTo` (a channel slug) grants it there at once, with its
-// dependencies; `personal` keeps it private to the author (granted to the author's own tier).
-export async function createLocalSkill({ slug = "", files, note = "", createdBy = "", grantTo = "", personal = false, publish = true } = {}) {
+// dependencies; `personal` keeps it private to the author (granted to the author's own tier);
+// `channelId` scopes it to that channel's section of the skills repository (granted there
+// automatically, published under channels/<id>/) — the default is the shared library.
+export async function createLocalSkill({ slug = "", files, note = "", createdBy = "", grantTo = "", personal = false, publish = true, channelId = "" } = {}) {
+  const scope = normalizeChannelScope(channelId);
+  if (scope && personal) throw new SkillCatalogError("a personal skill cannot be scoped to a channel section", { status: 400 });
   // "Create" never revises: an existing live skill of that slug — whoever owns it — is refused.
   const manifest = (Array.isArray(files) ? files : []).find((f) => isSkillManifestPath(f?.path));
   const name = manifest ? skillMetadata(parseFrontmatter(Buffer.isBuffer(manifest.content) ? manifest.content.toString("utf8") : String(manifest.content ?? "")).data).name : "";
@@ -67,12 +72,12 @@ export async function createLocalSkill({ slug = "", files, note = "", createdBy 
   if (existing && !existing.deleted) {
     throw new SkillCatalogError(`"${existing.slug}" already exists (${describeOwner(existing)}) — update it with update_skill, or propose a change`, { status: 409 });
   }
-  const r = putSkillRevision({ slug, files, ownerKind: "local", sourceRef: "manual", note, createdBy, status: "active", visibility: personal ? "personal" : "org" });
+  const r = putSkillRevision({ slug, files, ownerKind: "local", sourceRef: "manual", note, createdBy, status: "active", visibility: personal ? "personal" : "org", channelScope: scope });
   if (r.conflict) throw new SkillCatalogError(`${r.reason} — update it with update_skill, or propose a change`, { status: 409 });
   let granted = null;
   if (personal && createdBy) granted = await grantSkillsToUser(createdBy, [r.skill.slug]);
-  else if (grantTo) granted = await grantSkillsToChannel(grantTo, [r.skill.slug]);
-  logEvent("skill_created", { slug: grantTo, author: createdBy, skill: r.skill.slug, revision: r.revision?.revisionNo, personal });
+  else if (grantTo && !scope) granted = await grantSkillsToChannel(grantTo, [r.skill.slug]);
+  logEvent("skill_created", { slug: grantTo, author: createdBy, skill: r.skill.slug, revision: r.revision?.revisionNo, personal, scope });
   const published = publish && !personal ? await publishQuietly({ slug: r.skill.slug, revisionId: r.revision.id, actor: createdBy }) : { published: false, reason: personal ? "personal skills are not published" : "skipped" };
   return { ...r, granted, published };
 }
@@ -88,6 +93,35 @@ export async function updateLocalSkill({ skill, files = [], remove = [], note = 
   if (r.changed) logEvent("skill_updated", { author: createdBy, skill: skill.slug, revision: r.revision?.revisionNo });
   const published = r.changed && publish && skill.visibility !== "personal" ? await publishQuietly({ slug: skill.slug, revisionId: r.revision.id, actor: createdBy }) : { published: false, reason: r.changed ? "not published" : "unchanged" };
   return { ...r, published };
+}
+
+// Move a skill between the shared library and a channel's section ("" = the library). The
+// repository moves first when the skill has files there (the publish repository's own skills and
+// any published local one); a never-published local skill just changes scope. Leaving a section
+// keeps the skill in that channel as an explicit grant, so nothing changes for it.
+export async function moveSkillScope({ slug, channelId = "", actor = "", fetchImpl = fetch } = {}) {
+  const skill = getSkill(slug);
+  if (!skill || skill.deleted) throw new SkillCatalogError("skill not found", { status: 404 });
+  if (skill.visibility === "personal") throw new SkillCatalogError(`"${skill.slug}" is personal; make it an organization skill before placing it in a section`, { status: 409 });
+  const scope = normalizeChannelScope(channelId);
+  if (scope && !(await getChannelEntry(scope))) throw new SkillCatalogError(`no channel with id ${scope}`, { status: 404 });
+  const from = skill.channelScope || "";
+  if (from === scope) return { skill, moved: false, repo: null, kept: null, from, to: scope };
+  const source = publishSource(publishTarget());
+  const inPublishRepo = skill.ownerKind === "git" && Boolean(source) && skill.sourceId === source.id;
+  if (skill.ownerKind !== "local" && !inPublishRepo) {
+    throw new SkillCatalogError(`"${skill.slug}" is ${describeOwner(skill)}; only skills in the publish repository or authored here move between sections`, { status: 409 });
+  }
+  let repo = null;
+  if (inPublishRepo || listRevisions(skill.id).some((r) => r.publishedRef)) repo = await moveSkillFiles({ slug: skill.slug, channelId: scope, actor, fetchImpl });
+  else setSkillChannelScope(skill.slug, scope);
+  let kept = null;
+  if (from && !scope) {
+    const entry = await getChannelEntry(from);
+    if (entry?.slug) kept = await grantSkillsToChannel(entry.slug, [skill.slug]);
+  }
+  logEvent("skill_scope_changed", { skill: skill.slug, from, to: scope, author: actor, repo: Boolean(repo?.moved) });
+  return { skill: getSkill(skill.slug), moved: true, repo, kept, from, to: scope };
 }
 
 // Remove a skill you authored (tombstone: revisions stay, restorable by an admin).

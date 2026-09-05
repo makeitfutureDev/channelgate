@@ -19,6 +19,13 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Skill repository sections.** The skills repository is one shared library plus one folder per
+  channel (`channels/<channel id>/`); a skill in a channel's section is granted to that channel
+  automatically. New skills go to the library by default; `create_skill` takes `scope: "channel"`
+  for customer-specific ones (the agent asks first), and `set_skill_scope`, the Skills view's
+  *Section* control or the admin API move a skill either way — files move in the repository, and a
+  promoted skill stays with its former channel as an explicit grant. `.` as the publish folder
+  means the repository root.
 - **The bundled ChannelGate skill now matches the product.** Its small entrypoint routes to focused
   references for containers/security, write-only secrets and durable CLI/device logins,
   Claude/Codex credentials, MCP identities and the local skill platform, catalog-first channel

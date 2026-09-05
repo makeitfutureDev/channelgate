@@ -5,12 +5,12 @@
 // allowed in the channel; a member's own tier needs no card. Registered via register(server, ctx).
 import { z } from "zod";
 import { readFileSync } from "node:fs";
-import { getUser, isAdmin, isApproved } from "../../config/store.js";
+import { getUser, isAdmin, isApproved, getChannelMeta } from "../../config/store.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine } from "../../config/settings.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility } from "../../gateway/skills/resolve.js";
-import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta } from "../../gateway/skills/templates.js";
+import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
 import { fileToApi } from "../../gateway/skills/files.js";
 import {
@@ -27,6 +27,7 @@ import {
   decideSkillProposal,
   describeOwner,
   canSeeSkill,
+  moveSkillScope,
 } from "../../gateway/skills/authoring.js";
 import { publishRevision, publishTarget } from "../../gateway/skills/publish.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
@@ -98,7 +99,9 @@ export function register(server, ctx) {
       sharedProfile: resolveSkillProfile(shared.skills, { warnTokens }),
       orgSkills: new Set((getOrgAccessGrants().skills || []).map((s) => String(s).toLowerCase())),
       channelSkills: new Set((stored.skills || []).map((s) => String(s).toLowerCase())),
-      templateSkills: new Set(template ? (meta.skills || []).filter((s) => !(stored.skills || []).some((o) => String(o).toLowerCase() === String(s).toLowerCase())).map((s) => String(s).toLowerCase()) : []),
+      sectionSkills: new Set(channelScopedSkills(stored.channelId).map((s) => s.toLowerCase())),
+      templateSkills: new Set(template ? (meta.skills || []).filter((s) => !(stored.skills || []).some((o) => String(o).toLowerCase() === String(s).toLowerCase()) && !channelScopedSkills(stored.channelId).some((o) => o.toLowerCase() === String(s).toLowerCase())).map((s) => String(s).toLowerCase()) : []),
+      channelId: stored.channelId || "",
     };
   };
 
@@ -142,13 +145,14 @@ export function register(server, ctx) {
     "show_channel_skills",
     { description: "Show the skills active in this conversation: grants by tier (organization / this channel / your personal), dependencies pulled in automatically, anything missing or awaiting review, compatibility notes, and the estimated always-on context cost.", inputSchema: {} },
     async () => {
-      const { meta, template, profile, orgSkills, channelSkills, templateSkills, effective } = await channelProfile();
+      const { meta, template, profile, orgSkills, channelSkills, templateSkills, sectionSkills, effective } = await channelProfile();
       if (!effective.skills.length) return text("No skills are granted here yet. A manager can assign a template (list_skill_templates → set_channel_skill_template) or add skills by slug (add_channel_skills); you can add skills for your own runs with add_my_skills.");
       const tier = (e) => {
         const k = e.slug.toLowerCase();
         if (e.via === "dependency") return `required by ${e.requiredBy.join(", ")}`;
         if (orgSkills.has(k)) return "organization";
         if (channelSkills.has(k)) return "added to this channel";
+        if (sectionSkills.has(k)) return "this channel's section of the skills repository";
         if (templateSkills.has(k)) return `template ${template?.name || meta.skillTemplate}`;
         return "your personal grant";
       };
@@ -311,13 +315,16 @@ export function register(server, ctx) {
         note: z.string().optional(),
         grant_here: z.boolean().optional().describe("Grant the new skill in this conversation (default true)"),
         personal: z.boolean().optional().describe("Only you can see and use it (default false)"),
+        scope: z.enum(["library", "channel"]).optional().describe("library (default): the shared library, usable by every conversation. channel: specific to THIS channel's customer or project — kept in the channel's own section of the skills repository and granted here automatically. Ask the user before choosing channel."),
       },
     },
-    async ({ slug: wanted = "", files, note = "", grant_here = true, personal = false }) => {
+    async ({ slug: wanted = "", files, note = "", grant_here = true, personal = false, scope = "library" }) => {
       if (!(await approvedAuthor())) return text("Only approved members can add skills to the library.");
+      const { channelId, meta: scopeMeta } = await channelProfile();
+      if (scope === "channel" && (!channelId || scopeMeta.isDM)) return text("A channel-scoped skill needs a channel: create it from the customer's channel, or use scope library.");
       try {
-        const r = await createLocalSkill({ slug: wanted, files, note, createdBy, grantTo: grant_here ? slug : "", personal });
-        const where = personal ? "granted to your own runs" : r.granted ? `granted here${r.granted.added.length > 1 ? ` with ${r.granted.added.filter((s) => s !== r.skill.slug).join(", ")}` : ""}` : "not granted anywhere yet";
+        const r = await createLocalSkill({ slug: wanted, files, note, createdBy, grantTo: grant_here ? slug : "", personal, channelId: scope === "channel" ? channelId : "" });
+        const where = personal ? "granted to your own runs" : scope === "channel" ? "kept in this channel's section (granted here automatically)" : r.granted ? `granted here${r.granted.added.length > 1 ? ` with ${r.granted.added.filter((s) => s !== r.skill.slug).join(", ")}` : ""}` : "not granted anywhere yet";
         return text(`✅ Created \`${r.skill.slug}\` (revision ${r.revision.revisionNo}, ${r.revision.fileCount} file(s), ${personal ? "personal" : "organization"} skill), ${where} — active on the next message.${publishLine(r.published)}\n${personal ? "Promote it to the organization later with propose_skill_change (kind promote)." : "Other channels can add it with add_channel_skills; an admin can add it to a template or grant it organization-wide."}`);
       } catch (err) {
         return text(`🚫 Could not create the skill: ${err?.message || err}`);
@@ -403,6 +410,38 @@ export function register(server, ctx) {
         return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a local override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}.${publishLine(r.published)}`);
       } catch (err) {
         return text(`🚫 ${err?.message || err}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "set_skill_scope",
+    {
+      description: "MANAGERS. Move a skill between the shared library and a channel's section of the skills repository: scope library makes it available to every conversation (the channel it leaves keeps it as an explicit grant); scope channel keeps it for one customer/project only. Moves the files in the repository too.",
+      inputSchema: {
+        skill: z.string(),
+        scope: z.enum(["library", "channel"]),
+        channel: z.string().optional().describe("Channel slug for scope channel (default: this conversation)"),
+      },
+    },
+    async ({ skill: key, scope, channel = "" }) => {
+      const skill = await visibleSkill(key);
+      if (!skill) return text(`No catalog skill named "${key}".`);
+      let channelId = "";
+      if (scope === "channel") {
+        const stored = channel ? await getChannelMeta(channel) : await loadMeta();
+        channelId = stored?.channelId || "";
+        if (!channelId || stored?.isDM) return text(channel ? `No channel "${channel}".` : "A channel section needs a channel: run this from the customer's channel or name it with channel.");
+      }
+      if (!(await requireManage(`Move skill ${skill.slug} to ${scope === "channel" ? `the ${channel || slug} channel section` : "the shared library"}`))) return text("Not allowed here.");
+      try {
+        const r = await moveSkillScope({ slug: skill.slug, channelId, actor: createdBy });
+        if (!r.moved) return text(`\`${skill.slug}\` is already ${scope === "channel" ? "in that channel's section" : "in the shared library"}.`);
+        const repo = r.repo?.moved ? ` Repository: ${r.repo.from} → ${r.repo.path}.` : r.repo === null ? " (not published yet — it moves in the repository when it is)" : "";
+        const kept = r.kept?.added?.length ? ` The channel keeps it as an explicit grant.` : "";
+        return text(`✅ \`${skill.slug}\` is now ${scope === "channel" ? "channel-specific (granted there automatically)" : "in the shared library"}.${repo}${kept} Active on the next message.`);
+      } catch (err) {
+        return text(`🚫 Could not move the skill: ${err?.message || err}`);
       }
     },
   );

@@ -43,6 +43,12 @@ channel is in auto mode.
   required) and grant it to this channel at once; `personal: true` keeps it private to you. Use
   the `skill-authoring` skill for the frontmatter contract and a description that actually
   triggers. When Git publishing is configured the files are also pushed to the repository.
+  **Where it lives:** the default is the shared library (every conversation can use it). Only
+  when the skill is specific to this channel's customer or project — their data, their
+  systems, their procedures — ask the user whether it should stay with this channel only, and
+  then pass `scope: "channel"`: it goes to the channel's own section of the skills repository
+  (`channels/<channel id>/`) and is granted here automatically. Name skills uniquely across
+  the whole repository (prefix customer skills with the customer, e.g. `acme-invoice-check`).
 - `update_skill` — a new revision of a skill you created (managers and admins may update any
   locally authored skill). Pass the changed files; unnamed files are kept.
 - `propose_skill_change` — for a skill you may not edit directly (synced from a repository,
@@ -63,5 +69,9 @@ channel is in auto mode.
 - `add_org_skills` / `remove_org_skills` — the organization tier (every conversation).
 - `set_skill_excluded` — hide a synced/bundled skill from the catalog (it stays hidden across syncs) or bring it back.
 - `publish_skill` (managers too) — push a local skill to the configured Git repository now.
+- `set_skill_scope` (managers) — move a skill between the shared library and a channel's section
+  (`scope: "library"` promotes a customer skill for everyone; the channel it leaves keeps it as
+  an explicit grant; `scope: "channel"` keeps it for one customer). The files move in the
+  repository too.
 - Templates, pins/rollbacks, staged revisions, access tokens for the catalog's MCP endpoint, the
   GitHub webhook and the usage dashboard live in the admin UI under **Skills**.

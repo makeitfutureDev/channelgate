@@ -2507,6 +2507,13 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       source drop still comes back; restore clears both and lands on the newest revision; stats
       count exclusions apart from removals (`test/skills-platform.test.js`, admin API DELETE in
       `test/skills-admin-api.test.js`).
+- [x] Unit: repository sections — a synced path `channels/<id>/…` and a local skill created
+      with `channelId` carry `channelScope`; the channel tier includes the channel's section
+      (`channelSkillGrants`); publishing a scoped skill writes `channels/<id>/<slug>/` plus the
+      section README and a publish-repository skill goes back to its synced folder; `moveSkillScope`
+      moves files, keeps the former channel as an explicit grant on promotion, and refuses skills of
+      other sources (`test/skills-standalone.test.js`, `test/skills-templates-assign.test.js`, admin
+      API `/scope` in `test/skills-admin-api.test.js`).
 - [x] Unit: the profile resolver pulls `requires` dependencies, reports unknown names, missing
       dependencies and cycles, estimates always-on context and warns above the soft cap
       (`test/skills-platform.test.js`).
