@@ -49,11 +49,17 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       device-login troubleshooting and excludes ordinary work merely performed through the gateway
       (`test/channelgate-skill.test.js`). The same test invokes both memory retrieval registrations
       through their real MCP response adapter, preventing the `text is not defined` regression.
+- [x] Automated: both the always-on operating guide and the on-demand credential guide require a
+      device login to keep one assistant turn and TTY/session alive, send link/code only as
+      commentary, poll within 60-second intervals, recover with a new code, respect provider-token
+      precedence at subprocess scope, and verify identity/access before the final response.
 - [ ] Live, Claude + Codex: in each Auto fixture ask how to connect an unauthenticated provider CLI
       that offers a device flow, then ask where its login survives. Pass when both engines route to
-      the credentials reference, return the browser verification link/code without asking for a
-      token in chat, identify the per-conversation HOME volume, and distinguish `/secrets` tokens
-      from saved CLI sessions (Airtable `SKL-15`).
+      the credentials reference, return the browser verification link/code as commentary without
+      asking for a token in chat, retain and poll the same live session after the user says “done”,
+      finish only after CLI confirmation plus identity/access verification, identify the
+      per-conversation HOME volume, and distinguish `/secrets` tokens from saved CLI sessions
+      (Airtable `SKL-15`).
 - [ ] Live, Claude + Codex: ask whether Full access can read another conversation or the host HOME,
       and whether Allow network is an egress firewall. Pass when both identify the container as the
       filesystem/process boundary, keep admin mode inside it, and state the current network limit

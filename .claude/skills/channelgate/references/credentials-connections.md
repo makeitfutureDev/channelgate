@@ -29,16 +29,27 @@ that conversation and survives idle stop, image recreation, daemon restart, and 
 
 When a CLI reports that it is not authenticated:
 
-1. Prefer its documented headless/device authorization mode when available. Start it inside the
-   conversation container and relay the exact HTTPS verification link and one-time code to the
-   requester. Never claim that ChannelGate opened the browser for them.
-2. Keep polling only when the running CLI is designed to wait for device authorization and the
-   foreground turn can remain alive. Explain that the link/code is short-lived; do not repeat or
-   store it in memory.
-3. If the CLI requires a real interactive terminal or loopback browser callback, direct an
+1. Prefer its documented headless/device authorization mode when available. Inspect credential
+   source precedence without displaying values: an injected provider token can override a saved
+   CLI login. For a fresh device login, omit only conflicting provider-token variables from the
+   login and verification subprocesses; do not unset them globally or delete unrelated secrets.
+2. Start the command in a real TTY/session and advance any “open browser” prompt until the CLI is
+   actually waiting. Relay the exact HTTPS verification link and one-time code as an interim
+   commentary update, never as the final response. Browser-open failure inside a headless container
+   is expected. Never claim that ChannelGate opened the browser for the requester.
+3. Keep the SAME assistant turn and CLI session alive, polling at intervals no longer than 60
+   seconds. A final response ends the turn and may discard the waiting process. Treat “done” as an
+   update to the active wait, and finish only after the CLI itself confirms authentication.
+4. If the process/session vanished or the code expired before CLI confirmation, start a fresh flow
+   and send its NEW code. Never reuse the old code or infer success from the browser page alone.
+5. Verify with the CLI's non-secret identity/status command under the same environment precedence;
+   if a target account/repository matters, verify that access too without printing credentials.
+6. If the CLI requires a real interactive terminal or loopback browser callback, direct an
    operator to `npm run vscode -- <channel id|slug|name>` and authenticate in the attached live
    container, or use the provider's supported environment token through `/secrets`.
-4. Verify with the CLI's identity/status command without printing credential material.
+
+Do not move an interactive device-code wait to a daemon background job: the requester needs its
+short-lived code in this conversation and the foreground turn must retain the session.
 
 Do not tell the host operator to log in globally for an ordinary provider CLI: that would create
 the wrong identity and the container cannot see the host login anyway.
@@ -60,4 +71,3 @@ VS Code attachment opens the existing live container/workdir and holds an editor
 the same channel HOME and provider CLI sessions. Claude gets the access-token relay wrapper; Codex
 keeps its narrow auth mount. Channel environment secrets are deliberately not injected into the
 editor session.
-

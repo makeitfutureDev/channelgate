@@ -9,6 +9,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
 ## Conversation settings and persistent memory
 
+- **Reliable provider CLI device login:** the always-on operating guide and on-demand ChannelGate
+  credential guide share one lifecycle: isolate conflicting token precedence to the subprocess,
+  relay link/code as commentary, retain and poll the same TTY/session in the same assistant turn,
+  recover a lost/expired session with a new code, and finish only after CLI confirmation plus a
+  non-secret identity/access check. → TEST-PLAN: ChannelGate skill package.
+
 - **Deterministic Composio identity selection:** `composio-user` is always the active requester's
   personal account; `composio-agent` is the shared agent account. Pronouns and named connection
   aliases select between them, ambiguous apps connected to both require a question, and connection
