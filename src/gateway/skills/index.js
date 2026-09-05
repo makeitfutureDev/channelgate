@@ -11,6 +11,7 @@ import { listSources, getSource, catalogStats, recordSourceSync } from "./catalo
 import { skillSourceDirs } from "../folders.js";
 import { getSkillsGithubToken, getSkillsSyncIntervalMinutes } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
+import { retireStandaloneGatewaySkills } from "./retire.js";
 
 function packageVersion() {
   try {
@@ -22,7 +23,7 @@ function packageVersion() {
 
 // Import bundled + host-folder skills and seed templates. Returns a summary for the boot log.
 export async function bootSkillsPlatform({ log = console.log } = {}) {
-  const summary = { bundled: null, host: null, templates: [], stats: null, errors: [] };
+  const summary = { bundled: null, host: null, retired: null, templates: [], stats: null, errors: [] };
   try {
     summary.bundled = await importBundledSkills({ version: packageVersion() });
   } catch (err) {
@@ -32,6 +33,11 @@ export async function bootSkillsPlatform({ log = console.log } = {}) {
     summary.host = await importHostSkillFolders(skillSourceDirs());
   } catch (err) {
     summary.errors.push(`host folders: ${err?.message || err}`);
+  }
+  try {
+    summary.retired = retireStandaloneGatewaySkills();
+  } catch (err) {
+    summary.errors.push(`retired built-ins: ${err?.message || err}`);
   }
   try {
     summary.templates = seedBuiltinTemplates();

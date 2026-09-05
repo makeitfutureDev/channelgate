@@ -136,6 +136,17 @@ test("skill grants reject traversal on both persistence and runtime resolution p
   }).skills, ["org", "channel", "user"]);
 });
 
+test("the former standalone video skill is retired at every grant boundary", () => {
+  assert.deepEqual(
+    sanitizeSkillGrantNames(["video-understanding", " Video-Understanding ", "screen-notes"]),
+    ["screen-notes"],
+  );
+  assert.deepEqual(resolveAccessGrants({
+    organization: { skills: ["video-understanding", "org"] },
+    channel: { skills: ["Video-Understanding", "channel"] },
+  }).skills, ["org", "channel"]);
+});
+
 test("frontend grant state preserves MCP selections while discovery is loading", () => {
   const saved = { claude: ["server-a"], codex: ["app-b"] };
   assert.deepEqual(

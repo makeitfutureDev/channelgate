@@ -20,12 +20,40 @@ const gitSync = await import("../src/gateway/skills/git-sync.js");
 const templates = await import("../src/gateway/skills/templates.js");
 const usage = await import("../src/gateway/skills/usage.js");
 const authoring = await import("../src/gateway/skills/authoring.js");
+const { retireStandaloneGatewaySkills } = await import("../src/gateway/skills/retire.js");
 const { enableSkills } = await import("../src/gateway/folders.js");
-const { upsertChannelEntry, saveChannelMeta, defaultChannelMeta, getChannelMeta } = await import("../src/config/store.js");
-const { saveSettings, getOrgAccessGrants } = await import("../src/config/settings.js");
+const { upsertChannelEntry, saveChannelMeta, defaultChannelMeta, getChannelMeta, setUser, getUser } = await import("../src/config/store.js");
+const { saveSettings, getSettings, getOrgAccessGrants } = await import("../src/config/settings.js");
 const { toolTarget } = await import("../src/engines/stream.js");
 
 const md = (name, description, extra = "", body = `# ${name}\n`) => ({ path: "SKILL.md", content: `---\nname: ${name}\ndescription: ${description}\n${extra}---\n\n${body}` });
+
+test("promoting video understanding into gateway-usage retires its catalog entry and every durable grant", async () => {
+  catalog.putSkillRevision({ files: [md("video-understanding", "old standalone video workflow")], ownerKind: "local" });
+  catalog.upsertTemplate({ slug: "video-test", name: "Video", skills: ["video-understanding", "keep-template"] });
+  const entry = await upsertChannelEntry("C_RETIRED_VIDEO", { name: "retired-video", type: "channel" });
+  await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: entry.channelId, name: entry.name, type: "channel", isDM: false }), skills: ["video-understanding", "keep-channel"] });
+  await setUser("U_RETIRED_VIDEO", { name: "Viewer", skills: ["video-understanding", "keep-user"] });
+  saveSettings({
+    accessGrants: { skills: ["video-understanding", "keep-org"] },
+    channelTemplate: { skills: ["video-understanding", "keep-new-channel"] },
+    dmTemplates: { user: { skills: ["video-understanding", "keep-dm"] }, admin: { skills: ["video-understanding"] } },
+  });
+
+  const first = retireStandaloneGatewaySkills();
+  const second = retireStandaloneGatewaySkills();
+
+  assert.equal(first.catalog, 1);
+  assert.deepEqual(second, { catalog: 0, users: 0, channels: 0, templates: 0, settings: 0 });
+  assert.equal(catalog.getSkill("video-understanding").excluded, true);
+  assert.deepEqual(catalog.getTemplate("video-test").skills, ["keep-template"]);
+  assert.deepEqual((await getChannelMeta(entry.slug)).skills, ["keep-channel"]);
+  assert.deepEqual((await getUser("U_RETIRED_VIDEO")).skills, ["keep-user"]);
+  assert.deepEqual(getSettings().accessGrants.skills, ["keep-org"]);
+  assert.deepEqual(getSettings().channelTemplate.skills, ["keep-new-channel"]);
+  assert.deepEqual(getSettings().dmTemplates.user.skills, ["keep-dm"]);
+  assert.deepEqual(getSettings().dmTemplates.admin.skills, []);
+});
 
 // ── frontmatter ──────────────────────────────────────────────────────────────────────────────
 

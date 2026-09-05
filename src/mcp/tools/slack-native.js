@@ -386,7 +386,7 @@ export function register(server, ctx) {
         const kind = result.mimetype ? ` (${result.mimetype})` : "";
         return text(
           `${result.reused ? "Already in the folder" : "Downloaded"}: ${result.path}${kind}, ${formatBytes(result.bytes)}. ` +
-          "Read it with your Read tool (images render visually; a video goes through the video-understanding skill)."
+          "Read it with your Read tool (images render visually; for video, follow gateway-usage/references/video-understanding.md)."
         );
       } catch (e) {
         return text(`Couldn't download that file: ${e.message}`);

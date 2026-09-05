@@ -15,6 +15,8 @@ export const ACCESS_GRANT_FIELDS = [
 // calls), trim whitespace, and dedupe deterministically. Colons and spaces remain valid because
 // existing skill/plugin names may use them; path separators, controls, and dot traversal do not.
 const SAFE_SKILL_NAME = /^(?!\.{1,2}$)[^\u0000-\u001f\u007f/\\]{1,160}$/;
+export const RETIRED_STANDALONE_SKILLS = Object.freeze(["video-understanding"]);
+const RETIRED_STANDALONE_SKILL_KEYS = new Set(RETIRED_STANDALONE_SKILLS.map((name) => name.toLowerCase()));
 
 export function sanitizeSkillGrantNames(value) {
   if (!Array.isArray(value)) return [];
@@ -23,7 +25,7 @@ export function sanitizeSkillGrantNames(value) {
   for (const raw of value) {
     if (typeof raw !== "string") continue;
     const name = raw.trim();
-    if (!SAFE_SKILL_NAME.test(name) || seen.has(name)) continue;
+    if (!SAFE_SKILL_NAME.test(name) || RETIRED_STANDALONE_SKILL_KEYS.has(name.toLowerCase()) || seen.has(name)) continue;
     seen.add(name);
     out.push(name);
   }
