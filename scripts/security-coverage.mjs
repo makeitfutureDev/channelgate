@@ -42,7 +42,11 @@ const areas = [
   // branch RATIO dropped. Read this area's three numbers together: a branch % that falls while
   // lines and functions climb is new code being reached, not a regression. Raise as tests appear.
   //
-  { name: "settings-generator", floor: [72, 57, 75], include: ["src/gateway/folders.js"], tests: ["test/folders-settings.test.js", "test/subagent-completion.test.js", "test/runtime-integration-folders.test.js"] },
+  // 2026-09-05: the skills catalog reshaped enableSkills/listAvailableSkills (functions 77->64.5
+  // with the old test list); test/folders-generator-paths.test.js reaches the containment,
+  // instruction-update and host-folder-grant paths and brings the area back over its floor.
+  //
+  { name: "settings-generator", floor: [72, 57, 75], include: ["src/gateway/folders.js"], tests: ["test/folders-settings.test.js", "test/folders-generator-paths.test.js", "test/subagent-completion.test.js", "test/runtime-integration-folders.test.js"] },
   // channel-env.js belongs here because its name rules
   // are what stop a "secret" from being LD_PRELOAD or ANTHROPIC_BASE_URL, so a bug in it is a
   // confinement bug. Floor set just under measured reality when it was added (2026-08-26).

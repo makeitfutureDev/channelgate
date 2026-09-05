@@ -134,6 +134,17 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **The daemon boots on the documented Node floor again.** Migration 17 created the channel-memory
+  search index as an FTS5 virtual table; Node 22.13's bundled SQLite has no FTS5, so the migration
+  threw and the whole database refused to open. The index is now optional per engine build
+  (`src/db/fts.js` probes once per handle), the migration skips it with a warning, every open
+  re-attempts the creation so a later Node upgrade gains the index without a new migration, and
+  `search_channel_memory` answers from a plain scan (same AND semantics, diacritic folding and
+  bracketed excerpts) until then.
+- **CI's settings-generator coverage floor is met again.** The skills catalog reshaped the grant
+  and listing paths in `src/gateway/folders.js`; `test/folders-generator-paths.test.js` now reaches
+  work-folder containment, instruction updates, the host-folder grant fallback and the legacy
+  managed-skill rename, and is part of the security-coverage gate.
 - **Resumed Codex replies show the current message's cost, not the whole session's.** On a cold
   runtime probe the daemon learned Podman's host-side HOME-volume path only after run artifacts
   were materialized. Codex accounting then had no rollout baseline and treated its cumulative

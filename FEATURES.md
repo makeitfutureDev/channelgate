@@ -19,7 +19,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   sessions receive only a bounded catalog (counts, topic names, retrieval contract), never the
   memory body. `search_channel_memory` rebuilds and queries a derived SQLite FTS5 index and
   `read_channel_memory` loads one validated source; both handlers return through the injected MCP
-  response formatter. Writes no longer fail on a character budget.
+  response formatter. Writes no longer fail on a character budget. The index is optional per
+  engine build: a Node whose SQLite lacks FTS5 (22.13, the floor) still boots, and search falls
+  back to a plain scan with the same AND semantics and excerpts until the index exists.
   → TEST-PLAN: Conversation settings + on-demand memory.
 
 ## Maintainable module and persistence boundaries

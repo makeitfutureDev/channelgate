@@ -5,6 +5,7 @@
 // pending schema migrations, and performs the one-time import of legacy JSON — all guarded so it's
 // safe when the daemon and the MCP server open the same file concurrently (WAL + busy_timeout,
 // migrations inside an IMMEDIATE transaction).
+import { ensureMemoryFtsTable } from "./fts.js";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { dbFile } from "../config/paths.js";
@@ -93,6 +94,13 @@ export function getDb() {
   if (db) return db;
   db = open();
   runMigrations(db);
+  // The memory search index is optional per engine build (see fts.js): create it when this Node
+  // can, so a box that upgraded Node since migration 17 ran gains it without a new migration.
+  try {
+    ensureMemoryFtsTable(db);
+  } catch (err) {
+    console.error("[db] memory search index unavailable (continuing):", err?.message || err);
+  }
   // One-time pull of any pre-existing JSON data into the fresh tables (no-op after the first run).
   try {
     importLegacy(db);
