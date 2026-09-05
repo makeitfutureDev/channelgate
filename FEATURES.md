@@ -18,7 +18,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Uncapped, on-demand channel memory:** Markdown remains the portable source of truth. Fresh
   sessions receive only a bounded catalog (counts, topic names, retrieval contract), never the
   memory body. `search_channel_memory` rebuilds and queries a derived SQLite FTS5 index and
-  `read_channel_memory` loads one validated source. Writes no longer fail on a character budget.
+  `read_channel_memory` loads one validated source; both handlers return through the injected MCP
+  response formatter. Writes no longer fail on a character budget.
   → TEST-PLAN: Conversation settings + on-demand memory.
 
 ## Maintainable module and persistence boundaries

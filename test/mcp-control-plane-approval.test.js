@@ -4,7 +4,7 @@
 // for the daemon's /internal/approval endpoint.
 import path from "node:path";
 import http from "node:http";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
@@ -122,6 +122,21 @@ test("an approved click lets the control-plane change through", async () => {
   assert.equal(approvalRequests.length, 1);
   // restore
   await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), allowBash: false });
+});
+
+test("memory search and read handlers use the injected MCP text formatter", async () => {
+  mkdirSync(DEFAULT_WORKDIR, { recursive: true });
+  writeFileSync(path.join(DEFAULT_WORKDIR, "MEMORY.md"), "# Channel memory\n\nRelease workflow uses the canary fixture.\n");
+
+  await withGateway({}, async (client) => {
+    const search = await client.callTool({ name: "search_channel_memory", arguments: { query: "canary fixture" } });
+    assert.match(resultText(search), /MEMORY\.md/);
+    assert.doesNotMatch(resultText(search), /text is not defined/);
+
+    const read = await client.callTool({ name: "read_channel_memory", arguments: { source: "MEMORY.md" } });
+    assert.match(resultText(read), /Release workflow uses the canary fixture/);
+    assert.doesNotMatch(resultText(read), /text is not defined/);
+  });
 });
 
 test("token tools are gated and the approval card never carries the token value", async () => {
