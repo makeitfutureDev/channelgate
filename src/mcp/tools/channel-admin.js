@@ -563,7 +563,7 @@ export function register(server, ctx) {
 }
 
 export function registerMemoryReadTools(server, ctx) {
-  const { slug } = ctx;
+  const { slug, text } = ctx;
   server.registerTool(
     "search_channel_memory",
     {

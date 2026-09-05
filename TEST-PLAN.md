@@ -24,6 +24,23 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 - [ ] Admin browser: verify Access special-mode boxes, all four Tool tabs, guest lock state, and
       the uncapped Memory explanation/save behavior at desktop and narrow widths.
 
+## ChannelGate skill package
+
+- [x] Automated: the skill parses through ChannelGate's own frontmatter and bundle validators;
+      every focused reference is present and routed from `SKILL.md`, while discovery includes CLI
+      device-login troubleshooting and excludes ordinary work merely performed through the gateway
+      (`test/channelgate-skill.test.js`). The same test invokes both memory retrieval registrations
+      through their real MCP response adapter, preventing the `text is not defined` regression.
+- [ ] Live, Claude + Codex: in each Auto fixture ask how to connect an unauthenticated provider CLI
+      that offers a device flow, then ask where its login survives. Pass when both engines route to
+      the credentials reference, return the browser verification link/code without asking for a
+      token in chat, identify the per-conversation HOME volume, and distinguish `/secrets` tokens
+      from saved CLI sessions (Airtable `SKL-15`).
+- [ ] Live, Claude + Codex: ask whether Full access can read another conversation or the host HOME,
+      and whether Allow network is an egress firewall. Pass when both identify the container as the
+      filesystem/process boundary, keep admin mode inside it, and state the current network limit
+      (Airtable `SKL-16`).
+
 ## Chat-platform adapter kernel (multi-platform seam)
 
 Automated: `test/platforms.test.js` (32 checks). Existing `test/format.test.js` (45) is the
