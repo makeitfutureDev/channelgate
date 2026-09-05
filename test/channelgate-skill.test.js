@@ -71,3 +71,21 @@ test("the ChannelGate skill defines deterministic Composio identity discovery", 
   assert.match(guide, /COMPOSIO_MANAGE_CONNECTIONS.*action: "list"/is);
   assert.match(guide, /must not initiate connections/is);
 });
+
+test("both bundled skills keep device-code login in one live assistant turn", async () => {
+  const domain = await readFile(path.join(root, "references/credentials-connections.md"), "utf8");
+  const operating = await readFile(path.resolve("src/gateway/gateway-usage/SKILL.md"), "utf8");
+  const procedure = await readFile(path.resolve("src/gateway/gateway-usage/references/cli-device-login.md"), "utf8");
+
+  for (const text of [domain, operating, procedure]) {
+    assert.match(text, /same\s+assistant\s+turn/i);
+    assert.match(text, /commentary/i);
+    assert.match(text, /60\s+seconds/i);
+    assert.match(text, /CLI.*confirm/is);
+  }
+  assert.match(procedure, /provider token.*override/is);
+  assert.match(procedure, /omit only.*subprocess/is);
+  assert.match(procedure, /process\/session is unknown.*start a new login/is);
+  assert.match(procedure, /identity\/status command/i);
+  assert.match(procedure, /never as the final response/i);
+});

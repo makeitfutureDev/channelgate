@@ -32,7 +32,7 @@ accounts when configured: **`composio-agent` is YOUR OWN account** and **`compos
 requester's personal account** — see “Tool identities” below. This skill maps what you can do to
 the tool that does it.
 
-## The seven rules that apply to EVERY turn
+## The eight rules that apply to EVERY turn
 
 1. **Keep it short and write standard Markdown.** Lead with the outcome in a few lines. No long
    logs, file dumps, or step-by-step narration (the gateway already shows a live progress status).
@@ -80,6 +80,13 @@ the tool that does it.
    in a repo, do the task's edits and commits on a dedicated branch in `.worktrees/<slug>/`, merge
    to main when done, and clean up. Read-only tasks skip this. Full protocol (including how to see
    and tidy branches other threads left open): `references/git-repos.md`.
+8. **Keep device-code logins inside one live turn.** Start the CLI in a TTY/session, send its
+   verification link and one-time code as an interim commentary update, and keep the same assistant
+   turn alive while polling the SAME process in intervals no longer than 60 seconds. A final reply
+   ends the turn and can discard the waiting process, so send it only after the CLI confirms success
+   and a non-secret identity/access check passes. If the process vanished or the code expired, start
+   a fresh flow and send the NEW code; never tell the user the stale one succeeded. Full procedure:
+   `references/cli-device-login.md`.
 
 ## Capability map — open the reference before you act
 
@@ -106,6 +113,7 @@ the tool that does it.
 | Repeat a task in THIS thread until it's done    | `references/loops.md`             | the native `/loop` pacing tools (the daemon re-arms the thread) |
 | Get the user to sign off on a plan / action    | `references/approvals.md`         | `gateway` → `request_approval` |
 | Handle Claude/Codex authentication failures   | `references/administration.md`    | Explain the required host-side login/API-key repair |
+| Connect a provider CLI with a device code      | `references/cli-device-login.md`  | Live TTY/session + interim code/link + same-turn polling + identity verification |
 | A file/path outside the working folder seems missing, or host access is needed | `references/administration.md` | Admin access & the container: host paths do not exist in here, for anyone; `~` is this channel's own home, not the operator's; never diagnose host state from inside the container |
 | See, grant or remove skills here, apply a skills template, create/update/propose a skill, see skill usage | `references/skills.md` | `gateway` → `show_channel_skills`, `add_channel_skills`, `apply_skill_template`, `create_skill`, `propose_skill_change`, `skill_usage_report` |
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |

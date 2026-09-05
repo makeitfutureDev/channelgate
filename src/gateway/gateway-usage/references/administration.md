@@ -50,6 +50,10 @@ gateway host. On a service-account/VPS deployment, follow that host's operations
 injecting the API key and restarting the service rather than attempting interactive OAuth from a
 Slack turn.
 
+This section is for engine credentials only. For an ordinary provider CLI's browser/device flow,
+use `references/cli-device-login.md`: its waiting process must remain alive in the same assistant
+turn until CLI confirmation and identity verification.
+
 ## Control-plane tools block on a human Approve click
 Every tool below that CHANGES state (modes, network, workdir, Drive link, MCP allowlist,
 instructions, gateway guide, tokens) posts a Slack Approve/Deny card and
