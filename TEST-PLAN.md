@@ -2131,6 +2131,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       installs distro `ffmpeg`/`ffprobe`, preloads Whisper `small` under the shared read-only model
       cache, passes every pin through the image builder, and bumps the daemon/image spec in lockstep
       (automated: `test/container-image.test.js`).
+- [x] Unit: `npm run setup` builds the channel image as part of the install (`scripts/install.sh`
+      runs `scripts/build-image.mjs`), accepts `--skip-image` / `CG_BUILD_IMAGE` to defer it, and
+      names `npm run build:image` as the remedy when skipped or failed (automated:
+      `test/container-image.test.js`).
 - [x] Unit: durability — the mount contract keeps `/tmp` and `/var/tmp` as rw BIND mounts of
       `<artifactDir>/{tmp,var-tmp}` and leaves `/run` as the only tmpfs, and both appear on the
       create argv beside `--userns=keep-id` (rootless) / `--user uid:gid` (docker), so files in the

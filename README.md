@@ -201,8 +201,8 @@ white-label — are described at
   The daemon spawns it directly; auth is whatever the CLI already uses (login or
   `ANTHROPIC_API_KEY`).
 - **Rootless Podman** (Linux) — every channel's engines run in a container of that channel's own,
-  and the daemon refuses to boot without a container CLI: `sudo apt install podman uidmap`, then
-  `npm run build:image` once the code is in place (see
+  and the daemon refuses to boot without a container CLI: `sudo apt install podman uidmap`; the
+  installer builds the channel image (`npm run build:image` by hand — see
   [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime)).
 - A **Slack app** in Socket Mode (below).
 
@@ -250,7 +250,9 @@ fallback works without registering the slash command.
 
 > **Setting it up on a new machine?** See **[INSTALL.md](./INSTALL.md)** — or just clone and run
 > `npm run setup` (checks prerequisites, installs dependencies, asks whether to provision local
-> Whisper + its multilingual model, and scaffolds `.env`; the systemd service is one `sudo` step after).
+> Whisper + its multilingual model, builds the channel container image — engine CLIs, `ffmpeg`,
+> OpenCV, `faster-whisper` + its speech model — and scaffolds `.env`; the systemd service is one
+> `sudo` step after).
 > Choosing local Whisper downloads about 1.5 GiB for `large-v3-turbo`; server installs can skip it.
 
 ```bash

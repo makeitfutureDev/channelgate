@@ -98,6 +98,17 @@ test("pins: the image installs the same mcp-remote the daemon depends on, and ev
   }
 });
 
+test("npm run setup builds the channel image as part of the install, and can be told not to", () => {
+  const install = readFileSync(path.join(repoRoot, "scripts", "install.sh"), "utf8");
+  assert.match(install, /node scripts\/build-image\.mjs/, "install.sh must build the channel image");
+  assert.match(install, /--skip-image/, "install.sh must accept --skip-image for a deferred build");
+  assert.match(install, /CG_BUILD_IMAGE/, "install.sh must honor CG_BUILD_IMAGE for unattended installs");
+  assert.match(install, /npm run build:image/, "a skipped or failed build must name the manual remedy");
+  const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  assert.equal(pkg.scripts.setup, "bash scripts/install.sh");
+  assert.equal(pkg.scripts["build:image"], "node scripts/build-image.mjs");
+});
+
 test("the image ships the complete local video-understanding toolchain", () => {
   assert.match(containerfile, /\bffmpeg\b/, "ffmpeg/ffprobe must be installed from the distro");
   assert.match(containerfile, /opencv-python-headless==\$\{OPENCV_VERSION\}/);
