@@ -17,7 +17,7 @@ The governed AI agent gateway for your Slack, Microsoft Teams and Google Chat ch
 ## Website
 
 ```text
-https://makeitfuture.com/channelgate/
+https://channelgate.dev
 ```
 
 ## Topics
@@ -36,7 +36,7 @@ Run once at launch, from a checkout, with `gh` authenticated as `makeitfutureDev
 ```bash
 gh repo edit makeitfutureDev/channelgate \
   --description "The governed AI agent gateway for your Slack, Microsoft Teams and Google Chat channels. A self-hosted daemon that runs Claude Code or Codex inside a sandboxed folder per conversation, with per-author credentials, an MCP allowlist, schedules, background jobs and an admin UI. Source-available fair-code." \
-  --homepage "https://makeitfuture.com/channelgate/" \
+  --homepage "https://channelgate.dev" \
   --add-topic slack-bot \
   --add-topic microsoft-teams \
   --add-topic google-chat \
