@@ -233,6 +233,28 @@ product overview.
   settled on (the canonical component rollup where a run reported one, so the API and the Audit
   view cannot quote two different costs), marked with a new `costEstimated` flag, and keeps `null`
   only when nothing anywhere knows. A stopped-mid-flight run is billed the same way.
+- **A sentence before the first tool call no longer costs the turn its toolbox.** The live progress
+  card is its own message posted above the answer, so once answer text starts a card that does not
+  exist yet can only be created underneath it. The guard that protected that ordering latched the
+  whole card OFF for the rest of the turn, and a model that wrote one preamble line before its
+  first tool call therefore lost every tool, subagent and failed-tool row — the same run with
+  tools first showed the full toolbox. Only the content-free liveness pulse is suppressed now: a
+  tool, subagent, notice or progress-report row still opens (or keeps) the card at any point in the
+  turn, while a text-only answer still stays a single message.
+- **A progress stage no longer repeats its output two or three times.** Slack replaces a task row's
+  title and status on every chunk but APPENDS its rich `details`/`output`, so a stage that carried
+  its output when it was published, again when it flipped to complete, and once more in the
+  snapshot that seals the card rendered the same paragraph three times over. Each row now remembers
+  what it has already delivered to the current message and sends a rich field only when it actually
+  changed — just the added tail when the value grew (an interrupted step's note), nothing at all
+  when it is unchanged. A stream rollover reseeds its successor in full, since that message has
+  rendered nothing yet.
+- **A rate-limited stream finalization leaves one reply, not four.** When Slack rejected
+  `chat.stopStream`, the classic recovery posted the complete answer as a new message while the
+  partial streamed one stayed in the thread (truncated mid-sentence, no footer) and the run-stats
+  footer arrived as yet another message — four bot replies for one turn. The recovery now deletes
+  that partial copy first and attaches the footer and its controls to the answer it posts, so a
+  failed finalization ends with the progress card and exactly one complete answer.
 - **Fresh installs get their first-boot admin password again.** `npm run setup` answers the
   voice-transcription question before the daemon has ever booted and saves it through the settings
   writer, so a brand-new install already had a `settings.json` at first boot — and the first-boot

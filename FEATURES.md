@@ -338,9 +338,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   inline tables (including code/bold cell content); the classic-post fallback preserves them as
   aligned monospace grids when streaming is unavailable. A rejected footer block is retried without
   controls (and classic delivery preserves the stats as text), so cosmetic Block Kit validation can
-  never turn an already-completed engine answer into `run_error`. Alongside the answer, tool calls
+  never turn an already-completed engine answer into `run_error`. If Slack rejects the stream's
+  terminal call outright (a rate-limited `stopStream`), the classic recovery removes the partial
+  streamed message before posting the complete answer and puts the footer on that answer, so a
+  failed finalization still leaves exactly one reply rather than a truncated copy, a duplicate and a
+  stats-only trailer. Alongside the answer, tool calls
   and the agent's plan render in Slack's native
-  **task_update card** streamed into the same message — grouped into ONE collapsible "steps" card
+  **task_update card**, streamed as its own message directly ABOVE the answer — a turn with progress
+  is two bot messages (the live card, then the uninterrupted answer beneath it), a text-only turn
+  stays one. A tool, subagent, notice or progress-report row that arrives after the answer has
+  started still opens the card; only the content-free liveness pulse is suppressed then, so one
+  preamble sentence before the first tool call never costs the turn its toolbox. Rows are
+  grouped into ONE collapsible "steps" card
   via `task_display_mode: "plan"` (not a separate box per step): each tool call is a row that starts
   `in_progress` and closes as soon as Claude or Codex reports its result (with
   next-step/answer fallback for older events), and a `TodoWrite` plan upserts a row per item carrying
@@ -361,10 +370,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   plain posted reply if streaming is unavailable. → TEST-PLAN: Slack gateway.
 - Persistent toolbox plus temporary assistant status: the native `task_update` toolbox is durable
   reply content in **every** thread type, including assistant/AI-app threads. Its tool, plan,
-  subagent, and heartbeat rows stream live into the answer message and remain available in Slack
+  subagent, and heartbeat rows stream live into the card message and remain available in Slack
   history after the run. Finalize, controlled stop, and every stream rollover re-send a complete
   row snapshot as `chat.stopStream` chunks, sealing each toolbox into its message after streaming
-  ends. During a long-run rollover, a successor first receives the complete compiled answer and
+  ends. Slack REPLACES a row's title and status but APPENDS its rich `details`/`output`, so a row
+  sends those only when they actually change — the seal never repeats a value the live card already
+  rendered, and a value that grew carries just its added tail. A rollover reseeds the successor
+  message in full. During a long-run rollover, a successor first receives the complete compiled answer and
   full toolbox snapshot (completed history plus current in-progress state); only after that copy is
   durable is the retired bot message deleted, keeping one authoritative reply visible whenever the
   answer fits Slack's single-message limit. A failed cleanup leaves both safe complete copies and
@@ -399,9 +411,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   at meaningful checkpoints. Work that must outlive the turn still routes to daemon-owned agents;
   contexts without the Plan tool never claim one. Slack streams a
   `plan_update` title and rich `task_update` stage rows into the **same expandable toolbox** as the
-  low-level tool/subagent history, inside the answer message—never a third persistent message.
+  low-level tool/subagent history, in the turn's own progress-card message directly above the
+  answer—never a third persistent message.
   Stable step IDs retain pending/in_progress/complete/error state plus optional details, output,
-  and source links. The capability is exposed only to visible, non-clean
+  and source links; each stage's details and output are delivered once, on the chunk that changes
+  them, so a finished plan never renders the same paragraph two or three times. The capability is
+  exposed only to visible, non-clean
   interactive Slack and non-recovery Slack-backed API turns; daemon jobs, schedules, recovery,
   diagnosis, and headless runs fail closed. Identical snapshots are deduplicated; controlled stops
   and final-delivery failures mark only the active step as error while preserving completed/pending
