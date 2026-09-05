@@ -359,8 +359,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   the whole toolbox as "Something went wrong" even when the turn recovered and answered. `error` is
   reserved for a stage the agent itself declares failed through `report_progress`.
   Native in-turn **Claude and Codex subagents** use the same card with independently updating
-  parallel rows: the engine adapters normalize Agent/Task and Codex collaboration lifecycle
-  payloads (including multi-child `agents_states` updates), completed rows remain visible,
+  parallel rows: the engine adapters normalize Agent/Task and every shape Codex reports a child in
+  — multi-child `agents_states` updates, `receiver_agents`/`receiver_thread_ids`, the
+  `SubAgentActivity` start/finish lifecycle (keyed on the child's thread id, so the spawning call
+  and the completion merge into one row) and the `collaboration` spawn call whose task name titles
+  it — while a collab call that names no child (Codex multi-agent v2 waits) renders the
+  coordination step itself rather than nothing; completed rows remain visible,
   elapsed/token/tool metadata appears when supplied, and
   failed/stopped/missing-terminal lifecycles close with an explicit warning instead of leaving a
   spinner behind. The assistant shimmer also reports how many native agents are active. These

@@ -816,6 +816,59 @@ test("task timeline keeps native subagents concurrent and updates each stable ro
   assert.equal([...finalById.keys()].filter((id) => id.startsWith("agent-")).length, 2);
 });
 
+test("real Codex multi-agent JSONL becomes one card row per child", async () => {
+  // Verbatim lines from a Codex turn (CLI 0.152.0, multi_agent_version v2) whose two children left
+  // no trace on the card: the spawn arrives as a collaboration function call, the lifecycle as
+  // SubAgentActivity items, and the only collab tool call is an EMPTY `wait`.
+  const lines = [
+    { type: "response_item", payload: { type: "function_call", name: "spawn_agent", namespace: "collaboration", arguments: "{\"task_name\":\"sandbox_reviewer\",\"fork_turns\":\"all\",\"message\":\"gAAAAABqnJuNTot2…\"}", call_id: "call_A" } },
+    { type: "event_msg", payload: { type: "item_completed", item: { type: "SubAgentActivity", id: "call_A", kind: "started", agent_thread_id: "thread-A", agent_path: "/root/sandbox_reviewer" } } },
+    { type: "response_item", payload: { type: "function_call", name: "spawn_agent", namespace: "collaboration", arguments: "{\"task_name\":\"connector_reviewer\",\"fork_turns\":\"all\",\"message\":\"gAAAAABqnJuQ7H6Hl3…\"}", call_id: "call_B" } },
+    { type: "event_msg", payload: { type: "item_completed", item: { type: "SubAgentActivity", id: "call_B", kind: "started", agent_thread_id: "thread-B", agent_path: "/root/connector_reviewer" } } },
+    // The wait, as `codex exec --json` reports it: an empty collab item, started then completed.
+    { type: "item.started", item: { type: "collab_tool_call", id: "item_5", tool: "wait", status: "in_progress", receiver_thread_ids: [], receiver_agents: [], agents_states: {} } },
+    { type: "item.completed", item: { type: "collab_tool_call", id: "item_5", tool: "wait", status: "completed", receiver_thread_ids: [], receiver_agents: [], agents_states: {} } },
+    { type: "event_msg", payload: { type: "item_completed", item: { type: "SubAgentActivity", id: "subagent-completed-1", kind: "completed", agent_thread_id: "thread-A", agent_path: "/root/sandbox_reviewer" } } },
+    { type: "event_msg", payload: { type: "item_completed", item: { type: "SubAgentActivity", id: "subagent-completed-2", kind: "completed", agent_thread_id: "thread-B", agent_path: "/root/connector_reviewer" } } },
+  ];
+
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => streamer,
+    chat: { postMessage: async () => {}, update: async () => {} },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+  progress.onRuntimeResolved({ engine: "codex", model: "gpt-5.6-sol" });
+
+  for (const line of lines) {
+    const mapped = progressFromCodexEvent(line);
+    assert.ok(mapped, `every subagent line must map to progress: ${JSON.stringify(line).slice(0, 80)}`);
+    if (mapped.event) progress.onEvent(mapped.event);
+    for (const event of mapped.events || []) progress.onEvent(event);
+  }
+  progress.onDelta("Both reviews are in.");
+  await progress.finalize({ content: "Both reviews are in.", durationMs: 10, usage: { input_tokens: 1, output_tokens: 1 } });
+
+  const rows = terminalTaskUpdates(calls);
+  const sandbox = rows.find((row) => /sandbox_reviewer/.test(row.title));
+  const connector = rows.find((row) => /connector_reviewer/.test(row.title));
+  assert.ok(sandbox && connector, "each child must own a row on the card");
+  assert.equal(sandbox.status, "complete");
+  assert.equal(connector.status, "complete");
+  // The spawn call and the lifecycle items describe the SAME child: one row each, not two.
+  assert.equal(rows.filter((row) => row.id.startsWith("agent-")).length, 2);
+  // The children's names must never be an encrypted spawn payload.
+  assert.ok(!rows.some((row) => /gAAAA/.test(row.title)), "an encrypted spawn message must never reach a row title");
+  assert.ok(rows.some((row) => row.title === "wait_agent"), "the coordination step is visible too");
+});
+
 test("in an assistant thread the shimmer makes parallel agent work visible", async () => {
   const calls = [];
   const client = {

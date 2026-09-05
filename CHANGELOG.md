@@ -149,6 +149,27 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **Codex subagent work is visible on the task card again.** The mapping built child rows only from
+  a collab tool call's `agents_states`, and Codex's multi-agent v2 mode reports children somewhere
+  else entirely: the spawn arrives as a `collaboration` function call, the child's start and finish
+  as `SubAgentActivity` items, and the only collab tool call it emits — the wait — carries no
+  receivers and no states at all. A turn where two children really ran therefore showed nothing.
+  Every shape is now read: `agents_states`, `receiver_agents` and `receiver_thread_ids`; the
+  `SubAgentActivity` lifecycle, keyed on the child's THREAD id so its start (the spawning call id)
+  and its finish (a synthetic completion id) merge into one row; and the spawn call itself, whose
+  requested task name titles the row while its encrypted message never can. Item types match in
+  both spellings the CLI uses (`collab_tool_call` in the exec stream, `CollabAgentToolCall` in the
+  session stream), and a collab call that names no child now renders the coordination step itself
+  instead of nothing. Note the remaining CLI limit: under multi-agent v2 (CLI 0.152/0.153)
+  `codex exec --json` forwards no per-child lifecycle at all, so such a turn shows its wait step;
+  per-child rows appear wherever the CLI reports child identity.
+- **Codex answers no longer run their segments together.** Codex reports each assistant message as
+  its own completed item — a stage narration, then the answer — and the native Slack stream shows
+  exactly what the runner streamed, so the last word of one segment was glued to the first word of
+  the next ("…isolates conversations.ChannelGate isolates each…"). A new message item now opens a
+  new paragraph; deltas inside one streamed item are still concatenated untouched (the break marks
+  a boundary, it does not reformat prose), and the authoritative final message read from Codex's
+  `-o` file is unchanged.
 - **Stopping a turn now stops everything the turn started.** A container run was signalled by
   process GROUP, and Claude Code's Bash tool puts its shell in a session and a process group of its
   own — so `kill -- -<leader>` reported success, the tool's shell survived, and a loop it was

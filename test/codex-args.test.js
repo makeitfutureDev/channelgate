@@ -9,7 +9,7 @@ import { ensureTestEnv } from "./helpers.js";
 import { createFakeRuntime } from "./fixtures/fake-runtime-backend.js";
 
 const scratch = ensureTestEnv();
-const { buildCodexArgs, buildCodexEnv, progressFromCodexEvent } = await import("../src/engines/codex.js");
+const { buildCodexArgs, buildCodexEnv, createCodexProgressState, progressFromCodexEvent } = await import("../src/engines/codex.js");
 const { CONTAINER_HOME, CONTAINER_PATH, localRuntimeTarget } = await import("../src/engines/runtime-target.js");
 const { workspaceRoot } = await import("../src/config/paths.js");
 const { allowedFsRoot } = await import("../src/web/security.js");
@@ -502,4 +502,221 @@ test("Codex JSONL suppresses invalid recognized progress report", () => {
   });
 
   assert.equal(progress, null);
+});
+
+// ── Subagents ────────────────────────────────────────────────────────────────────────────────
+// The fixtures below are verbatim JSONL lines from a real multi-agent Codex turn (CLI 0.152.0,
+// multi_agent_version v2) in which two children — sandbox_reviewer and connector_reviewer — really
+// ran, and the Slack card showed no sign of them. Only the spawn message (an encrypted blob) is
+// shortened. Codex reports the same turn in three different shapes, and a build/mode decides which
+// of them a stream carries, so the mapping has to read all three.
+const SPAWN_CALL = {
+  timestamp: "2026-09-05T22:45:33.149Z",
+  type: "response_item",
+  payload: {
+    type: "function_call",
+    id: "fc_0ddf2b06675e57d7016a9c9b8b437c87d28c08f501c51ec75d",
+    name: "spawn_agent",
+    namespace: "collaboration",
+    arguments: "{\"task_name\":\"sandbox_reviewer\",\"fork_turns\":\"all\",\"message\":\"gAAAAABqnJuNTot2Kqv_ov5C2WetE7sT5T1V…\"}",
+    call_id: "call_Un4efzD5prFaiBCep2k0oT41",
+  },
+};
+const SUBAGENT_STARTED = {
+  type: "event_msg",
+  payload: {
+    type: "item_completed",
+    thread_id: "01a073bf-51d7-7130-8934-b5b1c41d2087",
+    item: {
+      type: "SubAgentActivity",
+      id: "call_Un4efzD5prFaiBCep2k0oT41",
+      kind: "started",
+      agent_thread_id: "01a073bf-9f63-7401-bf3b-f100fe66bdb2",
+      agent_path: "/root/sandbox_reviewer",
+    },
+  },
+};
+const SUBAGENT_COMPLETED = {
+  type: "event_msg",
+  payload: {
+    type: "item_completed",
+    thread_id: "01a073bf-51d7-7130-8934-b5b1c41d2087",
+    item: {
+      type: "SubAgentActivity",
+      id: "subagent-completed-01a073bf-9f7d-7c01-be48-2fec93f6ed6e",
+      kind: "completed",
+      agent_thread_id: "01a073bf-9f63-7401-bf3b-f100fe66bdb2",
+      agent_path: "/root/sandbox_reviewer",
+    },
+  },
+};
+const WAIT_ITEM = {
+  type: "event_msg",
+  payload: {
+    type: "item_completed",
+    item: {
+      type: "CollabAgentToolCall",
+      id: "call_kydoSEJQUvezRkCHeuBaK3Ks",
+      tool: "wait",
+      status: "completed",
+      sender_thread_id: "01a073bf-51d7-7130-8934-b5b1c41d2087",
+      receiver_thread_ids: [],
+      receiver_agents: [],
+      agents_states: {},
+    },
+  },
+};
+
+test("Codex spawn call opens a subagent row named after the task, never its encrypted message", () => {
+  const progress = progressFromCodexEvent(SPAWN_CALL);
+
+  assert.deepEqual(progress, {
+    event: {
+      kind: "agent_activity",
+      id: "call_Un4efzD5prFaiBCep2k0oT41",
+      engine: "codex",
+      name: "sandbox_reviewer",
+      status: "running",
+    },
+  });
+});
+
+test("Codex subagent activity keys the row on the child thread and aliases the spawning call", () => {
+  const started = progressFromCodexEvent(SUBAGENT_STARTED).event;
+  assert.equal(started.kind, "agent_activity");
+  assert.equal(started.id, "01a073bf-9f63-7401-bf3b-f100fe66bdb2");
+  assert.equal(started.name, "sandbox_reviewer");
+  assert.equal(started.status, "running");
+  // The alias is what merges this row with the one the spawn call opened.
+  assert.ok(started.aliasIds.includes("call_Un4efzD5prFaiBCep2k0oT41"));
+
+  const completed = progressFromCodexEvent(SUBAGENT_COMPLETED).event;
+  assert.equal(completed.id, "01a073bf-9f63-7401-bf3b-f100fe66bdb2");
+  assert.equal(completed.status, "completed");
+});
+
+test("Codex raw sub_agent_activity payloads normalize to the same row contract", () => {
+  // The bare event payload (snake_case) and its camelCase twin, as older/alternate streams send it.
+  const snake = progressFromCodexEvent({
+    type: "event",
+    payload: { type: "sub_agent_activity", kind: "completed", agent_thread_id: "thread-A", agent_path: "/root/sandbox_reviewer" },
+  }).event;
+  assert.deepEqual(snake, {
+    kind: "agent_activity",
+    id: "thread-A",
+    engine: "codex",
+    name: "sandbox_reviewer",
+    status: "completed",
+    aliasIds: ["thread-A"],
+  });
+
+  const camel = progressFromCodexEvent({
+    type: "event",
+    payload: { type: "subAgentActivity", kind: "started", agentThreadId: "thread-B", agentPath: "/root/connector_reviewer" },
+  }).event;
+  assert.equal(camel.id, "thread-B");
+  assert.equal(camel.name, "connector_reviewer");
+  assert.equal(camel.status, "running");
+});
+
+test("Codex wait items with no child state still render the coordination step", () => {
+  // multi-agent v2 sends `wait` items with empty receivers and empty agents_states: mapping them
+  // to nothing is what left the card blank while two children worked.
+  assert.deepEqual(progressFromCodexEvent(WAIT_ITEM), {
+    event: { kind: "tool_result", id: "call_kydoSEJQUvezRkCHeuBaK3Ks", name: "wait_agent", status: "completed" },
+  });
+  assert.deepEqual(
+    progressFromCodexEvent({ type: "item.started", item: { type: "collab_tool_call", id: "wait-1", tool: "wait", status: "in_progress", agents_states: {} } }),
+    { event: { kind: "tool_use", id: "wait-1", name: "wait_agent" } },
+  );
+});
+
+test("Codex collab items that DO carry child state still drive per-child rows", () => {
+  // The `agents_states` path (multi-agent v1 and every version's stateful items) is unchanged.
+  const spawn = progressFromCodexEvent({
+    type: "item.completed",
+    item: {
+      type: "collab_tool_call",
+      id: "call-spawn",
+      tool: "spawn_agent",
+      status: "completed",
+      receiver_thread_ids: ["thread-a"],
+      agents_states: { "thread-a": { status: "running" } },
+      prompt: "Review the sandbox boundary",
+    },
+  });
+  assert.equal(spawn.event.kind, "agent_activity");
+  assert.equal(spawn.event.id, "call-spawn");
+  assert.deepEqual(spawn.event.aliasIds, ["thread-a"]);
+  assert.equal(spawn.event.description, "Review the sandbox boundary");
+  assert.equal(spawn.event.status, "running");
+
+  const wait = progressFromCodexEvent({
+    type: "item.completed",
+    item: {
+      type: "collab_tool_call",
+      id: "call-wait",
+      tool: "wait",
+      status: "completed",
+      agents_states: { "thread-a": { status: "completed" }, "thread-b": { status: "errored", message: "child crashed" } },
+    },
+  });
+  assert.equal(wait.events.length, 2);
+  assert.deepEqual(wait.events[0], { kind: "agent_activity", id: "thread-a", engine: "codex", status: "completed" });
+  assert.equal(wait.events[1].id, "thread-b");
+  assert.equal(wait.events[1].status, "failed");
+  assert.equal(wait.events[1].description, "child crashed");
+});
+
+test("Codex receiver agents name their OWN row, never every row in the item", () => {
+  const wait = progressFromCodexEvent({
+    type: "item.started",
+    item: {
+      type: "collab_tool_call",
+      id: "call-wait",
+      tool: "wait",
+      status: "in_progress",
+      receiver_thread_ids: ["thread-a", "thread-b"],
+      receiver_agents: [
+        { thread_id: "thread-a", agent_nickname: "sandbox_reviewer" },
+        { thread_id: "thread-b", agent_nickname: "connector_reviewer" },
+      ],
+      agents_states: {},
+    },
+  });
+
+  assert.equal(wait.events.length, 2);
+  assert.equal(wait.events[0].id, "thread-a");
+  assert.equal(wait.events[0].name, "sandbox_reviewer");
+  assert.equal(wait.events[1].id, "thread-b");
+  assert.equal(wait.events[1].name, "connector_reviewer");
+});
+
+test("Codex answer segments are separated by a blank line, deltas inside one item are not", () => {
+  const state = createCodexProgressState();
+  const first = progressFromCodexEvent({
+    type: "item.completed",
+    item: { id: "item_3", type: "agent_message", text: "Each channel runs in its own container, which isolates conversations." },
+  }, state);
+  const second = progressFromCodexEvent({
+    type: "item.completed",
+    item: { id: "item_7", type: "agent_message", text: "ChannelGate isolates each Slack channel in its own folder." },
+  }, state);
+
+  assert.equal(first.delta, "Each channel runs in its own container, which isolates conversations.");
+  assert.equal(second.delta, "\n\nChannelGate isolates each Slack channel in its own folder.");
+  assert.match(`${first.delta}${second.delta}`, /conversations\.\n\nChannelGate/);
+
+  // A segment that already ends its own paragraph is not padded twice, and a streamed item's own
+  // deltas stay glued together — the break marks a boundary, it does not reformat prose.
+  const streaming = createCodexProgressState();
+  assert.equal(progressFromCodexEvent({ type: "agent_message_delta", item: { id: "item_1" }, delta: { text: "Half a " } }, streaming).delta, "Half a ");
+  assert.equal(progressFromCodexEvent({ type: "agent_message_delta", item: { id: "item_1" }, delta: { text: "sentence.\n" } }, streaming).delta, "sentence.\n");
+  assert.equal(progressFromCodexEvent({ type: "item.completed", item: { id: "item_2", type: "agent_message", text: "Next segment." } }, streaming).delta, "\nNext segment.");
+});
+
+test("Codex event mapping without a progress state leaves the text untouched", () => {
+  // Callers that map one event in isolation (tests, tooling) must see no injected whitespace.
+  const mapped = progressFromCodexEvent({ type: "item.completed", item: { id: "item_9", type: "agent_message", text: "Answer." } });
+  assert.deepEqual(mapped, { delta: "Answer." });
 });
