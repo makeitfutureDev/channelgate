@@ -1480,7 +1480,12 @@ are retired, bullet by bullet; everything else stands.
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's
   pid names the host-side `exec` CLIENT, never the engine, so liveness and signals are asked of the
   backend: a probe execs `cg-probe <runId>` against the process-group leader `cg-exec` recorded
-  inside, and a stop signals the whole in-container group through `cg-signal`. The probe is
+  inside, and a stop signals the whole in-container run through `cg-signal`. A stop is the whole
+  RUN, not its process group: `cg-signal` walks `/proc` once before it signals anything and takes
+  down every process in the run's session plus the leader's entire descendant tree, because Claude
+  Code's Bash tool puts its shell in a session and a process group of its own and a group kill left
+  it — and whatever it was running — alive after the turn was stopped. `cg-sweep` signals through
+  the same helper, so a boot sweep reaches exactly what a stop reaches. The probe is
   therefore ASYNC and bounded by a timeout, and its result is three-valued — `true`, `false`, or
   **unknown**. A probe that throws, times out, or answers inconclusively reports UNKNOWN and the
   turn KEEPS WAITING; only a definite `false` ends it. The non-negotiable rule is intact: a quiet

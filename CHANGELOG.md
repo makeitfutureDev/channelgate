@@ -149,6 +149,16 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **Stopping a turn now stops everything the turn started.** A container run was signalled by
+  process GROUP, and Claude Code's Bash tool puts its shell in a session and a process group of its
+  own — so `kill -- -<leader>` reported success, the tool's shell survived, and a loop it was
+  running went on to completion minutes after the turn was reported stopped. `cg-signal` now walks
+  `/proc` once before it signals anything and takes down every process in the run's session plus
+  the leader's whole descendant tree (deduped by process group, then by pid), keeping its "0 when
+  something was delivered" status; `cg-sweep` signals through the same helper so a boot sweep and a
+  stop can never drift apart. Nothing outside the run can be in either set: the leader is its own
+  session leader and a detached background job is a separate leader with its own session. Image
+  spec 1.2.1 — `npm run build:image` (an update rebuilds it).
 - **Fresh installs get their first-boot admin password again.** `npm run setup` answers the
   voice-transcription question before the daemon has ever booted and saves it through the settings
   writer, so a brand-new install already had a `settings.json` at first boot — and the first-boot
