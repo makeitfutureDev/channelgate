@@ -1011,6 +1011,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   for zero use. Clean mode gets none either, like every other injected grant.
 
 ## Isolation & security
+- **Current, progressively disclosed ChannelGate skill.** The repository's `channelgate` skill is
+  now a concise router instead of a Claude-only lockdown recipe. Focused references cover the
+  Linux/container trust boundary, per-channel HOME and write-only secrets, provider CLI/device
+  login, Claude/Codex credentials, MCP identities, local skill catalog and materialization,
+  catalog-first channel memory, automation/attachments/platform capabilities, and the low-level
+  folder/headless MCP recipe. Its description names realistic administration/troubleshooting
+  triggers while explicitly excluding ordinary tasks merely performed through ChannelGate.
+  The same slice repairs the memory search/read tool registration so both use the gateway's MCP
+  text-response adapter instead of failing with `text is not defined`.
+  → TEST-PLAN: ChannelGate skill package.
 - **Trustworthy release gate** (the macOS leg retired 2026-09-03 — Linux only): every pull request
   runs the complete coverage-gated suite on Ubuntu at the exact Node 22.13 minimum and Node 24, plus dependency-free syntax /
   whitespace checks, tracked-file secret scanning, production dependency audit, and independent
