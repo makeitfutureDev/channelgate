@@ -3,8 +3,22 @@
 // register(server, ctx); the tool contracts are unchanged.
 import { z } from "zod";
 import { addSchedule, listForChannel, deleteSchedule, countEnabledForChannel } from "../../config/schedules.js";
-import { cronValid, minIntervalMinutes } from "../../util/cron.js";
+import { cronValid, minIntervalMinutes, nextCronRun } from "../../util/cron.js";
+import { daemonTimeZone, isUtcZone, zonedStamp } from "../../util/timezone.js";
 import { getScheduleMinIntervalMinutes, getScheduleMaxPerChannel } from "../../config/settings.js";
+
+// Every schedule time in this file is the DAEMON's wall clock (the scheduler tick evaluates crons
+// against it). The zone has to travel WITH the time or it gets relabelled on the way to the user:
+// the channel container's own clock was Etc/UTC, and a `15 9 * * 1-5` cron was reported live as
+// "9:15 UTC" for a schedule that fires 09:15 in Bucharest (QA ART-002). The container runtime now
+// exports the daemon's TZ too, but a stated zone is what makes the reply verifiable rather than a
+// second thing that has to be configured right. The stamps name the zone; this sentence tells the
+// agent to keep the name when it repeats them.
+export function zoneHint() {
+  const tz = daemonTimeZone();
+  if (!tz || isUtcZone(tz)) return "";
+  return ` (Times are the gateway's local zone, ${tz} — say the zone when you tell the user, and don't convert it.)`;
+}
 
 export function register(server, ctx) {
   const { channelId, slug, createdBy, text } = ctx;
@@ -16,8 +30,10 @@ export function register(server, ctx) {
       description:
         "Schedule a task in THIS channel — either RECURRING (cron) or ONE-TIME (run once, then it " +
         "auto-deletes). For recurring, pass `cron`, a 5-field expression 'minute hour day-of-month " +
-        "month day-of-week' (e.g. '0 9 * * *' = every day 09:00; '0 9 * * 1' = Mondays 09:00, server " +
-        "local time). For a one-time reminder/task, pass `in_minutes` (run N minutes from now — e.g. " +
+        "month day-of-week' (e.g. '0 9 * * *' = every day 09:00; '0 9 * * 1' = Mondays 09:00). Times are " +
+        "the GATEWAY's local zone — never assume UTC: the reply names the zone and the next fire " +
+        "time, and that is what you quote to the user. For a one-time reminder/task, pass " +
+        "`in_minutes` (run N minutes from now — e.g. " +
         "120 for 'in 2 hours') OR `run_at` (an ISO-8601 local datetime like '2026-06-26T15:30'); leave " +
         "`cron` empty. `prompt` is what to do; `description` is the title in the 'Running:' " +
         "announcement. It runs as YOU (your tokens/mode) in this channel's folder. `notify`: 'channel' " +
@@ -76,7 +92,9 @@ export function register(server, ctx) {
         if (when.getTime() <= Date.now() - 60_000) return text("That time is in the past — pick a future time.");
         const s = addSchedule({ channelId, slug, prompt, description, createdBy, notify: mode, notifyUserId, delivery, runAt: when.toISOString(), once: true, ...reminderFields });
         const what = reminderFields.kind === "reminder" ? "One-time reminder" : "One-time task";
-        return text(`✅ ${what} scheduled (id ${s.id}) for ${when.toLocaleString()}: "${description || prompt}", notifies ${who}${reminderFields.ack ? " · requires ✅" : ""}.`);
+        // The stamp NAMES the zone and gives the UTC equivalent, so the reply cannot be relabelled
+        // by an agent that formats the instant against some other clock (QA ART-002).
+        return text(`✅ ${what} scheduled (id ${s.id}) for ${zonedStamp(when)}: "${description || prompt}", notifies ${who}${reminderFields.ack ? " · requires ✅" : ""}.${zoneHint()}`);
       }
 
       // Recurring mode: require a valid cron and enforce the minimum-interval floor.
@@ -89,7 +107,9 @@ export function register(server, ctx) {
       }
       const s = addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify: mode, notifyUserId, delivery, ...reminderFields });
       const what = reminderFields.kind === "reminder" ? "Reminder" : "Scheduled";
-      return text(`✅ ${what} (id ${s.id}): "${description || prompt}" — cron \`${cron}\`, notifies ${who}${s.delivery === "daily-thread" ? " · one thread per day" : ""}${reminderFields.ack ? " · requires ✅" : ""}.`);
+      const next = nextCronRun(cron);
+      const nextText = next ? ` · next run ${zonedStamp(next)}` : "";
+      return text(`✅ ${what} (id ${s.id}): "${description || prompt}" — cron \`${cron}\`${nextText}, notifies ${who}${s.delivery === "daily-thread" ? " · one thread per day" : ""}${reminderFields.ack ? " · requires ✅" : ""}.${zoneHint()}`);
     }
   );
 
@@ -102,7 +122,7 @@ export function register(server, ctx) {
       return text(
         list
           .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}] cron \`${s.cron}\` — ${s.description || s.prompt} (notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : ""})`)
-          .join("\n")
+          .join("\n") + (zoneHint() ? `\n${zoneHint().trim()}` : "")
       );
     }
   );

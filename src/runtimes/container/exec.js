@@ -38,7 +38,11 @@ export function normalizeSignal(signal) {
 // Keys the CONTAINER owns. The runners compute a HOST environment (a synthetic Claude HOME under
 // the gateway root, a host CODEX_HOME); inside a container those paths do not exist, so the
 // backend's values win. This is the one place the caller's env is overridden rather than extended.
-export const CONTAINER_OWNED_ENV = Object.freeze(["HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "CG_RUNTIME"]);
+//
+// TZ is here for the opposite reason: the image is Etc/UTC and the daemon is not, so a run that
+// inherited nothing would read a different wall clock than the scheduler that started it (an agent
+// labelled a 09:15 Bucharest cron "09:15 UTC" — QA ART-002). The daemon's zone is authoritative.
+export const CONTAINER_OWNED_ENV = Object.freeze(["HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "TZ", "CG_RUNTIME"]);
 
 // Keys whose host value would send the run looking for binaries, modules and directories that only
 // exist on the daemon's filesystem. `--env-file` is applied to the exec'd process and overrides the

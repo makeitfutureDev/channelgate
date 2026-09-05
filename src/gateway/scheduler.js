@@ -46,6 +46,15 @@ function notifyPrefix(sched) {
   return "";
 }
 
+// The text of a reminder post, without the label the renderer is about to add. People (and agents
+// writing a `create_schedule` prompt) naturally phrase a reminder as "Reminder: review the QA
+// results", and the "⏰ *Reminder:*" prefix then stuttered — "⏰ *Reminder:* Reminder: review the
+// QA results" (QA ART-001). Exactly ONE leading label is removed, so a deliberate
+// "Reminder: Reminder: …" still shows one and text that merely mentions the word keeps it.
+export function reminderBody(text) {
+  return String(text || "").trim().replace(/^reminders?\s*:\s*/i, "").trim();
+}
+
 export function scheduleDayKey(now = new Date()) {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -116,7 +125,12 @@ async function runSchedule(sched) {
     // no duplicate restatement. When ack is set, track the message so the escalation chain runs if
     // nobody reacts ✅.
     if (sched.kind === "reminder") {
-      const body = (sched.prompt || sched.description || "").trim() || title;
+      const raw = (sched.prompt || sched.description || "").trim() || title;
+      // Strip a leading "Reminder:" the author already wrote — the renderer adds its own label.
+      // The ack title travels into the 2nd notice ("🔔 *Reminder — 2nd notice:* …") and the
+      // creator's DM, so it is stripped on the same rule rather than stuttering one step later.
+      const body = reminderBody(raw) || raw;
+      const ackTitle = reminderBody(title) || title;
       const ackHint = sched.ack ? `\n\n_React :${sched.ackEmoji || "white_check_mark"}: to acknowledge._` : "";
       const posted = await postNotice(client, {
         conversationId: sched.channelId,
@@ -131,7 +145,7 @@ async function runSchedule(sched) {
           messageTs: posted.messageId,
           threadTs: posted.messageId,
           text: body,
-          title,
+          title: ackTitle,
           createdBy: sched.createdBy,
           notifyUserId: sched.notifyUserId,
           notify: sched.notify,

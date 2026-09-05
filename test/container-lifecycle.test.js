@@ -308,3 +308,40 @@ test("stale env files are swept when a new one is written", async () => {
   assert.equal(existsSync(fresh), true);
   runner.discardEnvFile(fresh);
 });
+
+test("the daemon's timezone crosses into the container — at create AND on every exec", async () => {
+  const { buildCreateArgs } = await import("../src/runtimes/container/lifecycle.js");
+  const { containerRunEnv } = await import("../src/runtimes/container/exec.js");
+  const { containerEnvDefaults } = await import("../src/runtimes/container/credentials.js");
+  const { daemonTimeZone } = await import("../src/util/timezone.js");
+
+  const real = process.env.TZ;
+  try {
+    // The image is built on Etc/UTC while the scheduler matches crons against the DAEMON's clock,
+    // so a run that inherited nothing read a different wall time than the schedule that started it
+    // and labelled a 09:15 Bucharest cron "09:15 UTC" (QA ART-002).
+    process.env.TZ = "Europe/Bucharest";
+    assert.equal(daemonTimeZone(), "Europe/Bucharest");
+    assert.equal(containerEnvDefaults(target("tz-chan")).TZ, "Europe/Bucharest");
+
+    const t = target("tz-chan");
+    await harness().cli.probe(SETTINGS, { image: SETTINGS.image });
+    const args = buildCreateArgs(t, { uidStrategy: "keep-id", supportsInit: true, cgroupLimits: false });
+    const envFlags = args.filter((a, i) => args[i - 1] === "-e");
+    assert.ok(envFlags.includes("TZ=Europe/Bucharest"), `create args must carry the daemon zone: ${envFlags.join(" ")}`);
+
+    // Per-exec: the daemon's zone OWNS the key, so a stale host value cannot re-label the run.
+    const runEnv = containerRunEnv(t, { TZ: "America/New_York", KEEP: "1" });
+    assert.equal(runEnv.TZ, "Europe/Bucharest");
+    assert.equal(runEnv.KEEP, "1");
+    // And it survives the env-file rendering the exec actually writes.
+    const { renderEnvFile } = await import("../src/runtimes/container/exec.js");
+    assert.match(renderEnvFile(runEnv).body, /^TZ=Europe\/Bucharest$/m);
+
+    process.env.TZ = "Asia/Tokyo";
+    assert.equal(containerRunEnv(t, {}).TZ, "Asia/Tokyo", "the zone is read per run, not frozen at import");
+  } finally {
+    if (real === undefined) delete process.env.TZ;
+    else process.env.TZ = real;
+  }
+});

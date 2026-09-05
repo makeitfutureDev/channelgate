@@ -164,12 +164,16 @@ test("credentialError names the remedy per engine and stays silent when the engi
   assert.ok(notes.some((n) => /sign-in file is shared/.test(n)));
 });
 
-test("the container environment always points HOME and both engine state dirs into the HOME volume", () => {
+test("the container environment always points HOME and both engine state dirs into the HOME volume", async () => {
+  const { daemonTimeZone } = await import("../src/util/timezone.js");
   const t = target("env-chan");
   assert.deepEqual(credentials.containerEnvDefaults(t), {
     HOME: "/home/agent",
     CLAUDE_CONFIG_DIR: "/home/agent/.claude",
     CODEX_HOME: "/home/agent/.codex",
+    // The image is Etc/UTC; the daemon's zone rides in so a run reads the same wall clock as the
+    // scheduler that started it (QA ART-002, test/schedule-timezone.test.js).
+    TZ: daemonTimeZone(),
     CG_RUNTIME: "container",
     CG_CHANNEL: "env-chan",
     CG_PLATFORM: "slack",

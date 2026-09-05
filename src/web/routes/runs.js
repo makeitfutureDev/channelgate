@@ -23,6 +23,9 @@ function publicJob(job) {
     createdAt: job.createdMs ? new Date(job.createdMs).toISOString() : null,
     completedAt: job.completedMs ? new Date(job.completedMs).toISOString() : null,
     costUSD: job.costUSD ?? null,
+    // True when the figure is the usage ledger's priced estimate rather than an engine-reported
+    // amount (Codex reports no cost of its own) — the same distinction the Audit view draws.
+    costEstimated: Boolean(job.costEstimated),
     durationMs: job.durationMs ?? null,
     result: job.result ? job.result.content : null,
     error: job.error || null,

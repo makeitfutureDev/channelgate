@@ -106,3 +106,57 @@ export function cronMatches(expr, date) {
   if (dowStar) return domOk;
   return domOk || dowOk;
 }
+
+// The next instant `expr` fires at or after `from`, as a Date in the DAEMON's local time (the same
+// clock `cronMatches` is evaluated against by the scheduler tick), or null when the expression is
+// invalid or matches nothing inside the search window (e.g. "0 0 30 2 *" — February 30th).
+//
+// It exists so a reply can say WHEN a cron actually fires instead of leaving the reader to decode
+// five fields: an agent that has to compute the next run itself computes it in the container's
+// zone and gets it wrong (QA ART-002). Fields are parsed once and the scan skips whole days and
+// hours that cannot match, so a yearly cron costs a few thousand steps rather than half a million.
+export function nextCronRun(expr, from = new Date(), { maxDays = 400 } = {}) {
+  const sets = parseCron(expr);
+  if (!sets) return null;
+  const fields = String(expr).trim().split(/\s+/);
+  const domStar = fields[2] === "*";
+  const dowStar = fields[4] === "*";
+  const [minutes, hours, dom, mon, dow] = sets;
+  const dayOk = (d) => {
+    if (!mon.has(d.getMonth() + 1)) return false;
+    const wday = d.getDay();
+    const domOk = dom.has(d.getDate());
+    const dowOk = dow.has(wday) || (wday === 0 && dow.has(7)); // allow 7 = Sunday
+    if (domStar && dowStar) return true;
+    if (domStar) return dowOk;
+    if (dowStar) return domOk;
+    return domOk || dowOk;
+  };
+
+  const start = new Date(from instanceof Date ? from.getTime() : Number(from));
+  if (!Number.isFinite(start.getTime())) return null;
+  start.setSeconds(0, 0);
+  start.setMinutes(start.getMinutes() + 1); // strictly after `from`'s minute
+  const deadline = start.getTime() + maxDays * 24 * 60 * 60_000;
+  let cursor = start;
+  // A wall-clock jump (DST) can land on a time that is not later than the cursor; the guard caps
+  // the walk so an unexpected zone can never spin here.
+  for (let steps = 0; steps < maxDays * 24 * 60 && cursor.getTime() <= deadline; steps++) {
+    if (!dayOk(cursor)) {
+      const next = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1, 0, 0, 0, 0);
+      cursor = next.getTime() > cursor.getTime() ? next : new Date(cursor.getTime() + 60_000);
+      continue;
+    }
+    if (!hours.has(cursor.getHours())) {
+      const next = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), cursor.getHours() + 1, 0, 0, 0);
+      cursor = next.getTime() > cursor.getTime() ? next : new Date(cursor.getTime() + 60_000);
+      continue;
+    }
+    if (!minutes.has(cursor.getMinutes())) {
+      cursor = new Date(cursor.getTime() + 60_000);
+      continue;
+    }
+    return cursor;
+  }
+  return null;
+}

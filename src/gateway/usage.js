@@ -192,6 +192,12 @@ export function insertComponent(db, usageId, component) {
 
 // Append one normalized record. Best-effort: a logging failure must never break a run.
 // taskKind: "interactive" | "scheduled" | "background" — where the run originated.
+//
+// Returns what the LEDGER settled on for this run — { costUSD, costEstimated, tokensIn, tokensOut }
+// — so a caller that has to publish a cost (the run API's status endpoint, its `api_run_done`
+// event and its webhook) reports the same figure the ledger stores instead of a bare `null`
+// whenever the engine reports no dollar amount of its own (Codex never does — QA API-001). Null on
+// a failure, because a caller must not invent a number the ledger does not have.
 export async function recordUsage({ channelId, slug, authorId, engine, model, taskKind = "interactive", result = {} } = {}) {
   try {
     const normalizedResult = { ...result, engine: engine || result.engine || "", model: result.model || model || "" };
@@ -234,12 +240,35 @@ export async function recordUsage({ channelId, slug, authorId, engine, model, ta
         }
       }
       db.exec("COMMIT");
+      // What the ledger SETTLED on, read back the way every other surface reads it: when the run
+      // reported per-component accounting, the CANONICAL cost is the component rollup, not the
+      // row's cumulative-token estimate. Reading it here is what stops an API caller and the Audit
+      // view from quoting two different costs for the same run.
+      try {
+        const settled = db.prepare(
+          `${CANONICAL_CTE} SELECT canonical_cost_usd AS cost_usd, canonical_cost_estimated AS cost_estimated,
+             canonical_tokens_in AS tokens_in, canonical_tokens_out AS tokens_out
+             FROM canonical_usage WHERE id = @id`
+        ).get({ id: usageId });
+        if (settled) {
+          return {
+            costUSD: settled.cost_usd ?? null,
+            costEstimated: Boolean(settled.cost_estimated),
+            tokensIn: settled.tokens_in ?? inTok,
+            tokensOut: settled.tokens_out ?? outTok,
+          };
+        }
+      } catch {
+        /* the read-back is a nicety; the row we just wrote is answer enough */
+      }
     } catch (error) {
       try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
       throw error;
     }
+    return { costUSD, costEstimated: estimated, tokensIn: inTok, tokensOut: outTok };
   } catch (err) {
     countDrop("usage", err); // ledger is best-effort, but a silent drop diverges the spend numbers
+    return null;
   }
 }
 

@@ -6,12 +6,16 @@ channel's folder, and posts back here. Creating and deleting schedules needs NO 
 just call the tool. Say what you scheduled (and when it will fire) in your reply so the channel
 can see it, and use `list_schedules` / `delete_schedule` to show or undo it.
 
+**Every schedule time is the gateway's own local zone** — never assume UTC. The tool reply names
+that zone and the next fire time; quote the zone back to the user exactly as given instead of
+converting or relabelling it.
+
 ## One-time vs recurring
 - **One-time:** pass `in_minutes` (run N minutes from now, e.g. `120` = in 2 hours) OR `run_at`
   (an ISO-8601 local datetime like `2026-06-26T15:30`). Leave `cron` empty. It runs once, then
   auto-deletes.
 - **Recurring:** pass `cron` — a 5-field expression `minute hour day-of-month month day-of-week`
-  in server local time. Examples: `0 9 * * *` = every day 09:00; `0 9 * * 1` = Mondays 09:00;
+  in the gateway's local zone. Examples: `0 9 * * *` = every day 09:00; `0 9 * * 1` = Mondays 09:00;
   `0 * * * *` = hourly. Recurring schedules must fire no more often than the configured minimum
   interval (default 60 min) or the call is rejected.
 
