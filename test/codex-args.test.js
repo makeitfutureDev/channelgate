@@ -64,6 +64,27 @@ test("read-only Codex runs keep Codex's own read-only sandbox as defence in dept
   assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");
 });
 
+// Codex's DEFAULT sandbox mechanism is bubblewrap, which cannot start under the container's
+// `--cap-drop ALL` + no-new-privileges ("bwrap: Unexpected capabilities but not setuid") and fails
+// every command — read mode included, which made Read channels answer nothing at all. Landlock is
+// the mechanism that works under those caps, so every run that states a sandbox mode also states
+// the mechanism that can enforce it.
+test("a stated sandbox mode also states the mechanism that works inside the container", () => {
+  for (const options of [{ writable: false }, { writable: true }, { writable: false, isNewSession: false }, { writable: true, isNewSession: false }]) {
+    const args = argsFor({ ...options, clean: false });
+    assert.ok(cfgValues(args).includes("features.use_legacy_landlock=true"),
+      `bubblewrap cannot start in the container: ${JSON.stringify(options)} must pick Landlock`);
+  }
+});
+
+test("the admin bypass has no sandbox, so it never picks a sandbox mechanism", () => {
+  for (const isNewSession of [true, false]) {
+    const args = argsFor({ dangerouslySkip: true, writable: true, isNewSession });
+    assert.ok(!cfgValues(args).some((value) => value.startsWith("features.use_legacy_landlock")),
+      "a bypassed run has no sandbox for a mechanism to enforce");
+  }
+});
+
 test("explicit admin bypass drops Codex's own sandbox entirely — the container is still the boundary", () => {
   const adminArgs = argsFor({ dangerouslySkip: true, writable: true });
   assert.ok(adminArgs.includes("--dangerously-bypass-approvals-and-sandbox"));

@@ -1239,6 +1239,10 @@ release, no egress cut-off — so the network entry has no container equivalent 
 
 ### In-thread commands & stop
 - [ ] `/context` shows tokens + % of the context window from the last turn.
+- [x] Unit: a configured 1M model keeps its 1,000,000 window even though the CLI echoes the plain id
+      back (`opus[1m]` → runtime `claude-opus-5`), including when the runtime reports the family's
+      standard 200k for it — `/context` and every footer percentage were measured against a window
+      five times too small (automated: `test/model-info.test.js`).
 - [ ] `/model` opens the runtime wizard: scope buttons (*This channel* / *Just this thread* — the
       thread button only appears when a thread is known), then harness buttons (*Claude* / *Codex* /
       *Use defaults*), then one **button per model** filtered to the chosen harness, then one
@@ -1288,6 +1292,14 @@ release, no egress cut-off — so the network entry has no container equivalent 
       containing the word) is NOT intercepted — it runs as a normal prompt.
 - [ ] Stop: a plain "stop" message and a 🛑 reaction each halt an in-flight run and post "🛑 Stopped.";
       `/stop` is rejected by Slack inside a thread (words/reactions are the in-thread path).
+- [ ] Stop is the end of the answer, on both engines: stop a run that is mid-answer and nothing more
+      than "🛑 Stopped." arrives — no full reply beneath the card, no chunked fallback. Whatever
+      text had already streamed stays put, ending in `🛑 _Stopped — partial answer._`.
+- [x] Unit: with answer deltas queued but not yet accepted by Slack (rate-limit back-pressure), a
+      stop creates NO answer message at all — the stop path's own chain drain must not flush the
+      buffered reply — and a finalize arriving after the stop delivers nothing by either surface;
+      partial text that did land is closed with the `Stopped — partial answer` marker and the answer
+      stream closes exactly once (automated: `test/slack-progress.test.js`).
 - [ ] Stopped-request replay: stopping request 1 in a thread does not create replay context; stopping
       request 2+ records only that stopped user request, then the next message in the same Slack
       thread consumes it once before the current message.
@@ -2354,6 +2366,15 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       helper commands with `CG_FS_ROOT`/`CG_WORKSPACE_DIR`/`CHANNELGATE_DIR`/`PATH` absent; its
       answer file and secret bundle live under the artifact mount, nothing names a path under the
       gateway root, and the bundle is deleted when the turn ends (automated).
+- [x] Unit: every isolated Codex turn that states a sandbox mode also states
+      `features.use_legacy_landlock=true` (fresh and resume, read and write posture), and an admin
+      bypass — which has no sandbox — states no mechanism. Codex's default bubblewrap cannot start
+      under the container's `--cap-drop ALL` + no-new-privileges and failed every command, which
+      left Read mode unable to read (automated: `test/codex-args.test.js`).
+- [ ] LIVE: in a Read-mode Codex channel inside a container, a read command (`ls`, `cat`) succeeds
+      and a write (`touch`) is refused with "Permission denied" — not `bwrap: Unexpected
+      capabilities but not setuid` on everything. Re-run after any Codex CLI bump: the Landlock
+      feature flag is deprecated-but-functional in the pinned version.
 - [x] Unit: the runner seam — a cold turn is spawned BY THE BACKEND with the contract spec
       (`stdio`, `detached`, `kind`, a `run-` id); a probe that THROWS is reported as a quiet event
       and never ends the turn; a definite `false` ends it and the kill goes back through the backend

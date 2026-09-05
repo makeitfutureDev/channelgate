@@ -57,6 +57,19 @@ test("modelLabel renders the 1M suffix from the governing model", () => {
   assert.equal(modelLabel(result), "Opus 4.8 1M");
 });
 
+test("a configured 1M model keeps its window even though the CLI reports the plain id", () => {
+  // The CLI does not echo the [1m] suffix back: an `opus[1m]` run reports `claude-opus-5`, and
+  // reading the window off the runtime id alone understated it fivefold (200k) in /context and
+  // every footer percentage.
+  assert.equal(contextWindowFor({ engine: "claude", model: "opus[1m]", raw: { model: "claude-opus-5" } }), 1_000_000);
+  // ...including when the runtime reports the family's standard window for that plain id.
+  assert.equal(contextWindowFor({
+    engine: "claude",
+    model: "opus[1m]",
+    raw: { model: "claude-opus-5", modelUsage: { "claude-opus-5": { contextWindow: 200_000 } } },
+  }), 1_000_000);
+});
+
 test("Codex turn.completed model drives cost estimates; the label shows the governing model", () => {
   const usage = { input_tokens: 1_000_000, output_tokens: 0 };
   const result = {

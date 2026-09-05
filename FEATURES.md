@@ -486,6 +486,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   ✋ `raised_hand`, `no_entry`, …) on any message in the thread; or the **`/stop` slash command** —
   which Slack does **not** allow inside threads, so words/reactions are the in-thread path. All post
   "🛑 Stopped." with a resume command. → TEST-PLAN: In-thread commands.
+- **A stopped run stops answering**, on either engine: "🛑 Stopped." is the last thing the thread
+  receives. Answer text still queued behind Slack's rate limiter is dropped rather than flushed by
+  the stop path (which used to create the answer message itself, lazily, and post the whole buffered
+  reply beneath the stop card), and the stop flag is re-read immediately before every delivery call
+  — the streamed finalize and the chunked fallback — so a stop landing during usage bookkeeping
+  still wins. Text that had already reached Slack stays, closed with a
+  `🛑 _Stopped — partial answer._` marker so a cut-off stream is never read as a finished answer.
+  → TEST-PLAN: In-thread commands.
 - Stopped-request replay: if a user stops a turn after the Slack thread already had a live session,
   the gateway stores only that stopped user request and prepends it once to the next turn in the same
   thread. This fills the missing request after a killed Codex turn while leaving first-message stops
@@ -1438,7 +1446,13 @@ are retired, bullet by bullet; everything else stands.
   workspace scan, the channel listing and the toolchain/credential carve-outs that only existed to
   build it are skipped; Codex states `--sandbox danger-full-access` for write modes and `read-only`
   in read mode (as the `sandbox_mode=` config twin on resume, where the flag is rejected), with no
-  permission profiles, no `network_proxy` compilation and no `sqlite_home`. Everything that is
+  permission profiles, no `network_proxy` compilation and no `sqlite_home`. A stated mode also
+  states the MECHANISM that can enforce it in here — `features.use_legacy_landlock=true`: Codex's
+  default is bubblewrap, which cannot start under `--cap-drop ALL` + no-new-privileges
+  (`bwrap: Unexpected capabilities but not setuid`) and failed every command, so Read mode could not
+  even read; Landlock gives the same posture in-container (reads succeed, writes get "Permission
+  denied"). The flag is deprecated-but-functional in the pinned CLI (`containers/versions.json`) and
+  is re-checked on every Codex bump; the admin bypass has no sandbox and states no mechanism. Everything that is
   POLICY rather than confinement is unchanged on both backends: `permissions.allow`, the mode →
   tool/approval mapping, `disableBypassPermissionsMode`, `autoMemoryEnabled`/`autoDreamEnabled` off,
   the MCP allowlist, `--ignore-user-config`, and the admin-only bypass. The Stop hook and every
@@ -2018,7 +2032,11 @@ are retired, bullet by bullet; everything else stands.
 ## Observability
 - Live streaming feedback in Slack + a width-conscious stats footer per reply:
   `Opus 4.8 1M · 14.4s · 34.8k/214 · $0.15 · 17%` (model · duration · tokens in/out compacted ·
-  cost at 2 decimals · context% against the MODEL's own window — 1M variants use 1,000,000,
+  cost at 2 decimals · context% against the MODEL's own window — 1M variants use 1,000,000
+  (read from the CONFIGURED model as well as the runtime one, and ahead of any runtime-reported
+  window: the CLI does not echo the suffix back, reporting an `opus[1m]` run as plain
+  `claude-opus-5` with the family's standard 200k, which measured a 1M run against a window five
+  times too small),
   other Claude models 200k, Codex prefers the rollout's runtime-reported usable window (with the
   engine declaration as fallback), unknown models fall back to Settings →
   contextWindow; no icons/unit labels). The 💻 Resume button sits on the same row (section

@@ -95,13 +95,17 @@ export function modelLabel(result = {}) {
 // Context window for the model a run actually used, not the global settings constant.
 export function contextWindowFor(result = {}) {
   const raw = resolveCurrentModel(result);
+  // The [1m] suffix names a CONFIGURED variant the CLI does not echo back (an `opus[1m]` run
+  // reports plain `claude-opus-5`), so it is checked against the configured model as well as the
+  // runtime one, and BEFORE the runtime windows below — those report the family's standard 200k
+  // for a 1M run and would otherwise understate the window fivefold.
+  if (/\[1m\]/i.test(raw) || /\[1m\]/i.test(String(result.model || ""))) return 1_000_000;
   const runtimeWindow = modelUsageContextWindow(result.raw, raw);
   if (runtimeWindow) return runtimeWindow;
   const requestWindow = Array.isArray(result.usageRequests)
     ? Number(result.usageRequests.findLast((request) => Number(request?.contextWindow) > 0)?.contextWindow)
     : 0;
   if (requestWindow > 0) return requestWindow;
-  if (/\[1m\]/i.test(raw)) return 1_000_000;
   if (/opus|sonnet|haiku|fable|claude/i.test(raw)) return 200_000;
   // Fall back to the engine's own declared window rather than assuming Claude's.
   if (/gpt-|codex/i.test(raw)) return 272_000;

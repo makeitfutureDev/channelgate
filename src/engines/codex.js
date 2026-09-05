@@ -415,6 +415,16 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     const sandbox = writable ? "danger-full-access" : "read-only";
     if (resuming) args.push("-c", `sandbox_mode=${tomlString(sandbox)}`);
     else args.push("--sandbox", sandbox);
+    // The sandbox also has to be a MECHANISM that can start in here. Codex's default is
+    // bubblewrap, which refuses under the container's `--cap-drop ALL` + no-new-privileges
+    // ("bwrap: Unexpected capabilities but not setuid") and fails EVERY command — which left Read
+    // mode inoperative, reads included. Landlock is the mechanism that works under those caps:
+    // reads succeed, writes get "Permission denied". Codex runs only inside a container (asserted
+    // above), so this is unconditional wherever Codex's own sandbox is in use — never on the admin
+    // bypass, which has no sandbox to pick a mechanism for. `use_legacy_landlock` is
+    // DEPRECATED-but-functional in the pinned CLI (containers/versions.json): re-check it on every
+    // Codex CLI bump.
+    args.push("-c", "features.use_legacy_landlock=true");
   }
 
   // Optional host/runtime MCP policy. OpenAI injects `codex_apps` AFTER config parsing, so treating
