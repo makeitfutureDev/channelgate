@@ -159,6 +159,21 @@ product overview.
   stop can never drift apart. Nothing outside the run can be in either set: the leader is its own
   session leader and a detached background job is a separate leader with its own session. Image
   spec 1.2.1 — `npm run build:image` (an update rebuilds it).
+- **Connection inventory no longer starts connections, and an ambiguous account is no longer
+  guessed.** Both bundled skills told the agent to confirm a toolkit through
+  `COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"`. That call is not side-effect-free: on a
+  toolkit with no connection on the selected identity it CREATES a pending authorization request
+  and answers "All connections have been initiated and are pending completion"
+  (`status: "initiated"`), so a plain "what is connected?" question left pending auth requests
+  behind on both identities. The side-effect-free existence check is now the identity's own
+  `COMPOSIO_SEARCH_TOOLS` — `toolkit_connection_statuses[].has_active_connection` plus the entry's
+  `accounts[]` aliases — and `COMPOSIO_MANAGE_CONNECTIONS` is reserved for a toolkit already known
+  to be connected there or for a connection the user asked for. In the same pass, the ambiguous
+  identity rule became a MUST with its reason stated: when neither a pronoun nor a single
+  connection settles the account, the first response is the question and never a tool call, because
+  reading a calendar, inbox, chat or CRM on a guess exposes the requester's or a third party's
+  private data to the whole conversation — a bare "check the calendar" had gone straight to a
+  personal calendar read.
 - **Fresh installs get their first-boot admin password again.** `npm run setup` answers the
   voice-transcription question before the daemon has ever booted and saves it through the settings
   writer, so a brand-new install already had a `settings.json` at first boot — and the first-boot

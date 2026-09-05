@@ -8,9 +8,27 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 - [x] Automated: both bundled skills define `composio-user` as the active requester's personal
       identity and `composio-agent` as the shared agent identity; recognize hyphenated and
       underscore-normalized callable prefixes; select named accounts by alias; ask when Gmail or
-      another app exists on both identities; inspect `toolkit_connection_statuses`; confirm through
-      `COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"`; and prohibit silent fallback or starting
-      connections during inventory (`test/composio-guide.test.js`, `test/channelgate-skill.test.js`).
+      another app exists on both identities; read
+      `toolkit_connection_statuses[].has_active_connection` with the entry's `accounts[]` aliases;
+      and prohibit silent fallback or starting connections during inventory
+      (`test/composio-guide.test.js`, `test/channelgate-skill.test.js`).
+- [x] Automated: no bundled-skill file routes discovery or inventory through
+      `COMPOSIO_MANAGE_CONNECTIONS` with `action: "list"` — a negative assertion over every
+      `gateway-usage` file and the ChannelGate skill — and every remaining mention states that the
+      call CREATES a pending authorization (`status: "initiated"`) on a toolkit with no connection
+      on that identity (`test/composio-guide.test.js`, `test/channelgate-skill.test.js`).
+- [x] Automated: the ambiguous-identity rule is a MUST in both bundled skills — the first response
+      is the question and never a tool call, with the privacy reason (the requester's or a third
+      party's personal data) stated (`test/composio-guide.test.js`,
+      `test/channelgate-skill.test.js`).
+- [ ] Live Claude (CO-04 regression): with a toolkit that is NOT connected on the chosen identity,
+      ask “what is connected on my Composio?”. Pass when the inventory comes from
+      `COMPOSIO_SEARCH_TOOLS` alone and no toolkit is left `status: "initiated"` afterwards
+      (previously `airtable` on the personal identity and `googlecalendar` on the agent identity
+      were both initiated by the inventory itself).
+- [ ] Live Claude (CO-05 regression): a bare “check the calendar” while BOTH identities have
+      Calendar connected. Pass when the whole reply is the “which account?” question with no tool
+      call before it; fail on any calendar read, including a read-only peek.
 - [ ] Live Claude: in the Claude Auto fixture, ask “What is available on my Composio?” and then
       ask “Check Gmail” while Gmail exists on both identities. Pass when the first answer inspects
       `composio-user`, reports active aliases, and does not claim the normalized personal tools are
