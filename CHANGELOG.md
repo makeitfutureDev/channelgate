@@ -170,6 +170,18 @@ product overview.
   new paragraph; deltas inside one streamed item are still concatenated untouched (the break marks
   a boundary, it does not reformat prose), and the authoritative final message read from Codex's
   `-o` file is unchanged.
+- **A skill's dependencies are no longer stored as grants of their own.** Granting a skill through
+  the chat verbs, the admin API or a newly authored skill wrote the RESOLVED `requires:` closure
+  into the tier's stored grant list, so the dependency reported as a direct channel (or personal,
+  or organization) grant instead of *required by* its parent, showed up checked in the
+  conversation's skill list, and stayed behind as an orphan grant when the parent was revoked. A
+  grant list now holds only what was explicitly granted; dependencies keep being resolved at every
+  materialization and in every effective profile, so nothing that used to load stops loading, the
+  skills and usage views attribute them to the skill that requires them, and revoking a parent
+  takes its dependencies with it. Granting a dependency by name is still an ordinary grant that
+  outlives its parent. The grant surfaces now report the dependencies a grant pulls in, and a
+  revoke of something that is only a dependency says which skill keeps it active instead of
+  claiming a removal that changed nothing.
 - **Stopping a turn now stops everything the turn started.** A container run was signalled by
   process GROUP, and Claude Code's Bash tool puts its shell in a session and a process group of its
   own — so `kill -- -<leader>` reported success, the tool's shell survived, and a loop it was

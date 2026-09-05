@@ -2693,11 +2693,20 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       (path, target or shell command) as inferred, dedupes per run, `toolTarget("Skill")` names the
       skill, and the report lists never-used grants, off-catalog names and per-conversation rollups
       (`test/skills-platform.test.js`).
-- [x] Integration: authoring creates a local skill granted with its dependencies, refuses an
+- [x] Integration: authoring creates a local skill granted here, refuses an
       existing slug, merges partial files on update, refuses in-place edits of source-owned skills,
       files proposals, approves a change into a pinned override that survives the next source
       revision, rejects with a note, promotes organization-wide, and revokes by name or slug
       (`test/skills-platform.test.js`).
+- [x] Integration: a grant stores only what was granted — a `requires:` dependency is reported to
+      the caller but never written into `channel_meta.skills`, a user's tier or the organization
+      tier (chat verbs, admin API `/skills/profile/:channel/grant`, and a newly authored skill's
+      automatic grant); the profile and the usage report still attribute it as `via: "dependency"`
+      / `requiredBy`, materialization still writes it, revoking a dependency reports the skill that
+      keeps it active instead of a removal, revoking the parent takes the dependency with it
+      (folder pruned, nothing stranded), and a dependency granted explicitly outlives its parent
+      (`test/skills-platform.test.js`, `test/skills-standalone.test.js`,
+      `test/skills-admin-api.test.js`).
 - [x] Admin API: catalog create/read/file/update/pin/remove/restore, path rejection (400), a folder
       source imported in review mode → staged → approved, source validation/duplicates (400/409),
       mode/enable updates, removal tombstoning, template preview/apply, grant/revoke per

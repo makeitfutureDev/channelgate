@@ -104,7 +104,10 @@ export function withTemplateSkills(meta) {
 }
 
 // What assigning `templateKey` to a conversation would give it: the template's skills plus the
-// conversation's own additions, with dependencies, against its current effective tier.
+// conversation's own additions, with dependencies, against its current effective tier. `names` is
+// the RESOLVED profile (dependencies included) because that is what the conversation would end up
+// running; nothing here is ever stored — assigning writes only the template slug, and the
+// conversation's own grant list keeps holding explicit grants only.
 export function previewTemplate(templateKey, meta = {}, { additions = null } = {}) {
   const template = templateKey ? getTemplate(templateKey) : null;
   if (templateKey && !template) return null;

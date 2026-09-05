@@ -170,7 +170,10 @@ test("templates: preview and assign to a conversation, grant/revoke, profile and
   assert.equal(typeof profile.json.profile.contextTokens, "number");
 
   const granted = await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["Tpl Sales Skill"] } });
-  assert.deepEqual(granted.json.added, ["tpl-sales-skill", "tpl-dep"], "an addition is stored on the conversation even when the template already provides it");
+  assert.deepEqual(granted.json.added, ["tpl-sales-skill"], "an addition is stored on the conversation even when the template already provides it");
+  assert.deepEqual(granted.json.dependencies, [{ slug: "tpl-dep", requiredBy: ["tpl-sales-skill"] }], "the dependency is reported, never stored as a channel grant");
+  assert.deepEqual((await getChannelMeta(entry.slug)).skills, ["tpl-sales-skill"]);
+  assert.equal((await request(`/skills/profile/${entry.slug}`)).json.profile.active.find((e) => e.slug === "tpl-dep").via, "dependency", "and it still reports as required by its parent");
   const revoked = await request(`/skills/profile/${entry.slug}/revoke`, { method: "POST", body: { slugs: ["tpl-sales-skill"] } });
   assert.deepEqual(revoked.json.removed, ["tpl-sales-skill"]);
   assert.ok((await request(`/skills/profile/${entry.slug}`)).json.profile.active.some((e) => e.slug === "tpl-sales-skill"), "still active through the template");
