@@ -716,13 +716,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         const sessionId = (await getSessionMap(entry.slug).catch(() => ({})))[threadKey] || "";
         const threadEngine =
           (await getThreadEngine(entry.slug, threadKey).catch(() => "")) || (await getSessionEngine(entry.slug, threadKey).catch(() => "")) || getEngine();
+        // WHERE the channel runs decides both halves of `/resume`: which line to print, and where
+        // to look for a pasted id. A session minted inside the channel's container cannot be
+        // reopened by a bare CLI on the host, and its transcript is not in the daemon's engine dirs
+        // either. A resolve failure must not swallow either half — both fall back to the host form.
+        let runtimeTarget = null;
+        try { runtimeTarget = resolveRuntime(entry.slug, meta); } catch { /* fall back to the host form */ }
         if (!sc.arg) {
-          // WHERE the session lives decides what the printed line is: a session minted inside an
-          // isolated runtime cannot be reopened by a bare CLI on the host, so the backend supplies
-          // the form that does reopen it. A resolve failure must not swallow the command — the
-          // host form is still the right answer for every host channel.
-          let runtimeTarget = null;
-          try { runtimeTarget = resolveRuntime(entry.slug, meta); } catch { /* fall back to the host form */ }
           const cmd = buildResumeCommand(workDir, sessionId, threadEngine, runtimeTarget);
           await reply(
             cmd
@@ -744,7 +744,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           await reply("This thread is running `/clean`, so it can only continue a session built the same way. Send `/clean off` first if you want to adopt an existing session here.");
           return;
         }
-        const plan = await planSessionAdoption({ arg: sc.arg, slug: entry.slug, threadKey, workDir, threadEngine, currentSessionId: sessionId });
+        const plan = await planSessionAdoption({ arg: sc.arg, slug: entry.slug, threadKey, workDir, threadEngine, currentSessionId: sessionId, target: runtimeTarget, log: console.log });
         if (!plan.ok) {
           await reply(plan.message);
           return;

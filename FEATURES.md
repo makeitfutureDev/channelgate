@@ -453,10 +453,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   thread adopts the existing local session, so a conversation started in a terminal on the gateway
   machine (or left behind by a cleared thread) continues in Slack. Accepts the full pasted command,
   the bare engine invocation, or a bare id, surviving Slack's `&amp;&amp;` escaping, smart quotes,
-  and backticks. **Same-channel only:** the transcript's own recorded `cwd` — never the pasted
-  `cd` — must be this channel's effective work dir, so a session from another channel's folder is
-  refused with a pointer to the channel that owns it; an id already bound to another thread is
-  refused too (one session, one thread). Unknown ids are refused rather than bound blindly, the
+  and backticks. **Runtime-aware lookup:** a containerized thread's transcripts live in the
+  channel's own HOME volume, so the id is looked for in the stores this channel can actually reach,
+  cheapest first — the daemon's engine dirs (a legacy, pre-container session), the volume read
+  straight off the host where it is traversable, and otherwise the channel's container itself,
+  asked through the runtime's read-only `inspectState` (one `sh -c` that globs the layout and
+  returns each match's mtime and opening records; nothing is copied out). Whichever store answers,
+  the same rule decides. **Same-channel only:** the transcript's own recorded `cwd` — never the
+  pasted `cd` — must be this channel's effective work dir, so a session from another channel's
+  folder is refused with a pointer to the channel that owns it; an id already bound to another
+  thread is refused too (one session, one thread). Unknown ids are refused rather than bound
+  blindly — naming the harness the PASTED command named (a `claude --resume` line pasted into a
+  Codex thread is not a missing "Codex session") and saying where the gateway looked — the
   thread is pinned to the harness that minted the id, the warm pool entry for the replaced session
   is evicted, and the adoption is audit-logged as `session_adopted`),
   `/pending` (alias `/followups`; the bare words `pending` / `my followups` work too, exact-match
@@ -1550,6 +1558,9 @@ are retired, bullet by bullet; everything else stands.
   fact (`copyIn`/`copyOut`, optional contract methods): the daemon cannot touch a HOME volume, so
   the container half stages through the bind-mounted artifact dir and runs ONE `sh -c` inside — and
   a file that container stages outside the requested state dirs is refused, never written. The
+  read-only twin `inspectState` answers the same boundary problem for a LOOK rather than a move —
+  `/resume` adoption asking "is this session in this channel, and where was it started?" — with one
+  `sh -c` that globs the layout and returns each match's mtime plus its capped opening lines. The
   session row is re-stamped the moment a carry succeeds, so it always names the side holding the
   newest copy and the next turn can never carry a stale copy back over it. Every failure is one log
   line and the turn continues: the heal is still the safety net, it is just no longer the first

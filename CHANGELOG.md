@@ -195,6 +195,21 @@ product overview.
   and the window was read off the runtime id alone — so a 1M run was measured against 200,000, five
   times too small, inflating every context percentage by the same factor. The suffix is now read
   from the configured model as well as the runtime one, and ahead of any runtime-reported window.
+- **`/resume <command or id>` can adopt a session again.** Under the container runtime a thread's
+  engine transcripts live in the channel's own HOME volume, but the lookup behind `/resume` only
+  ever searched the daemon's own state dirs — so pasting back the very command `/resume` had just
+  printed was answered with "I can't find … on the gateway machine", and no channel had ever
+  adopted a session. The lookup is now runtime-aware: it walks the stores this channel can actually
+  reach, cheapest first — the daemon's engine dirs (a legacy, pre-container session), the HOME
+  volume read straight off the host where that is traversable, and otherwise the container itself
+  through a new read-only runtime method, `inspectState` (one `sh -c` that globs the engine's
+  layout and returns each match's mtime and capped opening lines; nothing is copied out, and the
+  volume is never mounted). Rootless Podman is why the last step exists: it owns the volume's own
+  directory as the mapped sub-uid with mode 0700, so the daemon cannot traverse into it even though
+  the transcripts inside belong to its uid. The same-channel rule is unchanged and still decides on
+  the cwd the transcript itself recorded. A refusal now also names the harness the PASTED command
+  named rather than the thread's (a `claude --resume` line pasted into a Codex thread was reported
+  as a missing "Codex session") and says where the gateway looked.
 - **Fresh installs get their first-boot admin password again.** `npm run setup` answers the
   voice-transcription question before the daemon has ever booted and saves it through the settings
   writer, so a brand-new install already had a `settings.json` at first boot — and the first-boot
