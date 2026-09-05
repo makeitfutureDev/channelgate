@@ -18,6 +18,7 @@ resume="no"
 mcp="no"
 cancel="no"
 fail="no"
+two_segments="no"
 transient_times=0
 transient_after_tool="no"
 reject_model="no"
@@ -42,6 +43,7 @@ for arg in "$@"; do
     *'domains = { "api.github.com" = "allow" }'*) network_domain="yes" ;;
     *CODEX_STUB_WAIT_FOR_CANCEL*) cancel="yes" ;;
     *CODEX_STUB_FAIL_GENERIC*) fail="yes" ;;
+    *CODEX_STUB_TWO_SEGMENTS*) two_segments="yes" ;;
     *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
     *CODEX_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
     *CODEX_STUB_TRANSIENT_AFTER_TOOL*) transient_after_tool="yes" ;;
@@ -81,6 +83,17 @@ if [ "$stall_401" = "yes" ]; then
     printf '%s\n' 'stream error: unexpected status 401 Unauthorized; retrying 1/5 in 200ms' >&2
     sleep 0.1
   done
+fi
+# Two consecutive assistant message items: a stage narration, then the answer. Codex sends each as
+# its own completed item, and streaming their texts back to back is what used to glue the last word
+# of one to the first word of the next ("…isolates conversations.ChannelGate isolates…").
+if [ "$two_segments" = "yes" ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-segments"}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Each channel runs in its own container, which isolates conversations."}}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"ChannelGate isolates each Slack channel in its own folder."}}'
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":9,"output_tokens":3}}'
+  printf '%s\n' 'ChannelGate isolates each Slack channel in its own folder.' > "$out"
+  exit 0
 fi
 if [ "$fail" = "yes" ]; then
   printf '%s\n' 'stub failure detail' >&2

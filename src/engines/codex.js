@@ -190,9 +190,17 @@ export function codexTurnError(event) {
   };
 }
 
+// Item type as a comparison key. Codex writes the same item under two spellings depending on the
+// stream: the `codex exec --json` schema is snake_case (`collab_tool_call`), the session/app-server
+// stream is PascalCase (`CollabAgentToolCall`). Folding both to letters means one branch covers the
+// item wherever it came from.
+function codexItemKey(value) {
+  return String(value || "").replace(/[._\s-]/g, "").toLowerCase();
+}
+
 function codexItemMayExecuteTool(item = {}) {
-  const type = String(item.type || "").replace(/[_\s-]/g, "").toLowerCase();
-  return ["mcptoolcall", "commandexecution", "filechange", "websearch", "collabtoolcall"].includes(type);
+  const type = codexItemKey(item.type);
+  return ["mcptoolcall", "commandexecution", "filechange", "websearch", "collabtoolcall", "collabagenttoolcall"].includes(type);
 }
 
 function codexMcpToolName(item = {}) {
@@ -250,25 +258,100 @@ function codexAgentEvent(payload, { spawnCompleted = false, id: idOverride = "",
   };
 }
 
+// Collab tool names: the model calls `spawn_agent`/`wait_agent`/`send_input`/`close_agent`, the
+// exec JSON item reports `tool: "wait"` for the waiting family (Wait and ResumeAgent both map to
+// it). One canonical name per family keeps the branches — and the rendered row — stable.
+const COLLAB_TOOL_NAMES = {
+  spawn_agent: "spawn_agent",
+  spawn: "spawn_agent",
+  send_input: "send_input",
+  wait: "wait_agent",
+  wait_agent: "wait_agent",
+  resume_agent: "wait_agent",
+  close_agent: "close_agent",
+};
+
+function codexCollabTool(value) {
+  const raw = String(value || "").replace(/-/g, "_").toLowerCase();
+  return COLLAB_TOOL_NAMES[raw] || raw;
+}
+
+// The arguments of a collaboration function call arrive as a JSON STRING (`{"task_name":"…"}`);
+// a structured stream may hand over the object itself. Never throw on either.
+function codexToolArguments(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+// A `SubAgentActivity` item — the shape Codex's session/app-server stream uses to announce a child
+// thread starting and finishing. The child's THREAD id is the identity that survives its whole
+// life; the item id differs between the start (the spawning call id) and the finish (a synthetic
+// `subagent-completed-…`), so both ride along as aliases and Slack merges them into one row.
+function codexSubAgentEvent(item) {
+  const threadId = String(item.agent_thread_id || item.agentThreadId || item.new_thread_id || item.newThreadId || "").trim();
+  const itemId = String(item.id || item.event_id || item.eventId || "").trim();
+  if (!threadId && !itemId) return null;
+  return codexAgentEvent(item, {
+    id: threadId || itemId,
+    aliasIds: [threadId, itemId, item.call_id, item.callId],
+    status: codexAgentStatus(item.kind ?? item.agent_status ?? item.agentStatus ?? item.status),
+  });
+}
+
+// Rows for the children of a collab tool call. Codex reports them in three different places
+// depending on the CLI version and the multi-agent mode, so all three are read here:
+//   · `agents_states` — one entry per child with its own status (multi-agent v1, and every
+//     version's spawn/send_input/close_agent items that carry state);
+//   · `receiver_agents` — the same children as objects (thread id + nickname/role);
+//   · `receiver_thread_ids` — bare ids, the last resort for identity.
+// Returning [] is meaningful: it says this item named no child at all (multi-agent v2 sends empty
+// `wait` items), and the caller then renders the coordination step itself rather than nothing.
 function codexCollabEvents(item, eventType) {
-  const tool = String(item.tool || item.name || "").replace(/-/g, "_").toLowerCase();
-  const receivers = item.receiver_thread_ids || item.receiverThreadIds || (
-    item.receiver_thread_id || item.receiverThreadId ? [item.receiver_thread_id || item.receiverThreadId] : []
-  );
+  const tool = codexCollabTool(item.tool || item.name);
+  const args = codexToolArguments(item.arguments);
+  const rawReceiverAgents = item.receiver_agents || item.receiverAgents;
+  const receiverAgents = Array.isArray(rawReceiverAgents) ? rawReceiverAgents : [];
+  const rawReceiverIds = item.receiver_thread_ids || item.receiverThreadIds;
+  // One id per child: the same thread is often listed both as a bare id and as a receiver agent.
+  const receivers = [...new Set([
+    ...(Array.isArray(rawReceiverIds) ? rawReceiverIds : []),
+    ...(item.receiver_thread_id || item.receiverThreadId ? [item.receiver_thread_id || item.receiverThreadId] : []),
+    ...receiverAgents.map((agent) => agent?.thread_id || agent?.threadId || ""),
+  ].filter(Boolean).map(String))];
+  // Nicknames belong to ONE child each — never to the whole item, or a two-child wait would label
+  // both rows with the first child's name.
+  const nicknames = new Map(receiverAgents
+    .map((agent) => [String(agent?.thread_id || agent?.threadId || ""), agent?.agent_nickname || agent?.nickname || agent?.agent_role || ""])
+    .filter(([threadId, nickname]) => threadId && nickname));
   const rawStates = item.agents_states || item.agentsStates || {};
   const states = rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)
     ? Object.entries(rawStates)
     : [];
   const toolFailed = codexAgentStatus(item.status, "") === "failed";
+  // The requested identity of the child, wherever this shape carries it.
+  const named = {
+    ...item,
+    ...(args.task_name || args.agent_type || args.name ? { task_name: args.task_name || args.agent_type || args.name } : {}),
+    ...(args.description ? { description: args.description } : {}),
+  };
+  const forChild = (threadId) => (nicknames.has(threadId) ? { ...named, agent_name: nicknames.get(threadId) } : named);
 
   if (tool === "spawn_agent") {
     const stateIds = states.map(([threadId]) => threadId);
     const aliases = [...receivers, ...stateIds];
     const state = states[0]?.[1];
     const status = toolFailed ? "failed" : codexAgentStatus(state?.status, "running");
+    // A spawn always deserves a row, even from a build that reports no child identity yet: the
+    // call id then holds the row until a later event supplies the thread id as an alias.
     const event = codexAgentEvent(
       {
-        ...item,
+        ...forChild(aliases[0]),
         ...(toolFailed && item.error?.message ? { message: item.error.message } : {}),
       },
       {
@@ -283,38 +366,117 @@ function codexCollabEvents(item, eventType) {
 
   // wait/send_input/close_agent can report several children in one item. Emit one sparse update
   // per child thread; Slack's alias map reconnects it to the original spawn row.
-  return states.map(([threadId, state]) => codexAgentEvent(
-    {
-      ...item,
-      message: ["failed", "errored", "not_found"].includes(String(state?.status || "").toLowerCase())
-        ? state?.message
-        : "",
-    },
-    { id: threadId, status: codexAgentStatus(state?.status) },
-  )).filter(Boolean);
+  if (states.length) {
+    return states.map(([threadId, state]) => codexAgentEvent(
+      {
+        ...forChild(threadId),
+        message: ["failed", "errored", "not_found"].includes(String(state?.status || "").toLowerCase())
+          ? state?.message
+          : "",
+      },
+      { id: threadId, status: codexAgentStatus(state?.status) },
+    )).filter(Boolean);
+  }
+  // No per-child state, but the children are still named: mark them running again (a wait that
+  // completed says nothing about which child finished, so status stays with the tool's own row).
+  if (eventType !== "item.completed" && receivers.length) {
+    return receivers.map((threadId) => codexAgentEvent(forChild(threadId), { id: threadId, status: "running" })).filter(Boolean);
+  }
+  return [];
 }
 
-export function progressFromCodexEvent(p) {
-  const item = p?.item || {};
-  const itemType = String(item.type || "");
-  const normalizedItemType = itemType.replace(/_/g, "").toLowerCase();
-  const payload = p?.payload || {};
-  const normalizedPayloadType = String(payload.type || "").replace(/_/g, "").toLowerCase();
+// The collab call itself, as a tool row. Multi-agent v2 reports `wait` items with no receivers and
+// no `agents_states` at all (the child lifecycle rides events `codex exec --json` does not
+// forward), so without this the card would say nothing while two subagents worked.
+function codexCollabToolEvent(item, completed) {
+  const name = codexCollabTool(item.tool || item.name) || "collab";
+  const id = String(item.id || "").trim();
+  if (!completed) return { event: { kind: "tool_use", ...(id ? { id } : {}), name } };
+  return {
+    event: {
+      kind: "tool_result",
+      ...(id ? { id } : {}),
+      name,
+      status: item.error ? "failed" : codexAgentStatus(item.status, "completed"),
+    },
+  };
+}
 
-  if (normalizedPayloadType === "subagentactivity") {
-    const event = codexAgentEvent(payload);
+// Per-run state for progressFromCodexEvent: which message item is currently writing, and the last
+// characters it wrote. Only the answer-segment separation needs it; every other mapping is pure.
+export function createCodexProgressState() {
+  return { messageItemId: "", messageTail: "" };
+}
+
+// Codex reports each assistant message as its OWN completed item — a stage narration, then the
+// answer — and the gateway streams their texts into one Slack message. Concatenating them verbatim
+// is what glued sentences together ("…isolates conversations.ChannelGate isolates each…"), so a
+// NEW message item opens a new paragraph. Deltas WITHIN one streamed item are never separated: the
+// break marks a boundary, it does not reformat prose. Callers that map a single event in isolation
+// pass no state and get the text unchanged.
+function codexMessageDelta(text, { state = null, itemId = "", complete = false } = {}) {
+  if (!state) return text;
+  const key = String(itemId || "");
+  const boundary = complete || !key || key !== state.messageItemId;
+  const wroteBefore = Boolean(state.messageTail);
+  state.messageItemId = complete ? "" : key;
+  let out = text;
+  if (wroteBefore && boundary) {
+    const gap = /\n\n$/.test(state.messageTail) ? "" : (/\n$/.test(state.messageTail) ? "\n" : "\n\n");
+    out = `${gap}${text.replace(/^\n+/, "")}`;
+  }
+  state.messageTail = `${state.messageTail}${out}`.slice(-2);
+  return out;
+}
+
+export function progressFromCodexEvent(p, state = null) {
+  const payload = p?.payload && typeof p.payload === "object" ? p.payload : {};
+  // Two envelopes carry the same items. `codex exec --json` puts the item next to an
+  // "item.started"/"item.completed" type at the top level; the session/app-server stream wraps an
+  // "item_completed" payload (and spells the item types in PascalCase). Read the item and its
+  // lifecycle from whichever envelope this line uses.
+  const item = (p?.item && typeof p.item === "object" ? p.item : null)
+    || (payload.item && typeof payload.item === "object" ? payload.item : null)
+    || {};
+  const itemType = String(item.type || "");
+  const normalizedItemType = codexItemKey(itemType);
+  const normalizedPayloadType = codexItemKey(payload.type);
+  const eventKey = codexItemKey(p?.item ? p?.type : (payload.item ? payload.type : p?.type));
+  const startedEvent = eventKey === "itemstarted";
+  const completedEvent = eventKey === "itemcompleted";
+
+  // A child thread starting or finishing. Codex announces this as a SubAgentActivity item — the
+  // only place a child's name and its completion appear when multi-agent v2 is in charge.
+  if (normalizedItemType === "subagentactivity" || (!itemType && normalizedPayloadType === "subagentactivity")) {
+    const event = codexSubAgentEvent(normalizedItemType === "subagentactivity" ? item : payload);
     return event ? { event } : null;
   }
 
-  if (normalizedItemType === "collabtoolcall") {
-    const events = codexCollabEvents(item, p?.type);
+  // A raw collaboration tool CALL. Streams that carry response items (rather than only the mapped
+  // thread items) report a spawn here, and the child's requested name rides in its arguments.
+  if (normalizedPayloadType === "functioncall" && String(payload.namespace || "").toLowerCase() === "collaboration") {
+    if (codexCollabTool(payload.name) !== "spawn_agent") return null;
+    const args = codexToolArguments(payload.arguments);
+    // Deliberately NOT payload.arguments.message: a spawn's message is an encrypted blob.
+    const event = codexAgentEvent(
+      { task_name: args.task_name || args.agent_type || "", description: args.description || "" },
+      { id: payload.call_id || payload.id, status: "running" },
+    );
+    return event ? { event } : null;
+  }
+
+  if (normalizedItemType === "collabtoolcall" || normalizedItemType === "collabagenttoolcall") {
+    const events = codexCollabEvents(item, completedEvent ? "item.completed" : "item.started");
     if (events.length === 1) return { event: events[0] };
     if (events.length > 1) return { events };
+    // The item named no child (multi-agent v2 sends empty `wait` items). Render the coordination
+    // step itself so the card is not silent while subagents work.
+    if (startedEvent || completedEvent) return codexCollabToolEvent(item, completedEvent);
     return null;
   }
 
-  if (p?.type === "item.started") {
-    if (itemType === "mcp_tool_call") {
+  if (startedEvent) {
+    if (normalizedItemType === "mcptoolcall") {
       const name = codexMcpToolName(item);
       if (isProgressReportTool(name)) {
         const event = normalizeProgressReport(item.arguments);
@@ -323,7 +485,7 @@ export function progressFromCodexEvent(p) {
       }
       return { event: { kind: "tool_use", ...(item.id ? { id: String(item.id) } : {}), name } };
     }
-    if (itemType === "command_execution") {
+    if (normalizedItemType === "commandexecution") {
       return {
         event: {
           kind: "tool_use",
@@ -334,8 +496,8 @@ export function progressFromCodexEvent(p) {
     }
     if (/reasoning|thinking/i.test(itemType)) return { event: { kind: "thinking" } };
   }
-  if (p?.type === "item.completed") {
-    if (itemType === "mcp_tool_call") {
+  if (completedEvent) {
+    if (normalizedItemType === "mcptoolcall") {
       const name = codexMcpToolName(item);
       if (isProgressReportTool(name)) return null;
       return {
@@ -347,7 +509,7 @@ export function progressFromCodexEvent(p) {
         },
       };
     }
-    if (itemType === "command_execution") {
+    if (normalizedItemType === "commandexecution") {
       return {
         event: {
           kind: "tool_result",
@@ -357,7 +519,9 @@ export function progressFromCodexEvent(p) {
         },
       };
     }
-    if (itemType === "agent_message" && typeof item.text === "string" && item.text) return { delta: item.text };
+    if (normalizedItemType === "agentmessage" && typeof item.text === "string" && item.text) {
+      return { delta: codexMessageDelta(item.text, { state, itemId: item.id, complete: true }) };
+    }
     if (/reasoning|thinking/i.test(itemType)) {
       // Completed reasoning items carry Codex's own summary text — surface its gist so the
       // status line says WHAT it was reasoning about, mirroring Claude's thinking summaries.
@@ -366,7 +530,11 @@ export function progressFromCodexEvent(p) {
     }
   }
   const t = p?.delta?.text ?? item.text ?? p?.text ?? "";
-  if (typeof t === "string" && t && /message|delta|agent/i.test(String(p?.type || ""))) return { delta: t };
+  if (typeof t === "string" && t && /message|delta|agent/i.test(String(p?.type || ""))) {
+    // A delta INSIDE one streamed message item: the item id (when the stream carries one) is what
+    // tells a continuation apart from the start of the next segment.
+    return { delta: codexMessageDelta(t, { state, itemId: item.id || p?.item_id || p?.itemId }) };
+  }
   return null;
 }
 
@@ -688,6 +856,9 @@ export async function runCodex({
     let stderr = "";
     let buffer = "";
     let deltaText = "";
+    // Per-run, because the only cross-event state a mapping needs is where the previous assistant
+    // message segment ended (see codexMessageDelta).
+    const progressState = createCodexProgressState();
     let resolvedSessionId = sessionId;
     let usage = null;
     let raw = null;
@@ -753,7 +924,7 @@ export async function runCodex({
           break;
         default: {
           // Best-effort live progress for Slack; final answer content still comes from outFile.
-          const progress = progressFromCodexEvent(p);
+          const progress = progressFromCodexEvent(p, progressState);
           if (progress?.delta) {
             deltaText = appendTail(deltaText, progress.delta, MAX_RETAINED); // fallback content only — outFile is authoritative
             onDelta?.(progress.delta);

@@ -101,3 +101,26 @@ test("the Codex runner takes the network switch as on/off and hands the process 
   // The host-sandbox tiers no longer exist: a caller that still names one is refused before spawn.
   await assert.rejects(turn("approved"), /Unknown Codex network mode/);
 });
+
+test("consecutive Codex message segments reach Slack as separate paragraphs", async () => {
+  // Codex reports each assistant message as its own completed item, and the native Slack stream
+  // shows exactly what the runner streamed — so without a boundary the reader gets
+  // "…isolates conversations.ChannelGate isolates each…" in one run-on paragraph.
+  const target = directTarget();
+  let streamed = "";
+  const result = await runCodex({
+    cwd: projectRoot,
+    prompt: "CODEX_STUB_TWO_SEGMENTS",
+    sessionId: "",
+    isNewSession: true,
+    clean: true,
+    timeoutMs: 10_000,
+    target,
+    artifactDir: target.artifactDir,
+    onDelta: (text) => { streamed += text; },
+  });
+
+  assert.match(streamed, /isolates conversations\.\n\nChannelGate isolates each Slack channel/);
+  // The authoritative final message (the -o file) is untouched by the boundary.
+  assert.equal(result.content, "ChannelGate isolates each Slack channel in its own folder.");
+});

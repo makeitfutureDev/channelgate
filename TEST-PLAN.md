@@ -662,6 +662,22 @@ shape is asserted, not reviewed by eye.
       spawn-call IDs to child-thread IDs, and do not treat spawn-tool completion as child
       completion (`test/progress-report.test.js`,
       `test/codex-args.test.js`).
+- [x] Unit: a real multi-agent Codex turn (CLI 0.152.0, multi-agent v2) maps to one card row per
+      child — the `collaboration` spawn call opens the row under its task name, the
+      `SubAgentActivity` start and finish merge into it through the child's thread id, an encrypted
+      spawn message never reaches a title, and the empty `wait` collab item renders the
+      coordination step instead of nothing; the `agents_states` path still drives per-child
+      spawn/update rows, and both the exec (`collab_tool_call`) and session (`CollabAgentToolCall`)
+      spellings are recognized (`test/codex-args.test.js`, `test/slack-progress.test.js`).
+- [x] Unit + stub e2e: two consecutive Codex `agent_message` items stream as separate paragraphs,
+      deltas inside one streamed item stay glued, a segment that already ends a paragraph is not
+      padded twice, mapping without a run state injects nothing, and the authoritative `-o` final
+      message is unchanged (`test/codex-args.test.js`,
+      `test/codex-message-to-reply-e2e.test.js`).
+- [ ] Live Codex: in a Codex channel, ask for work that spawns two subagents. Verify the card shows
+      the subagent/coordination rows for the whole wait instead of a silent card, and that the
+      answer's stage narration and final answer are separate paragraphs (no
+      "…sentence.NextSentence" glue).
 - [x] Unit: the native task card keeps two subagent rows `in_progress` concurrently, updates and
       completes them independently, formats available elapsed/token/tool metadata, shows
       failed/stopped warnings, terminalizes missing lifecycle events, drives the assistant shimmer
