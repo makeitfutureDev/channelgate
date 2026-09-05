@@ -229,16 +229,15 @@ test("Codex MCP entries in a container are composed from the runtime's helper co
     assert.equal(cfg(args, `mcp_servers.gateway.env.${key}=`), "", `${key} must not reach a container`);
   }
 
-  // The header-bearing remote bridge and the Composio SDK bridge are the image's too.
-  assert.equal(cfg(args, "mcp_servers.composio-user.command="), `mcp_servers.composio-user.command="/usr/local/bin/node"`);
-  assert.deepEqual(cfgJson(args, "mcp_servers.composio-user.args="), [
-    "/opt/channelgate/mcp/remote-secret-bridge.js",
-    bundle,
-    "composioUserToken",
-    "https://composio.example/mcp",
-    "x-consumer-api-key",
-    "",
-  ]);
+  // A header-bearing remote MCP is Codex's own HTTP client plus a per-run headers helper beside the
+  // bundle — no image bridge, because a stdio bridge could not start fast enough to be in the tool
+  // registry of a RESUMED turn. The Composio SDK bridge is still the image's.
+  assert.equal(cfg(args, "mcp_servers.composio-user.command="), "", "an http server has no command");
+  assert.equal(cfg(args, "mcp_servers.composio-user.url="), `mcp_servers.composio-user.url="https://composio.example/mcp"`);
+  assert.equal(
+    cfg(args, "mcp_servers.composio-user.http_headers_helper="),
+    `mcp_servers.composio-user.http_headers_helper="${target.artifactDir}/run/bundle-composio-user.headers.cjs"`,
+  );
   assert.deepEqual(cfgJson(args, "mcp_servers.composio-agent.args="), [
     "/opt/channelgate/mcp/composio-sdk-bridge.js",
     "https://backend.composio.dev/api/v3/tool_router/x/mcp",

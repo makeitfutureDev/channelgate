@@ -209,11 +209,17 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   turns (A2), untrusted API principals never qualify, non-admin authors keep the normal floor,
   and control-plane ("agent"-type) approvals still require a human click. The `/mode admin`
   confirmation spells the split out. → TEST-PLAN: Background jobs, Security checks.
-- Deterministic Codex MCP bridges: `mcp-remote` is a pinned dependency spawned via the local
-  install (npx cold-start fetches from the npm registry intermittently blew Codex's 10s MCP
-  startup window — observed as `composio-user` tools absent in background runs); bridged servers
-  get `startup_timeout_sec=120` (gateway control server 60) so slow first-initialize endpoints
-  are waited for, not dropped. → TEST-PLAN: Background jobs.
+- Deterministic Codex MCP startup: Codex does not block a turn while its MCP servers come up — it
+  takes whichever finished before it builds the first request, and a resumed turn reaches that
+  point far sooner than a fresh one. So every header-bearing remote MCP (both Composio identities,
+  the Toolbox, a channel's Make toolbox) is dialled by Codex itself over its native
+  streamable-HTTP transport rather than bridged to stdio, and its credential is produced at
+  startup by a per-run `http_headers_helper` script that reads the run's 0600 secret bundle — the
+  token never appears in Codex's argv or environment. Remote servers still get
+  `startup_timeout_sec=120` (gateway control server 60) as a ceiling on the handshake itself.
+  Before this, the `mcp-remote` bridge needed ~2.4 s to answer `tools/list` and made only the cold
+  window, so the SECOND turn of a Codex thread had no Composio tools at all.
+  → TEST-PLAN: Background jobs, MCP.
 - Resilient image/file attachments: every accepted Slack trigger is hydrated from the exact
   canonical root/reply before processing; `message` and `app_mention` delivery is deduplicated by
   message identity; direct, legacy, attachment, and file-block references are merged; incomplete

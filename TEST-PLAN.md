@@ -1162,6 +1162,14 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       `*.composio.dev` pattern in SDK mode) beside the `serverName` entries, and still does so when the
       channel picks a global server — Claude Code matches remote servers by URL once any `serverUrl`
       entry exists, which silently blocked Composio in #int-sales (2026-09-04). Clean mode stays empty.
+- [x] Unit: a resumed Codex run configures exactly the MCP servers a fresh one does — the
+      `mcp_servers.*` overrides of `exec resume <id>` and of a fresh `exec` are set-equal, and
+      `gateway`, both Composio identities and both toolboxes are present in the resumed argv
+      (WB-10: a warm Codex turn saw only the `gateway` family and lost Workbench).
+- [x] Unit: header-bearing remote MCP servers reach Codex over its native streamable-HTTP transport
+      (`url` + `http_headers_helper`), never through the `mcp-remote` stdio bridge, and the
+      generated per-run helper resolves its credential from the run's 0600 bundle — printing the
+      header on stdout, carrying no secret in its own source, and exiting 2 once the bundle is gone.
 - [x] Unit: Codex JSONL `item.started` / `item.completed` events for MCP tool calls, shell command
       executions, and agent messages map to Slack progress callbacks (`tool_use` events + text
       deltas), so streaming/status modes can render Codex tool activity.
