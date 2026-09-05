@@ -7,7 +7,7 @@
 // (`meta.skills`), so editing a template later reaches every conversation that follows it, and
 // "add this skill to the channel" always adds on top of the template. The organization and
 // personal tiers union in as before (access-grants.js).
-import { getTemplate, listTemplates, upsertTemplate, resolveTemplateSkills } from "./catalog.js";
+import { getTemplate, listTemplates, upsertTemplate, resolveTemplateSkills, listSkills } from "./catalog.js";
 import { withDependencies } from "./resolve.js";
 import { patchChannelMeta, listChannels } from "../../config/store.js";
 import { sanitizeSkillGrantNames } from "../access-grants.js";
@@ -66,16 +66,27 @@ export function templateOfMeta(meta) {
   return key ? getTemplate(key) : null;
 }
 
-// The conversation's own tier: the assigned template's CURRENT skills plus the skills added to
-// the conversation itself. This is what the grant union takes as the channel tier.
+// The skills that live in this channel's section of the skills repository
+// (channels/<channelId>/…, or a local skill created with that scope). Personal skills never
+// carry a scope, so the shared viewer is right here.
+export function channelScopedSkills(channelId) {
+  const id = typeof channelId === "string" ? channelId.trim() : "";
+  if (!id) return [];
+  return listSkills({ channelScope: id, viewer: "" }).map((s) => s.slug);
+}
+
+// The conversation's own tier: the assigned template's CURRENT skills, the skills in the
+// channel's own repository section, plus the skills added to the conversation itself. This is
+// what the grant union takes as the channel tier.
 export function channelSkillGrants(meta = {}) {
   const own = sanitizeSkillGrantNames(meta?.skills || []);
   const template = templateOfMeta(meta);
-  if (!template) return own;
-  const fromTemplate = resolveTemplateSkills(template).skills.map((s) => s.slug);
+  const scoped = channelScopedSkills(meta?.channelId);
+  if (!template && !scoped.length) return own;
+  const fromTemplate = template ? resolveTemplateSkills(template).skills.map((s) => s.slug) : [];
   const seen = new Set();
   const out = [];
-  for (const s of [...fromTemplate, ...own]) {
+  for (const s of [...fromTemplate, ...scoped, ...own]) {
     const k = s.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);
@@ -84,12 +95,11 @@ export function channelSkillGrants(meta = {}) {
   return out;
 }
 
-// A copy of the conversation meta whose `skills` is the full channel tier (template + own). Used
-// wherever a run or a report resolves grants from a stored meta.
+// A copy of the conversation meta whose `skills` is the full channel tier (template + section +
+// own). Used wherever a run or a report resolves grants from a stored meta.
 export function withTemplateSkills(meta) {
   if (!meta) return meta;
-  const template = templateOfMeta(meta);
-  if (!template) return meta;
+  if (!templateOfMeta(meta) && !channelScopedSkills(meta.channelId).length) return meta;
   return { ...meta, skills: channelSkillGrants(meta) };
 }
 

@@ -631,4 +631,17 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 18,
+    up(db) {
+      db.exec(`
+        -- Which section of the skills repository a skill belongs to (docs/SKILLS.md "Sections"):
+        -- '' = the shared library; otherwise the Slack channel id whose section
+        -- (channels/<channelId>/<slug>/) holds it. A source-owned skill follows its folder; a
+        -- locally authored one carries the scope it was created with. The channel tier includes
+        -- every skill scoped to that channel automatically.
+        ALTER TABLE skills ADD COLUMN channel_scope TEXT NOT NULL DEFAULT '';
+      `);
+    },
+  },
 ];

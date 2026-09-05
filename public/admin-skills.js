@@ -120,13 +120,19 @@ function renderSummary() {
   ].join("");
 }
 
+// "#channel" for a channel id (the section key), falling back to the id itself.
+function channelLabel(channelId) {
+  const ch = (state.profiles || []).find((c) => c.channelId === channelId);
+  return ch ? `#${ch.name || ch.slug}` : channelId;
+}
+
 function renderCatalog() {
   const skills = state.catalog?.skills || [];
   const cats = state.catalog?.categories || [];
   const owners = ["", "bundled", "local", "folder", "git"];
   const rows = skills.map((s) => `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
-      <td><code>${esc(s.slug)}</code>${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
+      <td><code>${esc(s.slug)}</code>${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
       <td class="desc">${esc(s.description)}</td>
       <td>${esc(s.category || "—")}</td>
       <td><span class="muted">${esc(ownerLabel(s))}</span></td>
@@ -205,6 +211,10 @@ function renderDetail() {
         <span class="skills-inline">Grant to
           <select id="grant-channel">${channels.map((c) => `<option value="${esc(c.slug)}">${esc(c.name || c.slug)}${c.skills.includes(s.slug) ? " ✓" : ""}</option>`).join("")}</select>
           <button type="button" class="ghost" data-action="grant">Grant</button>
+        </span>
+        <span class="skills-inline" title="Library = shared with every conversation; a channel section = that customer/project only, granted there automatically">Section
+          <select id="scope-channel"><option value=""${s.channelScope ? "" : " selected"}>Shared library</option>${channels.filter((c) => c.channelId && !c.isDM).map((c) => `<option value="${esc(c.channelId)}"${c.channelId === s.channelScope ? " selected" : ""}>#${esc(c.name || c.slug)}</option>`).join("")}</select>
+          <button type="button" class="ghost" data-action="set-scope">Move</button>
         </span>
         ${s.ownerKind === "local" ? `<button type="button" class="ghost" data-action="toggle-visibility">${s.visibility === "personal" ? "Make organization skill" : "Make personal (author only)"}</button>` : ""}
         ${(state.overview?.orgSkills || []).some((x) => x.toLowerCase() === s.slug.toLowerCase()) ? `<button type="button" class="ghost" data-action="org-revoke">Remove organization-wide grant</button>` : `<button type="button" class="ghost" data-action="org-grant">Grant organization-wide</button>`}
@@ -596,6 +606,15 @@ async function act(action, el) {
       await withStatus(() => api(`/api/skills/tokens/${id}`, { method: "DELETE" }), "Token deleted.");
       await refreshAll();
       break;
+    case "set-scope": {
+      const channelId = document.getElementById("scope-channel")?.value || "";
+      const label = channelId ? `the ${channelLabel(channelId)} section` : "the shared library";
+      if (await confirmDialog({ title: `Move ${state.selected} to ${label}?`, body: channelId ? "Only that channel gets it automatically; other conversations keep any explicit grant. The files move in the skills repository." : "Every conversation can use it; the channel it leaves keeps it as an explicit grant. The files move in the skills repository.", confirmLabel: "Move" })) {
+        await withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(state.selected)}/scope`, { method: "POST", body: JSON.stringify({ channelId }) }), `Moved ${state.selected} to ${label}.`);
+        await refreshAll();
+      }
+      break;
+    }
     case "toggle-visibility": {
       const next = state.detail?.skill?.visibility === "personal" ? "org" : "personal";
       await withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(state.selected)}/visibility`, { method: "POST", body: JSON.stringify({ visibility: next }) }), next === "personal" ? "Now a personal skill (author only)." : "Now an organization skill.");

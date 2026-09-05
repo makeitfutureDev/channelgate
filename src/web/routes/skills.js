@@ -37,9 +37,9 @@ import {
 } from "../../gateway/skills/catalog.js";
 import { fileToApi, SkillFileError } from "../../gateway/skills/files.js";
 import { resolveSkillProfile } from "../../gateway/skills/resolve.js";
-import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, templateSummary, templateAssignments, withTemplateSkills, templateOfMeta } from "../../gateway/skills/templates.js";
+import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, templateSummary, templateAssignments, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
-import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, revokeSkillsFromOrg } from "../../gateway/skills/authoring.js";
+import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, revokeSkillsFromOrg, moveSkillScope } from "../../gateway/skills/authoring.js";
 import { importHostSkillFolders } from "../../gateway/skills/import-folder.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
 import { publishRevision, publishTarget, publishSource } from "../../gateway/skills/publish.js";
@@ -170,6 +170,14 @@ export function createSkillsRouter() {
     const visibility = String(req.body?.visibility || "");
     if (!VISIBILITIES.includes(visibility)) return res.status(400).json({ error: `visibility must be one of ${VISIBILITIES.join(", ")}` });
     res.json({ ok: true, skill: skillToApi(setSkillVisibility(req.params.slug, visibility)) });
+  }));
+
+  // Move between the shared library and a channel's section: { channelId } ('' = library).
+  router.post("/skills/catalog/:slug/scope", guard(async (req, res) => {
+    const skill = getSkill(req.params.slug);
+    if (!skill) return res.status(404).json({ error: "skill not found" });
+    const r = await moveSkillScope({ slug: skill.slug, channelId: String(req.body?.channelId || ""), actor: ADMIN_UI });
+    res.json({ ok: true, moved: r.moved, repo: r.repo, kept: r.kept, skill: skillToApi(r.skill) });
   }));
 
   router.post("/skills/catalog/:slug/publish", guard(async (req, res) => {
@@ -334,7 +342,7 @@ export function createSkillsRouter() {
     for (const ch of await listChannels()) {
       const grants = ch.meta ? resolveAccessGrants({ organization: getOrgAccessGrants(), channel: withTemplateSkills(ch.meta) }) : { skills: [] };
       const profile = resolveSkillProfile(grants.skills, { warnTokens: getSkillsContextWarnTokens() });
-      out.push({ slug: ch.slug, name: ch.name, platform: ch.platform, isDM: ch.isDM, skillTemplate: ch.meta?.skillTemplate || "", own: ch.meta?.skills || [], skills: profile.slugs, contextTokens: profile.contextTokens, warnings: profile.warnings.length, warningMessages: profile.warnings });
+      out.push({ slug: ch.slug, name: ch.name, platform: ch.platform, isDM: ch.isDM, skillTemplate: ch.meta?.skillTemplate || "", own: ch.meta?.skills || [], channelId: ch.channelId || "", section: channelScopedSkills(ch.channelId), skills: profile.slugs, contextTokens: profile.contextTokens, warnings: profile.warnings.length, warningMessages: profile.warnings });
     }
     res.json({ profiles: out });
   }));

@@ -1795,6 +1795,14 @@ are retired, bullet by bullet; everything else stands.
   **tombstone** (revisions kept, dependents readable, a returning source restores it); an admin's
   removal is a sticky **exclusion** (`excluded_at`) that no sync or import undoes until restored.
   → TEST-PLAN: Skills platform (Core).
+- **Repository sections (`channel_scope`)**: the skills repository is one shared library plus
+  `channels/<channel id>/<slug>/` per channel; a skill in a channel's section is in that channel's
+  tier automatically (`channelSkillGrants` = template ∪ section ∪ own), derived from the synced
+  path or the scope a local skill was created with. `create_skill` defaults to the library and
+  takes `scope: "channel"` for customer-specific skills (the agent asks first); `set_skill_scope`,
+  the admin *Section* control and `POST /api/skills/catalog/:slug/scope` move a skill either way —
+  files move in the repository (`moveSkillFiles`), promotion leaves the channel an explicit grant.
+  → TEST-PLAN: Skills platform (round two).
 - **Channel profiles without tokens.** The existing organization → conversation → user grant union
   resolves against the catalog on every message (`resolve.js`): `requires:` dependencies are
   granted with a skill, missing links, tombstones, staged (unapproved) skills, dependency cycles

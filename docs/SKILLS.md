@@ -61,6 +61,26 @@ through its plugin and to Codex through the `.agents/skills` link. A project-own
 same name always wins over the catalog copy; only folders the gateway wrote are ever updated or
 pruned.
 
+### Sections: the shared library and one folder per channel
+
+The skills repository has one **shared library** (the publish folder, `.` = the repository root)
+and one **section per channel** at `channels/<channel id>/<slug>/`. The Slack channel *id* is the
+key — never the name, which gets renamed and collides. A skill in a channel's section belongs to
+that channel's tier automatically (with the template and the conversation's own additions), on
+every gateway that syncs the repository and hosts the channel; nothing is stored per channel.
+Skills in a section are ordinary catalog skills otherwise: an admin can still grant one to a second
+channel of the same customer.
+
+New skills go to the library by default. `create_skill` with `scope: "channel"` — for a skill
+that only makes sense for one customer or project; the agent asks first — keeps it in the
+channel's section. `set_skill_scope` (managers), the admin UI's *Section* control and
+`POST /api/skills/catalog/:slug/scope` move a skill either way: **promoting** a customer skill to
+the library moves its files in the repository and leaves the channel with an explicit grant, so
+nothing changes there; demoting keeps it for that channel only. Only skills the publish
+repository owns (or unpublished local ones) move — a skill synced from another source stays with
+its source. Names must be unique across the whole repository (the slug comes from the skill's
+name), so customer skills are prefixed with the customer.
+
 ## Templates
 
 **Development**, **Sales**, **Marketing** and **Management** are seeded; each is a named skill
@@ -149,7 +169,10 @@ publishes it). Any approved member can also carry organization skills in their o
 Admin UI → Skills → Sources → *Publishing to Git*: a GitHub repository (owner/repo), branch and
 folder. With the daemon's GitHub token set, every new revision of a local skill — created,
 updated, an approved change, an approved promotion — is pushed with the GitHub Contents API, one
-commit per file under `<folder>/<slug>/`, and files a newer revision dropped are deleted. The
+commit per file under `<folder>/<slug>/` (`.` as the folder = the repository root) — or under
+`channels/<channel id>/<slug>/` for a channel-scoped skill, with a README naming the channel — and
+files a newer revision dropped are deleted. A skill the publish repository already owns is written
+back to the folder it was synced from. The
 revision records the commit. When the publish repository is also a configured git source, the
 published skill is **adopted** by that source (it becomes a synced skill of that source), so the
 next sync recognises its own files instead of reporting a conflict: authored in chat, pushed to

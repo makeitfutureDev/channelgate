@@ -91,6 +91,7 @@ function rowToSkill(r) {
     createdBy: r.created_by,
     deletedAt: r.deleted_at || "",
     deleted: Boolean(r.deleted_at),
+    channelScope: r.channel_scope || "",
     excludedAt: r.excluded_at || "",
     excluded: Boolean(r.excluded_at),
     visibility: r.visibility === "personal" ? "personal" : "org",
@@ -208,10 +209,14 @@ export function getSkillById(id) {
 
 // `viewer` narrows personal skills: "" (nobody) hides every personal skill, a user id shows that
 // user's own, "*" (an admin surface) shows all.
-export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = null, category = "", query = "", limit = 0, viewer = "*", visibility = "" } = {}) {
+export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = null, category = "", query = "", limit = 0, viewer = "*", visibility = "", channelScope = null } = {}) {
   const where = [];
   const args = [];
   if (!includeDeleted) where.push("s.deleted_at = ''");
+  if (channelScope != null) {
+    where.push("s.channel_scope = ?");
+    args.push(String(channelScope));
+  }
   if (visibility) {
     where.push("s.visibility = ?");
     args.push(visibility);
@@ -327,6 +332,7 @@ export function putSkillRevision({
   createdBy = "",
   status = "active",
   visibility = "org",
+  channelScope = null,
   now = nowIso(),
 } = {}) {
   if (!OWNER_KINDS.includes(ownerKind)) throw new SkillCatalogError(`unknown owner kind "${ownerKind}"`);
@@ -342,6 +348,9 @@ export function putSkillRevision({
   if (!isValidSlug(resolvedSlug)) throw new SkillCatalogError(`cannot derive a valid slug for "${md.name}"`, { code: "slug" });
   const hash = hashSkillFiles(normalized);
   const sid = sourceId == null ? null : Number(sourceId);
+  // The repository section: a source-owned skill follows its folder (channels/<id>/…), a local
+  // one carries the scope the caller states; null = leave the stored scope alone.
+  const scope = channelScope != null ? normalizeChannelScope(channelScope) : sid != null ? channelScopeOfPath(sourcePath) : null;
 
   return tx((db) => {
     const existing = db.prepare("SELECT * FROM skills WHERE slug = ? COLLATE NOCASE").get(resolvedSlug);
@@ -353,10 +362,10 @@ export function putSkillRevision({
     if (!existing) {
       const res = db
         .prepare(
-          `INSERT INTO skills(slug, name, description, owner_kind, source_id, source_path, category, tags, requires, version, meta, created_at, updated_at, created_by, visibility)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO skills(slug, name, description, owner_kind, source_id, source_path, category, tags, requires, version, meta, created_at, updated_at, created_by, visibility, channel_scope)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(resolvedSlug, md.name, md.description, ownerKind, sid, sourcePath, md.category, toJson(md.tags), toJson(md.requires), md.version, toJson(parsed.data), now, now, createdBy, visibility);
+        .run(resolvedSlug, md.name, md.description, ownerKind, sid, sourcePath, md.category, toJson(md.tags), toJson(md.requires), md.version, toJson(parsed.data), now, now, createdBy, visibility, scope ?? "");
       skillId = Number(res.lastInsertRowid);
       created = true;
     } else {
@@ -371,6 +380,7 @@ export function putSkillRevision({
           db.prepare("UPDATE skills SET deleted_at = '', updated_at = ? WHERE id = ?").run(now, skillId);
         }
         if (sourcePath && existing.source_path !== sourcePath) db.prepare("UPDATE skills SET source_path = ? WHERE id = ?").run(sourcePath, skillId);
+        syncChannelScope(db, skillId, existing, scope);
         return { changed: false, created: false, conflict: false, skill: getSkillById(skillId), revision: getRevision(latest.id) };
       }
     }
@@ -378,6 +388,7 @@ export function putSkillRevision({
     if (status === "active") activateRow(db, skillId, revisionId, now);
     else db.prepare("UPDATE skills SET updated_at = ? WHERE id = ?").run(now, skillId);
     if (sourcePath) db.prepare("UPDATE skills SET source_path = ? WHERE id = ?").run(sourcePath, skillId);
+    if (existing) syncChannelScope(db, skillId, existing, scope);
     return { changed: true, created, conflict: false, skill: getSkillById(skillId), revision: getRevision(revisionId) };
   });
 }
@@ -430,6 +441,37 @@ export function pinSkill(slug, revisionNo, { now = nowIso() } = {}) {
   });
 }
 
+// ── Repository sections ────────────────────────────────────────────────────────────────────
+// The skills repository has one shared library plus one section per channel:
+// `channels/<channelId>/<slug>/`. The channel id (never the name — channels get renamed and
+// names collide) is the key; the channel tier includes every skill scoped to it automatically.
+export const CHANNEL_SECTION_DIR = "channels";
+
+export function normalizeChannelScope(value) {
+  const v = String(value ?? "").trim();
+  if (!v) return "";
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(v)) throw new SkillCatalogError(`"${v}" is not a channel id`, { code: "scope" });
+  return v;
+}
+
+// The section a repository path belongs to: channels/<id>/… → <id>; anything else → '' (library).
+export function channelScopeOfPath(sourcePath) {
+  const m = /^\/?channels\/([A-Za-z0-9_-]{1,64})\//.exec(String(sourcePath || ""));
+  return m ? m[1] : "";
+}
+
+function syncChannelScope(db, skillId, existing, scope) {
+  if (scope == null || scope === (existing?.channel_scope || "")) return;
+  db.prepare("UPDATE skills SET channel_scope = ? WHERE id = ?").run(scope, skillId);
+}
+
+export function setSkillChannelScope(slug, channelId, { now = nowIso() } = {}) {
+  const scope = normalizeChannelScope(channelId);
+  const res = getDb().prepare("UPDATE skills SET channel_scope = ?, updated_at = ? WHERE slug = ? COLLATE NOCASE").run(scope, now, String(slug));
+  if (res.changes === 0) throw new SkillCatalogError("skill not found", { status: 404 });
+  return getSkill(slug);
+}
+
 export function tombstoneSkill(slug, { now = nowIso() } = {}) {
   const res = getDb().prepare("UPDATE skills SET deleted_at = ?, updated_at = ? WHERE slug = ? COLLATE NOCASE AND deleted_at = ''").run(now, now, String(slug));
   return res.changes > 0;
@@ -462,8 +504,8 @@ export function setSkillVisibility(slug, visibility, { now = nowIso() } = {}) {
 // conflict. The revisions stay; only ownership moves.
 export function adoptSkillIntoSource(slug, sourceId, { sourcePath = "", sourceRef = "", now = nowIso() } = {}) {
   const res = getDb()
-    .prepare("UPDATE skills SET owner_kind = 'git', source_id = ?, source_path = ?, updated_at = ? WHERE slug = ? COLLATE NOCASE")
-    .run(Number(sourceId), sourcePath, now, String(slug));
+    .prepare("UPDATE skills SET owner_kind = 'git', source_id = ?, source_path = ?, channel_scope = ?, updated_at = ? WHERE slug = ? COLLATE NOCASE")
+    .run(Number(sourceId), sourcePath, channelScopeOfPath(sourcePath), now, String(slug));
   if (res.changes === 0) throw new SkillCatalogError("skill not found", { status: 404 });
   if (sourceRef) getDb().prepare("UPDATE skill_revisions SET source_ref = CASE WHEN source_ref = '' OR source_ref = 'manual' THEN ? ELSE source_ref END WHERE skill_id = (SELECT id FROM skills WHERE slug = ? COLLATE NOCASE)").run(sourceRef, String(slug));
   return getSkill(slug);
@@ -761,6 +803,7 @@ export function catalogStats() {
     skills: one("SELECT COUNT(*) AS n FROM skills WHERE deleted_at = ''"),
     tombstoned: one("SELECT COUNT(*) AS n FROM skills WHERE deleted_at <> '' AND excluded_at = ''"),
     excluded: one("SELECT COUNT(*) AS n FROM skills WHERE excluded_at <> ''"),
+    scoped: one("SELECT COUNT(*) AS n FROM skills WHERE deleted_at = '' AND channel_scope <> ''"),
     byOwner: Object.fromEntries(db.prepare("SELECT owner_kind, COUNT(*) AS n FROM skills WHERE deleted_at = '' GROUP BY owner_kind").all().map((r) => [r.owner_kind, r.n])),
     staged: one("SELECT COUNT(*) AS n FROM skill_revisions WHERE status = 'staged'"),
     sources: one("SELECT COUNT(*) AS n FROM skill_sources"),

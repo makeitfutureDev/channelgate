@@ -19,6 +19,13 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Skill repository sections.** The skills repository is one shared library plus one folder per
+  channel (`channels/<channel id>/`); a skill in a channel's section is granted to that channel
+  automatically. New skills go to the library by default; `create_skill` takes `scope: "channel"`
+  for customer-specific ones (the agent asks first), and `set_skill_scope`, the Skills view's
+  *Section* control or the admin API move a skill either way — files move in the repository, and a
+  promoted skill stays with its former channel as an explicit grant. `.` as the publish folder
+  means the repository root.
 - **Video understanding is part of the main gateway skill.** `gateway-usage` now ships the complete
   synchronized visual/audio workflow, sampling and dependency guidance, and local analyzer script
   to every conversation. The former standalone catalog skill is excluded and removed from durable

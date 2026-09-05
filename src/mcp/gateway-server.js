@@ -217,6 +217,7 @@ export function buildControlPlane({ loadMeta }) {
     ["sync_skill_sources", { authz: "admin", details: ({ id }) => `Sync ${id ? `skill source #${Number(id)}` : "every skill source"} into the catalog now.` }],
     ["delete_skill", { authz: "any", details: ({ skill }) => `Remove skill \`${summarize(skill)}\` from the catalog (tombstone; an admin can restore it).` }],
     ["publish_skill", { authz: "manage", details: ({ skill }) => `Push skill \`${summarize(skill)}\` to the configured Git repository now.` }],
+    ["set_skill_scope", { authz: "manage", details: ({ skill, scope, channel }) => `Move skill \`${summarize(skill)}\` to ${scope === "channel" ? `the ${channel ? summarize(channel) : "current"} channel's section (that customer only)` : "the shared library (every conversation)"}; its files move in the skills repository.` }],
     ["add_org_skills", { authz: "admin", details: ({ slugs }) => `Grant skill(s) ORGANIZATION-WIDE (every conversation): ${summarize((slugs || []).join(", "))}` }],
     ["remove_org_skills", { authz: "admin", details: ({ slugs }) => `Remove organization-wide skill grant(s): ${summarize((slugs || []).join(", "))}` }],
     ["add_skill_source", { authz: "admin", details: ({ kind, url }) => `Add a ${summarize(kind)} skill source and sync it: ${summarize(url)}` }],
