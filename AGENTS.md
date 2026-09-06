@@ -14,10 +14,11 @@ permissions, the MCP allowlist and memory-off per the `channelgate` skill, and t
 driven per the `headless-app-creator` skill. A small admin web UI (served by the same process)
 configures per-channel access plus personal, channel, and organization Composio tokens.
 
-This is **not** a Vercel/Supabase/Next.js platform, so the MIF profiles (A/B/C) don't apply.
-We use the `makeitfuture-development` skill only as the **orchestration spine**: canonical
-`AGENTS.md`, `TASKS.md` plan→execute with vertical slices + acceptance criteria, living
-`FEATURES.md` + `TEST-PLAN.md`, and the one-source-of-truth guardrail.
+This is **not** a Vercel/Supabase/Next.js platform, so the MIF profiles (A/B/C) and its mandatory
+planning workflow don't apply. Keep `AGENTS.md` canonical, maintain the living `FEATURES.md` +
+`TEST-PLAN.md`, and use scoped acceptance criteria where they help. Do not require the
+`brainstorming` or `writing-plans` skills before project work, and do not create or maintain a
+`TASKS.md` task ledger.
 
 ## Architecture (the contract)
 
@@ -308,12 +309,11 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
   POSIX-portable.
 - **Secrets** live in `.env` (repo root, gitignored) and per-user tokens in `users.json`
   (gitignored runtime dir). Never hardcode tokens; never log them.
-- **One source of truth:** build status lives in `TASKS.md`, not chat. Shipped features in
-  `FEATURES.md`; the cumulative regression in `TEST-PLAN.md`. `TASKS.md` is **not in this repo**:
-  it lives in the private companion repo `makeitfuture-internal-projects/channelgate-internal`
-  (checked out as a sibling, `../channelgate-internal/`) and is symlinked into this checkout as
-  `TASKS.md` (gitignored). Design plans, audits, and working notes live there too (`docs/plans/`,
-  `notes/`). Never copy them back into this tree — it is published.
+- **Project records:** shipped behavior lives in `FEATURES.md`; the cumulative regression lives in
+  `TEST-PLAN.md`. Keep both aligned with shipped code. Do not create, consult, or update
+  `TASKS.md`, and do not make a brainstorming or standalone plan-writing phase a prerequisite for
+  implementation. Use the active request, repository state, focused acceptance criteria, and
+  tests as the working source of truth.
 - **Every shipped feature needs live dual-engine acceptance coverage.** In the same slice that
   changes `FEATURES.md` and `TEST-PLAN.md`, add or update the corresponding records in the
   `ChannelGate QA` Airtable base. Cover **both Claude and Codex** whenever the behavior can reach
@@ -322,16 +322,6 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
   expected evidence, and pass rule. A feature is not complete while its applicable Airtable cases
   are missing. Airtable writes use the requesting user's explicitly selected personal connection;
   never substitute an agent-side account.
-- **Log every dev task on the roadmap.** When the user gives a development task, add it to
-  `TASKS.md` (the "Development Roadmap (incoming)" section for ad-hoc requests, or the relevant
-  milestone slice) as `[ ]` before starting — mark `[~]` while working it and flip to `[x]` the
-  moment it ships. This is automatic and applies to ad-hoc requests too, not just planned slices;
-  the roadmap is the running record, never chat. Because `TASKS.md` is a symlink into the sibling
-  `channelgate-internal` checkout, edit it there and **commit + push it in that repo directly**
-  (`git -C ../channelgate-internal commit -am … && git -C ../channelgate-internal push`) — it is
-  not part of this repo's branches, worktrees, or landing step. A task worktree does not contain
-  it; use the sibling path.
-
 ## Git workflow (isolated worktree per development thread → serialized landing → push)
 
 The canonical checkout is `~/Code/channelgate` (the service unit's `WorkingDirectory`). Its
@@ -342,7 +332,7 @@ ARCHIVE of the full history (remote `archive` in the canonical checkout; tag
 `archive/fresh-start-base` there marks the commit the tree was squashed from) — never push to it.
 Because the repository will be public, every commit is written for strangers: sign it off
 (`git commit -s`, the CLA acceptance) and keep customer, channel and person names out of commit
-messages — that context belongs in `TASKS.md`, which is private.
+messages; use generic project language for private context.
 
 `main` is the **served branch** — the daemon runs the repo live from `main`, so whatever is on
 `main` is in production. Keep the canonical checkout permanently on `main`; never use it as a
