@@ -24,6 +24,7 @@ import {
   defaultChannelMeta,
   getUsers,
 } from "../../config/store.js";
+import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
 import { ensureChannelFolder, effectiveWorkDir, gatewayInstructionsBlock, splitGatewayBlock, channelSeed } from "../../gateway/folders.js";
 import { memoryEnabled, countMemoryFacts, MEM_FILE, MEM_DIR } from "../../gateway/channel-memory.js";
 import {
@@ -368,13 +369,14 @@ export function createChannelsRouter({
       const next_ = Array.isArray(body.allowedUsers)
         ? await withChannelMembershipLock(channelId, commitMeta)
         : await commitMeta();
-      await ensureChannelFolder(entry.slug, next_); // refresh lockdown + skills now
+      const workspaceSync = await syncWorkspaceSkillsOrThrow({ channelSlugs: [entry.slug] });
       // One row per save, listing ONLY the policy keys that moved (and never a token or an env
       // value — see the allowlist in config/channel-audit.js). A save that changes nothing on that
       // list — a nudge toggle, a token rotation, a re-submitted form — writes no event at all.
       await logChannelPolicyChange({ channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: replaced, after: next_ });
-      res.json({ ok: true, meta: maskChannelMeta(next_) });
+      res.json({ ok: true, meta: maskChannelMeta(next_), workspaceSync });
     } catch (e) {
+      if (e?.code === "workspace_sync_failed") return res.status(503).json({ error: e.message, code: e.code, saved: true, workspaceSync: e.workspaceSync });
       if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
       if (/^Make toolbox /i.test(String(e?.message || "")))
         return res.status(400).json({ error: String(e.message) });

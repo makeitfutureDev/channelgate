@@ -240,3 +240,17 @@ The main maintainability concern is concentrated policy complexity. public/app.j
 Before calling the release ready, I would require the P1 items resolved, regression tests for the reproduced failures, reconciled license/provider terms, a clean-host service install and restore drill, and actual Claude/Codex acceptance in isolated private fixtures. Teams/Google Chat should either pass their own disconnected-from-Slack acceptance or carry an explicit limited-support designation. The repository's release checklist already records publication of 0.5.0 while several of these gates remain unchecked; I did not independently confirm current GitHub visibility.
 
 Evidence files retained outside the repository: `/tmp/channelgate-review-tests-unrestricted.log`, `/tmp/channelgate-review-static.log`, `/tmp/channelgate-review-npm-audit.json`, `/tmp/channelgate-review-evidence.jsonl`, `/tmp/channelgate-review-surface-repros.mjs`, and the frozen snapshot's `review-inventory.json` / `review-evidence.mjs`.
+
+### Follow-up: real workspace skill synchronization
+
+The workspace review found that provisioning retained unmarked project skill folders, trusted
+revision markers without verifying file contents, and did not refresh all shared grant changes
+until another run. This could leave local terminal/editor discovery different from the gateway
+selection. The fix makes the real project skill directory authoritative, preserves displaced
+local entries in daemon backups, repairs file drift, and gives Claude and Codex the same shared
+skill tree. Personal grants stay isolated. Bundled sources now live outside generated discovery
+folders. Runtime settings also have a Save/Discard-aware folder reset button beside Browse.
+
+Validation: full suite 2,079 passed, zero failed, one skipped; final affected admin/folder tests,
+static checks and secret scan passed. Live dual-engine QA and Airtable records remain pending
+on the designated personal connection; these automated results do not claim a live engine pass.

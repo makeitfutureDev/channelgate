@@ -7,8 +7,9 @@
 // gateway. What remains here: the marker that identifies a leftover stub so the materializer can
 // replace it and the workspace provisioner can prune it, the legacy CLAUDE.md favorites-block
 // splitter the instruction-file writer still strips, and the `.agents/skills` link for Codex.
-import { mkdir, readdir, symlink, lstat, rm, access } from "node:fs/promises";
+import { mkdir, readdir, symlink, readlink, lstat, rm, access } from "node:fs/promises";
 import path from "node:path";
+import { archiveWorkspaceEntry, openWorkspaceDirectory, directoryPath } from "./skills/workspace-backup.js";
 
 const FAV_START = "<!-- SKILLS-MANAGER-FAVORITES:START -->";
 const FAV_END = "<!-- SKILLS-MANAGER-FAVORITES:END -->";
@@ -73,9 +74,9 @@ async function pathKind(p) {
 // Codex discovers repo-scoped skills under `.agents/skills`, while Claude discovers them under
 // `.claude/skills`. Keep `.claude/skills` canonical and expose that exact tree to Codex through a
 // relative symlink, so granted skills, channel-memory, and gateway-usage stay in lockstep without
-// duplicate copies. Never traverse a symlinked `.agents` parent or replace an existing
-// `.agents/skills` entry: either may belong to the project using a custom work directory.
-export async function ensureCodexSkillsLink(cwd) {
+// duplicate copies. Authoritative workspace callers archive conflicting entries, including
+// symlink nodes without following their targets. Other callers preserve existing project entries.
+export async function ensureCodexSkillsLink(cwd, { authoritative = false, backupDir = "" } = {}) {
   const claudeSkills = path.join(cwd, ".claude", "skills");
   const agentsDir = path.join(cwd, ".agents");
   const codexSkills = path.join(agentsDir, "skills");
@@ -86,15 +87,24 @@ export async function ensureCodexSkillsLink(cwd) {
   } catch (err) {
     if (err?.code !== "ENOENT") throw err;
   }
-  if (parent && (!parent.isDirectory() || parent.isSymbolicLink())) return false;
-  if ((await pathKind(codexSkills)) !== null) return false;
+  if (parent && (!parent.isDirectory() || parent.isSymbolicLink())) {
+    if (!authoritative) return false;
+    await archiveWorkspaceEntry(agentsDir, backupDir);
+  }
+  if ((await pathKind(codexSkills)) !== null) {
+    if (!authoritative) return false;
+    const info = await lstat(codexSkills);
+    if (info.isSymbolicLink() && (await readlink(codexSkills)) === "../.claude/skills") return false;
+    await archiveWorkspaceEntry(codexSkills, backupDir);
+  }
 
   await mkdir(agentsDir, { recursive: true });
+  const handle = await openWorkspaceDirectory(agentsDir);
   try {
-    await symlink(path.relative(agentsDir, claudeSkills), codexSkills, "dir");
+    await symlink(path.relative(agentsDir, claudeSkills), path.join(directoryPath(handle), "skills"), "dir");
     return true;
   } catch (err) {
     if (err?.code === "EEXIST") return false; // another provisioner won the race
     throw err;
-  }
+  } finally { await handle.close(); }
 }

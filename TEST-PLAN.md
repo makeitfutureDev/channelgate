@@ -3772,3 +3772,36 @@ the suite runs as an enterprise deployment because it holds a license it actuall
 - Image recovery: build old pins, change the desired Codex pin without changing imageSpecVersion, make the first build fail, then run Update again on the same checkout revision. Require retry and matching built/desired source digest; a build exiting zero with stale labels fails verification. Existing channels retain HOME and adopt the new image when idle.
 - Admin container status: require actual built and desired Claude/Codex versions, rebuild-needed status, and count of containers awaiting adoption. A custom image reference must never report a successful default-image rebuild.
 - Live acceptance fixtures: private disposable `update-smoke-<uuid>` container per gateway; authenticated local IPC only, no Slack posting. Run both engine cases on each deployment. Airtable cases must mirror these actions and exact pass evidence using the requester's personal connection.
+
+## Real project skill synchronization and workspace reset
+
+Automated regressions: `workspace-skill-materialize.test.js`, `workspace-skill-sync.test.js`,
+`channel-workdir-ui.test.js`, folder generation and run-grant isolation suites.
+
+Live acceptance is required on both `cg-testing-claude-auto` and `cg-testing-codex-auto`, using
+a disposable real project under the allowed filesystem root. Record the deployed commit,
+channel/thread, author, harness/model and the exact prompt/action with filesystem evidence.
+
+1. Set the fixture's custom folder, select one channel skill and one organization skill, and create
+   conflicting local `.claude/skills` and `.agents/skills` copies with recognizable harmless text.
+   Save in the admin UI without sending a chat message. Pass: selected source bytes appear in the
+   real project, unrelated local entries are absent from discovery and readable in daemon backups,
+   `.agents/skills` is the canonical relative link, and unrelated project files remain intact.
+2. Edit/delete/add files inside a selected copy without changing its revision marker. Prompt:
+   “Read the selected test skill and report its current revision marker and the fixture sentence.”
+   Pass: both engines read the selected source revision, drift is repaired on disk, and a repeated
+   unchanged turn leaves skill-file timestamps unchanged. Grant a personal-only fixture to a
+   different author; pass only if it never appears in the shared project.
+3. Change a channel grant through MCP, update its assigned template, publish a new catalog
+   revision, and revoke an organization grant. Inspect locally without sending another message.
+   Pass: the next five-second reconciliation poll applies each changed shared selection, unavailable
+   skills are reported, and clean mode exposes only its required protocols while the normal project
+   still has its shared selection. Filesystem failures must be visible and retried.
+4. On Runtime, choose a custom path, Save, then click **Reset to default** beside **Browse**.
+   Pass: only the folder field becomes dirty; Discard restores the custom path; Save persists an
+   empty override and the next turn uses the normal platform/slug folder. Other settings and files
+   in the former custom folder stay intact. A failed Save retains the pending edit.
+
+Airtable case/run registration and live engine verdicts remain pending until the requesting
+user’s designated personal QA Airtable connection is available; automated results are not a
+substitute for live passes.

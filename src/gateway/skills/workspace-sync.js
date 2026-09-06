@@ -26,10 +26,31 @@ async function snapshot() {
     })),
     channels: channels.map(({ slug, meta }) => ({
       slug, channelId: meta.channelId, platform: meta.platform, workDir: meta.workDir,
-      skills: meta.skills, skillTemplate: meta.skillTemplate, cleanMode: meta.cleanMode,
+      skills: meta.skills, skillTemplate: meta.skillTemplate, cleanMode: meta.cleanMode, memory: meta.memory,
     })),
   })).digest("hex");
   return { channels, organization, fingerprint };
+}
+
+function selectionSignature(meta, organization) {
+  const grants = withDependencies([...(organization.skills || []), ...channelSkillGrants(meta)]).names.sort();
+  return JSON.stringify({ grants, platform: platformFolderName(meta.platform), memory: meta.memory !== false });
+}
+
+// The same rule applies at every run/save boundary, including after a rejected but persisted
+// admin edit. A later foreground run must not silently overwrite the other conversation's tree.
+export async function assertWorkspaceSkillsCompatible(slug, meta) {
+  const { effectiveWorkDir } = await import("../folders.js");
+  const cwd = effectiveWorkDir(slug, { ...meta, cleanMode: false });
+  const organization = getOrgAccessGrants();
+  const signature = selectionSignature(meta, organization);
+  for (const channel of await listChannels()) {
+    if (!channel.meta || channel.slug === slug) continue;
+    if (effectiveWorkDir(channel.slug, { ...channel.meta, cleanMode: false }) !== cwd) continue;
+    if (selectionSignature(channel.meta, organization) !== signature) {
+      throw new Error("This working folder is assigned to conversations with different shared skill grants or memory settings. Choose separate folders or align their selections.");
+    }
+  }
 }
 
 async function syncPass({ channelSlugs = null, force = true, log = console.warn } = {}) {
@@ -43,8 +64,7 @@ async function syncPass({ channelSlugs = null, force = true, log = console.warn 
   const destinations = new Map();
   for (const channel of state.channels) {
     const cwd = effectiveWorkDir(channel.slug, { ...channel.meta, cleanMode: false });
-    const grants = withDependencies([...(state.organization.skills || []), ...channelSkillGrants(channel.meta)]).names.sort();
-    const signature = JSON.stringify({ grants, platform: platformFolderName(channel.meta.platform) });
+    const signature = selectionSignature(channel.meta, state.organization);
     if (!destinations.has(cwd)) destinations.set(cwd, new Set());
     destinations.get(cwd).add(signature);
   }

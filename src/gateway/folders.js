@@ -4,12 +4,13 @@
 // granted MCP namespaces (+ Composio, per author). The file is POLICY — confinement is the channel
 // container the folder is mounted into. Skills the channel is granted are copied into the folder. Everything here is idempotent — safe to re-run on
 // every message so config changes in the admin UI take effect on the next turn.
-import { mkdir, writeFile, cp, access, readdir, readlink, rename, symlink, lstat, rm } from "node:fs/promises";
+import { mkdir, writeFile, cp, access, readdir, realpath, readlink, rename, symlink, lstat, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder } from "../config/paths.js";
+import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder, gatewayRoot } from "../config/paths.js";
 import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
 
 
@@ -52,13 +53,17 @@ import { applyGatewayGuide } from "./guide.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
 import { channelMode, networkState } from "./modes.js";
 import { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
-import { getAgentsFile, getAgentsInstructions, getComposioMode } from "../config/settings.js";
+import { getAgentsFile, getAgentsInstructions, getComposioMode, getOrgAccessGrants } from "../config/settings.js";
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
 import { isLibraryStub, splitFavorites, ensureCodexSkillsLink, pruneLegacyLibraryStubs } from "./library-skills.js";
 import { MANAGED_SKILL_MARKER, materializeSkill, pruneManagedSkills } from "./skills/materialize.js";
 import { listSkills as listCatalogSkills } from "./skills/catalog.js";
 import { withDependencies } from "./skills/resolve.js";
 import { channelSkillGrants } from "./skills/templates.js";
+import { archiveWorkspaceEntry } from "./skills/workspace-backup.js";
+import { readSkillDirectory } from "./skills/import-folder.js";
+import { normalizeSkillFiles, hashSkillFiles } from "./skills/files.js";
+import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { sanitizeSkillGrantNames } from "./access-grants.js";
 import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 // Capability reads only — never the registry or the resolver (resolve.js imports THIS module for
@@ -443,8 +448,7 @@ const SHELL_TOOLS = ["Bash", "Write", "Edit", "MultiEdit"];
 // permission prompt tool, i.e. the Slack approval card, which is what Read mode promises.
 const ASK_WITHOUT_SHELL = ["Bash"];
 
-// Where to look for a skill by name when a channel grants it. First match wins; copy is
-// skipped if the destination already exists (preserves per-folder customization).
+// Trusted host sources for pre-catalog grants. First match wins; workspace copies track its bytes.
 export function skillSourceDirs() {
   if (process.env.GATEWAY_SKILL_SOURCES) {
     return process.env.GATEWAY_SKILL_SOURCES.split(":").filter(Boolean);
@@ -584,7 +588,42 @@ async function writeIfChanged(file, content) {
 // and the lockdown file(s) to pass via --settings. The settings files always live in the gateway
 // folder, so a custom (real-project) work dir is never overwritten; skills are copied into the
 // work dir.
+// Backups live in daemon metadata, outside all engine discovery paths and normal mounts.
+export function workspaceSkillBackupDir(cwd) {
+  return path.join(gatewayRoot(), "skill-backups", createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 24));
+}
+
+async function entryInfo(file) {
+  try { return await lstat(file); } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function prepareWorkspaceSkills(cwd, backupDir) {
+  await mkdir(cwd, { recursive: true });
+  for (const parts of [[".claude"], [".claude", "skills"]]) {
+    const entry = path.join(cwd, ...parts);
+    const info = await entryInfo(entry);
+    if (info && !info.isDirectory()) await archiveWorkspaceEntry(entry, backupDir);
+    await ensureRealDir(cwd, ...parts);
+  }
+  const skillsDir = path.join(cwd, ".claude", "skills");
+  // These two protocols are injected independently of catalog grants. Preserve custom copies
+  // before allowing their managed writers to take ownership, just like a selected catalog skill.
+  for (const [name, marker] of [["gateway-usage", ".gateway-usage-skill"], ["channel-memory", ".gateway-memory-skill"]]) {
+    const entry = path.join(skillsDir, name);
+    const info = await entryInfo(entry);
+    if (info && (!info.isDirectory() || (await readNoFollow(path.join(entry, marker))) === null)) {
+      await archiveWorkspaceEntry(entry, backupDir);
+    }
+  }
+  return skillsDir;
+}
+
 export async function ensureChannelFolder(slug, meta, { runMeta = meta, target = null } = {}) {
+  const { assertWorkspaceSkillsCompatible } = await import("./skills/workspace-sync.js");
+  await assertWorkspaceSkillsCompatible(slug, meta);
   // Every per-channel path is namespaced by the channel's platform; an unknown/missing one
   // resolves to Slack in the registry, which is what keeps pre-multi-platform rows working.
   const platform = meta?.platform;
@@ -623,30 +662,37 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   }
 
   const configureWorkspace = async (cwd, workspaceMeta, skills) => {
-    // Recreate the managed skill tree as REAL directories — a symlink swapped in at .claude/ or
-    // skills/ would otherwise route every managed write below to wherever the agent pointed it.
-    const skillsDir = await ensureRealDir(cwd, ".claude", "skills");
-    await ensureCodexSkillsLink(cwd);
-    // Stub folders the retired Skills Manager integration generated are removed on sight: the
-    // catalog delivers real files now, and a leftover stub would shadow a same-named skill.
-    await pruneLegacyLibraryStubs(skillsDir);
-    await renameLegacyManagedSkills(skillsDir);
-    await enableSkills(skillsDir, skills);
-    // The gateway-usage skill (the chat operating manual) is injected in EVERY mode — including
-    // clean mode — since the bot always replies into a conversation. Resolved for the channel's
-    // PLATFORM, so a Teams channel is never told to post a Slack List. Marker-guarded +
-    // write-on-change, so a channel that changes surface re-materializes on its next message.
-    await applyGatewayGuide(cwd, { platform: workspaceMeta?.platform || DEFAULT_PLATFORM });
-    await ensureInstructionFiles(cwd, slug, workspaceMeta);
-    await applyChannelMemory(cwd, { ...workspaceMeta, _slug: slug });
+    const release = await acquireKeyedLock("workspace-skills", cwd);
+    try {
+      // Recreate the managed skill tree as REAL directories — a symlink swapped in at .claude/ or
+      // skills/ would otherwise route every managed write below to wherever the agent pointed it.
+      const backupDir = workspaceSkillBackupDir(cwd);
+      const skillsDir = await prepareWorkspaceSkills(cwd, backupDir);
+      await ensureCodexSkillsLink(cwd, { authoritative: true, backupDir });
+      // Stub folders the retired Skills Manager integration generated are removed on sight: the
+      // catalog delivers real files now, and a leftover stub would shadow a same-named skill.
+      await pruneLegacyLibraryStubs(skillsDir);
+      await renameLegacyManagedSkills(skillsDir);
+      const skillSync = await enableSkills(skillsDir, skills, { authoritative: true, backupDir });
+      // The gateway-usage skill (the chat operating manual) is injected in EVERY mode — including
+      // clean mode — since the bot always replies into a conversation. Resolved for the channel's
+      // PLATFORM, so a Teams channel is never told to post a Slack List. Marker-guarded +
+      // write-on-change, so a channel that changes surface re-materializes on its next message.
+      await applyGatewayGuide(cwd, { platform: workspaceMeta?.platform || DEFAULT_PLATFORM });
+      await ensureInstructionFiles(cwd, slug, workspaceMeta);
+      await applyChannelMemory(cwd, { ...workspaceMeta, _slug: slug });
+      if (skillSync.missing.length) console.warn(`[skills] ${slug}: unavailable selected skills: ${skillSync.missing.join(", ")}`);
+      return skillSync;
+    } finally { release(); }
   };
 
   // The durable workspace always reflects organization+channel grants. A run-specific clean/mode
   // override may select a different cwd, but must not prune or rewrite this shared baseline.
   // The channel tier: the assigned skill template's current skills plus the conversation's own.
-  const channelSkills = meta.cleanMode ? [] : channelSkillGrants(meta);
-  const durableCwd = effectiveWorkDir(slug, meta);
-  await configureWorkspace(durableCwd, meta, channelSkills);
+  const channelSkills = sanitizeSkillGrantNames([...(getOrgAccessGrants().skills || []), ...channelSkillGrants(meta)]);
+  const durableMeta = { ...meta, cleanMode: false };
+  const durableCwd = effectiveWorkDir(slug, durableMeta);
+  const skillSync = await configureWorkspace(durableCwd, durableMeta, channelSkills);
 
   const cwd = effectiveWorkDir(slug, runMeta);
   if (cwd !== durableCwd) {
@@ -655,6 +701,7 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
 
   return {
     cwd,
+    skillSync,
     settingsFile: channelSettingsFile(slug, platform),
     // Present only for adminMode channels; run.js swaps it in for admin-author runs.
     adminSettingsFile: meta.adminMode ? adminSettingsFile : "",
@@ -711,14 +758,16 @@ async function renameLegacyManagedSkills(skillsDir) {
 // (real files of the skill's effective revision, write-on-change — see skills/materialize.js); a
 // grant that names nothing in the catalog falls back to the pre-catalog host-folder copy so an
 // un-imported folder keeps working. Managed copies whose grant ended are pruned; a project-owned
-// folder of the same name is never touched and always wins.
-export async function enableSkills(skillsDir, skillNames) {
+// folder of the same name is preserved only for callers that opt out of authoritative mirroring.
+export async function enableSkills(skillsDir, skillNames, { authoritative = false, backupDir = "" } = {}) {
   const sources = skillSourceDirs();
   // Defense at the filesystem sink: web writes and run-time grant resolution already normalize
   // names, but legacy/manual config and direct callers must not turn a grant into `../` traversal.
   // A grant stored under a renamed bundled skill's OLD name resolves to the new one, so an
   // existing channel keeps the skill it was granted without an admin re-granting it.
-  const grantNames = sanitizeSkillGrantNames(skillNames).map((n) => RENAMED_MANAGED_SKILLS[n] || n);
+  const reserved = new Set(["gateway-usage", "channel-memory"]);
+  const grantNames = sanitizeSkillGrantNames(skillNames).map((n) => RENAMED_MANAGED_SKILLS[n] || n)
+    .filter((name) => !authoritative || !reserved.has(name.toLowerCase()));
   // Dependencies (`requires:` in a catalog skill's frontmatter) are resolved HERE, at every
   // materialization, not only when a grant is written: a dependency that was still awaiting
   // review when the grant was made arrives the moment it is approved. Unknown names pass through
@@ -729,8 +778,8 @@ export async function enableSkills(skillsDir, skillNames) {
     // Dependencies that cannot be materialized yet (awaiting review, tombstoned, not in the
     // catalog) still go through the loop below so they are REPORTED as missing, never dropped.
     const pending = [
-      ...profile.staged.filter((e) => e.via === "dependency").map((e) => e.slug),
-      ...profile.removed.filter((e) => e.via === "dependency").map((e) => e.slug),
+      ...profile.staged.map((e) => e.slug),
+      ...profile.removed.map((e) => e.slug),
       ...profile.missingDependencies.map((m) => m.slug),
     ];
     safeSkillNames = [...new Set([...names, ...pending])];
@@ -742,10 +791,12 @@ export async function enableSkills(skillsDir, skillNames) {
   const states = {};
 
   for (const name of safeSkillNames) {
+    if (authoritative && reserved.has(name.toLowerCase())) continue;
     let result;
     try {
-      result = await materializeSkill(skillsDir, name);
+      result = await materializeSkill(skillsDir, name, { authoritative, backupDir });
     } catch (err) {
+      if (authoritative) throw new Error(`Could not synchronize skill "${name}": ${err?.message || err}`, { cause: err });
       result = { state: "error", slug: name, error: err?.message || String(err) };
     }
     states[name] = result.state;
@@ -759,7 +810,7 @@ export async function enableSkills(skillsDir, skillNames) {
     }
     // Not in the catalog (or the catalog failed): the original host-folder copy path.
     const dest = path.join(skillsDir, name);
-    if (await exists(dest)) {
+    if (!authoritative && await exists(dest)) {
       // A real granted skill wins over a library stub of the same name — replace the stub with it.
       if (!(await isLibraryStub(dest))) {
         enabled.push(name);
@@ -770,7 +821,20 @@ export async function enableSkills(skillsDir, skillNames) {
     let copied = false;
     for (const dir of sources) {
       const src = path.join(dir, name);
-      if (await exists(src)) {
+      if (path.resolve(src) !== path.resolve(dest) && await exists(src)) {
+        if (authoritative && (await realpath(src)) === (await realpath(dest).catch(() => path.resolve(dest)))) continue;
+        if (authoritative) {
+          const files = normalizeSkillFiles(await readSkillDirectory(src));
+          const hash = hashSkillFiles(files);
+          const revision = { id: `host:${hash}`, contentHash: hash, revisionNo: 1, version: "" };
+          const fallback = await materializeSkill(skillsDir, name, {
+            authoritative, backupDir, lookup: () => ({ slug: name }), bundleFor: () => ({ revision, files }),
+          });
+          states[name] = fallback.state;
+          enabled.push(name);
+          copied = true;
+          break;
+        }
         // dereference: the user's skills are often symlinks into an available_skills/ store;
         // copy the real content so the folder is self-contained (no broken relative links).
         await cp(src, dest, { recursive: true, dereference: true });
@@ -783,10 +847,10 @@ export async function enableSkills(skillsDir, skillNames) {
     if (!copied) missing.push(name);
   }
 
-  // Revoke stale grants, but only when the marker proves this exact copy was created by us. A
-  // project-owned skill with the same name is never removed merely because an admin grant ended.
+  // Revoke stale grants. Authoritative workspaces archive unmarked local entries; other callers
+  // remove only copies bearing our marker. Reserved injected protocols are managed separately.
   // Runs AFTER materialization so a skill whose catalog slug differs from its grant name (a name
   // grant resolving to a slug) is kept under the slug it was written to.
-  await pruneManagedSkills(skillsDir, enabled);
+  await pruneManagedSkills(skillsDir, authoritative ? [...enabled, ...reserved] : enabled, { authoritative, backupDir });
   return { enabled, missing, states };
 }

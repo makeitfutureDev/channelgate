@@ -28,12 +28,8 @@ node_modules/
 backup/
 .gh/
 
-# Runtime leakage in .claude/ when gateway sessions run in the repo root: library skill STUBS
-# (marker .gateway-library-stub) materialized from Skills Manager favorites, and Claude Code
-# worktree state. The two BUNDLED skills (channelgate, headless-app-creator) are source and
-# stay tracked — negations below keep them visible.
+# Runtime skill mirrors and Claude worktree state. Bundled source packages live in
+# src/gateway/skills/bundled/ so selecting this checkout cannot delete tracked sources.
 .claude/skills/*
-!.claude/skills/channelgate/
-!.claude/skills/headless-app-creator/
 .claude/worktrees/
 .agents/skills
