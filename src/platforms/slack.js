@@ -23,7 +23,7 @@ export function createSlackConnector(client, { capabilities } = {}) {
     // One message. `threadKey` is a SESSION key, not necessarily a Slack ts — slackThreadFor is the
     // single rule that turns it into a legal thread_ts (or null = post top-level), shared with the
     // MCP tool servers so a scheduled run's synthetic key can never reach Slack as a thread_ts.
-    async post({ conversationId, threadKey, text, ephemeralTo = "", blocks = null } = {}) {
+    async post({ conversationId, threadKey, text, ephemeralTo = "", ephemeralOnly = false, blocks = null } = {}) {
       const thread_ts = threadKey ? slackThreadFor(threadKey) : null;
       const payload = { channel: conversationId, text, ...(thread_ts ? { thread_ts } : {}), ...(blocks ? { blocks } : {}) };
       if (ephemeralTo) {
@@ -33,6 +33,12 @@ export function createSlackConnector(client, { capabilities } = {}) {
         } catch {
           // Some Slack surfaces refuse threaded ephemerals. Keeping the control usable matters more
           // than its privacy here — the same fallback the in-thread commands already use.
+          //
+          // `ephemeralOnly` opts OUT of that trade. Some payloads are private by nature — an
+          // approval link is a bearer credential minted for one person — and posting one into the
+          // shared thread would hand everybody in the channel the ability to decide. For those,
+          // failing to deliver is strictly better than delivering to the wrong audience.
+          if (ephemeralOnly) return null;
         }
       }
       const res = await client.chat.postMessage(payload);

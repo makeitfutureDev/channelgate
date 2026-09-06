@@ -16,11 +16,18 @@ run the bot in this channel — the original author or an admin — can decide. 
 also decide the same card from the admin web UI without opening this conversation; you receive that
 exactly like a click, with `decided_by` reading `admin UI`.
 
+A decision can also arrive by **link**. Alongside the buttons, the gateway sends the person who
+raised the request a private message containing one signed, single-use URL per action. They open it,
+read a confirmation page, and press Confirm. This is how a surface without buttons (Microsoft Teams,
+Google Chat) answers at all, and it is the same decision by a different route — you receive it
+exactly like a click, with `decided_by` reading `link`. Nothing about your side of the protocol
+changes, and you never see or handle the links yourself.
+
 **Returns** JSON: `{ approved, feedback, decided_by }`.
 - `approved` — `true` if they clicked Approve, `false` on Deny, Comment, or timeout.
 - `feedback` — the comment text when they requested changes (or the deny/timeout reason).
-- `decided_by` — the Slack user id who decided, or `admin UI` when a gateway admin decided it from
-  the admin web UI (empty on timeout).
+- `decided_by` — the Slack user id who decided, `admin UI` when a gateway admin decided it from the
+  admin web UI, or `link` when they confirmed it from an approval link (empty on timeout).
 
 ## Protocol
 This call **blocks until the user decides** (or it times out after a few minutes) and hands you the

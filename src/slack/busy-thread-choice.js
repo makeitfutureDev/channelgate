@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { retireApprovalLinkTokens } from "../gateway/approval-link-tokens.js";
+import { approvalLinkBase, approvalLinksMessage, buildApprovalLinks } from "../web/approval-links.js";
+import { slackAdapter } from "../platforms/slack.js";
+import { postPrivately } from "../platforms/notify.js";
 import {
   acceptPendingRunChoice,
   clearActiveRun,
@@ -159,6 +163,39 @@ export function busyThreadChoiceBlocks(id) {
   ];
 }
 
+// The same three answers as signed, single-use links, delivered privately to the person whose
+// message is waiting. Same rationale as the approval card's links (src/web/approval-links.js): a
+// surface without working buttons has no other way to answer, and automation cannot click. The
+// card's own ownership rule ("only the sender of THAT message may choose") is preserved by
+// construction — the links are minted for, and delivered only to, that sender.
+export async function deliverBusyThreadChoiceLinks(client, choiceId, { channelId, threadTs = "", userId } = {}) {
+  try {
+    const baseUrl = approvalLinkBase({ capabilities: slackAdapter.capabilities });
+    if (!baseUrl || !client || !userId) return [];
+    const links = buildApprovalLinks({
+      baseUrl,
+      id: choiceId,
+      kind: "thread_choice",
+      requester: userId,
+      choices: [
+        { action: "steer", scope: "", label: "Steer Conversation" },
+        { action: "queue", scope: "", label: "Add to Queue" },
+        { action: "cancel", scope: "", label: "Cancel Request" },
+      ],
+    });
+    if (!links.length) return [];
+    await postPrivately(client, {
+      conversationId: channelId,
+      threadKey: threadTs,
+      userId,
+      text: approvalLinksMessage({ toolName: "This thread is already running", links, expiresAt: links[0].expiresAt }),
+    });
+    return links;
+  } catch {
+    return []; // the buttons still work
+  }
+}
+
 export async function handleBusyThreadChoice({ ack, body, action, client }, { processMessage }) {
   await ack();
   const userId = body?.user?.id || "";
@@ -201,6 +238,13 @@ export async function handleBusyThreadChoice({ ack, body, action, client }, { pr
 // pipeline with the exact stored event. Whoever calls this has already claimed the card through
 // the store (take / takeAsAdmin), which is what makes a double resolution impossible.
 export async function applyBusyThreadChoice({ choiceId, record, choice, client, channel = "", messageTs = "", processMessage }) {
+  // The card is being answered, so every unused LINK for it dies with it — whichever surface
+  // answered (a button, the admin API, or one of the links themselves).
+  try {
+    retireApprovalLinkTokens(choiceId);
+  } catch {
+    /* best-effort: a choice must never fail because the link ledger is unavailable */
+  }
   // Cancel never re-enters the pipeline: the pending message is dropped durably (so no restart or
   // stale click can resurrect it) and the run in progress is deliberately left untouched.
   if (choice === "cancel") {

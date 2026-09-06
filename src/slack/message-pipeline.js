@@ -57,7 +57,7 @@ import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk
 
 import { buildResumeCommand, resumeButton, footerButtons, footerText } from "./footer.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
-import { busyThreadChoiceBlocks, busyThreadChoices, steerActiveRun, BUSY_THREAD_CHOICE_KIND } from "./busy-thread-choice.js";
+import { busyThreadChoiceBlocks, busyThreadChoices, deliverBusyThreadChoiceLinks, steerActiveRun, BUSY_THREAD_CHOICE_KIND } from "./busy-thread-choice.js";
 import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText } from "./engine-switch-choice.js";
 
 // In-flight runs by "<slug>::<threadKey>". The queue serializes turns per thread — a second
@@ -898,8 +898,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           blocks: busyThreadChoiceBlocks(choiceId),
         });
         // Remember the card's message so a decision that does NOT come from a click on it — the
-        // admin approvals API — can still retire it instead of leaving a dead card in the thread.
+        // admin approvals API, or one of the links below — can still retire it instead of leaving
+        // a dead card in the thread.
         if (card?.ts) busyThreadChoices.noteCard(choiceId, card.ts);
+        // The same three answers as signed, single-use links, privately to the person waiting.
+        await deliverBusyThreadChoiceLinks(client, choiceId, { channelId: event.channel, threadTs: threadKey, userId: event.user });
       } catch (error) {
         busyThreadChoices.discard(choiceId);
         throw error;

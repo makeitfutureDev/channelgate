@@ -19,6 +19,27 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Approvals as links, so every chat surface can answer one.** Native buttons are Slack's
+  primitive: Teams and Google Chat have none the gateway drives, and automation cannot click
+  anything at all. Every approval card (permission, control-plane, durable background-shell) and
+  every busy-thread card is now ALSO minted as short-lived, single-use, HMAC-signed URLs — one per
+  action the recipient may actually take — and delivered **privately to the person who raised the
+  request**: a Slack ephemeral in the same thread, a DM on a surface with no ephemeral primitive,
+  never the shared thread (a link is a bearer credential). `GET /approve/<token>` renders a
+  confirmation page and changes nothing, because Slack, Teams and corporate proxies prefetch and
+  unfurl links; `POST` — the page's single Confirm button — resolves the request through the same
+  `applyApprovalDecision` / `applyBusyThreadChoice` the buttons and the admin API use, so scope
+  semantics, the durable compare-and-swap, the waiting MCP call and the card update in the thread
+  are identical to a click. The waiting agent reads `decided_by: "link"`. The signature covers id +
+  action + scope + expiry (a *Deny* link cannot be edited into an *Approve forever* one), the nonce
+  is spent by one atomic UPDATE (a link works exactly once), deciding a card retires its other
+  links, and the requester's own authority is re-checked on every POST — so an admin-tier sign-off
+  is handed a Deny link and no Approve link. Unknown/used/expired answer 404/410 with a page that
+  reveals nothing about any other request, bad tokens get per-IP backoff, and every response is
+  `no-store` + `noindex`. New setting Settings → Connection → **Approval links**: `auto` (default —
+  where there are no native buttons, plus Slack once a public URL is set), `always`, `off`. Every
+  link decision logs `approval_resolved_by_link` (ids, decision, scope — never a value). Slack's
+  buttons are unchanged.
 - **Approvals can be resolved from the admin UI and over HTTP, not only by a chat click.** A
   pending approval used to be answerable only by clicking its card in a real Slack client, which
   blocked every automated and QA path that has to get past a permission prompt, a control-plane

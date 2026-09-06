@@ -16,6 +16,7 @@ import { mountSkillsPublicRoutes } from "./skills-mcp.js";
 import { triggerSourceSync } from "../gateway/skills/index.js";
 import { createRunsRouter } from "./routes/runs.js";
 import { createFileEditorRouter } from "./file-editor.js";
+import { createApprovalLinkRouter } from "./routes/approve.js";
 import { createFileUploadRouter } from "./file-upload.js";
 import { poolStats } from "../engines/session-pool.js";
 import { getEngine, isEngineEnabled } from "../config/settings.js";
@@ -74,7 +75,7 @@ export function createWebApp({
   mountSkillsPublicRoutes(app, { triggerSync: (id) => triggerSourceSync(id) });
 
   const jsonParser = express.json({ limit: "1mb" });
-  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") || req.path === "/api/skills/webhook/github" || req.path === "/mcp/skills" ? next() : jsonParser(req, res, next)));
+  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") || req.path.startsWith("/approve/") || req.path === "/api/skills/webhook/github" || req.path === "/mcp/skills" ? next() : jsonParser(req, res, next)));
 
   // Auth: login/logout are always reachable; everything else is gated when ADMIN_PASSWORD is set.
   app.post("/api/login", handleLogin);
@@ -202,6 +203,13 @@ export function createWebApp({
       return context;
     },
   }));
+
+  // Link-based approvals. Public by design and mounted outside the admin login: the token in the
+  // URL IS the credential, minted for one person, single-use, expiring, and re-checked against the
+  // approval's own authorization on every POST. GET renders a confirmation page and changes
+  // nothing — link unfurlers, preview services and scanning proxies fetch these URLs, so a GET
+  // with a side effect would let the unfurler decide the request before the human saw it.
+  app.use("/approve", createApprovalLinkRouter({ slack }));
 
   // DNS-rebinding guard: refuse API requests whose Host/Origin isn't an address we recognise, so
   // an attacker page that rebinds its hostname to 127.0.0.1 can't drive the admin API from a
