@@ -181,7 +181,7 @@ test("conversation tool categories are first-class channel pages", () => {
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(html, /id="org-grant-tier"[\s\S]*Organization[\s\S]*Channel[\s\S]*Individual user/);
   assert.doesNotMatch(html, /class="ch-grant-tier"/);
-  assert.match(html, /data-pane="access">Access<[\s\S]*data-pane="connections">Connections<[\s\S]*data-pane="mcps">MCP servers<[\s\S]*data-pane="environment">Environment tokens<[\s\S]*data-pane="skills">Skills<[\s\S]*data-pane="runtime">Runtime<[\s\S]*data-pane="instructions">Instructions<[\s\S]*data-pane="memory">Memory</);
+  assert.match(html, /data-pane="access">Access<[\s\S]*data-pane="connections">MCP Connections<[\s\S]*data-pane="mcps">Cloud MCP<[\s\S]*data-pane="environment">Environment tokens<[\s\S]*data-pane="skills">Skills<[\s\S]*data-pane="runtime">Runtime<[\s\S]*data-pane="instructions">Instructions<[\s\S]*data-pane="memory">Memory</);
   assert.doesNotMatch(html, /data-pane="tools"|tool-subtab|data-tool-pane/);
   assert.doesNotMatch(client, /toolSections|tool-subtab|dataToolPane/);
   assert.match(html, /class="ud-row ud-grants"/);

@@ -26,7 +26,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
 - **Focused conversation settings:** Access presents Read-only, Worker, and Autonomous as the
   primary modes, with Full access and Lean as clearly separated special-mode boxes; Custom is no
-  longer offered. Connections, MCP servers, Environment tokens, and Skills are separate first-class
+  longer offered. MCP Connections, Cloud MCP, Environment tokens, and Skills are separate first-class
   channel pages rather than nested beneath Tools; enabled skills sort first and the channel-level
   Grant Tier switch is gone.
 - **Truthful guest access:** approved members appear selected because they already have access;
