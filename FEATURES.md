@@ -19,6 +19,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   personal account; `composio-agent` is the shared agent account. Pronouns and named connection
   aliases select between them, ambiguous apps connected to both require a question, and connection
   discovery recognizes normalized MCP names and verifies active aliases without silent fallback.
+  A missing personal identity is never substituted: a request for the requester's own account is
+  served by `composio-user` or answered with the fact that it is absent, never from the shared
+  identity's data — that identity holds other people's accounts.
   → TEST-PLAN: Composio identity and connection discovery.
 
 - **Focused conversation settings:** Access presents Read-only, Worker, and Autonomous as the
@@ -1475,6 +1478,17 @@ are retired, bullet by bullet; everything else stands.
   it behind a channel-local `claude` wrapper which defers to any credential explicitly injected by
   a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
   → TEST-PLAN: Container runtime (v0.8 P1).
+- **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
+  halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
+  clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch
+  there is never deferred: the turn waits, bounded and announced in the thread, for the runs still
+  inside to finish and then rebuilds, or fails with a message naming the pending rebuild. Running
+  against mounts that point at a directory the channel has moved or deleted is not an option. A
+  mismatch that is only about behaviour (a rebuilt image, a limit, the network mode) keeps the old
+  deferral: the container is used for this turn and replaced at the next idle moment. "Busy" means
+  someone ELSE is inside — a caller that leased the container before asking for it (every turn does,
+  so the idle reaper cannot stop the environment mid-spawn) passes its own lease handle and is not
+  counted against itself. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Nothing a channel accumulates is ever lost — including its temp files.** A container is stopped
   as a matter of routine (the ten-minute idle sweep, the max-running cap) and recreated whenever its
   create-time fingerprint changes (an image rebuild, a limit change, a network-mode flip), so the
@@ -1834,11 +1848,15 @@ are retired, bullet by bullet; everything else stands.
   in place only when its content
   changes and self-repairing if a marker is damaged; everything below the end marker is
   user/agent-owned forever. The **hard rules** are the handful a run must never get wrong — the two
-  Composio identities and the "ask, don't guess" stop when a request names neither, that
-  `COMPOSIO_MANAGE_CONNECTIONS` initiates connections rather than listing them, and that only the
-  gateway's `run_in_background` / `run_agent_in_background` / `create_schedule` can report back
-  after a turn ends — stated here because a skill body is read only when the model opens it, and
-  one engine reliably did not (retest, 2026-09-06). They ride clean mode too, are engine-neutral,
+  Composio identities and the "ask, don't guess" stop when a request names neither; that a request
+  phrased for the requester's own accounts ("my inbox", their own name) is served ONLY by
+  `composio-user` and, when that identity is absent or lacks the app, is answered by saying so
+  rather than by reading the shared identity that holds other people's accounts (and the mirror:
+  "your X" never touches `composio-user`); that `COMPOSIO_MANAGE_CONNECTIONS` initiates connections
+  rather than listing them; and that only the gateway's `run_in_background` /
+  `run_agent_in_background` / `create_schedule` can report back after a turn ends — stated here
+  because a skill body is read only when the model opens it, and one engine reliably did not
+  (retest, 2026-09-06). They ride clean mode too, are engine-neutral,
   and stay under 4 KB with the switches so the always-on prompt weight is read rather than skimmed. Editable three ways: the admin UI Instructions tab (edits the real
   file; managed block shown read-only with a Settings link; hash-guarded against concurrent
   writes), by hand, or by asking the agent — the `update_channel_instructions` gateway MCP tool

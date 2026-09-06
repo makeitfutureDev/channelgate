@@ -44,7 +44,7 @@ export const localRuntime = Object.freeze({
   },
 
   acquireLease() {
-    return { release() {} };
+    return { id: "", release() {} };
   },
 
   async destroy() {},

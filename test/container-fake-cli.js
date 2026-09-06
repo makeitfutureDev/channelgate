@@ -85,8 +85,10 @@ export function createFakeCli({
   };
 }
 
-// The `inspect --format` line the lifecycle parses, in the exact 9-field shape INSPECT_FORMAT
-// produces (podman prints an empty string for a missing label; docker prints "<no value>").
+// The `inspect --format` line the lifecycle parses, in the exact 10-field shape INSPECT_FORMAT
+// produces (podman prints an empty string for a missing label; docker prints "<no value>"). The
+// last field is `cg.mounts` — empty for a container created before that label existed, which the
+// lifecycle reads as "unknown mounts" and treats as changed.
 export function inspectLine({
   name = "cg-test",
   status = "running",
@@ -97,6 +99,7 @@ export function inspectLine({
   image = "channelgate/runtime:latest",
   channel = "chan",
   platform = "slack",
+  mountFingerprint = "",
 } = {}) {
-  return [name, status, startedAt, imageId, fingerprint, install, image, channel, platform].join("|");
+  return [name, status, startedAt, imageId, fingerprint, install, image, channel, platform, mountFingerprint].join("|");
 }

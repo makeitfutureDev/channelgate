@@ -52,17 +52,25 @@ export function homeVolumeName(target) {
 // The label set every container we create carries. `channelgate=1` is the coarse marker an
 // operator can filter on; `cg.install` is the ownership proof; `cg.fingerprint` is what a later
 // run compares to decide "reuse or recreate" (§7).
+//
+// `cg.mounts` is the MOUNT-ONLY half of that fingerprint, carried separately because the two kinds
+// of mismatch are not equally urgent: a new image id can wait for the container to go idle, while a
+// changed workspace/artifact path means the running container is bound to directories that may no
+// longer exist. Only a mismatch of the FULL fingerprint ever makes us read this one, so a container
+// created before the label existed is untouched until something actually changes — and an empty
+// value then reads as "unknown", which the lifecycle treats as mount-affecting (fail closed).
 export const LABEL_MARKER = "channelgate";
 export const LABEL_INSTALL = "cg.install";
 export const LABEL_PLATFORM = "cg.platform";
 export const LABEL_CHANNEL = "cg.channel";
 export const LABEL_FINGERPRINT = "cg.fingerprint";
+export const LABEL_MOUNTS = "cg.mounts";
 export const LABEL_IMAGE = "cg.image";
 export const LABEL_CREATED = "cg.created";
 
 // `created` is deliberately NOT defaulted to now(): prepareTarget() must be pure, so it asks for
 // the label set WITHOUT a timestamp and only the create call stamps one.
-export function containerLabels(target, { fingerprint = "", image = "", created = "" } = {}) {
+export function containerLabels(target, { fingerprint = "", mountFingerprint = "", image = "", created = "" } = {}) {
   const labels = {
     [LABEL_MARKER]: "1",
     [LABEL_INSTALL]: currentInstallId(),
@@ -71,6 +79,7 @@ export function containerLabels(target, { fingerprint = "", image = "", created 
     [LABEL_FINGERPRINT]: String(fingerprint || ""),
     [LABEL_IMAGE]: String(image || ""),
   };
+  if (mountFingerprint) labels[LABEL_MOUNTS] = String(mountFingerprint);
   if (created) labels[LABEL_CREATED] = created;
   return labels;
 }

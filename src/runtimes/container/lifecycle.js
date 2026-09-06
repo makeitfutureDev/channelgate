@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
 import { channelArtifactDir } from "../../config/paths.js";
-import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_PLATFORM } from "./names.js";
+import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM } from "./names.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
 import { CONTAINER_SOCKET_DIR } from "./image-paths.js";
 
@@ -98,6 +98,7 @@ const INSPECT_FIELDS = [
   `{{index .Config.Labels "${LABEL_IMAGE}"}}`,
   `{{index .Config.Labels "${LABEL_CHANNEL}"}}`,
   `{{index .Config.Labels "${LABEL_PLATFORM}"}}`,
+  `{{index .Config.Labels "${LABEL_MOUNTS}"}}`,
 ];
 export const INSPECT_FORMAT = INSPECT_FIELDS.join("|");
 
@@ -106,6 +107,9 @@ function field(value) {
   return text === "<no value>" ? "" : text;
 }
 
+// Tolerant of a 9-field line on purpose: `cg.mounts` was added after containers were already in
+// service, and a container created before it reports nothing for that field. An empty mount
+// fingerprint means "unknown", which ensureUp treats as mount-affecting rather than benign.
 export function parseInspectLine(line) {
   const parts = String(line || "").split("|");
   if (parts.length < 9) return null;
@@ -116,12 +120,14 @@ export function parseInspectLine(line) {
     startedAt: parseStartedAt(parts[2]),
     imageId: field(parts[3]),
     fingerprint: field(parts[4]),
+    mountFingerprint: field(parts[9]),
     labels: {
       [LABEL_INSTALL]: field(parts[5]),
       [LABEL_IMAGE]: field(parts[6]),
       [LABEL_CHANNEL]: field(parts[7]),
       [LABEL_PLATFORM]: field(parts[8]),
       [LABEL_FINGERPRINT]: field(parts[4]),
+      [LABEL_MOUNTS]: field(parts[9]),
     },
   };
 }
@@ -207,6 +213,32 @@ function mountArgs(mounts) {
 }
 
 // ── Fingerprint ───────────────────────────────────────────────────────────────────────────────
+// The create-time inputs that decide WHAT THE CONTAINER CAN SEE, hashed on their own.
+//
+// A stale full fingerprint is not one thing. "The image was rebuilt" is a container that still sees
+// exactly the right directories — it can finish the jobs inside it and be replaced when it next
+// goes idle. "The workspace moved" is a container bound to paths that may not exist any more: a
+// channel whose `workDir` was pointed at a subfolder and then back again kept a warm container
+// whose workspace bind still named the (by then deleted) subfolder, and three turns exec'd into it
+// died on `Append system prompt file not found: …/CLAUDE.md`. So the mount half is compared
+// separately and never deferred — see ensureUp.
+//
+// Deliberately NOT in here: the image, the network mode, cgroup limits, caps and the security opts.
+// They change how the container BEHAVES, not which host directories it is looking at, and the
+// existing deferral is the right answer for them.
+export function containerMountFingerprint(target) {
+  const c = target?.container || {};
+  const canonical = JSON.stringify({
+    v: 1,
+    workDir: target?.workDir || "",
+    cleanWorkDir: target?.cleanWorkDir || "",
+    artifactDir: target?.artifactDir || "",
+    homeVolume: c.homeVolume || "",
+    mounts: (c.mounts || []).map((m) => `${m.kind}:${m.type}:${m.source}:${m.target}:${m.mode}`).sort(),
+  });
+  return `m1-${createHash("sha256").update(canonical).digest("hex").slice(0, 32)}`;
+}
+
 export function containerFingerprint(target) {
   const c = target?.container || {};
   const canonical = JSON.stringify({
@@ -235,10 +267,10 @@ export function containerFingerprint(target) {
 }
 
 // ── Create argv ───────────────────────────────────────────────────────────────────────────────
-export function buildCreateArgs(target, caps, { fingerprint = "", created = new Date().toISOString() } = {}) {
+export function buildCreateArgs(target, caps, { fingerprint = "", mountFingerprint = containerMountFingerprint(target), created = new Date().toISOString() } = {}) {
   const c = target.container;
   const args = ["run", "-d", "--name", c.name];
-  args.push(...labelArgs(containerLabels(target, { fingerprint, image: c.image, created })));
+  args.push(...labelArgs(containerLabels(target, { fingerprint, mountFingerprint, image: c.image, created })));
   if (caps.uidStrategy === "keep-id") args.push("--userns=keep-id");
   else if (c.uid != null && c.gid != null) args.push("--user", `${c.uid}:${c.gid}`);
   if (caps.supportsInit) args.push("--init");
@@ -263,7 +295,19 @@ export function buildCreateArgs(target, caps, { fingerprint = "", created = new 
 }
 
 // ── The lifecycle object ──────────────────────────────────────────────────────────────────────
-export function createContainerLifecycle({ cli, image, reaper, log = () => {}, now = () => Date.now() } = {}) {
+// How long a turn will wait for the runs already inside a container to finish when the container
+// has to be REBUILT before it can be used (its mounts changed). Bounded on purpose: past the bound
+// the turn fails with the reason instead of waiting silently or, worse, running against the wrong
+// directories.
+export const DEFAULT_RECREATE_WAIT_MS = 60_000;
+export const DEFAULT_RECREATE_POLL_MS = 1_000;
+
+export function createContainerLifecycle({
+  cli, image, reaper, log = () => {}, now = () => Date.now(),
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.()),
+  recreateWaitMs = DEFAULT_RECREATE_WAIT_MS,
+  recreatePollMs = DEFAULT_RECREATE_POLL_MS,
+} = {}) {
   async function inspectByRef(caps, ref) {
     const result = await cli.runWith(caps, ["inspect", "--type", "container", "--format", INSPECT_FORMAT, ref], { timeoutMs: 30_000 });
     if (result.code !== 0) {
@@ -345,9 +389,9 @@ export function createContainerLifecycle({ cli, image, reaper, log = () => {}, n
     }
   }
 
-  async function createContainer(caps, target, fingerprint) {
+  async function createContainer(caps, target, fingerprint, mountFingerprint) {
     ensureBindSources(target);
-    const args = buildCreateArgs(target, caps, { fingerprint });
+    const args = buildCreateArgs(target, caps, { fingerprint, mountFingerprint });
     const result = await cli.runWith(caps, args, { timeoutMs: 120_000 });
     if (result.code === 0) return;
     const stderr = String(result.stderr || "").trim();
@@ -389,9 +433,15 @@ export function createContainerLifecycle({ cli, image, reaper, log = () => {}, n
     }
   }
 
-  async function ensureUp(target, { announce = null } = {}) {
+  // `lease` is the CALLER's own lease on this container, when it took one before asking (run.js and
+  // the memory reviewer both do — the idle reaper must not stop an environment a turn is about to
+  // spawn into). It is excluded from "is anyone else inside?", because a turn is not a reason to
+  // refuse to rebuild the container that turn is waiting for.
+  async function ensureUp(target, { announce = null, lease = null } = {}) {
     const name = target?.container?.name;
     if (!name) throw new Error("container target is missing its name");
+    const ownLeaseId = typeof lease === "string" ? lease : (lease?.id || "");
+    const othersInside = () => reaper.leaseCount(name, { exclude: ownLeaseId });
     const startedAt = now();
     const release = await acquireKeyedLock("cg-container", name);
     let slowTimer = null;
@@ -402,7 +452,9 @@ export function createContainerLifecycle({ cli, image, reaper, log = () => {}, n
       if (!img.present) throw new Error(img.reason);
       settleTarget(target, { caps, img });
       const fingerprint = containerFingerprint(target);
+      const mountFingerprint = containerMountFingerprint(target);
       target.container.fingerprint = fingerprint;
+      target.container.mountFingerprint = mountFingerprint;
 
       let info = await inspectByRef(caps, name);
       if (info.exists && !isOurContainer(info.labels)) {
@@ -417,11 +469,38 @@ export function createContainerLifecycle({ cli, image, reaper, log = () => {}, n
 
       let recreate = false;
       if (info.exists && info.fingerprint !== fingerprint) {
-        if (info.status !== "running" || reaper.leaseCount(name) === 0) {
+        // What KIND of stale? A container whose mounts still match can keep running the jobs inside
+        // it (the image is newer, nothing it can see moved). A container whose mounts do NOT match
+        // is looking at the wrong host directories — possibly deleted ones — and no turn may be
+        // exec'd into it. An unknown stored value (a container created before the `cg.mounts` label)
+        // counts as changed: fail closed.
+        const mountsChanged = info.mountFingerprint !== mountFingerprint;
+        if (info.status !== "running" || othersInside() === 0) {
           log(`[container] ${name} configuration changed — recreating (background state in it is lost)`);
           recreate = true;
+        } else if (mountsChanged) {
+          // Busy AND mount-affecting: wait, bounded, for the runs inside to finish — then rebuild.
+          // Never "use it now": that is the path that ran three turns against a workspace bind
+          // pointing at a directory the channel had already deleted.
+          target.container.recreatePending = true;
+          log(`[container] ${name} workspace mounts changed and ${othersInside()} run(s) are active — waiting up to ${Math.round(recreateWaitMs / 1000)}s to rebuild it`);
+          announceOnce(announce, "This channel's workspace changed, so its container has to be rebuilt — waiting for the runs still inside it to finish.");
+          const deadline = now() + recreateWaitMs;
+          while (othersInside() > 0 && now() < deadline) await sleep(recreatePollMs);
+          if (othersInside() > 0) {
+            throw new Error(
+              `this channel's container must be rebuilt before it can run again — its workspace mounts changed `
+              + `(the work folder, clean workspace or artifact directory moved), so the container is bound to the OLD paths. `
+              + `${othersInside()} run(s) are still active inside it, so the rebuild could not happen within `
+              + `${Math.round(recreateWaitMs / 1000)}s. It rebuilds by itself as soon as they finish — send the message again then, `
+              + `or stop the running job.`,
+            );
+          }
+          log(`[container] ${name} is idle now — rebuilding it for the changed workspace mounts`);
+          recreate = true;
         } else {
-          // Leased: an active job is inside. Use it now and recreate at the next idle moment.
+          // Busy, but nothing it can SEE changed (a rebuilt image, a limit, the network mode). Use
+          // it for this turn and recreate at the next idle moment, as before.
           target.container.recreatePending = true;
           log(`[container] ${name} configuration changed but runs are active — recreating when it next goes idle`);
         }
@@ -429,6 +508,7 @@ export function createContainerLifecycle({ cli, image, reaper, log = () => {}, n
       if (recreate) {
         await removeContainer(caps, name);
         info = { exists: false, status: "missing" };
+        target.container.recreatePending = false;
       }
 
       let created = false;
@@ -437,13 +517,13 @@ export function createContainerLifecycle({ cli, image, reaper, log = () => {}, n
         await reaper.reserveSlot(name, { maxRunning: target.settings?.maxRunning ?? 8, announce });
         prepareHostSide(target);
         slowTimer = announceAfter(announce, "Warming up this channel's container — the first run takes a few seconds.");
-        await createContainer(caps, target, fingerprint);
+        await createContainer(caps, target, fingerprint, mountFingerprint);
         created = true;
         started = true;
       } else if (info.status !== "running") {
         await reaper.reserveSlot(name, { maxRunning: target.settings?.maxRunning ?? 8, announce });
         prepareHostSide(target);
-        const hadLeases = reaper.leaseCount(name) > 0;
+        const hadLeases = othersInside() > 0;
         slowTimer = announceAfter(announce, "Restarting this channel's container…");
         await startContainer(caps, name);
         started = true;

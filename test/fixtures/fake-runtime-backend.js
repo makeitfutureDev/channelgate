@@ -66,7 +66,7 @@ export function createFakeRuntime({
       return true;
     },
     acquireLease() {
-      return { release() {} };
+      return { id: "", release() {} };
     },
     async destroy() {},
     fingerprint() {
