@@ -149,6 +149,17 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **A daily-thread schedule starts a fresh session on every fire again.** A scheduled run's session
+  key was built from the message its result is threaded under, which is a different message per
+  fire only for `standard` delivery. `delivery:"daily-thread"` reuses one anchor for the whole
+  server-local day, so the day's second and later fires landed on the same key and RESUMED the
+  previous fire's engine session — carrying context between runs the schedule contract explicitly
+  promises are independent. The session key is now derived per fire and never from the delivery
+  thread; the anchor still groups the day's results exactly as before. Known limitation, unchanged
+  and now documented in the code: the scheduler starts only after restart recovery finishes and its
+  first tick lands a minute later, so a cron matching a minute that passed during boot is skipped
+  until its next match — firing that minute would need a durable per-minute fire record, because
+  the in-memory one cannot tell it apart from a minute that already fired before the restart.
 - **A Claude run's skill uses now land on the skill they name.** Claude names a plugin-provided
   skill as `<plugin>:<slug>` in its `Skill` tool call, and the usage recorder looked that whole
   string up in the catalog — it matched nothing, so every exact signal Claude produced was stored
