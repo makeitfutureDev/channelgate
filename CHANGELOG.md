@@ -12,11 +12,33 @@ product overview.
 >
 > | License version | Effective | Published |
 > | --- | --- | --- |
-> | Makeitfuture Sustainable Use License 1.2 | 2026-08-25 | not yet published |
+> | Makeitfuture Sustainable Use License 1.2 | 2026-08-25 | 2026-09-06 (with ChannelGate 0.5.0) |
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
+## [0.5.0] — first public release (2026-09-06)
+
+> **Versioning.** 0.5.0 is the first published version of ChannelGate; the repository became public
+> on 2026-09-06. The internal iteration labels used below the first public entry (the container
+> runtime work labelled "v0.8", and the June 2026 "v1.0.0 (foundation)" milestone) were names for
+> private milestones, never publications — the public version series starts here. Everything under
+> this heading is what 0.5.0 contains, accumulated since the foundation.
+
+### Highlights
+- Container-per-channel runtime (rootless Podman, Linux + systemd only) as the sole confinement
+  boundary, with a per-channel HOME volume, image-shipped toolchain and durable channel state.
+- Claude Code and OpenAI Codex as interchangeable harnesses with per-thread choice, transient
+  failover, warm sessions and the operator's own login relayed into every run.
+- Slack in full (threads, streaming progress, approvals as buttons and as links, native charts,
+  Lists, file explorer and editor, attachments to 500 MB), with Microsoft Teams and Google Chat
+  transports behind the same capability-declared platform layer.
+- Skills platform: local catalog, channel and personal tiers, templates followed live, Git and
+  folder sources with review, publishing, a catalog MCP endpoint and peer-gateway sync.
+- Uncapped channel memory with on-demand retrieval, schedules, background jobs, follow-ups,
+  video understanding, VS Code attach, and an admin UI for all of it.
+- Licensing: free tier with limits, license keys issued by the platform at channelgate.dev,
+  Ed25519-signed entitlements with a 14-day offline grace, and privacy-bounded usage reports.
+
 
 ### Added
 - **Approvals as links, so every chat surface can answer one.** Native buttons are Slack's
