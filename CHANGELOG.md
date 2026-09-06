@@ -149,6 +149,24 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **The rules a run must never get wrong are now in the context every run receives.** Guidance that
+  lived only in the `gateway-usage` skill reached one engine and not the other: the skill body is
+  read when the model chooses to open it, and across a retest wave of failing transcripts the string
+  `gateway-usage` appeared only in the skills catalog listing while none of the rule text appeared at
+  all — the other engine, reading the identical text through the `AGENTS.md` symlink, followed it and
+  passed. The cost was not stylistic: a personal calendar read into a shared channel without asking
+  whose it was, an "inventory" call that quietly raised a fresh authorization request, remote
+  execution run against the requester's own identity unasked, and follow-ups promised on background
+  processes that die with the turn and never report. The gateway-managed block at the top of every
+  conversation's instruction file — appended to the system prompt of every run, in every mode, clean
+  mode included — now carries a compact **Hard rules** section beside this conversation's switches:
+  the two Composio identities and the stop that makes an unnamed request a question rather than a
+  tool call, that `COMPOSIO_MANAGE_CONNECTIONS` initiates connections for any action (`list`
+  included) rather than listing them, and that only the gateway's `run_in_background`,
+  `run_agent_in_background` and `create_schedule` can report back after a turn ends. It is
+  engine-neutral, applies wherever the named tools exist, and the gateway-owned part of the block
+  stays under 4 KB so the always-on prompt weight is read rather than skimmed; the full reasoning,
+  tool shapes and examples stay in the skill.
 - **A Codex thread keeps its Composio tools on every turn, not just the first.** The second message
   in a Codex thread came back without `composio-user` or `composio-agent` at all — the registry
   showed only the `gateway` family, so Workbench and every connected app vanished mid-conversation
