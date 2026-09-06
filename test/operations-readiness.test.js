@@ -138,6 +138,10 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   assert.match(systemd, /Delegate=yes/);
   assert.match(systemd, /--add-subids-for-system/);
   assert.match(systemd, /run_as_service "\$NODE_BIN"/);
+  assert.match(systemd, /Requires=user@\$SERVICE_UID\.service/);
+  assert.match(systemd, /After=network-online.target user@\$SERVICE_UID\.service/);
+  assert.ok(systemd.indexOf('scripts/service-path-preflight.mjs') < systemd.indexOf('useradd --system'));
+  assert.match(systemd, /Relocate the checkout to \/opt\/channelgate/);
   assert.match(systemd, /ProtectSystem=strict/);
   // The engines spawn by bare name: the unit must carry an explicit PATH with the resolved CLI
   // dirs (systemd's default PATH won't have nvm/user-prefix installs) and the credential env
