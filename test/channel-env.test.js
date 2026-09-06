@@ -64,6 +64,21 @@ test("the admin env form upper-cases the name it shows and sends", () => {
   assert.match(form, /const name = envNameInput\.value\.trim\(\)\.toUpperCase\(\);/);
 });
 
+// ADM-009: these fields save through their OWN request (a variable is stored the moment "Save
+// variable" is pressed, and a write-only value must never round-trip through the card's Save), so
+// typing in them — or storing one — must not raise the card's "Unsaved changes" bar over edits that
+// do not exist.
+test("the env card is exempt from the conversation card's unsaved-changes tracking", () => {
+  const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(client, /const SELF_SAVING_CONTROLS = "\.channel-env-card";/);
+  // Each of the three dirty-trackers (conversation card, DM/template card, Settings page) exempts it.
+  assert.match(client, /\[data-pane="instructions"\], \[data-pane="memory"\], \.detail-savebar, \.checks-filter, \$\{SELF_SAVING_CONTROLS\}/);
+  assert.match(client, /\.detail-savebar, \.checks-filter, \$\{SELF_SAVING_CONTROLS\}`\)\) mark\(\)/);
+  assert.match(client, /\.settings-savebar, \.checks-filter, \.setbar, \$\{SELF_SAVING_CONTROLS\}/);
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.match(html, /<div class="setcard channel-env-card">/);
+});
+
 test("names that would rewrite what the child executes are reserved", () => {
   for (const reserved of [
     "PATH", "HOME", "TMPDIR",                    // the daemon sets these itself

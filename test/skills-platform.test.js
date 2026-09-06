@@ -158,9 +158,15 @@ test("catalog: staged revisions need approval, pins roll back, tombstones restor
   assert.equal(catalog.effectiveRevisionFor(catalog.getSkill("gamma")).revisionNo, 2);
   catalog.pinSkill("gamma", 1);
   assert.equal(catalog.effectiveRevisionFor(catalog.getSkill("gamma")).revisionNo, 1, "pin = rollback");
+  // The derived columns are rebuilt from the newest ACTIVATED revision, so the pin has to be read
+  // back through them too: a rolled-back skill that still advertises v2's description is describing
+  // files the conversation never receives.
+  assert.equal(catalog.getSkill("gamma").description, "Gamma v1", "a pinned skill advertises the pinned revision");
+  assert.equal(catalog.listSkills({ query: "gamma" }).find((x) => x.slug === "gamma").description, "Gamma v1", "and so does its catalog row");
   assert.throws(() => catalog.pinSkill("gamma", 7), /not found/);
   catalog.pinSkill("gamma", null);
   assert.equal(catalog.effectiveRevisionFor(catalog.getSkill("gamma")).revisionNo, 2);
+  assert.equal(catalog.getSkill("gamma").description, "Gamma v2", "unpinned follows the current revision again");
   assert.equal(catalog.tombstoneMissingSourceSkills(src.id, []), 1);
   assert.equal(catalog.getSkill("gamma").deleted, true);
   const back = catalog.putSkillRevision({ files: [md("Gamma", "Gamma v2")], ownerKind: "git", sourceId: src.id, sourcePath: "skills/gamma", status: "active", sourceRef: "bbb" });
@@ -484,6 +490,31 @@ test("templates resolve explicit skills, preview against a conversation, and are
   catalog.upsertTemplate({ slug: "sales", name: "Sales", categories: [], skills: [] });
   assert.deepEqual(templates.channelSkillGrants(await getChannelMeta(entry.slug)), ["existing-grant"]);
   assert.equal(await templates.assignTemplateToChannel("no-such-channel", "sales"), null);
+});
+
+// A template's own skills are never the whole always-on cost: the organization tier loads in every
+// conversation whatever the template says, so a preview that counted only the template understated
+// the number an admin sizes a template against. Both are reported, each labelled.
+test("a template preview reports its own tier, the organization tier, and the effective total", () => {
+  catalog.putSkillRevision({ files: [md("Ctx Tier", "a skill the template brings")], ownerKind: "local" });
+  catalog.putSkillRevision({ files: [md("Ctx Org", "a skill every conversation already loads")], ownerKind: "local" });
+  catalog.upsertTemplate({ slug: "ctx", name: "Ctx", skills: ["ctx-tier"] });
+  const before = getOrgAccessGrants().skills || [];
+  saveSettings({ accessGrants: { skills: ["ctx-org"] } });
+  try {
+    const preview = templates.previewTemplate("ctx", {});
+    assert.equal(preview.context.tier, preview.profile.contextTokens, "the template's own estimate is still there, labelled");
+    assert.ok(preview.context.tier > 0 && preview.context.organization > 0);
+    assert.equal(preview.context.effective, preview.context.tier + preview.context.organization, "both tiers are always on");
+    assert.deepEqual(preview.context.names.sort(), ["ctx-org", "ctx-tier"], "the effective total is the union, dependencies included");
+
+    // A skill the template shares with the organization tier is loaded once, so it is counted once.
+    catalog.upsertTemplate({ slug: "ctx", name: "Ctx", skills: ["ctx-tier", "ctx-org"] });
+    const shared = templates.previewTemplate("ctx", {});
+    assert.equal(shared.context.effective, shared.context.tier, "no double counting");
+  } finally {
+    saveSettings({ accessGrants: { skills: before } });
+  }
 });
 
 // ── usage ────────────────────────────────────────────────────────────────────────────────────

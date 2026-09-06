@@ -319,7 +319,9 @@ export function register(server, ctx) {
       const meta = (await loadMeta()) || {};
       const p = previewTemplate(template, meta);
       if (!p) return text(`No template named "${template}". See list_skill_templates.`);
-      return text(`Following **${p.template.name}** here would give:\n• gain: ${p.add.join(", ") || "(nothing)"}\n• keep: ${p.keep.join(", ") || "(nothing)"}\n• drop: ${p.remove.join(", ") || "(nothing)"}${p.missing.length ? `\n• template names skills not in the catalog: ${p.missing.join(", ")}` : ""}\nChannel tier (${p.names.length}): ${p.names.join(", ") || "(none)"}\nAlways-on context: ~${p.profile.contextTokens} tokens${p.profile.warnings.length ? `\nWarnings: ${p.profile.warnings.join("; ")}` : ""}`);
+      // Two numbers, both labelled: this tier alone, and what the conversation actually pays once
+      // the organization tier (always on, whatever the template says) is counted with it.
+      return text(`Following **${p.template.name}** here would give:\n• gain: ${p.add.join(", ") || "(nothing)"}\n• keep: ${p.keep.join(", ") || "(nothing)"}\n• drop: ${p.remove.join(", ") || "(nothing)"}${p.missing.length ? `\n• template names skills not in the catalog: ${p.missing.join(", ")}` : ""}\nChannel tier (${p.names.length}): ${p.names.join(", ") || "(none)"}\nAlways-on context: this tier adds ~${p.context.tier} tokens; effective total ~${p.context.effective} tokens per turn (organization tier ~${p.context.organization}, loaded in every conversation)${p.context.warnings.length ? `\nWarnings: ${p.context.warnings.join("; ")}` : ""}`);
     },
   );
 
@@ -336,7 +338,7 @@ export function register(server, ctx) {
       // Same event kind the admin UI's template route writes, so both surfaces read alike.
       await logEvent("skill_template_assigned", { channel: channelId, slug, template: r.template?.slug || "none", author: createdBy });
       if (!r.template) return text(`✅ This channel follows no template now. Its own added skills stay (${r.names.length}): ${r.names.join(", ") || "(none)"}.`);
-      return text(`✅ This channel now follows **${r.template.name}**: +${r.add.length} skill(s)${r.remove.length ? `, −${r.remove.length}` : ""}. Channel tier (${r.names.length}): ${r.names.join(", ") || "(none)"}\nAlways-on context ~${r.profile.contextTokens} tokens.${r.profile.staged.length ? `\nAwaiting admin review: ${r.profile.staged.map((s) => s.slug).join(", ")}` : ""} Template edits follow automatically; add_channel_skills adds on top. Active on the next message.`);
+      return text(`✅ This channel now follows **${r.template.name}**: +${r.add.length} skill(s)${r.remove.length ? `, −${r.remove.length}` : ""}. Channel tier (${r.names.length}): ${r.names.join(", ") || "(none)"}\nAlways-on context ~${r.context.effective} tokens per turn (this tier ~${r.context.tier} + the organization tier ~${r.context.organization}).${r.profile.staged.length ? `\nAwaiting admin review: ${r.profile.staged.map((s) => s.slug).join(", ")}` : ""} Template edits follow automatically; add_channel_skills adds on top. Active on the next message.`);
     },
   );
 

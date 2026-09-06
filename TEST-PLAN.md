@@ -2388,6 +2388,10 @@ history.
       split across two deltas is still caught by the holdback redactor; with no secrets the
       redactor is a pass-through; the holdback is always released, so an answer never loses its
       tail (automated).
+- [x] Admin card (ADM-009 regression): the env card saves through its OWN request, so typing a name
+      or a value — or storing one — never raises the conversation card's "Unsaved changes" bar over
+      edits that do not exist; all three dirty-trackers (conversation card, DM/template card,
+      Settings page) exempt the same self-saving controls (automated: `test/channel-env.test.js`).
 - [x] Slack discovery: every authored completed-run footer includes the 🔑 secrets manager control
       even when `channelSecretCount` is absent or zero, while author-less posts still expose no
       requester-bound controls (automated: `test/slack-progress.test.js`,
@@ -2964,6 +2968,15 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       conversation, profile and usage endpoints, proposals approve/reject, and the settings fields
       (clamps 400; the publishing token never rides a listing and is revealable only via the allowlist)
       (`test/skills-admin-api.test.js`).
+- [x] Unit + Admin API (SKL-07 regression): a skill pinned to an older revision advertises THAT
+      revision's name, description, category, tags, requires and version wherever the catalog is
+      read — the derived index columns follow the pin exactly as the file list already did — and
+      unpinning goes back to the current revision (`test/skills-platform.test.js`,
+      `test/skills-admin-api.test.js`).
+- [x] Unit (SKL-04 regression): a template preview reports the always-on context cost in labelled
+      numbers — this tier, the organization tier that loads in every conversation whatever the
+      template says, and the effective union (dependencies included, a skill in both tiers counted
+      once) — instead of the template tier alone (`test/skills-platform.test.js`).
 - [x] Drift tripwires: every skills tool is classified gated/open in the control-plane inventory
       (`test/mcp-control-plane-approval.test.js`) and present in the lockdown allowlist
       (`test/folders-settings.test.js`); the Skills admin view has a canonical path
@@ -2975,6 +2988,11 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       searchable and usage-descending with By skill / By channel rollups, compact bars,
       and context-warning explanations. The profile API supplies warning text rather
       than only a count (`test/skills-admin-ui.test.js`, `test/skills-admin-api.test.js`).
+- [x] Admin UI (SKL-13 regression): every class the admin JS hides by setting `.hidden` carries a
+      `[hidden] { display: none }` companion rule — an author `display` declaration beats the UA
+      sheet's `[hidden]` whatever the specificity, so without it the template skill search filtered
+      nothing and the Add-source dialog showed the GitHub and ChannelGate fields at once
+      (`test/skills-admin-ui.test.js`).
 - [ ] Live (Claude + Codex): grant a catalog skill to a private test channel, ask for something its
       description covers, and confirm the skill fires from the materialized folder with no Skills
       Manager token configured (Claude: exact usage row; Codex: inferred row after it reads

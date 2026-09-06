@@ -1990,7 +1990,8 @@ are retired, bullet by bullet; everything else stands.
   boundary (`src/gateway/skills/files.js`). The parsed frontmatter columns (name, description,
   category, tags, version, `requires`) are a DERIVED index rebuilt from the activated revision
   (`frontmatter.js` — a YAML-subset reader that never rewrites), so an unmodelled key such as
-  `allowed-tools` is never lost. Ownership is explicit per slug (`bundled` / `folder` / `git` /
+  `allowed-tools` is never lost; a catalog read resolves them for the EFFECTIVE revision, so a skill
+  pinned to an older one advertises that revision's text beside that revision's files. Ownership is explicit per slug (`bundled` / `folder` / `git` /
   `local`); a write from another owner is a reported **conflict**, never an overwrite. Removal is a
   **tombstone** (revisions kept, dependents readable, a returning source restores it); an admin's
   removal is a sticky **exclusion** (`excluded_at`) that no sync or import undoes until restored.
@@ -2044,7 +2045,9 @@ are retired, bullet by bullet; everything else stands.
   field): its channel tier is the template's current skills plus the skills added to the
   conversation (`meta.skills`), so a template edit reaches every follower and additions come on
   top; `none` stops following and keeps the additions. **Preview** shows gains / keeps / drops and
-  the context cost. (2026-09-05, replacing the earlier snapshot-copy apply.)
+  the always-on context cost in labelled numbers — what this tier adds, what the organization tier
+  costs in every conversation whatever the template says, and the effective union measured against
+  the soft cap. (2026-09-05, replacing the earlier snapshot-copy apply.)
   → TEST-PLAN: Skills platform (Core).
 - **Chat verbs** (`src/mcp/tools/skills.js`, in the lockdown allowlist and the control-plane
   approval map): `list_skills`, `show_channel_skills` (tiers, dependencies, missing/staged, context

@@ -55,6 +55,11 @@ let convFilter = "all"; // segmented control: all | channels | dms
 let CONV_COSTS = null; // { byId: {channelId→cost}, bySlug: {slug→cost} }; null until first (soft) fetch
 let convCostsFetched = false;
 let detailDirty = false; // whether the open conversation detail has unsaved edits (drives the savebar)
+// Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
+// The per-conversation environment secrets are the case that exists: write-only values stored the
+// moment "Save variable" is pressed (they must never round-trip through the card's Save), so typing
+// in them — or storing one — must not tell the admin the card has edits waiting.
+const SELF_SAVING_CONTROLS = ".channel-env-card";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -1410,9 +1415,9 @@ function renderChannelDetail(ch) {
     savebarMsg.classList.remove("clean");
   };
   const onEdit = (e) => {
-    // Exempt: the two file editors, the savebar buttons, and the tools filter boxes (filtering
-    // the checklists is a view action, not a config change).
-    if (e.target.closest('[data-pane="instructions"], [data-pane="memory"], .detail-savebar, .checks-filter')) return;
+    // Exempt: the two file editors, the savebar buttons, the tools filter boxes (filtering the
+    // checklists is a view action, not a config change), and the self-saving controls above.
+    if (e.target.closest(`[data-pane="instructions"], [data-pane="memory"], .detail-savebar, .checks-filter, ${SELF_SAVING_CONTROLS}`)) return;
     markDirty();
   };
   card.addEventListener("input", onEdit);
@@ -2095,7 +2100,7 @@ function wireSavebar(card, bar, save, discard) {
     msg.textContent = "Unsaved changes";
     msg.classList.remove("clean");
   };
-  const onEdit = (e) => { if (!e.target.closest(".detail-savebar, .checks-filter")) mark(); };
+  const onEdit = (e) => { if (!e.target.closest(`.detail-savebar, .checks-filter, ${SELF_SAVING_CONTROLS}`)) mark(); };
   card.addEventListener("input", onEdit);
   card.addEventListener("change", onEdit);
   bar.querySelector(".save-changes").addEventListener("click", async () => {
@@ -3759,7 +3764,7 @@ for (const a of document.querySelectorAll("#settings-nav a")) {
 // checklist is a view action, not a config change). A successful save re-loads settings, clearing it.
 {
   const view = document.getElementById("view-settings");
-  const onEdit = (e) => { if (!e.target.closest(".settings-savebar, .checks-filter, .setbar")) markSettingsDirty(); };
+  const onEdit = (e) => { if (!e.target.closest(`.settings-savebar, .checks-filter, .setbar, ${SELF_SAVING_CONTROLS}`)) markSettingsDirty(); };
   view.addEventListener("input", onEdit);
   view.addEventListener("change", onEdit);
 }
