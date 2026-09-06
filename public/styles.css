@@ -439,6 +439,13 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .audit-empty { color: var(--faint); font-style: italic; text-align: center; padding: 22px 16px; }
 .audit-foot { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
 .audit-count { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.audit-events-head { margin: 26px 0 12px; }
+.audit-events-head h3 { margin: 0 0 4px; }
+.audit-events-head .hint { margin: 0; }
+.audit-what { color: var(--muted); }
+.audit-kind { white-space: nowrap; }
+/* Event rows are read-only — no detail modal behind them, so no pointer cursor either. */
+.events-table tbody tr { cursor: default; }
 
 /* ══════════════════════════════════════════════════════════════════════════
    NEW design-system components. Defined now for the shell + later slices

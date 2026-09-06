@@ -13,6 +13,10 @@
 // the registered-slash-command variant is an ephemeral message with no body.message to read a
 // thread from on the next click.
 import { getChannelEntry, getChannelMeta, patchChannelMeta, isAdmin, isApproved } from "../config/store.js";
+// A channel-scope runtime pick (engine / model / effort) is a policy change — audited like the
+// admin UI's save and the `/mode` command (config/channel-audit.js). Thread-scope picks are not:
+// they live in the thread override store, never in the channel's meta.
+import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { getEngine, canChangeChannelRuntime, getEnabledEngines } from "../config/settings.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { isAuthorized } from "../gateway/modes.js";
@@ -284,6 +288,17 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
     }
 
     const repaint = (blocks) => updateRuntimePickerMessage({ client, respond, channel, ts, text: MODEL_WIZARD_TEXT, blocks });
+    // Persist a channel-scope pick AND record who changed what. The replaced record is captured
+    // inside the store transaction, so the diff is against what this click really overwrote.
+    const patchChannelRuntime = async (patch) => {
+      let replaced = null;
+      const next = await patchChannelMeta(entry.slug, (current) => {
+        replaced = current;
+        return patch;
+      });
+      await logChannelPolicyChange({ channelId: channel, slug: entry.slug, actor: userId, before: replaced, after: next, source: "slack-runtime-picker" });
+      return next;
+    };
     const clearThreadOverrides = async () => {
       await setThreadEngine(entry.slug, threadTs, "");
       await setThreadModel(entry.slug, threadTs, "");
@@ -303,7 +318,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       if (scope === "thread") {
         await clearThreadOverrides();
       } else {
-        await patchChannelMeta(entry.slug, { engine: "", model: "", effort: "" });
+        await patchChannelRuntime({ engine: "", model: "", effort: "" });
         // A channel-wide reset asked for from inside a thread also drops that thread's own
         // overrides, so the reset visibly applies right where it was requested.
         if (threadTs) await clearThreadOverrides();
@@ -329,7 +344,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         const patch = { engine };
         if (!modelBelongsToEngine(meta.model, engine)) patch.model = "";
         if (!effortBelongsToEngine(meta.effort, engine)) patch.effort = "";
-        const next = await patchChannelMeta(entry.slug, patch);
+        const next = await patchChannelRuntime(patch);
         current = next.model || "";
         // The channel choice should govern this thread too — drop any thread-level overrides here
         // (engine set by a "claude"/"codex" prefix, model/effort by an earlier thread-scoped run).
@@ -360,7 +375,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         await setThreadModel(entry.slug, threadTs, val);
         effortCurrent = await getThreadEffort(entry.slug, threadTs);
       } else {
-        effortCurrent = (await patchChannelMeta(entry.slug, { model: val })).effort || "";
+        effortCurrent = (await patchChannelRuntime({ model: val })).effort || "";
       }
       await repaint(modelWizardEffortBlocks({ scope, threadTs, engine, model: val, current: effortCurrent, isDM }));
       return;
@@ -377,7 +392,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         await setThreadEffort(entry.slug, threadTs, val);
         model = await getThreadModel(entry.slug, threadTs);
       } else {
-        model = (await patchChannelMeta(entry.slug, { effort: val })).model || "";
+        model = (await patchChannelRuntime({ effort: val })).model || "";
       }
       await updateRuntimePickerMessage({
         client,

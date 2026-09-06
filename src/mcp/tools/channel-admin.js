@@ -11,6 +11,9 @@ import { effectiveWorkDir, updateChannelInstructions } from "../../gateway/folde
 import { memoryEnabled, applyMemoryOperations, MEMORY_SECTIONS } from "../../gateway/channel-memory.js";
 import { searchChannelMemory, readChannelMemorySource } from "../../gateway/memory-search.js";
 import { logEvent } from "../../util/logger.js";
+// Every switch below rewrites the channel's security posture, so every successful one leaves an
+// audit row naming the chat author who flipped it (config/channel-audit.js).
+import { logChannelPolicyChange } from "../../config/channel-audit.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../../gateway/mcp-discovery.js";
 import { engineLabel, requireAdapter } from "../../engines/registry.js";
 import { getDriveSyncEnabled, getDriveSyncKeyJson, getDriveSyncKeyFile, getDriveSyncKeyEmail } from "../../config/settings.js";
@@ -22,6 +25,25 @@ import { slackThreadFor } from "../../slack/thread-keys.js";
 
 export function register(server, ctx) {
   const { channelId, slug, createdBy, threadKey, activeEngine, text, daemon, requireAdmin, requireManage, loadMeta } = ctx;
+
+  // Patch this channel's meta AND write the policy-audit row for whatever actually changed. The
+  // replaced record is captured inside the store's write transaction, so the diff is against what
+  // this call really overwrote even when another writer lands between the read and the commit.
+  // Returns exactly what patchChannelMeta returns (null = channel not set up yet → nothing written,
+  // and nothing audited). Every set_channel_* tool goes through here; a bare patchChannelMeta in
+  // this file would be a posture change with no trail.
+  async function patchAuditedMeta(patch) {
+    let replaced = null;
+    const next = await patchChannelMeta(slug, (meta) => {
+      if (!meta) return null; // channel isn't set up yet — nothing written, nothing audited
+      const partial = typeof patch === "function" ? patch(meta) : patch;
+      if (partial == null) return null;
+      replaced = meta;
+      return partial;
+    });
+    if (next) await logChannelPolicyChange({ channelId, slug, actor: createdBy, before: replaced, after: next, source: "mcp" });
+    return next;
+  }
 
   server.registerTool(
     "list_available_mcps",
@@ -58,7 +80,7 @@ export function register(server, ctx) {
       const unknown = [];
       // Atomic merge: the current list is re-read inside the store's write transaction, so a
       // concurrent add/remove (daemon or another run) can't be clobbered by a stale whole-record save.
-      const next = await patchChannelMeta(slug, (meta) => {
+      const next = await patchAuditedMeta((meta) => {
         if (!meta) return null; // channel isn't set up yet — nothing written
         added.length = unknown.length = 0; // fresh pass over the current list
         const current = [...(meta[field] || [])];
@@ -96,7 +118,7 @@ export function register(server, ctx) {
       const field = selectionFieldForEngine(activeEngine);
       let removed = 0;
       // Atomic: filter the CURRENT list inside the store's write transaction (see add_channel_mcps).
-      const next = await patchChannelMeta(slug, (meta) => {
+      const next = await patchAuditedMeta((meta) => {
         if (!meta) return null;
         const selected = meta[field] || [];
         const kept = selected.filter((m) => !drop.has(m.name.toLowerCase()));
@@ -122,7 +144,7 @@ export function register(server, ctx) {
     async ({ enabled }) => {
       if (!(await requireAdmin())) return text("Only admins can change this channel's admin mode.");
       // Atomic partial patch: only this flag changes (no whole-record save from a stale read).
-      if (!(await patchChannelMeta(slug, (meta) => (meta ? { adminMode: Boolean(enabled) } : null)))) {
+      if (!(await patchAuditedMeta((meta) => (meta ? { adminMode: Boolean(enabled) } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
       return text(
@@ -146,7 +168,7 @@ export function register(server, ctx) {
     },
     async ({ enabled }) => {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its shell access.");
-      if (!(await patchChannelMeta(slug, (meta) => (meta ? { allowBash: Boolean(enabled) } : null)))) {
+      if (!(await patchAuditedMeta((meta) => (meta ? { allowBash: Boolean(enabled) } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
       return text(
@@ -169,7 +191,7 @@ export function register(server, ctx) {
     },
     async ({ enabled }) => {
       if (!(await requireAdmin())) return text("Only admins can change this channel's network access.");
-      if (!(await patchChannelMeta(slug, (meta) => (meta ? { allowNetwork: Boolean(enabled) } : null)))) {
+      if (!(await patchAuditedMeta((meta) => (meta ? { allowNetwork: Boolean(enabled) } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
       return text(
@@ -192,7 +214,7 @@ export function register(server, ctx) {
     },
     async ({ enabled }) => {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its auto mode.");
-      if (!(await patchChannelMeta(slug, (meta) => (meta ? { autoMode: Boolean(enabled) } : null)))) {
+      if (!(await patchAuditedMeta((meta) => (meta ? { autoMode: Boolean(enabled) } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
       return text(
@@ -242,7 +264,7 @@ export function register(server, ctx) {
         isDir = false;
       }
       if (!isDir) return text(`That path is not a directory:\n${real}`);
-      if (!(await patchChannelMeta(slug, (meta) => (meta ? { workDir: real } : null)))) {
+      if (!(await patchAuditedMeta((meta) => (meta ? { workDir: real } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
       return text(`✅ This channel now runs in:\n${real}\nActive on the next message. (Dangerous tools still also require admin mode + an admin author.)`);
@@ -254,7 +276,7 @@ export function register(server, ctx) {
     { description: "ADMIN ONLY. Revert this channel to the default gateway working folder.", inputSchema: {} },
     async () => {
       if (!(await requireAdmin())) return text("Only admins can change this channel's working folder.");
-      if (!(await patchChannelMeta(slug, (meta) => (meta ? { workDir: "" } : null)))) {
+      if (!(await patchAuditedMeta((meta) => (meta ? { workDir: "" } : null)))) {
         return text("Channel isn't set up yet.");
       }
       return text("✅ Reverted to the default gateway working folder (on the next message).");
@@ -339,7 +361,7 @@ export function register(server, ctx) {
       const raw = (link || "").trim();
       const folderId = parseDriveFolderId(raw);
       if (!folderId) return text("That doesn't look like a Google Drive folder link. Paste the folder URL (…/folders/<id>), an ?id=<id> link, or the bare folder id.");
-      if (!(await patchChannelMeta(slug, (meta) => (meta ? { syncDriveFolder: raw } : null)))) {
+      if (!(await patchAuditedMeta((meta) => (meta ? { syncDriveFolder: raw } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
       const lines = [`✅ Linked this channel to Google Drive folder id ${folderId}. It syncs into the channel folder's Drive/ subfolder on the next sweep.`];
@@ -363,7 +385,7 @@ export function register(server, ctx) {
     { description: "ADMIN ONLY. Unlink this channel's Google Drive folder (turns the scheduled two-way sync off). The already-synced Drive/ subfolder is left in place.", inputSchema: {} },
     async () => {
       if (!(await requireAdmin())) return text("Only admins can change this channel's Google Drive sync folder.");
-      if (!(await patchChannelMeta(slug, (meta) => (meta ? { syncDriveFolder: "" } : null)))) {
+      if (!(await patchAuditedMeta((meta) => (meta ? { syncDriveFolder: "" } : null)))) {
         return text("Channel isn't set up yet.");
       }
       return text("✅ Unlinked — this channel's Google Drive sync is off (on the next sweep). The existing Drive/ folder is left as-is.");

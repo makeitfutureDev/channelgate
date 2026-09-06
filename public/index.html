@@ -151,6 +151,14 @@
             <select id="audit-engine" class="audit-filter"><option value="">All engines</option></select>
           </div>
           <div id="audit-runs"></div>
+          <!-- Admin & security events (the `events` table, GET /api/audit/events): channel policy
+               changes, secret reveals, schedule/background lifecycle. The run table above is the
+               usage ledger; this is WHO CHANGED WHAT. -->
+          <div class="audit-events-head">
+            <h3>Admin &amp; security events</h3>
+            <p class="hint">Configuration and security changes — who changed what, newest first.</p>
+          </div>
+          <div id="audit-events"></div>
         </section>
 
         <!-- API: read-only reference for the HTTP run API (POST /api/runs). Content is static;

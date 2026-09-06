@@ -742,6 +742,39 @@ shape is asserted, not reviewed by eye.
       to the Codex model if the turn falls back from Claude.
 - [ ] Errors surface a readable message in Slack and a full entry in `logs/`.
 
+#### Channel policy audit + refused secret reveals (2026-09-06)
+- [x] Unit: `policyDiff` reports only the allowlisted policy keys that actually changed, with
+      before/after values; an unchanged key writes nothing, a token / per-channel environment value
+      / any other non-policy field can never appear in the payload, list keys compare by sorted name
+      (a reorder is not a change), and `skills` reports a COUNT while a same-size grant SWAP is
+      still detected as a change (`test/channel-policy-audit.test.js`).
+- [x] Unit: one `PUT /api/channels/:channelId/meta` that turns Allow-network on, switches the
+      channel to Full access and repoints its working folder logs exactly ONE `channel_meta_changed`
+      carrying those three keys with before/after, actor `admin-ui`, source `admin-ui` — and nothing
+      for the keys the save round-tripped unchanged (`test/channel-policy-audit.test.js`).
+- [x] Unit: a save that moves no policy key (a nudges toggle, a re-submitted form) writes no event,
+      and a `PUT /channels/:id/env/:name` still writes only its own name-only `channel_env_set` —
+      the value never reaches any audit row and the env change does not duplicate into
+      `channel_meta_changed` (`test/channel-policy-audit.test.js`).
+- [x] Unit: the MCP `set_channel_network` handler logs `channel_meta_changed` with the Slack author
+      as both actor and author and source `mcp`; re-setting the same value logs nothing; the
+      admin-mode and workdir twins are audited the same way (`test/channel-policy-audit.test.js`).
+- [x] Unit: a typed `/mode bash` logs one row with the author who typed it (source
+      `slack-command`) including the preset move, while a bare `/mode` (read-only) logs nothing
+      (`test/mode-command-audit.test.js`).
+- [x] Unit: a refused `POST /api/secrets/reveal` logs `secret_reveal_rejected` with the requested
+      field NAME, scope and reason and never a value; unknown scope, a `__proto__` probe and an
+      unknown user each log one; the recorded labels are clipped so a padded body cannot inflate the
+      events table; a granted reveal still logs only `secret_revealed`, without the value; and all
+      three outcomes (granted / wrong password / refused field) carry the `admin-ui` principal in
+      both `actor` and `author` rather than an empty author, with the attempted password never
+      logged (`test/secret-reveal.test.js`).
+- [ ] Manual: flip *Allow network* and *Full access* for a channel in the admin UI, then open
+      **Activity → Admin & security events** — the change is listed with the conversation, `admin-ui`
+      and `allowNetwork: on → off`. Type `@bot /mode admin` in that channel and confirm a second row
+      naming the Slack author. Probe `POST /api/secrets/reveal` with a bogus field and confirm a
+      *Secret reveal refused (not revealable)* row carrying the field name and no value.
+
 ### Mention resolution (@Name → real tag)
 - [x] Unit: `resolveMentions` / `createMentionStream` / directory build — 28 checks (single- &
       multi-word longest-match, unicode, email guard, `@here`/`@channel`, inline code, existing

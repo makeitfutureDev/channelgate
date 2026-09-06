@@ -166,6 +166,39 @@ product overview.
   larger eligible files remain browser-only. Slack does not expose a modal-size setting, so the
   browser editor remains the larger workspace.
 
+### Security
+- **Channel policy changes are audited, and a refused secret reveal leaves a trace.** Two gaps in
+  the audit trail, both confirmed live. (1) A channel's meta record IS its security posture, and
+  changing it wrote nothing: turning *Allow network* off, repointing the working folder and
+  switching a conversation to Full access through `PUT /api/channels/:channelId/meta` all persisted
+  with zero rows in `events` — only the per-channel environment secrets were audited — and the chat
+  twins (`set_channel_admin_mode`, `set_channel_network`, `set_channel_bash`, `set_channel_auto_mode`,
+  `set_channel_workdir`, `set_channel_drive_folder`, the MCP allowlist tools, the typed `/mode`
+  command and the `/model` runtime picker) wrote nothing either. Every one of them now emits a
+  single `channel_meta_changed` event naming the conversation, the principal (`admin-ui` for the
+  admin UI's one shared password, the chat author's own id for anything typed or clicked in Slack)
+  and the POLICY keys that actually moved, with their before/after values. The diff is one helper
+  (`src/config/channel-audit.js` → `policyDiff`) shared by every surface, over a curated allowlist —
+  so a token, a per-channel environment value or any other non-policy field can never reach an audit
+  row, an unchanged key writes nothing, and a save that touches no policy key (a nudge toggle, a
+  re-submitted form, a token rotation) writes no event at all. Skill grants made from chat now write
+  the same `skill_granted` / `skill_revoked` / `skill_template_assigned` rows the admin UI already
+  did. (2) `POST /api/secrets/reveal` answered 400 for any field off the reveal allowlist BEFORE it
+  logged anything, so someone holding a stolen session could sweep the endpoint for revealable field
+  names — probing `adminPassword`, `__proto__`, every config key they could think of — and leave the
+  audit completely empty; only a wrong password logged (`secret_reveal_denied`). A refusal now logs
+  `secret_reveal_rejected` with the requested scope/field/id NAMES (clipped, never a value) before
+  the 400. All three outcomes of that endpoint — granted, wrong password, refused field — now also
+  name the admin principal (`admin-ui`, the same spelling the skills audit has always written; the
+  UI's sessions carry no personal identity); they used to be written with an empty author, so an
+  audit row read as if nobody had asked for the secret. The revealed value is still never logged.
+- **The admin UI shows the events trail.** `GET /api/audit/events` existed but nothing rendered it,
+  so every audit row above was invisible to an operator. **Activity** now carries an *Admin &
+  security events* table under the run history — time, event, conversation, who, and what changed
+  (for a policy change: `key: before → after`) — defaulting to the admin/security kinds with a
+  toggle for the full feed and 25-row pagination. An unrecognized kind still renders, with its raw
+  name opened up, so a newly added event is readable the day it ships.
+
 ### Fixed
 - **A daily-thread schedule starts a fresh session on every fire again.** A scheduled run's session
   key was built from the message its result is threaded under, which is a different message per
