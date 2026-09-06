@@ -2024,6 +2024,19 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [ ] Users: table rows show role chips, C/S/T token state and Slack identity; clicking a row opens
       the edit drawer; Save from the drawer persists name/approved/admin/tokens (unchanged PUT) and
       the drawer stays on that user; "+ Add user" reveals the add form; adding opens the new user.
+- [x] Unit: `test/user-search.test.js` proves `GET /api/users?q=…` folds case and accents, ANDs
+      terms across name / Slack ID / visible role / configured token provider, returns an empty
+      object for no matches, searches only the masked representation (never stored secret values),
+      and that the Users page carries the debounced server request plus clear control while keeping
+      table results separate from the full user directory.
+- [ ] Live (Admin UI, engine-independent): open Users with fixtures covering Admin, Approved and No
+      access plus configured/missing Composio and Toolbox tokens. Search by partial mixed-case name,
+      Slack ID, role, provider, and a two-term combination; confirm only matching rows remain. Enter
+      a junk query and confirm the explicit no-match row; clear with × and Escape; select a row,
+      filter it out and confirm the drawer closes; resize to 390px and confirm search + Add user
+      remain usable without horizontal page overflow.
+- [x] Airtable: active engine-independent live definition `UI-USERS-SEARCH-01` covers masked
+      server-side search, UI debounce/race behavior, clear/no-results states, and secret non-match.
 - [ ] Settings danger zone: Reset all channels' access / Remove password / Restart daemon /
       Disconnect Slack live in the red zone; each opens the branded confirm dialog (danger-tinted
       confirm button, Escape cancels, backdrop cancels); reset completion shows an in-app notice

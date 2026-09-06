@@ -614,6 +614,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 
 .userlayout { display: flex; gap: 18px; align-items: flex-start; }
 .userlayout > .utable { flex: 1; min-width: 0; }
+.user-search { width: min(300px, 38vw); }
 .drawer { width: 340px; flex: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; position: sticky; top: 26px; }
 .drawer[hidden] { display: none; }
 .drawer-head { display: flex; align-items: flex-start; gap: 10px; }
@@ -791,6 +792,9 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
   .sched-open .sched-desc { flex-basis: 100%; white-space: normal; }
   .schedule-card { width: calc(100vw - 24px); max-height: 92vh; }
   .schedule-details { grid-template-columns: 1fr; }
+  #view-users .dash-head { flex-direction: column; }
+  #view-users .dash-tools { width: 100%; flex-wrap: wrap; }
+  #view-users .user-search { flex: 1 1 220px; width: auto; }
 }
 
 /* Gateway version chip + one-click update (rail footer) */
