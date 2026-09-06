@@ -15,6 +15,17 @@ export function skillSlugFromText(text) {
   return m ? m[1] : "";
 }
 
+// Claude names a plugin-provided skill as `<plugin>:<slug>` (e.g.
+// `gateway-shared-skills:code-review`) in its Skill tool call; the catalog only knows the bare
+// slug, so strip the prefix before looking it up — without it every Claude run recorded an
+// unmatched name with no skill/revision id.
+const PLUGIN_QUALIFIED_RE = /^[^:\s]+:([A-Za-z0-9][A-Za-z0-9._-]{0,119})$/;
+
+export function unqualifySkillName(name) {
+  const m = PLUGIN_QUALIFIED_RE.exec(String(name ?? "").trim());
+  return m ? m[1] : "";
+}
+
 // Build a per-run observer. Feed it every engine event; it records catalog skills as they are
 // used. Unknown names (a project-owned skill that is not in the catalog) are recorded by name so
 // the report can still show them, with no skill/revision id.
@@ -35,13 +46,19 @@ export function createSkillUsageRecorder({
   function note(nameOrSlug, signal) {
     const raw = String(nameOrSlug || "").trim();
     if (!raw) return;
+    const bare = unqualifySkillName(raw);
     let skill = null;
-    try {
-      skill = lookup(raw);
-    } catch {
-      skill = null;
+    for (const candidate of bare ? [raw, bare] : [raw]) {
+      try {
+        skill = lookup(candidate);
+      } catch {
+        skill = null;
+      }
+      if (skill) break;
     }
-    const slug = skill?.slug || raw;
+    // A plugin-qualified name that matches nothing is still recorded by its bare slug, so repeats
+    // of the same skill aggregate together in the report.
+    const slug = skill?.slug || bare || raw;
     const key = slug.toLowerCase();
     const prior = seen.get(key);
     if (prior === "exact" || (prior === "inferred" && signal === "inferred")) return;

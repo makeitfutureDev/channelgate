@@ -1114,7 +1114,7 @@ async function connectAndWire(app) {
       await respond({
         response_type: "ephemeral",
         text: stopped
-          ? `🛑 Stopped ${stopped} run${stopped === 1 ? "" : "s"} in this channel.${stopped > 1 ? " _(To stop a single thread, type `stop` in that thread or react 🛑.)_" : ""}`
+          ? `🛑 Stopped ${stopped} run${stopped === 1 ? "" : "s"} in this channel.${stopped > 1 ? " _(To stop a single thread, send `stop` in that thread — mentioning me, unless it is a DM — or react 🛑.)_" : ""}`
           : "Nothing is running here right now.",
       });
     } catch (e) {

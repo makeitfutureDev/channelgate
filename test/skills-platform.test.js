@@ -511,6 +511,29 @@ test("usage recorder: Claude's Skill tool is exact, a SKILL.md read is inferred,
   assert.equal(report.channels[0].total, 3, "channel rollups preserve both exact and inferred signals");
 });
 
+test("usage recorder: Claude's plugin-qualified skill name attributes to the catalog skill", () => {
+  catalog.putSkillRevision({ files: [md("Plugin Skill", "fires through a plugin")], ownerKind: "local" });
+  const rec = usage.createSkillUsageRecorder({ channelSlug: "usage-plugin", conversationId: "C_USAGE_PLUGIN", userId: "U1", engine: "claude", sessionId: "s2", runId: "r2", origin: "slack_foreground" });
+  rec.onEvent({ kind: "tool_use", name: "Skill", target: "gateway-shared-skills:plugin-skill" });
+  rec.onEvent({ kind: "tool_use", name: "Skill", target: "some-plugin:not-in-catalog" });
+  assert.equal(rec.seen().get("plugin-skill"), "exact", "the plugin prefix is stripped before the catalog lookup");
+  assert.equal(rec.seen().get("not-in-catalog"), "exact", "an unmatched plugin skill still records under its bare slug");
+  const report = usage.skillUsageReport({ channelSlug: "usage-plugin", days: 7, grants: ["plugin-skill"] });
+  const used = report.used.find((u) => u.slug === "plugin-skill");
+  assert.equal(used.inCatalog, true, "the row carries the catalog slug, not the qualified name");
+  assert.equal(used.exact, 1);
+  assert.equal(report.used.find((u) => u.slug === "not-in-catalog").inCatalog, false);
+  assert.deepEqual(report.neverUsed, []);
+  const rows = [];
+  const spy = usage.createSkillUsageRecorder({ engine: "claude", record: (row) => rows.push(row) });
+  spy.onEvent({ kind: "tool_use", name: "Skill", target: "gateway-shared-skills:plugin-skill" });
+  assert.equal(rows[0].slug, "plugin-skill");
+  assert.equal(rows[0].signal, "exact");
+  assert.ok(rows[0].skillId, "the row carries the catalog skill id (was NULL for every Claude run)");
+  assert.ok(rows[0].revisionId, "…and the effective revision id");
+  assert.equal(usage.unqualifySkillName("plain-slug"), "", "an unqualified name is left alone");
+});
+
 // ── authoring + proposals ────────────────────────────────────────────────────────────────────
 
 test("authoring: create grants here with dependencies, update merges files, source-owned skills need a proposal that pins an override", async () => {

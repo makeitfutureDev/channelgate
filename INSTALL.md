@@ -169,7 +169,8 @@ In the admin UI:
   Typed text is preserved as instructions and raw audio never reaches Claude or Codex.
 - Browse the channel workspace with `/files`; from a thread, use the *Browse channel files* message
   shortcut or mention the bot with `/files`.
-- Stop a run: `/stop`, or react 🛑 on a message, or type `stop`.
+- Stop a run: `/stop`, react 🛑 on a message, or send `stop` in the thread — in a channel that
+  message must @mention the bot (a DM needs no mention).
 - Switch engine (Claude ↔ Codex) any time in **Settings**.
 
 ## Backup & restore config (encrypted)

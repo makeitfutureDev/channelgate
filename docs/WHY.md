@@ -381,8 +381,9 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
   messages; users needed session control in place, and admins needed a zero-SSH upgrade path.
 
 #### Stop in-flight runs (stop words · stop emoji · `/stop`)
-- **What:** a plain "stop"/"cancel", a 🛑/❌/✋ reaction, or the slash command aborts the running
-  turn and posts a resume hint.
+- **What:** a plain "stop"/"cancel" (bare in a DM, @mentioning the bot in a channel thread, since an
+  un-mentioned channel message never reaches the gateway), a 🛑/❌/✋ reaction, or the slash command
+  aborts the running turn and posts a resume hint.
 - **Value:** a misdirected or runaway run is halted in seconds — by anyone watching, from any
   device.
 - **Reason:** an agent that cannot be interrupted is an agent people won't trust with real work;

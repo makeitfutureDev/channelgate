@@ -463,7 +463,9 @@ Headless runs can't do interactive OAuth, so shared servers should use **non-int
   - **`/stop`** slash command — works in channels and regular DMs.
   - **React** with 🛑 / ✋ / ❌ on any message in the thread — the reliable way in the **Assistant
     pane**, where the composer is locked while the bot is responding.
-  - Type **`stop`** / `cancel` / `abort` — works wherever the composer isn't locked.
+  - Type **`stop`** / `cancel` / `abort` — works wherever the composer isn't locked. In a channel
+    the message must @mention the bot (`@bot stop`), because an un-mentioned channel message is
+    never delivered to the gateway; in a DM a bare `stop` is enough.
 - **Assistant animation**: in the Slack **Assistant / AI-app** thread, the bot shows the native
   shimmering status ("is thinking…", "is using <tool>…", "is putting it all together…") via
   `assistant.threads.setStatus`. This needs the app's **Assistant** feature + `assistant:write`

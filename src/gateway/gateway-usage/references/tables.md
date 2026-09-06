@@ -16,7 +16,7 @@ only when it improves scanning.
 | # | Way to stop | How to trigger |
 |---:|---|---|
 | 1 | `/stop` command | Type `/stop` |
-| 2 | Stop word | Type `stop`, `cancel`, or `abort` |
+| 2 | Stop word | `@bot stop` (DM: `stop`) |
 ```
 
 Do not call a tool for this case: output the table as part of the answer. If Slack native streaming

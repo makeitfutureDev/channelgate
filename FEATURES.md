@@ -518,7 +518,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   also drops the session like `/clear`), and `/update` (admin-only — git pull + install + restart, detached).
   → TEST-PLAN: In-thread commands.
 - Stop an in-flight run three ways: a plain-text **stop word** (`stop`, `cancel`, `abort`, `halt`,
-  `nevermind`, …) — works in a DM or a thread; a **stop emoji reaction** (🛑 `octagonal_sign`, ❌ `x`,
+  `nevermind`, …) — bare in a DM, @mentioning the bot in a channel thread (the mention gate drops an
+  un-mentioned channel message before the stop word is ever read); a **stop emoji reaction** (🛑 `octagonal_sign`, ❌ `x`,
   ✋ `raised_hand`, `no_entry`, …) on any message in the thread; or the **`/stop` slash command** —
   which Slack does **not** allow inside threads, so words/reactions are the in-thread path. All post
   "🛑 Stopped." with a resume command. → TEST-PLAN: In-thread commands.
