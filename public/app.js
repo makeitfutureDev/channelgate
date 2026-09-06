@@ -1205,26 +1205,6 @@ function renderChannelDetail(ch) {
   const meta = ch.meta || { allowedUsers: [], allowedMcps: [], skills: [], adminMode: false };
   const node = document.getElementById("channel-card").content.cloneNode(true);
   const card = node.querySelector(".conv-detail");
-  const toolsPane = card.querySelector('[data-pane="tools"]');
-  const toolSections = Object.fromEntries(["connections", "mcps", "environment", "skills"].map((name) => {
-    const section = document.createElement("div");
-    section.className = "tool-section";
-    section.dataset.toolSection = name;
-    toolsPane.appendChild(section);
-    return [name, section];
-  }));
-  const toolGrid = toolsPane.querySelector(".grid.grid-2");
-  const toolColumns = toolGrid ? [...toolGrid.children] : [];
-  if (toolColumns[0]) toolSections.mcps.appendChild(toolColumns[0]);
-  if (toolColumns[1]) toolSections.skills.appendChild(toolColumns[1]);
-  toolGrid?.remove();
-  for (const selector of [".tok-fields", ".make-toolbox-card"]) {
-    const el = toolsPane.querySelector(selector);
-    if (el) toolSections.connections.appendChild(el);
-  }
-  const envCard = toolsPane.querySelector(".channel-env-card");
-  if (envCard) toolSections.environment.appendChild(envCard);
-  for (const [name, section] of Object.entries(toolSections)) section.hidden = name !== "connections";
   card.querySelector(".ch-name").textContent = hashName(ch.name || ch.slug);
   card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "");
   card.querySelector(".ch-slug").textContent = ch.slug;
@@ -1333,15 +1313,6 @@ function renderChannelDetail(ch) {
   // Editing a custom flag directly re-paints the header pill (mode may change).
   for (const el of Object.values(flagEls)) el.addEventListener("change", () => paintModePill(liveMeta()));
   networkBox.addEventListener("change", () => paintModePill(liveMeta()));
-
-  // Tool categories are intentionally explicit even while the legacy controls remain one save
-  // surface. The active category is highlighted; the content grouping is progressively enhanced
-  // as each pane is split without changing the persisted channel schema.
-  const toolTabs = [...card.querySelectorAll(".tool-subtab")];
-  for (const tab of toolTabs) tab.addEventListener("click", () => {
-    for (const item of toolTabs) item.classList.toggle("active", item === tab);
-    for (const section of Object.values(toolSections)) section.hidden = section.dataset.toolSection !== tab.dataset.toolPane;
-  });
 
   // Access: who can USE + who can MANAGE, each with a live description of the selected option.
   const accessSel = card.querySelector(".ch-access");
@@ -1732,7 +1703,7 @@ function renderChannelDetail(ch) {
     }
   });
 
-  // Sub-tabs — a view toggle; all Access/Tools/Runtime controls stay in the DOM so the one savebar
+  // Page tabs are view toggles; all Access/Connections/MCP/Environment/Skills/Runtime controls stay in the DOM so the one savebar
   // persists them. Instructions & Memory lazy-load on first open and keep their own Save.
   const subtabs = card.querySelectorAll(".subtab");
   const subpanes = card.querySelectorAll(".subpane");

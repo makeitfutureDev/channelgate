@@ -989,7 +989,10 @@
 
         <div class="subtabs">
           <button type="button" class="subtab active" data-pane="access">Access</button>
-          <button type="button" class="subtab" data-pane="tools">Tools</button>
+          <button type="button" class="subtab" data-pane="connections">Connections</button>
+          <button type="button" class="subtab" data-pane="mcps">MCP servers</button>
+          <button type="button" class="subtab" data-pane="environment">Environment tokens</button>
+          <button type="button" class="subtab" data-pane="skills">Skills</button>
           <button type="button" class="subtab" data-pane="runtime">Runtime</button>
           <button type="button" class="subtab" data-pane="instructions">Instructions</button>
           <button type="button" class="subtab" data-pane="memory">Memory</button>
@@ -1055,31 +1058,8 @@
           <div class="ch-approved" style="font-size:12px;color:var(--muted);margin:12px 0 0"></div>
         </div>
 
-        <!-- ── TOOLS ──────────────────────────────────────────────────────── -->
-        <div class="subpane" data-pane="tools">
-          <div class="tool-subtabs" role="tablist" aria-label="Tool settings">
-            <button type="button" class="tool-subtab active" data-tool-pane="connections">Connections</button>
-            <button type="button" class="tool-subtab" data-tool-pane="mcps">MCP servers</button>
-            <button type="button" class="tool-subtab" data-tool-pane="environment">Environment tokens</button>
-            <button type="button" class="tool-subtab" data-tool-pane="skills">Skills</button>
-          </div>
-          <div class="grid grid-2">
-            <div class="col tools-col">
-              <div class="checks-head"><h4>MCP servers</h4><span class="checks-count ch-mcps-count"></span></div>
-              <input type="search" class="checks-filter ch-mcps-filter" placeholder="Filter servers…" autocomplete="off" />
-              <div class="ch-mcps checks"></div>
-            </div>
-            <div class="col tools-col">
-              <label class="field">
-                <span>Skill template <em class="state">· the channel follows it live; skills checked below are added on top</em></span>
-                <select class="ch-skill-template"><option value="">none</option></select>
-                <em class="state ch-skill-template-state"></em>
-              </label>
-              <div class="checks-head"><h4>Additional skills</h4><span class="checks-count ch-skills-count"></span></div>
-              <input type="search" class="checks-filter ch-skills-filter" placeholder="Filter skills…" autocomplete="off" />
-              <div class="ch-skills checks"></div>
-            </div>
-          </div>
+        <!-- ── CONNECTIONS ────────────────────────────────────────────────── -->
+        <div class="subpane" data-pane="connections">
           <div class="tok-fields">
             <label class="field">
               <span>Shared Composio token (<code>composio</code>; personal <code>composio-user</code> stays available)</span>
@@ -1093,17 +1073,6 @@
               <input class="ch-toolboxtoken" type="password" placeholder="leave blank to keep / use per-user" />
               <em class="state ch-toolboxtoken-state"></em>
             </label>
-          </div>
-          <div class="setcard channel-env-card">
-            <h4>Environment secrets <em class="state ch-env-state"></em></h4>
-            <p class="desc">Variables passed to every run in this conversation — this channel's own CLI logins (e.g. <code>SUPABASE_ACCESS_TOKEN</code>), separate from every other channel's. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
-            <div class="ch-env-list"></div>
-            <div class="ch-env-add">
-              <input class="ch-env-name" type="text" placeholder="SUPABASE_ACCESS_TOKEN" autocomplete="off" spellcheck="false" />
-              <input class="ch-env-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
-              <button type="button" class="ghost ch-env-save">Save variable</button>
-            </div>
-            <em class="state ch-env-hint"></em>
           </div>
           <div class="setcard make-toolbox-card">
             <h4>Make MCP toolbox <em class="state ch-make-toolbox-state"></em></h4>
@@ -1120,6 +1089,44 @@
               <button type="button" class="ghost ch-make-toolbox-test">Test connection</button>
               <button type="button" class="ghost ch-make-toolbox-clear">Clear</button>
             </div>
+          </div>
+        </div>
+
+        <!-- ── MCP SERVERS ───────────────────────────────────────────────── -->
+        <div class="subpane" data-pane="mcps">
+          <div class="col tools-col">
+            <div class="checks-head"><h4>MCP servers</h4><span class="checks-count ch-mcps-count"></span></div>
+            <input type="search" class="checks-filter ch-mcps-filter" placeholder="Filter servers…" autocomplete="off" />
+            <div class="ch-mcps checks"></div>
+          </div>
+        </div>
+
+        <!-- ── ENVIRONMENT TOKENS ────────────────────────────────────────── -->
+        <div class="subpane" data-pane="environment">
+          <div class="setcard channel-env-card">
+            <h4>Environment secrets <em class="state ch-env-state"></em></h4>
+            <p class="desc">Variables passed to every run in this conversation — this channel's own CLI logins (e.g. <code>SUPABASE_ACCESS_TOKEN</code>), separate from every other channel's. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
+            <div class="ch-env-list"></div>
+            <div class="ch-env-add">
+              <input class="ch-env-name" type="text" placeholder="SUPABASE_ACCESS_TOKEN" autocomplete="off" spellcheck="false" />
+              <input class="ch-env-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
+              <button type="button" class="ghost ch-env-save">Save variable</button>
+            </div>
+            <em class="state ch-env-hint"></em>
+          </div>
+        </div>
+
+        <!-- ── SKILLS ────────────────────────────────────────────────────── -->
+        <div class="subpane" data-pane="skills">
+          <div class="col tools-col">
+            <label class="field">
+              <span>Skill template <em class="state">· the channel follows it live; skills checked below are added on top</em></span>
+              <select class="ch-skill-template"><option value="">none</option></select>
+              <em class="state ch-skill-template-state"></em>
+            </label>
+            <div class="checks-head"><h4>Additional skills</h4><span class="checks-count ch-skills-count"></span></div>
+            <input type="search" class="checks-filter ch-skills-filter" placeholder="Filter skills…" autocomplete="off" />
+            <div class="ch-skills checks"></div>
           </div>
         </div>
 
