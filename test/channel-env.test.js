@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 const {
   assertValidEnvName, assertValidEnvValue, channelEnvFingerprint, listChannelEnv,
-  MAX_CHANNEL_ENV_VARS, normalizeChannelEnv, patchChannelEnv, resolveChannelEnv, safeSpawnEnv,
+  MAX_CHANNEL_ENV_VARS, normalizeChannelEnv, normalizeEnvName, patchChannelEnv, resolveChannelEnv, safeSpawnEnv,
 } = await import("../src/config/channel-env.js");
 const { createSecretRedactor, redactSecretValues } = await import("../src/util/redact.js");
 const { buildClaudeEnv } = await import("../src/engines/claude.js");
@@ -23,9 +24,44 @@ const localVar = (value, extra = {}) => ({ provider: "local", value, setBy: "<@U
 test("env names must look like env names", () => {
   assert.equal(assertValidEnvName("SUPABASE_ACCESS_TOKEN"), "SUPABASE_ACCESS_TOKEN");
   assert.equal(assertValidEnvName("  VERCEL_TOKEN  "), "VERCEL_TOKEN");
-  for (const bad of ["", "lower_case", "1STARTS_WITH_DIGIT", "HAS-DASH", "HAS SPACE", "HAS$SIGN"]) {
+  for (const bad of ["", "1STARTS_WITH_DIGIT", "HAS-DASH", "HAS SPACE", "HAS$SIGN"]) {
     assert.throws(() => assertValidEnvName(bad), /valid name|Give the variable a name/, `"${bad}" must be refused`);
   }
+});
+
+// Case is the ONE thing that is forgiven, because UPPER_SNAKE is the convention every surface
+// already renders — typing it in lower case is a spelling, not a different variable.
+test("a lowercase name is normalized to the canonical uppercase one", () => {
+  assert.equal(assertValidEnvName("supabase_access_token"), "SUPABASE_ACCESS_TOKEN");
+  assert.equal(assertValidEnvName("  MixedCase_Token  "), "MIXEDCASE_TOKEN");
+  assert.equal(normalizeEnvName(" vercel_token "), "VERCEL_TOKEN");
+  // Folding happens BEFORE the reserved check, so lower case cannot smuggle a reserved name past it.
+  for (const reserved of ["path", "node_options", "anthropic_api_key", "Ld_Preload"]) {
+    assert.throws(() => assertValidEnvName(reserved), /reserved/, `${reserved} must still be reserved`);
+  }
+  // Everything else stays a refusal, and the message quotes what was TYPED, not the folded form.
+  assert.throws(() => assertValidEnvName("my-token"), /"my-token" is not a valid name/);
+});
+
+test("a lowercase spelling writes, lists and removes the same canonical variable", () => {
+  const added = patchChannelEnv({}, { set: { name: "supabase_access_token", value: "sbp_0123456789abcdef" }, actor: "<@U1>" });
+  assert.deepEqual(Object.keys(added), ["SUPABASE_ACCESS_TOKEN"]);
+  assert.equal(listChannelEnv({ env: added })[0].name, "SUPABASE_ACCESS_TOKEN");
+  // Setting it again in the other case is an UPDATE of the same entry, never a second one.
+  const updated = patchChannelEnv(added, { set: { name: "SUPABASE_ACCESS_TOKEN", value: "sbp_fedcba9876543210" }, actor: "<@U1>" });
+  assert.deepEqual(Object.keys(updated), ["SUPABASE_ACCESS_TOKEN"]);
+  assert.deepEqual(Object.keys(patchChannelEnv(updated, { remove: "supabase_access_token" })), []);
+});
+
+// The admin card folds case as the admin types (ADM-010/SEC-02: the name is VISIBLY normalized),
+// and sends the folded name — so the row that comes back is the one that was on screen.
+test("the admin env form upper-cases the name it shows and sends", () => {
+  const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+  const form = client.slice(client.indexOf("const envNameInput = card.querySelector"), client.indexOf("const makeToolboxUrlInput"));
+  assert.match(form, /envNameInput\.addEventListener\("input"/);
+  assert.match(form, /envNameInput\.value = upper/);
+  assert.match(form, /envNameInput\.addEventListener\("blur", \(\) => \{ envNameInput\.value = envNameInput\.value\.trim\(\)\.toUpperCase\(\); \}\)/);
+  assert.match(form, /const name = envNameInput\.value\.trim\(\)\.toUpperCase\(\);/);
 });
 
 test("names that would rewrite what the child executes are reserved", () => {

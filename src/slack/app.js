@@ -704,10 +704,13 @@ async function connectAndWire(app) {
       await ack({ response_action: "errors", errors: { [SECRETS_NAME_BLOCK_ID]: e.message.slice(0, 150) } });
       return;
     }
-    const { name, value } = readSecretForm(view);
+    const { name: typedName, value } = readSecretForm(view);
     // Validate each field against its own input so the error lands on the box that is wrong.
+    // assertValidEnvName returns the CANONICAL (uppercase) name — use that from here on so the
+    // stored key, the "added vs updated" check, the audit line and the confirmation all agree.
     const errors = {};
-    try { assertValidEnvName(name); } catch (e) { errors[SECRETS_NAME_BLOCK_ID] = e.message.slice(0, 150); }
+    let name = String(typedName || "").trim();
+    try { name = assertValidEnvName(typedName); } catch (e) { errors[SECRETS_NAME_BLOCK_ID] = e.message.slice(0, 150); }
     try { assertValidEnvValue(value); } catch (e) { errors[SECRETS_VALUE_BLOCK_ID] = e.message.slice(0, 150); }
     if (Object.keys(errors).length > 0) {
       await ack({ response_action: "errors", errors });

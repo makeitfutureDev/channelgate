@@ -6,8 +6,10 @@ import { conversationKindForChannel, conversationRouteForPath, pathForConversati
 import {
   accessGrantSkillOptions,
   captureGrantMcpSelection,
+  changedSettingKeys,
   channelGuestAcceptedIds,
   channelGuestSavePatch,
+  diffSettingsPayload,
   loadChannelGuestOptions,
   reconcileChannelMeta,
 } from "./admin-state.js";
@@ -35,6 +37,16 @@ let ENGINE_MANIFESTS = [];
 let ENGINE_ENABLED = {};
 let GLOBAL_COMPOSIO_MODE = "personal";
 let orgGrantsEditor = null;
+// The Settings page's Save sends a DIFF, so it has to remember what it was painted from:
+// SETTINGS_BASELINE is the form read back immediately after that paint (form shape, compared
+// against the form at save time) and SETTINGS_SNAPSHOT is the server representation itself (API
+// shape, compared against a newer one to name what changed under a refused save). SETTINGS_VERSION
+// is echoed on the save so the server can refuse a stale one.
+let SETTINGS_BASELINE = null;
+let SETTINGS_SNAPSHOT = null;
+let SETTINGS_VERSION = "";
+// Live parts of the settings payload: they move on their own and are nobody's edit.
+const SETTINGS_NON_VALUE_KEYS = ["ok", "stale", "code", "error", "slack", "platforms", "engines", "settingsVersion"];
 // Unified Conversations selection key: "ch:<channelId>" (channel) or "dm:<channelId>" (DM). One
 // key drives both list highlight + detail. (The User/Admin DM templates live under Settings now.)
 let selectedConv = null;
@@ -1461,8 +1473,21 @@ function renderChannelDetail(ch) {
     }
   };
   renderEnvVars();
+  // Environment variables are UPPER_SNAKE everywhere they are shown, and the store folds case on
+  // write — so fold it VISIBLY here too, as the admin types. Typing `supabase_token` and having
+  // the row come back as SUPABASE_TOKEN is a surprise; watching it become SUPABASE_TOKEN is not.
+  // The caret is restored because assigning .value otherwise jumps it to the end mid-word.
+  envNameInput.addEventListener("input", () => {
+    const upper = envNameInput.value.toUpperCase();
+    if (upper === envNameInput.value) return;
+    const { selectionStart, selectionEnd } = envNameInput;
+    envNameInput.value = upper; // ASCII case folding is length-preserving, so the caret still fits
+    try { envNameInput.setSelectionRange(selectionStart, selectionEnd); } catch { /* selection unsupported here */ }
+  });
+  envNameInput.addEventListener("blur", () => { envNameInput.value = envNameInput.value.trim().toUpperCase(); });
   envSaveButton.addEventListener("click", async () => {
-    const name = envNameInput.value.trim();
+    const name = envNameInput.value.trim().toUpperCase();
+    envNameInput.value = name; // what gets sent is what the admin can see
     const value = envValueInput.value;
     if (!name || !value) {
       envHint.textContent = "Both a name and a value are required.";
@@ -2604,6 +2629,101 @@ function paintEngineToggles() {
   }));
 }
 
+// Read the whole Settings form into the API's shape. Separate from the save handler because it is
+// called TWICE: once right after a paint (the baseline the page was loaded with) and once on Save
+// — what differs between the two is all that gets sent.
+function readSettingsForm() {
+  return {
+    // Tokens are write-only: tokenValue() is "" unless the admin actually typed a new one (the
+    // fields are pre-filled with the masked stored value, so `.value` is never blank).
+    slackBotToken: tokenValue(document.getElementById("set-bot")),
+    slackAppToken: tokenValue(document.getElementById("set-app")),
+    slackSigningSecret: tokenValue(document.getElementById("set-sign")),
+    ...(tokenValue(document.getElementById("set-admin-user")) ? { slackAdminUserToken: tokenValue(document.getElementById("set-admin-user")) } : {}),
+    ...(document.getElementById("clear-admin-user").classList.contains("armed") ? { clearSlackAdminUserToken: true } : {}),
+    sessionKeepalive: document.getElementById("set-keepalive").value,
+    mentionReactions: document.getElementById("set-mention-reactions").value,
+    trustedBotApps: document.getElementById("set-trusted-apps").value,
+    defaultChannelAccess: document.getElementById("set-channel-access").value,
+    composioMode: document.getElementById("set-composio-mode").value,
+    ...(tokenValue(document.getElementById("set-composio-sdk-key")) ? { composioSdkApiKey: tokenValue(document.getElementById("set-composio-sdk-key")) } : {}),
+    ...(document.getElementById("clear-composio-sdk-key").classList.contains("armed") ? { clearComposioSdkApiKey: true } : {}),
+    ...(tokenValue(document.getElementById("set-default-composio")) ? { defaultComposioToken: tokenValue(document.getElementById("set-default-composio")) } : {}),
+    ...(document.getElementById("clear-default-composio").classList.contains("armed") ? { clearDefaultComposioToken: true } : {}),
+    ...(tokenValue(document.getElementById("set-default-toolbox")) ? { defaultToolboxToken: tokenValue(document.getElementById("set-default-toolbox")) } : {}),
+    ...(document.getElementById("clear-default-toolbox").classList.contains("armed") ? { clearDefaultToolboxToken: true } : {}),
+    // Owner labels always round-trip (empty clears them) — they're notes, not secrets.
+    defaultComposioTokenLabel: document.getElementById("set-default-composio-label").value,
+    defaultToolboxTokenLabel: document.getElementById("set-default-toolbox-label").value,
+    accessGrants: orgGrantsEditor?.getValues() || {},
+    composioMcpUrl: document.getElementById("set-composio").value,
+    toolboxMcpUrl: document.getElementById("set-toolbox").value,
+    publicUrl: document.getElementById("set-public-url").value,
+    ...(document.getElementById("set-gchat-key").value.trim() ? { googleChatServiceAccountJson: document.getElementById("set-gchat-key").value } : {}),
+    ...(document.getElementById("clear-gchat-key").classList.contains("armed") ? { clearGoogleChatServiceAccountJson: true } : {}),
+    googleChatSubscription: document.getElementById("set-gchat-sub").value,
+    googleChatBotUserId: document.getElementById("set-gchat-bot").value,
+    teamsAppId: document.getElementById("set-teams-app").value,
+    ...(tokenValue(document.getElementById("set-teams-secret")) ? { teamsAppPassword: tokenValue(document.getElementById("set-teams-secret")) } : {}),
+    ...(document.getElementById("clear-teams-secret").classList.contains("armed") ? { clearTeamsAppPassword: true } : {}),
+    teamsTenantId: document.getElementById("set-teams-tenant").value,
+    ...(tokenValue(document.getElementById("set-license-key")) ? { licenseKey: tokenValue(document.getElementById("set-license-key")) } : {}),
+    ...(document.getElementById("clear-license-key").classList.contains("armed") ? { clearLicenseKey: true } : {}),
+    platformUrl: document.getElementById("set-platform-url").value,
+    contextWindow: Number(document.getElementById("set-ctxwindow").value) || undefined,
+    engine: document.getElementById("set-engine").value,
+    defaultClaudeModel: document.getElementById("set-default-claude-model").value,
+    defaultCodexModel: document.getElementById("set-default-codex-model").value,
+    modelChangeAccess: document.getElementById("set-model-change-access").value,
+    engineEnabled: { ...ENGINE_ENABLED },
+    engineFallback: document.getElementById("set-engine-fallback").checked,
+    engineFallbackMode: document.getElementById("set-engine-fallback-mode").value,
+    showMessageCost: document.getElementById("set-show-message-cost").checked,
+    whisperEnabled: document.getElementById("set-whisper-enabled").checked,
+    containerCli: document.getElementById("set-container-cli").value,
+    containerImage: document.getElementById("set-container-image").value,
+    containerIdleMinutes: Number(document.getElementById("set-container-idle").value) || undefined,
+    containerMaxRunning: Number(document.getElementById("set-container-max").value) || undefined,
+    containerPidsLimit: Number(document.getElementById("set-container-pids").value) || undefined,
+    containerMemory: document.getElementById("set-container-memory").value,
+    containerCpus: document.getElementById("set-container-cpus").value,
+    containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
+    // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
+    ...(tokenValue(document.getElementById("set-container-claude-token")) ? { containerClaudeOauthToken: tokenValue(document.getElementById("set-container-claude-token")) } : {}),
+    ...(document.getElementById("clear-container-claude-token").classList.contains("armed") ? { clearContainerClaudeOauthToken: true } : {}),
+    agentsFile: document.getElementById("set-agentsfile").checked,
+    agentsInstructions: document.getElementById("set-agents-instructions").value,
+    agentMemory: document.getElementById("set-agentmemory").checked,
+    memoryReviewEvery: Number(document.getElementById("set-memory-review-every").value),
+    memoryReviewModel: document.getElementById("set-memory-review-model").value,
+    memoryReviewNotify: document.getElementById("set-memory-review-notify").checked,
+    scheduleMinIntervalMinutes: Number(document.getElementById("set-sched-min").value) || undefined,
+    scheduleMaxPerChannel: Number(document.getElementById("set-sched-max").value) || undefined,
+    noResponseReminderHours: Number(document.getElementById("set-nudge-hours").value) || undefined,
+    defaultNudges: document.getElementById("set-default-nudges").checked,
+    driveSyncEnabled: document.getElementById("set-drivesync-enabled").checked,
+    driveSyncKeyFile: document.getElementById("set-drivesync-keyfile").value,
+    ...(document.getElementById("set-drivesync-keyjson").value.trim() ? { driveSyncKeyJson: document.getElementById("set-drivesync-keyjson").value } : {}),
+    ...(document.getElementById("clear-drivesync-keyjson").checked ? { clearDriveSyncKeyJson: true } : {}),
+    driveSyncSubject: document.getElementById("set-drivesync-subject").value,
+    driveSyncIntervalMinutes: Number(document.getElementById("set-drivesync-interval").value) || undefined,
+    driveSyncConflict: document.getElementById("set-drivesync-conflict").value,
+    driveSyncRclonePath: document.getElementById("set-drivesync-rclone").value,
+    codexModelRates: readCodexRates(),
+    ...(channelTplEditor ? { channelTemplate: channelTplEditor.getValues() } : {}),
+    // DM templates fold into the one global Save. Only include an editor that's mounted (the
+    // section may not have been visited yet — mounting happens in loadSettings, so it always is).
+    ...(dmTplEditors.user && dmTplEditors.admin
+      ? { dmTemplates: { user: dmTplEditors.user.getValues(), admin: dmTplEditors.admin.getValues() } }
+      : {}),
+    ...(document.getElementById("set-adminpw").value ? { adminPassword: document.getElementById("set-adminpw").value } : {}),
+    // HTTP run API token (write-only): send the new value only if edited/generated; the clear
+    // toggle removes it. Leaving the field untouched keeps the stored token.
+    ...(tokenValue(document.getElementById("set-apikey")) ? { apiKey: tokenValue(document.getElementById("set-apikey")) } : {}),
+    ...(document.getElementById("clear-apikey").classList.contains("armed") ? { clearApiKey: true } : {}),
+  };
+}
+
 function paintSettings(s) {
   applyEngineManifests(s.engines);
   ENGINE_ENABLED = { ...(s.engineEnabled || {}) };
@@ -2737,6 +2857,18 @@ function paintSettings(s) {
   // Re-render the chip editors from the (just-set) hidden inputs, and treat this repaint as clean.
   for (const c of document.querySelectorAll("#view-settings .chips[data-chip-for]")) renderChipsFromInput(c);
   clearSettingsDirty();
+  // A repaint shows what the daemon STORES, so nothing pending may survive it: an armed clear
+  // toggle or a typed write-only value belongs either to a save that already happened or — after a
+  // refused one — to a save that never will. They also have to go before the baseline below, or a
+  // pending action would be captured as "already the server's state" and then never sent.
+  for (const btn of document.querySelectorAll("#view-settings .clear-tok.armed")) disarmClearTok(btn);
+  document.getElementById("set-adminpw").value = "";
+  document.getElementById("set-gchat-key").value = "";
+  // Remember what this paint put on the page: Save sends the difference against it, so a field
+  // nobody touched here is never re-asserted over another writer's newer value.
+  SETTINGS_SNAPSHOT = s;
+  SETTINGS_VERSION = s?.settingsVersion ? String(s.settingsVersion) : "";
+  SETTINGS_BASELINE = readSettingsForm();
 }
 
 async function loadSettings() {
@@ -2983,104 +3115,22 @@ function bindSettings() {
   document.getElementById("save-settings").addEventListener("click", async () => {
     const saved = document.getElementById("settings-saved");
     saved.textContent = "saving…";
-    const newPw = document.getElementById("set-adminpw").value;
-    // Read the token fields via tokenValue: "" unless the admin actually typed a new one (the
-    // fields are pre-filled with the masked stored token now, so `.value` is never blank).
-    const botTok = tokenValue(document.getElementById("set-bot"));
-    const appTok = tokenValue(document.getElementById("set-app"));
-    const signTok = tokenValue(document.getElementById("set-sign"));
+    // Only the fields this admin actually changed. Everything else is left to whatever the daemon
+    // holds now — the whole point: an unrelated save must not revert another writer.
+    const form = readSettingsForm();
+    const patch = diffSettingsPayload(SETTINGS_BASELINE || {}, form);
+    const newPw = form.adminPassword || "";
     // Only (re)connect Slack when a Slack token was actually changed in this save — a normal
     // settings change just persists and takes effect on the next message, no reconnect.
-    const slackTokenChanged = !!(botTok || appTok || signTok);
+    const slackTokenChanged = !!(form.slackBotToken || form.slackAppToken || form.slackSigningSecret);
     try {
       const r = await api("/api/settings", {
         method: "PUT",
         body: JSON.stringify({
-          slackBotToken: botTok,
-          slackAppToken: appTok,
-          slackSigningSecret: signTok,
-          ...(tokenValue(document.getElementById("set-admin-user")) ? { slackAdminUserToken: tokenValue(document.getElementById("set-admin-user")) } : {}),
-          ...(document.getElementById("clear-admin-user").classList.contains("armed") ? { clearSlackAdminUserToken: true } : {}),
-          sessionKeepalive: document.getElementById("set-keepalive").value,
-          mentionReactions: document.getElementById("set-mention-reactions").value,
-          trustedBotApps: document.getElementById("set-trusted-apps").value,
-          defaultChannelAccess: document.getElementById("set-channel-access").value,
-          composioMode: document.getElementById("set-composio-mode").value,
-          ...(tokenValue(document.getElementById("set-composio-sdk-key")) ? { composioSdkApiKey: tokenValue(document.getElementById("set-composio-sdk-key")) } : {}),
-          ...(document.getElementById("clear-composio-sdk-key").classList.contains("armed") ? { clearComposioSdkApiKey: true } : {}),
-          ...(tokenValue(document.getElementById("set-default-composio")) ? { defaultComposioToken: tokenValue(document.getElementById("set-default-composio")) } : {}),
-          ...(document.getElementById("clear-default-composio").classList.contains("armed") ? { clearDefaultComposioToken: true } : {}),
-          ...(tokenValue(document.getElementById("set-default-toolbox")) ? { defaultToolboxToken: tokenValue(document.getElementById("set-default-toolbox")) } : {}),
-          ...(document.getElementById("clear-default-toolbox").classList.contains("armed") ? { clearDefaultToolboxToken: true } : {}),
-          // Owner labels always round-trip (empty clears them) — they're notes, not secrets.
-          defaultComposioTokenLabel: document.getElementById("set-default-composio-label").value,
-          defaultToolboxTokenLabel: document.getElementById("set-default-toolbox-label").value,
-          accessGrants: orgGrantsEditor?.getValues() || {},
-          composioMcpUrl: document.getElementById("set-composio").value,
-          toolboxMcpUrl: document.getElementById("set-toolbox").value,
-          publicUrl: document.getElementById("set-public-url").value,
-          ...(document.getElementById("set-gchat-key").value.trim() ? { googleChatServiceAccountJson: document.getElementById("set-gchat-key").value } : {}),
-          ...(document.getElementById("clear-gchat-key").classList.contains("armed") ? { clearGoogleChatServiceAccountJson: true } : {}),
-          googleChatSubscription: document.getElementById("set-gchat-sub").value,
-          googleChatBotUserId: document.getElementById("set-gchat-bot").value,
-          teamsAppId: document.getElementById("set-teams-app").value,
-          ...(tokenValue(document.getElementById("set-teams-secret")) ? { teamsAppPassword: tokenValue(document.getElementById("set-teams-secret")) } : {}),
-          ...(document.getElementById("clear-teams-secret").classList.contains("armed") ? { clearTeamsAppPassword: true } : {}),
-          teamsTenantId: document.getElementById("set-teams-tenant").value,
-          ...(tokenValue(document.getElementById("set-license-key")) ? { licenseKey: tokenValue(document.getElementById("set-license-key")) } : {}),
-          ...(document.getElementById("clear-license-key").classList.contains("armed") ? { clearLicenseKey: true } : {}),
-          platformUrl: document.getElementById("set-platform-url").value,
-          contextWindow: Number(document.getElementById("set-ctxwindow").value) || undefined,
-          engine: document.getElementById("set-engine").value,
-          defaultClaudeModel: document.getElementById("set-default-claude-model").value,
-          defaultCodexModel: document.getElementById("set-default-codex-model").value,
-          modelChangeAccess: document.getElementById("set-model-change-access").value,
-          engineEnabled: { ...ENGINE_ENABLED },
-          engineFallback: document.getElementById("set-engine-fallback").checked,
-    engineFallbackMode: document.getElementById("set-engine-fallback-mode").value,
-          showMessageCost: document.getElementById("set-show-message-cost").checked,
-          whisperEnabled: document.getElementById("set-whisper-enabled").checked,
-          containerCli: document.getElementById("set-container-cli").value,
-          containerImage: document.getElementById("set-container-image").value,
-          containerIdleMinutes: Number(document.getElementById("set-container-idle").value) || undefined,
-          containerMaxRunning: Number(document.getElementById("set-container-max").value) || undefined,
-          containerPidsLimit: Number(document.getElementById("set-container-pids").value) || undefined,
-          containerMemory: document.getElementById("set-container-memory").value,
-          containerCpus: document.getElementById("set-container-cpus").value,
-          containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
-          // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
-          ...(tokenValue(document.getElementById("set-container-claude-token")) ? { containerClaudeOauthToken: tokenValue(document.getElementById("set-container-claude-token")) } : {}),
-          ...(document.getElementById("clear-container-claude-token").classList.contains("armed") ? { clearContainerClaudeOauthToken: true } : {}),
-          agentsFile: document.getElementById("set-agentsfile").checked,
-          agentsInstructions: document.getElementById("set-agents-instructions").value,
-          agentMemory: document.getElementById("set-agentmemory").checked,
-          memoryReviewEvery: Number(document.getElementById("set-memory-review-every").value),
-          memoryReviewModel: document.getElementById("set-memory-review-model").value,
-          memoryReviewNotify: document.getElementById("set-memory-review-notify").checked,
-          scheduleMinIntervalMinutes: Number(document.getElementById("set-sched-min").value) || undefined,
-          scheduleMaxPerChannel: Number(document.getElementById("set-sched-max").value) || undefined,
-          noResponseReminderHours: Number(document.getElementById("set-nudge-hours").value) || undefined,
-          defaultNudges: document.getElementById("set-default-nudges").checked,
-          driveSyncEnabled: document.getElementById("set-drivesync-enabled").checked,
-          driveSyncKeyFile: document.getElementById("set-drivesync-keyfile").value,
-          ...(document.getElementById("set-drivesync-keyjson").value.trim() ? { driveSyncKeyJson: document.getElementById("set-drivesync-keyjson").value } : {}),
-          ...(document.getElementById("clear-drivesync-keyjson").checked ? { clearDriveSyncKeyJson: true } : {}),
-          driveSyncSubject: document.getElementById("set-drivesync-subject").value,
-          driveSyncIntervalMinutes: Number(document.getElementById("set-drivesync-interval").value) || undefined,
-          driveSyncConflict: document.getElementById("set-drivesync-conflict").value,
-          driveSyncRclonePath: document.getElementById("set-drivesync-rclone").value,
-          codexModelRates: readCodexRates(),
-          ...(channelTplEditor ? { channelTemplate: channelTplEditor.getValues() } : {}),
-          // DM templates fold into the one global Save. Only include an editor that's mounted (the
-          // section may not have been visited yet — mounting happens in loadSettings, so it always is).
-          ...(dmTplEditors.user && dmTplEditors.admin
-            ? { dmTemplates: { user: dmTplEditors.user.getValues(), admin: dmTplEditors.admin.getValues() } }
-            : {}),
-          ...(newPw ? { adminPassword: newPw } : {}),
-          // HTTP run API token (write-only): send the new value only if edited/generated; the clear
-          // toggle removes it. Leaving the field untouched keeps the stored token.
-          ...(tokenValue(document.getElementById("set-apikey")) ? { apiKey: tokenValue(document.getElementById("set-apikey")) } : {}),
-          ...(document.getElementById("clear-apikey").classList.contains("armed") ? { clearApiKey: true } : {}),
+          ...patch,
+          // Echo the version this page was painted from: the server refuses the save (409) if
+          // anything wrote settings in the meantime, instead of landing it on a newer state.
+          ...(SETTINGS_VERSION ? { settingsVersion: SETTINGS_VERSION } : {}),
           connectSlack: slackTokenChanged,
         }),
       });
@@ -3099,6 +3149,16 @@ function bindSettings() {
       paintSettings(r);
       await loadHealth();
     } catch (e) {
+      // 409 = somebody wrote settings between this page's load and its Save, so NOTHING was saved.
+      // The refusal carries the current representation: repaint from it (the page must stop
+      // holding values the daemon no longer has) and name what moved, so the admin can re-apply
+      // their change knowing what it would have landed on.
+      if (e.status === 409 && e.body) {
+        const moved = changedSettingKeys(SETTINGS_SNAPSHOT || {}, e.body, SETTINGS_NON_VALUE_KEYS);
+        paintSettings(e.body);
+        saved.textContent = `✗ ${e.message}${moved.length ? ` Changed elsewhere: ${moved.join(", ")}.` : ""}`;
+        return;
+      }
       saved.textContent = "✗ " + e.message;
     }
   });

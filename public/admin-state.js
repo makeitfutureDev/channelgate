@@ -72,3 +72,50 @@ export function accessGrantSkillOptions(available = [], saved = []) {
     ...savedNames.filter((name) => !known.has(name)).map((name) => ({ value: name, label: `${name} · unavailable` })),
   ];
 }
+
+// ── Global settings: send the CHANGE, not the page ────────────────────────────────────────────
+// The Settings page is one long form with a single Save. Re-submitting all of it re-asserted every
+// field as the page happened to have loaded them, so anything written after that load — by another
+// admin, by the skills sync, by a license or password write — was silently reverted by an
+// unrelated save minutes later. So Save now sends only what actually differs from the snapshot the
+// page was painted from, and the server merges it (settings.js saveSettings has always been a
+// merge). A key the admin never touched is simply absent, and therefore cannot revert anything.
+//
+// A key MISSING from the baseline counts as changed: that is how the write-only fields work (a
+// token, a clear flag, a new password appear only once they are set), and re-sending one is
+// exactly what the admin asked for.
+export function settingValuesEqual(a, b) {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  // Objects and arrays are built by the same reader on both sides, so their key order matches and
+  // a serialized compare is a structural compare.
+  if (typeof a === "object" || typeof b === "object") {
+    try {
+      return JSON.stringify(a) === JSON.stringify(b);
+    } catch {
+      return false; // a cycle can only come from a bug — treat it as changed and let the server decide
+    }
+  }
+  return false;
+}
+
+export function diffSettingsPayload(baseline = {}, next = {}) {
+  const patch = {};
+  for (const [key, value] of Object.entries(next || {})) {
+    if (value === undefined) continue; // JSON.stringify would drop it anyway
+    if (Object.prototype.hasOwnProperty.call(baseline || {}, key) && settingValuesEqual(baseline[key], value)) continue;
+    patch[key] = value;
+  }
+  return patch;
+}
+
+// What a stale save collided with: the keys whose value moved between the server representation
+// the page was painted from and the one the server just returned. Both sides are the SAME shape
+// (an /api/settings payload), never the form-shaped snapshot the diff above uses. `ignore` drops
+// the live, non-setting parts of that payload — a connection snapshot changes on its own and is
+// not something anybody overwrote.
+export function changedSettingKeys(before = {}, after = {}, ignore = []) {
+  const skip = new Set(ignore);
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  return [...keys].filter((key) => !skip.has(key) && !settingValuesEqual(before?.[key], after?.[key])).sort();
+}

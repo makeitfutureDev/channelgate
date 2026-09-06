@@ -167,6 +167,29 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **Saving Settings no longer reverts what someone else changed.** The Settings page's single Save
+  re-submitted the WHOLE form from the snapshot the page had loaded with, so any value written
+  after that load — by a second admin, by the skills sync, by a license write, by the first-boot
+  password upgrade — was silently reverted by an unrelated save minutes later (a restored
+  `channelTemplate.effort` lost to a save of `scheduleMaxPerChannel` is what surfaced it). Save now
+  sends only the fields that actually differ from what the page was painted from, and the server
+  merges them exactly as it always did — a field nobody touched is not in the request and cannot
+  revert anything. On top of that, `/api/settings` carries a `settingsVersion` that a save may echo
+  back: if anything wrote settings in between, the save is refused with 409 and NOTHING is written
+  (the check runs inside the same lock as the merge, so it cannot be raced), and the refusal
+  carries the current settings — the page repaints from them and names the keys that moved, so the
+  admin re-applies their change on top instead of over. A caller that sends no version (an older
+  UI, a script) is merged in exactly as before. A repaint also clears anything left pending — an
+  armed *clear* toggle, a typed password or service-account key — because a pending action captured
+  as "already saved" would silently never run.
+- **A channel environment variable typed in lower case is the variable you meant.** The admin card
+  sent the name exactly as typed and the store rejected anything but `A–Z0–9_`, so `supabase_token`
+  was a validation error instead of `SUPABASE_TOKEN`. The name is now upper-cased visibly as it is
+  typed (and on blur, and before it is sent), and the store folds case itself, so the Slack modal
+  and any API client get the same canonical name — an update of an existing variable rather than a
+  refusal or a duplicate. Nothing else is forgiven: a dash, a space or a leading digit is still
+  refused (quoting what was typed), and the reserved-name check runs on the folded name, so `path`
+  cannot smuggle `PATH` past it.
 - **A daily-thread schedule starts a fresh session on every fire again.** A scheduled run's session
   key was built from the message its result is threaded under, which is a different message per
   fire only for `standard` delivery. `delivery:"daily-thread"` reuses one anchor for the whole

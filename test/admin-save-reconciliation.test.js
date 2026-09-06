@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { reconcileChannelMeta } from "../public/admin-state.js";
+import { changedSettingKeys, diffSettingsPayload, reconcileChannelMeta, settingValuesEqual } from "../public/admin-state.js";
 
 test("channel save reconciliation adopts authoritative tool and skill selections", () => {
   const current = {
@@ -88,4 +88,60 @@ test("Admin save handlers repaint from their successful PUT responses", () => {
   assert.match(client, /async function loadLicense\(\)/);
   assert.match(settingsSave, /paintSettings\(r\)/);
   assert.doesNotMatch(settingsSave, /await loadSettings\(\)/);
+});
+
+// ── Global settings: the save carries the CHANGE, not the page ────────────────────────────────
+test("a settings diff carries only what moved since the page was painted", () => {
+  const baseline = {
+    scheduleMaxPerChannel: 20,
+    sessionKeepalive: "10m",
+    channelTemplate: { engine: "claude", effort: "high" },
+    codexModelRates: { "gpt-5.6": { input: 5, output: 30 } },
+    mentionReactions: "robot_face",
+  };
+  const form = {
+    scheduleMaxPerChannel: 44,
+    sessionKeepalive: "10m",
+    channelTemplate: { engine: "claude", effort: "high" },
+    codexModelRates: { "gpt-5.6": { input: 5, output: 30 } },
+    mentionReactions: "robot_face",
+  };
+
+  // Exactly one key moved, so exactly one key is sent — the untouched channelTemplate cannot
+  // revert another writer's change to it.
+  assert.deepEqual(diffSettingsPayload(baseline, form), { scheduleMaxPerChannel: 44 });
+});
+
+test("a settings diff keeps deep edits, one-shot actions, and nothing undefined", () => {
+  const baseline = { channelTemplate: { engine: "claude", effort: "high" }, contextWindow: 200000 };
+  const form = {
+    channelTemplate: { engine: "claude", effort: "low" }, // a nested value changed
+    contextWindow: undefined, // a blanked number: JSON would drop it anyway
+    adminPassword: "hunter2", // absent from the baseline = a pending action, always sent
+    clearApiKey: true,
+  };
+
+  assert.deepEqual(diffSettingsPayload(baseline, form), {
+    channelTemplate: { engine: "claude", effort: "low" },
+    adminPassword: "hunter2",
+    clearApiKey: true,
+  });
+  assert.deepEqual(diffSettingsPayload({}, {}), {});
+});
+
+test("settings equality is structural for the objects and arrays the form builds", () => {
+  assert.equal(settingValuesEqual(["a", "b"], ["a", "b"]), true);
+  assert.equal(settingValuesEqual(["a", "b"], ["b", "a"]), false);
+  assert.equal(settingValuesEqual({ user: { mode: "read" } }, { user: { mode: "read" } }), true);
+  assert.equal(settingValuesEqual(undefined, undefined), true);
+  assert.equal(settingValuesEqual(undefined, ""), false);
+  assert.equal(settingValuesEqual(0, false), false);
+});
+
+test("a refused save can name what changed under it, ignoring the live parts of the payload", () => {
+  const before = { scheduleMaxPerChannel: 20, channelTemplate: { effort: "high" }, slack: { connected: false }, settingsVersion: "4" };
+  const after = { scheduleMaxPerChannel: 20, channelTemplate: { effort: "low" }, slack: { connected: true }, settingsVersion: "5" };
+
+  assert.deepEqual(changedSettingKeys(before, after, ["slack", "settingsVersion"]), ["channelTemplate"]);
+  assert.deepEqual(changedSettingKeys(before, before, []), []);
 });

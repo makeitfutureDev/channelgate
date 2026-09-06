@@ -65,18 +65,26 @@ export function createSettingsRouter({
 } = {}) {
   const router = Router();
 
+  // The ONE settings representation. The admin UI repaints from whatever a request returns —
+  // the initial GET, the response to a successful save, or the 409 that refuses a stale one — so
+  // all three must carry the same shape, or a repaint would blank the fields the other two omit.
+  const settingsPayload = (slackSnap = null) => ({
+    ...settingsForApi(),
+    engines: engineUiManifest(),
+    // Live connection state per non-Slack surface, next to its stored credentials. The manifest
+    // comes from the platform registry so a newly added adapter appears here without another
+    // edit in this file.
+    platforms: platformUiManifest().map((manifest) => ({
+      ...manifest,
+      connection: transports?.[manifest.id]?.snapshot?.() ?? { status: "disconnected", connected: false },
+    })),
+    slack: slackSnap ?? slack?.snapshot?.() ?? { status: "disconnected", connected: false },
+  });
+
   // ── Settings (Slack tokens + daemon options) ─────────────────────────────────
   router.get("/settings", (_req, res, next) => {
     try {
-      const payload = { ...settingsForApi(), engines: engineUiManifest(), slack: slack?.snapshot?.() ?? { status: "disconnected", connected: false } };
-      // Live connection state per non-Slack surface, next to its stored credentials. The manifest
-      // comes from the platform registry so a newly added adapter appears here without another
-      // edit in this file.
-      payload.platforms = platformUiManifest().map((manifest) => ({
-        ...manifest,
-        connection: transports?.[manifest.id]?.snapshot?.() ?? { status: "disconnected", connected: false },
-      }));
-      res.json(payload);
+      res.json(settingsPayload());
     } catch (e) {
       next(e);
     }
@@ -397,7 +405,24 @@ export function createSettingsRouter({
       // Empty = the compiled-in default (src/ee/tiers.js). Staging points it elsewhere.
       if (typeof body.platformUrl === "string") patch.platformUrl = body.platformUrl.trim().replace(/\/+$/, "");
 
-      saveSettings(patch);
+      // Compare-and-swap when the client echoed the version it loaded: a save that would otherwise
+      // revert somebody else's change (another admin, the skills sync, a license write, the
+      // first-boot password upgrade) is refused rather than applied. A client that sends no
+      // version — an older UI, a script, an integration — is merged in as before.
+      const expectVersion =
+        typeof body.settingsVersion === "string" || typeof body.settingsVersion === "number" ? String(body.settingsVersion).trim() : "";
+      try {
+        saveSettings(patch, { expectVersion });
+      } catch (e) {
+        if (e?.code !== "settings_version_conflict") throw e;
+        // Hand back the CURRENT settings so the page can show what it now has instead of guessing.
+        return res.status(409).json({
+          error: "These settings changed elsewhere since this page loaded — nothing was saved. The latest values are shown; re-apply your change and save again.",
+          code: "settings_version_conflict",
+          stale: true,
+          ...settingsPayload(),
+        });
+      }
       applySettingsToEnv();
       if (passwordChanged) invalidateAllSessions();
       if (licenseKeyChanged) {
@@ -412,7 +437,7 @@ export function createSettingsRouter({
         slackSnap = await slack.connect(resolveSlackConfig());
       }
 
-      res.json({ ok: true, ...settingsForApi(), slack: slackSnap });
+      res.json({ ok: true, ...settingsPayload(slackSnap) });
     } catch (e) {
       next(e);
     }

@@ -13,6 +13,9 @@ export async function api(url, options = {}) {
     const error = new Error(body.error || `${res.status}`);
     error.status = res.status;
     if (body.code) error.code = body.code;
+    // The parsed body too: a refusal can carry state the caller needs to recover with (a 409 on
+    // Settings returns the current settings so the page can repaint instead of guessing).
+    error.body = body;
     throw error;
   }
   return body;
