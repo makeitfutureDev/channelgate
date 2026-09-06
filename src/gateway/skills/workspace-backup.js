@@ -101,8 +101,16 @@ export async function archiveWorkspaceEntry(entry, backupDir) {
   const source = path.resolve(entry);
   const backup = path.resolve(backupDir);
   const parent = path.dirname(source);
-  const relative = path.relative(parent, backup);
-  if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))) {
+  // The entry may be a conflicting .claude/.agents container, not an individual skill. In that
+  // case a sibling .channelgate backup beneath the same workDir is safe (including cwd = HOME).
+  // Individual skill entries still reject backups anywhere under their discovery parent.
+  const name = path.basename(source);
+  const containerNames = new Set([".claude", ".agents", ".codex"]);
+  const discoveryRoot = containerNames.has(name) || (name === "skills" && containerNames.has(path.basename(parent))) ? source : parent;
+  const relative = path.relative(discoveryRoot, backup);
+  const segments = backup.split(path.sep);
+  const inOtherDiscoveryTree = segments.some((segment, index) => containerNames.has(segment) && segments[index + 1] === "skills");
+  if (inOtherDiscoveryTree || !relative || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))) {
     throw new Error("skill backups must be outside the skill discovery tree");
   }
   const sourceParent = await openWorkspaceDirectory(parent);
