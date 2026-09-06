@@ -17,6 +17,8 @@ import { resolveRuntime } from "../runtimes/resolve.js";
 import { setThreadEngine, getThreadEngine, setThreadClean, getThreadClean, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
 import { abortPooled, pooledBusy, interruptPooled } from "../engines/session-pool.js";
 import { logEvent } from "../util/logger.js";
+// A typed `/mode` is a channel POLICY change like any admin-UI save — audited the same way.
+import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { createUsageBank } from "../gateway/usage.js";
 import { contextWindowFor } from "../gateway/model-info.js";
 
@@ -827,14 +829,20 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         }
         // Atomic partial patch: only the mode flags + preset change, so a concurrent writer
         // (admin UI save, MCP tool) can't be clobbered by a whole-record save from a stale read.
-        Object.assign(
-          meta,
-          await patchChannelMeta(entry.slug, {
+        // The record it replaces is captured inside that transaction for the audit diff below.
+        let replaced = null;
+        const moded = await patchChannelMeta(entry.slug, (current) => {
+          replaced = current;
+          return {
             ...MODE_FLAGS[arg],
             profile: arg === "admin" ? "full" : arg === "bash" ? "worker" : arg, // keep the UI preset in sync
-          })
-        );
+          };
+        });
+        Object.assign(meta, moded);
         await ensureChannelFolder(entry.slug, meta); // re-provision the lockdown now
+        // `/mode admin` turns the sandbox off for this channel. Typing it in Slack must leave the
+        // same trail as flipping it in the admin UI, naming the author who typed it.
+        await logChannelPolicyChange({ channelId: event.channel, slug: entry.slug, actor: event.user, before: replaced, after: moded, source: "slack-command" });
         await reply(
           `✅ Mode set to *${arg}* (${modeLabel(meta)}) for this channel — applies to new turns.` +
             (arg === "admin" ? "\n⚠️ Full tools, sandbox off — only honored for admin authors' live turns. An admin's background agents, continuations, and schedules run at the *auto* tier: writable + auto-approved, but always sandboxed." : "")

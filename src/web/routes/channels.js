@@ -53,6 +53,9 @@ import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
 import { listChannelEnv, normalizeEnvName, patchChannelEnv } from "../../config/channel-env.js";
+// Per-channel POLICY changes (Allow-network, Full access, work folder, access lists, engine…) are
+// audited by diffing the record that was replaced against the one now stored — see config/channel-audit.js.
+import { ADMIN_UI_ACTOR, logChannelPolicyChange } from "../../config/channel-audit.js";
 import { cliEnvKeys, cliIntegrationIds } from "../../config/cli-catalog.js";
 
 const WEB_ADMIN_ACTOR = "admin UI";
@@ -200,6 +203,9 @@ export function createChannelsRouter({
       if (body.clearToolboxToken === true) next_.toolboxToken = "";
       await saveChannelMeta(entry.slug, next_);
       await ensureChannelFolder(entry.slug, effectiveMeta(next_)); // re-provision with effective config
+      // Same posture change, same audit row as a channel: a DM's template/admin-mode/network flags
+      // decide what its runs can reach. Nothing is written when only unaudited fields moved.
+      await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: current, after: next_ });
       res.json({ ok: true });
     } catch (e) {
       next(e);
@@ -311,6 +317,9 @@ export function createChannelsRouter({
       // Atomic read-modify-write: the merge callback runs inside the store's BEGIN IMMEDIATE
       // transaction, so a concurrent writer (Slack /mode, an MCP channel-admin tool) can't be
       // clobbered by this save reading stale meta.
+      // The record this save replaces, captured INSIDE the store transaction (below) so the audit
+      // diff compares against what was actually overwritten, not against a stale pre-lock read.
+      let replaced = null;
       const commitMeta = async () => {
         let allowedUsersPatch;
         if (Array.isArray(body.allowedUsers)) {
@@ -318,6 +327,7 @@ export function createChannelsRouter({
         }
         return patchChannelMeta(entry.slug, (existing) => {
           const current = existing ?? defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM });
+          replaced = current;
           const out = {
             ...current,
             // Access model: who can USE (access) and who can MANAGE (manageAccess + managers[]).
@@ -376,6 +386,10 @@ export function createChannelsRouter({
         ? await withChannelMembershipLock(channelId, commitMeta)
         : await commitMeta();
       await ensureChannelFolder(entry.slug, next_); // refresh lockdown + skills now
+      // One row per save, listing ONLY the policy keys that moved (and never a token or an env
+      // value — see the allowlist in config/channel-audit.js). A save that changes nothing on that
+      // list — a nudge toggle, a token rotation, a re-submitted form — writes no event at all.
+      await logChannelPolicyChange({ channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: replaced, after: next_ });
       res.json({ ok: true, meta: maskChannelMeta(next_) });
     } catch (e) {
       if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });

@@ -17,6 +17,7 @@ import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
 import { loadSkills } from "./admin-skills.js";
+import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 
 // ── Inline SVG icon ─────────────────────────────────────────────────────────────
 const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z"/></svg>`;
@@ -429,6 +430,65 @@ function renderAuditRows() {
   }
 }
 
+// ── Admin & security events ──────────────────────────────────────────────────────
+// The `events` table (GET /api/audit/events), rendered under the run history. The run table above
+// is the usage ledger; this is the trail of WHO CHANGED WHAT: channel policy changes, secret
+// reveals (granted and refused), skill grants, platform connections. The wording lives in
+// admin-events.js so it can be unit-tested without a DOM.
+const EVENTS_PAGE = 25;
+let AUDIT_EVENTS = [];
+let eventsShown = EVENTS_PAGE;
+let eventsAdminOnly = true;
+
+function renderAuditEvents() {
+  const el = document.getElementById("audit-events");
+  if (!el) return;
+  const filtered = eventsAdminOnly ? AUDIT_EVENTS.filter(isAdminEvent) : AUDIT_EVENTS;
+  const shown = filtered.slice(0, eventsShown);
+  const rows = shown.length
+    ? shown.map((e) => {
+        const when = new Date(e.ts).toLocaleString();
+        const who = e.actor || e.author || "—";
+        const where = e.slug || e.channel || "—";
+        return `<tr>
+      <td class="num audit-time">${escapeHtml(when)}</td>
+      <td class="audit-kind">${escapeHtml(eventLabel(e.event))}</td>
+      <td>${escapeHtml(where)}</td>
+      <td>${escapeHtml(who)}</td>
+      <td class="audit-what">${escapeHtml(describeEvent(e))}</td>
+    </tr>`;
+      }).join("")
+    : `<tr><td class="audit-empty" colspan="5">No events recorded yet.</td></tr>`;
+  el.innerHTML = `
+    <div class="utable events-table"><table>
+      <thead><tr><th>Time</th><th>Event</th><th>Conversation</th><th>Who</th><th>What changed</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="audit-foot">
+      ${filtered.length > eventsShown ? `<button id="events-more" class="ghost" type="button">Show more</button>` : ""}
+      <button id="events-scope" class="ghost" type="button">${eventsAdminOnly ? "Show all events" : "Admin &amp; security only"}</button>
+      <span class="audit-count">Showing ${shown.length} of ${fmtNum(filtered.length)} events</span>
+    </div>`;
+  const moreBtn = document.getElementById("events-more");
+  if (moreBtn) moreBtn.addEventListener("click", () => { eventsShown += EVENTS_PAGE; renderAuditEvents(); });
+  const scopeBtn = document.getElementById("events-scope");
+  if (scopeBtn) scopeBtn.addEventListener("click", () => { eventsAdminOnly = !eventsAdminOnly; eventsShown = EVENTS_PAGE; renderAuditEvents(); });
+}
+
+async function loadAuditEvents() {
+  const el = document.getElementById("audit-events");
+  if (!el) return;
+  try {
+    const data = await api("/api/audit/events?limit=500");
+    AUDIT_EVENTS = data.events || [];
+  } catch (e) {
+    el.innerHTML = `<div class="utable events-table"><table><tbody><tr><td class="audit-empty" colspan="5">Couldn't load events: ${escapeHtml(e.message)}</td></tr></tbody></table></div>`;
+    return;
+  }
+  eventsShown = EVENTS_PAGE;
+  renderAuditEvents();
+}
+
 // Session-detail modal — the full ledger record for one run, reusing the shared .modal styles.
 // Read-only; Esc / backdrop / ✕ closes.
 function openSessionDetail(r) {
@@ -499,6 +559,7 @@ async function loadAudit() {
 
   auditShown = AUDIT_PAGE;
   renderAuditRows();
+  await loadAuditEvents();
 }
 
 // ── Dashboard (KPIs + 30-day charts) ─────────────────────────────────────────────

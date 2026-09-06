@@ -31,6 +31,10 @@ import {
 } from "../../gateway/skills/authoring.js";
 import { publishRevision, publishTarget } from "../../gateway/skills/publish.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
+// A conversation's granted skills and its skill template are policy: they decide what loads into
+// every future run here. The admin UI's grant/revoke/template routes already wrote these rows; the
+// chat path wrote nothing at all until now.
+import { logEvent } from "../../util/logger.js";
 
 const MAX_TEXT = 12000;
 const FILE_INPUT = z.object({
@@ -84,7 +88,7 @@ function publishLine(p) {
 }
 
 export function register(server, ctx) {
-  const { slug, createdBy, text, requireAdmin, requireManage, loadMeta } = ctx;
+  const { channelId, slug, createdBy, text, requireAdmin, requireManage, loadMeta } = ctx;
 
   const isAdminUser = async () => Boolean(createdBy) && (await isAdmin(createdBy));
   const approvedAuthor = async () => Boolean(createdBy) && ((await isAdminUser()) || (await isApproved(createdBy)));
@@ -238,6 +242,9 @@ export function register(server, ctx) {
       if (!known.length) return text(`None of those are grantable catalog skills: ${unknown.join(", ")}. See list_skills (personal skills are granted with add_my_skills).`);
       const r = await grantSkillsToChannel(slug, known);
       if (!r) return text("Channel isn't set up yet — send a normal message first.");
+      // Same audit row the admin UI's grant route writes — the chat path used to change what every
+      // future run here loads and leave nothing behind. Slugs only; a skill name is not a secret.
+      if (r.added.length) await logEvent("skill_granted", { channel: channelId, slug, skills: r.added, author: createdBy });
       const profile = resolveSkillProfile(r.names, { warnTokens: getSkillsContextWarnTokens() });
       return text(`✅ Granted here: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.`);
     },
@@ -253,6 +260,7 @@ export function register(server, ctx) {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its skills.");
       const r = await revokeSkillsFromChannel(slug, slugs);
       if (!r) return text("Channel isn't set up yet.");
+      if (r.removed.length) await logEvent("skill_revoked", { channel: channelId, slug, skills: r.removed, author: createdBy });
       const org = new Set((getOrgAccessGrants().skills || []).map((s) => String(s).toLowerCase()));
       const stillOrg = slugs.filter((s) => org.has(String(s).toLowerCase()));
       return text(`🗑️ Removed ${r.removed.length} grant(s)${r.removed.length ? `: ${r.removed.map((s) => `\`${s}\``).join(", ")}` : ""}.${stillOrg.length ? `\nStill active from the organization tier (an admin changes that with remove_org_skills): ${stillOrg.join(", ")}` : ""}${stillRequiredLine(r.stillRequired)}\nNow granted here: ${r.names.join(", ") || "(none)"}. Active on the next message.`);
@@ -325,6 +333,8 @@ export function register(server, ctx) {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its skills.");
       const r = await assignTemplateToChannel(slug, template);
       if (!r) return text(`Could not assign "${template}": unknown template, or this channel isn't set up yet.`);
+      // Same event kind the admin UI's template route writes, so both surfaces read alike.
+      await logEvent("skill_template_assigned", { channel: channelId, slug, template: r.template?.slug || "none", author: createdBy });
       if (!r.template) return text(`✅ This channel follows no template now. Its own added skills stay (${r.names.length}): ${r.names.join(", ") || "(none)"}.`);
       return text(`✅ This channel now follows **${r.template.name}**: +${r.add.length} skill(s)${r.remove.length ? `, −${r.remove.length}` : ""}. Channel tier (${r.names.length}): ${r.names.join(", ") || "(none)"}\nAlways-on context ~${r.profile.contextTokens} tokens.${r.profile.staged.length ? `\nAwaiting admin review: ${r.profile.staged.map((s) => s.slug).join(", ")}` : ""} Template edits follow automatically; add_channel_skills adds on top. Active on the next message.`);
     },

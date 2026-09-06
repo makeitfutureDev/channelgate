@@ -1756,7 +1756,12 @@ are retired, bullet by bullet; everything else stands.
   an orange hero value chart with gridlines and dated peak, runs/tokens sparklines, top-users and
   channel runs+value bars (DM slugs resolved to people's names). **Activity** (was Audit): a
   one-line all-time totals strip + a real runs table with combinable text/channel/user/engine
-  filters and 50-row "Show more" pagination over a cached 1000-row fetch. → TEST-PLAN: Admin UI (redesign).
+  filters and 50-row "Show more" pagination over a cached 1000-row fetch, followed by an
+  **Admin & security events** table over `GET /api/audit/events` — time, event, conversation, who,
+  and what changed (a channel policy change renders as `key: before → after`). It opens on the
+  admin/security kinds with a toggle for the whole feed and 25-row pagination; an unrecognized kind
+  still renders, under its raw name with the underscores opened up, so a newly added event is
+  readable the day it ships. → TEST-PLAN: Admin UI (redesign).
 - **Overview KPI drill-downs**: value/runs/tokens jump to the **Activity** run history; live active
   sessions opens its modal (hover lift + orange edge, keyboard-focusable role="button"). Active users
   remains a plain read-only tile. On Activity, **clicking a run row opens a Session-detail modal**
@@ -2160,6 +2165,31 @@ are retired, bullet by bullet; everything else stands.
   follow-up read. Usage accounting, Overview, Activity, conversation cost badges, and API results
   always retain cost independently of this display preference. → TEST-PLAN: Observability.
 - Structured event log in the `events` table (no secrets), queryable by day/channel/user.
+- **Channel policy audit (`channel_meta_changed`).** A conversation's meta record IS its security
+  posture, so every successful change to it writes one event naming the conversation, the principal
+  and the POLICY keys that actually moved, with before/after values. Every surface that can change
+  it goes through the same diff helper (`src/config/channel-audit.js` → `policyDiff`): the admin
+  API's channel and DM saves (actor `admin-ui` — the UI authenticates one shared password, so there
+  is no personal identity to attribute), the gateway control MCP tools (`set_channel_admin_mode`,
+  `set_channel_network`, `set_channel_bash`, `set_channel_auto_mode`, `set_channel_workdir` /
+  `clear_channel_workdir`, `set_channel_drive_folder` / `clear_channel_drive_folder`,
+  `add_channel_mcps` / `remove_channel_mcps`), the typed `/mode` command and the `/model` runtime
+  picker (actor = the chat author's own id, also in the event's author column). The allowlist is
+  curated — profile, the four capability flags, cleanMode, noDefaultTokens, engine/model/effort,
+  runtime, workDir, the Drive sync link, access/manageAccess/managers/allowedUsers, the two MCP
+  allowlists, the DM template, the skill template, and skills as a COUNT — so a token, a per-channel
+  environment value or any other field can never reach an audit row. Only keys that changed are
+  recorded, a save that moves no policy key writes nothing at all, list keys are compared by sorted
+  name (a reorder is not a change), and one row's payload is bounded (over ~8 KB, list values
+  collapse to counts). Chat-side skill grants write the same `skill_granted` / `skill_revoked` /
+  `skill_template_assigned` rows the admin UI does. → TEST-PLAN: Observability.
+- **Refused secret reveals are audited (`secret_reveal_rejected`).** `POST /api/secrets/reveal`
+  answers 400 for any field off the reveal allowlist; it now logs the attempt — scope, field and id
+  NAMES (clipped, never a value) plus the admin principal — BEFORE returning, so an enumeration
+  sweep with a borrowed session leaves a trail instead of nothing. A wrong password still logs
+  `secret_reveal_denied` and a granted reveal still logs `secret_revealed`, neither with the value —
+  and all three now carry the admin principal (`admin-ui`) instead of an empty author, so no row
+  reads as unattributed. → TEST-PLAN: Observability.
 - Usage accounting preserves one immutable run/raw-evidence row in `usage` across interactive,
   scheduled, and background work. Canonical Codex root and native-child deltas live in
   `usage_components`, with per-request cache/context/model evidence in `usage_requests`; child

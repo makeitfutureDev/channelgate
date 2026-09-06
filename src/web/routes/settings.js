@@ -46,6 +46,8 @@ import { isValidModel } from "../../slack/util.js";
 import { detectServiceManager, requestShutdown, restartExitCode } from "../../gateway/shutdown.js";
 import { invalidateAllSessions, authEnabled } from "../auth.js";
 import { readSecret } from "../secrets.js";
+// The shared admin principal — one password, no personal identity behind an admin-UI action.
+import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
 import { engineUiManifest } from "../../engines/registry.js";
 
@@ -55,6 +57,10 @@ function utcMonthNow(at = Date.now()) {
   const d = new Date(at);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
+
+// Caller-supplied labels that go into an audit row (a rejected reveal's scope/field/id). Names,
+// never values — and bounded, so a padded request body cannot inflate the events table.
+const clipLabel = (v) => String(v ?? "").slice(0, 120);
 
 export function createSettingsRouter({
   slack,
@@ -91,23 +97,36 @@ export function createSettingsRouter({
   });
 
   // Reveal ONE stored secret, on demand. Listing endpoints return has*/last4 only; this is the
-  // single way to see a value, and it costs a fresh password entry every time. Audit-logged with
-  // what was revealed (never the value itself).
+  // single way to see a value, and it costs a fresh password entry every time. All three outcomes
+  // — granted, wrong password, refused field — are audited with the requested NAMES (never the
+  // value) and the admin principal: the UI's sessions carry no personal identity, so "admin-ui" is
+  // who did it, and a row that left `author` empty read as if nobody had.
   router.post("/secrets/reveal", async (req, res, next) => {
+    // Destructured OUTSIDE the try: the catch below audits the REFUSED request, and it can only
+    // name what was asked for if these are in scope there.
+    const { scope = "", field = "", id = "", password = "" } = req.body ?? {};
     try {
-      const { scope = "", field = "", id = "", password = "" } = req.body ?? {};
       // Re-authenticate even though a valid session got here: a borrowed session should not be
       // able to drain every credential silently. Skipped only when no password is configured at
       // all, in which case there is nothing to re-enter.
       if (authEnabled() && !(await verifyPassword(String(password), getAdminPassword()))) {
-        await logEvent("secret_reveal_denied", { scope, field, id });
+        await logEvent("secret_reveal_denied", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR });
         return res.status(401).json({ error: "Wrong password" });
       }
       const value = await readSecret({ scope, field, id: String(id) });
-      await logEvent("secret_revealed", { scope, field, id });
+      await logEvent("secret_revealed", { scope, field, id, actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR });
       res.json({ value });
     } catch (e) {
-      if (/unknown scope|not revealable|unknown user/.test(e.message)) return res.status(400).json({ error: e.message });
+      // A REFUSED reveal is audited too. readSecret throws for anything off the allowlist, and
+      // this handler used to answer 400 before any logEvent ran — so someone holding a stolen
+      // session could sweep the endpoint for revealable field names and leave no trace at all
+      // (only a wrong password logged anything). Names only: the requested scope/field/id are
+      // caller-supplied labels, never a stored value, and they are clipped so a padded request
+      // body can't inflate the audit row.
+      if (/unknown scope|not revealable|unknown user/.test(e.message)) {
+        await logEvent("secret_reveal_rejected", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR, reason: e.message });
+        return res.status(400).json({ error: e.message });
+      }
       next(e);
     }
   });

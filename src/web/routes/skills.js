@@ -49,11 +49,13 @@ import { publishRevision, publishTarget, publishSource } from "../../gateway/ski
 import { createAccessToken, listAccessTokens, revokeAccessToken, deleteAccessToken, TOKEN_SCOPES } from "../../gateway/skills/tokens.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsPublishGithubToken, getSkillsWebhookSecret, getPublicUrl } from "../../config/settings.js";
+import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { getChannelMeta, listChannels } from "../../config/store.js";
 import { skillSourceDirs } from "../../gateway/folders.js";
 import { logEvent } from "../../util/logger.js";
 
-const ADMIN_UI = "admin-ui";
+// The one spelling of the admin-UI principal across the whole audit trail (config/channel-audit.js).
+const ADMIN_UI = ADMIN_UI_ACTOR;
 
 function guard(fn) {
   return async (req, res, next) => {
