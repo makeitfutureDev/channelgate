@@ -305,6 +305,11 @@ export function getContainerRuntime() {
     cpus: typeof s.containerCpus === "string" ? s.containerCpus.trim() : "",
     // Presence only — the value goes through getContainerClaudeOauthToken() at spawn time.
     hasClaudeOauthToken: Boolean(s.containerClaudeOauthToken),
+    // Full-access (adminMode) channels get the gateway user's whole home directory mounted
+    // read-write at its identical path (src/runtimes/container/lifecycle.js operatorHomeMounts).
+    // Off by default: the confined work-folder-only admin channel is the product's posture; an
+    // operator who wants an overseer channel that sees every agent and every repo switches it on.
+    fullAccessHome: s.containerFullAccessHome === true,
   };
 }
 // The long-lived subscription token from `claude setup-token`, injected as CLAUDE_CODE_OAUTH_TOKEN
@@ -798,6 +803,7 @@ export function settingsForApi() {
         containerPidsLimit: c.pidsLimit,
         containerMemory: c.memory,
         containerCpus: c.cpus,
+        containerFullAccessHome: c.fullAccessHome,
         hasContainerClaudeOauthToken: c.hasClaudeOauthToken,
         containerClaudeOauthTokenLast4: last4(getContainerClaudeOauthToken()),
       };

@@ -2365,6 +2365,31 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       and target paths (automated: `test/container-lifecycle.test.js`).
 - [x] Unit: the fingerprint covers create-time configuration only — a new image ID changes it, a
       network-mode change changes it, a per-exec meta change does not (automated).
+- [x] Unit: the operator-home grant — an adminMode channel gets the `operator-home` bind (source =
+      target = the daemon user's home, rw) plus a tmpfs `mask` over `~/.local/share/containers` ONLY
+      while `fullAccessHome === true` (a Worker channel with the switch on, an admin channel with it
+      off, and a truthy non-boolean all get nothing); the grant moves the fingerprint both ways
+      (switch and mode); the create argv carries the home as a plain rw `-v` and the mask as
+      `--tmpfs …:rw,noexec,nosuid,size=1m,notmpcopyup` (`notmpcopyup` is load-bearing: podman's default
+      copies the destination's contents into the tmpfs, gigabytes of container store into 1 MB —
+      proven live), and without the grant `/run` is the only tmpfs
+      (automated: `test/container-lifecycle.test.js`).
+- [x] Unit: Claude's ADMIN settings variant lists the operator home in
+      `permissions.additionalDirectories` only when the resolved target mounts it (never the mask,
+      never without a target); the shared variant never does (automated: `test/folders-settings.test.js`).
+- [x] Unit: `PUT /api/settings` stores `containerFullAccessHome` as a boolean only (default false;
+      a string is ignored, not stored), `settingsForApi` + `getContainerRuntime()` read it back, and
+      the admin UI's Container runtime card carries the checkbox wired both ways (automated:
+      `test/admin-container-runtime.test.js`).
+- [x] Live (2026-09-06, throwaway container on the real image, rootless podman 5.7): the home bind +
+      mask create args work; the `agent` user sees every channel folder and memory, every repo and the
+      gateway logs, can write, and `~/.local/share/containers` is an empty tmpfs while the host store
+      is untouched.
+- [ ] Manual (Xavier, both engines): switch on → an admin author in a Full-access channel lists
+      another channel's `MEMORY.md` under `~/ChannelGate/slack/<slug>/` and a repo under `~/Code/`
+      with Read/Bash (Claude) and the shell (Codex); `podman inspect` shows the home bind + the
+      tmpfs mask; a Worker channel's container shows neither; switch off → the admin container is
+      recreated at its next turn without the mount.
 - [x] Unit: the state machine — missing → create + start with the artifact dir made 0700 BEFORE the
       mount; exited → `start`, never a recreate, and a lost lease is announced in-thread; running
       with a matching fingerprint → reused with no CLI mutation at all; running with a stale

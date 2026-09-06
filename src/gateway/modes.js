@@ -87,7 +87,7 @@ export const PROFILE_HELP = {
   read: "Answers and reads files in this channel's folder. Can't edit or run commands; anything riskier asks you to approve. Safest.",
   worker: "Runs commands and edits files inside this channel's container. Still asks before unusual actions. For channels that build things.",
   auto: "Like Worker but doesn't stop to ask — auto-approves and keeps going. For trusted, multi-step tasks.",
-  full: "Every tool, no permission prompts. Only works when an org admin sends the message; otherwise falls back to Worker behaviour. The channel container is still the boundary. Use only for trusted ops channels.",
+  full: "Every tool, no permission prompts. Only works when an org admin sends the message; otherwise falls back to Worker behaviour. The channel container is still the boundary — unless the gateway's \"Full-access channels see the gateway home\" switch is on, in which case this channel also reaches the gateway user's whole home. Use only for trusted ops channels.",
   lean: "Bare model — no skills or connectors. Cheapest and fastest, but can't use HubSpot/Gmail/etc.",
   custom: "Set every capability yourself (mode, network, clean).",
 };

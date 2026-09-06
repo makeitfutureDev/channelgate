@@ -249,7 +249,7 @@ export async function createRunGrantArtifacts({
 
     let settingsFile = "";
     if (needsClaudeSettings) {
-      const settings = await buildSettings({ ...meta, _slug: slug }, { allowBypass });
+      const settings = await buildSettings({ ...meta, _slug: slug }, { allowBypass, target });
       const content = `${JSON.stringify(settings, null, 2)}\n`;
       const digest = createHash("sha256").update(content).digest("hex").slice(0, 24);
       const settingsRoot = path.join(stableArtifactRoot, "claude-settings");

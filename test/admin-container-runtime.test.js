@@ -70,6 +70,20 @@ test("the settings PUT accepts the container keys and reads them back through se
   assert.equal(s.containerPidsLimit, 2048);
   assert.equal(s.containerMemory, "2g");
   assert.equal(s.containerCpus, "1.5");
+  // The operator-home grant is a boolean and nothing else: off by default, on only when the admin
+  // says so, and a string can neither switch it on nor sneak a path in.
+  assert.equal(s.containerFullAccessHome, false);
+  assert.equal(getContainerRuntime().fullAccessHome, false);
+  const grant = await request("/settings", { method: "PUT", body: { containerFullAccessHome: true } });
+  assert.equal(grant.status, 200);
+  assert.equal(settingsForApi().containerFullAccessHome, true);
+  assert.equal(getContainerRuntime().fullAccessHome, true);
+  const smuggled = await request("/settings", { method: "PUT", body: { containerFullAccessHome: "/etc" } });
+  assert.equal(smuggled.status, 200);
+  assert.equal(settingsForApi().containerFullAccessHome, true, "a non-boolean is ignored, not stored");
+  const revoke = await request("/settings", { method: "PUT", body: { containerFullAccessHome: false } });
+  assert.equal(revoke.status, 200);
+  assert.equal(getContainerRuntime().fullAccessHome, false);
   // And the runtime reads the same snapshot the UI just wrote.
   assert.equal(getContainerRuntime().image, "channelgate/runtime:v3");
   assert.equal(getContainerRuntime().cli, "podman");
@@ -177,6 +191,7 @@ test("the admin UI has a Container runtime card wired to the API, and no switch 
 
   for (const id of ["set-container-cli", "set-container-image",
     "set-container-idle", "set-container-max", "set-container-pids", "set-container-memory", "set-container-cpus",
+    "set-container-full-access-home",
     "set-container-claude-token", "clear-container-claude-token", "container-runtime-health"]) {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
@@ -191,6 +206,8 @@ test("the admin UI has a Container runtime card wired to the API, and no switch 
   }
   assert.doesNotMatch(client, /containerRuntimeEnabled|containerDefaultBackend/);
 
+  assert.match(client, /containerFullAccessHome: document\.getElementById\("set-container-full-access-home"\)\.checked/);
+  assert.match(client, /set-container-full-access-home"\)\.checked = s\.containerFullAccessHome === true/);
   assert.match(client, /clearContainerClaudeOauthToken: true/);
   assert.match(client, /revealSecret\("settings", "containerClaudeOauthToken"\)/);
   assert.match(client, /paintContainerRuntimeHealth/);

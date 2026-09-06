@@ -208,7 +208,15 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
   mounted read-write like any other's — so an admin channel whose work folder is a host directory
   (the gateway's own checkout, say) hands that directory, and only that directory, to its
   container, everything in it included. That is the intended trust model for admin channels; put
-  nothing in such a folder that the channel must not see.
+  nothing in such a folder that the channel must not see. The one operator-chosen widening is the
+  gateway-wide *Full-access channels see the gateway home* switch (Settings → Container runtime,
+  `containerFullAccessHome`, OFF by default): while it is on, every Full-access channel's container
+  also bind-mounts the daemon user's WHOLE home read-write at its identical path — every channel's
+  work folder and memory, every repo, the gateway root with its logs, metadata and credential
+  stores — with only the container engine's own storage masked. It is a boolean, never a path
+  (`operatorHomeMounts` in `src/runtimes/container/lifecycle.js`), it is part of the create-time
+  fingerprint, no MCP tool can flip it, and it is per CHANNEL: every author the channel admits can
+  read the home through the file tools, only an admin author's turn writes with the bypass tools.
 - **Secrets never ride a listing response.** `/api/settings`, `/api/channels`, `/api/users` and the
   channel-meta PUT return `has*`/`last4` ONLY. A value is fetched one at a time from
   `POST /api/secrets/reveal`, which re-checks the admin password even for a valid session and

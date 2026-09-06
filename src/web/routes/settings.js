@@ -283,6 +283,10 @@ export function createSettingsRouter({
         if (v && !CONTAINER_CPUS_RE.test(v)) return res.status(400).json({ error: "containerCpus must be a number like 1 or 1.5 (blank = no limit)" });
         patch.containerCpus = v;
       }
+      // The operator-home grant for Full-access channels. A boolean only — there is no path to
+      // configure, because the grant is the daemon user's own home and nothing else; an admin
+      // API caller cannot turn this into "mount an arbitrary host path".
+      if (typeof body.containerFullAccessHome === "boolean") patch.containerFullAccessHome = body.containerFullAccessHome;
       // The Claude subscription token for container runs (`claude setup-token` on the host). Same
       // write-only rule as every other credential: set on a value, cleared by an empty string or
       // the explicit flag, never echoed back by any listing.
