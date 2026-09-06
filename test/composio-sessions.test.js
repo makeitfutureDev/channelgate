@@ -4,7 +4,7 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 
-const sessions = await import("../src/gateway/composio-sessions.js");
+const sessions = await import("../src/ee/composio-sessions.js");
 
 test("Composio identities are stable and workspace scoped", () => {
   assert.equal(

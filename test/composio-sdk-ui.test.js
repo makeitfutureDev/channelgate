@@ -25,7 +25,7 @@ test("admin UI loads masked SDK-key state and saves mode independently from cred
 
 test("SDK mode explains stable identities, per-thread sessions, and manager-owned shared connections", () => {
   assert.match(client, /Stable identity per Slack user\/channel/);
-  assert.match(client, /separate Composio session is reused per Slack thread/);
-  assert.match(client, /Only channel managers can manage shared connections/);
+  assert.match(client, /separate sessions per Slack thread/);
+  assert.match(client, /Only channel managers manage shared connections/);
   assert.match(client, /saved · inactive in SDK mode/);
 });

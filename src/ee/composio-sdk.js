@@ -1,6 +1,7 @@
 // Composio SDK session lifecycle. The SDK key stays inside this daemon module; callers receive
 // only a session-scoped MCP URL plus non-secret metadata. Connected accounts are keyed by the
 // stable external identity in Composio, while SQLite keeps per-thread remote session mappings.
+import { requireComposioSdkEntitlement } from "./composio-entitlement.js";
 import { Composio } from "@composio/core";
 import { getComposioSdkApiKey } from "../config/settings.js";
 import {
@@ -72,6 +73,7 @@ export async function resolveSdkSession({
   manageConnections = false,
   client = null,
 } = {}) {
+  requireComposioSdkEntitlement();
   const identityId = composioIdentity({ workspaceId, kind, id });
   const sessionKey = composioSessionKey({ identityId, threadKey, accessKind });
   const source = kind === "user" ? "sdk-user" : "sdk-channel";

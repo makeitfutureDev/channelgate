@@ -39,7 +39,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { runtimeSocketDir, runtimeSocketFile } from "../config/paths.js";
 import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
 import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./gateway-server.js";
-import { runBridge } from "./composio-sdk-bridge.js";
+import { runBridge } from "../ee/composio-sdk-bridge.js";
 
 const HELLO_TIMEOUT_MS = 2_000;
 const HELLO_MAX_BYTES = 64 * 1024;
@@ -141,7 +141,7 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
         // cannot see, so it rides this socket too. The session URL is not a secret; runBridge still
         // validates it is a hosted Composio tool_router URL before connecting.
         const url = Array.isArray(frame.args) ? String(frame.args[0] || "") : "";
-        const { server } = await runBridge(url, { transport });
+        const { server } = await runBridge(url, { transport, verifyCapability: verify });
         socket.once("close", () => { server.close?.().catch?.(() => {}); });
       }
       if (frame.framed === true) writeFrame(socket, { channelgate: "ready", v: 1, service: frame.service });
@@ -149,7 +149,7 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
     } catch (e) {
       // Deliberately terse for composio: upstream errors can quote request headers or URLs.
       const reason = frame.service === "gateway" ? String(e?.message || "server error") : "composio bridge unavailable";
-      log?.warn?.(`[gateway] MCP socket: ${frame.service} connection failed — ${e?.message || e}`);
+      log?.warn?.(`[gateway] MCP socket: ${frame.service} connection failed — ${reason}`);
       refuse(socket, reason);
     }
   }

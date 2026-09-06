@@ -2,6 +2,7 @@
 // channels, applies the gating rules (DM → no mention needed; everywhere else → require an
 // explicit @bot mention), authorizes the author against the channel's allowedUsers, then runs
 // the message through the gateway orchestrator and posts the reply in the thread.
+import { hasComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import pkg from "@slack/bolt";
 const { App, LogLevel } = pkg;
 
@@ -1335,14 +1336,16 @@ async function connectAndWire(app) {
           : `❌ *${label}* — not connected${note ? ` (${note})` : ""}`;
     const composioMode = getComposioMode();
     const composioLines = composioMode === "sdk"
-      ? (getComposioSdkApiKey()
+      ? (!hasComposioSdkEntitlement()
+          ? ["❌ *Composio SDK (Enterprise · Beta)* — an active Enterprise license is required"]
+          : getComposioSdkApiKey()
           ? [
-              "✅ *Composio personal (`composio-user`)* — SDK identity created for you at runtime",
-              "✅ *Composio agent (`composio-agent`)* — SDK identity created for each channel at runtime",
+              "✅ *Composio personal (`composio-user`)* — SDK (Enterprise · Beta) identity created for you at runtime",
+              "✅ *Composio agent (`composio-agent`)* — SDK (Enterprise · Beta) identity created for each channel at runtime",
             ]
           : [
-              "❌ *Composio personal (`composio-user`)* — SDK mode is on, but its organization API key is missing",
-              "❌ *Composio agent (`composio-agent`)* — SDK mode is on, but its organization API key is missing",
+              "❌ *Composio personal (`composio-user`)* — SDK (Enterprise · Beta) mode is on, but its organization API key is missing",
+              "❌ *Composio agent (`composio-agent`)* — SDK (Enterprise · Beta) mode is on, but its organization API key is missing",
             ])
       : [
           connLine("Composio personal (`composio-user`)", cTok, "", "connect it with the button below"),

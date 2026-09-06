@@ -3,6 +3,7 @@
 // The public key is the whole trust boundary: a response that does not verify against it must
 // change NOTHING, in either direction. A forged upgrade and a forged downgrade are the same bug.
 import test from "node:test";
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createHash } from "node:crypto";
 import { ensureTestEnv, clearTestLicense, makeTestLicense, signTestLicense, testCanonicalJson, testLicenseKeyPair, testLicensePublicKeyPem } from "./helpers.js";
@@ -18,6 +19,8 @@ const {
   getEffectiveLimits,
   resetLicenseAnnouncements,
   offlineLicense,
+  onLicenseKeyChanged,
+  readLastCheck,
 } = await import("../src/ee/license.js");
 const { buildUsageReport, resetLicenseUsage, licenseAdmission } = await import("../src/ee/limits.js");
 const { saveSettings } = await import("../src/config/settings.js");
@@ -224,4 +227,77 @@ test("the usage report carries hashes and counts only — never a name or an id 
   const finance = createHash("sha256").update("C_FINANCE_BOARD", "utf8").digest("hex");
   assert.equal(report.conversations.find((c) => c.hash === finance).count, 2);
   resetLicenseUsage();
+});
+
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test("a response for a replaced key cannot restore its cached tier", async () => {
+  networkMode();
+  const oldLicense = makeTestLicense({ tier: "enterprise", keyId: "old-key" });
+  const oldResponse = deferred();
+  const oldCheck = verifyLicense({ fetchImpl: () => oldResponse.promise });
+  saveSettings({ licenseKey: "replacement-key" });
+  onLicenseKeyChanged({ verify: false });
+  const currentLicense = makeTestLicense({ tier: "free", keyId: "new-key" });
+  await verifyLicense({ fetchImpl: async () => okResponse(currentLicense, signTestLicense(currentLicense)) });
+  oldResponse.resolve(okResponse(oldLicense, signTestLicense(oldLicense)));
+  assert.equal((await oldCheck).outcome, "superseded");
+  assert.equal(readCache().license.keyId, "new-key");
+  assert.equal(getLicenseStatus().tier, "free");
+  // Even a settings edit outside the key-change callback cannot read another key's cache.
+  saveSettings({ licenseKey: "third-key" });
+  assert.equal(readCache(), null);
+  assert.equal(readLastCheck(), null);
+  assert.equal(getLicenseStatus().tier, "none");
+});
+
+test("verification generations discard old errors and A-to-B-to-A responses", async () => {
+  networkMode();
+  const pending = deferred();
+  const staleCheck = verifyLicense({ fetchImpl: () => pending.promise });
+  saveSettings({ licenseKey: "second-key" });
+  onLicenseKeyChanged({ verify: false });
+  saveSettings({ licenseKey: "cg-net-key" });
+  onLicenseKeyChanged({ verify: false });
+  const license = makeTestLicense();
+  await verifyLicense({ fetchImpl: async () => okResponse(license, signTestLicense(license)) });
+  pending.resolve({ status: 403 });
+  assert.equal((await staleCheck).outcome, "superseded");
+  assert.equal(getLicenseStatus().state, "valid");
+  assert.equal(readLastCheck().outcome, "verified");
+});
+
+test("a delayed response body cannot restore a cleared key", async () => {
+  networkMode();
+  const body = deferred();
+  const license = makeTestLicense();
+  const check = verifyLicense({ fetchImpl: async () => ({ status: 200, json: () => body.promise }) });
+  await Promise.resolve();
+  clearTestLicense();
+  saveSettings({ licenseKey: "" });
+  onLicenseKeyChanged({ verify: false });
+  body.resolve({ ok: true, license, signature: signTestLicense(license) });
+  assert.equal((await check).outcome, "superseded");
+  assert.equal(readCache(), null);
+  assert.equal(getLicenseStatus().state, "no_key");
+});
+
+
+test("a newer verification from another process supersedes the daemon's pending response", async () => {
+  networkMode();
+  const pending = deferred();
+  const older = verifyLicense({ fetchImpl: () => pending.promise });
+  const moduleUrl = new URL("../src/ee/license.js", import.meta.url).href;
+  execFileSync(process.execPath, ["--input-type=module", "-e",
+    `const { verifyLicense } = await import(${JSON.stringify(moduleUrl)}); await verifyLicense({ fetchImpl: async () => ({ status: 403 }) });`,
+  ], { env: { ...process.env }, stdio: "pipe" });
+  const license = makeTestLicense();
+  pending.resolve(okResponse(license, signTestLicense(license)));
+  assert.equal((await older).outcome, "superseded");
+  assert.equal(getLicenseStatus().state, "revoked");
 });

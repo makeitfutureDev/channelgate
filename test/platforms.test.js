@@ -105,8 +105,8 @@ test("the built-in platforms are registered, Slack is the default, and all three
   assert.deepEqual(livePlatformIds(), ["slack", "googlechat", "msteams"]);
   assert.equal(platformStatus("slack"), "ga");
   // Preview until each has run against a real tenant; the descriptor is what says so.
-  assert.equal(platformStatus("googlechat"), "preview");
-  assert.equal(platformStatus("msteams"), "preview");
+  assert.equal(platformStatus("googlechat"), "beta");
+  assert.equal(platformStatus("msteams"), "beta");
 });
 
 test("the platform UI manifest contains cloneable data and no runtime functions", () => {

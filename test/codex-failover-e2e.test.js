@@ -321,3 +321,31 @@ test("the Codex runner types the plan-limit rejection as a replay-safe provider 
     },
   );
 });
+
+
+test("a native Codex login failure in one channel does not suppress another channel", async () => {
+  const oldOpenAiKey = process.env.OPENAI_API_KEY;
+  const oldCodexKey = process.env.CODEX_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.CODEX_API_KEY;
+  try {
+    resetEngineCooldowns();
+    saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+    await setUser("U_NATIVE_AUTH", { name: "Native Auth", approved: true, isAdmin: false });
+    await codexChannel("D_NATIVE_AUTH_FIRST", "native-auth-first");
+    await codexChannel("D_NATIVE_AUTH_SECOND", "native-auth-second");
+    const send = (channelId, text, threadKey) => runMessage({
+      channelId, authorId: "U_NATIVE_AUTH", text, threadKey, origin: "slack_foreground", preferCold: true,
+      getFallbackContext: async () => "Conversation context\n\n",
+    });
+    const failed = await send("D_NATIVE_AUTH_FIRST", "CODEX_STUB_AUTH_HANG", "1910.001");
+    assert.equal(failed.engine, "claude");
+    const healthy = await send("D_NATIVE_AUTH_SECOND", "hello", "1910.002");
+    assert.equal(healthy.engine, "codex", "a different container's login must still be tried");
+    assert.match(healthy.content, /Codex stub reply/);
+  } finally {
+    if (oldOpenAiKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = oldOpenAiKey;
+    if (oldCodexKey === undefined) delete process.env.CODEX_API_KEY; else process.env.CODEX_API_KEY = oldCodexKey;
+    resetEngineCooldowns();
+  }
+});

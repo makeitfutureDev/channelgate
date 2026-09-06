@@ -24,13 +24,15 @@ import { composioUrl, toolboxUrl } from "./mcp-catalog.js";
 import { gatewayRoot } from "../config/paths.js";
 import { requireAdapter } from "../engines/registry.js";
 import { runtimeSupports } from "../runtimes/contract.js";
+import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { mintGatewayCapability } from "./mcp-capability.js";
 
 const GATEWAY_PATH = fileURLToPath(new URL("../mcp/gateway-server.js", import.meta.url));
-const COMPOSIO_SDK_BRIDGE_PATH = fileURLToPath(new URL("../mcp/composio-sdk-bridge.js", import.meta.url));
+const COMPOSIO_SDK_BRIDGE_PATH = fileURLToPath(new URL("../ee/composio-sdk-bridge.js", import.meta.url));
 
 function composioServer(endpoint, legacyToken, { socketBridge = null, gatewayCapability = "" } = {}) {
   if (endpoint?.mode === "sdk" && endpoint.url) {
+    requireComposioSdkEntitlement();
     // SDK mode reads the ORGANIZATION Composio key from gateway settings — a settings file and a
     // database a container deliberately cannot see. So inside a container it rides the daemon
     // socket as well, selected by CG_MCP_SERVICE, and the command is the SAME stdio↔socket bridge
@@ -47,7 +49,7 @@ function composioServer(endpoint, legacyToken, { socketBridge = null, gatewayCap
     return {
       command: process.execPath,
       args: [COMPOSIO_SDK_BRIDGE_PATH, endpoint.url],
-      env: { CHANNELGATE_DIR: gatewayRoot() },
+      env: { CHANNELGATE_DIR: gatewayRoot(), CG_GATEWAY_CAPABILITY: gatewayCapability },
       default_tools_approval_mode: "approve",
     };
   }
@@ -80,6 +82,10 @@ export async function buildMcpConfig({ composioUserEndpoint = null, composioEndp
     origin,
     engine: normalizedEngine,
     principalTrusted,
+    composioSessions: [
+      ...(principalTrusted && composioUserEndpoint?.mode === "sdk" ? [{ kind: "user", url: composioUserEndpoint.url }] : []),
+      ...(composioEndpoint?.mode === "sdk" ? [{ kind: "channel", url: composioEndpoint.url }] : []),
+    ],
     // Signed, so the bearer alone fixes the tool surface: the socket server has no environment of
     // its own to read these from (src/mcp/socket-server.js).
     toolset,
@@ -127,7 +133,7 @@ export async function buildMcpConfig({ composioUserEndpoint = null, composioEndp
     },
   };
   const composioOpts = { socketBridge: gatewayHelper, gatewayCapability };
-  const userComposio = composioServer(composioUserEndpoint, composioUserToken, composioOpts);
+  const userComposio = principalTrusted ? composioServer(composioUserEndpoint, composioUserToken, composioOpts) : null;
   if (userComposio) servers["composio-user"] = userComposio;
   const sharedComposio = composioServer(composioEndpoint, composioToken, composioOpts);
   if (sharedComposio) servers["composio-agent"] = sharedComposio;
