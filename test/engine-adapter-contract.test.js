@@ -13,7 +13,9 @@ function fakeAdapter(id = "third") {
     supports: { warmPool: false, networkModes: ["off"] }, modelBelongs: (m) => m.startsWith("third-"),
     resumeCommand: (session) => `third resume ${session}`,
     compileConfinement: () => ({ supported: true, network: { mode: "off", supported: true }, writable: false }),
-    run: async () => ({ content: "ok" }), interrupt: () => false, discoverMcps: async () => [], health: async () => ({ ready: true }),
+    run: async () => ({ content: "ok" }), interrupt: () => false, discoverMcps: async () => [],
+    discoverModels: async () => [{ label: "Third Two", value: "third-2" }],
+    health: async () => ({ ready: true }),
   };
 }
 
@@ -22,11 +24,13 @@ test("a fake third adapter satisfies the kernel without orchestrator, route, or 
   assert.deepEqual(registry.ids, ["third"]);
   assert.equal(registry.require("third").modelBelongs("third-1"), true);
   assert.deepEqual(registry.manifests()[0].models, [{ label: "Third One", value: "third-1" }]);
+  assert.equal(registry.manifests()[0].discoverModels, undefined);
   await assert.doesNotReject(() => registry.require("third").run({}));
 });
 
 test("adapter registration and RunContext validation fail closed", () => {
   assert.throws(() => createAdapterRegistry([{ ...fakeAdapter(), compileConfinement: undefined }]), /compileConfinement/);
+  assert.throws(() => createAdapterRegistry([{ ...fakeAdapter(), discoverModels: true }]), /discoverModels/);
   assert.throws(() => createAdapterRegistry([{ ...fakeAdapter(), compileConfinement: () => ({ supported: true, network: { mode: "approved" } }) }]), /fail closed/);
   assert.throws(() => validateRunContext({}), /principal/);
   assert.throws(() => validateRunContext({ principal: { kind: "user", id: "U1" }, origin: "unknown", cwd: "/tmp", session: {}, policy: {} }), /origin/);

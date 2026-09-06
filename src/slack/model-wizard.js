@@ -21,7 +21,7 @@ import { getEngine, canChangeChannelRuntime, getEnabledEngines } from "../config
 import { effectiveMeta } from "../gateway/run.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { setThreadEngine, getThreadEngine, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
-import { ENGINE_IDS, adapterFor, requireAdapter, modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
+import { ENGINE_IDS, adapterFor, requireAdapter, modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel, effortsForModel, modelsForEngine, refreshEngineModels } from "../engines/registry.js";
 import { isValidModel } from "./util.js";
 
 // ONE command for the whole runtime (the old /engine and /effort are folded in): /model walks
@@ -76,7 +76,7 @@ const EFFORT_DEFAULT_OPTION = { label: "Engine default", value: DEFAULT_PICKER_V
 
 // Effort options are BUILT from the shared per-engine value lists (slack/util.js), so the picker
 // can never drift from what effortBelongsToEngine accepts.
-const EFFORT_LABELS = { none: "None", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max" };
+const EFFORT_LABELS = { none: "None", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max", ultra: "Ultra" };
 const EFFORT_DESCRIPTIONS = {
   none: "No extra reasoning effort.",
   low: "Faster, lower reasoning budget.",
@@ -84,6 +84,7 @@ const EFFORT_DESCRIPTIONS = {
   high: "Deeper reasoning for harder work.",
   xhigh: "Very high reasoning effort.",
   max: "Maximum reasoning effort.",
+  ultra: "Maximum reasoning with automatic task delegation.",
 };
 const effortOption = (v) => ({ label: EFFORT_LABELS[v] || v, value: v, description: EFFORT_DESCRIPTIONS[v] });
 function runtimeEngine(meta = {}) {
@@ -92,11 +93,11 @@ function runtimeEngine(meta = {}) {
 }
 
 export function modelOptionsForEngine(engine) {
-  return [MODEL_DEFAULT_OPTION, ...requireAdapter(engine).models];
+  return [MODEL_DEFAULT_OPTION, ...modelsForEngine(engine)];
 }
 
-function effortOptionsForEngine(engine) {
-  return [EFFORT_DEFAULT_OPTION, ...requireAdapter(engine).efforts.map(effortOption)];
+function effortOptionsForEngine(engine, model = "") {
+  return [EFFORT_DEFAULT_OPTION, ...effortsForModel(engine, model).map(effortOption)];
 }
 
 function decodePickerValue(value) {
@@ -203,7 +204,7 @@ export function modelWizardEffortBlocks({ scope, threadTs, engine, model, curren
     scope,
     threadTs,
     actionId: EFFORT_PICKER_ACTION,
-    options: effortOptionsForEngine(engine),
+    options: effortOptionsForEngine(engine, model),
     current,
     header: `*Choose reasoning effort* — for ${wizardScopeLabel(scope, isDM)}\nModel: \`${model || "default"}\` · Current effort: \`${current || "default"}\``,
     step: "Step 4 of 4 — done after this. *Engine default* clears the override.",
@@ -350,6 +351,9 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         // (engine set by a "claude"/"codex" prefix, model/effort by an earlier thread-scoped run).
         if (threadTs) await clearThreadOverrides();
       }
+      // The authenticated CLI is the source of truth for selectable Codex models. Refresh only
+      // when its bounded cache is stale; failure keeps the last known-good/static catalog.
+      await refreshEngineModels(engine);
       await repaint(modelWizardModelBlocks({ scope, threadTs, engine, current, isDM }));
       return;
     }
@@ -374,8 +378,14 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       if (scope === "thread") {
         await setThreadModel(entry.slug, threadTs, val);
         effortCurrent = await getThreadEffort(entry.slug, threadTs);
+        if (!effortBelongsToModel(effortCurrent, engine, val)) {
+          effortCurrent = "";
+          await setThreadEffort(entry.slug, threadTs, "");
+        }
       } else {
-        effortCurrent = (await patchChannelRuntime({ model: val })).effort || "";
+        const patch = { model: val };
+        if (!effortBelongsToModel(meta.effort, engine, val)) patch.effort = "";
+        effortCurrent = (await patchChannelRuntime(patch)).effort || "";
       }
       await repaint(modelWizardEffortBlocks({ scope, threadTs, engine, model: val, current: effortCurrent, isDM }));
       return;
@@ -383,7 +393,10 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
 
     // Step 4 → done: effort picked.
     if (isPickerAction(actionId, EFFORT_PICKER_ACTION)) {
-      if (!effortOptionsForEngine(engine).some((o) => o.value === (val || DEFAULT_PICKER_VALUE))) {
+      const currentModel = scope === "thread"
+        ? await getThreadModel(entry.slug, threadTs)
+        : effectiveMeta(meta).model || "";
+      if (!effortOptionsForEngine(engine, currentModel).some((o) => o.value === (val || DEFAULT_PICKER_VALUE))) {
         await ephemeral("That effort value is not allowed.");
         return;
       }

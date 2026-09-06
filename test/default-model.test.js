@@ -9,6 +9,7 @@ ensureTestEnv(); // scratch gateway dir — getSettings() reads no real config
 
 const { getDefaultModel, saveSettings, settingsForApi } = await import("../src/config/settings.js");
 const { isValidModel } = await import("../src/slack/util.js");
+const { invalidModelOrEffort } = await import("../src/web/routes/helpers.js");
 
 test("unset default model is empty for both engines (CLI default)", () => {
   assert.equal(getDefaultModel("claude"), "");
@@ -36,10 +37,12 @@ test("values are trimmed and non-strings ignored; blank clears back to CLI defau
 });
 
 test("the admin route's isValidModel guard accepts the intended ids and rejects garbage", () => {
-  for (const ok of ["opus", "sonnet", "haiku", "opus[1m]", "claude-fable-5", "gpt-5.6-terra", "codex", "o3-mini"]) {
+  for (const ok of ["best", "fable", "opus", "sonnet", "haiku", "opus[1m]", "claude-fable-5", "gpt-6-astra", "codex", "o3-mini"]) {
     assert.equal(isValidModel(ok), true, ok);
   }
-  for (const bad of ["opus; rm -rf /", "my model", "--verbose", "OPUS EXTRA"]) {
+  for (const bad of ["fable[1m]", "haiku[1m]", "opus; rm -rf /", "my model", "--verbose", "OPUS EXTRA"]) {
     assert.equal(isValidModel(bad), false, bad);
   }
+  assert.equal(invalidModelOrEffort({ model: "gpt-6-astra", effort: "ultra" }), "");
+  assert.match(invalidModelOrEffort({ effort: "extreme" }), /effort must be one of/);
 });

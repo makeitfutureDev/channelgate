@@ -60,7 +60,7 @@ test("the effort step is buttons too, one per level the engine accepts", () => {
   assert.equal(new Set(els.map((e) => e.action_id)).size, els.length);
   assert.deepEqual(
     els.slice(1).map((e) => JSON.parse(e.value).v),
-    ["none", "low", "medium", "high", "xhigh", "max"],
+    ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
   );
   assert.equal(JSON.parse(els.find((e) => e.style === "primary").value).v, "high");
 });

@@ -230,13 +230,13 @@ test("leaves ordinary brackets alone", () => {
 // ── isValidModel ──────────────────────────────────────────────────────────────────────────────
 
 test("accepts engine aliases and known model families", () => {
-  for (const v of ["opus", "sonnet", "haiku", "opusplan", "sonnet[1m]", "claude-opus-4-8", "claude-sonnet-4-5", "gpt-5-codex", "gpt-4.1", "o3", "o4-mini", "codex", "Sonnet", "anthropic/claude-sonnet-4-5"]) {
+  for (const v of ["best", "fable", "opus", "sonnet", "haiku", "opusplan", "sonnet[1m]", "claude-opus-4-8", "claude-sonnet-4-5", "gpt-6-astra", "gpt-5-codex", "gpt-4.1", "o3", "o4-mini", "codex", "Sonnet", "anthropic/claude-sonnet-4-5"]) {
     assert.equal(isValidModel(v), true, v);
   }
 });
 
 test("rejects free-form or malformed strings", () => {
-  for (const v of ["", "   ", "totally-made-up", "claude", "claude-", "rm -rf /", "opus; whoami", "claude opus", "a".repeat(80), null, undefined]) {
+  for (const v of ["", "   ", "fable[1m]", "haiku[1m]", "totally-made-up", "claude", "claude-", "rm -rf /", "opus; whoami", "claude opus", "a".repeat(80), null, undefined]) {
     assert.equal(isValidModel(v), false, String(v));
   }
 });

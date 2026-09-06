@@ -53,6 +53,20 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   immediate SQLite transaction and skip omitted fields, preventing concurrent writers from
   silently restoring stale security or credential fields. → TEST-PLAN: Phase E module boundaries.
 
+## Dynamic engine model catalog
+
+- **One live catalog for every selector:** Codex's authenticated, installed CLI supplies its current
+  selectable models through `codex debug models`; hidden entries are excluded and each model keeps
+  the exact reasoning efforts the CLI reports. Slack's `/model` wizard and the Admin UI consume the
+  same registry snapshot, so newly available models such as Astra appear without a ChannelGate code
+  change. Discovery is bounded and cached for six hours; a failed refresh retains the last good
+  snapshot, or the bundled fallback on a cold start.
+- **Claude stays current through rolling aliases:** the catalog offers `best`, `opus`, `sonnet`,
+  `haiku`, `fable`, `opusplan`, and the supported 1M aliases instead of pinning dated model IDs.
+  Saved same-engine full IDs remain valid and round-trip through the Admin UI. Provider CLI/package
+  upgrades are deliberately separate and continue through reviewed dependency PRs.
+  → TEST-PLAN: Dynamic engine model catalog.
+
 ## Chat-platform adapter kernel
 
 - Validated `PlatformAdapter` contract with a CLOSED 30-key capability spec: an undeclared

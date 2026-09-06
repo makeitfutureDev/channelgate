@@ -215,6 +215,29 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 - [x] Verify complete safe Codex stdio/HTTP MCP serialization and reject credentials/userinfo.
 - [x] Run the full local suite and static parser/whitespace gate.
 
+## Dynamic engine model catalog
+
+- [x] Automated: parse the machine-readable Codex catalog, expose only `visibility=list` entries,
+      reject malformed/empty output, and preserve each visible model's supported/default reasoning
+      levels (`test/model-discovery.test.js`).
+- [x] Automated: a successful discovery replaces the bundled Codex picker list, remains cached
+      inside the refresh window, maps model-specific effort choices, and survives the next failed
+      refresh with the last good snapshot; a cold failure retains the bundled fallback
+      (`test/model-discovery.test.js`).
+- [x] Automated: Claude's picker and browser fallback use rolling aliases (including `best`,
+      `fable`, and `sonnet[1m]`); the Admin UI consumes the registry's model/effort manifests and
+      keeps a valid saved same-engine custom ID available (`test/model-options.test.js`,
+      `test/model-wizard-buttons.test.js`).
+- [ ] Live Codex: in the Codex Auto fixture, open `/model`, choose Codex, and verify the buttons
+      match the authenticated CLI's current visible catalog, include `gpt-6-astra`, and show
+      Astra's reported efforts through `ultra`; select Astra and complete one ordinary turn.
+- [ ] Live Claude: in the Claude Auto fixture, open `/model`, choose Claude, and verify the rolling
+      aliases are offered; select `best`, complete the wizard, and confirm a normal turn runs on
+      the account's resolved current model.
+- [ ] Admin browser: load Settings and a conversation Runtime page after a catalog refresh; verify
+      both show the same Codex models as Slack, model changes narrow the effort selector, and a
+      saved valid full/custom same-engine model ID survives a load/save round trip.
+
 ## OpenCode proof adapter (Phase D)
 
 - [x] Registry/UI manifest exposes OpenCode through the existing adapter-driven selectors and

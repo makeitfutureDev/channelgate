@@ -79,8 +79,10 @@ const EFFORT_OPTIONS = {
     ["high", "High"],
     ["xhigh", "Extra high"],
     ["max", "Max"],
+    ["ultra", "Ultra"],
   ],
 };
+const MODEL_EFFORT_OPTIONS = {};
 
 function effectiveEngine(engine) {
   return engine || GLOBAL_ENGINE || "claude";
@@ -91,6 +93,9 @@ function applyEngineManifests(manifests) {
   ENGINE_MANIFESTS = manifests;
   Object.assign(EFFORT_OPTIONS, Object.fromEntries(manifests.map((m) => [m.id, [["", "default"], ...(m.efforts || []).map((v) => [v, v])]])));
   Object.assign(MODEL_OPTIONS, Object.fromEntries(manifests.map((m) => [m.id, (m.models || []).map((o) => [o.value, o.label])])));
+  Object.assign(MODEL_EFFORT_OPTIONS, Object.fromEntries(manifests.map((m) => [m.id, Object.fromEntries(
+    (m.models || []).filter((o) => Array.isArray(o.efforts) && o.efforts.length).map((o) => [o.value, o.efforts]),
+  )])));
 }
 
 function engineIsEnabled(id) {
@@ -109,9 +114,12 @@ function engineOptionsHtml({ includeDefault = false } = {}) {
     selectableEngines().map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join("");
 }
 
-function syncEffortOptions({ engineSelect, effortSelect, label, value }) {
+function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value }) {
   const engine = effectiveEngine(engineSelect?.value || "");
-  const options = EFFORT_OPTIONS[engine] || EFFORT_OPTIONS.claude;
+  const modelEfforts = MODEL_EFFORT_OPTIONS[engine]?.[modelSelect?.value || ""];
+  const options = modelEfforts?.length
+    ? [["", "default"], ...modelEfforts.map((effort) => [effort, effort])]
+    : EFFORT_OPTIONS[engine] || EFFORT_OPTIONS.claude;
   const current = value !== undefined ? value : effortSelect.value;
   effortSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(text)}</option>`).join("");
   effortSelect.value = options.some(([v]) => v === current) ? current : "";
@@ -122,11 +130,14 @@ function syncEffortOptions({ engineSelect, effortSelect, label, value }) {
 // server's isValidModel guard; "" = blank (inherit: gateway default, or the CLI default).
 const MODEL_OPTIONS = {
   claude: [
+    ["best", "Best"],
     ["opus", "Opus"],
     ["opus[1m]", "Opus 1M (1M context)"],
-    ["claude-fable-5", "Fable 5"],
     ["sonnet", "Sonnet"],
+    ["sonnet[1m]", "Sonnet 1M (1M context)"],
     ["haiku", "Haiku"],
+    ["fable", "Fable"],
+    ["opusplan", "Opus plan"],
   ],
   codex: [
     ["codex", "Codex (default family)"],
@@ -145,7 +156,7 @@ const MODEL_OPTIONS = {
 // isn't in the curated list (hand-edited config, a full id like claude-opus-4-8) should survive as
 // an extra option (same engine: keep so Save round-trips it) or be dropped (other engine).
 function modelMatchesEngine(model, engine) {
-  return engine === "codex" ? /^(?:gpt-|o[0-9]|codex)/i.test(model) : /^(?:opus|sonnet|haiku|opusplan)(?:\[1m\])?$|^claude-/i.test(model);
+  return engine === "codex" ? /^(?:gpt-|o[0-9]|codex)/i.test(model) : /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/i.test(model);
 }
 
 // Fill a model <select> for an engine. `engine` pins the list (the Settings per-engine defaults);
@@ -1566,6 +1577,7 @@ function renderChannelDetail(ch) {
   });
   syncEffortOptions({
     engineSelect,
+    modelSelect: card.querySelector(".ch-model"),
     effortSelect: card.querySelector(".ch-effort"),
     label: card.querySelector(".ch-effort-label"),
     value: meta.effort || "",
@@ -1578,11 +1590,18 @@ function renderChannelDetail(ch) {
     });
     syncEffortOptions({
       engineSelect,
+      modelSelect: card.querySelector(".ch-model"),
       effortSelect: card.querySelector(".ch-effort"),
       label: card.querySelector(".ch-effort-label"),
     });
     renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
   });
+  card.querySelector(".ch-model").addEventListener("change", () => syncEffortOptions({
+    engineSelect,
+    modelSelect: card.querySelector(".ch-model"),
+    effortSelect: card.querySelector(".ch-effort"),
+    label: card.querySelector(".ch-effort-label"),
+  }));
   card.querySelector(".ch-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (meta.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
     : (meta.hasComposioToken ? "" : "no token (uses org default)");
@@ -2006,6 +2025,7 @@ function buildConfigEditor(cfg = {}) {
   });
   syncEffortOptions({
     engineSelect,
+    modelSelect: el.querySelector(".cfg-model"),
     effortSelect: el.querySelector(".cfg-effort"),
     label: el.querySelector(".cfg-effort-label"),
     value: cfg.effort || "",
@@ -2018,11 +2038,18 @@ function buildConfigEditor(cfg = {}) {
     });
     syncEffortOptions({
       engineSelect,
+      modelSelect: el.querySelector(".cfg-model"),
       effortSelect: el.querySelector(".cfg-effort"),
       label: el.querySelector(".cfg-effort-label"),
     });
     renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
   });
+  el.querySelector(".cfg-model").addEventListener("change", () => syncEffortOptions({
+    engineSelect,
+    modelSelect: el.querySelector(".cfg-model"),
+    effortSelect: el.querySelector(".cfg-effort"),
+    label: el.querySelector(".cfg-effort-label"),
+  }));
 
   // Capability cards → hidden flag checkboxes (identical mapping + copy to the channel Access tab).
   const flags = {

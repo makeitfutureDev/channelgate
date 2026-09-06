@@ -54,6 +54,9 @@ export function validateEngineAdapter(adapter) {
   if (!adapter.supports || !Array.isArray(adapter.efforts) || typeof adapter.modelBelongs !== "function") {
     throw new TypeError(`EngineAdapter ${adapter.id || "?"} has an incomplete capability manifest`);
   }
+  if (adapter.discoverModels !== undefined && typeof adapter.discoverModels !== "function") {
+    throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares an invalid discoverModels hook`);
+  }
   // OPTIONAL, but never half-declared: `sessionState` says where this harness keeps a session's
   // own transcript, so the gateway can carry it between runtime backends (src/gateway/session-carry.js).
   // An adapter that omits it simply never carries; one that declares a broken shape must not load,
@@ -93,7 +96,7 @@ export function createAdapterRegistry(adapters) {
     },
     // `sessionState` is stripped like the other behaviour-bearing fields: it holds functions, and
     // structuredClone throws on those. The UI has no use for where a transcript lives on disk.
-    manifests: () => [...map.values()].map(({ run, interrupt, discoverMcps, health, credentialState, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, ...manifest }) => structuredClone(manifest)),
+    manifests: () => [...map.values()].map(({ run, interrupt, discoverMcps, discoverModels, modelCatalogSource, health, credentialState, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, ...manifest }) => structuredClone(manifest)),
   });
 }
 
