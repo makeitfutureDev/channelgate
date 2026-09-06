@@ -118,6 +118,7 @@ export const containerBackend = Object.freeze({
       imageId: "",
       imageVersion: "",
       fingerprint: "",
+      mountFingerprint: "",
       recreatePending: false,
       mounts: [],
       labels: {},
@@ -203,6 +204,10 @@ export const containerBackend = Object.freeze({
       warm: info.status === "running",
       imageId: info.imageId,
       fingerprintMatch: c.fingerprint ? info.fingerprint === c.fingerprint : null,
+      // The half that decides whether a stale container may still be USED: false means it is bound
+      // to host paths this channel no longer runs in, and the next turn rebuilds it rather than
+      // exec'ing into it.
+      mountsMatch: c.mountFingerprint ? info.mountFingerprint === c.mountFingerprint : null,
       recreatePending: Boolean(c.recreatePending),
     };
     // Codex shares ONE auth file with the gateway and every other container channel. If the host

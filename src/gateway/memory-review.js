@@ -191,7 +191,7 @@ export async function runMemoryReview({
   const lease = target.runtime.acquireLease(target, { kind: "review", id: reviewRunId });
   let saves = 0;
   try {
-    await target.runtime.ensureUp(target, { announce: () => {} });
+    await target.runtime.ensureUp(target, { announce: () => {}, lease });
     const result = await run({
       cwd,
       prompt,

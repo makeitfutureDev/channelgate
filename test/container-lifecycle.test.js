@@ -11,7 +11,7 @@ ensureTestEnv();
 
 const { createContainerCli } = await import("../src/runtimes/container/cli.js");
 const { createContainerImage } = await import("../src/runtimes/container/image.js");
-const { createContainerLifecycle, containerFingerprint, isContainerGoneError, parseStartedAt, parseInspectLine, buildCreateArgs, operatorHomeDir, operatorHomeGranted, MASK_TMPFS_OPTIONS, OPERATOR_HOME_MASKS, SOCKET_MOUNT_TARGET } = await import("../src/runtimes/container/lifecycle.js");
+const { createContainerLifecycle, containerFingerprint, containerMountFingerprint, isContainerGoneError, parseStartedAt, parseInspectLine, buildCreateArgs, operatorHomeDir, operatorHomeGranted, MASK_TMPFS_OPTIONS, OPERATOR_HOME_MASKS, SOCKET_MOUNT_TARGET } = await import("../src/runtimes/container/lifecycle.js");
 const { createContainerReaper } = await import("../src/runtimes/container/reaper.js");
 const { currentInstallId } = await import("../src/runtimes/container/names.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
@@ -28,7 +28,9 @@ function target(slug, overrides = {}) {
 }
 
 // A fake CLI that always resolves the image and answers `inspect` from a mutable state object.
-function harness({ state = { exists: false }, kind = "podman", extraRoutes = [] } = {}) {
+// `lifecycleOpts` reaches createContainerLifecycle so a test can drive the rebuild wait on a fake
+// clock (`now` + `sleep`) instead of real timers.
+function harness({ state = { exists: false }, kind = "podman", extraRoutes = [], lifecycleOpts = {} } = {}) {
   const fake = createFakeCli({
     kind,
     routes: [
@@ -46,8 +48,20 @@ function harness({ state = { exists: false }, kind = "podman", extraRoutes = [] 
   const cli = createContainerCli({ exec: fake.exec, log: (m) => logs.push(m) });
   const image = createContainerImage({ cli });
   const reaper = createContainerReaper({ log: (m) => logs.push(m) });
-  const lifecycle = createContainerLifecycle({ cli, image, reaper, log: (m) => logs.push(m) });
+  const lifecycle = createContainerLifecycle({ cli, image, reaper, log: (m) => logs.push(m), ...lifecycleOpts });
   return { fake, cli, image, reaper, lifecycle, logs, state };
+}
+
+// Bring a container up once so the target carries the fingerprints the daemon would have stamped,
+// then make the fake `inspect` report them back. Everything after this point is a REAL mismatch.
+async function warmed(h, t, { fingerprint = null, mountFingerprint = null } = {}) {
+  h.state.fingerprint = "";
+  h.state.mountFingerprint = "";
+  await h.lifecycle.ensureUp(t, {});
+  h.state.fingerprint = fingerprint ?? t.container.fingerprint;
+  h.state.mountFingerprint = mountFingerprint ?? t.container.mountFingerprint;
+  h.fake.reset();
+  return t;
 }
 
 test("mounts: nothing under the gateway root but the clean workspace, the MCP socket dir and the Codex auth file — and nothing under config/", () => {
@@ -186,6 +200,31 @@ test("fingerprint: create-time config only — the image id moves it, a per-exec
   assert.equal(containerFingerprint(off), first, "the network switch does not move the fingerprint");
 });
 
+test("mount fingerprint: the paths a container can SEE, and nothing about how it behaves", () => {
+  const a = target("mfp-chan");
+  a.container.imageId = "sha256:one";
+  const base = containerMountFingerprint(a);
+  assert.match(base, /^m1-[0-9a-f]{32}$/);
+
+  // A new image retires the container (full fingerprint) but changes nothing it can see.
+  const newImage = target("mfp-chan");
+  newImage.container.imageId = "sha256:two";
+  assert.notEqual(containerFingerprint(newImage), containerFingerprint(a));
+  assert.equal(containerMountFingerprint(newImage), base, "a rebuilt image does not move the mount fingerprint");
+
+  // The work folder moving is exactly the case that must NOT be deferred.
+  const moved = target("mfp-chan");
+  moved.container.imageId = "sha256:one";
+  moved.workDir = `${moved.workDir}/sub`;
+  moved.container.mounts = moved.container.mounts.map((m) => (m.kind === "workdir" ? { ...m, source: moved.workDir, target: moved.workDir } : m));
+  assert.notEqual(containerMountFingerprint(moved), base, "a moved work folder moves the mount fingerprint");
+
+  // So does the operator-home grant, which is a whole extra bind plus its mask.
+  const granted = resolveRuntime("mfp-home", { platform: "slack", channelId: "C9", adminMode: true }, { settings: { ...SETTINGS, fullAccessHome: true } });
+  const plain = resolveRuntime("mfp-home", { platform: "slack", channelId: "C9", adminMode: true }, { settings: SETTINGS });
+  assert.notEqual(containerMountFingerprint(granted), containerMountFingerprint(plain));
+});
+
 test("state machine: missing → create+start, and the artifact dir is prepared 0700 first", async () => {
   const h = harness();
   const t = target("sm-missing");
@@ -233,21 +272,116 @@ test("state machine: running with a matching fingerprint is reused as-is", async
   assert.equal(h.fake.last("rm"), null);
 });
 
-test("state machine: running with a stale fingerprint recreates when unleased, defers while leased", async () => {
+test("state machine: running with a stale fingerprint recreates when unleased", async () => {
   const h = harness({ state: { exists: true, status: "running", fingerprint: "c1-stale" } });
   const t = target("sm-stale");
   await h.lifecycle.ensureUp(t, {});
   assert.deepEqual(h.fake.last("rm"), ["podman", "rm", "-f", t.container.name]);
   assert.ok(h.fake.last("run"), "an unleased stale container is replaced");
+  // The rebuild happens BEFORE anything could be exec'd into the old one.
+  const rmAt = h.fake.calls.findIndex((c) => c.argv[1] === "rm");
+  const createAt = h.fake.calls.findIndex((c) => c.argv[1] === "run" && c.argv[2] === "-d");
+  assert.ok(rmAt >= 0 && createAt > rmAt, "the stale container is removed before the new one is created");
+  // Both halves of the fingerprint are stamped, so the next run can tell WHICH one moved.
+  assert.ok(h.fake.last("run").includes(`cg.fingerprint=${t.container.fingerprint}`));
+  assert.ok(h.fake.last("run").includes(`cg.mounts=${t.container.mountFingerprint}`));
+  assert.match(t.container.mountFingerprint, /^m1-[0-9a-f]{32}$/);
+});
 
-  const leased = harness({ state: { exists: true, status: "running", fingerprint: "c1-stale" } });
-  const t2 = target("sm-stale-leased");
-  const lease = leased.reaper.acquireLease(t2, { kind: "job", id: "j" });
-  await leased.lifecycle.ensureUp(t2, {});
-  lease.release();
-  assert.equal(leased.fake.last("rm"), null, "a leased container is never torn down mid-job");
-  assert.equal(t2.container.recreatePending, true);
-  assert.ok(leased.logs.some((m) => /recreating when it next goes idle/.test(m)));
+// The mount half of the fingerprint (2026-09-06). A channel's `workDir` was pointed at a subfolder,
+// used, then restored to the default and the subfolder deleted. The warm container had been created
+// with the subfolder bind-mounted as the workspace; the fingerprint mismatched, recreation was
+// DEFERRED because the container looked busy, and three turns were exec'd into it — every one of
+// them dying on `Append system prompt file not found: …/CLAUDE.md`. Two things were wrong: a
+// mount-affecting mismatch must never be deferred, and the turn asking the question was counting
+// its OWN lease as "a run is active inside".
+test("mount mismatch + idle: rebuilt before the turn is exec'd, and the caller's own lease is not 'busy'", async () => {
+  const h = harness({ state: { exists: true, status: "running" }, lifecycleOpts: { sleep: async () => { throw new Error("must not wait"); } } });
+  const t = await warmed(h, target("sm-mount-idle"));
+
+  // The workspace moved: same container, different mounts.
+  h.state.fingerprint = "c1-old-workdir";
+  h.state.mountFingerprint = "m1-old-workdir";
+  // …and the turn asking holds the lease it took before ensureUp, exactly as run.js does.
+  const own = h.reaper.acquireLease(t, { kind: "run", id: "r1" });
+  await h.lifecycle.ensureUp(t, { lease: own });
+  own.release();
+  assert.deepEqual(h.fake.last("rm"), ["podman", "rm", "-f", t.container.name], "a turn's own lease never blocks the rebuild it is waiting for");
+  assert.ok(h.fake.last("run"));
+  assert.equal(t.container.recreatePending, false, "nothing is left pending once it is rebuilt");
+});
+
+test("mount mismatch + busy: waits for the runs inside, announces it, then rebuilds", async () => {
+  let clock = 0;
+  let onSleep = null;
+  const h = harness({
+    state: { exists: true, status: "running" },
+    lifecycleOpts: {
+      now: () => clock,
+      sleep: async (ms) => { clock += ms; onSleep?.(); },
+      recreateWaitMs: 10_000,
+      recreatePollMs: 1_000,
+    },
+  });
+  const t = await warmed(h, target("sm-mount-busy"));
+  h.state.fingerprint = "c1-old-workdir";
+  h.state.mountFingerprint = "m1-old-workdir";
+
+  const job = h.reaper.acquireLease(t, { kind: "job", id: "j" });
+  const own = h.reaper.acquireLease(t, { kind: "run", id: "r1" });
+  let polls = 0;
+  onSleep = () => { if (++polls === 3) job.release(); };
+
+  const announced = [];
+  await h.lifecycle.ensureUp(t, { lease: own, announce: (m) => announced.push(m) });
+  own.release();
+  assert.equal(polls, 3, "it polls until the other run is gone rather than giving up or barging in");
+  assert.deepEqual(h.fake.last("rm"), ["podman", "rm", "-f", t.container.name]);
+  assert.ok(h.fake.last("run"), "the rebuild happens as soon as the container goes idle");
+  assert.ok(announced.some((m) => /rebuilt/.test(m) && /waiting/i.test(m)), `the wait is announced: ${announced.join(" | ")}`);
+  assert.equal(announced.length, 1, "announced once, not once per poll");
+});
+
+test("mount mismatch + busy past the bound: the turn fails fast and names the pending rebuild", async () => {
+  let clock = 0;
+  const h = harness({
+    state: { exists: true, status: "running" },
+    lifecycleOpts: { now: () => clock, sleep: async (ms) => { clock += ms; }, recreateWaitMs: 5_000, recreatePollMs: 1_000 },
+  });
+  const t = await warmed(h, target("sm-mount-stuck"));
+  h.state.fingerprint = "c1-old-workdir";
+  h.state.mountFingerprint = "m1-old-workdir";
+
+  const job = h.reaper.acquireLease(t, { kind: "job", id: "j" });
+  const own = h.reaper.acquireLease(t, { kind: "run", id: "r1" });
+  await assert.rejects(
+    h.lifecycle.ensureUp(t, { lease: own }),
+    /must be rebuilt before it can run again.*workspace mounts changed.*1 run\(s\) are still active/s,
+  );
+  job.release();
+  own.release();
+  // Never silently against the wrong mounts: the old container is still there, and nothing was
+  // created or started for this turn.
+  assert.equal(h.fake.last("rm"), null);
+  assert.equal(h.fake.last("run"), null);
+  assert.equal(h.fake.last("start"), null);
+  assert.equal(t.container.recreatePending, true, "the pending rebuild is visible in /status");
+});
+
+test("image mismatch + busy: still deferred — the container can see everything it could before", async () => {
+  const h = harness({ state: { exists: true, status: "running" }, lifecycleOpts: { sleep: async () => { throw new Error("must not wait"); } } });
+  const t = await warmed(h, target("sm-image-busy"));
+  // Only the image moved; every mount is exactly where it was.
+  h.state.fingerprint = "c1-new-image";
+
+  const job = h.reaper.acquireLease(t, { kind: "job", id: "j" });
+  const own = h.reaper.acquireLease(t, { kind: "run", id: "r1" });
+  await h.lifecycle.ensureUp(t, { lease: own });
+  job.release();
+  own.release();
+  assert.equal(h.fake.last("rm"), null, "a leased container is never torn down mid-job for a new image");
+  assert.equal(t.container.recreatePending, true);
+  assert.ok(h.logs.some((m) => /recreating when it next goes idle/.test(m)));
 });
 
 test("state machine: a foreign container with our name is never touched, and a paused one fails closed", async () => {
@@ -326,11 +460,18 @@ test("parsers: podman and docker inspect shapes, and the gone-error matcher", ()
   assert.equal(parseStartedAt("2026-09-02 01:51:32.1391321 +0300 EEST").slice(0, 4), "2026");
   assert.equal(parseStartedAt("2026-09-02T01:51:32.139Z"), "2026-09-02T01:51:32.139Z");
   assert.equal(parseStartedAt("0001-01-01T00:00:00Z"), "");
-  const docker = parseInspectLine(["/cg-x", "running", "2026-09-02T01:51:32.139Z", "sha256:i", "c1-f", "inst", "ref", "chan", "slack"].join("|"));
+  const docker = parseInspectLine(["/cg-x", "running", "2026-09-02T01:51:32.139Z", "sha256:i", "c1-f", "inst", "ref", "chan", "slack", "m1-f"].join("|"));
   assert.equal(docker.name, "cg-x", "docker's leading slash is stripped");
-  const podman = parseInspectLine(["cg-y", "configured", "0001-01-01T00:00:00Z", "sha256:i", "<no value>", "inst", "ref", "chan", "slack"].join("|"));
+  assert.equal(docker.mountFingerprint, "m1-f");
+  const podman = parseInspectLine(["cg-y", "configured", "0001-01-01T00:00:00Z", "sha256:i", "<no value>", "inst", "ref", "chan", "slack", "<no value>"].join("|"));
   assert.equal(podman.status, "created", "podman's `configured` is docker's `created`");
   assert.equal(podman.fingerprint, "", "<no value> is an empty label, not a literal");
+  assert.equal(podman.mountFingerprint, "");
+  // A container created before `cg.mounts` existed prints nine fields; it parses, with unknown
+  // mounts — which ensureUp treats as changed rather than as "matching".
+  const legacy = parseInspectLine(["cg-z", "running", "2026-09-02T01:51:32.139Z", "sha256:i", "c1-f", "inst", "ref", "chan", "slack"].join("|"));
+  assert.equal(legacy.mountFingerprint, "");
+  assert.equal(parseInspectLine("too|few|fields"), null);
   for (const text of [
     'Error: no container with name or ID "x" found: no such container',
     "Error: can only create exec sessions on running containers: container state improper",

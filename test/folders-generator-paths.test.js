@@ -193,6 +193,10 @@ test("the managed block states this conversation's mode and network switch, in b
 // not a rule, so the irreducible core moved into the managed block, which is appended to the system
 // prompt of every run. These anchors are what the failures cost us; if one disappears, the fix is
 // gone and the failures come back.
+//
+// CO-02 (same wave) is the identity-SUBSTITUTION half: a requester with no personal Composio token
+// asked for "my Gmail", and the run answered from the shared `composio-agent` identity — reporting
+// a third employee's mailbox address and subject lines as the requester's own.
 test("the managed block carries the hard rules a run must never get wrong", () => {
   for (const meta of [{ allowBash: true }, { allowBash: true, cleanMode: true }, { autoMode: true, allowNetwork: true }]) {
     const block = gatewayInstructionsBlock(meta);
@@ -205,13 +209,24 @@ test("the managed block carries the hard rules a run must never get wrong", () =
     assert.match(block, /`composio-agent`/);
     assert.match(block, /which account\?" — not a tool call/);
 
-    // 2. Inventory goes through the search tool; MANAGE_CONNECTIONS initiates and is not a
+    // 2. A request phrased for the requester's OWN accounts is `composio-user` or nothing — the
+    //    agent's shared identity is never substituted for a missing personal one (CO-02: a
+    //    requester with no personal token asked for "my Gmail" and was told a third employee's
+    //    mailbox identity and subject lines).
+    assert.match(block, /"My X" is the requester's X/);
+    assert.match(block, /served ONLY by `composio-user`/);
+    assert.match(block, /do not read\n?\s*`composio-agent` to answer it/);
+    assert.match(block, /holds OTHER people's/);
+    // …and the mirror direction: "your X" must not be answered from the requester's identity.
+    assert.match(block, /"the agent's X" never\n?\s*touches `composio-user`/);
+
+    // 3. Inventory goes through the search tool; MANAGE_CONNECTIONS initiates and is not a
     //    read-only listing, whatever its action (CO-05: an "inventory" raised a pending auth).
     assert.match(block, /COMPOSIO_SEARCH_TOOLS/);
     assert.match(block, /COMPOSIO_MANAGE_CONNECTIONS/);
     assert.match(block, /any action, `list` included — INITIATES connections/);
 
-    // 3. The harness's own backgrounding dies with the turn; only the daemon tools report back
+    // 4. The harness's own backgrounding dies with the turn; only the daemon tools report back
     //    (ART-005 / AU-07 promised "I'll report back" from a harness background shell).
     assert.match(block, /never promise "I'll report back"/);
     assert.match(block, /`run_in_background`/);

@@ -180,6 +180,17 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Security
+- **"My inbox" is never answered from the shared Composio identity.** A requester with no
+  personal Composio token asked, in their own words, for their own mailbox. The run had only the
+  shared agent identity (`composio-agent`) — which holds OTHER people's connected accounts — used it
+  without saying so, and reported a third person's email address and recent subject lines as the
+  requester's. Ambiguity was already a hard stop; substitution was not, because the rule against it
+  lived only in the `gateway-usage` skill body, which one harness never opened (the other refused
+  correctly). The always-injected managed block now carries it as a hard rule: a request phrased for
+  the person asking ("my inbox", "my calendar", their own name) is served ONLY by `composio-user`;
+  when `composio-user` is absent from the run or has no connection for that app, the answer is to
+  say so and stop — never a read of the shared identity, "not even to check" — and the mirror holds
+  too ("your X" never touches the requester's identity). The block stays inside its 4 KB budget.
 - **Channel policy changes are audited, and a refused secret reveal leaves a trace.** Two gaps in
   the audit trail, both confirmed live. (1) A channel's meta record IS its security posture, and
   changing it wrote nothing: turning *Allow network* off, repointing the working folder and
@@ -213,6 +224,22 @@ product overview.
   name opened up, so a newly added event is readable the day it ships.
 
 ### Fixed
+- **A container whose workspace moved is rebuilt before the next turn, never reused.** A channel's
+  work folder was pointed at a subfolder, used for a few turns, then restored and the subfolder
+  deleted. The warm container had been created with that subfolder bind-mounted as its workspace;
+  the create-time fingerprint mismatched, but the rebuild was DEFERRED as "runs are active" and
+  three more turns were exec'd into the container anyway — each dying on `Append system prompt file
+  not found: …/CLAUDE.md`, because the directory it was bound to no longer existed. Two things were
+  wrong. Containers now carry a second label, `cg.mounts`, covering only the create-time inputs that
+  decide what the container can SEE (work dir, clean workspace, artifact dir, HOME volume, every
+  bind and mask): when that half of the fingerprint moves, the turn never runs against the old
+  mounts — it waits, bounded and announced in the thread, for the runs still inside to finish and
+  then rebuilds, or fails with a message naming the pending rebuild. A mismatch that is only about
+  behaviour (a rebuilt image, a limit, the network mode) is still deferred to the next idle moment
+  exactly as before. And the deferral no longer fires spuriously: the asking turn takes its own
+  container lease before the environment is brought up, and that lease was being counted as "a run
+  is active inside", so every turn looked busy to itself — a caller now passes its own lease handle
+  and the backend asks whether anyone ELSE is inside.
 - **Saving Settings no longer reverts what someone else changed.** The Settings page's single Save
   re-submitted the WHOLE form from the snapshot the page had loaded with, so any value written
   after that load — by a second admin, by the skills sync, by a license write, by the first-boot

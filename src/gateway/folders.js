@@ -155,8 +155,24 @@ export function channelSwitchesNote(meta = {}) {
 // shapes, parameters and examples stay in the skill's references.
 //
 // Written engine-neutrally ("your harness's own backgrounding"), because the same file reaches
-// every engine, and gated on nothing: a channel without Composio simply has no tool the first two
+// every engine, and gated on nothing: a channel without Composio simply has no tool the first three
 // rules can apply to, which the closing line says out loud.
+//
+// The "my X" rule (CO-02, 2026-09-06) is the same failure one rung further down. A non-admin
+// requester with NO personal Composio token asked for THEIR OWN mailbox; the run had only
+// `composio-agent`, silently used it, and reported a third employee's address and subject lines as
+// the requester's. Substitution is worse than ambiguity: the request was not ambiguous at all, and
+// the shared identity is exactly where OTHER people's accounts live. One engine refused; the other
+// substituted, because the rule against it lived only in the skill body.
+//
+// It is stated as a rule and not enforced structurally on purpose. The only per-run lever the
+// gateway has here would be a note about WHICH identities this run received — but the file this
+// block is written into is the channel's shared CLAUDE.md (Claude reads it via
+// --append-system-prompt-file, Codex through the AGENTS.md symlink), and `composio-user` is
+// per-AUTHOR: two people messaging the same channel concurrently would race a per-author sentence
+// through one shared file. Nothing per-run exists to carry it (the MCP config has no place for a
+// tool-description note, and both remote and socket-bridged Composio servers are opaque), so the
+// rule is written to be checkable by the model against its OWN tool list.
 const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; the reasoning and the
 tool shapes are in the \`gateway-usage\` skill:
 - **Two Composio identities.** \`composio-user\` = the REQUESTER's own accounts; \`composio-agent\` = the
@@ -164,6 +180,13 @@ tool shapes are in the \`gateway-usage\` skill:
   could serve it, your reply is the question "which account?" — not a tool call, not a read-only
   peek: a guessed read puts someone's private data in front of everyone here, and no correction
   takes it back.
+- **"My X" is the requester's X — never the shared one.** A request phrased for the person asking
+  ("my inbox", "my calendar", their own name) is served ONLY by \`composio-user\`. If \`composio-user\`
+  is absent from this run, or has no connection for that app, SAY THAT and stop — do not read
+  \`composio-agent\` to answer it, not even to check: the shared identity holds OTHER people's
+  accounts, so reporting its address, events or subjects as "yours" hands a third party's mail to
+  whoever is in this conversation. The mirror is a rule too: "your X" / "the agent's X" never
+  touches \`composio-user\`.
 - **An inventory is not a connection.** Ask what is connected with that identity's
   \`COMPOSIO_SEARCH_TOOLS\` (read \`toolkit_connection_statuses[]\`). \`COMPOSIO_MANAGE_CONNECTIONS\` —
   any action, \`list\` included — INITIATES connections and raises authorization requests; use it only

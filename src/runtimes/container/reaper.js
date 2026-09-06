@@ -65,22 +65,33 @@ export function createContainerReaper({
     entries.delete(name);
   }
 
-  function leaseCount(name) {
+  // `exclude` names lease ids that must NOT count as "someone else is inside". The caller that
+  // needs it is the one asking whether a container can be rebuilt right now: run.js takes its own
+  // lease BEFORE ensureUp (so the idle reaper cannot stop the environment out from under a turn
+  // that is about to spawn), and counting that lease made every turn look busy to itself — which is
+  // how a recreate could be deferred forever on a channel where nothing else was running.
+  function leaseCount(name, { exclude = null } = {}) {
     const entry = entries.get(name);
-    return (entry?.leases.size || 0) + (entry?.target ? activeEditorLeases(entry.target).length : 0);
+    if (!entry) return 0;
+    const ids = exclude == null ? [] : (Array.isArray(exclude) ? exclude : [exclude]);
+    let own = 0;
+    for (const id of ids) if (id && entry.leases.has(id)) own += 1;
+    return Math.max(0, entry.leases.size - own) + (entry.target ? activeEditorLeases(entry.target).length : 0);
   }
 
-  // Contract: synchronous, returns { release() }. release() doubles as an activity record — the
-  // idle clock starts when the last lease goes away, not when the turn began.
+  // Contract: synchronous, returns { id, release() }. release() doubles as an activity record — the
+  // idle clock starts when the last lease goes away, not when the turn began. The `id` is the
+  // handle a holder passes back to leaseCount({ exclude }) to ask "is anyone ELSE inside?".
   function acquireLease(target, lease = {}) {
     const name = target?.container?.name || "";
-    if (!name) return { release() {} };
+    if (!name) return { id: "", release() {} };
     const entry = ensureEntry(name, target);
     const id = `${lease.kind || "run"}:${lease.id || `l${++leaseSeq}`}`;
     entry.leases.set(id, { kind: lease.kind || "run", id, at: now() });
     entry.lastActivity = now();
     let released = false;
     return {
+      id,
       release() {
         if (released) return;
         released = true;

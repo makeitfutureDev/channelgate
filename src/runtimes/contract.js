@@ -159,7 +159,9 @@ export const HELPER_COMMANDS = Object.freeze([
  *                                  beyond reading `base.settings`. Host returns `base` with artifactDir=null.
  * ensureUp(target, opts)         → Promise<{ created, started, warmupMs }> — make the run environment ready
  *                                  (create/start the container). Host: no-op. Callers await it once per turn
- *                                  BEFORE spawn; `opts.announce(text)` lets a slow start tell the user.
+ *                                  BEFORE spawn; `opts.announce(text)` lets a slow start tell the user, and
+ *                                  `opts.lease` is the caller's OWN lease handle (when it took one first) so
+ *                                  the backend can tell "someone else is inside" from "I am".
  * spawn(target, spec)            → RuntimeChild (sync, like child_process.spawn). Never throws for a missing
  *                                  binary — the child emits "error" exactly like spawn does.
  * probe(child)                   → Promise<boolean> — is the run's process (group) still alive? Host:
@@ -167,7 +169,7 @@ export const HELPER_COMMANDS = Object.freeze([
  *                                  purpose; the watchdog awaits it.
  * signal(child, signal)          → Promise<boolean> — deliver `signal` to the run's WHOLE process group.
  *                                  Host: killTree (negative-pid group kill, single-pid fallback).
- * acquireLease(target, lease)    → { release() } — declare activity that must keep the run environment
+ * acquireLease(target, lease)    → { id, release() } — declare activity that must keep the run environment
  *                                  up: { kind: "run"|"job"|"review"|"dev", id }. Host: no-op. The container
  *                                  reaper stops nothing that holds a lease and counts release() as activity.
  * destroy(target, opts)          → Promise<void> — tear the run environment down. { volumes:false, reason }.

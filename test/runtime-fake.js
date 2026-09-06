@@ -122,6 +122,7 @@ export function createFakeRuntimeBackend({
       const record = { ...lease, released: false };
       calls.leases.push(record);
       return {
+        id: `${lease?.kind || "run"}:${lease?.id || ""}`,
         release() {
           record.released = true;
           calls.released.push(record);

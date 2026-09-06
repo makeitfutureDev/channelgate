@@ -1559,6 +1559,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         warmupTimer.unref?.();
       }
       const warmup = await target.runtime.ensureUp(target, {
+        // This turn's OWN lease (taken just above, so the idle reaper cannot stop the environment
+        // between here and the spawn). The backend needs to know which lease is ours: counting it
+        // as "a run is active inside" is what let a container keep serving turns after its
+        // workspace mounts had gone stale, because every turn looked busy to itself.
+        lease: runtimeLease,
         // The backend's own words, subject to the same "only if it is actually slow" rule: before
         // the threshold they replace the default line rather than adding one, so a sub-second start
         // stays silent; after it, they are a live update on a wait the user can already see.

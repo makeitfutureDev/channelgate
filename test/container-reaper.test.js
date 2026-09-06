@@ -68,6 +68,28 @@ test("a lease blocks the sweep, and releasing it restarts the idle clock", async
   assert.equal(reaper.leaseCount("cg-leased"), 0);
 });
 
+// The question a rebuild has to answer is "is anyone ELSE inside?", not "is anyone inside?". run.js
+// takes its own lease BEFORE ensureUp so the idle reaper cannot stop the environment between the
+// lease and the spawn — counting that lease made every turn look busy to itself, which is how a
+// container with stale workspace mounts kept being reused instead of rebuilt (2026-09-06).
+test("leaseCount can exclude the caller's own lease", () => {
+  const { reaper } = makeReaper();
+  const t = fakeTarget("cg-own");
+  reaper.markRunning("cg-own", t);
+  const own = reaper.acquireLease(t, { kind: "run", id: "r1" });
+  assert.equal(own.id, "run:r1", "the handle carries the id the exclusion is keyed on");
+  assert.equal(reaper.leaseCount("cg-own"), 1);
+  assert.equal(reaper.leaseCount("cg-own", { exclude: own.id }), 0, "a turn is not 'someone else' to itself");
+
+  const job = reaper.acquireLease(t, { kind: "job", id: "j1" });
+  assert.equal(reaper.leaseCount("cg-own", { exclude: own.id }), 1, "a real background job still counts");
+  assert.equal(reaper.leaseCount("cg-own", { exclude: [own.id, job.id] }), 0);
+  assert.equal(reaper.leaseCount("cg-own", { exclude: "run:not-held" }), 2, "an id nobody holds subtracts nothing");
+  assert.equal(reaper.leaseCount("cg-absent", { exclude: own.id }), 0);
+  own.release();
+  job.release();
+});
+
 test("max running: the least-recently-used IDLE container is stopped to make room", async () => {
   const { reaper, stopped, clock: c } = makeReaper();
   const names = ["cg-1", "cg-2", "cg-3"];
