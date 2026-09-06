@@ -12,7 +12,7 @@ import { describeSilence } from "../engines/watchdog.js";
 // Live feedback: while Claude runs, edit the placeholder every ~1.5s (Slack's chat.update rate
 // limit) with the streamed text + a cursor, falling back to an activity line before any text.
 // Slack Assistant working UI in an AI-app / assistant thread
-// (assistant.threads.setStatus). `status` drives the compact "atlas is using…" activity line;
+// (assistant.threads.setStatus). `status` drives the compact "<bot> is using…" activity line;
 // `loading_messages` drives the separate, prominent loading copy above the composer. It no-ops
 // gracefully outside an assistant thread or without the required scope. Pass "" to clear.
 // Threads where setStatus has already been refused (not an assistant thread, missing

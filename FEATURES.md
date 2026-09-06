@@ -2149,7 +2149,7 @@ are retired, bullet by bullet; everything else stands.
 - **Gateway-to-gateway sources** (`src/gateway/skills/peer-sync.js`): a source of kind `gateway`
   (a peer's URL + a token with the `sync` scope, stored write-only) pulls the peer's organization
   skills through that endpoint — staged in review mode, active in auto mode, tombstoned when the
-  peer drops them, last-good kept on failure — so a second gateway (Atlas following Xavier) shares
+  peer drops them, last-good kept on failure — so a second gateway (a follower gateway tracking a primary one) shares
   one library with nothing but a URL and a token. All source kinds (git / folder / gateway) sync
   through one dispatcher on the interval, from the UI and from chat.
   → TEST-PLAN: Skills platform (round two).

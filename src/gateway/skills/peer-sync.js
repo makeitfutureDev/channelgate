@@ -2,7 +2,7 @@
 // that gateway's MCP endpoint (/mcp/skills) with an access token carrying the `sync` scope. The
 // peer's organization skills arrive as synced (owner git, this source) revisions — staged in
 // review mode, active in auto mode — with the same tombstone/conflict rules as a git source. A
-// second gateway on the same host (Atlas following Xavier) needs nothing more than the URL and a
+// second gateway on the same host (a follower tracking a primary) needs nothing more than the URL and a
 // token minted on the peer.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
