@@ -1805,10 +1805,17 @@ are retired, bullet by bullet; everything else stands.
 - Per-channel agent instructions: the channel's `CLAUDE.md` (canonical, `AGENTS.md` symlinked so
   Codex reads the same file) IS the channel's own standing instructions — persistent, never
   regenerated. The gateway contributes one managed block on top (`<!-- GATEWAY-INSTRUCTIONS -->`:
-  just the admin's global instructions — Slack operating guidance now lives in the `gateway-usage`
-  skill, not this block), refreshed in place only when its content
+  this conversation's switches, the gateway's **hard rules**, and the admin's global instructions —
+  the rest of the operating manual lives in the `gateway-usage` skill, not this block), refreshed
+  in place only when its content
   changes and self-repairing if a marker is damaged; everything below the end marker is
-  user/agent-owned forever. Editable three ways: the admin UI Instructions tab (edits the real
+  user/agent-owned forever. The **hard rules** are the handful a run must never get wrong — the two
+  Composio identities and the "ask, don't guess" stop when a request names neither, that
+  `COMPOSIO_MANAGE_CONNECTIONS` initiates connections rather than listing them, and that only the
+  gateway's `run_in_background` / `run_agent_in_background` / `create_schedule` can report back
+  after a turn ends — stated here because a skill body is read only when the model opens it, and
+  one engine reliably did not (retest, 2026-09-06). They ride clean mode too, are engine-neutral,
+  and stay under 4 KB with the switches so the always-on prompt weight is read rather than skimmed. Editable three ways: the admin UI Instructions tab (edits the real
   file; managed block shown read-only with a Settings link; hash-guarded against concurrent
   writes), by hand, or by asking the agent — the `update_channel_instructions` gateway MCP tool
   appends a rule in any mode (replace = admin-only). New sessions and `/clear` pick the file up

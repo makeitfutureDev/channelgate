@@ -90,18 +90,21 @@ function stripBlock(content, start, end) {
 // ── Gateway-managed instructions block ────────────────────────────────────────
 // The per-channel CLAUDE.md is the channel's OWN instructions (user/agent-owned, persistent,
 // never overwritten). The gateway contributes exactly one delimited block at the TOP of the
-// file — just the admin's global instructions (Settings → Behavior), refreshed in place only when
-// its content changes. (How to operate inside Slack — formatting, mentions, the gateway tools —
-// now lives in the always-injected `gateway-usage` skill, not here; see guide.js.) Both engines
+// file — this conversation's switches, the hard rules, and the admin's global instructions
+// (Settings → Behavior) — refreshed in place only when its content changes. (How to operate inside
+// the chat surface — formatting, mentions, the gateway tools — lives in the always-injected
+// `gateway-usage` skill, not here; see guide.js. Only the handful of rules a run must never get
+// wrong is duplicated here, because a skill body is read only if the model opens it.) Both engines
 // read the same file (AGENTS.md is a symlink), so this one mechanism covers Claude and Codex,
 // survives /clear (a new session re-reads the file), and never touches anything below the marker.
 const GW_START = "<!-- GATEWAY-INSTRUCTIONS:START -->";
 const GW_END = "<!-- GATEWAY-INSTRUCTIONS:END -->";
 const GW_NOTE = `> ⚙️ Gateway-managed block — do NOT edit between these markers; the gateway refreshes this
-> section automatically (this conversation's switches + the admin's global instructions). Everything
-> BELOW the end marker is this channel's own standing instructions: it persists across sessions and
-> is never overwritten. To add a durable channel rule when asked, use the gateway tool
-> \`update_channel_instructions\` (or edit the file where file writes are allowed).`;
+> section automatically (this conversation's switches, the gateway's hard rules, and the admin's
+> global instructions). Everything BELOW the end marker is this channel's own standing instructions:
+> it persists across sessions and is never overwritten. To add a durable channel rule when asked,
+> use the gateway tool \`update_channel_instructions\` (or edit the file where file writes are
+> allowed).`;
 
 // What each mode actually grants, in the agent's own terms — the label alone ("Bash") does not
 // tell a model what it may do.
@@ -137,15 +140,52 @@ export function channelSwitchesNote(meta = {}) {
   ].join("\n");
 }
 
-// Compose the managed block for a channel: the do-not-edit note, this conversation's switches, and
-// (outside clean mode) the admin's global instructions. Deliberately nothing about memory or Slack
-// usage here — the memory system ships as the `channel-memory` skill (+ update_channel_memory tool)
-// and the Slack operating manual as the `gateway-usage` skill, so CLAUDE.md stays free of that
-// plumbing. The switches are the exception: they are per-conversation FACTS, not a manual, and the
-// guide (one shared copy for every channel) has nowhere to put them.
+// The few rules a run must never get wrong, stated where EVERY run actually reads them.
+//
+// They are also in the `gateway-usage` skill, at length and with the reasoning — but a skill body
+// is only read when the model decides to open it, and the retest wave (2026-09-06) showed one
+// harness never did: across the failing transcripts the string `gateway-usage` appeared only in the
+// skills catalog listing, and none of the new rule text appeared at all, while the other engine —
+// reading the identical text through the AGENTS.md symlink — followed it. The cost of that miss is
+// not a style slip: a personal calendar read into a public channel, a stray authorization request
+// created by an "inventory" call, a follow-up promised on a background process that dies with the
+// turn. So the irreducible core lives HERE, in the managed block that is appended to the system
+// prompt of every run in every mode. Keep it SHORT (it is prompt weight on every turn, and a long
+// block is skimmed like the skill was): the rule and the consequence, never the how-to — the tool
+// shapes, parameters and examples stay in the skill's references.
+//
+// Written engine-neutrally ("your harness's own backgrounding"), because the same file reaches
+// every engine, and gated on nothing: a channel without Composio simply has no tool the first two
+// rules can apply to, which the closing line says out loud.
+const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; the reasoning and the
+tool shapes are in the \`gateway-usage\` skill:
+- **Two Composio identities.** \`composio-user\` = the REQUESTER's own accounts; \`composio-agent\` = the
+  shared agent's own (either may appear with \`_\` for \`-\`). If the request names neither and BOTH
+  could serve it, your reply is the question "which account?" — not a tool call, not a read-only
+  peek: a guessed read puts someone's private data in front of everyone here, and no correction
+  takes it back.
+- **An inventory is not a connection.** Ask what is connected with that identity's
+  \`COMPOSIO_SEARCH_TOOLS\` (read \`toolkit_connection_statuses[]\`). \`COMPOSIO_MANAGE_CONNECTIONS\` —
+  any action, \`list\` included — INITIATES connections and raises authorization requests; use it only
+  for a toolkit already known connected, or when the user explicitly asked to connect one.
+- **Only the gateway can report back after this turn.** Your harness's own backgrounding (a
+  background \`Bash\`/shell, background Agent-or-subagent options, \`nohup\`/\`setsid\`, in-turn sleep
+  loops) dies with this turn and can never post a follow-up — never promise "I'll report back" on
+  one. The durable mechanisms are only the gateway tools \`run_in_background\` (shell; auto/admin
+  channels), \`run_agent_in_background\` and \`create_schedule\`; if this conversation's mode allows
+  none of them, say so plainly instead of promising.`;
+
+// Compose the managed block for a channel: the do-not-edit note, this conversation's switches, the
+// hard rules, and (outside clean mode) the admin's global instructions. Deliberately nothing about
+// memory or chat formatting here — the memory system ships as the `channel-memory` skill (+
+// update_channel_memory tool) and the operating manual as the `gateway-usage` skill, so CLAUDE.md
+// stays free of that plumbing. Two exceptions earn their place: the switches, which are
+// per-conversation FACTS the shared guide has nowhere to put, and the hard rules, which have to
+// hold even for a run that never opens the guide. The hard rules ride clean mode too — a lean
+// channel can still hold Composio identities and can still promise a follow-up it cannot keep.
 export function gatewayInstructionsBlock(meta = {}) {
   const g = meta.cleanMode ? "" : getAgentsInstructions().trim();
-  const parts = [GW_NOTE, channelSwitchesNote(meta)];
+  const parts = [GW_NOTE, channelSwitchesNote(meta), HARD_RULES];
   if (g) parts.push(g);
   return `${GW_START}\n${parts.join("\n\n")}\n${GW_END}`;
 }

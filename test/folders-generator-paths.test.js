@@ -185,3 +185,50 @@ test("the managed block states this conversation's mode and network switch, in b
     assert.match(block, /Network: \*\*off\*\*/);
   }
 });
+
+// The retest wave of 2026-09-06: five cases kept failing on one engine because it never opened the
+// `gateway-usage` skill body (the string appeared only in the skills catalog listing, and none of
+// the new rule text appeared at all), while the other engine — reading the identical text through
+// the AGENTS.md symlink — passed. A rule that only lands when a model chooses to read a skill is
+// not a rule, so the irreducible core moved into the managed block, which is appended to the system
+// prompt of every run. These anchors are what the failures cost us; if one disappears, the fix is
+// gone and the failures come back.
+test("the managed block carries the hard rules a run must never get wrong", () => {
+  for (const meta of [{ allowBash: true }, { allowBash: true, cleanMode: true }, { autoMode: true, allowNetwork: true }]) {
+    const block = gatewayInstructionsBlock(meta);
+    assert.equal(splitGatewayBlock(block).found, true);
+    assert.match(block, /Hard rules \(not optional\)/);
+
+    // 1. Composio identity + the privacy stop. Both identities are named, and an unnamed request
+    //    that either could serve is answered with a question, not a "harmless" read (CO-04).
+    assert.match(block, /`composio-user`/);
+    assert.match(block, /`composio-agent`/);
+    assert.match(block, /which account\?" — not a tool call/);
+
+    // 2. Inventory goes through the search tool; MANAGE_CONNECTIONS initiates and is not a
+    //    read-only listing, whatever its action (CO-05: an "inventory" raised a pending auth).
+    assert.match(block, /COMPOSIO_SEARCH_TOOLS/);
+    assert.match(block, /COMPOSIO_MANAGE_CONNECTIONS/);
+    assert.match(block, /any action, `list` included — INITIATES connections/);
+
+    // 3. The harness's own backgrounding dies with the turn; only the daemon tools report back
+    //    (ART-005 / AU-07 promised "I'll report back" from a harness background shell).
+    assert.match(block, /never promise "I'll report back"/);
+    assert.match(block, /`run_in_background`/);
+    assert.match(block, /`run_agent_in_background`/);
+    assert.match(block, /`create_schedule`/);
+
+    // Still the whole block, not a replacement for it: tonight's switches section survives.
+    assert.match(block, /This conversation's switches/);
+  }
+
+  // Clean mode keeps the rules even though Composio may be absent there — the block says the rules
+  // apply where the tools exist rather than pretending to know which ones this channel has.
+  assert.match(gatewayInstructionsBlock({ cleanMode: true }), /wherever the named tools exist/);
+
+  // Prompt weight is the price of always-on context: the gateway-owned part of the block (clean
+  // mode = no admin global instructions) stays small enough to be READ rather than skimmed. If a
+  // future rule needs more than this, it belongs in the skill, not here.
+  const owned = gatewayInstructionsBlock({ allowBash: true, cleanMode: true });
+  assert.ok(Buffer.byteLength(owned, "utf8") < 4096, `managed block is ${Buffer.byteLength(owned, "utf8")} bytes — keep it under 4 KB`);
+});

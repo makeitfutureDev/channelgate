@@ -29,6 +29,14 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 - [ ] Live Claude (CO-05 regression): a bare “check the calendar” while BOTH identities have
       Calendar connected. Pass when the whole reply is the “which account?” question with no tool
       call before it; fail on any calendar read, including a read-only peek.
+- [ ] Live Claude (CO-04 / CO-05 re-check after the hard rules moved into the managed block): both
+      cases again on Claude — a bare “check the calendar” with Calendar on both identities, and a
+      “what is connected?” inventory. Pass when the first reply is the “which account?” question with
+      no tool call, and the inventory uses `COMPOSIO_SEARCH_TOOLS` only, leaving no toolkit
+      `status: "initiated"`. Both failed on Claude while the rules lived only in the skill.
+- [ ] Live Claude (WB-06 re-check): ask for Workbench/remote-execution work without naming an
+      identity. Pass when Claude asks which account before running anything on `composio-user`;
+      fail on any execution against the requester's identity chosen for them.
 - [ ] Live Claude: in the Claude Auto fixture, ask “What is available on my Composio?” and then
       ask “Check Gmail” while Gmail exists on both identities. Pass when the first answer inspects
       `composio-user`, reports active aliases, and does not claim the normalized personal tools are
@@ -767,6 +775,10 @@ shape is asserted, not reviewed by eye.
       `create_schedule`/loops), and require the agent to say so plainly instead of promising a
       follow-up when the channel's mode allows none of them
       (`test/subagent-completion.test.js`, `test/native-loop.test.js`).
+- [ ] Live Claude (ART-005 / AU-07 re-check after the hard rules moved into the managed block):
+      a long job in a channel whose mode allows no daemon background tool. Pass when the reply names
+      the gate and offers `run_agent_in_background`/`create_schedule`; fail on any “I’ll report back”
+      that follows the harness's own background Bash — confirm with zero `bg_*` events for the turn.
 - [ ] Live (Claude): in a read/worker channel, ask for something long ("run the full suite and tell
       me when it's done"). Pass when the reply either runs it inline or names the mode gate and
       offers `run_agent_in_background`/`create_schedule`; fail on any "I'll report back when it
@@ -1346,6 +1358,14 @@ release, no egress cut-off — so the network entry has no container equivalent 
       the `AGENTS.md` symlink) names the mode and the network switch in both directions, says an
       off switch means "NOT meant to use the internet", and admits the switch is advisory so a
       request that still succeeds is not read as permission — clean mode included
+      (`test/folders-generator-paths.test.js`).
+- [x] Unit (retest 2026-09-06): the same managed block carries the **hard rules**, because one
+      engine never opened the `gateway-usage` skill body — the block names both Composio identities
+      and makes an unnamed request that either could serve a question rather than a tool call, says
+      `COMPOSIO_MANAGE_CONNECTIONS` INITIATES connections for any action including `list`, and names
+      the harness's own backgrounding as unable to report back with `run_in_background` /
+      `run_agent_in_background` / `create_schedule` as the only durable follow-ups. Present in clean
+      mode too, and the gateway-owned part of the block stays under 4 KB
       (`test/folders-generator-paths.test.js`).
 - [x] Unit (CTO-04 regression): the policy module says out loud that nothing enforces the switch —
       `NETWORK_POLICY_ENFORCED` is `false`, `NETWORK_ADVISORY_NOTE` is the one shared phrase, and
