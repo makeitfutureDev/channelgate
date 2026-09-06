@@ -11,6 +11,9 @@
 // is the backstop for turns where the model never called the tool.
 import { mkdir, access, rm, readdir } from "node:fs/promises";
 import path from "node:path";
+import { constants, openSync, readFileSync, writeFileSync, closeSync, renameSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { getDb } from "../db/index.js";
 import { slugify } from "../config/paths.js";
 import { getAgentMemory } from "../config/settings.js";
 import { readNoFollow, writeNoFollow, createExclusive, ensureRealDir } from "./safe-fs.js";
@@ -109,7 +112,7 @@ source. Do not load every memory file preemptively.
 
 ## Save (whenever a trigger fires — and always as an end-of-task check)
 Tool: \`update_channel_memory\`. Prefer ONE call with an \`operations\` array; the batch is applied
-atomically and storage has no character ceiling.
+after validating the complete batch and storage has no character ceiling. Concurrent gateway saves are serialized; separate topic files are not a filesystem transaction.
 - \`add\` — one concise line (\`text\`; optional \`section\`).
 - \`replace\` — \`old\` (a unique substring of an existing line) → the whole line becomes \`text\`.
   Prefer this over adding near-duplicates.
@@ -268,21 +271,62 @@ function validateTopicOp(op) {
 }
 
 // The write API behind the `update_channel_memory` gateway MCP tool — daemon-side, so saving
-// works in EVERY mode (read channels can't write files in-sandbox). A batch is ALL-OR-NOTHING:
-// every operation is validated and applied to an in-memory copy of the index first, and only then
-// are topic files and the index written. Validation errors never partially persist.
+// works in EVERY mode (read channels can't write files in-sandbox). Validation is all-or-nothing.
+// A short synchronous SQLite write transaction excludes other daemon/MCP writers across processes
+// for the complete read-modify-write. File publication is individually atomic; ordinary I/O failures
+// restore previous files. A process crash between separate file renames can leave a partial batch.
 // `cwd` is the channel's effective work dir — the caller resolves it (effectiveWorkDir in
 // folders.js), keeping this module free of any folders.js import.
 export async function applyMemoryOperations(cwd, meta, operations) {
   const ops = Array.isArray(operations) ? operations.filter((o) => o && typeof o === "object") : [];
   if (!ops.length) throw new Error("Nothing to do — pass an action (add, replace, remove, write_topic) or an operations array.");
   if (ops.length > MAX_OPERATIONS) throw new Error(`Too many operations in one call (${ops.length}; max ${MAX_OPERATIONS}).`);
-  const memPath = path.join(cwd, MEM_FILE);
+  for (const op of ops) if (op.action === "write_topic") validateTopicOp(op);
   await mkdir(cwd, { recursive: true });
+  if (ops.some((op) => op.action === "write_topic")) await ensureRealDir(cwd, MEM_DIR);
+  const db = getDb();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = applyMemoryOperationsLocked(cwd, meta, ops);
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
 
+function readMemoryFileSync(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    return readFileSync(fd, "utf8");
+  } catch (error) {
+    if (["ENOENT", "ELOOP", "EISDIR", "ENOTDIR"].includes(error.code)) return null;
+    throw error;
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function replaceMemoryFileSync(file, body) {
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
+  let fd;
+  try {
+    fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
+    writeFileSync(fd, body);
+    closeSync(fd);
+    fd = undefined;
+    renameSync(temp, file);
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    try { unlinkSync(temp); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+}
+
+function applyMemoryOperationsLocked(cwd, meta, ops) {
+  const memPath = path.join(cwd, MEM_FILE);
   // No-follow read: a planted symlink at MEMORY.md reads as absent (and is replaced as a node by
   // the atomic write below) rather than pulling foreign content into the index.
-  const before = (await readNoFollow(memPath)) ?? "";
+  const before = readMemoryFileSync(memPath) ?? "";
   const lines = before.replace(/\r\n?/g, "\n").replace(/\s+$/, "").split("\n");
   if (before === "") lines.length = 0;
   const notes = [];
@@ -309,19 +353,33 @@ export async function applyMemoryOperations(cwd, meta, operations) {
   // workspace: recreate it as a real dir and publish each topic via exclusive temp + rename, so a
   // pre-planted symlink at memory/<topic>.md is replaced as a node — never written through.
   const written = [];
-  if (topics.length) {
-    await ensureRealDir(cwd, MEM_DIR);
-    for (const { slug, body } of topics) {
-      const file = path.join(cwd, MEM_DIR, `${slug}.md`);
-      await writeNoFollow(file, body.replace(/\s+$/, "") + "\n");
-      written.push({ topic: slug, path: file });
-      notes.push(`Topic [[${slug}]] saved — make sure an index line points to it.`);
-    }
+  const writes = new Map();
+  for (const { slug, body } of topics) {
+    const file = path.join(cwd, MEM_DIR, `${slug}.md`);
+    writes.set(file, body.replace(/\s+$/, "") + "\n");
+    written.push({ topic: slug, path: file });
+    notes.push(`Topic [[${slug}]] saved — make sure an index line points to it.`);
   }
-  // Atomic replacement (exclusive temp + rename): concurrent runs read old-or-new, never a
-  // truncated index. (A cross-process mutex over the read-modify-write is deliberately not
-  // attempted here — last writer wins, but every observable state is a complete file.)
-  if (indexChanged) await writeNoFollow(memPath, next);
+  if (indexChanged) writes.set(memPath, next);
+  const previous = new Map([...writes.keys()].map((file) => [file, readMemoryFileSync(file)]));
+  const published = [];
+  try {
+    for (const [file, body] of writes) {
+      replaceMemoryFileSync(file, body);
+      published.push(file);
+    }
+  } catch (error) {
+    const failures = [];
+    for (const file of published.reverse()) {
+      try {
+        const body = previous.get(file);
+        if (body === null) unlinkSync(file);
+        else replaceMemoryFileSync(file, body);
+      } catch (rollbackError) { failures.push(rollbackError); }
+    }
+    if (failures.length) throw new AggregateError([error, ...failures], "Memory batch failed and rollback was incomplete; inspect the memory files before retrying.");
+    throw error;
+  }
 
   const meter = indexChanged || !topics.length ? memoryMeter(next || before, meta) : "";
   return {

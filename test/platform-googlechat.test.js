@@ -413,3 +413,35 @@ test("the transport learns its own bot id, drops bot authors, and never answers 
   assert.equal(delivered[0].text, "hello");
   await transport.stop();
 });
+
+test("Pub/Sub acknowledges only successfully accepted events and accepts before ACK", async () => {
+  const sequence = [];
+  let pulls = 0;
+  const puller = createPubSubPuller({ auth: fakeAuth(), subscription: "projects/cg-test/subscriptions/acceptance",
+    onEvent: async ({ id }) => { sequence.push(`accept:${id}`); if (id === "retry") throw new Error("durable queue unavailable"); },
+    fetchImpl: async (url, init) => {
+      if (url.endsWith(":acknowledge")) { sequence.push(`ack:${JSON.parse(init.body).ackIds.join(",")}`); return ok({}); }
+      if (++pulls > 1) { puller.stop(); return ok({}); }
+      return ok({ receivedMessages: ["saved", "retry"].map((id) => ({ ackId: id, message: { data: Buffer.from(JSON.stringify({ id })).toString("base64") } })) });
+    }, log: { error() {} },
+  });
+  await puller.start();
+  assert.deepEqual(sequence, ["accept:saved", "accept:retry", "ack:saved"]);
+});
+
+test("stopping a puller never waits for a blocked handler or dispatches the rest of its batch", async () => {
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const seen = [];
+  const puller = createPubSubPuller({ auth: fakeAuth(), subscription: "projects/cg-test/subscriptions/stopping",
+    onEvent: async ({ id }) => { seen.push(id); await blocked; },
+    fetchImpl: async () => ok({ receivedMessages: [1, 2].map((id) => ({ ackId: String(id), message: { data: Buffer.from(JSON.stringify({ id })).toString("base64") } })) }),
+  });
+  const loop = puller.start();
+  while (!seen.length) await new Promise((resolve) => setImmediate(resolve));
+  await puller.stop();
+  assert.deepEqual(seen, [1]);
+  release();
+  await loop;
+  assert.deepEqual(seen, [1]);
+});

@@ -5,13 +5,13 @@
 import { getSchedules, updateSchedule, deleteSchedule } from "../config/schedules.js";
 import { getAcks, addAck, updateAck, deleteAck } from "../config/acks.js";
 import { cronMatches, elapsedMinutes } from "../util/cron.js";
-import { runMessage } from "./run.js";
+import { runMessage as defaultRunMessage } from "./run.js";
 import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops } from "./loops.js";
 import { logEvent } from "../util/logger.js";
 import { createUsageBank } from "./usage.js";
 import { deliverResult } from "../slack/deliver.js";
 import { runQueue } from "../slack/message-lifecycle.js";
-import { postNotice } from "../platforms/notify.js";
+import { postNotice, postDirectMessage, automationTarget } from "../platforms/notify.js";
 
 const MAX_CONCURRENT_SCHED = 5; // most schedules allowed to run at once (runaway fan-out backstop)
 // How many times a one-time schedule may actually EXECUTE before we stop retrying it. Only a real
@@ -77,19 +77,20 @@ export async function taskDeliveryThread(client, sched, title, now = new Date())
       conversationId: sched.channelId,
       text: `${notifyPrefix(sched)}⏰ *Running:* ${title}`,
     });
-    if (anchor?.messageId) {
-      updateSchedule(sched.id, { dailyThreadDate: date, dailyThreadTs: anchor.messageId });
+    const anchorThread = anchor?.threadKey || anchor?.messageId || null;
+    if (anchorThread) {
+      updateSchedule(sched.id, { dailyThreadDate: date, dailyThreadTs: anchorThread });
       sched.dailyThreadDate = date;
-      sched.dailyThreadTs = anchor.messageId;
+      sched.dailyThreadTs = anchorThread;
     }
-    return anchor?.messageId || null;
+    return anchorThread;
   }
 
   const announcement = await postNotice(client, {
     conversationId: sched.channelId,
     text: `${notifyPrefix(sched)}⏰ *Running:* ${title}`,
   });
-  return announcement?.messageId || null;
+  return announcement?.threadKey || announcement?.messageId || null;
 }
 
 // The session key for ONE fire of a schedule. Two properties, both deliberate:
@@ -116,16 +117,34 @@ export function scheduleSessionKey(sched, now = Date.now()) {
   return `sched-${sched.id}-${lastFireStamp}`;
 }
 
-async function runSchedule(sched) {
+export async function runSchedule(sched, { runner: runMessage = defaultRunMessage, deliver = deliverResult } = {}) {
   if (running.has(sched.id)) return;
   running.add(sched.id);
-  const client = slackRef?.snapshot?.().connected ? slackRef.getClient?.() : null;
-  let threadTs = null;
+  const client = automationTarget(slackRef, sched.channelId);
+  let threadTs = sched.executionThread || null;
   try {
     if (!client) {
-      // No Slack = no delivery. A one-time schedule keeps its durable row (and its full attempt
+      // No destination transport = no delivery. A one-time schedule keeps its durable row (and its full attempt
       // budget) so the next tick after the outage still runs it, instead of being deleted unrun.
-      await logEvent("schedule_skip", { id: sched.id, reason: "slack not connected" });
+      await logEvent("schedule_skip", { id: sched.id, reason: "destination transport not connected" });
+      return;
+    }
+    if (isOneTime(sched) && sched.executionState === "delivered") {
+      retireOneTime(sched);
+      return;
+    }
+    // A completed output can be retried without re-running its tools. A previous execution
+    // without that checkpoint has unknown external effects and requires a human reconciliation.
+    if (sched.pendingDelivery) {
+      await deliver(client, { channel: sched.channelId, threadKey: threadTs || undefined,
+        result: sched.pendingDelivery, trustedPrefix: sched.delivery === "channel" ? notifyPrefix(sched) : "" });
+      await finishScheduleDelivery(client, sched, sched.pendingDelivery, threadTs);
+      return;
+    }
+    if (sched.executionState === "running" || (isOneTime(sched) && sched.runAttempts > 0 && !sched.executionState && sched.kind !== "reminder")) {
+      updateSchedule(sched.id, { enabled: false, executionState: "interrupted", lastStatus: "interrupted: external actions unknown; inspect before retrying" });
+      await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "",
+        text: "⏰ A scheduled task was interrupted before its result was saved. It was paused without running again because external actions may already have happened. Inspect the task before explicitly retrying." });
       return;
     }
     // Only now, with a client in hand, does this count as an execution of a one-time schedule.
@@ -232,6 +251,8 @@ async function runSchedule(sched) {
         await logEvent("loop_tick_aborted", { id: sched.id, loopId: sched.loopId, channel: sched.channelId });
         return;
       }
+      sched.executionState = "running";
+      updateSchedule(sched.id, { executionState: "running", executionThread: threadTs });
       result = await runMessage({
         channelId: sched.channelId,
         authorId: sched.createdBy,
@@ -244,47 +265,25 @@ async function runSchedule(sched) {
       if (loopTick) runQueue.release(loopRunKey, loopHandle);
     }
 
+    sched.executionState = "completed";
+    sched.pendingDelivery = result;
+    updateSchedule(sched.id, { executionState: "completed", pendingDelivery: result, executionThread: threadTs });
+
     // 3. The AI's reply, in the announcement's thread — through the same sanitize/chunk pipeline
     // as every unattended reply (deliverResult). The tokens are already spent, so the ledger is
     // written before delivery: a Slack failure must not erase the spend.
     await bankUsage({ channelId: sched.channelId, slug: sched.slug, authorId: sched.createdBy, engine: result.engine, taskKind: "scheduled", result });
-    await deliverResult(client, {
+    await deliver(client, {
       channel: sched.channelId,
       threadKey: threadTs || undefined,
       result,
       trustedPrefix: sched.delivery === "channel" ? notifyPrefix(sched) : "",
     });
-    updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: "ok" });
-    // A loop spends one tick of its budget per delivered fire, then re-arms from whatever pacing
-    // decision the model made during THIS tick. `armLoop` replaces the thread's pending row, so a
-    // dynamic loop hands off cleanly; a loop that decided to stop (or ran out of budget) leaves
-    // nothing armed. Silence would be indistinguishable from "the loop finished on purpose", so a
-    // budget stop always says so in the thread.
-    if (loopTick) {
-      const left = consumeTick(sched);
-      const outcome = left === 0 ? null : await applyLoopWakeup({
-        client,
-        channelId: sched.channelId,
-        slug: sched.slug,
-        threadTs: sched.threadTs,
-        authorId: sched.createdBy,
-        wakeup: result.loopWakeup,
-      });
-      if (left === 0) {
-        stopThreadLoops(sched.channelId, sched.threadTs);
-        await logEvent("loop_budget_exhausted", { id: sched.id, loopId: sched.loopId, channel: sched.channelId });
-        try {
-          await postNotice(client, { conversationId: sched.channelId, threadKey: sched.threadTs, text: "🔁 _Loop stopped — it reached its tick budget. Say what you'd like next to start another._" });
-        } catch {
-          /* the answer itself already landed — the notice is best-effort */
-        }
-      } else if (outcome?.action === "armed") {
-        await logEvent("loop_rearmed", { id: outcome.schedule?.id, loopId: outcome.loopId, channel: sched.channelId, ticksLeft: left });
-      }
-    }
-    retireOneTime(sched); // executed AND delivered — only now may the durable row go
+    await finishScheduleDelivery(client, sched, result, threadTs);
+
   } catch (err) {
-    updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: `error: ${err.message}` });
+    updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: `error: ${err.message}`,
+      ...(sched.executionState === "running" ? { enabled: false, executionState: "interrupted" } : {}) });
     await logEvent("schedule_error", { id: sched.id, error: err.message });
     try {
       if (client) await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${err.message}` });
@@ -307,6 +306,39 @@ async function runSchedule(sched) {
   }
 }
 
+async function finishScheduleDelivery(client, sched, result, threadTs) {
+  const loopTick = isLoopRow(sched) && Boolean(sched.resumeThread);
+  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: "ok", executionState: "delivered", pendingDelivery: null, executionThread: null });
+  // A loop spends one tick of its budget per delivered fire, then re-arms from whatever pacing
+  // decision the model made during THIS tick. `armLoop` replaces the thread's pending row, so a
+  // dynamic loop hands off cleanly; a loop that decided to stop (or ran out of budget) leaves
+  // nothing armed. Silence would be indistinguishable from "the loop finished on purpose", so a
+  // budget stop always says so in the thread.
+  if (loopTick) {
+    const left = consumeTick(sched);
+    const outcome = left === 0 ? null : await applyLoopWakeup({
+      client,
+      channelId: sched.channelId,
+      slug: sched.slug,
+      threadTs: sched.threadTs,
+      authorId: sched.createdBy,
+      wakeup: result.loopWakeup,
+    });
+    if (left === 0) {
+      stopThreadLoops(sched.channelId, sched.threadTs);
+      await logEvent("loop_budget_exhausted", { id: sched.id, loopId: sched.loopId, channel: sched.channelId });
+      try {
+        await postNotice(client, { conversationId: sched.channelId, threadKey: sched.threadTs, text: "🔁 _Loop stopped — it reached its tick budget. Say what you'd like next to start another._" });
+      } catch {
+        /* the answer itself already landed — the notice is best-effort */
+      }
+    } else if (outcome?.action === "armed") {
+      await logEvent("loop_rearmed", { id: outcome.schedule?.id, loopId: outcome.loopId, channel: sched.channelId, ticksLeft: left });
+    }
+  }
+  retireOneTime(sched); // executed AND delivered — only now may the durable row go
+}
+
 // Escalation pass for reminder acknowledgments. An unacknowledged reminder steps stage1 → (2nd
 // notice in the channel/thread) → stage2 → (DM the creator) → close. Each step reschedules the
 // next via `nextAt`; a ✅ (handled in slack/app.js) deletes the entry, ending the chain.
@@ -318,11 +350,11 @@ async function processAcks(now) {
     return Number.isFinite(t) && t <= now.getTime();
   });
   if (!due.length) return;
-  const client = slackRef?.snapshot?.().connected ? slackRef.getClient?.() : null;
-  if (!client) return;
   acksTicking = true;
   try {
     for (const ack of due) {
+      const client = automationTarget(slackRef, ack.channelId);
+      if (!client) continue;
       try {
         if (ack.stage === "sent1") {
           const prefix = ack.notify === "channel" ? "<!channel> " : ack.notify === "user" && ack.notifyUserId ? `<@${ack.notifyUserId}> ` : "";
@@ -341,24 +373,13 @@ async function processAcks(now) {
             let permalink = "";
             try { const p = await client.chat.getPermalink({ channel: ack.channelId, message_ts: ack.messageTs }); permalink = p?.permalink || ""; } catch { /* optional */ }
             try {
-              const im = await client.conversations.open({ users: ack.createdBy });
-              const dm = im?.channel?.id;
-              if (dm) {
-                const body = `👋 Your reminder in <#${ack.channelId}> — *${ack.title || ack.text}* — still hasn't been acknowledged after two notices.`;
-                // SLACK-ONLY: unfurl suppression + a link button. Left on the raw client until the
-                // interactive surfaces are re-authored per platform; every other scheduler notice
-                // goes through postNotice.
-                await client.chat.postMessage({
-                  channel: dm,
-                  text: body, // notification/fallback text
-                  unfurl_links: false,
-                  unfurl_media: false,
-                  blocks: [
-                    { type: "section", text: { type: "mrkdwn", text: body } },
-                    ...(permalink ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "View conversation" }, url: permalink }] }] : []),
-                  ],
-                });
-              }
+              const body = `👋 Your reminder — *${ack.title || ack.text}* — still hasn't been acknowledged after two notices.`;
+              await postDirectMessage(client, { userId: ack.createdBy, text: body,
+                blocks: [
+                  { type: "section", text: { type: "mrkdwn", text: body } },
+                  ...(permalink ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "View conversation" }, url: permalink }] }] : []),
+                ],
+              });
             } catch (e) { await logEvent("ack_dm_error", { id: ack.id, error: e.message }); }
           }
           deleteAck(ack.id);
@@ -378,6 +399,7 @@ async function processAcks(now) {
 // Is this schedule due right now? One-time ("run at") schedules fire once their runAt has passed;
 // recurring schedules fire when their cron matches the current minute.
 function isDue(sched, now) {
+  if (sched.pendingDelivery || sched.executionState === "running") return true;
   if (sched.once || sched.runAt) {
     const t = Date.parse(sched.runAt);
     return Number.isFinite(t) && t <= now.getTime();
@@ -401,6 +423,7 @@ function runDueForMinute(now, scheds, firedOnce) {
     if (!sched.enabled) continue;
     if (firedOnce.has(sched.id)) continue;
     if (firedThisMinute.get(sched.id) === mk) continue;
+    if (sched.lastFireMinute === mk && !sched.pendingDelivery && sched.executionState !== "running") continue;
     if (!isDue(sched, now)) continue;
     // Fan-out ceiling: if too many schedules are already executing, leave the rest for the next
     // tick rather than stampeding the host.
@@ -410,6 +433,8 @@ function runDueForMinute(now, scheds, firedOnce) {
       break;
     }
     firedThisMinute.set(sched.id, mk);
+    sched.lastFireMinute = mk;
+    updateSchedule(sched.id, { lastFireMinute: mk });
     // A one-time schedule is claimed (not deleted) up front so a slow run can't double-fire on the
     // next tick; runSchedule deletes it once its output has actually been delivered.
     if (isOneTime(sched)) {

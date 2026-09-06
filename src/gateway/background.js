@@ -26,7 +26,7 @@ import { logEvent } from "../util/logger.js";
 import { recordUsage, createUsageBank } from "./usage.js";
 import { countDrop } from "../util/drops.js";
 import { getDb, toJson, fromJson } from "../db/index.js";
-import { postNotice } from "../platforms/notify.js";
+import { postNotice, automationTarget } from "../platforms/notify.js";
 import { resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues } from "../util/redact.js";
@@ -216,8 +216,8 @@ export class BackgroundJobs {
     this._releaseRecovery = null;
   }
 
-  _client() {
-    return this.slack?.snapshot?.().connected ? this.slack.getClient?.() ?? null : null;
+  _client(channelId) {
+    return automationTarget(this.slack, channelId);
   }
   _threadCount(threadKey) {
     let n = 0;
@@ -226,7 +226,7 @@ export class BackgroundJobs {
   }
 
   // Persist the serializable view of every tracked job (no child handles). Best-effort.
-  _persist() {
+  _persist({ required = false } = {}) {
     try {
       const db = getDb();
       db.exec("BEGIN");
@@ -249,7 +249,8 @@ export class BackgroundJobs {
         throw e;
       }
     } catch (err) {
-      countDrop("bg_jobs", err); // persistence is best-effort, but drops cost crash recovery
+      countDrop("bg_jobs", err);
+      if (required) throw err; // execution checkpoints must be durable before tools start
     }
   }
 
@@ -621,7 +622,7 @@ export class BackgroundJobs {
   // Visible lifecycle: a small in-thread note with a status button, so anyone in the thread can
   // see the job is running and check on it without waiting for the finish notification.
   async _postStarted(rec) {
-    const client = this._client();
+    const client = this._client(rec.channelId);
     if (!client) return;
     const what = rec.kind === "agent" ? "🤖 Background agent" : "⚙️ Background job";
     try {
@@ -710,9 +711,9 @@ export class BackgroundJobs {
     const isAgent = rec.kind === "agent";
     const what = isAgent ? "Background agent" : "Background job";
 
-    const client = this._client();
+    const client = this._client(rec.channelId);
     if (!client) {
-      await logEvent("bg_skip_post", { id: rec.id, reason: "slack not connected" });
+      await logEvent("bg_skip_post", { id: rec.id, reason: "destination transport not connected" });
       return; // row survives — the next boot redelivers
     }
     const attempts = (rec.deliveryAttempts || 0) + 1;
@@ -783,6 +784,11 @@ export class BackgroundJobs {
           threadKey: rec.threadKey,
           result: { content: report, engine: rec.result?.engine || "" },
         });
+      } else if (pending.continuationResult) {
+        await this.deliver(client, { channel: rec.channelId, threadKey: rec.threadKey, result: pending.continuationResult });
+      } else if (pending.continuationStarted) {
+        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey,
+          text: `⚠️ ${what} *${rec.label}* finished, but its continuation was interrupted. Its external actions are unknown. Check the result before explicitly continuing; it was not run again.` });
       } else {
         // Shell output and failed/incomplete agent runs still need interpretation. Their
         // continuation is a real turn in a real Slack thread, so it takes the SAME per-thread
@@ -796,6 +802,8 @@ export class BackgroundJobs {
           // A stop that landed while we were queued is itself terminal — the stop handler already
           // answered the thread, so skip the turn but still retire the row.
           if (!handle.aborted) {
+            pending.continuationStarted = new Date().toISOString();
+            this._persist({ required: true });
             const result = await this.runner({
               channelId: rec.channelId,
               authorId: rec.authorId,
@@ -804,6 +812,8 @@ export class BackgroundJobs {
               origin: "continuation",
               signal: handle.controller.signal,
             });
+            pending.continuationResult = result;
+            this._persist({ required: true });
             // The continuation's tokens are spent before Slack sees a word of it — bank them first.
             await bankUsage({ channelId: rec.channelId, slug: rec.slug, authorId: rec.authorId, engine: result.engine, taskKind: "background", result });
             // Same sanitize/chunk pipeline as every unattended reply (deliverResult) — background

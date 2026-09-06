@@ -7,12 +7,22 @@
 // falls back to "_(no output)_" on an empty reply). This is also the gateway/ side's single
 // dependency on slack/ for result delivery — a second transport would be another deliver
 // implementation, not five new call sites.
+import { formatOutboundFor } from "../platforms/registry.js";
+import { postFormatted } from "../platforms/connector.js";
 import { getDirectory } from "./directory.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { postChunkedReply } from "./util.js";
 import { footerText, resumeButton } from "./footer.js";
 
 export async function deliverResult(client, { channel, threadKey, result, dir, footer = false, trustedPrefix = "" } = {}) {
+  if (client?.platform && typeof client.post === "function") {
+    const directory = dir !== undefined ? dir : await client.directory(channel).catch(() => null);
+    const formatted = formatOutboundFor(client.platform, result?.content || "", { directory });
+    // The prefix is renderer-specific trusted markup; do not carry Slack controls onto other
+    // platforms. Scheduling on those platforms currently delivers without a broadcast mention.
+    return postFormatted(client, { conversationId: channel, threadKey, formatted,
+      footer: footer ? footerText(result) : "" });
+  }
   // Callers that already resolved the workspace directory pass it; otherwise fetch (best-effort —
   // mentions simply stay plain text without it).
   const directory = dir !== undefined ? dir : await getDirectory(client).catch(() => null);
