@@ -119,7 +119,8 @@ manifest in Azure Portal.
   four are degraded on the way out by `src/platforms/format/degrade.js`.
 - **Mentions** are structural: the text carries `<at>Name</at>` and the activity must carry a
   matching entity. The formatter emits both together.
-- **No ephemeral messages:** as on Google Chat, a per-person notice becomes a 1:1 chat message.
+- **No ephemeral messages:** as on Google Chat, a per-person notice becomes a 1:1 chat message —
+  which is how approval links reach the person who raised the request.
 
 ---
 
@@ -133,6 +134,7 @@ manifest in Azure Portal.
 | Threads | ✅ | spaces only | channels only |
 | Live progress rendering | ✅ | placeholder → answer | placeholder → answer |
 | Interactive approval buttons | ✅ | ❌ (actions named in text) | ❌ (actions named in text) |
+| Approvals by signed link | ✅ (in addition to the buttons) | ✅ (the mechanism) | ✅ (the mechanism) |
 | In-thread commands (`/model`, `/clear`, stop, steer) | ✅ | ❌ | ❌ |
 | Native tables / charts / Lists / canvases | ✅ | ❌ | ❌ |
 | Escalation to full-access in an admin-mode channel | ✅ | ❌ | ❌ |
@@ -140,6 +142,22 @@ manifest in Azure Portal.
 The last row is not an oversight. Escalation requires an interactive permission prompt the author
 can answer; until a surface has one, a run there uses the channel folder's permission allowlist like
 every other run — which fails closed.
+
+**Approvals reach every surface as links.** Slack's Block Kit buttons are the primary control and
+are unchanged. Alongside them, each approval card and each busy-thread card is also minted as
+short-lived, single-use, HMAC-signed URLs — one per action the recipient may take — delivered
+**privately to the person who raised the request**: an ephemeral where the platform has one
+(Slack), a 1:1 message where it does not (Teams, Google Chat). Opening a link shows a confirmation
+page and decides nothing; the page's Confirm button performs the decision through exactly the code
+a button click runs. The gateway needs a **Public URL** for a link to be reachable from outside the
+host, and the behaviour is Settings → Connection → **Approval links** (`auto` / `always` / `off`).
+See `FEATURES.md` → Modes & approvals for the security properties.
+
+This is what makes approvals *possible* on Teams and Google Chat rather than *already wired* there:
+the link mechanism, its private delivery and its confirmation page are platform-neutral and honour
+each adapter's declared `ephemeral` capability, but a turn on those surfaces still does not RAISE a
+permission card (see the header of `src/platforms/ingest.js` — interactive approvals are a slice of
+their own). When it does, the answer arrives by link with no further work.
 
 ---
 

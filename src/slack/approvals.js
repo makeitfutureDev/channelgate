@@ -21,6 +21,10 @@ import {
   patchPendingApproval,
   transitionApprovalRequest,
 } from "../gateway/approval-requests.js";
+import { retireApprovalLinkTokens } from "../gateway/approval-link-tokens.js";
+import { approvalLinkBase, approvalLinksMessage, buildApprovalLinks } from "../web/approval-links.js";
+import { slackAdapter } from "../platforms/slack.js";
+import { postPrivately } from "../platforms/notify.js";
 
 // The live Slack client of the currently-connected app (set from connectAndWire); the approval
 // flow is driven by the daemon's /internal/approval route rather than an event, so it can't take
@@ -70,6 +74,14 @@ function rememberResolved(id, info = {}) {
   resolvedApprovals.delete(key);
   resolvedApprovals.set(key, { at: Date.now(), ...info });
   while (resolvedApprovals.size > RESOLVED_MEMORY) resolvedApprovals.delete(resolvedApprovals.keys().next().value);
+  // The card is answered, so every UNUSED approval link for it dies with it — whichever surface
+  // answered it. A live "Deny" URL sitting in someone's ephemeral after the request was approved
+  // is the link equivalent of a dead button that still fires.
+  try {
+    retireApprovalLinkTokens(key);
+  } catch {
+    /* best-effort: a decision must never fail because the link ledger is unavailable */
+  }
 }
 
 // The preview is model-controlled text inside a mrkdwn fence: a ``` in the content would close
@@ -134,6 +146,67 @@ async function postApprovalCard(client, { channelId, threadTs, text, blocks, con
     throw new Error(`Slack returned no usable message ts for the approval card (got ${JSON.stringify(ts ?? null)})`);
   }
   return ts;
+}
+
+// ── The same card, as links ─────────────────────────────────────────────────────
+// Signed, single-use URLs are the platform-neutral form of this card: they work on a surface whose
+// buttons the gateway does not drive (Teams, Google Chat), and they let automation and QA get past
+// a permission prompt that otherwise needs a human in a Slack client. On Slack they are strictly
+// ADDITIONAL — the Block Kit buttons are unchanged and remain the primary control.
+//
+// A link is a bearer credential, so the set of links is exactly the set of decisions the RECIPIENT
+// could make by clicking: `canResolveApproval` is the same authority function the button handler
+// runs, and it is run again on every POST. Nothing is minted that the requester could not click,
+// which is why an admin-tier control-plane sign-off gets a Deny link and no Approve link at all.
+// "Comment" has no link: it needs free text, and a one-button confirmation page cannot carry it.
+async function approvalLinkChoices(entry, { durable = false, approveText = "Approve", denyText = "Deny" } = {}) {
+  const requester = entry.authorId || "";
+  if (!requester) return [];
+  let authority;
+  try {
+    authority = await canResolveApproval(entry, requester);
+  } catch {
+    return [];
+  }
+  if (!authority.allowed) return [];
+  const choices = [];
+  if (authority.meetsTier) {
+    if (entry.approvalType === "permission" && !durable) {
+      choices.push({ action: "approve", scope: "once", label: "Approve once" });
+      choices.push({ action: "approve", scope: "thread", label: "Approve for this thread" });
+      // Persisting a forever-approval changes the channel's security posture — admins only, on a
+      // link exactly as on the button.
+      if (authority.clickerIsAdmin) choices.push({ action: "approve", scope: "forever", label: "Approve forever (this channel)" });
+    } else {
+      choices.push({ action: "approve", scope: "once", label: approveText || "Approve" });
+    }
+  }
+  choices.push({ action: "deny", scope: "", label: denyText || "Deny" });
+  return choices;
+}
+
+// Mint the links for one card and hand them to the requester privately (Slack ephemeral in the
+// same thread; a DM on a surface with no ephemeral). Best-effort by design: a card that posted is
+// answerable by its buttons, so a failure here must never fail the approval.
+async function deliverApprovalLinks(client, entry, { id, threadKey, durable = false, approveText, denyText } = {}) {
+  try {
+    const baseUrl = approvalLinkBase({ capabilities: slackAdapter.capabilities });
+    if (!baseUrl || !client) return [];
+    const choices = await approvalLinkChoices(entry, { durable, approveText, denyText });
+    if (!choices.length) return [];
+    const links = buildApprovalLinks({ baseUrl, id, kind: "approval", requester: entry.authorId || "", choices });
+    if (!links.length) return [];
+    const text = approvalLinksMessage({ toolName: entry.toolName || "", links, expiresAt: links[0].expiresAt });
+    await postPrivately(client, {
+      conversationId: entry.channelId,
+      threadKey: slackThreadFor(threadKey) || "",
+      userId: entry.authorId,
+      text,
+    });
+    return links;
+  } catch {
+    return []; // the buttons still work; a link is an addition, never a precondition
+  }
 }
 
 // Called by the daemon's /internal/approval route. Posts buttons, returns { allow, reason } once
@@ -244,6 +317,13 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
       deleteApprovalRequest(id);
       return { allow: false, reason: `couldn't post the approval prompt: ${error.message}` };
     }
+    await deliverApprovalLinks(client, { channelId, slug, authorId, toolName, approvalType, requiredTier }, {
+      id,
+      threadKey,
+      durable: true,
+      approveText,
+      denyText,
+    });
     return {
       allow: false,
       pending: true,
@@ -298,6 +378,11 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
       createdAt,
       expiresAt: createdAt + APPROVAL_TIMEOUT_MS,
     });
+    // Deliberately NOT awaited, and deliberately after pendingApprovals.set: the entry has to
+    // exist the instant the card does, or a click landing in the gap between the two would find
+    // no request and answer "already handled" while the run waits forever. The links are an
+    // addition to a card that already works.
+    void deliverApprovalLinks(client, { channelId, slug, authorId, toolName, approvalType, requiredTier }, { id, threadKey, approveText, denyText });
   });
 }
 
@@ -491,7 +576,10 @@ export async function applyApprovalDecision({
   return { ok: true, decision: approve ? "approve" : "deny", scope: approve ? scope : "", outcome: reason };
 }
 
-async function canResolveApproval(entry, clicker) {
+// Who may decide THIS request, and how far. Exported because it is the one authority rule for an
+// approval: the button handler runs it on a click, the link router runs it again on every POST
+// (and once more at mint time, so a link that could not be honoured is never handed out).
+export async function canResolveApproval(entry, clicker) {
   const clickerIsAdmin = await isAdmin(clicker);
   const clickerIsApproved = await isApproved(clicker);
   const m = await getChannelMeta(entry.slug).catch(() => null);

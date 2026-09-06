@@ -717,4 +717,29 @@ export const migrations = [
       strip("users", "user_id");
     },
   },
+  {
+    version: 21,
+    up(db) {
+      db.exec(`
+        -- Single-use tokens behind the LINK form of an approval (GET /approve/<token> renders a
+        -- confirmation page, POST performs the decision). The token itself is HMAC-signed and
+        -- self-describing, so this table stores no secret and no request detail — only the nonce,
+        -- what it may do, when it stops working, and whether it has already been spent. That is
+        -- what makes a link exactly single-use across processes: the HMAC proves the token was
+        -- minted here, this row proves it has not been used yet.
+        CREATE TABLE approval_link_tokens (
+          nonce       TEXT PRIMARY KEY,
+          approval_id TEXT NOT NULL,
+          kind        TEXT NOT NULL,
+          action      TEXT NOT NULL,
+          scope       TEXT NOT NULL DEFAULT '',
+          requester   TEXT NOT NULL DEFAULT '',
+          expires_ms  INTEGER NOT NULL,
+          used_ms     INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_approval_link_tokens_expires ON approval_link_tokens(expires_ms);
+        CREATE INDEX idx_approval_link_tokens_approval ON approval_link_tokens(approval_id, used_ms);
+      `);
+    },
+  },
 ];

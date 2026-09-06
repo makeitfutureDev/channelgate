@@ -21,6 +21,7 @@ import {
   getEngine,
   isEngineEnabled,
   getDmTemplates,
+  APPROVAL_LINK_MODES,
   CHANNEL_ACCESS_MODES,
   MODEL_CHANGE_ACCESS_MODES,
   ENGINE_FALLBACK_MODES,
@@ -192,6 +193,8 @@ export function createSettingsRouter({
       if (typeof body.composioMcpUrl === "string") patch.composioMcpUrl = body.composioMcpUrl.trim();
       if (typeof body.toolboxMcpUrl === "string") patch.toolboxMcpUrl = body.toolboxMcpUrl.trim();
       if (typeof body.publicUrl === "string") patch.publicUrl = normalizePublicUrl(body.publicUrl);
+      // Link-based approvals: auto (default) / always / off. See src/web/approval-links.js.
+      if (typeof body.approvalLinks === "string" && APPROVAL_LINK_MODES.includes(body.approvalLinks)) patch.approvalLinks = body.approvalLinks;
       // Self-diagnosis target channel slug ("" turns the feature off).
       if (typeof body.errorDiagnosisChannel === "string") patch.errorDiagnosisChannel = body.errorDiagnosisChannel.trim();
       // Org-default access policy applied to each channel the bot newly joins.

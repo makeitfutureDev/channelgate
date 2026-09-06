@@ -211,6 +211,19 @@ export function getPublicUrl() {
   return normalizePublicUrl(s.publicUrl || process.env.GATEWAY_PUBLIC_URL || "");
 }
 
+// Link-based approvals: whether an approval card is ALSO delivered as signed, single-use URLs in
+// an ephemeral message to the person who raised it (src/web/approval-links.js).
+//   "auto"   (default) — links on a surface whose buttons the gateway does not drive (Teams,
+//                        Google Chat), and on Slack as an addition once `publicUrl` is set
+//   "always"           — links everywhere, falling back to the loopback address when no public
+//                        URL is configured (useful for local automation and QA)
+//   "off"              — native controls only
+export const APPROVAL_LINK_MODES = ["auto", "always", "off"];
+export function getApprovalLinks() {
+  const v = getSettings().approvalLinks;
+  return APPROVAL_LINK_MODES.includes(v) ? v : "auto";
+}
+
 // Native Slack text streaming is the only in-progress display mode. Keep the exported shape for
 // admin/API compatibility, but ignore legacy stored values from older installs.
 export const PROGRESS_VIEWS = ["stream"];
@@ -771,6 +784,7 @@ export function settingsForApi() {
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
+    approvalLinks: getApprovalLinks(),
     progressView: getProgressView(),
     mentionReactions: getMentionReactions(),
     trustedBotApps: getTrustedBotApps(),

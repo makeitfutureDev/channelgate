@@ -1408,6 +1408,46 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       (or is refused) immediately, the card in the thread is edited to say the **admin UI** decided,
       the Activity feed shows `approval_resolved_by_admin`, and a later click on the now-dead card
       reports it already handled.
+- [x] Automated (`test/approval-links.test.js`): the LINK form of the same cards. The token is
+      signed over id + action + scope + expiry, so editing `once`→`forever`, swapping the approval
+      id, flipping `deny`→`approve`, appending a character, or signing with another secret all read
+      as `bad-signature`; a stale token reads as `expired`; a URL is only built from an http(s)
+      base and always lands on `/approve/<token>`.
+- [x] Automated (`test/approval-links.test.js`): the links are delivered to the REQUESTER in an
+      ephemeral (never a second shared-thread message, and the card itself carries no link), the
+      offered set is exactly what that person could click — no *Approve forever* for a non-admin,
+      and a `requiredTier: "admin"` card gets *Deny* and nothing else — and every link points at
+      that approval's own id.
+- [x] Automated (`test/approval-links.test.js`): `GET /approve/<token>` renders the tool, the
+      clipped command preview, the requester, the expiry and the one action the link performs, and
+      leaves the approval PENDING however many times it is fetched (link unfurlers and scanning
+      proxies prefetch); the same link then still resolves on `POST`. A used link is 410 on both
+      verbs, and deciding a card kills its sibling links too.
+- [x] Automated (`test/approval-links.test.js`): authority is re-checked at Confirm time, not only
+      at mint time — an *Approve forever* link minted for an admin is refused 403 after that person
+      stops being an admin, the request stays pending, and the SAME link works again once the
+      authority is restored (a refusal must not silently destroy a credential).
+- [x] Automated parity (`test/approval-links.test.js`): the same fixture resolved by link and by
+      `handleApprovalClick` produces the same decision and the same outcome card, differing only in
+      the decider; the waiting agent reads `decided_by: "link"`. `scope: thread` stops the next
+      identical prompt in that thread and `scope: forever` persists to `meta.approvedTools`. Each
+      resolution writes `approval_resolved_by_link` with the ids and the decision and no value from
+      the request.
+- [x] Automated (`test/approval-links.test.js`): a busy-thread card answered by link — the three
+      links go only to the person whose message is waiting, `GET` leaves the card up, `POST` of
+      *Cancel* drops the waiting message durably and no click can resurrect it.
+- [x] Automated (`test/approval-links.test.js`): invalid tokens get per-IP exponential backoff
+      (429 + `Retry-After`, and a perfectly valid token is refused while the backoff holds, because
+      the limiter is about the address); the `approvalLinks` setting's three values behave — `off`
+      mints nothing at all, `auto` needs a public URL before adding links to a surface that already
+      has buttons but builds them anyway where there are none, `always` falls back to this
+      machine's own address.
+- [ ] Live: in a channel with a `publicUrl` configured, trigger a permission card. Pass when the
+      requester (and nobody else) sees an ephemeral with three links; opening one shows the
+      confirmation page with the command preview and leaves the card in the thread PENDING; pressing
+      Confirm resolves it, the card is edited to name the requester with "(approval link)", the
+      Activity feed shows `approval_resolved_by_link`, and reloading the link says it was already
+      used.
 
 ### Sandbox boundaries (bash / network)
 **Retired 2026-09-03 (Linux + containers only):** the host sandbox is gone. The boundary is the

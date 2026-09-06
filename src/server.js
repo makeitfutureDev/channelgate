@@ -26,6 +26,7 @@ import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
+import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
 import { takeStaleRuns, recoverRuns } from "./gateway/active-runs.js";
 import { recoverApiRuns } from "./gateway/api-runs.js";
 import { startNudgeSweep } from "./gateway/nudges.js";
@@ -154,6 +155,7 @@ async function main() {
   const root = await ensureRoot();
   const lock = acquireSingletonLock(root);
   pruneTerminalApprovalRequests();
+  pruneApprovalLinkTokens(); // spent/expired approval-link nonces
   applySettingsToEnv(); // UI-managed settings.json overrides .env
   // Skills platform (src/gateway/skills): fill the local catalog from the bundled starter library
   // and the host's skill folders, and seed the built-in channel templates. Never fatal — a turn

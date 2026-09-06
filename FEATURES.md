@@ -1306,6 +1306,31 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `{ approved, feedback, decided_by }` to the agent so it continues, or addresses the feedback. The
   card shows the full `details` text (not the 60-char tool preview); documented in the
   `gateway-usage` skill (`references/approvals.md`). → TEST-PLAN: Modes & approvals.
+- **Link-based approvals — the same card, as URLs, on every surface.** Native buttons are Slack's
+  primitive; Teams and Google Chat do not have one the gateway drives, and automation cannot click
+  anything at all. Every approval card (permission, control-plane, durable background-shell) and
+  every busy-thread card is therefore ALSO minted as short-lived, single-use, HMAC-signed links —
+  one per action the recipient may actually take (*Approve once* / *Approve for this thread* /
+  *Approve forever* / *Deny*, and *Steer* / *Queue* / *Cancel* for a busy thread) — and delivered
+  **privately to the person who raised the request**: a Slack ephemeral in the same thread, or a
+  DM on a surface with no ephemeral primitive. Never in the shared thread: a link is a bearer
+  credential. `GET /approve/<token>` renders a confirmation page (tool, clipped command/plan
+  preview, conversation, requester, expiry, and the one action this link performs) and **changes
+  nothing** — link unfurlers, preview services and scanning proxies fetch these URLs, so a GET with
+  a side effect would let the unfurler decide the request before a human saw it. `POST` (the page's
+  single Confirm button) resolves it through the same `applyApprovalDecision` /
+  `applyBusyThreadChoice` the buttons and the admin API use, so scope semantics, the durable
+  compare-and-swap, the waiting MCP call and the in-thread card update are identical; the waiting
+  agent reads `decided_by: "link"`. The signature covers id + action + scope + expiry, so a *Deny*
+  link cannot be edited into an *Approve forever* one; the nonce is spent by one atomic UPDATE, so
+  a link works exactly once; deciding a card retires every other link for it; and the requester's
+  own authority is re-checked on every POST, so an admin-tier sign-off gets a Deny link and no
+  Approve link at all. Unknown/used/expired → a plain page and 404/410 that says nothing about any
+  other request, with per-IP backoff on bad tokens; responses are `no-store` + `noindex`. Settings →
+  Connection → **Approval links**: `auto` (default — where there are no native buttons, plus Slack
+  once `publicUrl` is set), `always` (everywhere, falling back to this machine's address), `off`.
+  Every link decision logs `approval_resolved_by_link` (ids, decision, scope — never a value).
+  → TEST-PLAN: Modes & approvals.
 - Admin-only dangerous permissions (admin author **and** adminMode channel); non-admins run the
   folder allowlist. → TEST-PLAN: Security (dangerous perms).
 - **Retired 2026-09-03 (Linux + containers only):** the deny lists and the allowlisted domain set,

@@ -43,6 +43,26 @@ export async function postNotice(target, { conversationId, threadKey = "", text,
   return connector.post(payload);
 }
 
+// Post something that must reach ONE person and nobody else — an approval link is a bearer
+// credential minted for the requester, so the shared thread is the one place it may never appear.
+//
+// Where the platform has an ephemeral primitive (Slack) that is the delivery: it lands in the same
+// thread the card is in, so the context is right there. Where it does not (Teams and Google Chat
+// both declare `ephemeral: false`), the private equivalent is a 1:1 message. The ephemeral attempt
+// is `ephemeralOnly`, which suppresses the connector's ordinary "fall back to a public post"
+// behaviour — a failure here falls back to the DM, never to the channel.
+export async function postPrivately(target, { conversationId, threadKey = "", userId, text, blocks = null } = {}) {
+  const connector = asConnector(target);
+  if (!connector || !userId || !text) return null;
+  if (connector.capabilities?.ephemeral) {
+    const payload = { conversationId, threadKey, text, ephemeralTo: userId, ephemeralOnly: true };
+    if (blocks && connector.capabilities?.richCards === "block-kit") payload.blocks = blocks;
+    const sent = await connector.post(payload).catch(() => null);
+    if (sent?.ephemeral) return sent;
+  }
+  return postDirectMessage(connector, { userId, text, blocks }).catch(() => null);
+}
+
 // Open (or find) the 1:1 conversation with a user and post into it. The scheduler's acknowledgement
 // DMs and the follow-up digest both need this, and "open a DM" is a different API on every surface.
 export async function postDirectMessage(target, { userId, text, blocks = null } = {}) {
