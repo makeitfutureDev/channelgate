@@ -19,6 +19,19 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Approvals can be resolved from the admin UI and over HTTP, not only by a chat click.** A
+  pending approval used to be answerable only by clicking its card in a real Slack client, which
+  blocked every automated and QA path that has to get past a permission prompt, a control-plane
+  sign-off or a durable background-shell request. `GET /api/approvals` now lists what is waiting
+  (conversation, requester, tool, a clipped command/plan preview, age, expiry — no values),
+  `POST /api/approvals/:id` takes `{ decision: "approve" | "deny", scope?: "once" | "thread" |
+  "forever" }`, and `POST /api/approvals/thread-choice/:id` takes `{ choice: "steer" | "queue" |
+  "cancel" }` for a busy-thread card. The decision half of the button handler was factored into one
+  shared applier both callers use, so scope semantics, the durable compare-and-swap, the waiting MCP
+  call, the requester binding and the in-thread card update are identical either way. Unknown or
+  expired is 404, already decided is 409, and every resolution logs
+  `approval_resolved_by_admin` with the principal and decision (never the command). Overview shows
+  the same queue with Approve/Deny buttons. Admin session only — the run-API key cannot reach it.
 - **Full-access channels can see the whole gateway home.** A new gateway-wide switch in Settings →
   Container runtime (`containerFullAccessHome`, off by default). While it is on, every channel in
   Full access gets the gateway user's whole home directory bind-mounted read-write at its identical

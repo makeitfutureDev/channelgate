@@ -12,20 +12,23 @@ meant yes.
 - `approve_label` / `deny_label` (optional) — custom button text (default "Approve" / "Deny").
 
 The user sees **Approve**, **Deny**, and **Comment** (request-changes) buttons. Anyone allowed to
-run the bot in this channel — the original author or an admin — can decide.
+run the bot in this channel — the original author or an admin — can decide. A gateway admin can
+also decide the same card from the admin web UI without opening this conversation; you receive that
+exactly like a click, with `decided_by` reading `admin UI`.
 
 **Returns** JSON: `{ approved, feedback, decided_by }`.
 - `approved` — `true` if they clicked Approve, `false` on Deny, Comment, or timeout.
 - `feedback` — the comment text when they requested changes (or the deny/timeout reason).
-- `decided_by` — the Slack user id who decided (empty on timeout).
+- `decided_by` — the Slack user id who decided, or `admin UI` when a gateway admin decided it from
+  the admin web UI (empty on timeout).
 
 ## Protocol
 This call **blocks until the user decides** (or it times out after a few minutes) and hands you the
 result inline — unlike `run_in_background`, you do NOT end your turn. Then:
 - **Approved** → proceed with the approved work.
 - **Denied or feedback present** → address the feedback before continuing; don't just repeat the ask.
-- **Timed out** (`approved:false`, empty `decided_by`) → nobody clicked; post a brief note and stop
-  rather than proceeding unilaterally.
+- **Timed out** (`approved:false`, empty `decided_by`, and a `feedback` that says nobody clicked) →
+  post a brief note and stop rather than proceeding unilaterally.
 
 Use it for consequential steps (destructive changes, sends to other channels, spending, irreversible
 actions) — not for routine replies.

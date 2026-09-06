@@ -5,7 +5,8 @@
 //
 // This file is the aggregator: the routes live in one resource module each — settings.js
 // (settings/secrets/update/daemon/slack/fs/skills/mcp), observability.js (audit/dashboard/
-// active-runs), schedules.js, channels.js (dms + channels + memory + instructions), users.js —
+// active-runs), approvals.js (pending approvals + resolving one without a Slack client),
+// schedules.js, channels.js (dms + channels + memory + instructions), users.js —
 // with shared shape-cleaners in helpers.js. The resource routers are mounted here in the same
 // order the routes were originally registered, so every URL, method, and match order is
 // unchanged.
@@ -14,6 +15,7 @@ import { startUpdate } from "../../gateway/updater.js";
 import { listMakeToolboxTools } from "../../gateway/make-toolbox.js";
 import { createSettingsRouter } from "./settings.js";
 import { createObservabilityRouter } from "./observability.js";
+import { createApprovalsRouter } from "./approvals.js";
 import { createSchedulesRouter } from "./schedules.js";
 import { createChannelsRouter } from "./channels.js";
 import { createUsersRouter } from "./users.js";
@@ -31,6 +33,7 @@ export function createAdminRouter({
 
   router.use(createSettingsRouter({ slack, transports, instanceId, startGatewayUpdate, restartCoordinator }));
   router.use(createObservabilityRouter());
+  router.use(createApprovalsRouter({ slack }));
   router.use(createSchedulesRouter());
   router.use(createChannelsRouter({ slack, testMakeToolbox }));
   router.use(createUsersRouter());

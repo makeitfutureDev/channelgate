@@ -1370,6 +1370,29 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       thread; **Approve** lets the run continue, **Deny** and **Comment** (modal → feedback) return the
       decision to the agent, only author/admin/approved may decide, and no click within the timeout
       resolves as not-approved. Unlike a permission prompt, auto-mode does NOT auto-approve it.
+- [x] Automated (`test/approvals-api.test.js`): the admin approvals API. `GET /api/approvals` and
+      both POST routes need an admin session (401 without one) and the `X-CG-Request` CSRF header
+      (403 without it, and the refused call leaves the request still pending); the list carries
+      conversation/requester display names, the tool, a clipped preview, age and expiry, and never
+      the volatile continuation or the durable action record. `POST /api/approvals/:id` with
+      `approve`/`deny` resolves the waiting run and names the principal (`admin UI`); `scope:
+      "thread"` stops the next identical request in that thread from posting a card at all and
+      `scope: "forever"` persists to `meta.approvedTools`; an unknown id is 404, a second
+      resolution 409, a malformed decision or scope 400. A durable `background_shell` approval
+      executes its exact action once and refuses the replay. Every resolution writes
+      `approval_resolved_by_admin` with the principal and decision and no value from the request.
+- [x] Automated parity (`test/approvals-api.test.js`): the same fixture resolved through the API and
+      through `handleApprovalClick` produces the same decision and the same outcome card, differing
+      only in the decider — the guard on the shared applier both callers now go through.
+- [x] Automated (`test/approvals-api.test.js`): busy-thread cards over the same surface — the
+      `awaitingChoice` row is listed, `cancel` drops the waiting message durably (no click can
+      resurrect it), an unknown id is 404 and a malformed choice 400; `steer` re-enters the message
+      pipeline with the exact stored event and its stored options.
+- [ ] Live: with a real approval card in a thread, resolve it from the admin UI's Overview
+      "Pending approvals" panel instead of clicking in the chat client. Pass when the run continues
+      (or is refused) immediately, the card in the thread is edited to say the **admin UI** decided,
+      the Activity feed shows `approval_resolved_by_admin`, and a later click on the now-dead card
+      reports it already handled.
 
 ### Sandbox boundaries (bash / network)
 **Retired 2026-09-03 (Linux + containers only):** the host sandbox is gone. The boundary is the

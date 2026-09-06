@@ -17,6 +17,7 @@ import {
   deleteApprovalRequest,
   findPendingApproval,
   getApprovalRequest,
+  listPendingApprovalRequests,
   patchPendingApproval,
   transitionApprovalRequest,
 } from "../gateway/approval-requests.js";
@@ -46,6 +47,30 @@ const pendingApprovals = new Map(); // id -> { finish, channelId, msgTs, runKey,
 const threadAllow = new Map(); // runKey -> Set(toolName) pre-approved for the rest of the thread
 export const APPROVAL_ACTIONS = ["cg_approve_once", "cg_approve_thread", "cg_approve_always", "cg_approve", "cg_deny", "cg_approval_comment"];
 const APPROVAL_TIMEOUT_MS = 4 * 60 * 1000;
+
+// How far an "approve" reaches. A Slack button carries it in its action_id; the admin HTTP API
+// carries it in the request body. Both hand the same value to applyApprovalDecision().
+export const APPROVAL_SCOPES = ["once", "thread", "forever"];
+const SCOPE_BY_ACTION = {
+  cg_approve: "once",
+  cg_approve_once: "once",
+  cg_approve_thread: "thread",
+  cg_approve_always: "forever",
+};
+
+// A bounded memory of the approvals this process has already decided. The volatile map deletes an
+// entry the moment it resolves, so without this an id that was just approved is indistinguishable
+// from one that never existed — and the HTTP API has to answer 409 (already resolved) rather than
+// 404 (unknown). Never consulted for authorization; it holds no request detail.
+const RESOLVED_MEMORY = 500;
+const resolvedApprovals = new Map(); // id -> { at, decision, scope }
+function rememberResolved(id, info = {}) {
+  if (!id) return;
+  const key = String(id);
+  resolvedApprovals.delete(key);
+  resolvedApprovals.set(key, { at: Date.now(), ...info });
+  while (resolvedApprovals.size > RESOLVED_MEMORY) resolvedApprovals.delete(resolvedApprovals.keys().next().value);
+}
 
 // The preview is model-controlled text inside a mrkdwn fence: a ``` in the content would close
 // the fence early and let the remainder render as styled prose (disguising what's approved), and
@@ -241,6 +266,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
   } catch (error) {
     return { allow: false, reason: `couldn't post the approval prompt: ${error.message}` };
   }
+  const createdAt = Date.now();
   return new Promise((resolve) => {
     const finish = (decision) => {
       if (!pendingApprovals.has(id)) return;
@@ -257,8 +283,212 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
         .catch(() => {});
     }, APPROVAL_TIMEOUT_MS);
     timer.unref?.();
-    pendingApprovals.set(id, { finish, channelId, msgTs, runKey, slug, toolName, authorId, approvalType, requiredTier });
+    pendingApprovals.set(id, {
+      finish,
+      channelId,
+      msgTs,
+      runKey,
+      slug,
+      threadKey,
+      toolName,
+      target,
+      authorId,
+      approvalType,
+      requiredTier,
+      createdAt,
+      expiresAt: createdAt + APPROVAL_TIMEOUT_MS,
+    });
   });
+}
+
+// ── One lookup, two homes ───────────────────────────────────────────────────────
+// An approval lives either in the in-memory long-poll map (a permission or control-plane card
+// whose MCP call is still open) or in the durable `approval_requests` row (a background-shell
+// action that outlives the process). `entry` is set only while the request is still decidable;
+// `resolved` separates "already decided" from "never existed" so the HTTP API can answer 409 vs
+// 404 — and so the Slack card can say which happened.
+export function lookupApproval(id) {
+  const key = String(id ?? "");
+  const volatileEntry = pendingApprovals.get(key);
+  const persisted = volatileEntry ? null : getApprovalRequest(key);
+  const durable = Boolean(persisted?.action?.kind === "background_shell");
+  const record = volatileEntry || persisted || null;
+  const live = Boolean(record) && (!durable || record.status === "pending");
+  return {
+    entry: live ? record : null,
+    record,
+    durable,
+    resolved: Boolean((record && !live) || resolvedApprovals.has(key)),
+  };
+}
+
+const summarize = (text, max = 400) => {
+  const value = String(text ?? "");
+  return { summary: value.slice(0, max), summaryTruncated: value.length > max };
+};
+
+// Everything still awaiting a decision, newest first, in one secret-free shape. Deliberately built
+// field by field: the volatile entry holds the `finish` continuation and the durable row holds the
+// full authority-bearing action (command, workDir, caps) — neither may leak into an HTTP response.
+// The command/plan PREVIEW is the same text the Slack card already shows in the thread.
+export function listPendingApprovals() {
+  const rows = [];
+  for (const [id, entry] of pendingApprovals) {
+    rows.push({
+      id,
+      durable: false,
+      kind: entry.approvalType === "permission" ? "permission" : "agent",
+      approvalType: entry.approvalType || "permission",
+      channelId: entry.channelId || "",
+      slug: entry.slug || "",
+      threadKey: entry.threadKey || "",
+      messageTs: entry.msgTs || "",
+      requesterId: entry.authorId || "",
+      tool: entry.toolName || "",
+      label: "",
+      requiredTier: entry.requiredTier || "",
+      createdAt: entry.createdAt || 0,
+      expiresAt: entry.expiresAt || null,
+      ...summarize(entry.target),
+    });
+  }
+  for (const row of listPendingApprovalRequests()) {
+    rows.push({
+      id: row.id,
+      durable: true,
+      kind: row.action?.kind || "background_shell",
+      approvalType: row.approvalType || "agent",
+      channelId: row.channelId || "",
+      slug: row.slug || "",
+      threadKey: row.action?.threadKey || "",
+      messageTs: row.msgTs || "",
+      requesterId: row.authorId || "",
+      tool: row.toolName || "",
+      label: row.action?.label || "",
+      requiredTier: row.requiredTier || "",
+      createdAt: row.createdAt || 0,
+      // Durable approvals deliberately never expire: the whole point is that the button still
+      // works after a restart.
+      expiresAt: null,
+      ...summarize(row.target),
+    });
+  }
+  return rows.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+// ── The decision itself ─────────────────────────────────────────────────────────
+// Shared by the Slack button handler and the admin HTTP API. Everything AFTER "who may decide
+// this" happens here exactly once — scope semantics (once / thread / forever), the durable
+// executor and its state machine, releasing the waiting MCP call, and the card update — so
+// resolving from the admin UI is the same event as a click, with a different principal on the
+// card and in the audit trail. Callers own their own refusal surface (an ephemeral vs an HTTP
+// status), which is why this returns a code instead of posting one.
+export async function applyApprovalDecision({
+  id,
+  entry,
+  durable = false,
+  decision,
+  scope = "once",
+  actorId = "",
+  actorLabel = "",
+  comment = "",
+  client = null,
+  messageTs = "",
+} = {}) {
+  if (!entry) return { ok: false, code: 404, error: "no such approval" };
+  // A comment is a request for CHANGES: it never approves, whichever button carried it.
+  const approve = decision === "approve" && !comment;
+  const who = actorLabel || (actorId ? `<@${actorId}>` : "the admin UI");
+  const cardTs = entry.msgTs || messageTs;
+  const reason = comment ? `Changes requested by ${who}` : approve ? `Approved by ${who}` : `Denied by ${who}`;
+  const updateCard = async (text, blocks) => {
+    if (!client?.chat?.update || !entry.channelId || !cardTs) return;
+    try {
+      await client.chat.update({ channel: entry.channelId, ts: cardTs, text, blocks });
+    } catch {
+      /* message gone */
+    }
+  };
+  const commentBlocks = () => [
+    { type: "section", text: { type: "mrkdwn", text: `💬 *${entry.toolName}* — changes requested by ${who}:\n>${comment.replace(/\n/g, "\n>")}` } },
+  ];
+
+  if (durable) {
+    if (!approve) {
+      const denied = transitionApprovalRequest(id, "pending", "denied", { decidedBy: actorId, reason, ...(comment ? { comment } : {}) });
+      if (!denied) return { ok: false, code: 409, error: "this approval was already handled" };
+      rememberResolved(id, { decision: "deny", scope: "" });
+      if (comment) await updateCard("Resolved", commentBlocks());
+      else await updateCard("Denied", [{ type: "section", text: { type: "mrkdwn", text: `🔒 *${entry.toolName}* — 🚫 ${reason}.` } }]);
+      return { ok: true, decision: "deny", scope: "", outcome: reason };
+    }
+    if (typeof durableApprovalExecutor !== "function") {
+      return { ok: false, code: 503, error: "The gateway cannot start durable approvals right now. This request remains pending; try again after a restart." };
+    }
+    const claimed = transitionApprovalRequest(id, "pending", "executing", { decidedBy: actorId, reason });
+    if (!claimed) return { ok: false, code: 409, error: "this approval was already handled" };
+    let result;
+    try {
+      result = await durableApprovalExecutor(claimed);
+    } catch (error) {
+      result = { ok: false, error: error.message };
+    }
+    if (result?.ok) {
+      transitionApprovalRequest(id, "executing", "consumed", {
+        jobId: result.id || "",
+        jobLabel: result.label || claimed.action?.label || "background job",
+      });
+      rememberResolved(id, { decision: "approve", scope: "once" });
+      const blocks = [
+        { type: "section", text: { type: "mrkdwn", text: `🔒 *${entry.toolName}* — ✅ Approved by ${who} and started *${result.label || "background job"}*. This exact approval is now consumed.` } },
+      ];
+      if (result.id) {
+        blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Check status" }, action_id: "cg_bgjob_status", value: result.id }] });
+      }
+      await updateCard("Approved and started", blocks);
+      return { ok: true, decision: "approve", scope: "once", outcome: reason, jobId: result.id || "", jobLabel: result.label || claimed.action?.label || "" };
+    }
+    transitionApprovalRequest(id, "executing", "failed", { error: String(result?.error || "the job could not be started").slice(0, 500) });
+    rememberResolved(id, { decision: "approve", scope: "once" });
+    await updateCard("Approved action could not start", [
+      { type: "section", text: { type: "mrkdwn", text: `⚠️ *${entry.toolName}* was approved by ${who}, but the exact job could not start: ${String(result?.error || "unknown error").slice(0, 500)}` } },
+    ]);
+    return { ok: false, code: 502, decision: "approve", started: false, error: String(result?.error || "the approved job could not start") };
+  }
+
+  // Volatile (long-poll) approval: apply the scope, then release the waiting MCP call.
+  if (approve && scope === "thread") {
+    if (!threadAllow.has(entry.runKey)) threadAllow.set(entry.runKey, new Set());
+    threadAllow.get(entry.runKey).add(entry.toolName);
+  } else if (approve && scope === "forever") {
+    // Persist: this tool is approved forever in this channel (auto-approved on future prompts).
+    try {
+      await patchChannelMeta(entry.slug, (meta) => ({
+        approvedTools: [...new Set([...(meta?.approvedTools || []), entry.toolName])],
+      }));
+    } catch {
+      /* persist failed — still approve this one */
+    }
+  }
+  entry.finish(
+    approve
+      ? { allow: true, reason, decidedBy: actorId }
+      : { allow: false, reason, decidedBy: actorId, ...(comment ? { comment } : {}) },
+  );
+  rememberResolved(id, { decision: approve ? "approve" : "deny", scope: approve ? scope : "" });
+  if (comment) {
+    await updateCard("Resolved", commentBlocks());
+  } else {
+    const outcome = !approve
+      ? `🚫 ${reason}.`
+      : scope === "thread"
+        ? `✅ ${reason} — won't ask again for \`${entry.toolName}\` in this thread.`
+        : scope === "forever"
+          ? `✅ ${reason} — \`${entry.toolName}\` is now approved forever in this channel.`
+          : `✅ ${reason}.`;
+    await updateCard("Resolved", [{ type: "section", text: { type: "mrkdwn", text: `🔒 *${entry.toolName}* — ${outcome}` } }]);
+  }
+  return { ok: true, decision: approve ? "approve" : "deny", scope: approve ? scope : "", outcome: reason };
 }
 
 async function canResolveApproval(entry, clicker) {
@@ -286,14 +516,11 @@ async function canResolveApproval(entry, clicker) {
 export async function handleApprovalClick({ ack, body, action, client }) {
   await ack();
   const id = action?.value;
-  const volatileEntry = pendingApprovals.get(id);
-  const persistedEntry = volatileEntry ? null : getApprovalRequest(id);
-  const durable = Boolean(persistedEntry?.action?.kind === "background_shell");
-  const entry = volatileEntry || persistedEntry;
+  const { entry, durable } = lookupApproval(id);
   const clicker = body?.user?.id;
   const channel = body?.channel?.id;
   const ts = body?.message?.ts;
-  if (!entry || (durable && entry.status !== "pending")) {
+  if (!entry) {
     try {
       await client.chat.update({ channel, ts, text: "Approval handled", blocks: [{ type: "section", text: { type: "mrkdwn", text: durable ? "✅ _This durable approval was already handled and cannot be used twice._" : "⏱ _This approval expired or was already handled._" } }] });
     } catch {
@@ -364,94 +591,29 @@ export async function handleApprovalClick({ ack, body, action, client }) {
     return;
   }
   const deny = action.action_id === "cg_deny";
-  if (durable) {
-    const messageTs = entry.msgTs || ts;
-    if (deny) {
-      const denied = transitionApprovalRequest(id, "pending", "denied", { decidedBy: clicker, reason: `Denied by <@${clicker}>` });
-      if (!denied) return;
-      try {
-        await client.chat.update({ channel: entry.channelId, ts: messageTs, text: "Denied", blocks: [{ type: "section", text: { type: "mrkdwn", text: `🔒 *${entry.toolName}* — 🚫 Denied by <@${clicker}>.` } }] });
-      } catch { /* message gone */ }
-      return;
-    }
-    if (typeof durableApprovalExecutor !== "function") {
-      try {
-        await client.chat.postEphemeral({ channel, user: clicker, thread_ts: ts, text: "The gateway cannot start durable approvals right now. This request remains pending; try the button again after restart." });
-      } catch { /* no ephemeral scope */ }
-      return;
-    }
-    const claimed = transitionApprovalRequest(id, "pending", "executing", {
-      decidedBy: clicker,
-      reason: `Approved by <@${clicker}>`,
-    });
-    if (!claimed) return;
-    let result;
+  // From here the decision is identical to the admin API's: one shared applier owns the scope
+  // semantics, the durable state machine and the card update. This handler keeps only the parts
+  // that are genuinely Slack-shaped — the ephemeral refusals.
+  const result = await applyApprovalDecision({
+    id,
+    entry,
+    durable,
+    decision: deny ? "deny" : "approve",
+    scope: SCOPE_BY_ACTION[action.action_id] || "once",
+    actorId: clicker,
+    client,
+    messageTs: ts,
+  });
+  if (!result.ok && result.code === 503) {
     try {
-      result = await durableApprovalExecutor(claimed);
-    } catch (error) {
-      result = { ok: false, error: error.message };
-    }
-    if (result?.ok) {
-      transitionApprovalRequest(id, "executing", "consumed", {
-        jobId: result.id || "",
-        jobLabel: result.label || claimed.action?.label || "background job",
-      });
-      const blocks = [
-        { type: "section", text: { type: "mrkdwn", text: `🔒 *${entry.toolName}* — ✅ Approved by <@${clicker}> and started *${result.label || "background job"}*. This exact approval is now consumed.` } },
-      ];
-      if (result.id) {
-        blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Check status" }, action_id: "cg_bgjob_status", value: result.id }] });
-      }
-      try {
-        await client.chat.update({ channel: entry.channelId, ts: messageTs, text: "Approved and started", blocks });
-      } catch { /* message gone; the job's own started note still posts */ }
-    } else {
-      transitionApprovalRequest(id, "executing", "failed", { error: String(result?.error || "the job could not be started").slice(0, 500) });
-      try {
-        await client.chat.update({
-          channel: entry.channelId,
-          ts: messageTs,
-          text: "Approved action could not start",
-          blocks: [{ type: "section", text: { type: "mrkdwn", text: `⚠️ *${entry.toolName}* was approved by <@${clicker}>, but the exact job could not start: ${String(result?.error || "unknown error").slice(0, 500)}` } }],
-        });
-      } catch { /* message gone */ }
-    }
-    return;
-  }
-  if (action.action_id === "cg_approve_thread") {
-    if (!threadAllow.has(entry.runKey)) threadAllow.set(entry.runKey, new Set());
-    threadAllow.get(entry.runKey).add(entry.toolName);
-  } else if (action.action_id === "cg_approve_always") {
-    // Persist: this tool is approved forever in this channel (auto-approved on future prompts).
-    try {
-      await patchChannelMeta(entry.slug, (meta) => ({
-        approvedTools: [...new Set([...(meta?.approvedTools || []), entry.toolName])],
-      }));
-    } catch {
-      /* persist failed — still approve this one */
-    }
-  }
-  entry.finish(deny ? { allow: false, reason: `Denied by <@${clicker}>`, decidedBy: clicker } : { allow: true, reason: `Approved by <@${clicker}>`, decidedBy: clicker });
-  const outcome = deny
-    ? `🚫 Denied by <@${clicker}>.`
-    : action.action_id === "cg_approve_thread"
-      ? `✅ Approved by <@${clicker}> — won't ask again for \`${entry.toolName}\` in this thread.`
-      : action.action_id === "cg_approve_always"
-        ? `✅ Approved by <@${clicker}> — \`${entry.toolName}\` is now approved forever in this channel.`
-        : `✅ Approved by <@${clicker}>.`;
-  try {
-    await client.chat.update({ channel: entry.channelId, ts: entry.msgTs, text: "Resolved", blocks: [{ type: "section", text: { type: "mrkdwn", text: `🔒 *${entry.toolName}* — ${outcome}` } }] });
-  } catch {
-    /* message gone */
+      await client.chat.postEphemeral({ channel, user: clicker, thread_ts: ts, text: "The gateway cannot start durable approvals right now. This request remains pending; try the button again after restart." });
+    } catch { /* no ephemeral scope */ }
   }
 }
 
 export async function handleApprovalCommentSubmit({ ack, body, view, client }) {
   const id = view?.private_metadata;
-  const volatileEntry = pendingApprovals.get(id);
-  const persistedEntry = volatileEntry ? null : getApprovalRequest(id);
-  const durable = Boolean(persistedEntry?.action?.kind === "background_shell");
-  const entry = volatileEntry || (persistedEntry?.status === "pending" ? persistedEntry : null);
+  const { entry, durable } = lookupApproval(id);
   const clicker = body?.user?.id;
   const comment = view?.state?.values?.comment?.text?.value?.trim() || "";
   if (!entry) {
@@ -468,23 +630,6 @@ export async function handleApprovalCommentSubmit({ ack, body, view, client }) {
     return;
   }
   await ack();
-  if (durable) {
-    transitionApprovalRequest(id, "pending", "denied", {
-      reason: `Changes requested by <@${clicker}>`,
-      comment,
-      decidedBy: clicker,
-    });
-  } else {
-    entry.finish({ allow: false, reason: `Changes requested by <@${clicker}>`, comment, decidedBy: clicker });
-  }
-  try {
-    await client.chat.update({
-      channel: entry.channelId,
-      ts: entry.msgTs,
-      text: "Resolved",
-      blocks: [{ type: "section", text: { type: "mrkdwn", text: `💬 *${entry.toolName}* — changes requested by <@${clicker}>:\n>${comment.replace(/\n/g, "\n>")}` } }],
-    });
-  } catch {
-    /* message gone */
-  }
+  // Request-changes is a DENY that carries feedback — same shared applier, same card update.
+  await applyApprovalDecision({ id, entry, durable, decision: "deny", comment, actorId: clicker, client });
 }
