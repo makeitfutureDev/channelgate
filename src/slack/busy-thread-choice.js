@@ -11,6 +11,9 @@ import {
 export const BUSY_THREAD_STEER_ACTION = "cg_busy_thread_steer";
 export const BUSY_THREAD_QUEUE_ACTION = "cg_busy_thread_queue";
 export const BUSY_THREAD_CANCEL_ACTION = "cg_busy_thread_cancel";
+// The three answers a busy-thread card accepts, in button order. Exported so the admin approvals
+// API validates against this list rather than a copy of it.
+export const BUSY_THREAD_CHOICES = ["steer", "queue", "cancel"];
 
 // One durable, expiring store of "a Slack message is waiting on a button" records, keyed by the
 // KIND of question asked: the busy-thread card (steer / queue / cancel) and the harness-switch card
@@ -64,6 +67,29 @@ export function createBusyThreadChoiceStore({ ttlMs = 10 * 60 * 1000, maxEntries
       if (claimed.has(id)) return { ok: false, reason: "claimed" };
       claimed.add(id);
       return { ok: true, record };
+    },
+    // Every card of this kind still waiting on a decision (expired ones swept first). The admin
+    // approvals API lists these beside the permission cards.
+    list() {
+      sweep();
+      return mine();
+    },
+    // Claim a card on behalf of the person who raised it. The admin approvals API resolves the
+    // same card an authorized Slack user could click; the ownership rule above is a chat-UI guard
+    // (only the sender of THAT message may click), not an authority boundary the admin session
+    // has to pass a second time.
+    takeAsAdmin(id) {
+      const record = getPendingRunChoice(String(id || ""));
+      if (!record || kindOf(record) !== kind) return { ok: false, reason: "expired" };
+      return this.take(id, record.event?.user || "", "");
+    },
+    // Remember which Slack message carries this card, so a decision made ANYWHERE (the buttons or
+    // the admin API) can retire the card instead of leaving a dead one in the thread.
+    noteCard(id, messageTs) {
+      const key = String(id || "");
+      const record = getPendingRunChoice(key);
+      if (!record || kindOf(record) !== kind || !messageTs) return false;
+      return recordPendingRunChoice(key, { ...record, choiceMessageTs: String(messageTs) });
     },
     accept(id, runId, rec) {
       const accepted = acceptPendingRunChoice(String(id || ""), runId, rec);
@@ -166,13 +192,20 @@ export async function handleBusyThreadChoice({ ack, body, action, client }, { pr
     return outcome;
   }
 
-  const messageTs = body?.message?.ts;
+  const messageTs = body?.message?.ts || outcome.record?.choiceMessageTs || "";
+  return applyBusyThreadChoice({ choiceId, record: outcome.record, choice, client, channel, messageTs, processMessage });
+}
 
+// The half of a busy-thread decision that is NOT Slack-shaped, shared by the button handler and
+// the admin approvals API: cancel drops the waiting message durably, steer/queue re-enter the
+// pipeline with the exact stored event. Whoever calls this has already claimed the card through
+// the store (take / takeAsAdmin), which is what makes a double resolution impossible.
+export async function applyBusyThreadChoice({ choiceId, record, choice, client, channel = "", messageTs = "", processMessage }) {
   // Cancel never re-enters the pipeline: the pending message is dropped durably (so no restart or
   // stale click can resurrect it) and the run in progress is deliberately left untouched.
   if (choice === "cancel") {
     busyThreadChoices.discard(choiceId);
-    if (channel && messageTs) {
+    if (client?.chat?.update && channel && messageTs) {
       await client.chat.update({
         channel,
         ts: messageTs,
@@ -185,13 +218,13 @@ export async function handleBusyThreadChoice({ ack, body, action, client }, { pr
 
   let accepted = false;
   try {
-    await processMessage(outcome.record.event, client, {
-      ...(outcome.record.options || {}),
+    await processMessage(record.event, client, {
+      ...(record.options || {}),
       busyChoice: choice,
       busyChoiceId: choiceId,
       onBusyChoiceAccepted: ({ runId, rec }) => {
         accepted = busyThreadChoices.accept(choiceId, runId, rec);
-        if (accepted && channel && messageTs) {
+        if (accepted && client?.chat?.delete && channel && messageTs) {
           // The user's follow-up already remains visible in Slack. Once its choice is accepted,
           // remove the temporary bot card instead of turning it into a second persistent message.
           client.chat.delete({ channel, ts: messageTs }).catch(() => {});

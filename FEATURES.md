@@ -1707,6 +1707,25 @@ are retired, bullet by bullet; everything else stands.
 ## Administration
 - Admin web UI + REST API: per-channel allowedUsers / allowedMcps / skills / adminMode.
 - Admin web UI: per-user Composio token + admin flag.
+- **Admin approvals API — an approval card no longer needs a chat client to resolve.**
+  `GET /api/approvals` lists everything waiting on a human: permission prompts and control-plane
+  sign-offs held open by their MCP call, durable `background_shell` requests that survive a restart,
+  and busy-thread *Steer / Add to Queue / Cancel* cards — each with its conversation, requester,
+  tool, a clipped command/plan preview (the same text the card already shows in the thread), its age
+  and, for a card that times out, its expiry. Never a token or any other value.
+  `POST /api/approvals/:id` with `{ decision: "approve" | "deny", scope?: "once" | "thread" |
+  "forever" }` resolves one, and `POST /api/approvals/thread-choice/:id` with `{ choice: "steer" |
+  "queue" | "cancel" }` resolves a busy-thread card. Both go through the SAME applier the buttons
+  use — one function, not a re-implementation and not a faked chat payload — so the scope semantics
+  (the per-thread allow-list, `meta.approvedTools` for *forever*), the durable compare-and-swap that
+  stops an approved action from running twice, the release of the waiting MCP call, the requester
+  binding and the card edit in the thread all behave exactly as a click does. Unknown or expired →
+  404; already decided (by a click, an earlier call, or the state machine) → 409. The admin session
+  IS the principal — the `/api/runs` API key never reaches these routes — so it satisfies an
+  admin-tier request the way an admin's own click does, and every resolution writes an
+  `approval_resolved_by_admin` audit event naming the principal (`admin UI`), the decision and the
+  scope, never the command. The Overview page carries the same queue with Approve/Deny buttons and a
+  scope picker. → TEST-PLAN: Modes & approvals.
 - Reveal-able token fields: every gateway token input (Slack bot/app/signing, org-default
   Composio/Skills/Toolbox, per-channel and per-user tokens) shows its stored value masked (first
   few + last 4 chars) with an eye toggle (inline SVG) to reveal the full token. Token values are

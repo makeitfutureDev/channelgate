@@ -891,12 +891,15 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         options: { botUserId, teamId, bypassMention, activeViewContext, busyTargetRunId: busyTarget.runId || "" },
       });
       try {
-        await client.chat.postMessage({
+        const card = await client.chat.postMessage({
           channel: event.channel,
           thread_ts: threadKey,
           text: "This thread is already running. Choose whether to steer the conversation or add your message to the queue.",
           blocks: busyThreadChoiceBlocks(choiceId),
         });
+        // Remember the card's message so a decision that does NOT come from a click on it — the
+        // admin approvals API — can still retire it instead of leaving a dead card in the thread.
+        if (card?.ts) busyThreadChoices.noteCard(choiceId, card.ts);
       } catch (error) {
         busyThreadChoices.discard(choiceId);
         throw error;

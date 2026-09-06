@@ -60,7 +60,8 @@ instructions, gateway guide, tokens) posts a Slack Approve/Deny card and
 BLOCKS until someone clicks — the Approve click must come from someone who could authorize the
 change themselves (admin-tier tools need an admin's click, manage-tier a manager's; anyone
 eligible may Deny or Comment) — auto mode and admin mode do not skip it, and a deny or ~4-minute
-timeout refuses the change. `update_gateway` is the one exception: for an admin author it starts
+timeout refuses the change. A gateway admin can decide the same card from the admin web UI instead
+of clicking in chat; that counts as an admin's decision and is recorded as the *admin UI*. `update_gateway` is the one exception: for an admin author it starts
 without an extra card when the channel is already in Auto or Admin mode; Read/Worker modes still
 prompt. `restart_gateway` skips the extra card only in Admin mode; Auto/Read/Worker still prompt.
 Schedules are NOT in this list: `create_schedule`/`delete_schedule` never ask (see

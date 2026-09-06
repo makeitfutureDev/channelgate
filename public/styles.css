@@ -380,6 +380,13 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .dash-range { flex: none; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 11px; border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; }
 
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 14px; margin-bottom: 20px; }
+/* Overview → Pending approvals. Reuses the active-session row; the decision cluster gets fixed
+   widths so Approve/Deny line up down the list instead of tracking each row's text width. */
+#dash-approvals:not(:empty) { margin-bottom: 20px; }
+#dash-approvals .active-main { flex: 1; }
+#dash-approvals .since { width: 62px; text-align: right; }
+#dash-approvals select { flex: none; width: 124px; margin-left: 6px; }
+#dash-approvals button { flex: none; margin-left: 6px; }
 .kpi { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 15px 18px; }
 .kpi-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); }
 .kpi-value { font-size: 26px; font-weight: 700; margin-top: 6px; line-height: 1.1; font-variant-numeric: tabular-nums; }

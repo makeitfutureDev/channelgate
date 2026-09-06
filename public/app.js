@@ -711,6 +711,103 @@ function startActiveRunsStream() {
   activeRunsSource.addEventListener("error", () => { activeRunsLive = false; });
 }
 
+// ── Pending approvals (Overview) ─────────────────────────────────────────────────
+// An approval card normally waits for someone to click it in the chat client, which leaves a run
+// stuck whenever nobody is watching the thread. This panel resolves the same request from here:
+// the API behind it goes through the identical handler as the button, so the scope (once / this
+// thread / forever), the audit event, the card update and the requester binding are the same.
+let PENDING_APPROVALS = { approvals: [], threadChoices: [] };
+// #dash-body is a stable element whose innerHTML is replaced on every dashboard load, so the
+// delegated click handler is attached exactly once — re-attaching per load would stack listeners
+// and turn one click into N requests (the first decides, the rest 409).
+let dashApprovalsWired = false;
+
+async function loadPendingApprovals() {
+  try {
+    const data = await api("/api/approvals");
+    PENDING_APPROVALS = { approvals: data.approvals || [], threadChoices: data.threadChoices || [] };
+  } catch {
+    // Best-effort, exactly like the active-sessions read: an Overview that cannot list approvals
+    // must still render everything else.
+    PENDING_APPROVALS = { approvals: [], threadChoices: [] };
+  }
+  renderPendingApprovals();
+}
+
+const SCOPE_LABEL = { once: "Once", thread: "This thread", forever: "Forever" };
+
+function renderPendingApprovals() {
+  const host = document.getElementById("dash-approvals");
+  if (!host) return;
+  const { approvals, threadChoices } = PENDING_APPROVALS;
+  const total = approvals.length + threadChoices.length;
+  if (!total) {
+    host.innerHTML = "";
+    return;
+  }
+  const now = Date.now();
+  const age = (iso) => (iso ? fmtDuration(Math.max(0, now - Date.parse(iso))) : "—");
+  const approvalRows = approvals.map((a) => {
+    const summary = a.summary ? a.summary + (a.summaryTruncated ? "…" : "") : a.label || "";
+    const scopes = a.scopes && a.scopes.length > 1
+      ? `<select class="audit-filter" data-approval-scope="${escapeHtml(a.id)}">${a.scopes.map((sc) => `<option value="${escapeHtml(sc)}">${escapeHtml(SCOPE_LABEL[sc] || sc)}</option>`).join("")}</select>`
+      : "";
+    return `<div class="active-item" data-approval-row="${escapeHtml(a.id)}">
+      <span class="active-main">
+        <span class="conv"><strong>${escapeHtml(a.tool || a.kind)}</strong> · ${escapeHtml(a.channelName || a.channelId)} · ${escapeHtml(a.requesterName || a.requesterId)}</span>
+        <span class="active-runtime">${escapeHtml(summary)}</span>
+      </span>
+      <span class="since">${escapeHtml(age(a.createdAt))}</span>
+      ${scopes}
+      <button type="button" data-approve="${escapeHtml(a.id)}">Approve</button>
+      <button type="button" class="ghost" data-deny="${escapeHtml(a.id)}">Deny</button>
+    </div>`;
+  }).join("");
+  const choiceRows = threadChoices.map((c) => `<div class="active-item" data-approval-row="${escapeHtml(c.id)}">
+      <span class="active-main">
+        <span class="conv"><strong>Busy thread</strong> · ${escapeHtml(c.channelName || c.channelId)} · ${escapeHtml(c.requesterName || c.requesterId)}</span>
+        <span class="active-runtime">a new message is waiting on Steer / Queue / Cancel</span>
+      </span>
+      <span class="since">${escapeHtml(age(c.createdAt))}</span>
+      <button type="button" data-choice="steer" data-choice-id="${escapeHtml(c.id)}">Steer</button>
+      <button type="button" class="ghost" data-choice="queue" data-choice-id="${escapeHtml(c.id)}">Queue</button>
+      <button type="button" class="ghost" data-choice="cancel" data-choice-id="${escapeHtml(c.id)}">Cancel</button>
+    </div>`).join("");
+  host.innerHTML = `<div class="chart-card">
+      <div class="chart-title"><h3>Pending approvals</h3><span class="chart-peak">${fmtNum(total)} waiting</span></div>
+      ${approvalRows}${choiceRows}
+      <p class="hint" style="margin:10px 0 0">Deciding here is the same decision as clicking the card in the conversation — it is recorded as the <strong>admin UI</strong>.</p>
+    </div>`;
+}
+
+// One delegated handler for both kinds of row. Buttons disable while the request is in flight so a
+// double click cannot send a second decision, and the list is re-read afterwards either way.
+async function resolveApprovalFromDash(target) {
+  const row = target.closest("[data-approval-row]");
+  const buttons = row ? [...row.querySelectorAll("button")] : [target];
+  for (const b of buttons) b.disabled = true;
+  try {
+    if (target.dataset.approve || target.dataset.deny) {
+      const id = target.dataset.approve || target.dataset.deny;
+      // One row carries at most one scope select, so the row itself is the selector — no need to
+      // quote a server-supplied id into a CSS attribute match.
+      const scopeSel = row?.querySelector("[data-approval-scope]");
+      await api(`/api/approvals/${encodeURIComponent(id)}`, {
+        method: "POST",
+        body: JSON.stringify({ decision: target.dataset.approve ? "approve" : "deny", scope: scopeSel?.value || "once" }),
+      });
+    } else {
+      await api(`/api/approvals/thread-choice/${encodeURIComponent(target.dataset.choiceId)}`, {
+        method: "POST",
+        body: JSON.stringify({ choice: target.dataset.choice }),
+      });
+    }
+  } catch (e) {
+    await infoDialog({ title: "Couldn't resolve that approval", body: e.message });
+  }
+  await loadPendingApprovals();
+}
+
 async function loadDashboard() {
   const body = document.getElementById("dash-body");
   const rangeSel = document.getElementById("dash-range");
@@ -795,6 +892,7 @@ async function loadDashboard() {
 
   body.innerHTML = `
     <div class="kpi-row">${kpiHtml}</div>
+    <div id="dash-approvals"></div>
     <div class="dash-grid">${charts}</div>
     <div class="dash-two">
       <div class="chart-card">
@@ -814,6 +912,18 @@ async function loadDashboard() {
         ${barList(skills, (s) => s.uses, (s) => `${fmtNum(s.uses)} uses`, "#6ea6a1", "No skill usage yet.")}
       </div>
     </div>`;
+
+  // Approvals waiting on a human, decided in place. Painted after the body so the panel is a
+  // separate read: a slow or missing approvals route never delays the rest of the Overview.
+  renderPendingApprovals();
+  void loadPendingApprovals();
+  if (!dashApprovalsWired) {
+    dashApprovalsWired = true;
+    body.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-approve],[data-deny],[data-choice]");
+      if (target) void resolveApprovalFromDash(target);
+    });
+  }
 
   // KPI cards drill in — a view card switches views; the "active" card opens the live-sessions
   // modal. Click or keyboard (Enter/Space).

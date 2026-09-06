@@ -45,6 +45,15 @@ export function findPendingApproval(actionKey) {
   ).get(actionKey));
 }
 
+// Every durable request still awaiting a decision, newest first. The admin approvals API lists
+// these beside the in-memory (long-poll) cards; nothing here is secret — the same fields already
+// render on the Slack card the request posted.
+export function listPendingApprovalRequests(limit = 200) {
+  return getDb().prepare(
+    "SELECT id, action_key, status, created_ms, updated_ms, data FROM approval_requests WHERE status = 'pending' ORDER BY created_ms DESC LIMIT ?",
+  ).all(Math.max(1, Number(limit) || 1)).map(rowToRecord);
+}
+
 export function createApprovalRequest(record) {
   const now = Number(record.createdAt) || Date.now();
   const stored = { ...record, createdAt: now, updatedAt: now };
