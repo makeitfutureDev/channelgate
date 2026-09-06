@@ -92,8 +92,8 @@ const claude = validateEngineAdapter({
     // WHERE this turn runs (src/runtimes/): the channel's container, resolved once per turn by
     // run.js and put on the context.
     const target = runtimeTargetOr(ctx.target, ctx.cwd);
-    // The gateway relays the ACCESS token of whichever login it resolved (src/gateway/claude-login.js
-    // — the operator's own ~/.claude first), because a container has no login of its own.
+    // Legacy token fields remain accepted in the runner context during migration; the env builder
+    // ignores them. Gateway Claude authentication comes only from the service API environment.
     const claudeOauthToken = ctx.claudeOauthToken ?? r.claudeOauthToken ?? "";
     const idleMs = canUseClaudeWarmPool(r) ? r.keepAliveMs : 0;
     if (idleMs > 0) {
@@ -134,9 +134,7 @@ const claude = validateEngineAdapter({
   // fingerprint is opaque and the orchestrator only ever compares it.
   async updateSmoke(args) {
     const { resolveContainerClaudeToken } = await import("../gateway/claude-token-relay.js");
-    const relay = await resolveContainerClaudeToken({ minFreshMs: 0, refresh: async () => {
-      throw new Error("Claude login expired; refresh the operator login before updating");
-    } });
+    const relay = await resolveContainerClaudeToken();
     if (!relay.token && relay.source !== "api-key") throw new Error(relay.error || "Claude login is unavailable");
     return runClaude({ ...args, claudeOauthToken: relay.token });
   },
@@ -219,14 +217,14 @@ const codex = validateEngineAdapter({
   // one that failed?" The orchestrator only ever compares the opaque fingerprint, so an engine
   // that cannot answer simply doesn't declare this hook.
   updateSmoke: (args) => runCodex({ ...args, clean: true, writable: false, networkMode: "off", artifactDir: args.target.artifactDir }),
-  credentialState: () => readCodexAuthState({ codexHome: codexEngineHome() }),
+  credentialState: () => readCodexAuthState({ daemonOnly: true }),
   // `codex --version` answers "is the CLI installed", which stays true for a logged-OUT host — so
   // the credential is probed too. It never flips `ready` (an unauthenticated CLI is still present,
   // and the run path fails over on its own); it is reported so boot logs and the admin rail can
   // say "signed out" instead of leaving the operator to infer it from stalled turns.
   async health(options) {
     const base = await commandHealth("codex", options);
-    const auth = await readCodexAuthState({ codexHome: codexEngineHome() }).catch((error) => ({
+    const auth = await readCodexAuthState({ daemonOnly: true }).catch((error) => ({
       known: false, authenticated: false, method: "", detail: String(error?.message || error), source: "",
     }));
     return { ...base, auth: { known: auth.known, authenticated: auth.authenticated, method: auth.method, detail: auth.detail } };

@@ -1,14 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const scratch = mkdtempSync(path.join(os.tmpdir(), "cg-vscode-test-"));
 process.env.CHANNELGATE_DIR = path.join(scratch, "gateway");
-const { createEditorLease, activeEditorLeases } = await import("../src/runtimes/container/editor-lease.js");
+const { createEditorLease, activeEditorLeases, editorLeaseDir } = await import("../src/runtimes/container/editor-lease.js");
 const { createContainerReaper } = await import("../src/runtimes/container/reaper.js");
-const { vscodeAttachedContainerUri, installVscodeClaudeRelay, launchVscodeContainer } = await import("../src/runtimes/container/vscode.js");
+const { vscodeAttachedContainerUri, launchVscodeContainer } = await import("../src/runtimes/container/vscode.js");
 
 test.after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -41,37 +41,27 @@ test("signed editor lease keeps the reaper from stopping a container and release
   assert.deepEqual(await reaper.tick(), [t.container.name]);
 });
 
-test("Claude editor wrapper uses the refreshed relay only when a run did not inject one", async () => {
-  const t = target("auth");
-  const calls = [];
-  const result = await installVscodeClaudeRelay(t, "podman", {
-    resolveToken: async () => ({ token: "test-oauth-value", source: "operator", expiresAt: 123 }),
-    runCommand: async (bin, args, options) => calls.push({ bin, args, options }),
-  });
-  assert.equal(result.source, "operator");
-  assert.equal(readFileSync(result.tokenFile, "utf8"), "test-oauth-value");
-  assert.equal(calls[0].bin, "podman");
-  assert.match(calls[0].options.input, /\[ -z "\$\{CLAUDE_CODE_OAUTH_TOKEN:-\}" \]/);
-  assert.match(calls[0].options.input, /exec \/usr\/local\/bin\/claude "\$@"/);
+test("agent-writable lease symlinks cannot make the daemon inspect or delete unrelated files", () => {
+  const t = target("lease-path");
+  const unrelated = path.join(scratch, "unrelated");
+  mkdirSync(unrelated);
+  writeFileSync(path.join(unrelated, "keep.json"), "unrelated file");
+  symlinkSync(unrelated, path.join(t.artifactDir, "editor-leases"), "dir");
+  assert.deepEqual(activeEditorLeases(t), []);
+  const lease = createEditorLease(t);
+  assert.ok(editorLeaseDir(t).startsWith(process.env.CHANNELGATE_DIR));
+  assert.equal(activeEditorLeases(t).length, 1);
+  lease.release();
+  assert.equal(readFileSync(path.join(unrelated, "keep.json"), "utf8"), "unrelated file");
 });
 
-test("an API-key-only Claude identity is not disclosed to an interactive editor", async () => {
-  await assert.rejects(
-    installVscodeClaudeRelay(target("api-key"), "podman", {
-      resolveToken: async () => ({ token: "", source: "api-key", expiresAt: 0 }),
-      runCommand: async () => assert.fail("no container write should occur"),
-    }),
-    /deliberately not exported/,
-  );
-});
-
-test("launcher holds an external lease until code --wait exits and removes the token", async () => {
+test("launcher holds an external lease until code --wait exits without exporting daemon authentication", async () => {
   const t = target("launch");
   let codeSawLease = false;
   await launchVscodeContainer(t, {
     cliBin: "podman",
     refreshMs: 60_000,
-    resolveToken: async () => ({ token: "test-token", source: "settings", expiresAt: 0 }),
+    resolveToken: async () => assert.fail("must not resolve a daemon credential"),
     runCommand: async (bin, args) => {
       if (bin === "code") {
         codeSawLease = activeEditorLeases(t).length === 1;

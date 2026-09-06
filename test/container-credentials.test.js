@@ -2,7 +2,7 @@
 // the daemon calls: helperCommand, spawn/probe/signal, boot and health.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createFakeCli, inspectLine } from "./container-fake-cli.js";
@@ -62,7 +62,7 @@ test("prepareTarget is pure: same inputs, same target, no container touched", ()
   assert.equal(a.container.uid, process.getuid());
   assert.equal(a.container.gid, process.getgid());
   assert.deepEqual(a.container.limits, { pidsLimit: 1024, memory: "2g", cpus: "4" });
-  assert.deepEqual(a.container.credentialMode, { claude: "token", codex: "shared-file" });
+  assert.deepEqual(a.container.credentialMode, { claude: "service-api", codex: "container-login" });
   assert.equal(a.container.imageId, "", "the image id is resolved by ensureUp, not by prepareTarget");
   assert.equal(a.container.appliedLimits, null);
   assert.ok(Array.isArray(a.container.mounts) && a.container.mounts.length >= 5);
@@ -74,94 +74,19 @@ test("prepareTarget is pure: same inputs, same target, no container touched", ()
   assert.match(a.artifactDir, /[\\/]\.runtime[\\/]slack[\\/]pure-chan$/);
 });
 
-test("Claude: token, else a RELAY of the resolved login — the login file is NEVER copied into a container", () => {
-  const credFile = credentials.claudeCredentialsFile();
-  const operatorFile = path.join(operatorClaudeConfigDir(), ".credentials.json");
-  rmSync(credFile, { force: true });
-  rmSync(operatorFile, { force: true });
-
-  const withToken = credentials.settleCredentialModes({ ...BASE, hasClaudeOauthToken: true }, NO_CODEX_ENV);
-  assert.equal(withToken.modes.claude, "token");
-  assert.equal(withToken.claudeSource, "", "a configured token means nothing is copied or mounted");
-
-  const noLogin = credentials.settleCredentialModes(BASE, NO_CODEX_ENV);
-  assert.equal(noLogin.modes.claude, "missing");
-
-  // The OPERATOR's own login is the normal case now that nothing plants a copy in the engine home:
-  // a container settles to "relay" purely because the host user is signed in.
+test("host logins never become container mounts or credentials", () => {
+  writeClaudeCredentials();
   writeOperatorCredentials();
-  const viaOperator = credentials.settleCredentialModes(BASE, NO_CODEX_ENV);
-  assert.equal(viaOperator.modes.claude, "relay");
-  assert.equal(viaOperator.claudeSource, operatorFile);
-  assert.equal(credentials.credentialError({ container: { credentialMode: viaOperator.modes } }, "claude", NO_CODEX_ENV), null);
-  rmSync(operatorFile, { force: true });
-
-  // A login somebody signed the gateway's own engine home in with is RELAYED the same way (its
-  // current access token rides the exec env), never copied: a copy forks the refresh chain and a
-  // refresh in the container rotates the gateway itself out (live incident, 2026-09-02).
-  writeClaudeCredentials();
-  const relayed = credentials.settleCredentialModes(BASE, NO_CODEX_ENV);
-  assert.equal(relayed.modes.claude, "relay");
-  assert.equal(relayed.claudeSource, credFile);
-  assert.equal(typeof credentials.stageClaudeSeed, "undefined", "no seed-staging code path may exist");
-  assert.match(credentials.CLAUDE_MISSING_MESSAGE, /setup-token/);
-  assert.match(credentials.CLAUDE_MISSING_MESSAGE, /Sign in with `claude` on the gateway host/);
-});
-
-test("Codex: the resolved auth FILE is shared read-write; no file at all is a refusal", () => {
-  const engineAuth = path.join(codexEngineHome(), "auth.json");
-  rmSync(engineAuth, { force: true });
-
-  const missing = credentials.settleCredentialModes(BASE, NO_CODEX_ENV);
-  assert.equal(missing.modes.codex, "missing");
-  assert.equal(missing.codexAuthFile, "");
-
   mkdirSync(codexEngineHome(), { recursive: true });
-  writeFileSync(engineAuth, '{"tokens":{"refresh_token":"r"}}', { mode: 0o600 });
-  const shared = credentials.settleCredentialModes(BASE, NO_CODEX_ENV);
-  assert.equal(shared.modes.codex, "shared-file");
-  assert.equal(shared.codexAuthFile, engineAuth);
-  // The engine home is preferred over the host CODEX_HOME, in the same order the runner resolves it.
-  assert.deepEqual(credentials.codexAuthCandidates(NO_CODEX_ENV), [engineAuth, path.join(NO_CODEX_ENV.CODEX_HOME, "auth.json")]);
-  rmSync(engineAuth, { force: true });
-});
-
-test("credentialError names the remedy per engine and stays silent when the engine can run", () => {
-  const ok = target("cred-ok");
-  ok.container.credentialMode = { claude: "token", codex: "shared-file" };
-  assert.equal(credentialError(ok, "claude"), null);
-  assert.equal(credentialError(ok, "codex"), null);
-
-  const bad = target("cred-bad");
-  bad.container.credentialMode = { claude: "missing", codex: "missing" };
-  assert.match(credentialError(bad, "claude").message, /no Claude login to relay.*claude setup-token.*Settings → Container runtime/s);
-  assert.match(credentialError(bad, "codex").message, /Codex is not signed in — run `codex login` on the gateway host/);
-
-  const tokenMode = target("cred-token");
-  tokenMode.container.credentialMode = { claude: "token", codex: "shared-file" };
-  tokenMode.container.codexAuthFile = writeClaudeCredentials();
-  assert.equal(credentialError(tokenMode, "claude"), null);
-  assert.equal(credentialError(tokenMode, "codex"), null);
-  const noToken = target("cred-none");
-  noToken.container.credentialMode = { claude: "missing", codex: "shared-file" };
-  assert.match(String(credentialError(noToken, "claude")?.message), /setup-token/, "no login at all = fail closed, never a copy");
-  const relayMode = target("cred-relay");
-  relayMode.container.credentialMode = { claude: "relay", codex: "shared-file" };
-  writeClaudeCredentials();
-  assert.equal(credentialError(relayMode, "claude"), null, "a readable gateway login can be relayed");
-  rmSync(credentials.claudeCredentialsFile(), { force: true });
-  assert.match(String(credentialError(relayMode, "claude")?.message), /no Claude login to relay/);
-
-  // The gate must be right even when it is called BEFORE ensureUp has settled the target, where
-  // the modes are still the pure "intent" prepareTarget produced.
-  const unsettled = target("cred-unsettled");
-  assert.deepEqual(unsettled.container.credentialMode, { claude: "relay", codex: "shared-file" });
-  rmSync(credentials.claudeCredentialsFile(), { force: true });
-  assert.match(credentialError(unsettled, "claude").message, /no Claude login to relay/);
-  assert.match(credentialError(unsettled, "codex", NO_CODEX_ENV).message, /Codex is not signed in/);
-  const notes = credentials.credentialNotes(tokenMode);
-  assert.ok(!notes.some((n) => /copy of the gateway's Claude login/.test(n)), "no copy-mode note may exist");
-  assert.ok(notes.some((n) => /sign-in file is shared/.test(n)));
+  writeFileSync(path.join(codexEngineHome(), "auth.json"), '{"tokens":{"refresh_token":"host-fixture"}}');
+  const settled = credentials.settleCredentialModes({ hasClaudeOauthToken: true }, {});
+  assert.deepEqual(settled.modes, { claude: "missing", codex: "container-login" });
+  assert.equal(settled.codexAuthFile, "");
+  const t = target("no-shared-auth");
+  assert.ok(!t.container.mounts.some((m) => m.kind === "codex-auth"));
+  assert.match(credentialError(t, "claude", {}).message, /ANTHROPIC_API_KEY/);
+  assert.equal(credentialError(t, "codex", {}), null, "the native CLI determines its own channel login");
+  assert.equal(credentialError(t, "claude", { ANTHROPIC_API_KEY: "service-fixture" }), null);
 });
 
 test("the container environment always points HOME and both engine state dirs into the HOME volume", async () => {
@@ -264,7 +189,7 @@ test("ensureUp settles the credential modes onto the target and drops the Codex 
     assert.equal(t.container.imageVersion, "1.0.0");
     assert.equal(t.container.uidStrategy, "keep-id");
     // A gateway login on disk is relayed as an access token at spawn (never copied — credentials.js).
-    assert.deepEqual(t.container.credentialMode, { claude: "relay", codex: "missing" });
+    assert.deepEqual(t.container.credentialMode, { claude: "api-key", codex: "container-login" });
     assert.ok(!t.container.mounts.some((m) => m.kind === "codex-auth"), "no Codex login means no Codex mount");
     const run = fake.last("run");
     assert.ok(!run.some((arg) => typeof arg === "string" && arg.includes("/.codex/auth.json")));
@@ -272,18 +197,12 @@ test("ensureUp settles the credential modes onto the target and drops the Codex 
     // Nothing credential-shaped is ever staged on the host side of a mount.
     assert.ok(!existsSync(path.join(t.artifactDir, "seed")), "no Claude credential seed may be staged");
 
-    // A Codex login that appears between two ensureUp passes must come BACK as a mount: the
-    // out-of-band retry re-runs ensureUp on the same target object.
+    // A host sign-in appearing later cannot add a mount on a subsequent resolve.
     mkdirSync(codexEngineHome(), { recursive: true });
-    writeFileSync(path.join(codexEngineHome(), "auth.json"), '{"tokens":{"refresh_token":"r"}}', { mode: 0o600 });
+    writeFileSync(path.join(codexEngineHome(), "auth.json"), '{"tokens":{"refresh_token":"r"}}');
     await containerBackend.ensureUp(t, {});
-    const codexMount = t.container.mounts.find((m) => m.kind === "codex-auth");
-    assert.ok(codexMount, "the Codex mount must reappear once the gateway is signed in");
-    assert.equal(codexMount.source, path.join(codexEngineHome(), "auth.json"));
-    assert.equal(codexMount.resolved, true);
-    assert.equal(t.container.credentialMode.codex, "shared-file");
-    assert.equal(t.container.mounts.filter((m) => m.kind === "codex-auth").length, 1, "settling must not duplicate mounts");
-    rmSync(path.join(codexEngineHome(), "auth.json"), { force: true });
+    assert.ok(!t.container.mounts.some((m) => m.kind === "codex-auth"));
+    assert.equal(t.container.credentialMode.codex, "container-login");
   } finally {
     __resetContainerRuntime();
   }
@@ -423,32 +342,16 @@ test("boot and health: an unusable CLI is legible, a usable one lists our contai
   }
 });
 
-test("describe reports state, credential modes and the shared-Codex caveat", async () => {
-  const fake = createFakeCli({
-    kind: "podman",
-    routes: [
-      { match: (a) => a[1] === "inspect", result: { code: 0, stdout: inspectLine({ name: "cg-desc", status: "running", install: currentInstallId(), fingerprint: "c1-live", imageId: "sha256:img" }) } },
-      { match: (a) => a[1] === "exec" && a.includes("stat"), result: { code: 0, stdout: "12345:37\n" } },
-    ],
-  });
+test("describe reports container-owned Codex authentication without host credential inspection", async () => {
+  const fake = createFakeCli({ kind: "podman", routes: [
+    { match: (a) => a[1] === "inspect", result: { code: 0, stdout: inspectLine({ name: "cg-desc", status: "running", install: currentInstallId() }) } },
+  ] });
   __setContainerRuntime({ exec: fake.exec, log: () => {} });
   try {
-    const t = target("desc-chan");
-    t.container.credentialMode = { claude: "copy", codex: "shared-file" };
-    t.container.fingerprint = "c1-live";
-    t.container.codexAuthFile = credentials.claudeCredentialsFile(); // any real file, for the stat comparison
-    writeClaudeCredentials();
-    const described = await containerBackend.describe(t);
-    assert.equal(described.backend, "container");
+    const described = await containerBackend.describe(target("desc-chan"));
     assert.equal(described.state, "running");
-    assert.equal(described.warm, true);
-    assert.equal(described.containerName, t.container.name);
-    assert.equal(described.fingerprintMatch, true);
-    assert.deepEqual(described.credentialMode, { claude: "copy", codex: "shared-file" });
-    assert.ok(described.notes.some((n) => /sign-in file is shared/.test(n)));
-    assert.equal(described.codexAuth.shared, true);
-    assert.equal(described.codexAuth.current, false, "a different inode inside means the container holds an older login");
-  } finally {
-    __resetContainerRuntime();
-  }
+    assert.ok(described.notes.some((n) => /no host auth.json/.test(n)));
+    assert.equal(described.codexAuth, undefined);
+    assert.ok(!fake.calls.some((c) => c.argv.includes("stat")));
+  } finally { __resetContainerRuntime(); }
 });

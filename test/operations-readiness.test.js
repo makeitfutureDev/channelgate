@@ -131,7 +131,10 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   const systemd = readFileSync(path.join(root, "scripts/install-systemd.sh"), "utf8");
   const uninstall = readFileSync(path.join(root, "scripts/uninstall-systemd.sh"), "utf8");
   assert.match(systemd, /User=\$SERVICE_USER/);
-  assert.match(systemd, /NoNewPrivileges=true/);
+  assert.match(systemd, /NoNewPrivileges=false/);
+  assert.match(systemd, /Delegate=yes/);
+  assert.match(systemd, /--add-subids-for-system/);
+  assert.match(systemd, /run_as_service "\$NODE_BIN"/);
   assert.match(systemd, /ProtectSystem=strict/);
   // The engines spawn by bare name: the unit must carry an explicit PATH with the resolved CLI
   // dirs (systemd's default PATH won't have nvm/user-prefix installs) and the credential env
@@ -139,7 +142,7 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   assert.match(systemd, /Environment=PATH=\$SERVICE_PATH/);
   assert.match(systemd, /Environment=HOME=\$SERVICE_HOME/);
   assert.match(systemd, /EnvironmentFile=-\$ENV_FILE/);
-  assert.match(systemd, /command -v "\$engine"/);
+  assert.match(systemd, /podman newuidmap newgidmap/);
   // Self-update runs git + npm as the service account inside the checkout, so the installer must
   // hand it ownership (guarded, then proven) instead of leaving root-owned files behind.
   assert.match(systemd, /chown -R "\$SERVICE_USER:\$SERVICE_USER" "\$APP_DIR"/);

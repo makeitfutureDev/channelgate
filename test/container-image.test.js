@@ -160,7 +160,8 @@ test("the container-side helper scripts are present, executable and POSIX-sh cle
   }
   const init = readFileSync(path.join(binDir, "cg-init"), "utf8");
   assert.doesNotMatch(init, /cp .*\.credentials\.json/, "cg-init must never copy a Claude login into the container (2026-09-02 incident)");
-  assert.match(init, /setup-token/, "cg-init documents the token-only rule");
+  assert.match(init, /service API credentials/, "cg-init documents the service-authentication boundary");
+  assert.match(init, /rm -f "\$legacy_wrapper"/, "an old gateway relay wrapper is retired inside the container");
 });
 
 // ── The stop path, executed for real ──────────────────────────────────────────────────────────

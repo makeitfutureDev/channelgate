@@ -42,6 +42,17 @@ const cfgValues = (args) => args.filter((value, i) => args[i - 1] === "-c");
 const cfg = (args, prefix) => cfgValues(args).find((value) => value.startsWith(prefix)) || "";
 const cfgJson = (args, prefix) => JSON.parse(cfg(args, prefix).slice(prefix.length));
 
+test("Codex service API authentication is explicit at invocation and cannot be replaced by a channel secret", () => {
+  const target = createFakeRuntime().target();
+  const base = buildCodexEnv({ target }, { ...SOURCE, OPENAI_API_KEY: "service-key" });
+  assert.equal(base.CODEX_API_KEY, "service-key");
+  const selected = buildCodexEnv({ target, extraEnv: { CODEX_API_KEY: "channel-attempt" } }, {
+    ...SOURCE, OPENAI_API_KEY: "default-key", CODEX_API_KEY: "codex-service-key",
+  });
+  assert.equal(selected.CODEX_API_KEY, "codex-service-key");
+  assert.equal(buildCodexEnv({ target }, SOURCE).CODEX_API_KEY, undefined);
+});
+
 test("Claude env inside a container is the IMAGE's, and a channel secret still cannot displace it", () => {
   const rt = createFakeRuntime();
   const target = rt.target();
@@ -58,7 +69,7 @@ test("Claude env inside a container is the IMAGE's, and a channel secret still c
   assert.equal(env.PATH, CONTAINER_PATH, "the daemon's PATH does not exist in the image");
   assert.ok(env.PATH.includes("/opt/channelgate/bin"), "…and the image's own run helpers stay resolvable by name");
   assert.equal(env.TMPDIR, "/tmp", "the container's tmpfs, never the host's per-user temp");
-  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-gateway", "the gateway's token, not the channel's");
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined, "subscription tokens are never injected");
   assert.equal(env.SUPABASE_ACCESS_TOKEN, "sbp_live", "the channel's own secrets still ride in");
   assert.equal(env.XDG_RUNTIME_DIR, undefined, "host locations are dropped, not carried into the image");
   assert.equal(env.SSH_AUTH_SOCK, undefined);
@@ -94,7 +105,7 @@ test("a LOCAL (daemon-own) run relays the gateway's login too, and a channel sec
     extraEnv: { CLAUDE_CODE_OAUTH_TOKEN: "attacker", HOME: "/tmp/hijack" },
     oauthToken: "sk-ant-oat-operator",
   }, SOURCE);
-  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-operator");
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   assert.equal(env.HOME, "/gw/home");
   assert.equal(env.CLAUDE_CONFIG_DIR, "/gw/home/.claude", "the child still keeps the gateway's own state dir");
 });
@@ -130,7 +141,7 @@ test("a containerized Claude turn passes the argv it was given, and nothing host
     strictMcp: true,
   }), "run.js decides the per-run files; the runner passes them through unchanged");
   assert.ok(!spec.args.some((arg) => arg.startsWith(gatewayRoot())), "no daemon-root path is ever named to a containerized engine");
-  assert.equal(spec.env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-gateway");
+  assert.equal(spec.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   assert.equal(spec.env.PATH, CONTAINER_PATH);
 
   rt.children[0].stdout.write(`${JSON.stringify({ type: "result", subtype: "success", result: "ok", session_id: "s-1" })}\n`);

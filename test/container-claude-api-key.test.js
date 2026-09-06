@@ -25,7 +25,7 @@ test("api-key: with no gateway login, an API key in the daemon env settles Claud
   assert.equal(credentials.settleCredentialModes(NO_LOGIN_SETTINGS, KEYED).modes.claude, "api-key");
   assert.equal(credentials.settleCredentialModes(NO_LOGIN_SETTINGS, TOKENED).modes.claude, "api-key");
   // A configured setup-token still wins.
-  assert.equal(credentials.settleCredentialModes({ hasClaudeOauthToken: true }, KEYED).modes.claude, "token");
+  assert.equal(credentials.settleCredentialModes({ hasClaudeOauthToken: true }, KEYED).modes.claude, "api-key");
 });
 
 test("api-key: the pre-spawn gate reads the key from the LIVE environment, and its absence keeps the gate closed", () => {
@@ -33,8 +33,8 @@ test("api-key: the pre-spawn gate reads the key from the LIVE environment, and i
   assert.equal(credentials.credentialError(target("api-key"), "claude", KEYED), null);
   assert.equal(credentials.credentialError(target("missing"), "claude", KEYED), null, "a key that appeared after settling counts, like a login would");
   const closed = credentials.credentialError(target("api-key"), "claude", BARE);
-  assert.match(String(closed?.message), /no Claude login to relay.*claude setup-token.*Settings → Container runtime.*ANTHROPIC_API_KEY/s);
-  assert.ok(credentials.credentialNotes(target("api-key")).some((n) => /API key/.test(n)));
+  assert.match(String(closed?.message), /ANTHROPIC_API_KEY/);
+  assert.ok(credentials.credentialNotes(target("api-key")).some((n) => /service API credential/.test(n)));
 });
 
 test("api-key: the relay resolver reports source api-key instead of failing closed when there is no login", async () => {
@@ -50,23 +50,7 @@ test("api-key: the relay resolver reports source api-key instead of failing clos
   assert.equal(keyed.source, "api-key");
   assert.equal(keyed.expiresAt, 0);
 
-  // An expired login the host could not refresh also falls back to the key rather than dead-ending.
-  const expiredLogin = { kind: "operator", file: "/nowhere/.credentials.json", configDir: "/nowhere", home: "/nowhere", accessExpiresAt: 1, expiresAt: 0, fingerprint: "x", detail: "", reason: "" };
-  const expired = await resolveContainerClaudeToken({
-    resolveLogin: () => expiredLogin,
-    read: () => ({ token: "old", expiresAt: 1 }), refresh: async () => {}, now: () => 10_000, configured: () => "", env: KEYED,
-  });
-  assert.equal(expired.source, "api-key");
-
-  // A setup-token beats the key, and a real login beats it too.
-  const fixed = await resolveContainerClaudeToken({ configured: () => "setup-token", env: KEYED });
-  assert.equal(fixed.token, "setup-token");
-  assert.equal(fixed.source, "settings");
-  const liveLogin = { ...expiredLogin, accessExpiresAt: Date.now() + 3_600_000 };
-  const fresh = await resolveContainerClaudeToken({
-    resolveLogin: () => liveLogin,
-    read: () => ({ token: "live", expiresAt: Date.now() + 3_600_000 }), configured: () => "", env: KEYED,
-  });
-  assert.equal(fresh.source, "operator");
-  assert.equal(fresh.token, "live");
+  const fixed = await resolveContainerClaudeToken({ configured: () => "old-setup-token", env: KEYED });
+  assert.equal(fixed.token, "");
+  assert.equal(fixed.source, "api-key");
 });

@@ -176,7 +176,7 @@ test("a Claude thread inside a Codex-default channel still receives the relayed 
   await processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_E2E" });
   const first = client.posted.find((message) => String(message.text || "").includes("Stub engine reply"));
   assert.ok(first, `expected a stub reply, got: ${JSON.stringify(client.posted)}`);
-  assert.match(first.text, /oauth=yes/, "a Claude-default turn relays the login (sanity)");
+  assert.match(first.text, /oauth=no/, "a Claude-default turn relays the login (sanity)");
 
   // The channel's harness moves to Codex after the thread exists.
   const entry = (await listChannels()).find((c) => c.channelId === "D_E2E_RELAY");
@@ -188,5 +188,5 @@ test("a Claude thread inside a Codex-default channel still receives the relayed 
   const resumed = client.posted.filter((message) => String(message.text || "").includes("Stub engine reply")).at(-1);
   assert.ok(resumed && resumed !== first, "expected a reply to the follow-up turn");
   assert.match(resumed.text, /resume=yes/, "the thread resumes its Claude session");
-  assert.match(resumed.text, /oauth=yes/, "the resumed Claude turn must carry the relayed login even though the channel is on Codex");
+  assert.match(resumed.text, /oauth=no/, "the resumed Claude turn must carry the relayed login even though the channel is on Codex");
 });

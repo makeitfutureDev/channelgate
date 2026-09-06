@@ -105,7 +105,10 @@ test("a Codex sign-in lost mid-turn is answered by Claude, with the reason on th
   assert.match(result.content, /Stub engine reply/);
 });
 
-test("the auth cooldown holds for the SAME credential and releases for a new one", async () => {
+test("the auth cooldown holds for the SAME service API credential and releases after rotation", async (t) => {
+  const savedKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "test-service-before-rotation";
+  t.after(() => { if (savedKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = savedKey; });
   // A cooldown is a memory of a broken credential. Holding it for a fixed window after the
   // operator has already run `codex login` is its own confusing failure ("I fixed it — why is it
   // still answering as Claude?"), so the release is keyed on the credential actually changing.
@@ -132,7 +135,7 @@ test("the auth cooldown holds for the SAME credential and releases for a new one
   assert.match(during.content, /authentication is unavailable right now/i);
 
   // `codex login` rewrites auth.json; the engine home reaches it through a symlink.
-  await writeFile(path.join(process.env.CODEX_HOME, "auth.json"), JSON.stringify({ tokens: { refresh_token: `fresh-${Date.now()}` } }));
+  process.env.OPENAI_API_KEY = "test-service-after-rotation";
 
   const after = await send("hello once more", "1901.028");
   assert.equal(after.engine, "codex", "a replaced credential ends the cooldown immediately");
