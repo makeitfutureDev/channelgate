@@ -4,7 +4,7 @@
   "base": "node:22-bookworm-slim",
   "npm": {
     "@anthropic-ai/claude-code": "2.1.258",
-    "@openai/codex": "0.152.0",
+    "@openai/codex": "0.153.4",
     "mcp-remote": "0.1.38",
     "vercel": "59.11.1",
     "supabase": "2.116.0"
