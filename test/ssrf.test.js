@@ -83,3 +83,25 @@ test("an unresolvable host is refused rather than attempted", async () => {
 test("malformed input is refused", async () => {
   await assert.rejects(() => assertPublicHttpUrl("not a url", { lookup: lookupTo("8.8.8.8") }), /not a valid URL/);
 });
+
+test("mapped and expanded IPv6 use the same address policy through URL and DNS", async () => {
+  for (const address of [
+    "::ffff:127.0.0.1", "::ffff:7f00:1", "0:0:0:0:0:ffff:a00:1",
+    "::ffff:a9fe:a9fe", "0:0:0:0:0:0:0:1", "febf::1", "ff02::1",
+    "64:ff9b:1::a00:1", "2002:7f00:1::", "2001:db8::1", "3fff::1",
+  ]) {
+    assert.ok(classifyAddress(address), address);
+    await assert.rejects(() => assertPublicHttpUrl(`http://[${address}]/`, { lookup: lookupTo("8.8.8.8") }), /refuses/);
+    await assert.rejects(() => assertPublicHttpUrl("https://attachment.example/", { lookup: lookupTo(address) }), /resolves to/);
+  }
+  for (const address of ["::ffff:808:808", "0:0:0:0:0:ffff:8.8.8.8", "2606:4700:0:0:0:0:0:1111"]) {
+    assert.equal(classifyAddress(address), "", address);
+    await assertPublicHttpUrl("https://attachment.example/", { lookup: lookupTo(address) });
+  }
+});
+
+test("invalid or empty DNS results fail closed", async () => {
+  for (const addresses of [[], ["not-an-address"], ["fe80::1%eth0"]]) {
+    await assert.rejects(() => assertPublicHttpUrl("https://attachment.example/", { lookup: lookupTo(...addresses) }));
+  }
+});

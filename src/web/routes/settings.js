@@ -397,17 +397,18 @@ export function createSettingsRouter({
         const arr = Array.isArray(body.followupDoneReactions) ? body.followupDoneReactions : String(body.followupDoneReactions).split(/[\s,]+/);
         patch.followupDoneReactions = arr.map((s) => String(s).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
       }
-      // Admin password (write-only): set when non-empty, or explicitly clear to open the UI.
-      // Stored as an scrypt hash, never cleartext. Any change drops every existing session —
-      // cookies minted under the old password must not outlive it.
-      let passwordChanged = false;
-      if (typeof body.adminPassword === "string" && body.adminPassword.length > 0) {
-        patch.adminPassword = await hashPassword(body.adminPassword);
-        passwordChanged = true;
-      }
-      if (body.clearAdminPassword === true) {
-        patch.adminPassword = "";
-        passwordChanged = true;
+      // Session possession alone cannot authorize replacing the password used by secret reveal.
+      const setPassword = typeof body.adminPassword === "string" && body.adminPassword.length > 0;
+      const clearPassword = body.clearAdminPassword === true;
+      const passwordChanged = setPassword || clearPassword;
+      const passwordBefore = getAdminPassword();
+      if (setPassword && clearPassword) return res.status(400).json({ error: "Choose either a new password or password removal." });
+      if (passwordChanged) {
+        if (passwordBefore && !(await verifyPassword(body.currentAdminPassword, passwordBefore))) {
+          logEvent("admin_password_change_denied", { actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR });
+          return res.status(403).json({ error: "The current admin password is required to change or remove it." });
+        }
+        patch.adminPassword = setPassword ? await hashPassword(body.adminPassword) : "";
       }
       // HTTP run API key (write-only): the bearer credential for POST /api/runs. Set when non-empty,
       // or explicitly clear to disable header-key auth for the run API.
@@ -435,6 +436,7 @@ export function createSettingsRouter({
       // version — an older UI, a script, an integration — is merged in as before.
       const expectVersion =
         typeof body.settingsVersion === "string" || typeof body.settingsVersion === "number" ? String(body.settingsVersion).trim() : "";
+      if (passwordChanged && getAdminPassword() !== passwordBefore) return res.status(409).json({ error: "The admin password changed. Authenticate again before retrying." });
       try {
         saveSettings(patch, { expectVersion });
       } catch (e) {
