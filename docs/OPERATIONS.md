@@ -85,6 +85,38 @@ with no gateway login to relay, `ANTHROPIC_API_KEY` in the daemon's environment 
 Claude inside every container (it crosses through the reviewed passthrough list in
 `src/engines/child-env.js`), so a keyed install never sees "no Claude login to relay".
 
+## Reverse proxies and tunnels
+
+The daemon binds `127.0.0.1`. The supported way to reach it from outside the host — for the admin
+UI over the internet, and for approval links a phone can open — is a tunnel or reverse proxy in
+front of it on the SAME machine (cloudflared, nginx). Set *Settings → Connection → Public URL* to
+the public address: it is what approval links are built from, and its hostname is automatically
+allowed past the DNS-rebinding guard (extra names go in `CG_ALLOWED_HOSTS`).
+
+**Client addresses behind that hop.** Every request then arrives on a loopback socket, so
+`req.ip` — and Express's idea of the client — is `127.0.0.1` for every caller on earth. Two things
+count failures per address: the admin login backoff and the approval-link token backoff. Keyed on
+the socket they would share ONE bucket, and a handful of bad tokens or passwords from anywhere
+would lock out every legitimate admin and every valid approval link. So both read the real client
+through one helper (`clientKey` in `src/web/security.js`): `CF-Connecting-IP` first, then the first
+hop of `X-Forwarded-For`, and **only when the socket itself is loopback** — from a non-loopback
+socket those headers are whatever the client typed and are ignored. A value that is not a valid IP
+address is ignored too.
+
+Notes for operators:
+
+- Express's app-wide `trust proxy` is deliberately NOT enabled: it would also re-point
+  `req.secure` / `req.protocol` / `req.hostname` at client-supplied headers (the Host/Origin guard
+  and the session cookie's `Secure` flag read those headers themselves, deliberately), and it knows
+  nothing about `CF-Connecting-IP`.
+- If your proxy runs on ANOTHER host, the socket is not loopback and the headers are ignored by
+  default. Set `CG_TRUST_PROXY=1` in `.env` to honour `X-Forwarded-For` there — only do this when a
+  proxy you control rewrites that header, or clients can pick their own limiter bucket.
+- Make the proxy set `X-Forwarded-For` rather than append to a client-supplied one. Where it
+  appends (Cloudflare does), `CF-Connecting-IP` is the unforgeable value and is preferred here; a
+  caller who spoofs the first XFF hop can only shed its own backoff, never push someone else into
+  one.
+
 ## The ChannelGate rename migration
 
 `scripts/migrate-channelgate.mjs` moves a pre-rename install onto the current layout:

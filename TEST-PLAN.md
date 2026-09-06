@@ -1442,6 +1442,17 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       mints nothing at all, `auto` needs a public URL before adding links to a surface that already
       has buttons but builds them anyway where there are none, `always` falls back to this
       machine's own address.
+- [x] Automated (`test/approval-links.test.js`, `test/web-security.test.js`): that backoff buckets
+      the REAL client, not the loopback proxy hop every public caller shares. Two bad tokens
+      forwarded from `203.0.113.5` put THAT address into 429 while `203.0.113.6` is still served —
+      including a valid link, which is the regression that let six bad tokens from anywhere disable
+      every approval link; `CF-Connecting-IP` outranks a client-supplied `X-Forwarded-For`; a
+      non-loopback socket ignores both headers unless `CG_TRUST_PROXY` is set; a header that is not
+      an address is ignored.
+- [x] Automated (`test/approval-links.test.js`): a busy-thread link names its conversation by SLUG —
+      the confirmation page's *Conversation* row shows the slug and never the raw channel id, and
+      the `approval_resolved_by_link` row carries the same slug (the record itself has none; it is
+      resolved from the channels index).
 - [ ] Live: in a channel with a `publicUrl` configured, trigger a permission card. Pass when the
       requester (and nobody else) sees an ephemeral with three links; opening one shows the
       confirmation page with the command preview and leaves the card in the thread PENDING; pressing

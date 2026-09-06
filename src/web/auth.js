@@ -8,7 +8,7 @@
 // comment below for why a loopback bind never bought one.
 import crypto from "node:crypto";
 import { getAdminPassword, getApiKey, getSettings, saveSettings } from "../config/settings.js";
-import { timingSafeEqualStr, createLoginLimiter, verifyPassword, hashPassword, isHashedPassword } from "./security.js";
+import { clientKey, timingSafeEqualStr, createLoginLimiter, verifyPassword, hashPassword, isHashedPassword } from "./security.js";
 
 // Sessions expire two ways: IDLE (untouched for this long) and ABSOLUTE (this old regardless of
 // use). Previously the set only grew and a token stayed valid for the daemon's whole lifetime, so
@@ -186,13 +186,12 @@ export function noPasswordLockdown(req, res, next) {
 // Which identity the login backoff counts against. Behind a reverse proxy or tunnel every request
 // arrives from 127.0.0.1, so keying on the socket puts all remote clients in ONE bucket: an
 // attacker's failures lock out the real admin, and distributed guessing looks like one client.
-// X-Forwarded-For fixes that but is client-spoofable, so it's used only when the operator opts in
-// by declaring that a trusted proxy sits in front (CG_TRUST_PROXY).
+// The forwarding headers fix that and are honoured exactly where they cannot be forged — from a
+// loopback socket, which only the proxy in front and this host's own processes can open — or when
+// the operator declares a trusted proxy elsewhere on the network (CG_TRUST_PROXY). One helper,
+// shared with the approval-link router, so both limiters bucket callers the same way.
 export function loginKey(req) {
-  const socketIp = req.socket?.remoteAddress || "unknown";
-  if (!process.env.CG_TRUST_PROXY) return socketIp;
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return forwarded || socketIp;
+  return clientKey(req);
 }
 
 export async function handleLogin(req, res) {

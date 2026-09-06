@@ -11,6 +11,7 @@ import {
   pathWithin,
   resolveWithinRoot,
   timingSafeEqualStr,
+  clientKey,
   createLoginLimiter,
   sanitizeMcpMatch,
   sanitizeCodexMcpSelection,
@@ -76,6 +77,48 @@ test("timingSafeEqualStr: equality without length short-circuit", () => {
   assert.equal(timingSafeEqualStr("hunter2", "hunter22"), false); // different length — no throw
   assert.equal(timingSafeEqualStr("", "x"), false);
   assert.equal(timingSafeEqualStr("", ""), true);
+});
+
+// ── clientKey ───────────────────────────────────────────────────────────────────
+// Everything a per-IP limiter buckets on. The daemon is reached through a loopback tunnel, so the
+// socket address is the same for every caller on earth — the forwarding headers are the only thing
+// that tells them apart, and they may be believed only where they cannot be forged.
+const req = (remoteAddress, headers = {}) => ({ socket: { remoteAddress }, headers });
+
+test("clientKey: a loopback socket is the proxy hop, so its forwarded client is the key", () => {
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "203.0.113.5" })), "203.0.113.5");
+  // A chain: the FIRST hop is the client, the rest are proxies.
+  assert.equal(clientKey(req("::1", { "x-forwarded-for": "203.0.113.5, 198.51.100.2, 10.0.0.3" })), "203.0.113.5");
+  assert.equal(clientKey(req("::ffff:127.0.0.1", { "x-forwarded-for": " 203.0.113.5 " })), "203.0.113.5");
+  // cloudflared OVERWRITES CF-Connecting-IP, while a client can prepend a hop to X-Forwarded-For,
+  // so the unforgeable one wins.
+  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "203.0.113.5" })), "198.51.100.7");
+  // Ports and brackets, as some proxies write them.
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "203.0.113.5:9000" })), "203.0.113.5");
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "[2001:db8::1]:443" })), "2001:db8::1");
+  // Nothing forwarded at all → the socket, i.e. the old behaviour for a direct loopback caller.
+  assert.equal(clientKey(req("127.0.0.1")), "127.0.0.1");
+});
+
+test("clientKey: a non-loopback socket is a client, and a client's header is just a claim", () => {
+  assert.equal(clientKey(req("198.51.100.9", { "x-forwarded-for": "203.0.113.5" })), "198.51.100.9");
+  assert.equal(clientKey(req("198.51.100.9", { "cf-connecting-ip": "203.0.113.5" })), "198.51.100.9");
+  // …unless the operator declares a trusted proxy that is NOT on this host.
+  process.env.CG_TRUST_PROXY = "1";
+  try {
+    assert.equal(clientKey(req("198.51.100.9", { "x-forwarded-for": "203.0.113.5" })), "203.0.113.5");
+  } finally {
+    delete process.env.CG_TRUST_PROXY;
+  }
+});
+
+test("clientKey: only a real address is honoured, so a header cannot fill the limiter's map", () => {
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "not-an-ip" })), "127.0.0.1");
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "unknown" })), "127.0.0.1"); // RFC 7239's placeholder
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "1".repeat(500) })), "127.0.0.1");
+  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "evil; DROP", "x-forwarded-for": "203.0.113.5" })), "203.0.113.5");
+  // No socket at all (a synthetic request) still produces a stable, non-empty bucket.
+  assert.equal(clientKey({}), "unknown");
 });
 
 // ── createLoginLimiter ──────────────────────────────────────────────────────────

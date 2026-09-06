@@ -25,8 +25,8 @@ import { applyBusyThreadChoice, busyThreadChoices, BUSY_THREAD_CHOICE_KIND, BUSY
 import { processMessageEvent } from "../../slack/message-pipeline.js";
 import { consumeApprovalLinkToken, inspectApprovalLinkToken, retireApprovalLinkTokens } from "../../gateway/approval-link-tokens.js";
 import { verifyApprovalLinkToken } from "../approval-links.js";
-import { createLoginLimiter } from "../security.js";
-import { getUsers } from "../../config/store.js";
+import { clientKey, createLoginLimiter } from "../security.js";
+import { getChannelEntry, getUsers } from "../../config/store.js";
 import { logEvent } from "../../util/logger.js";
 
 // The principal a link decision is recorded as. `actorId` is what the waiting agent receives as
@@ -38,7 +38,9 @@ export const APPROVAL_LINK_PRINCIPAL = "link";
 
 // Failed token lookups are the one thing a stranger can drive here, so they get the same per-IP
 // exponential backoff as a failed admin login. A CORRECT token never records a failure, so a
-// person retrying their own link is never slowed down.
+// person retrying their own link is never slowed down. "Per-IP" is per REAL client: these URLs are
+// opened from the internet through a loopback tunnel, and keying on the socket would let six bad
+// tokens from anywhere lock out every legitimate link (see clientKey in ../security.js).
 const DEFAULT_LIMITER = { freeAttempts: 5, baseDelayMs: 1_000, maxDelayMs: 60_000 };
 
 const escapeHtml = (value) =>
@@ -122,15 +124,34 @@ export function approvalLinkActionLabel(action, scope = "") {
   return ACTION_LABEL[action]?.[scope || ""] || ACTION_LABEL[action]?.[""] || ACTION_LABEL[action]?.once || action;
 }
 
+// The conversation's slug for a card that does not carry one. An approval entry is minted with
+// its slug (requestApproval is given both), but a busy-thread record is built from a raw Slack
+// event and knows only the channel id — so the page would name the conversation "C0123456789" and
+// the audit row would carry no slug at all, which is the one field every other approval event is
+// queryable by. The channels index is the same place the admin approvals list reads.
+async function slugForChannel(channelId) {
+  if (!channelId) return "";
+  const entry = await getChannelEntry(channelId).catch(() => null);
+  return entry?.slug || "";
+}
+
 // ── One resolution of "what does this token point at, and may it still act?" ────
 // Shared by GET and POST so the page can never describe a request the POST would refuse. Returns
-// either a refusal reason or everything both halves need.
+// either a refusal reason or everything both halves need — `slug` included, so the confirmation
+// page and the audit row name the conversation the same way on both kinds of card.
 async function resolveToken(claims) {
   if (claims.kind === "thread_choice") {
     const record = busyThreadChoices.list().find((row) => row.id === claims.id);
     if (!record) return { ok: false, reason: "resolved" };
     if (!BUSY_THREAD_CHOICES.includes(claims.action)) return { ok: false, reason: "invalid" };
-    return { ok: true, kind: "thread_choice", record, requesterId: record.authorId || record.event?.user || "" };
+    const channelId = record.channelId || record.event?.channel || "";
+    return {
+      ok: true,
+      kind: "thread_choice",
+      record,
+      slug: record.slug || (await slugForChannel(channelId)),
+      requesterId: record.authorId || record.event?.user || "",
+    };
   }
   const { entry, durable, resolved } = lookupApproval(claims.id);
   if (!entry) return { ok: false, reason: resolved ? "resolved" : "invalid" };
@@ -146,7 +167,7 @@ async function resolveToken(claims) {
   } else if (claims.action !== "deny") {
     return { ok: false, reason: "invalid" };
   }
-  return { ok: true, kind: "approval", entry, durable, requesterId };
+  return { ok: true, kind: "approval", entry, durable, slug: entry.slug || "", requesterId };
 }
 
 export function createApprovalLinkRouter({
@@ -158,7 +179,10 @@ export function createApprovalLinkRouter({
   const router = Router();
   // No body parser at all: the POST carries everything it needs in the URL, the form has no fields,
   // and a router that never reads a body cannot be fed one.
-  const clientIp = (req) => String(req.ip || req.socket?.remoteAddress || "unknown");
+  // The address the backoff counts against: the forwarded client when the request came through
+  // the loopback proxy hop, the socket otherwise. Never `req.ip` alone — behind cloudflared that
+  // is 127.0.0.1 for every caller on earth.
+  const clientIp = (req) => clientKey(req);
 
   // Verify signature + expiry and check the single-use ledger WITHOUT spending it. Both verbs
   // start here; only POST goes on to spend, and only after every refusal has been ruled out — a
@@ -216,10 +240,10 @@ export function createApprovalLinkRouter({
 
       const rows =
         target.kind === "thread_choice"
-          ? [["Conversation", target.record.slug || target.record.channelId || ""], ["Requested by", requesterName]]
+          ? [["Conversation", target.slug || target.record.channelId || ""], ["Requested by", requesterName]]
           : [
               ["Tool", target.entry.toolName || ""],
-              ["Conversation", target.entry.slug || target.entry.channelId || ""],
+              ["Conversation", target.slug || target.entry.channelId || ""],
               ["Requested by", requesterName],
             ];
       const preview =
@@ -283,7 +307,7 @@ export function createApprovalLinkRouter({
         await logEvent("approval_resolved_by_link", {
           channel,
           author: target.requesterId,
-          slug: record.slug || "",
+          slug: target.slug,
           approvalId: claims.id,
           principal: APPROVAL_LINK_PRINCIPAL,
           decision: claims.action,
@@ -321,7 +345,7 @@ export function createApprovalLinkRouter({
       await logEvent("approval_resolved_by_link", {
         channel: target.entry.channelId || "",
         author: target.requesterId,
-        slug: target.entry.slug || "",
+        slug: target.slug,
         approvalId: claims.id,
         principal: APPROVAL_LINK_PRINCIPAL,
         decision: result.decision || decision,
