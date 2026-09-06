@@ -11,7 +11,7 @@
 // is the backstop for turns where the model never called the tool.
 import { mkdir, access, rm, readdir } from "node:fs/promises";
 import path from "node:path";
-import { constants, openSync, readFileSync, writeFileSync, closeSync, renameSync, unlinkSync } from "node:fs";
+import { constants, openSync, readSync, writeFileSync, closeSync, renameSync, unlinkSync, fstatSync, lstatSync, statSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { getDb } from "../db/index.js";
 import { slugify } from "../config/paths.js";
@@ -39,6 +39,10 @@ export function isMemorySaveTool(name) {
 const MEMORY_SKILL = "channel-memory";
 const MEMORY_SKILL_MARKER = ".gateway-memory-skill"; // ours to refresh/remove (≠ library stubs)
 const MAX_OPERATIONS = 25;
+// Storage has no aggregate fact/topic budget. Each file and mutation still needs an I/O bound:
+// these operations run in the daemon and must never block on an agent-created FIFO or huge file.
+export const MAX_MEMORY_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_MEMORY_BATCH_BYTES = 32 * 1024 * 1024;
 // The index is grouped under these headers (seeded on first use). `add` may target one by name;
 // an index without headers (pre-sections channels) just appends — nothing breaks.
 export const MEMORY_SECTIONS = Object.freeze(["People & preferences", "Decisions", "Environment & gotchas", "Project state"]);
@@ -102,7 +106,7 @@ description: This channel's PERSISTENT memory (survives across threads/sessions)
 This channel has persistent memory that survives across threads and sessions:
 
 - \`${MEM_FILE}\` — durable facts and topic references, grouped under sections
-  (${MEMORY_SECTIONS.join(" · ")}). Storage is uncapped; saves land on disk at once.
+  (${MEMORY_SECTIONS.join(" · ")}). Storage has no aggregate budget; each file is limited to 8 MiB and each save batch to 32 MiB for safe daemon I/O.
 - \`${MEM_DIR}/<topic>.md\` — depth (project state, client details, procedures' gotchas).
   Referenced from index lines as \`[[topic]]\`.
 
@@ -281,17 +285,78 @@ export async function applyMemoryOperations(cwd, meta, operations) {
   const ops = Array.isArray(operations) ? operations.filter((o) => o && typeof o === "object") : [];
   if (!ops.length) throw new Error("Nothing to do — pass an action (add, replace, remove, write_topic) or an operations array.");
   if (ops.length > MAX_OPERATIONS) throw new Error(`Too many operations in one call (${ops.length}; max ${MAX_OPERATIONS}).`);
-  for (const op of ops) if (op.action === "write_topic") validateTopicOp(op);
+  let inputBytes = 0;
+  for (const op of ops) {
+    for (const field of ["text", "old", "content", "topic", "section"]) {
+      const bytes = Buffer.byteLength(String(op[field] || ""));
+      if (bytes > MAX_MEMORY_FILE_BYTES) throw new Error("Memory fields must not exceed the 8 MiB per-file I/O limit.");
+      inputBytes += bytes;
+    }
+    if (op.action === "write_topic") validateTopicOp(op);
+  }
+  if (inputBytes > MAX_MEMORY_BATCH_BYTES) throw new Error("Memory batch exceeds the 32 MiB mutation I/O limit.");
   await mkdir(cwd, { recursive: true });
   if (ops.some((op) => op.action === "write_topic")) await ensureRealDir(cwd, MEM_DIR);
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
+  let directories;
   try {
-    const result = applyMemoryOperationsLocked(cwd, meta, ops);
+    // Provisioning may have awaited other work. Pin and validate fresh descriptors under the lock;
+    // every later read, temporary file, rename and rollback is relative to these pinned parents.
+    directories = pinMemoryDirectories(cwd, ops.some((op) => op.action === "write_topic"));
+    const result = applyMemoryOperationsLocked(cwd, meta, ops, directories);
     db.exec("COMMIT");
     return result;
   } catch (error) {
     db.exec("ROLLBACK");
+    throw error;
+  } finally { directories?.close(); }
+}
+
+function sameNode(a, b) { return a.dev === b.dev && a.ino === b.ino; }
+
+function pinMemoryDirectories(cwd, includeTopics) {
+  const opened = [];
+  const directoryFlags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  try {
+    const rootFd = openSync(cwd, directoryFlags);
+    opened.push(rootFd);
+    const root = `/proc/self/fd/${rootFd}`;
+    const rootStat = fstatSync(rootFd);
+    let topics = null;
+    let topicsStat = null;
+    if (includeTopics) {
+      // Keep operator-owned links whose targets remain inside the workspace, but resolve their
+      // target into components and open each with NOFOLLOW. A changed parent can only fail the
+      // save; it cannot redirect any data read/write into the host.
+      const canonicalRoot = realpathSync(root);
+      const relative = path.relative(canonicalRoot, realpathSync(path.join(root, MEM_DIR)));
+      if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        throw new Error("Memory directory changed or escaped the workspace; retry after inspecting it.");
+      }
+      let parent = root;
+      for (const segment of relative.split(path.sep).filter(Boolean)) {
+        const fd = openSync(path.join(parent, segment), directoryFlags);
+        opened.push(fd);
+        parent = `/proc/self/fd/${fd}`;
+      }
+      topics = parent;
+      topicsStat = statSync(topics);
+    }
+    const assertCurrent = () => {
+      const currentRoot = lstatSync(cwd);
+      if (!currentRoot.isDirectory() || !sameNode(currentRoot, rootStat)) throw new Error("Memory workspace moved during the save; inspect the workspace before retrying.");
+      if (topics) {
+        const relative = path.relative(realpathSync(root), realpathSync(path.join(root, MEM_DIR)));
+        if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !sameNode(statSync(path.join(root, MEM_DIR)), topicsStat)) {
+          throw new Error("Memory directory moved during the save; inspect the memory files before retrying.");
+        }
+      }
+    };
+    assertCurrent();
+    return { root, topics, assertCurrent, close: () => { for (const fd of opened.reverse()) closeSync(fd); } };
+  } catch (error) {
+    for (const fd of opened.reverse()) closeSync(fd);
     throw error;
   }
 }
@@ -299,15 +364,30 @@ export async function applyMemoryOperations(cwd, meta, operations) {
 function readMemoryFileSync(file) {
   let fd;
   try {
-    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
-    return readFileSync(fd, "utf8");
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = fstatSync(fd);
+    if (!info.isFile()) throw new Error("Memory path is not a regular file; remove the special file before saving.");
+    if (info.size > MAX_MEMORY_FILE_BYTES) throw new Error("Memory file exceeds the 8 MiB per-file I/O limit; split it into smaller topics before saving.");
+    // Never trust st_size as a read limit: a regular file can grow while we hold its descriptor.
+    const chunks = [];
+    let total = 0;
+    for (;;) {
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, MAX_MEMORY_FILE_BYTES - total + 1));
+      const count = readSync(fd, buffer, 0, buffer.length, null);
+      if (!count) break;
+      total += count;
+      if (total > MAX_MEMORY_FILE_BYTES) throw new Error("Memory file grew beyond the 8 MiB per-file I/O limit during reading.");
+      chunks.push(buffer.subarray(0, count));
+    }
+    return Buffer.concat(chunks, total).toString("utf8");
   } catch (error) {
     if (["ENOENT", "ELOOP", "EISDIR", "ENOTDIR"].includes(error.code)) return null;
     throw error;
   } finally { if (fd !== undefined) closeSync(fd); }
 }
 
-function replaceMemoryFileSync(file, body) {
+function replaceMemoryFileSync(file, body, assertCurrent = () => {}) {
+  assertCurrent();
   const temp = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
   let fd;
   try {
@@ -315,6 +395,7 @@ function replaceMemoryFileSync(file, body) {
     writeFileSync(fd, body);
     closeSync(fd);
     fd = undefined;
+    assertCurrent();
     renameSync(temp, file);
   } finally {
     if (fd !== undefined) closeSync(fd);
@@ -322,8 +403,8 @@ function replaceMemoryFileSync(file, body) {
   }
 }
 
-function applyMemoryOperationsLocked(cwd, meta, ops) {
-  const memPath = path.join(cwd, MEM_FILE);
+function applyMemoryOperationsLocked(cwd, meta, ops, directories) {
+  const memPath = path.join(directories.root, MEM_FILE);
   // No-follow read: a planted symlink at MEMORY.md reads as absent (and is replaced as a node by
   // the atomic write below) rather than pulling foreign content into the index.
   const before = readMemoryFileSync(memPath) ?? "";
@@ -355,18 +436,27 @@ function applyMemoryOperationsLocked(cwd, meta, ops) {
   const written = [];
   const writes = new Map();
   for (const { slug, body } of topics) {
-    const file = path.join(cwd, MEM_DIR, `${slug}.md`);
+    const file = path.join(directories.topics, `${slug}.md`);
     writes.set(file, body.replace(/\s+$/, "") + "\n");
-    written.push({ topic: slug, path: file });
+    written.push({ topic: slug, path: path.join(cwd, MEM_DIR, `${slug}.md`) });
     notes.push(`Topic [[${slug}]] saved — make sure an index line points to it.`);
   }
   if (indexChanged) writes.set(memPath, next);
+  let batchBytes = 0;
+  for (const body of writes.values()) {
+    const bytes = Buffer.byteLength(body);
+    if (bytes > MAX_MEMORY_FILE_BYTES) throw new Error("Memory result exceeds the 8 MiB per-file I/O limit; split it into smaller topics.");
+    batchBytes += bytes;
+  }
+  if (batchBytes > MAX_MEMORY_BATCH_BYTES) throw new Error("Memory result exceeds the 32 MiB mutation I/O limit.");
+  directories.assertCurrent();
   const previous = new Map([...writes.keys()].map((file) => [file, readMemoryFileSync(file)]));
   const published = [];
   try {
     for (const [file, body] of writes) {
-      replaceMemoryFileSync(file, body);
+      replaceMemoryFileSync(file, body, directories.assertCurrent);
       published.push(file);
+      directories.assertCurrent();
     }
   } catch (error) {
     const failures = [];
@@ -383,7 +473,7 @@ function applyMemoryOperationsLocked(cwd, meta, ops) {
 
   const meter = indexChanged || !topics.length ? memoryMeter(next || before, meta) : "";
   return {
-    path: indexChanged || !written.length ? memPath : written[written.length - 1].path,
+    path: indexChanged || !written.length ? path.join(cwd, MEM_FILE) : written[written.length - 1].path,
     meter,
     note: notes.join(" "),
     notes,
