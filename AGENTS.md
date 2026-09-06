@@ -325,12 +325,12 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
 ## Git workflow (isolated worktree per development thread → serialized landing → push)
 
 The canonical checkout is `~/Code/channelgate` (the service unit's `WorkingDirectory`). Its
-`origin` is `https://github.com/makeitfutureDev/channelgate.git` — the public repository (private
-until the launch gates clear), whose history begins at the 2026-09-03 fresh-start commit of the
+`origin` is `https://github.com/makeitfutureDev/channelgate.git` — the public repository (public
+since 2026-09-06, release 0.5.0), whose history begins at the 2026-09-03 fresh-start commit of the
 scrubbed tree. The pre-rename repository `makeitfutureDev/claude-gateway-slack` is the read-only
 ARCHIVE of the full history (remote `archive` in the canonical checkout; tag
 `archive/fresh-start-base` there marks the commit the tree was squashed from) — never push to it.
-Because the repository will be public, every commit is written for strangers: sign it off
+Because the repository is public, every commit is written for strangers: sign it off
 (`git commit -s`, the CLA acceptance) and keep customer, channel and person names out of commit
 messages; use generic project language for private context.
 
