@@ -14,6 +14,14 @@ The operator HOME, gateway runtime root/database, daemon checkout, sibling conve
 credential stores are not mounted. An admin conversation may deliberately point its work folder at
 a host repository; that one directory is then visible read-write, but nothing beside it.
 
+One operator-chosen exception: with the gateway-wide **Full-access channels see the gateway home**
+switch on (Settings → Container runtime, off by default), every Full-access conversation's
+container also mounts the gateway user's whole home read-write at its identical path — every
+conversation's work folder and memory, every repository under that home, the gateway root
+(logs, metadata, credential stores) — with only the container engine's storage masked. It is a
+boolean, never a path; it changes the container fingerprint (recreate at the next turn); and it is
+per conversation, so every admitted author can read it while only an admin author's turn writes.
+
 Containers are stopped when idle and recreated when their create-time fingerprint changes. The
 HOME volume and mounted workspace/artifacts survive both. Active foreground runs, background work,
 scheduled runs, editors, and memory reviewers hold leases; never stop or recreate a leased

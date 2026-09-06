@@ -19,6 +19,24 @@ product overview.
 ## [Unreleased] — v0.8: container-per-channel runtime, P1 (2026-09-02)
 
 ### Added
+- **Full-access channels can see the whole gateway home.** A new gateway-wide switch in Settings →
+  Container runtime (`containerFullAccessHome`, off by default). While it is on, every channel in
+  Full access gets the gateway user's whole home directory bind-mounted read-write at its identical
+  path inside its container — every channel's work folder and memory, every repository under that
+  home, the gateway root with its logs, metadata and credential stores — with only the container
+  engine's own storage masked out (a write into a running container's layers would corrupt it;
+  the mask is a `notmpcopyup` tmpfs — podman's default would copy the whole store into it).
+  That is an overseer channel: one agent that can see every other agent and every repo, without
+  leaving the container. Until 2026-09-02 admin channels ran on the host, "honestly unconfined";
+  containers-only (2026-09-03) confined them to their own work folder; this restores "admin sees
+  everything" as an explicit operator choice. It is a boolean, never a path; it is part of the
+  container's create-time fingerprint (recreate at the next turn, HOME volume intact); no MCP tool
+  can flip it; and it is per channel — every admitted author can read the home through the file
+  tools, only an admin author's turn writes with the bypass tools. Claude's admin-run settings
+  variant lists the home in `permissions.additionalDirectories`, derived from the resolved mount so
+  the file can never name a path the container does not have; Codex admin turns already bypass
+  their sandbox. Other Linux users' homes stay unreadable (no `sudo` in the image) and system
+  directories are the image's own.
 - **Deterministic personal/shared Composio discovery.** Both bundled skills now define
   `composio-user` as the active requester's identity and `composio-agent` as the shared agent
   identity, select them by pronoun or connection alias, ask when an app is connected to both,

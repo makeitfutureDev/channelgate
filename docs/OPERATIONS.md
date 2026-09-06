@@ -327,6 +327,7 @@ runs too, and the next successful update settles it.
 | Max containers running at once | default 8; past it the least-recently-used **idle** container is stopped |
 | Process / memory / CPU limit | `--pids-limit` (default 1024), `--memory` (e.g. `2g`), `--cpus` (e.g. `1.5`); blank = no limit |
 | Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
+| Full-access channels see the gateway home | off by default; on = every Full-access channel's container also mounts the gateway user's whole home read-write (see below) |
 
 Values that would reach the container CLI's argv are validated at the boundary: a flag, a space or a
 shell metacharacter in the image/memory/cpu fields is rejected with an error, not silently cleaned.
@@ -353,6 +354,22 @@ whose work folder is a host directory — the gateway's own checkout, say — ha
 and only that directory, to its container: everything in it is visible there (the checkout's
 `.env` included), nothing beside it is. That is the intended trust model for admin channels; put
 nothing in such a folder that the channel must not see.
+
+**Full-access channels see the gateway home** (Settings → Container runtime, off by default) is
+the one deliberate widening. While it is on, every channel in Full access also gets the gateway
+user's whole home directory bind-mounted read-write at its identical path inside its container —
+every channel's work folder and memory, every repo under that home, the gateway root with its
+logs and per-channel metadata, and its credential stores (`~/.claude`, `~/.codex`, `~/.ssh`,
+`config/`, `gateway.db`). Only the container engine's own storage (`~/.local/share/containers`)
+is masked, because a write into a running container's layers corrupts it. Use it for an overseer
+channel that must see every agent and every repository; leave it off everywhere else. It is a
+boolean, never a path — the grant is the daemon user's home and nothing else — and it is per
+channel: every author the channel admits can read the home through the engine's file tools (an
+admin author's turn can also write, with the bypass tools). Flipping the switch, or moving a
+channel in or out of Full access, changes the container's create-time fingerprint, so its
+container is recreated at the next turn; the HOME volume survives. Other Linux users' homes stay
+unreadable (there is no `sudo` in the image), and the host's system directories are the image's
+own.
 
 **Where things live.** Containers and the per-channel HOME volumes live in the rootless podman store
 under the daemon user's home — `~/.local/share/containers` by default; `podman info --format

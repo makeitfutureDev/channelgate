@@ -8,6 +8,7 @@
 // pool's own fingerprint, and must not tear down a container that background jobs are using.
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
 import { channelArtifactDir } from "../../config/paths.js";
@@ -46,6 +47,17 @@ export const CAP_ADD = Object.freeze(["DAC_OVERRIDE", "CHOWN", "FOWNER"]);
 export const SECURITY_OPTS = Object.freeze(["no-new-privileges"]);
 export const CONTAINER_COMMAND = Object.freeze(["cg-init", "sleep", "infinity"]);
 export const SOCKET_MOUNT_TARGET = CONTAINER_SOCKET_DIR;
+
+// Full-access channels (adminMode) can be given the gateway user's WHOLE home directory
+// (Settings → Container runtime → "Full-access channels see the gateway home"): every agent's work
+// folder and memory, every repo, the gateway root with its logs and metadata — read-write, at the
+// identical path. That is the operator's explicit choice to trust those channels with everything
+// the daemon account can reach, credential stores included. The one thing masked out is the
+// container engine's own storage: a write into the overlay layers of a running container corrupts
+// it, and nothing an agent needs lives there. Relative to the home directory.
+export const OPERATOR_HOME_MASKS = Object.freeze([path.join(".local", "share", "containers")]);
+// The tmpfs options a mask is created with (see mountArgs for why `notmpcopyup`).
+export const MASK_TMPFS_OPTIONS = "rw,noexec,nosuid,size=1m,notmpcopyup";
 
 const GONE_PATTERN = /no such container|no container with name|is not running|only create exec sessions on running containers|container state improper|removing container/i;
 
@@ -123,6 +135,8 @@ export function parseInspectLine(line) {
 // the gateway root are the clean workspace (a bare workdir, mounted so clean mode works in a
 // container) and the MCP socket directory (read-only). The Codex auth FILE is the one credential
 // mount, and it is the resolved real file — see credentials.js for why it is a file and not a dir.
+// The single, deliberate exception is the operator-home grant (operatorHomeMounts below): a
+// Full-access channel, while the gateway-wide switch is on, gets the daemon user's whole home.
 //
 // `/tmp` and `/var/tmp` are mounts rather than tmpfs so a stop cannot empty them
 // (PERSISTENT_TMP_DIRS). Together with the HOME volume that means NOTHING a channel accumulates —
@@ -144,15 +158,49 @@ export function buildMounts(base) {
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
     { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
+    ...operatorHomeMounts(base),
   ];
-  return mounts.filter((mount) => mount.source);
+  return mounts.filter((mount) => mount.type === "tmpfs" || mount.source);
+}
+
+// The operator-home grant: ONLY for a channel in Full access (adminMode) and ONLY while the
+// gateway-wide switch is on. It is a create-time input like every other mount, so flipping either
+// side recreates the container at the channel's next turn (the HOME volume survives). The mount is
+// per CHANNEL, not per author — a container is shared by every turn of its channel — so every
+// author the channel admits can READ the home through the engine's file tools; only an admin
+// author's live turn gets the write-capable bypass tools on top.
+export function operatorHomeGranted(base) {
+  return Boolean(base?.meta?.adminMode) && base?.settings?.fullAccessHome === true;
+}
+
+export function operatorHomeDir() {
+  return os.homedir();
+}
+
+export function operatorHomeMounts(base) {
+  if (!operatorHomeGranted(base)) return [];
+  const home = operatorHomeDir();
+  return [
+    { kind: "operator-home", type: "bind", source: home, target: home, mode: "rw" },
+    // Masks apply deepest-last, so they sit on top of the home bind inside the container.
+    ...OPERATOR_HOME_MASKS.map((rel) => ({ kind: "mask", type: "tmpfs", source: "", target: path.join(home, rel), mode: "rw" })),
+  ];
 }
 
 function mountArgs(mounts) {
   const args = [];
   for (const mount of mounts) {
     // Destinations are applied deepest-last by both CLIs, so the Codex auth file lands inside the
-    // HOME volume correctly (verified on podman 5.7 rootless).
+    // HOME volume correctly (verified on podman 5.7 rootless) — and a tmpfs mask lands on top of
+    // the operator-home bind it hides a subtree of.
+    if (mount.type === "tmpfs") {
+      // `notmpcopyup` is load-bearing: podman's --tmpfs default copies the destination's existing
+      // contents INTO the tmpfs, and the destination here is the multi-gigabyte container store —
+      // the create fails with "no space left on device" before the mask is ever applied (proven
+      // live on podman 5.7). The mask must be empty; nothing is copied.
+      args.push("--tmpfs", `${mount.target}:${MASK_TMPFS_OPTIONS}`);
+      continue;
+    }
     args.push("-v", `${mount.source}:${mount.target}${mount.mode === "ro" ? ":ro" : ""}`);
   }
   return args;

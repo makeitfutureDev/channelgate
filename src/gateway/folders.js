@@ -458,6 +458,15 @@ export function subagentStopHooks() {
   return { Stop: [{ hooks: [{ type: "command", command: stopHookCommand() }] }] };
 }
 
+// The directories a Full-access channel's container mounts beyond its own folders — today only
+// the operator home (lifecycle.js operatorHomeMounts). Read off the resolved target so the
+// settings file can never name a host path the container does not actually have.
+export function operatorHomeDirectories(target) {
+  return (target?.container?.mounts || [])
+    .filter((m) => m.kind === "operator-home" && m.target)
+    .map((m) => m.target);
+}
+
 // Build the settings object for a channel from its meta. `allowBypass` is set ONLY for the
 // admin-run settings variant (see ensureChannelFolder): the shared channel settings file always
 // hard-disables the --dangerously-skip-permissions bypass.
@@ -465,8 +474,12 @@ export function subagentStopHooks() {
 // What this file carries is POLICY, not confinement: the tool permissions a mode grants, the MCP
 // allowlist, memory-off and the Stop hook. Confinement is the channel container — its per-channel
 // HOME volume, the mounted work folder, and its network mode — so there is no sandbox block here
-// and no host path of any kind (the engine never sees the daemon's filesystem).
-export async function buildSettings(meta, { allowBypass = false } = {}) {
+// and no host path of any kind (the engine never sees the daemon's filesystem). The one path that
+// can appear is the operator home in `permissions.additionalDirectories` of the ADMIN variant, and
+// only when the channel's container actually mounts it (`target.container.mounts`, kind
+// "operator-home"): Claude Code confines its file tools to the cwd plus these directories, so
+// without the entry a Full-access channel could see the home in Bash but not Read/Edit it.
+export async function buildSettings(meta, { allowBypass = false, target = null } = {}) {
   // Clean mode: run bare — no MCP servers reachable at all (the per-run --mcp-config is empty +
   // strict, and the allowlist is empty too), and no MCP tool namespaces pre-approved.
   const clean = Boolean(meta.cleanMode);
@@ -513,7 +526,7 @@ export async function buildSettings(meta, { allowBypass = false } = {}) {
       // which would strip the Stop hook, deny list and memory-off from the run.
       ...(allowBypass ? {} : { disableBypassPermissionsMode: "disable" }),
       disableAutoMode: "disable",
-      additionalDirectories: [],
+      additionalDirectories: allowBypass ? operatorHomeDirectories(target) : [],
       allow: [...SAFE_BUILTIN_TOOLS, ...(bashy ? SHELL_TOOLS : []), ...memTools, ...namespaces, ...gatewayTools],
       // Everything the mode did not grant asks (see ASK_WITHOUT_SHELL). Only when the shell is NOT
       // granted: `ask` outranks `allow`, so listing Bash here for a bash/auto channel would put an

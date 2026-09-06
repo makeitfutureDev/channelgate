@@ -205,7 +205,7 @@ const PROFILE_HELP = {
   read: "Answers and reads files in this channel's folder. Can't edit or run commands; anything riskier asks you to approve. Safest.",
   worker: "Runs commands and edits files, locked to this channel's folder. Still asks before unusual actions. For channels that build things.",
   auto: "Like Worker but doesn't stop to ask — auto-approves and keeps going. Still sandboxed. For trusted, multi-step tasks.",
-  full: "No sandbox — full machine access. Only works when an org admin sends the message; otherwise falls back to sandboxed. Use only for trusted ops channels.",
+  full: "Every tool, no permission prompts. Only works when an org admin sends the message; otherwise falls back to Worker behaviour. The channel container is still the boundary — unless the gateway's \"Full-access channels see the gateway home\" switch (Settings → Container runtime) is on, in which case this channel also reaches the gateway user's whole home. Use only for trusted ops channels.",
   lean: "Bare model — no skills or connectors. Cheapest and fastest, but can't use HubSpot/Gmail/etc.",
   custom: "Set every capability yourself with the checkboxes below.",
 };
@@ -2679,6 +2679,7 @@ function paintSettings(s) {
   document.getElementById("set-container-pids").value = s.containerPidsLimit ?? 1024;
   document.getElementById("set-container-memory").value = s.containerMemory || "";
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
+  document.getElementById("set-container-full-access-home").checked = s.containerFullAccessHome === true;
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
   attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
   document.getElementById("adminpw-state").textContent = s.hasAdminPassword ? "· set" : "· not set (UI open)";
@@ -3046,6 +3047,7 @@ function bindSettings() {
           containerPidsLimit: Number(document.getElementById("set-container-pids").value) || undefined,
           containerMemory: document.getElementById("set-container-memory").value,
           containerCpus: document.getElementById("set-container-cpus").value,
+          containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
           // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
           ...(tokenValue(document.getElementById("set-container-claude-token")) ? { containerClaudeOauthToken: tokenValue(document.getElementById("set-container-claude-token")) } : {}),
           ...(document.getElementById("clear-container-claude-token").classList.contains("armed") ? { clearContainerClaudeOauthToken: true } : {}),

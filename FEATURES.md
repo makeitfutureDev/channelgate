@@ -1337,7 +1337,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   → TEST-PLAN: Security (background gating).
 - **Retired 2026-09-03 (Linux + containers only):** admin channels run in containers too — the admin author's live turn keeps the bypass flag, its
   work folder is bind-mounted read-write like any other's (a host directory used as the work folder
-  is visible in full, nothing beside it), and nothing else of the host is reachable. **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
+  is visible in full, nothing beside it), and nothing else of the host is reachable — unless the
+  operator turns on **Full-access channels see the gateway home** (2026-09-06, Settings → Container
+  runtime, `containerFullAccessHome`, off by default): then every Full-access channel's container
+  also bind-mounts the gateway user's whole home read-write at its identical path (every channel's
+  work folder + memory, every repo, the gateway root incl. logs/metadata/credential stores; only
+  `~/.local/share/containers` masked), Claude's admin-run settings list it in
+  `permissions.additionalDirectories` (derived from the resolved mount), the grant is part of the
+  create-time fingerprint, no MCP tool can flip it, and it is per channel (every admitted author
+  reads; an admin author's turn writes). → TEST-PLAN: Container runtime (operator-home grant). **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
   live foreground turn in an admin-mode channel runs with the bypass AND `sandbox.enabled: false`
   (the flag alone never lifts the sandbox), so it can genuinely reach the whole account — while
   the shared settings keep every other run fully sandboxed, and unattended admin runs stay at the

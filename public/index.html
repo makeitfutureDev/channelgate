@@ -820,6 +820,7 @@
                     <span>CPU limit — e.g. <code>1.5</code> (blank = no limit)</span>
                     <input id="set-container-cpus" type="text" placeholder="blank = no limit" />
                   </label>
+                  <label class="toggle"><input type="checkbox" id="set-container-full-access-home" /> <strong>Full-access channels see the gateway home.</strong> While on, every channel in Full access gets this gateway user's whole home directory mounted read-write at its normal path inside its container: every channel's work folder and memory, every repo, the gateway's own logs and metadata — and its credential stores. Every author the channel admits can read it; only an admin author's turn can write with the bypass tools. Off keeps admin channels confined to their own work folder. Changing it recreates those containers at their next turn.</label>
                   <label class="field">
                     <span>Claude token for container runs <em class="state" id="container-token-state"></em></span>
                     <input id="set-container-claude-token" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />

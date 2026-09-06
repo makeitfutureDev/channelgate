@@ -20,6 +20,28 @@ const [
 // (including "allow") makes the CLI silently discard the ENTIRE settings file — no Stop hook, no
 // deny list, no memory-off. So the shared variant must pin "disable" and the admin bypass variant
 // must OMIT the key rather than set a permissive value.
+// A Full-access channel whose container mounts the operator home must be able to Read/Edit it,
+// not only see it from Bash: Claude Code confines its file tools to the cwd plus
+// `permissions.additionalDirectories`. The entry is derived from the resolved target's mounts
+// (kind "operator-home"), never typed in, so the settings file can never name a host path the
+// container does not have — and it appears in the ADMIN variant only.
+test("the admin variant lists the operator home as an additional directory only when the container mounts it", async () => {
+  const mounted = { container: { mounts: [{ kind: "workdir", source: "/w", target: "/w", mode: "rw" }, { kind: "operator-home", source: "/home/op", target: "/home/op", mode: "rw" }, { kind: "mask", type: "tmpfs", source: "", target: "/home/op/.local/share/containers", mode: "rw" }] } };
+  const unmounted = { container: { mounts: [{ kind: "workdir", source: "/w", target: "/w", mode: "rw" }] } };
+
+  const bypass = await buildSettings({ _slug: "home-admin", adminMode: true, allowedMcps: [] }, { allowBypass: true, target: mounted });
+  assert.deepEqual(bypass.permissions.additionalDirectories, ["/home/op"], "the mount target, and never the mask");
+
+  const bypassNoGrant = await buildSettings({ _slug: "home-admin", adminMode: true, allowedMcps: [] }, { allowBypass: true, target: unmounted });
+  assert.deepEqual(bypassNoGrant.permissions.additionalDirectories, []);
+  const bypassNoTarget = await buildSettings({ _slug: "home-admin", adminMode: true, allowedMcps: [] }, { allowBypass: true });
+  assert.deepEqual(bypassNoTarget.permissions.additionalDirectories, []);
+
+  // The SHARED file (every non-admin author's turn) never widens the file tools, mount or not.
+  const shared = await buildSettings({ _slug: "home-admin", adminMode: true, allowedMcps: [] }, { target: mounted });
+  assert.deepEqual(shared.permissions.additionalDirectories, []);
+});
+
 test("bypass key is 'disable' in shared settings and absent in the bypass variant", async () => {
   const shared = await buildSettings({ _slug: "bypass-probe", allowedMcps: [] });
   assert.equal(shared.permissions.disableBypassPermissionsMode, "disable");
