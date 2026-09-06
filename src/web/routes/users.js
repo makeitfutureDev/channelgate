@@ -30,13 +30,44 @@ function maskUsers(users) {
   return out;
 }
 
+function foldSearch(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase();
+}
+
+// Search only the already-masked representation. Besides keeping retired/unknown secret fields
+// out of the index, this makes the searchable vocabulary exactly match what the table can show:
+// identity, its one visible role, and which token-provider dots are filled.
+export function filterUsersForSearch(users, query) {
+  const terms = foldSearch(query).trim().split(/\s+/).filter(Boolean);
+  if (!terms.length) return users;
+
+  return Object.fromEntries(Object.entries(users).filter(([id, user]) => {
+    const role = user.isAdmin ? "admin" : user.approved ? "approved" : "no access";
+    const tokens = [
+      user.hasComposioToken ? "composio c token configured set" : "",
+      user.hasToolboxToken ? "toolbox t token configured set" : "",
+      !user.hasComposioToken && !user.hasToolboxToken ? "no tokens" : "",
+    ];
+    const haystack = foldSearch([user.name, id, role, ...tokens].join(" "));
+    return terms.every((term) => haystack.includes(term));
+  }));
+}
+
 export function createUsersRouter() {
   const router = Router();
 
   // ── Users ─────────────────────────────────────────────────────────────────
-  router.get("/users", async (_req, res, next) => {
+  router.get("/users", async (req, res, next) => {
     try {
-      res.json({ users: maskUsers(await getUsers()) });
+      const users = maskUsers(await getUsers());
+      // Bound an otherwise harmless query so one request cannot make a needlessly giant search
+      // string. Express may represent repeated query keys as an array; the first value wins.
+      const rawQuery = Array.isArray(req.query.q) ? req.query.q[0] : req.query.q;
+      const query = typeof rawQuery === "string" ? rawQuery.slice(0, 200) : "";
+      res.json({ users: filterUsersForSearch(users, query) });
     } catch (e) {
       next(e);
     }

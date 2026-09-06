@@ -85,6 +85,11 @@
               <p class="hint">Approve who may use the bot, mark <strong>admins</strong>, and set each user's personal <strong>Composio</strong> / <strong>Toolbox</strong> tokens (injected only into their own messages) and personal skill grants. Click a row to edit.</p>
             </div>
             <div class="dash-tools">
+              <div class="setsearch user-search">
+                <svg class="setsearch-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+                <input id="users-search" type="search" placeholder="Search users…" aria-label="Search users" autocomplete="off" />
+                <button id="users-search-clear" class="setsearch-clear" type="button" aria-label="Clear user search" title="Clear search" hidden>×</button>
+              </div>
               <button id="add-user-toggle" type="button">+ Add user</button>
             </div>
           </div>

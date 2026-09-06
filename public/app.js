@@ -28,6 +28,7 @@ let SKILL_TEMPLATES = []; // { slug, name, description, skills, categories, reso
 let AVAILABLE_MCPS = { claude: null, codex: null }; // engine → catalog (null until loaded)
 const MCP_CATALOG_LOADS = {}; // engine → in-flight Promise (dedupe open channel/template editors)
 let USERS = {};
+let USER_RESULTS = {}; // server-filtered subset for the Users table; USERS stays the full directory
 let CHANNELS = [];
 let DMS = [];
 let DM_TEMPLATES = {};
@@ -2356,26 +2357,46 @@ async function loadSchedules() {
 // loadUsers is called at boot to populate the org-wide Users table. The drawer opens on row click
 // and keeps the exact attachReveal/tokenValue masked-input semantics + the same per-user PUT body.
 let userDrawerId = null; // which user the drawer is editing (kept open across a save/refresh)
+let userSearchQuery = "";
+let userSearchRequest = 0;
+
+async function loadUserResults() {
+  const query = userSearchQuery;
+  const request = ++userSearchRequest;
+  const users = query
+    ? (await api(`/api/users?q=${encodeURIComponent(query)}`)).users
+    : USERS;
+  if (request !== userSearchRequest || query !== userSearchQuery) return false;
+  USER_RESULTS = users;
+  renderUsersTable();
+  // A filtered-out selection is no longer represented by a row, so the drawer should not float
+  // beside unrelated results. A visible selection keeps its existing unsaved drawer state.
+  if (userDrawerId && !USER_RESULTS[userDrawerId]) closeUserDrawer();
+  return true;
+}
 
 async function loadUsers() {
   const { users } = await api("/api/users");
   USERS = users;
-  renderUsersTable();
+  if (!await loadUserResults()) return;
   // If a drawer was open (e.g. a save just refreshed the data), re-open it on the same user.
-  if (userDrawerId && USERS[userDrawerId]) openUserDrawer(userDrawerId);
+  if (userDrawerId && USER_RESULTS[userDrawerId]) openUserDrawer(userDrawerId);
   else if (userDrawerId) closeUserDrawer();
 }
 
 function renderUsersTable() {
   const wrap = document.getElementById("users");
-  const ids = Object.keys(USERS).sort((a, b) =>
-    (USERS[a].name || a).localeCompare(USERS[b].name || b, undefined, { sensitivity: "base" }));
+  const ids = Object.keys(USER_RESULTS).sort((a, b) =>
+    (USER_RESULTS[a].name || a).localeCompare(USER_RESULTS[b].name || b, undefined, { sensitivity: "base" }));
   if (!ids.length) {
-    wrap.innerHTML = `<table><tbody><tr><td class="audit-empty">No users yet — they're recorded when they first message the bot, or add one.</td></tr></tbody></table>`;
+    const empty = userSearchQuery
+      ? `No users match “${escapeHtml(userSearchQuery)}”.`
+      : "No users yet — they're recorded when they first message the bot, or add one.";
+    wrap.innerHTML = `<table><tbody><tr><td class="audit-empty">${empty}</td></tr></tbody></table>`;
     return;
   }
   const rows = ids.map((id) => {
-    const u = USERS[id];
+    const u = USER_RESULTS[id];
     const role = u.isAdmin
       ? `<span class="rolechip admin">Admin</span>`
       : u.approved ? `<span class="rolechip appr">Approved</span>` : `<span class="rolechip none">No access</span>`;
@@ -3835,8 +3856,39 @@ document.getElementById("fs-modal").addEventListener("click", (e) => {
     await api(`/api/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ name: id }) });
     idInput.value = "";
     form.hidden = true;
+    const search = document.getElementById("users-search");
+    if (search) search.value = "";
+    userSearchQuery = "";
+    document.getElementById("users-search-clear").hidden = true;
     userDrawerId = id; // open the new user's drawer after the refresh
     await loadUsers();
+  });
+}
+
+// Users search is server-side: debounce keystrokes, keep the full USERS directory untouched for
+// access editors, and ignore out-of-order responses when a slower query finishes last.
+{
+  const search = document.getElementById("users-search");
+  const clear = document.getElementById("users-search-clear");
+  let timer = null;
+  const run = () => {
+    clearTimeout(timer);
+    userSearchQuery = search.value.trim();
+    clear.hidden = !userSearchQuery;
+    timer = setTimeout(() => loadUserResults().catch(() => {}), 220);
+  };
+  search.addEventListener("input", run);
+  search.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    search.value = "";
+    run();
+    search.blur();
+  });
+  clear.addEventListener("click", () => {
+    search.value = "";
+    run();
+    search.focus();
   });
 }
 
