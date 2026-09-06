@@ -1679,6 +1679,18 @@ release, no egress cut-off — so the network entry has no container equivalent 
       existing `CLAUDE.md`/`AGENTS.md` is not overwritten; clearing it reverts to `~/ChannelGate/<platform>/<slug>`.
 
 ### Admin UI
+- [x] Settings saves are a DIFF under a version check: a partial save leaves every key it does not
+      carry intact (a `scheduleMaxPerChannel` save cannot revert `channelTemplate.effort`); a save
+      echoing a stale `settingsVersion` is refused with `409`, writes nothing, and returns the
+      current settings payload (engines + platforms + slack included, so the page can repaint from
+      it); two admins changing different fields both survive once the second re-reads; a caller
+      that sends no version is merged in as before; and the page's Save reads the same
+      `readSettingsForm()` the baseline was captured from (automated:
+      `test/settings-save-version.test.js`, `test/admin-save-reconciliation.test.js`).
+- [x] Live (browser, scratch daemon): changing one field sends exactly
+      `{that field, settingsVersion, connectSlack}`; a concurrent daemon-side write then makes the
+      next Save show "changed elsewhere: …", repaint the newer values, and land on a retry with the
+      other writer's values intact.
 - [ ] Sidebar shows Overview/Conversations/Users/Automations/Activity/API/Settings with the
       #makeitfuture. wordmark; Conversations is master-detail. Poppins loads from `/fonts/`
       (self-hosted — no external font/CDN requests anywhere).
@@ -2259,6 +2271,13 @@ history.
 
 ## Per-channel environment secrets (2026-08-26)
 
+- [x] Case folding (ADM-010/SEC-02): a lowercase-but-otherwise-valid name normalizes to the
+      canonical uppercase one on every surface — `assertValidEnvName("supabase_access_token")`
+      returns `SUPABASE_ACCESS_TOKEN`, setting it twice in different cases updates ONE entry, and
+      removing it by either spelling removes that entry; the reserved check runs on the folded name
+      (`path`, `node_options` are still refused) and an invalid name still fails, quoting what was
+      typed. The admin card upper-cases the name box on input and on blur and sends the folded name
+      (automated: `test/channel-env.test.js`).
 - [x] Name rules: `^[A-Z][A-Z0-9_]*$` only; the reserved set refuses everything `child-env.js`
       sets or allowlists plus the interpreter/linker hooks that turn a variable into code
       (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, `BASH_ENV`, `PYTHONSTARTUP`,

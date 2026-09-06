@@ -41,11 +41,40 @@ export function normalizePublicUrl(value) {
   return /^[A-Za-z][A-Za-z\d+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
+// The stored settings' VERSION: a counter bumped by every saveSettings, so a reader can tell
+// whether the values it is holding are still the ones on disk. It lives in settings.json itself
+// rather than a table because settings.json is the record — a hand-edited file plus a stale
+// counter is the operator's own doing, but a version in a different store could disagree with the
+// file after a restore. Any caller may echo it back to get compare-and-swap semantics; a caller
+// that does not is merged in unconditionally (see saveSettings).
+export function getSettingsVersion() {
+  const raw = Number(getSettings().settingsRev);
+  return String(Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 0);
+}
+
+// Thrown when a caller's expectVersion no longer matches the stored one, i.e. somebody else wrote
+// settings between that caller's read and its write. Tagged with a `code` so the HTTP layer can
+// answer 409 without matching on prose.
+export class SettingsVersionConflict extends Error {
+  constructor(currentVersion) {
+    super("These settings changed elsewhere since this page loaded — nothing was saved.");
+    this.name = "SettingsVersionConflict";
+    this.code = "settings_version_conflict";
+    this.currentVersion = String(currentVersion);
+  }
+}
+
 // Merge a partial patch into settings.json (only supplied, non-undefined keys change). The file's
 // read-modify-write is serialized across BOTH processes (daemon + spawned MCP server) by holding
 // the shared SQLite write lock (BEGIN IMMEDIATE) for its duration — two concurrent saves would
 // otherwise each read the same base and silently drop the other's keys.
-export function saveSettings(patch) {
+//
+// `expectVersion` (optional) makes the write a compare-and-swap: the version is checked INSIDE the
+// same lock as the merge, so a writer that slipped in between the caller's read and this call
+// cannot be overwritten by a check that happened earlier. Omitting it keeps the historical
+// behavior — merge whatever is supplied — which is what every non-UI caller and every older API
+// client does.
+export function saveSettings(patch, { expectVersion = "" } = {}) {
   const db = getDb();
   mkdirSync(path.dirname(settingsFile()), { recursive: true }); // doesn't need the lock
   // The BEGIN IMMEDIATE lock intentionally spans the read-merge-write of settings.json: it is the
@@ -54,11 +83,15 @@ export function saveSettings(patch) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const current = getSettings();
+    const currentVersion = String(Number.isFinite(Number(current.settingsRev)) && Number(current.settingsRev) >= 0 ? Math.floor(Number(current.settingsRev)) : 0);
+    if (expectVersion !== "" && String(expectVersion) !== currentVersion) throw new SettingsVersionConflict(currentVersion);
     const next = { ...current };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
       next[k] = k === "publicUrl" ? normalizePublicUrl(v) : v;
     }
+    // Bumped LAST, so a patch can never set (or freeze) the version it is being checked against.
+    next.settingsRev = Number(currentVersion) + 1;
     // 0600: this file holds the Slack tokens, the org Composio/Skills/Toolbox tokens, the run-API
     // key and the admin password.
     writeSecretFile(settingsFile(), JSON.stringify(next, null, 2) + "\n");
@@ -719,6 +752,9 @@ export function settingsForApi() {
   const c = resolveSlackConfig();
   const s = getSettings();
   return {
+    // Echo this back on a PUT to get compare-and-swap semantics: the save is refused (409) if
+    // anything wrote settings in between, instead of silently reverting the other writer.
+    settingsVersion: getSettingsVersion(),
     tokens: {
       hasBotToken: Boolean(c.botToken),
       botTokenLast4: last4(c.botToken),

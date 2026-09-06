@@ -58,12 +58,27 @@ export function isReservedEnvName(name) {
   return RESERVED_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
+// Environment variables are UPPER_SNAKE by universal convention, and every surface that shows one
+// (the admin card, the Slack modal, the listing) renders it that way — so a typed `supabase_token`
+// is the same variable as `SUPABASE_TOKEN`, not a different one and not an error. Case is folded
+// HERE, before validation, so the stored key is canonical no matter which surface wrote it: the
+// store therefore keeps its uppercase-only invariant (normalizeChannelEnv / safeSpawnEnv still
+// drop anything else) while the human gets what they meant. Nothing else is forgiven — a dash, a
+// space or a leading digit is still a refusal, and the reserved check below runs on the CANONICAL
+// name so `path` cannot smuggle PATH past it.
+export function normalizeEnvName(name) {
+  return String(name || "").trim().toUpperCase();
+}
+
 // Throws with a message written for a human in a Slack modal, not a stack trace.
 export function assertValidEnvName(name) {
-  const key = String(name || "").trim();
+  const typed = String(name || "").trim();
+  const key = normalizeEnvName(typed);
   if (!key) throw new Error("Give the variable a name.");
   if (!CHANNEL_ENV_NAME_RE.test(key)) {
-    throw new Error(`"${key}" is not a valid name — use A–Z, 0–9 and underscores, starting with a letter (e.g. SUPABASE_ACCESS_TOKEN).`);
+    // Echo what was TYPED: telling someone that "MY-TOKEN" is invalid when they wrote "my-token"
+    // reads like the tool broke it.
+    throw new Error(`"${typed}" is not a valid name — use A–Z, 0–9 and underscores, starting with a letter (e.g. SUPABASE_ACCESS_TOKEN).`);
   }
   if (isReservedEnvName(key)) {
     throw new Error(`"${key}" is reserved — the gateway sets it, or it can change what the agent executes. Pick a different name.`);
@@ -161,7 +176,9 @@ export function setChannelEnvVar(env, { name, value, provider = "local", ref = "
 
 export function removeChannelEnvVar(env, name) {
   const current = normalizeChannelEnv(env);
-  const key = String(name || "");
+  // Same case folding as the write side: stored keys are always uppercase, so a lowercase spelling
+  // names the same variable here too.
+  const key = normalizeEnvName(name);
   if (!Object.hasOwn(current, key)) throw new Error(`"${key}" is not set on this channel.`);
   const next = { ...current };
   delete next[key];

@@ -52,7 +52,7 @@ import {
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
-import { listChannelEnv, patchChannelEnv } from "../../config/channel-env.js";
+import { listChannelEnv, normalizeEnvName, patchChannelEnv } from "../../config/channel-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../../config/cli-catalog.js";
 
 const WEB_ADMIN_ACTOR = "admin UI";
@@ -542,6 +542,10 @@ export function createChannelsRouter({
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
       const value = typeof req.body?.value === "string" ? req.body.value : "";
+      // The stored key is the canonical (uppercase) spelling, so the audit line names THAT rather
+      // than whatever case the caller typed. The mutation still gets the raw name: it folds case
+      // itself, and a refusal should quote what the caller actually sent.
+      const name = normalizeEnvName(req.params.name);
       let saved;
       try {
         // Function form: read-modify-write inside the store transaction, so two admins adding
@@ -554,7 +558,7 @@ export function createChannelsRouter({
       }
       await ensureChannelFolder(ctx.entry.slug, effectiveMeta(saved));
       // Name only. The audit trail must never carry what was set.
-      logEvent("channel_env_set", { slug: ctx.entry.slug, name: req.params.name, actor: WEB_ADMIN_ACTOR });
+      logEvent("channel_env_set", { slug: ctx.entry.slug, name, actor: WEB_ADMIN_ACTOR });
       res.json({ ok: true, vars: listChannelEnv(saved) });
     } catch (e) {
       next(e);
@@ -565,14 +569,15 @@ export function createChannelsRouter({
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
+      const name = normalizeEnvName(req.params.name);
       let saved;
       try {
-        saved = await patchChannelMeta(ctx.entry.slug, (existing) => ({ env: patchChannelEnv(existing?.env, { remove: req.params.name }) }));
+        saved = await patchChannelMeta(ctx.entry.slug, (existing) => ({ env: patchChannelEnv(existing?.env, { remove: name }) }));
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
       await ensureChannelFolder(ctx.entry.slug, effectiveMeta(saved));
-      logEvent("channel_env_removed", { slug: ctx.entry.slug, name: req.params.name, actor: WEB_ADMIN_ACTOR });
+      logEvent("channel_env_removed", { slug: ctx.entry.slug, name, actor: WEB_ADMIN_ACTOR });
       res.json({ ok: true, vars: listChannelEnv(saved) });
     } catch (e) {
       next(e);

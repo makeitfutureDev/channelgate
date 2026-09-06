@@ -1067,6 +1067,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (`ANTHROPIC_BASE_URL`), so a reserved set is enforced on write AND again at the runner boundary,
   where `safeSpawnEnv` re-filters inside `buildClaudeEnv`/`buildCodexEnv` rather than trusting the
   caller.
+- **Case is the one thing that is forgiven.** Names are `UPPER_SNAKE` everywhere they are shown, so
+  a name typed in lower case is the same variable, not an error: the admin card upper-cases it
+  visibly as it is typed (and on blur, and before it is sent), and the store folds case itself, so
+  the Slack modal and any API client store, list and remove the same canonical name — setting
+  `supabase_token` over `SUPABASE_TOKEN` updates that entry rather than failing or duplicating it.
+  Nothing else is forgiven: a dash, a space or a leading digit is still refused (quoting what was
+  typed), and the reserved check runs on the folded name, so `path` cannot smuggle `PATH` past it.
 - **Outbound value redaction.** Write-only in the UI is not write-only at runtime: the agent can
   read its own environment and a failing CLI will echo a token into its error line. Exact values
   are stripped from the reply, the live stream (holdback, so a value split across two deltas still
@@ -1885,6 +1892,17 @@ are retired, bullet by bullet; everything else stands.
 - Settings page: set Slack tokens (write-only/masked) + keepalive + Composio URL from the UI,
   stored in `config/settings.json` (overrides `.env`); Slack connects/reconnects live with a
   status banner — no process restart. A bad token reports the error without crashing the daemon.
+- **Settings save the CHANGE, not the page.** The one *Save changes* button sends only the fields
+  that differ from what the page was painted from, and the server merges them — so a value written
+  after this page loaded (another admin, the skills sync, a license write, the first-boot password
+  upgrade) is not in the request and cannot be reverted by an unrelated save. `GET /api/settings`
+  carries a `settingsVersion` the save echoes back: if anything wrote settings in between, the save
+  is refused with `409` and NOTHING is written (the check runs inside the same lock as the merge),
+  and the refusal carries the current settings — the page repaints from them and names the keys
+  that moved, so the admin re-applies their change on top of the newer state. Sending no version is
+  accepted and merged, so an older UI or a script keeps working. A repaint clears anything left
+  pending (an armed *clear* toggle, a typed password or key), because a pending action captured as
+  "already saved" would silently never run. → TEST-PLAN: Admin UI.
 - **Google Drive two-way sync (scheduled)**: a per-channel Drive folder link (channel settings)
   is bisync'd on a timer into a dedicated `Drive/` subfolder of that channel's working folder —
   never the folder root, so the confinement scaffolding (`.claude/`, `CLAUDE.md`, `MEMORY.md`,
