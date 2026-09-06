@@ -403,6 +403,7 @@ function renderUsage() {
       <span class="spacer"></span>
     </div>
     ${r ? `
+    ${(r.notes || []).length ? `<p class="skills-note"><strong>How this is counted:</strong> ${(r.notes || []).map((n) => esc(n)).join(" ")}</p>` : ""}
     ${state.usageView === "skill" ? `<table class="skills-table"><thead><tr><th>Skill</th><th>Usage</th><th>Users</th><th>Conversations</th><th>Last</th></tr></thead><tbody>${skillRows || '<tr><td colspan="5" class="muted">No matching skill use in this range.</td></tr>'}</tbody></table>` : `<table class="skills-table"><thead><tr><th>Conversation</th><th>Usage</th><th>Skills used</th><th>Last</th></tr></thead><tbody>${channelRows || '<tr><td colspan="4" class="muted">No matching conversation use in this range.</td></tr>'}</tbody></table>`}
     ${r.channelSlug ? `<p class="skills-note"><strong>Granted but never fired</strong> (${r.neverUsed.length}): ${r.neverUsed.map((n) => `<code>${esc(n.slug)}</code>${n.via === "dependency" ? ` <span class="muted">required by ${esc((n.requiredBy || []).join(", "))}</span>` : ""}`).join(" ") || "none"}${r.contextTokens != null ? ` · always-on context ~${r.contextTokens} tokens` : ""}</p>` : ""}
     ${warnings.length ? `<details class="skills-context-warnings"><summary>${warnings.length} conversation${warnings.length === 1 ? "" : "s"} over the skills context soft cap</summary><p>The warning means the always-loaded skill descriptions consume more context than the limit configured in Sync settings. It does not mean a skill failed.</p>${warnings.map((c) => `<div><strong>${esc(c.name || c.slug)}</strong> · ~${c.contextTokens} tokens<br/><span>${esc((c.warningMessages || []).join(" · "))}</span></div>`).join("")}</details>` : ""}
@@ -457,7 +458,10 @@ async function act(action, el) {
       const channel = val("grant-channel");
       const target = (state.profiles || []).find((c) => c.slug === channel);
       const r = await withStatus(() => api(`/api/skills/profile/${encodeURIComponent(channel)}/grant`, { method: "POST", body: JSON.stringify({ slugs: [state.selected] }) }));
-      if (r) setMessage(r.added.length ? `Granted ${r.added.join(", ")} in ${target?.name || channel} (active on its next message).` : `${state.selected} was already granted in ${target?.name || channel}.`);
+      // The grant's own warnings (over the context soft cap, a skill still awaiting review, …)
+      // belong to whoever just granted it — showing them only in the Usage panel meant nobody saw
+      // them at the moment they were caused.
+      if (r) setMessage(`${r.added.length ? `Granted ${r.added.join(", ")} in ${target?.name || channel} (active on its next message).` : `${state.selected} was already granted in ${target?.name || channel}.`}${(r.warnings || []).length ? ` Warning: ${r.warnings.join("; ")}.` : ""}`);
       await refreshAll();
       break;
     }

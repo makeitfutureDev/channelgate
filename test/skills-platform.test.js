@@ -26,6 +26,8 @@ const { enableSkills } = await import("../src/gateway/folders.js");
 const { upsertChannelEntry, saveChannelMeta, defaultChannelMeta, getChannelMeta, setUser, getUser } = await import("../src/config/store.js");
 const { saveSettings, getSettings, getOrgAccessGrants } = await import("../src/config/settings.js");
 const { toolTarget } = await import("../src/engines/stream.js");
+const { progressFromCodexEvent } = await import("../src/engines/codex.js");
+const skillTools = await import("../src/mcp/tools/skills.js");
 
 const md = (name, description, extra = "", body = `# ${name}\n`) => ({ path: "SKILL.md", content: `---\nname: ${name}\ndescription: ${description}\n${extra}---\n\n${body}` });
 
@@ -564,6 +566,69 @@ test("usage recorder: Claude's plugin-qualified skill name attributes to the cat
   assert.ok(rows[0].revisionId, "…and the effective revision id");
   assert.equal(usage.unqualifySkillName("plain-slug"), "", "an unqualified name is left alone");
 });
+
+// The exact shape a Codex run produced when a granted skill's read went unrecorded: ONE
+// `bash -lc` line that reads the always-on guide first and the granted skill second. The matcher
+// stopped at the first hit, so the guide was recorded and the granted skill — the reason the run
+// happened at all — was not.
+test("usage recorder: one compound Codex shell command records EVERY skill it reads", () => {
+  catalog.putSkillRevision({ files: [md("Compound Guide", "the always-on guide")], ownerKind: "local" });
+  catalog.putSkillRevision({ files: [md("Compound Granted", "the granted skill")], ownerKind: "local" });
+  const folder = "/home/agent/ChannelGate/slack/compound-usage";
+  const command = `sed -n '1,240p' ${folder}/.claude/skills/compound-guide/SKILL.md && sed -n '1,320p' ${folder}/.claude/skills/compound-granted/SKILL.md`;
+  const mapped = progressFromCodexEvent({ type: "item.started", item: { id: "item_1", type: "command_execution", command } });
+  assert.equal(mapped.event.kind, "tool_use");
+  assert.equal(mapped.event.name, command, "Codex carries the whole shell line as the tool name");
+
+  const rows = [];
+  const rec = usage.createSkillUsageRecorder({ channelSlug: "compound-usage", engine: "codex", runId: "r-compound", record: (row) => rows.push(row) });
+  rec.onEvent(mapped.event);
+  assert.deepEqual(rows.map((r) => r.slug).sort(), ["compound-granted", "compound-guide"], "both reads are recorded, not just the first");
+  assert.ok(rows.every((r) => r.signal === "inferred"), "a shell read stays an inferred signal");
+  assert.ok(rows.every((r) => r.skillId && r.revisionId), "each row attributes to the catalog skill and its effective revision");
+  assert.equal(rec.seen().get("compound-granted"), "inferred");
+});
+
+test("usage recorder: a SKILL.md read is caught through either skills dir, quoted, ~-relative, or mid-command", () => {
+  const shapes = [
+    ["wc -l .claude/skills/wc-a/SKILL.md .claude/skills/wc-b/SKILL.md", ["wc-a", "wc-b"]],
+    ['cat "$HOME/ChannelGate/slack/x/.agents/skills/quoted-skill/SKILL.md"', ["quoted-skill"]],
+    ["sed -n '1,80p' ~/.claude/skills/tilde-skill/SKILL.md; rg '^#' '.agents/skills/symlinked-skill/SKILL.md'", ["tilde-skill", "symlinked-skill"]],
+    ["cd /w && cat skills/relative-skill/SKILL.md | head -40", ["relative-skill"]],
+    ["cat myskills/not-a-skill/SKILL.md", []],
+    ["cat .claude/skills/dup-skill/SKILL.md .claude/skills/dup-skill/SKILL.md", ["dup-skill"]],
+  ];
+  for (const [command, expected] of shapes) {
+    assert.deepEqual(usage.skillSlugsFromText(command), expected, command);
+  }
+  assert.equal(usage.skillSlugFromText(shapes[0][0]), "wc-a", "the single-slug helper still answers with the first one");
+});
+
+test("chat verb: add_channel_skills reports the over-cap warning to the person who caused it", async () => {
+  const entry = await upsertChannelEntry("C_SKILL_WARN", { name: "skill-warn", type: "channel", isDM: false });
+  await saveChannelMeta(entry.slug, defaultChannelMeta({ channelId: "C_SKILL_WARN", name: "skill-warn", type: "channel", isDM: false }));
+  catalog.putSkillRevision({ files: [md("Warn Heavy", "a heavy always-on description that eats the budget")], ownerKind: "local" });
+  const before = getSettings().skillsContextWarnTokens;
+  saveSettings({ skillsContextWarnTokens: 1 });
+  try {
+    const tools = new Map();
+    skillTools.register({ registerTool: (name, _def, handler) => tools.set(name, handler) }, {
+      channelId: "C_SKILL_WARN",
+      slug: entry.slug,
+      createdBy: "U_SKILL_WARN",
+      text: (body) => ({ content: [{ type: "text", text: body }] }),
+      requireAdmin: async () => true,
+      requireManage: async () => true,
+      loadMeta: async () => getChannelMeta(entry.slug),
+    });
+    const reply = (await tools.get("add_channel_skills")({ slugs: ["warn-heavy"] })).content.map((c) => c.text).join("\n");
+    assert.match(reply, /Granted here: `warn-heavy`/);
+    assert.match(reply, /always-on skill descriptions cost about \d+ tokens per turn \(soft cap 1\)/, "the warning reaches the reply instead of being computed and dropped");
+  } finally {
+    saveSettings({ skillsContextWarnTokens: before });
+  }
+});
+
 
 // ── authoring + proposals ────────────────────────────────────────────────────────────────────
 

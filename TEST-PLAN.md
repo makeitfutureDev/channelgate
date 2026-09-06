@@ -2527,6 +2527,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       a string is ignored, not stored), `settingsForApi` + `getContainerRuntime()` read it back, and
       the admin UI's Container runtime card carries the checkbox wired both ways (automated:
       `test/admin-container-runtime.test.js`).
+- [x] Unit: the Container runtime card's copy matches the containers-only runtime — no "host
+      sandbox" and no "admin-mode channels always stay on the host"; it says an admin-mode channel
+      runs in its container with the permission bypass applied inside it (automated:
+      `test/admin-container-runtime.test.js`).
 - [x] Live (2026-09-06, throwaway container on the real image, rootless podman 5.7): the home bind +
       mask create args work; the `agent` user sees every channel folder and memory, every repo and the
       gateway logs, can write, and `~/.local/share/containers` is an empty tmpfs while the host store
@@ -2988,6 +2992,21 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       before the lookup, so the row carries the catalog slug with its skill and revision ids and the
       report marks it `inCatalog` with an exact signal; a plugin skill outside the catalog still
       records under its bare slug (`test/skills-platform.test.js`).
+- [x] Integration (SKL-11 regression): ONE compound Codex shell line that reads two `SKILL.md`
+      files — the always-on guide and the granted skill, mapped through `progressFromCodexEvent`
+      exactly as the engine emits it — records BOTH skills, not just the first match, each as an
+      inferred row carrying its catalog skill and effective revision ids
+      (`test/skills-platform.test.js`).
+- [x] Unit: the inferred-read matcher catches a `SKILL.md` read through either skills directory
+      (`.claude/skills` or the `.agents/skills` symlink), absolute, relative, `~`-relative, quoted,
+      repeated, or anywhere inside a compound command, deduped per text, and refuses a look-alike
+      path such as `myskills/<slug>/SKILL.md` (`test/skills-platform.test.js`).
+- [x] Integration: granting reports what it costs to whoever granted it — the admin API's
+      `/skills/profile/:channel/grant` answers with `contextTokens` and `warnings` resolved over the
+      conversation's whole durable tier (empty under the cap, carrying "always-on skill descriptions
+      cost about N tokens per turn (soft cap M)" over it), and the `add_channel_skills` chat verb
+      appends the same warnings to its reply (`test/skills-admin-api.test.js`,
+      `test/skills-platform.test.js`).
 - [x] Integration: authoring creates a local skill granted here, refuses an
       existing slug, merges partial files on update, refuses in-place edits of source-owned skills,
       files proposals, approves a change into a pinned override that survives the next source
@@ -3033,6 +3052,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       sheet's `[hidden]` whatever the specificity, so without it the template skill search filtered
       nothing and the Add-source dialog showed the GitHub and ChannelGate fields at once
       (`test/skills-admin-ui.test.js`).
+- [x] Admin UI: the Usage panel renders the report's `notes` as a help line under the header (how a
+      use is detected, exact vs inferred, capture is not retroactive) — one total per skill, no
+      exact/inferred columns — and a grant's confirmation message carries the warnings the grant
+      answered with (`test/skills-admin-ui.test.js`).
 - [ ] Live (Claude + Codex): grant a catalog skill to a private test channel, ask for something its
       description covers, and confirm the skill fires from the materialized folder with no Skills
       Manager token configured (Claude: exact usage row; Codex: inferred row after it reads

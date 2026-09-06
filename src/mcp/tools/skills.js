@@ -245,8 +245,12 @@ export function register(server, ctx) {
       // Same audit row the admin UI's grant route writes — the chat path used to change what every
       // future run here loads and leave nothing behind. Slugs only; a skill name is not a secret.
       if (r.added.length) await logEvent("skill_granted", { channel: channelId, slug, skills: r.added, author: createdBy });
-      const profile = resolveSkillProfile(r.names, { warnTokens: getSkillsContextWarnTokens() });
-      return text(`✅ Granted here: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.`);
+      // Cost and warnings over the conversation's whole DURABLE tier (organization + template +
+      // its own grants), not just the names this call stored: that is what every future run here
+      // loads. The soft-cap warning was computed and thrown away, so the person who pushed the
+      // channel over the cap was the one person who never heard about it.
+      const { sharedProfile: profile } = await channelProfile();
+      return text(`✅ Granted here: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.${profile.warnings.length ? `\n⚠️ ${profile.warnings.join("\n⚠️ ")}` : ""}`);
     },
   );
 

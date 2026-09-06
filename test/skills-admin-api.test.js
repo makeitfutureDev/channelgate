@@ -179,6 +179,8 @@ test("templates: preview and assign to a conversation, grant/revoke, profile and
   const granted = await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["Tpl Sales Skill"] } });
   assert.deepEqual(granted.json.added, ["tpl-sales-skill"], "an addition is stored on the conversation even when the template already provides it");
   assert.deepEqual(granted.json.dependencies, [{ slug: "tpl-dep", requiredBy: ["tpl-sales-skill"] }], "the dependency is reported, never stored as a channel grant");
+  assert.equal(typeof granted.json.contextTokens, "number", "the grant answers with what it now costs per turn");
+  assert.deepEqual(granted.json.warnings, [], "…and with the profile's warnings, empty while the conversation is under the cap");
   assert.deepEqual((await getChannelMeta(entry.slug)).skills, ["tpl-sales-skill"]);
   assert.equal((await request(`/skills/profile/${entry.slug}`)).json.profile.active.find((e) => e.slug === "tpl-dep").via, "dependency", "and it still reports as required by its parent");
   const revoked = await request(`/skills/profile/${entry.slug}/revoke`, { method: "POST", body: { slugs: ["tpl-sales-skill"] } });
@@ -246,6 +248,21 @@ test("sources: the admin fixes UI-created GitHub sources to main and keeps their
   const branch = await request("/skills/sources", { method: "POST", body: { kind: "git", url: "https://github.com/example/private/tree/develop/skills", syncNow: false } });
   assert.equal(branch.status, 400);
   catalog.removeSource(github.json.source.id);
+});
+
+test("grants: going over the skills context soft cap warns in the grant response itself", async () => {
+  await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Cap Buster", "a description heavy enough to blow any budget") }], publish: false } });
+  const before = settingsForApi().skillsContextWarnTokens;
+  saveSettings({ skillsContextWarnTokens: 1 });
+  try {
+    const over = await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["cap-buster"] } });
+    assert.equal(over.status, 200);
+    assert.ok(over.json.contextTokens > 1);
+    assert.match(over.json.warnings.join(" "), /always-on skill descriptions cost about \d+ tokens per turn \(soft cap 1\)/, "the warning travels with the grant that caused it");
+  } finally {
+    saveSettings({ skillsContextWarnTokens: before });
+    await request(`/skills/profile/${entry.slug}/revoke`, { method: "POST", body: { slugs: ["cap-buster"] } });
+  }
 });
 
 test("catalog: the section endpoint scopes a local skill to a channel (granted by the rule) and promotes it back with the grant kept", async () => {
