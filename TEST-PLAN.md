@@ -1057,6 +1057,21 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       encoded in every button value, exactly one button marked ✓ + primary (the "Gateway/Engine
       default" entry when nothing is overridden), and the patterns still match the retired bare
       `cg_model_pick` / `cg_effort_pick` select ids.
+- [x] Unit: the model and effort steps each carry exactly ONE back button, pointing at the step
+      before them (`cg_mw_back_engine` / `cg_mw_back_model`) and carrying that step's own
+      scope + thread, so a mis-click is corrected without re-running `/model`; the back ids do not
+      collide with the harness-step registration `/^cg_mw_engine_(?!reset$)…/` (a "← Back" click
+      handled as a harness pick would silently rewrite the engine)
+      (`test/model-wizard-buttons.test.js`).
+- [ ] Live: run `@bot /model` in a thread, pick *Just this thread*, then pick the WRONG harness.
+      Press **← Back** twice (to the harness step, then to the scope step) and confirm the same
+      message repaints each earlier step in place — no new message, the scope step still offers
+      *Just this thread*, and the harness step's `Current:` line shows the harness the mis-click
+      actually stored. Finish the wizard on the right harness and confirm the done card's
+      **Change again** reopens step 1 in that same message. Repeat with a channel-scope pick
+      (admin author) and confirm walking back never widens or narrows the scope on its own.
+- [x] Airtable: active dual-engine live definition `UI-MODEL-BACK-01` exercises the same-message
+      Back/Change-again flow in both the Claude and Codex Auto fixtures.
 - [x] Unit: admin-UI model dropdowns (Settings defaults, channel Runtime card, channel/DM config
       editors) list the wizard's curated options for the selected/inherited engine; a saved
       non-curated same-engine id shows as an extra option and stays selected; switching the engine

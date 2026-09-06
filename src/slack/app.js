@@ -14,7 +14,7 @@ export { isAuthorized };
 import { requestApproval, handleApprovalClick, handleApprovalCommentSubmit, APPROVAL_ACTIONS, setApprovalClient } from "./approvals.js";
 // Re-exported for existing importers (web/app.js, tests) — moved to slack/approvals.js.
 export { requestApproval };
-import { MODEL_WIZARD_SCOPE_CHANNEL_ACTION, MODEL_WIZARD_SCOPE_THREAD_ACTION, MODEL_WIZARD_ENGINE_CLAUDE_ACTION, MODEL_WIZARD_ENGINE_CODEX_ACTION, MODEL_WIZARD_ENGINE_RESET_ACTION, MODEL_PICKER_ACTION_PATTERN, EFFORT_PICKER_ACTION_PATTERN, ENGINE_PICKER_ACTION, MODEL_WIZARD_TEXT, modelWizardScopeBlocks, handleModelWizard, modelOptionsForEngine } from "./model-wizard.js";
+import { MODEL_WIZARD_SCOPE_CHANNEL_ACTION, MODEL_WIZARD_SCOPE_THREAD_ACTION, MODEL_WIZARD_ENGINE_CLAUDE_ACTION, MODEL_WIZARD_ENGINE_CODEX_ACTION, MODEL_WIZARD_ENGINE_RESET_ACTION, MODEL_WIZARD_BACK_ACTION_PATTERN, MODEL_PICKER_ACTION_PATTERN, EFFORT_PICKER_ACTION_PATTERN, ENGINE_PICKER_ACTION, MODEL_WIZARD_TEXT, modelWizardScopeBlocks, handleModelWizard, modelOptionsForEngine } from "./model-wizard.js";
 // Re-exported for existing importers (tests) — moved to slack/model-wizard.js.
 export { modelOptionsForEngine };
 import { getSessionMap } from "../gateway/sessions.js";
@@ -897,6 +897,9 @@ async function connectAndWire(app) {
   app.action(MODEL_WIZARD_SCOPE_THREAD_ACTION, handleModelWizard);
   app.action(/^cg_mw_engine_(?!reset$)[a-z0-9_-]+$/, handleModelWizard);
   app.action(MODEL_WIZARD_ENGINE_RESET_ACTION, handleModelWizard);
+  // "← Back" on steps 2–4 and "Change again" on the done card — same handler, which reads the
+  // destination step off the action_id.
+  app.action(MODEL_WIZARD_BACK_ACTION_PATTERN, handleModelWizard);
   // The retired /engine dropdown may still sit in old Slack messages — ack it with a pointer
   // instead of leaving a dead control that errors in the client.
   app.action(ENGINE_PICKER_ACTION, async ({ ack, body, client }) => {

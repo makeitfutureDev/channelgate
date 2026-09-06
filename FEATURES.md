@@ -520,7 +520,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (buttons) → harness: *Claude*/*Codex* (buttons, plus *Use defaults* to clear the scope's
   overrides) → model (one button per model) → effort (one button per level) — every step is a flat
   list of buttons, no dropdowns, with the choice already in force marked ✓ and highlighted;
-  each step persisting as it's clicked; thread scope
+  each step persisting as it's clicked. Because a step persists on click, a mis-click is corrected
+  in place rather than by re-running the command: steps 2–4 carry **← Back** to the step before
+  them and the final card carries **Change again**, both repainting the SAME message (walking back
+  writes nothing and undoes nothing — the re-pick overwrites what the wrong click stored, and the
+  repainted step shows what is actually in force). Thread scope
   writes per-thread engine/model/effort overrides that beat the channel at run time; Settings →
   Access & security chooses whether channel changes are admin-only (default) or available to every
   authorized channel user, while anyone approved may customize their DM; typed `@bot /model` is the command — no manifest slash command is

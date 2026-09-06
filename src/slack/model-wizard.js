@@ -7,7 +7,9 @@
 //   4. effort  — buttons, one per effort level, filtered to the chosen harness
 // Every step is a flat list of buttons — no dropdowns anywhere in the flow. Each step persists the
 // moment it's clicked, so abandoning mid-wizard keeps the steps already
-// taken. Channel scope writes meta.engine/model/effort (what the old pickers did); thread scope
+// taken. Steps 2-4 also carry a "← Back" button (and the done card a "Change again"), which walks
+// the same message to an earlier step so a mis-click is corrected by re-picking rather than by
+// re-running /model. Channel scope writes meta.engine/model/effort (what the old pickers did); thread scope
 // writes the per-thread overrides (thread-engine.js), which beat the channel at run time. Wizard
 // state ({s: scope, t: threadTs}) rides inside every button/option value as compact JSON, because
 // the registered-slash-command variant is an ephemeral message with no body.message to read a
@@ -42,6 +44,15 @@ export const MODEL_WIZARD_SCOPE_THREAD_ACTION = "cg_mw_scope_thread";
 export const MODEL_WIZARD_ENGINE_CLAUDE_ACTION = "cg_mw_engine_claude";
 export const MODEL_WIZARD_ENGINE_CODEX_ACTION = "cg_mw_engine_codex";
 export const MODEL_WIZARD_ENGINE_RESET_ACTION = "cg_mw_engine_reset";
+// Every step after the first carries a "← Back" button, and the final card a "Change again" — a
+// step persists the moment it is clicked, so someone who hits the wrong scope/harness/model needs
+// the way back to that step without re-running `/model`. Back is pure NAVIGATION: it repaints the
+// earlier step (never undoes the write), and the pick made there overwrites what the mistaken
+// click stored. Named per DESTINATION step, so the handler reads the target off the action_id.
+export const MODEL_WIZARD_BACK_SCOPE_ACTION = "cg_mw_back_scope"; // → step 1 (scope)
+export const MODEL_WIZARD_BACK_ENGINE_ACTION = "cg_mw_back_engine"; // → step 2 (harness)
+export const MODEL_WIZARD_BACK_MODEL_ACTION = "cg_mw_back_model"; // → step 3 (model)
+export const MODEL_WIZARD_BACK_ACTION_PATTERN = /^cg_mw_back_(?:scope|engine|model)$/;
 // The model/effort steps render one button per choice, and Slack requires a UNIQUE action_id inside
 // a block — so each button gets an index suffix (`cg_model_pick_2`) and both the Bolt registration
 // and the handler match on the base prefix. The bare id is still accepted: it's what the retired
@@ -125,6 +136,13 @@ function wizardButton(actionId, label, value) {
   return { type: "button", action_id: actionId, text: { type: "plain_text", text: label, emoji: false }, value };
 }
 
+// A back/restart button carries the same wizard state as the step it sits on (scope + thread), so
+// the repaint knows which scope it is walking back into. No `value` of its own — the destination
+// step is the action_id.
+function backButton(actionId, { scope, threadTs, label = "← Back" }) {
+  return wizardButton(actionId, label, encodeWizardState({ scope, threadTs }));
+}
+
 // Slack rejects an actions block with more than 25 elements, so a long model list is split across
 // consecutive blocks rather than silently truncated.
 const MAX_ACTION_ELEMENTS = 25;
@@ -163,9 +181,10 @@ function modelWizardEngineBlocks({ scope, threadTs, meta, threadEngine = "" }) {
       elements: [
         ...OFFERED_ENGINE_IDS().map((id) => button(`cg_mw_engine_${id}`, requireAdapter(id).label)),
         button(MODEL_WIZARD_ENGINE_RESET_ACTION, "Use defaults"),
+        backButton(MODEL_WIZARD_BACK_SCOPE_ACTION, { scope, threadTs }),
       ],
     },
-    { type: "context", elements: [{ type: "mrkdwn", text: "Step 2 of 4 — model and effort next. *Use defaults* instead clears the harness/model/effort overrides for this scope." }] },
+    { type: "context", elements: [{ type: "mrkdwn", text: "Step 2 of 4 — model and effort next. *Use defaults* instead clears the harness/model/effort overrides for this scope. *← Back* returns to the scope step." }] },
   ];
 }
 
@@ -174,7 +193,7 @@ function modelWizardEngineBlocks({ scope, threadTs, meta, threadEngine = "" }) {
 // instead of open-menu-then-pick). Each button embeds the wizard state in its value; `current` is
 // the choice already in force, marked with a ✓ and the primary style since a button list has no
 // equivalent of a select's initial_option.
-function wizardChoiceBlocks({ scope, threadTs, actionId, options, current, header, step }) {
+function wizardChoiceBlocks({ scope, threadTs, actionId, options, current, header, step, backActionId }) {
   const selected = current || DEFAULT_PICKER_VALUE;
   const elements = options.map((o, i) => {
     const button = wizardButton(`${actionId}_${i}`, o.value === selected ? `✓ ${o.label}` : o.label, encodeWizardState({ scope, threadTs, value: o.value }));
@@ -183,6 +202,9 @@ function wizardChoiceBlocks({ scope, threadTs, actionId, options, current, heade
   return [
     { type: "section", text: { type: "mrkdwn", text: header } },
     ...actionRows(elements),
+    // Back rides in its OWN actions block: the choice rows are already packed to Slack's 25-element
+    // limit, and a step with exactly 25 choices would otherwise push it onto a row of its own anyway.
+    ...(backActionId ? [{ type: "actions", elements: [backButton(backActionId, { scope, threadTs })] }] : []),
     { type: "context", elements: [{ type: "mrkdwn", text: step }] },
   ];
 }
@@ -194,8 +216,9 @@ export function modelWizardModelBlocks({ scope, threadTs, engine, current, isDM 
     actionId: MODEL_PICKER_ACTION,
     options: modelOptionsForEngine(engine),
     current,
+    backActionId: MODEL_WIZARD_BACK_ENGINE_ACTION,
     header: `*Choose a ${requireAdapter(engine).label} model* — for ${wizardScopeLabel(scope, isDM)}\nCurrent: \`${current || "default"}\``,
-    step: "Step 3 of 4 — effort next. *Gateway default* clears the model override.",
+    step: "Step 3 of 4 — effort next. *Gateway default* clears the model override. *← Back* returns to the harness step.",
   });
 }
 
@@ -206,17 +229,23 @@ export function modelWizardEffortBlocks({ scope, threadTs, engine, model, curren
     actionId: EFFORT_PICKER_ACTION,
     options: effortOptionsForEngine(engine, model),
     current,
+    backActionId: MODEL_WIZARD_BACK_MODEL_ACTION,
     header: `*Choose reasoning effort* — for ${wizardScopeLabel(scope, isDM)}\nModel: \`${model || "default"}\` · Current effort: \`${current || "default"}\``,
-    step: "Step 4 of 4 — done after this. *Engine default* clears the override.",
+    step: "Step 4 of 4 — done after this. *Engine default* clears the override. *← Back* returns to the model step.",
   });
 }
 
-function modelWizardDoneBlocks({ scope, isDM, engine, model, effort, reset = false }) {
+function modelWizardDoneBlocks({ scope, threadTs, isDM, engine, model, effort, reset = false }) {
   const where = wizardScopeLabel(scope, isDM);
   const text = reset
     ? `✅ Cleared — ${where} now follows the ${scope === "thread" ? "channel's" : "gateway's"} default harness, model, and effort.`
     : `✅ Runtime updated for ${where}\nHarness: *${requireAdapter(engine).label}* · Model: \`${model || "default"}\` · Effort: \`${effort || "default"}\``;
-  return [{ type: "section", text: { type: "mrkdwn", text } }];
+  return [
+    { type: "section", text: { type: "mrkdwn", text } },
+    // The last click ends the wizard, so a wrong final pick would otherwise cost a fresh `/model`.
+    // This walks the SAME message back to step 1 instead.
+    { type: "actions", elements: [backButton(MODEL_WIZARD_BACK_SCOPE_ACTION, { scope, threadTs, label: "Change again" })] },
+  ];
 }
 
 export async function postModelWizard(client, { channel, threadTs, meta }) {
@@ -306,6 +335,26 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       await setThreadEffort(entry.slug, threadTs, "");
     };
 
+    // "← Back" / "Change again": repaint an EARLIER step in this same message. Nothing is written
+    // or unwritten here — each step already persisted when it was clicked, and re-picking there
+    // overwrites it. Every step is re-read from the store so the repainted card shows what is
+    // actually in force right now (including the pick being corrected).
+    if (actionId === MODEL_WIZARD_BACK_SCOPE_ACTION) {
+      await repaint(modelWizardScopeBlocks({ threadTs, meta }));
+      return;
+    }
+    if (actionId === MODEL_WIZARD_BACK_ENGINE_ACTION) {
+      const threadEngine = scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "";
+      await repaint(modelWizardEngineBlocks({ scope, threadTs, meta: effectiveMeta(meta), threadEngine }));
+      return;
+    }
+    if (actionId === MODEL_WIZARD_BACK_MODEL_ACTION) {
+      const backEngine = (scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "") || runtimeEngine(effectiveMeta(meta));
+      const backModel = (scope === "thread" ? await getThreadModel(entry.slug, threadTs) : meta.model) || "";
+      await repaint(modelWizardModelBlocks({ scope, threadTs, engine: backEngine, current: backModel, isDM }));
+      return;
+    }
+
     // Step 1 → 2: scope picked. (A thread pick with no resolvable thread was already refused above.)
     if (actionId === MODEL_WIZARD_SCOPE_CHANNEL_ACTION || actionId === MODEL_WIZARD_SCOPE_THREAD_ACTION) {
       const chosen = actionId === MODEL_WIZARD_SCOPE_THREAD_ACTION ? "thread" : "channel";
@@ -324,7 +373,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         // overrides, so the reset visibly applies right where it was requested.
         if (threadTs) await clearThreadOverrides();
       }
-      await updateRuntimePickerMessage({ client, respond, channel, ts, text: "Runtime overrides cleared.", blocks: modelWizardDoneBlocks({ scope, isDM, reset: true }) });
+      await updateRuntimePickerMessage({ client, respond, channel, ts, text: "Runtime overrides cleared.", blocks: modelWizardDoneBlocks({ scope, threadTs, isDM, reset: true }) });
       return;
     }
 
@@ -413,7 +462,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         channel,
         ts,
         text: `Runtime updated for ${wizardScopeLabel(scope, isDM)}. Harness: ${engine}. Model: ${model || "default"}. Effort: ${val || "default"}.`,
-        blocks: modelWizardDoneBlocks({ scope, isDM, engine, model, effort: val }),
+        blocks: modelWizardDoneBlocks({ scope, threadTs, isDM, engine, model, effort: val }),
       });
     }
   } catch (e) {
