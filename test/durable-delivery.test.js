@@ -461,6 +461,18 @@ test("daily-thread schedule delivery persists one anchor per local day", async (
   const tomorrow = await scheduler.taskDeliveryThread(client, stored, "Monitor SLA", new Date(2026, 8, 2, 9, 0));
   assert.notEqual(tomorrow, first);
   assert.equal(client.posted.length, 2, "the next local day opens a fresh anchor");
+
+  // The reused anchor is a DELIVERY decision and nothing else. It used to seed the run's session
+  // key too (`sched-<id>-<threadTs>`), so the day's second fire resumed the first fire's engine
+  // session instead of starting the fresh, context-less one the schedule contract promises
+  // (QA AUT-DAILY-THREAD-01). The end-to-end proof is test/schedule-daily-thread.test.js.
+  const keys = [scheduler.scheduleSessionKey(stored), scheduler.scheduleSessionKey(stored)];
+  assert.notEqual(keys[0], keys[1], "each fire of the day runs under its own session key");
+  for (const key of keys) {
+    assert.ok(key.startsWith(`sched-${sched.id}-`), "…still the schedule's own synthetic key");
+    assert.equal(key.includes(first), false, "…and never derived from the reused anchor");
+    assert.equal(slackThreadFor(key), null, "…which Slack must never see as a thread_ts");
+  }
 });
 
 // ── H4: a recovered job's cap-kill must verify identity BEFORE it signals ────────────────────

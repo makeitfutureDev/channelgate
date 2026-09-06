@@ -89,6 +89,30 @@ export async function taskDeliveryThread(client, sched, title, now = new Date())
   return announcement?.messageId || null;
 }
 
+// The session key for ONE fire of a schedule. Two properties, both deliberate:
+//
+//  1. It is SYNTHETIC — never a Slack thread_ts, so it can never collide with a human thread's
+//     session (slack/thread-keys.js resolves it to "there is no thread; post top-level").
+//  2. It is unique per FIRE, because a scheduled run is contractually a fresh, context-less
+//     session every time (gateway-usage/references/reminders.md, and the `create_schedule` tool
+//     description say so in as many words).
+//
+// It used to be built from the run's delivery thread, which only LOOKED per-fire: `standard`
+// delivery announces every run, so each fire brought a new announcement ts — but `daily-thread`
+// delivery reuses ONE anchor for the whole server-local day, so every later fire of that day
+// landed on the previous fire's key and RESUMED its session (QA AUT-DAILY-THREAD-01: fire 1
+// isNewSession:true, fire 2 isNewSession:false, same key). Threading the delivery is `threadTs`'s
+// job and only `threadTs`'s job; the session key must not be derived from it.
+//
+// The stamp is monotonic rather than a bare `Date.now()` so that two fires landing in the same
+// millisecond (one tick catching up several minutes at once) still get different keys.
+let lastFireStamp = 0;
+export function scheduleSessionKey(sched, now = Date.now()) {
+  const stamp = Number(now);
+  lastFireStamp = Math.max(Number.isFinite(stamp) ? stamp : Date.now(), lastFireStamp + 1);
+  return `sched-${sched.id}-${lastFireStamp}`;
+}
+
 async function runSchedule(sched) {
   if (running.has(sched.id)) return;
   running.add(sched.id);
@@ -182,9 +206,10 @@ async function runSchedule(sched) {
     // Origin "schedule": nobody is watching this turn, and create_schedule is pre-approved in
     // every channel — so injected content processed during an admin's turn could have planted this
     // prompt. It runs under the folder's permission allowlist, never with the sandbox off.
-    // The session key is deliberately synthetic (a fresh session per fire, never colliding with a
-    // human thread) — it is NOT a Slack thread_ts. Anything that needs to POST into the run's
-    // thread (approval cards) takes the announcement's real ts from slack/approvals.js instead.
+    // The session key is deliberately synthetic and per-FIRE (scheduleSessionKey) — it is NOT a
+    // Slack thread_ts, and it is NOT derived from the delivery thread. Anything that needs to POST
+    // into the run's thread (approval cards) takes the announcement's real ts from
+    // slack/approvals.js instead.
     // The ONE exception is a loop tick, which is defined by continuing a human thread: it uses that
     // thread's real key on purpose, and therefore has to take the per-thread queue below.
     const bankUsage = createUsageBank();
@@ -208,7 +233,7 @@ async function runSchedule(sched) {
         channelId: sched.channelId,
         authorId: sched.createdBy,
         text: sched.prompt,
-        threadKey: loopTick ? sched.threadTs : `sched-${sched.id}-${threadTs || Date.now()}`,
+        threadKey: loopTick ? sched.threadTs : scheduleSessionKey(sched),
         signal: loopHandle?.controller.signal ?? null,
         origin: "schedule",
       });
@@ -429,6 +454,14 @@ export function resetSchedulerState() {
   running.clear();
 }
 
+// KNOWN LIMITATION (boot window). server.js starts the scheduler only after restart recovery has
+// finished, and the first tick then lands a further 60s later with `lastTickMs` still 0 — which
+// elapsedMinutes reads as "no previous tick", i.e. evaluate only the current minute. So a cron
+// matching a minute that passed while the daemon was booting (recovery re-runs whole interrupted
+// turns and can straddle a minute boundary) is skipped until its next match. It is not fixed here
+// because the obvious fix is not safe on its own: `firedThisMinute` is in-memory, so firing the
+// boot minute would re-fire a schedule that had ALREADY fired in that same minute before the
+// restart. Making the boot window safe needs a durable per-minute fire record, not an extra tick.
 export function startScheduler({ slack } = {}) {
   slackRef = slack;
   const timer = setInterval(tick, 60_000);

@@ -2970,6 +2970,10 @@ Manual checks for the daemon-level behavior:
       results to that same thread without another top-level banner, a daemon restart preserves the
       anchor, and tomorrow's first run creates a new anchor. Repeat with Claude and Codex and prove
       each execution still receives a fresh engine session.
+- [x] Automated — daily-thread sessions: two fires of one daily-thread schedule on the same day
+      run under DISTINCT synthetic session keys (neither resumes the other; the spawned argv
+      carries no `-r`) while both answers post under the one anchor of the day
+      (`test/schedule-daily-thread.test.js`, `test/durable-delivery.test.js`).
 ### Skills platform (governance and usage)
 
 - [x] Unit/API: migration 19 preserves existing discoverability; catalog search covers source

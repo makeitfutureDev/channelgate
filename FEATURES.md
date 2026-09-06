@@ -615,7 +615,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Recurring task schedules can opt into `delivery:"daily-thread"`: the first run of each
   server-local day creates one top-level “Running” anchor and every result that day lands beneath
   it. The durable anchor survives daemon restarts, the next day starts a new thread, and agent
-  sessions remain fresh per run. Existing schedules retain standard per-run announcements.
+  sessions remain fresh per run — the session key is minted per fire and never derived from the
+  reused anchor, so grouping the day's results never joins them into one conversation. Existing
+  schedules retain standard per-run announcements. → TEST-PLAN: Scheduling & reminders.
 - Native `/loop` in a thread: Claude Code's own loop skill paces itself with `ScheduleWakeup` /
   `CronCreate`, both of which are session-local (the harness documents its cron store as "gone when
   Claude exits") and therefore inert in a headless turn. The daemon reads the pacing call out of the
