@@ -40,6 +40,20 @@ case "$SERVICE_USER" in *[!a-zA-Z0-9_-]*|"") echo "Invalid service account name"
 for value in "$APP_DIR" "$SERVICE_HOME" "$NODE_BIN"; do
   case "$value" in *[[:space:]%\"\\]*|[!/]*) echo "Service paths must be absolute and contain no whitespace, percent, quote or backslash"; exit 1;; esac
 done
+# Before provisioning an account or changing checkout ownership, prove the parent directories
+# are traversable. Do not widen an operator's private home ACL to make a service install work.
+relocation_remedy() {
+  echo "The service account cannot reach the checkout or Node executable."
+  echo "Relocate the checkout to /opt/channelgate and use a system-wide Node installation, then rerun this installer."
+  echo "No account or checkout ownership was changed."
+  exit 1
+}
+if id "$SERVICE_USER" >/dev/null 2>&1; then
+  CG_CHECK_PARENT="$(dirname "$APP_DIR")" CG_CHECK_NODE="$NODE_BIN" runuser -u "$SERVICE_USER" -- /bin/sh -c \
+    'test -x "$CG_CHECK_PARENT" && test -x "$CG_CHECK_NODE"' || relocation_remedy
+else
+  "$NODE_BIN" "$APP_DIR/scripts/service-path-preflight.mjs" "$(dirname "$APP_DIR")" "$(dirname "$NODE_BIN")" || relocation_remedy
+fi
 if ! id "$SERVICE_USER" >/dev/null 2>&1; then
   useradd --system --add-subids-for-system --user-group --home-dir "$SERVICE_HOME" --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
@@ -126,8 +140,9 @@ UNIT="/etc/systemd/system/$UNIT_NAME"
 cat > "$UNIT" <<EOF
 [Unit]
 Description=ChannelGate
-After=network-online.target
+After=network-online.target user@$SERVICE_UID.service
 Wants=network-online.target
+Requires=user@$SERVICE_UID.service
 
 [Service]
 Type=simple
@@ -144,7 +159,7 @@ ExecStart=$NODE_BIN $APP_DIR/src/start.js
 Restart=on-failure
 RestartSec=5
 # SIGTERM only the daemon: it drains, marks the shutdown and sweeps its own engine children
-# (host process groups, container run groups) so interrupted turns replay on the next boot.
+# (host process groups, container run groups). Unknown interrupted executions are not replayed.
 KillMode=mixed
 UMask=0077
 # Podman's newuidmap/newgidmap helpers need their setuid transition. Each channel container
