@@ -1904,7 +1904,7 @@ function renderChannelDetail(ch) {
     }
   });
 
-  // Page tabs are view toggles; all Access/Connections/MCP/Environment/Skills/Runtime controls stay in the DOM so the one savebar
+  // Page tabs are view toggles; all Access/MCP Connections/Cloud MCP/Environment/Skills/Runtime controls stay in the DOM so the one savebar
   // persists them. Instructions & Memory lazy-load on first open and keep their own Save.
   const subtabs = card.querySelectorAll(".subtab");
   const subpanes = card.querySelectorAll(".subpane");

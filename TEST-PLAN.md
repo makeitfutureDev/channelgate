@@ -73,7 +73,7 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 - [x] The registered search and read MCP handlers return formatted content through their injected
       response helper (regression: neither can fail with `text is not defined`).
 - [x] Untrusted/API-spoofed principals cannot call memory retrieval tools.
-- [x] The channel editor exposes Access, Connections, MCP servers, Environment tokens, Skills,
+- [x] The channel editor exposes Access, MCP Connections, Cloud MCP, Environment tokens, Skills,
       Runtime, Instructions, and Memory as first-class pages in that order, with no nested Tools
       navigation or channel Grant Tier selector; enabled skills appear first and one shared save
       lifecycle preserves edits across the first six pages.
