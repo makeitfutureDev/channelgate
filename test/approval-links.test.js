@@ -10,8 +10,8 @@
 //   • POST resolves through the same applier the Slack button uses — same card, same decision,
 //     same channel state, differing only in the principal
 //   • the links reach the requester PRIVATELY (ephemeral), never the shared thread
-//   • a busy-thread card is answerable the same way
-//   • bad tokens are rate-limited per IP
+//   • a busy-thread card is answerable the same way, and names its conversation by slug
+//   • bad tokens are rate-limited per REAL client, not per proxy hop
 //   • the `approvalLinks` setting's three values do what they say
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
@@ -34,7 +34,7 @@ const {
   approvalLinkUrl,
   APPROVAL_LINK_TTL_MS,
 } = await import("../src/web/approval-links.js");
-const { createLoginLimiter } = await import("../src/web/security.js");
+const { clientKey, createLoginLimiter } = await import("../src/web/security.js");
 const { readEvents } = await import("../src/util/logger.js");
 
 const SLUG = "approval-links";
@@ -378,6 +378,27 @@ test("a busy-thread card is answerable by link, and cancel drops the waiting mes
   assert.ok(readEvents({ limit: 40 }).some((e) => e.event === "approval_resolved_by_link" && e.approvalId === choiceId && e.decision === "cancel"));
 });
 
+test("a busy-thread link names the conversation by slug, on the page and in the audit row", async () => {
+  // The record is built from a raw Slack event, so it carries a channel id and no slug. Without a
+  // lookup the page says "C_APPROVAL_LINKS" — a string the person clicking has never seen — and the
+  // audit row lands with an empty slug, which is the field every other approval event is queried by.
+  const event = { channel: CHANNEL, user: MEMBER, ts: "3.210", text: "one more thing" };
+  const choiceId = busyThreadChoices.create({ event, options: {} });
+  assert.equal(busyThreadChoices.list().find((r) => r.id === choiceId)?.slug, undefined, "the stored record has no slug");
+  await deliverBusyThreadChoiceLinks(client, choiceId, { channelId: CHANNEL, threadTs: "3.210", userId: MEMBER });
+  const cancel = lastLinks().find((l) => l.label === "Cancel Request").url;
+
+  const html = await (await fetch(cancel)).text();
+  assert.match(html, new RegExp(`<dt>Conversation</dt><dd>${SLUG}</dd>`), "the page names the conversation");
+  assert.doesNotMatch(html, new RegExp(CHANNEL), "not the raw channel id");
+
+  assert.equal((await fetch(cancel, { method: "POST" })).status, 200);
+  const logged = readEvents({ limit: 40 }).find((e) => e.event === "approval_resolved_by_link" && e.approvalId === choiceId);
+  assert.ok(logged, "the resolution is auditable");
+  assert.equal(logged.slug, SLUG, "and queryable by conversation, like every permission-card row");
+  assert.equal(logged.channel, CHANNEL);
+});
+
 // ── Rate limiting ───────────────────────────────────────────────────────────────
 
 test("bad tokens are rate-limited per IP; a valid one is never slowed down", async () => {
@@ -404,6 +425,39 @@ test("bad tokens are rate-limited per IP; a valid one is never slowed down", asy
   assert.equal(verifyApprovalLinkToken(good).claims.id, id);
   await fetch(findLink("Deny"), { method: "POST" });
   await pending;
+});
+
+test("the backoff counts the forwarded client, not the loopback proxy hop everyone shares", async () => {
+  // The daemon binds 127.0.0.1 and is reached through cloudflared, so `req.ip` is loopback for
+  // every caller on earth: keyed on that, a handful of bad tokens from anywhere locks out every
+  // legitimate approval link — including one opened from the same machine.
+  const proxied = express();
+  proxied.use("/approve", createApprovalLinkRouter({ slack: { getClient: () => client }, limiter: createLoginLimiter({ freeAttempts: 2, baseDelayMs: 60_000, maxDelayMs: 60_000 }) }));
+  const listener = await new Promise((resolve) => {
+    const instance = proxied.listen(0, "127.0.0.1", () => resolve(instance));
+  });
+  after(() => listener.close());
+  const url = (token) => `http://127.0.0.1:${listener.address().port}/approve/${token}`;
+  const from = (ip, token, init = {}) => fetch(url(token), { ...init, headers: { "X-Forwarded-For": ip, ...(init.headers || {}) } });
+
+  for (let i = 0; i < 2; i++) assert.equal((await from("203.0.113.5", `bogus-a${i}`)).status, 404);
+  assert.equal((await from("203.0.113.5", "bogus-a9")).status, 429, "that client is backing off");
+  assert.equal((await from("203.0.113.6", "bogus-b0")).status, 404, "a different client through the same tunnel is untouched");
+  // CF-Connecting-IP is written by cloudflared and cannot be prepended to, so it outranks a
+  // client-supplied X-Forwarded-For — here one naming the address that IS backing off.
+  assert.equal((await from("203.0.113.5", "bogus-c0", { headers: { "CF-Connecting-IP": "198.51.100.7" } })).status, 404);
+
+  // …and a real link still works from an address that never failed, which is the whole point.
+  const { pending } = await raise("3.310");
+  const good = findLink("Deny").split("/approve/")[1];
+  assert.equal((await from("203.0.113.6", good)).status, 200, "GET renders the page");
+  assert.equal((await from("203.0.113.6", good, { method: "POST" })).status, 200);
+  assert.equal((await pending).allow, false);
+
+  // A non-loopback socket is a client, not a proxy hop, so its header is just a claim — asserted on
+  // the helper itself, since a hermetic test cannot open a non-loopback socket to this server.
+  assert.equal(clientKey({ socket: { remoteAddress: "198.51.100.9" }, headers: { "x-forwarded-for": "203.0.113.5" } }), "198.51.100.9");
+  assert.equal(clientKey({ socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-for": "203.0.113.5" } }), "203.0.113.5");
 });
 
 // ── The setting ─────────────────────────────────────────────────────────────────

@@ -201,6 +201,24 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Security
+- **The approval-link and admin-login backoffs count the real client, not the tunnel in front of
+  it.** The daemon binds `127.0.0.1` and is reached from outside through cloudflared or a reverse
+  proxy on the same host, so every public caller arrives on a LOOPBACK socket — and both per-IP
+  backoffs keyed on that address, which made them one bucket for the entire internet. A handful of
+  bad approval tokens from anywhere put every legitimate approval link into 429 (verified live: a
+  429 raised through the public URL also refused a link opened from the machine itself), and the
+  same shape let one stranger's failed password guesses lock the admin out of the login form —
+  exactly the outcome the backoff exists to prevent. Both limiters now key on the FORWARDED client
+  through one shared helper: `CF-Connecting-IP` (which the tunnel overwrites, so it cannot be
+  prepended to), then the first hop of `X-Forwarded-For`, honoured **only when the socket itself is
+  loopback** — from a non-loopback socket those headers are whatever the client typed and are
+  ignored, unless the operator declares a trusted proxy elsewhere on the network with
+  `CG_TRUST_PROXY` — and only when the value parses as an address, so a header can neither pick a
+  bucket for someone else nor fill the limiter's map. Express's app-wide `trust proxy` was
+  deliberately not used: it would also re-point `req.secure` / `req.protocol` / `req.hostname` at
+  client-supplied headers, which the DNS-rebinding Host/Origin guard and the session cookie's
+  `Secure` flag read for themselves on purpose, and it knows nothing about `CF-Connecting-IP`. New
+  runbook section in `docs/OPERATIONS.md` → *Reverse proxies and tunnels*.
 - **"My inbox" is never answered from the shared Composio identity.** A requester with no
   personal Composio token asked, in their own words, for their own mailbox. The run had only the
   shared agent identity (`composio-agent`) — which holds OTHER people's connected accounts — used it
@@ -261,6 +279,14 @@ product overview.
   `src/config/dead-fields.js` in the same change.
 
 ### Fixed
+- **A busy-thread approval link names the conversation, in the page and in the audit row.** An
+  approval card is minted with its conversation slug, but a busy-thread card is built from a raw
+  chat event and carries only a channel id — so the *Conversation* row on its confirmation page
+  read `C0123456789`, a string the person deciding has never seen, and every
+  `approval_resolved_by_link` row for a steer/queue/cancel decision was written with an empty
+  `slug`, which is the field the other approval events are queryable by. The slug is now resolved
+  from the channels index (the same place the admin approvals list reads it) once per request, in
+  the shared resolution both verbs use, so the page and the audit row always agree.
 - **A shell turn that reads two skills in one command now records both.** Codex has no Skill tool:
   a skill is "used" when the run reads its `SKILL.md`, and the whole shell line arrives as one tool
   event. The matcher stopped at the FIRST `…/skills/<slug>/SKILL.md` in that line, so the routine

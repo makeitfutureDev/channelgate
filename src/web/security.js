@@ -1,11 +1,12 @@
 // Security helpers for the admin web layer: bind-address policy, allowlisted-root path
-// containment, constant-time password compare, per-IP login backoff, and the MCP `match`
-// shape-check. Kept as small standalone functions (unit-tested in test/web-security.test.js) —
+// containment, constant-time password compare, which client a per-IP limiter counts against,
+// per-IP login backoff, and the MCP `match` shape-check. Kept as small standalone functions (unit-tested in test/web-security.test.js) —
 // the Express wiring lives in auth.js / app.js / routes/admin.js.
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { realpathSync } from "node:fs";
+import { isIP } from "node:net";
 import { getSettings } from "../config/settings.js";
 
 // ── Bind address ────────────────────────────────────────────────────────────────
@@ -267,10 +268,61 @@ export function timingSafeEqualStr(a, b) {
   return crypto.timingSafeEqual(da, db);
 }
 
+// ── Which client is a per-IP limiter counting? ──────────────────────────────────
+// The daemon binds loopback and is reached from the internet through a tunnel or reverse proxy on
+// this same host (cloudflared, nginx), so EVERY public caller arrives on a 127.0.0.1 socket and
+// `req.ip` says so. Keying a backoff on that address puts the whole internet in ONE bucket: a
+// handful of bad approval tokens from anywhere locks out every legitimate approval link, and one
+// attacker's failed logins locks out the admin. That is not a per-IP limiter, it is a kill switch
+// anybody can pull.
+//
+// The forwarding headers carry the real client, and they are trustworthy exactly when the socket
+// itself is loopback: only the proxy in front and other processes on this host can open one, and
+// both are already inside the trust boundary. From a NON-loopback socket the header is whatever
+// the client typed, so it is ignored — unless the operator declares a trusted proxy elsewhere on
+// the network with CG_TRUST_PROXY.
+//
+// `CF-Connecting-IP` is preferred over `X-Forwarded-For`: Cloudflare's edge OVERWRITES it with the
+// connecting address, while the first XFF hop is client-supplied whenever the proxy appends rather
+// than replaces (so a caller through the tunnel can rotate it to shed its own backoff — an evasion,
+// never a way to attribute failures to someone else's bucket, since a spoofed value only ever
+// lengthens that caller's own runway).
+//
+// Only a syntactically valid address is honoured; anything else falls back to the socket, which
+// also caps what a header can put in the limiter's map.
+//
+// This is deliberately a helper rather than Express's app-wide `trust proxy`: it fixes the two
+// call sites that key on an address (this file's login backoff via auth.js, and the approval-link
+// router) without also re-pointing `req.secure` / `req.protocol` / `req.hostname` at
+// client-supplied headers, and Express's setting knows nothing about `CF-Connecting-IP`.
+const MAX_ADDRESS_LEN = 64;
+
+function normalizeAddress(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw.length > MAX_ADDRESS_LEN) return "";
+  let host = raw;
+  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(host); // [2001:db8::1]:443
+  if (bracketed) host = bracketed[1];
+  else if (/^[\d.]+:\d+$/.test(host)) host = host.slice(0, host.indexOf(":")); // 203.0.113.5:9000
+  return isIP(host) ? host.toLowerCase() : "";
+}
+
+export function clientKey(req) {
+  const socketIp = String(req?.socket?.remoteAddress || "");
+  const fallback = socketIp || String(req?.ip || "") || "unknown";
+  if (!isLoopbackHost(socketIp) && !process.env.CG_TRUST_PROXY) return fallback;
+  const headers = req?.headers || {};
+  const forwarded =
+    normalizeAddress(headers["cf-connecting-ip"]) || normalizeAddress(String(headers["x-forwarded-for"] || "").split(",")[0]);
+  return forwarded || fallback;
+}
+
 // ── Login backoff ───────────────────────────────────────────────────────────────
 // Per-IP exponential backoff: the first `freeAttempts` failures are free, after that each next
 // attempt must wait baseDelayMs·2ⁿ (capped at maxDelayMs) since the last failure. In-memory with
 // a TTL sweep — state resets on restart, like the admin session set. `now` is injectable for tests.
+// The caller decides what an "IP" is; both callers use clientKey() above, so the bucket is the real
+// client rather than the loopback proxy hop every remote request shares.
 export function createLoginLimiter({ freeAttempts = 3, baseDelayMs = 2_000, maxDelayMs = 300_000, ttlMs = 3_600_000 } = {}) {
   const perIp = new Map(); // ip → { fails, last }
   const prune = (now) => {
