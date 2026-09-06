@@ -10,13 +10,18 @@ see [README.md](./README.md).
 - **Linux with systemd** (Ubuntu 24.04 tested). The daemon refuses to start anywhere else.
 - **Node.js ≥ 22.13** — `node -v` (the gateway's SQLite store uses the built-in `node:sqlite`,
   stable from 22.13). Install from <https://nodejs.org> or your distribution's packages.
-- **Claude Code CLI**, installed and authenticated — the gateway spawns it directly:
+- **Claude Code CLI**, installed and signed in on the host as the daemon user. Turns run inside
+  the channel containers (the runtime image ships the engine CLIs), and the gateway relays that
+  host login's short-lived access token into each container — the credentials file itself is
+  never copied or mounted. Alternatives: paste a `claude setup-token` value in *Settings →
+  Container runtime*, or set `ANTHROPIC_API_KEY` for a service install with no interactive login.
   ```bash
   npm install -g @anthropic-ai/claude-code
   claude login          # or set ANTHROPIC_API_KEY
   claude --version      # must work
   ```
-- **(Optional) OpenAI Codex CLI** — only if you'll use the Codex engine:
+- **(Optional) OpenAI Codex CLI** — only if you'll use the Codex engine. Its host sign-in file is
+  bind-mounted into the channel containers (sessions stay per channel; the sign-in is shared):
   ```bash
   npm install -g @openai/codex
   codex login           # or set OPENAI_API_KEY
@@ -78,10 +83,12 @@ hands it the checkout:
 sudo bash scripts/install-systemd.sh      # = npm run service:install, run as root
 ```
 
-It writes `/etc/systemd/system/channelgate.service` (hardened: `NoNewPrivileges`,
-`ProtectSystem=strict`, `ProtectHome`, private `/tmp`), runs the daemon as the `channelgate`
-account with its runtime root in `/var/lib/channelgate`, bakes the engine CLIs' directories into
-the unit's `PATH`, and enables it at boot. Manage it with `systemctl`:
+It provisions the final service user's subordinate UID/GID ranges, user runtime and cgroup
+delegation, then builds/probes the image in that user's own rootless Podman store. It writes
+`/etc/systemd/system/channelgate.service`, with `ProtectSystem=strict`, `ProtectHome=read-only`
+and private `/tmp`. The daemon must permit Podman's setuid namespace helpers; every channel
+container still uses no-new-privileges and dropped capabilities. API credentials belong in the
+0600 `/var/lib/channelgate/service.env` before starting real turns. Manage it with `systemctl`:
 
 ```bash
 sudo systemctl status channelgate
@@ -156,7 +163,7 @@ In the admin UI:
 - **Users** — approve the people who may use the bot (set their Composio token if they have one).
   Bot users only respond to *approved* users; unknown users are denied even in DMs.
 - **Channels** — once the bot is invited to a channel and has seen a message there, it appears
-  here. MakeItFuture members in a channel are auto-added to its allow-list on join. Set MCPs,
+  here. operator-approved members in a channel are auto-added to its allow-list on join. Set MCPs,
   skills, working folder, admin mode, or a channel-wide Composio token as needed.
 
 ## 7. Use it

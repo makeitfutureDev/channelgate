@@ -15,7 +15,7 @@ test("a per-run mode override cannot introduce adminMode", () => {
   const channel = { adminMode: false, allowBash: false };
   const merged = applyRunOverrides(channel, { mode: "full" });
   assert.equal(merged.adminMode, false, "mode:full must not grant adminMode to a non-admin channel");
-  assert.equal(merged.profile, "full", "the requested profile is still recorded");
+  assert.equal(merged.profile, "read", "the profile reports the effective reduced capability");
 });
 
 test("a channel that is already adminMode keeps it through an override", () => {
@@ -148,4 +148,23 @@ test("adminUnattendedTier: admin author in an adminMode channel qualifies; every
   // Non-admin channels are governed by their own flags, not this tier.
   assert.equal(adminUnattendedTier({ ...qualifying, meta: { adminMode: false } }), false);
   assert.equal(adminUnattendedTier(), false);
+});
+
+
+test("API overrides cannot widen a read channel or restore clean-mode integrations", () => {
+  for (const mode of ["worker", "auto", "full"]) {
+    const reduced = applyRunOverrides({ adminMode: false, allowBash: false, autoMode: false }, { mode });
+    assert.equal(reduced.adminMode, false, mode);
+    assert.equal(reduced.allowBash, false, mode);
+    assert.equal(reduced.autoMode, false, mode);
+  }
+  const worker = applyRunOverrides({ allowBash: true }, { mode: "auto" });
+  assert.equal(worker.allowBash, true);
+  assert.equal(worker.autoMode, false);
+  assert.equal(worker.profile, "worker");
+  for (const mode of ["read", "worker", "auto", "full"]) {
+    assert.equal(applyRunOverrides({ cleanMode: true }, { mode }).cleanMode, true, mode);
+  }
+  assert.equal(applyRunOverrides({ autoMode: true }, { mode: "worker" }).allowBash, true);
+  assert.equal(applyRunOverrides({ adminMode: true }, { mode: "auto" }).autoMode, true);
 });

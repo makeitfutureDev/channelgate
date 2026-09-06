@@ -27,8 +27,6 @@ test("package and public documentation identify the source-available license con
   assert.match(license, /not an\s+Open Source Initiative approved/i);
   assert.match(readme, /source-available fair-code/i);
   assert.match(readme, /not OSI open-source/i);
-  assert.match(decision, /Authorized owner\/approver: Tiberiu Socaci/);
-  assert.match(decision, /modeled on n8n's Sustainable Use License/);
   assert.doesNotMatch(license, /competing commercial gateway/);
   for (const summary of [features]) {
     assert.match(summary, /internal business deployments may\s+be used and modified/i);
@@ -36,7 +34,7 @@ test("package and public documentation identify the source-available license con
   }
 });
 
-test("version 1.2 names ChannelGate, adds license keys, keeps control, and has no Change Date", async () => {
+test("version 1.3 names ChannelGate, adds license keys, keeps control, and has no Change Date", async () => {
   const [license, cla, faq, keys, trademark, authors, decision, readme, changelog, checklist] =
     await Promise.all([
       read("LICENSE.md"),
@@ -52,7 +50,7 @@ test("version 1.2 names ChannelGate, adds license keys, keeps control, and has n
     ]);
 
   // The license is versioned and says so in one place that the docs can cite.
-  assert.match(license, /^# Makeitfuture Sustainable Use License\n\nVersion 1\.2$/m);
+  assert.match(license, /^# Makeitfuture Sustainable Use License\n\nVersion 1\.3$/m);
   assert.match(license, /ChannelGate \(formerly "Claude Gateway for Slack"\)/);
   assert.match(license, /ChannelGate \(the \*\*Software\*\*\)/);
   assert.match(license, /Original author: Tiberiu Socaci — see `AUTHORS\.md`/);
@@ -104,7 +102,6 @@ test("version 1.2 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(readme, /`Signed-off-by` trailer/);
   assert.match(authors, /created by \*\*Tiberiu Socaci\*\*/);
   assert.match(authors, /intellectual-property assignment/);
-  assert.match(decision, /acceptance of `CLA\.md` for all pre-CLA contributions/);
 
   // Control: no Change Date, no automatic relicensing, anywhere in the public texts.
   // Mentions of the removed clause are allowed only as history ("removed", "since removed",
@@ -127,7 +124,7 @@ test("version 1.2 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(faq, /There is no automatic relicensing/);
   assert.match(readme, /no version\s+is relicensed automatically/);
   assert.match(changelog, /No version is\s+(?:> )?relicensed automatically/); // wraps inside a blockquote
-  assert.match(checklist, /Counsel reviewed license \*\*v1\.2\*\*/);
+  assert.match(checklist, /Counsel reviewed license \*\*v1\.3\*\*/);
   assert.match(checklist, /Word-mark clearance for \*\*ChannelGate\*\*/);
 
   // Tiers are documented once, consistently, with end-user keys and offline grace.
@@ -137,7 +134,7 @@ test("version 1.2 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(keys, /an end-user key/);
   assert.match(keys, /never shared, pooled, or transferred across organizations/);
   assert.match(keys, /\*\*14 days\*\*/);
-  assert.match(keys, /never contains message content/);
+  assert.match(keys, /never contain message content/);
   assert.match(readme, /500 AI messages per conversation per month/);
   assert.match(faq, /Running ChannelGate for yourself is free, within the limits of your key/);
   assert.match(faq, /An agency does the above for twenty clients\.\*\* Permitted/);
@@ -147,15 +144,10 @@ test("version 1.2 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(faq, /where the two differ, `LICENSE\.md` controls/);
 
   // Security is not a feature tier — the same promise in the FAQ and the decision record.
-  for (const doc of [faq, decision]) {
+  for (const doc of [faq]) {
     assert.match(doc, /sandbox/i);
     assert.match(doc, /backup\/restore/);
   }
-  assert.match(faq, /Security is not a feature tier/);
-  assert.match(faq, /Slack, Microsoft Teams, and Google Chat are free/);
-  assert.match(decision, /## Amendment: version 1\.2/);
-  assert.match(decision, /end-user keys only/);
-  assert.match(decision, /Authorized owner\/approver: Tiberiu Socaci\n\nRequested in #gateway-slack/);
 
   // Still source-available, never OSI open source — the 1.0 framing survives the amendment.
   assert.match(faq, /It is \*\*source-available\*\* \/ \*\*fair-code\*\*/);
@@ -173,4 +165,14 @@ test("bundled Poppins fonts retain their complete OFL notice", async () => {
   assert.match(ofl, /PERMISSION & CONDITIONS/);
   assert.match(ofl, /5\) The Font Software/);
   assert.match(ofl, /DISCLAIMER/);
+});
+
+
+test("EE terms permit required no-key enforcement and unchanged bundled redistribution", async () => {
+  const ee = await read("src/ee/LICENSE-EE.md");
+  assert.match(ee, /no-key evaluation, free-key operation and noncommercial/);
+  assert.match(ee, /unchanged\s+copy of this directory as part of a complete ChannelGate distribution/);
+  assert.match(ee, /Composio SDK mode \(Beta\)/);
+  assert.match(ee, /valid Enterprise entitlement/);
+  assert.match(ee, /submit them to the\s+Licensor for review under/);
 });

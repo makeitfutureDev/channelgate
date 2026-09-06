@@ -3,7 +3,12 @@
 set -euo pipefail
 [ "$(uname -s)" = "Linux" ] || { echo "systemd packaging is Linux-only"; exit 2; }
 [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo bash scripts/install-systemd.sh"; exit 1; }
-command -v systemctl >/dev/null || { echo "systemctl not found"; exit 1; }
+for required in systemctl loginctl podman newuidmap newgidmap runuser flock; do
+  command -v "$required" >/dev/null || { echo "$required is required (install rootless Podman and uidmap first)"; exit 1; }
+done
+# Serialize subordinate-id allocation and service provisioning across simultaneous installers.
+exec 9>/run/lock/channelgate-install.lock
+flock -x 9
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # Pre-rename account/runtime names. An upgraded host keeps using them (the runtime root, the
 # database and every channel folder live there) unless the operator overrides — only a FRESH
@@ -28,30 +33,48 @@ fi
 UNIT_NAME="channelgate.service"
 NODE_BIN="$(command -v node)"
 
-# The daemon spawns `claude`/`codex` by bare name, and systemd services get a minimal PATH —
-# resolve the engine CLIs NOW (from the installing user's PATH) and bake their dirs into the
-# unit. A binary under /home or /root
-# would be unreachable behind ProtectHome=true, so those dirs also get a read-only bind hole.
+# Engines run from the image. Only the daemon's Node/Podman tools need a host PATH.
 SERVICE_PATH="$(dirname "$NODE_BIN"):/usr/local/bin:/usr/bin:/bin"
-BIND_RO=""
-for engine in claude codex opencode; do
-  bin="$(command -v "$engine" 2>/dev/null || true)"
-  if [ -z "$bin" ]; then
-    echo "⚠️  $engine CLI not found on PATH — the service can start, but $engine runs will fail until it is installed system-wide."
-    continue
-  fi
-  dir="$(dirname "$bin")"
-  case ":$SERVICE_PATH:" in *":$dir:"*) ;; *) SERVICE_PATH="$SERVICE_PATH:$dir";; esac
-  case "$dir" in
-    /home/*|/root/*)
-      echo "⚠️  $engine resolves to $bin (inside a user home). Exposing it read-only to the service; prefer a system-wide install (e.g. npm prefix /usr/local)."
-      case " $BIND_RO " in *" $dir "*) ;; *) BIND_RO="$BIND_RO $dir";; esac
-      ;;
-  esac
+# Values are embedded in a systemd unit, whose quoting/expansion rules differ from shell.
+case "$SERVICE_USER" in *[!a-zA-Z0-9_-]*|"") echo "Invalid service account name"; exit 1;; esac
+for value in "$APP_DIR" "$SERVICE_HOME" "$NODE_BIN"; do
+  case "$value" in *[[:space:]%\"\\]*|[!/]*) echo "Service paths must be absolute and contain no whitespace, percent, quote or backslash"; exit 1;; esac
 done
-if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-  useradd --system --home-dir "$SERVICE_HOME" --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+# Before provisioning an account or changing checkout ownership, prove the parent directories
+# are traversable. Do not widen an operator's private home ACL to make a service install work.
+relocation_remedy() {
+  echo "The service account cannot reach the checkout or Node executable."
+  echo "Relocate the checkout to /opt/channelgate and use a system-wide Node installation, then rerun this installer."
+  echo "No account or checkout ownership was changed."
+  exit 1
+}
+if id "$SERVICE_USER" >/dev/null 2>&1; then
+  CG_CHECK_PARENT="$(dirname "$APP_DIR")" CG_CHECK_NODE="$NODE_BIN" runuser -u "$SERVICE_USER" -- /bin/sh -c \
+    'test -x "$CG_CHECK_PARENT" && test -x "$CG_CHECK_NODE"' || relocation_remedy
+else
+  "$NODE_BIN" "$APP_DIR/scripts/service-path-preflight.mjs" "$(dirname "$APP_DIR")" "$(dirname "$NODE_BIN")" || relocation_remedy
 fi
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+  useradd --system --add-subids-for-system --user-group --home-dir "$SERVICE_HOME" --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+fi
+SERVICE_UID="$(id -u "$SERVICE_USER")"
+[ "$SERVICE_UID" -ne 0 ] || { echo "The daemon must use a non-root account"; exit 1; }
+# Upgrade old service accounts without rewriting existing namespace mappings.
+for mapping in subuid subgid; do
+  touch "/etc/$mapping"
+  if ! awk -F: -v account="$SERVICE_USER" -v uid="$SERVICE_UID" '($1==account || $1==uid) && $3>=65536 { found=1 } END { exit !found }' "/etc/$mapping"; then
+    first="$(awk -F: 'BEGIN { top=100000 } $2+$3>top { top=$2+$3 } END { print top }' "/etc/$mapping")"
+    last="$((first + 65535))"
+    case "$mapping" in
+      subuid) usermod --add-subuids "$first-$last" "$SERVICE_USER" ;;
+      subgid) usermod --add-subgids "$first-$last" "$SERVICE_USER" ;;
+    esac
+  fi
+done
+loginctl enable-linger "$SERVICE_USER"
+systemctl start "user@$SERVICE_UID.service"
+SERVICE_RUNTIME_DIR="/run/user/$SERVICE_UID"
+[ -d "$SERVICE_RUNTIME_DIR" ] || { echo "The service user's runtime directory was not created"; exit 1; }
 install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$SERVICE_HOME" "$SERVICE_HOME/logs"
 
 # The service account must OWN the checkout, not merely have it listed in ReadWritePaths:
@@ -92,6 +115,18 @@ ENVEOF
   chmod 0600 "$ENV_FILE"
 fi
 
+# Probe and build in the final daemon identity's own rootless store. The installer's store and
+# image UID cannot be reused by a different service account.
+run_as_service() {
+  runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" CHANNELGATE_DIR="$SERVICE_HOME" \
+    XDG_RUNTIME_DIR="$SERVICE_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="unix:path=$SERVICE_RUNTIME_DIR/bus" \
+    PATH="$SERVICE_PATH" "$@"
+}
+run_as_service podman info --format '{{.Host.Security.Rootless}}' | grep -qx true || {
+  echo "Rootless Podman is not usable as $SERVICE_USER"; exit 1;
+}
+run_as_service "$NODE_BIN" "$APP_DIR/scripts/build-image.mjs" --cli podman
+
 # Retire the pre-rename unit BEFORE writing the new one: both ExecStart the same checkout against
 # the same runtime root, and the daemon's singleton lock would make the second one crash-loop.
 LEGACY_UNIT="/etc/systemd/system/$LEGACY_UNIT_NAME"
@@ -105,8 +140,9 @@ UNIT="/etc/systemd/system/$UNIT_NAME"
 cat > "$UNIT" <<EOF
 [Unit]
 Description=ChannelGate
-After=network-online.target
+After=network-online.target user@$SERVICE_UID.service
 Wants=network-online.target
+Requires=user@$SERVICE_UID.service
 
 [Service]
 Type=simple
@@ -116,22 +152,26 @@ WorkingDirectory=$APP_DIR
 Environment=CHANNELGATE_DIR=$SERVICE_HOME
 Environment=HOME=$SERVICE_HOME
 Environment=PATH=$SERVICE_PATH
+Environment=XDG_RUNTIME_DIR=$SERVICE_RUNTIME_DIR
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=$SERVICE_RUNTIME_DIR/bus
 EnvironmentFile=-$ENV_FILE
 ExecStart=$NODE_BIN $APP_DIR/src/start.js
 Restart=on-failure
 RestartSec=5
 # SIGTERM only the daemon: it drains, marks the shutdown and sweeps its own engine children
-# (host process groups, container run groups) so interrupted turns replay on the next boot.
+# (host process groups, container run groups). Unknown interrupted executions are not replayed.
 KillMode=mixed
 UMask=0077
-NoNewPrivileges=true
+# Podman's newuidmap/newgidmap helpers need their setuid transition. Each channel container
+# still independently applies no-new-privileges to all engine processes.
+NoNewPrivileges=false
+Delegate=yes
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=$SERVICE_HOME $APP_DIR
-${BIND_RO:+BindReadOnlyPaths=${BIND_RO# }}
+ProtectHome=read-only
+ReadWritePaths=$SERVICE_HOME $APP_DIR $SERVICE_RUNTIME_DIR
 LockPersonality=true
-RestrictSUIDSGID=true
+RestrictSUIDSGID=false
 
 [Install]
 WantedBy=multi-user.target

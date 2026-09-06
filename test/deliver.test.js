@@ -64,3 +64,17 @@ test("deliverResult with footer appends the run-stats trailer and resume control
   const json = JSON.stringify(trailer.blocks);
   assert.match(json, /resume_cmd_modal/);
 });
+
+for (const platform of ["googlechat", "msteams"]) {
+  for (const engine of ["claude", "codex"]) {
+    test(`${platform} delivers a ${engine} automation result through its formatter without a Slack client`, async () => {
+      const posts = [];
+      const connector = { platform, post: async (payload) => { posts.push(payload); }, directory: async () => null };
+      await deliverResult(connector, { channel: "fixture", threadKey: "fixture-thread", result: { content: "# Output\n\n" + "A result line.\n".repeat(5000), engine } });
+      assert.ok(posts.length > 1);
+      assert.equal(posts[0].conversationId, "fixture");
+      assert.equal(posts[0].threadKey, "fixture-thread");
+      assert.match(posts[0].text, /Output/);
+    });
+  }
+}

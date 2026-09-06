@@ -1,6 +1,6 @@
 # Makeitfuture Sustainable Use License
 
-Version 1.2
+Version 1.3
 
 Copyright © 2026 MAKEITFUTURE S.R.L. All rights reserved.
 Original author: Tiberiu Socaci — see `AUTHORS.md`.
@@ -32,18 +32,18 @@ available, and create derivative works of ChannelGate (the **Software**), subjec
 
 Subject to Section 3.2, you may:
 
-1. use and modify the Software for your own internal business operations;
-2. use and modify the Software for personal, educational, charitable, or other noncommercial
+(a) use and modify the Software for your own internal business operations;
+(b) use and modify the Software for personal, educational, charitable, or other noncommercial
    purposes;
-3. provide consulting, integration, support, installation, maintenance, or operation services for
+(c) provide consulting, integration, support, installation, maintenance, or operation services for
    a single organization's permitted internal deployment, including a deployment you host or
    administer on that organization's behalf, provided the conditions in Section 3.1 are met; and
-4. distribute original or modified copies without charge solely for noncommercial purposes,
+(d) distribute original or modified copies without charge solely for noncommercial purposes,
    provided every recipient receives this license and all required notices.
 
 ### 3.1 Dedicated deployments operated on a customer's behalf
 
-A deployment you operate for a customer stays within Section 3.3 only while all of the following
+A deployment you operate for a customer stays within Section 3, item (c) only while all of the following
 remain true:
 
 1. the deployment serves that one customer and its organization — it is not shared with, or
@@ -92,7 +92,7 @@ Without a separate written agreement from the Licensor, you may not:
 5. circumvent or disable license-key verification, usage limits, or usage reporting, or share,
    pool, or transfer a license key across organizations.
 
-These restrictions do not prohibit charging for the services described in Sections 3.3 and 3.1,
+These restrictions do not prohibit charging for the services described in Section 3, item (c), and Section 3.1,
 provided the customer uses the Software only for its own permitted internal operations.
 
 The Licensor offers written agreements for uses outside this license: a **Reseller Agreement**
@@ -174,6 +174,10 @@ identifies the organization operating a deployment and the limits that apply to 
 platform, as identified by the Software.
 
 ## 13. Version history
+
+- **1.3** (2026-09-07) — disambiguated Section 3 list references; reconciled the separately
+  licensed EE directory with permitted no-key/free-key installations and unchanged bundled
+  redistribution, and specified Enterprise feature and contribution permissions in its license.
 
 - **1.2** (2026-08-25) — renamed the Software to ChannelGate; added license keys and usage limits
   (3.2, 4.5, 12) with end-user keys only; made per-deployment service work under 3.1 explicit for

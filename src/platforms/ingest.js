@@ -132,7 +132,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
 
     await bankUsage({ channelId: message.conversationId, slug: entry.slug, authorId: message.userId, engine: result.engine, taskKind: "interactive", result });
 
-    let text = String(result.text || "").trim() || "_(no output)_";
+    let text = String(result.content || "").trim() || "_(no output)_";
     if (skipped.length) {
       text += `\n\n_Couldn't read ${skipped.length} attachment(s): ${skipped.join(", ")} — this surface only hands the bot files it uploaded directly._`;
     }

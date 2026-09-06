@@ -49,21 +49,10 @@ if ! node -e 'const [maj, min] = process.versions.node.split(".").map(Number); p
 fi
 echo "✅ node $(node -v)"
 
-# 2. claude CLI (required) --------------------------------------------------------
-if command -v claude >/dev/null 2>&1; then
-  echo "✅ claude $(claude --version 2>/dev/null | head -1)"
-else
-  echo "⚠️  'claude' CLI not found — the gateway spawns it directly. Install + authenticate:"
-  echo "     npm install -g @anthropic-ai/claude-code   &&   claude login"
-fi
-
-# 3. codex CLI (optional — only for the Codex engine) -----------------------------
-if command -v codex >/dev/null 2>&1; then
-  echo "✅ codex $(codex --version 2>/dev/null | head -1) (optional engine available)"
-else
-  echo "ℹ️  'codex' not found (optional — needed only for the Codex engine):"
-  echo "     npm install -g @openai/codex   &&   codex login"
-fi
+# 2–3. engine CLIs ----------------------------------------------------------------
+# Both CLIs ship in the channel image. Host CLI logins are not service credentials.
+echo "Claude and Codex are installed in the runtime image."
+echo "Configure ANTHROPIC_API_KEY and OPENAI_API_KEY in the daemon environment."
 
 # 4. rootless Podman (the channel runtime) -----------------------------------------
 HAVE_PODMAN=0
@@ -89,7 +78,10 @@ node scripts/configure-whisper.mjs "${WHISPER_ARGS[@]}"
 # its pre-cached speech model) — so building it IS part of the install, not a step to remember later.
 say "Channel container image"
 IMAGE_BUILT=0
-if [ "$BUILD_IMAGE" -eq 0 ]; then
+if [ "$NO_SERVICE" -eq 0 ]; then
+  echo "The service installer builds the image as the final service account."
+  echo "Run: sudo bash scripts/install-systemd.sh"
+elif [ "$BUILD_IMAGE" -eq 0 ]; then
   echo "ℹ️  Skipped the channel image build (--skip-image / CG_BUILD_IMAGE=no). Before the first message run:"
   echo "     npm run build:image"
 elif [ "$HAVE_PODMAN" -eq 0 ]; then
@@ -126,7 +118,7 @@ PORT_SHOW="${PORT:-4747}"
 if [ "$IMAGE_BUILT" -eq 1 ]; then
   say "✅ Done. Next steps:"
 else
-  say "✅ Done (channel image NOT built yet — run 'npm run build:image' before the first message). Next steps:"
+  say "✅ Dependencies ready. Build the runtime image as the account that will run the daemon before the first message. Next steps:"
 fi
 cat <<EOT
   1) Create the Slack app from slack-app-manifest.json

@@ -2,6 +2,7 @@
 // secret reveal, gateway self-update, daemon restart/stop, Slack reconnect/disconnect, the
 // filesystem browser, and UI reference data (/skills, /mcp/available). Split from admin.js;
 // mounted by createAdminRouter so every URL is unchanged.
+import { hasComposioSdkEntitlement } from "../../ee/composio-entitlement.js";
 import { Router } from "express";
 import { readdir } from "node:fs/promises";
 import os from "node:os";
@@ -78,6 +79,7 @@ export function createSettingsRouter({
   const settingsPayload = (slackSnap = null) => ({
     ...settingsForApi(),
     engines: engineUiManifest(),
+    composioSdk: { tier: "enterprise", status: "beta", entitled: hasComposioSdkEntitlement() },
     // Live connection state per non-Slack surface, next to its stored credentials. The manifest
     // comes from the platform registry so a newly added adapter appears here without another
     // edit in this file.
@@ -189,6 +191,9 @@ export function createSettingsRouter({
       if (typeof body.sessionKeepalive === "string") patch.sessionKeepalive = body.sessionKeepalive.trim();
       // Mode selection and credentials are deliberately independent: changing the mode never
       // clears either the existing personal/channel/org tokens or this organization SDK key.
+      if ((body.composioMode === "sdk" || (typeof body.composioSdkApiKey === "string" && body.composioSdkApiKey.trim())) && !hasComposioSdkEntitlement()) {
+        return res.status(403).json({ error: "Composio SDK (Beta) requires an active Enterprise license" });
+      }
       if (typeof body.composioMode === "string" && COMPOSIO_MODES.includes(body.composioMode)) patch.composioMode = body.composioMode;
       if (typeof body.composioSdkApiKey === "string" && body.composioSdkApiKey.trim()) patch.composioSdkApiKey = body.composioSdkApiKey.trim();
       if (body.clearComposioSdkApiKey === true) patch.composioSdkApiKey = "";
@@ -397,17 +402,18 @@ export function createSettingsRouter({
         const arr = Array.isArray(body.followupDoneReactions) ? body.followupDoneReactions : String(body.followupDoneReactions).split(/[\s,]+/);
         patch.followupDoneReactions = arr.map((s) => String(s).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
       }
-      // Admin password (write-only): set when non-empty, or explicitly clear to open the UI.
-      // Stored as an scrypt hash, never cleartext. Any change drops every existing session —
-      // cookies minted under the old password must not outlive it.
-      let passwordChanged = false;
-      if (typeof body.adminPassword === "string" && body.adminPassword.length > 0) {
-        patch.adminPassword = await hashPassword(body.adminPassword);
-        passwordChanged = true;
-      }
-      if (body.clearAdminPassword === true) {
-        patch.adminPassword = "";
-        passwordChanged = true;
+      // Session possession alone cannot authorize replacing the password used by secret reveal.
+      const setPassword = typeof body.adminPassword === "string" && body.adminPassword.length > 0;
+      const clearPassword = body.clearAdminPassword === true;
+      const passwordChanged = setPassword || clearPassword;
+      const passwordBefore = getAdminPassword();
+      if (setPassword && clearPassword) return res.status(400).json({ error: "Choose either a new password or password removal." });
+      if (passwordChanged) {
+        if (passwordBefore && !(await verifyPassword(body.currentAdminPassword, passwordBefore))) {
+          logEvent("admin_password_change_denied", { actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR });
+          return res.status(403).json({ error: "The current admin password is required to change or remove it." });
+        }
+        patch.adminPassword = setPassword ? await hashPassword(body.adminPassword) : "";
       }
       // HTTP run API key (write-only): the bearer credential for POST /api/runs. Set when non-empty,
       // or explicitly clear to disable header-key auth for the run API.
@@ -435,6 +441,7 @@ export function createSettingsRouter({
       // version — an older UI, a script, an integration — is merged in as before.
       const expectVersion =
         typeof body.settingsVersion === "string" || typeof body.settingsVersion === "number" ? String(body.settingsVersion).trim() : "";
+      if (passwordChanged && getAdminPassword() !== passwordBefore) return res.status(409).json({ error: "The admin password changed. Authenticate again before retrying." });
       try {
         saveSettings(patch, { expectVersion });
       } catch (e) {

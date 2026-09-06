@@ -42,6 +42,17 @@ const cfgValues = (args) => args.filter((value, i) => args[i - 1] === "-c");
 const cfg = (args, prefix) => cfgValues(args).find((value) => value.startsWith(prefix)) || "";
 const cfgJson = (args, prefix) => JSON.parse(cfg(args, prefix).slice(prefix.length));
 
+test("Codex service API authentication is explicit at invocation and cannot be replaced by a channel secret", () => {
+  const target = createFakeRuntime().target();
+  const base = buildCodexEnv({ target }, { ...SOURCE, OPENAI_API_KEY: "service-key" });
+  assert.equal(base.CODEX_API_KEY, "service-key");
+  const selected = buildCodexEnv({ target, extraEnv: { CODEX_API_KEY: "channel-attempt" } }, {
+    ...SOURCE, OPENAI_API_KEY: "default-key", CODEX_API_KEY: "codex-service-key",
+  });
+  assert.equal(selected.CODEX_API_KEY, "codex-service-key");
+  assert.equal(buildCodexEnv({ target }, SOURCE).CODEX_API_KEY, undefined);
+});
+
 test("Claude env inside a container is the IMAGE's, and a channel secret still cannot displace it", () => {
   const rt = createFakeRuntime();
   const target = rt.target();

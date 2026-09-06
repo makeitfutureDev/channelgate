@@ -1,7 +1,7 @@
 # Chat platforms
 
 ChannelGate speaks to three chat surfaces. Slack is GA; Google Chat and Microsoft Teams are in
-**preview** — their transports are implemented and tested, but have not yet run against a live
+**Beta** — their transports are implemented and tested, but have not yet run against a live
 tenant, and their in-chat feature set is deliberately smaller (see *What works where* below).
 
 Every surface goes through the same seam: a capability descriptor in `src/platforms/<id>.js`, a
@@ -12,7 +12,7 @@ per-platform, and none of it is relaxed to make a surface work.
 
 ---
 
-## Google Chat
+## Google Chat (Beta)
 
 **Transport: Pub/Sub pull.** Google publishes your Chat app's events to a topic you own, and the
 daemon pulls them over an outbound HTTPS connection. No inbound endpoint, no tunnel, no firewall
@@ -54,7 +54,7 @@ optional field exists only to short-circuit that.
 
 ---
 
-## Microsoft Teams
+## Microsoft Teams (Beta)
 
 **Transport: Bot Framework (public HTTPS endpoint).** Every supported Teams bot path delivers
 messages as inbound POSTs from Azure Bot Service — there is no outbound-only receive path. The

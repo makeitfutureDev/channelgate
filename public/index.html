@@ -433,7 +433,7 @@
                   <p class="desc">Used only by the in-thread <code>/delete</code> command (org-admin gated): a bot token can only delete the bot's own messages — a workspace admin's user token lets <code>/delete</code> remove everyone's (where workspace preferences allow admins to delete messages). Never passed to runs or MCP servers.</p>
                 </div>
                 <div class="setcard">
-                  <h4>Google Chat (preview)</h4>
+                  <h4>Google Chat (Beta)</h4>
                   <div id="gchat-status" class="status-banner">Not configured</div>
                   <p class="desc">A Chat app with a <strong>Cloud Pub/Sub</strong> connection: Google publishes events to your topic and the daemon pulls them, so no inbound endpoint and no tunnel are needed. Grant the service account <code>roles/pubsub.subscriber</code> on the subscription, and set the Chat app's connection to that topic.</p>
                   <label class="field">
@@ -456,7 +456,7 @@
                   </div>
                 </div>
                 <div class="setcard">
-                  <h4>Microsoft Teams (preview)</h4>
+                  <h4>Microsoft Teams (Beta)</h4>
                   <div id="teams-status" class="status-banner">Not configured</div>
                   <p class="desc">Teams <strong>pushes</strong> events to ChannelGate. Use Microsoft's Teams CLI to create the bot and app against the exact public endpoint below:</p>
                   <ol class="desc">
@@ -698,12 +698,12 @@
                     <span>Mode</span>
                     <select id="set-composio-mode">
                       <option value="personal">Personal tokens — existing behavior</option>
-                      <option value="sdk">SDK — organization-managed identities</option>
+                      <option value="sdk">SDK — Enterprise · Beta</option>
                     </select>
                     <em class="state" id="composio-mode-help"></em>
                   </label>
                   <label class="field" id="composio-sdk-key-field">
-                    <span>Composio SDK API key <em class="state" id="composio-sdk-key-state"></em></span>
+                    <span>Composio SDK API key · Enterprise · Beta <em class="state" id="composio-sdk-key-state"></em></span>
                     <input id="set-composio-sdk-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
                     <em class="state">Organization-level secret. It stays in gateway settings and is never passed to Claude, Codex, or a channel folder.</em>
                     <div class="tok-foot"><button type="button" class="clear-tok" id="clear-composio-sdk-key">clear</button></div>
@@ -1020,9 +1020,13 @@
 
     <!-- Shared in-app confirm / info dialog (replaces native confirm()/alert()). -->
     <div id="confirm-modal" class="modal" hidden>
-      <div class="modal-card confirm-card">
+      <div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <h3 id="confirm-title"></h3>
         <p id="confirm-body"></p>
+        <label class="field" id="confirm-password-field" hidden>
+          <span>Current admin password</span>
+          <input id="confirm-password" type="password" autocomplete="current-password" />
+        </label>
         <div class="modal-foot">
           <span style="flex:1"></span>
           <button id="confirm-cancel" class="ghost">Cancel</button>

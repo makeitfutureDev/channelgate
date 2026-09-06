@@ -492,7 +492,7 @@ access-token relay every 20 minutes and exposes only that access token to intera
 commands. Closing VS Code removes the live token and releases the lease; an interrupted helper is
 detected by PID start identity and its stale lease is discarded automatically. A daemon configured
 only with `ANTHROPIC_API_KEY` cannot currently export that key to an interactive editor terminal;
-use the normal operator subscription login or a configured `claude setup-token` for this workflow.
+use the normal operator subscription login or a configured `claude setup-token` for this workflow. The editor lease is held in daemon-owned metadata, outside the writable container artifacts.
 
 This is deliberately an operator command, not a remotely callable channel tool: VS Code provides a
 full shell inside the container and bypasses chat tool presets. The container boundary remains the
@@ -553,9 +553,9 @@ and a copy that refreshes logs the original out. A relayed access token cannot r
 
 **Service unit:** the installer sets `KillMode=mixed`. systemd then sends SIGTERM only to the
 daemon, which drains, marks the shutdown and sweeps its own engine children (the container run
-groups) so interrupted turns replay on the next boot. With the default
+groups) so interrupted execution is recorded for reconciliation on the next boot. With the default
 `control-group` mode systemd signals the engine (or the `podman exec` client) directly and the
-turn is recorded as a plain error instead of being replayed. Existing installs: add
+turn may be recorded as a plain error before orderly state persistence. Existing installs: add
 `KillMode=mixed` under `[Service]` and `systemctl --user daemon-reload`.
 
 ## Retention and log rotation

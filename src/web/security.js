@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { realpathSync } from "node:fs";
 import { isIP } from "node:net";
+import { classifyAddress } from "./ip-policy.js";
+export { classifyAddress } from "./ip-policy.js";
 import { getSettings } from "../config/settings.js";
 
 // ── Bind address ────────────────────────────────────────────────────────────────
@@ -107,40 +109,7 @@ export function hostAllowed(req, allowed = allowedHosts()) {
 // endpoints, and the private network. Scheme was the only validation.
 //
 // This blocks by resolved ADDRESS, not just hostname, so a public name pointing at 127.0.0.1 is
-// caught too. It cannot close every TOCTOU gap (a name could re-resolve between check and fetch),
-// so it is a strong barrier rather than a proof — which is why the redirect cap matters as well.
-const BLOCKED_V4 = [
-  [/^127\./, "loopback"],
-  [/^10\./, "private"],
-  [/^192\.168\./, "private"],
-  [/^169\.254\./, "link-local / cloud metadata"],
-  [/^0\./, "unspecified"],
-  [/^(22[4-9]|23[0-9])\./, "multicast"],
-  // 100.64.0.0/10 carrier-grade NAT — internal on CGN deployments, and Alibaba Cloud serves
-  // instance metadata at 100.100.100.200.
-  [/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, "carrier-grade NAT / cloud metadata"],
-  [/^192\.0\.0\./, "special-purpose"], // IETF protocol assignments (192.0.0.0/24)
-  [/^198\.1[89]\./, "benchmarking"], // 198.18.0.0/15
-  [/^(24\d|25[0-5])\./, "reserved"], // 240.0.0.0/4 incl. 255.255.255.255 broadcast
-];
-
-export function classifyAddress(ip) {
-  const raw = String(ip || "").trim().toLowerCase();
-  const v4 = raw.startsWith("::ffff:") ? raw.slice(7) : raw;
-
-  if (v4 === "::" || v4 === "::1") return "loopback";
-  if (/^f[cd][0-9a-f]{2}:/.test(v4)) return "private"; // unique-local IPv6
-  if (/^fe80:/.test(v4)) return "link-local / cloud metadata";
-  if (/^fe[c-f][0-9a-f]:/.test(v4)) return "site-local"; // deprecated fec0::/10 — still routable on old gear
-  if (/^64:ff9b:/.test(v4)) return "NAT64"; // 64:ff9b::/96 embeds v4 targets reachable on NAT64 networks
-
-  for (const [re, label] of BLOCKED_V4) if (re.test(v4)) return label;
-  // 172.16.0.0/12 needs a range test, not a prefix match.
-  const m = /^172\.(\d{1,3})\./.exec(v4);
-  if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return "private";
-  return "";
-}
-
+// caught too. Callers pin the connection to the checked records and validate each redirect.
 // Resolve a URL, refuse it if it points anywhere internal, and hand back the exact records that
 // passed the check. Callers that go on to CONNECT must connect to these addresses and nothing
 // else — re-resolving at fetch time reopens the DNS-rebinding TOCTOU this check exists to close.
@@ -157,7 +126,7 @@ export async function resolvePublicHttpUrl(value, { lookup } = {}) {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   // A literal address needs no DNS round-trip, and hostnames that are loopback by definition
   // never reach a resolver.
-  const literal = classifyAddress(host);
+  const literal = isIP(host) ? classifyAddress(host) : "";
   if (literal) throw new Error(`refuses to reach a ${literal} address`);
   if (host === "localhost" || host.endsWith(".localhost")) throw new Error("refuses to reach a loopback address");
 
@@ -168,11 +137,12 @@ export async function resolvePublicHttpUrl(value, { lookup } = {}) {
   } catch {
     throw new Error(`could not resolve ${host}`);
   }
+  if (!Array.isArray(records) || !records.length) throw new Error(`could not resolve ${host}`);
   for (const { address } of records) {
     const kind = classifyAddress(address);
     if (kind) throw new Error(`${host} resolves to a ${kind} address`);
   }
-  return { url, addresses: records.map(({ address, family }) => ({ address, family })) };
+  return { url, addresses: records.map(({ address }) => ({ address, family: isIP(address) })) };
 }
 
 // Back-compat shape: validation only, URL out.

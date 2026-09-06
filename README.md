@@ -2,7 +2,7 @@
 
 **The governed AI agent gateway for your Slack, Microsoft Teams and Google Chat channels — Claude Code and Codex, a container per conversation, self-hosted.**
 
-[![License: Sustainable Use License 1.2](https://img.shields.io/badge/license-Sustainable%20Use%20License%201.2-2f6f4e)](./LICENSE.md)
+[![License: Sustainable Use License 1.3](https://img.shields.io/badge/license-Sustainable%20Use%20License%201.3-2f6f4e)](./LICENSE.md)
 [![CI](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml/badge.svg)](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-3c873a)](./docs/COMPATIBILITY.md)
 [![Platforms](https://img.shields.io/badge/platforms-Slack%20%C2%B7%20Teams%20%C2%B7%20Google%20Chat-4a154b)](./docs/COMPATIBILITY.md)
@@ -10,25 +10,21 @@
 
 ChannelGate (formerly Claude Gateway for Slack) is a self-hosted daemon that runs a real
 coding-grade agent — Claude Code or OpenAI Codex — inside the channels your team already talks in.
-Every conversation gets its own gated folder: the filesystem is confined to it, only the MCP servers
-that channel was granted are reachable, and the harness's global memory is off. Nothing sits between
-your chat and the model except a process you run — no vendor platform in the middle, no per-seat
-subscription, and no shared workspace where one channel can read another's files.
+Every conversation gets a container with its own home and working folder. Tool permissions and
+MCP configuration are scoped per run. The default filesystem boundary excludes other channels
+and the operator's home; an explicit Full-access home-sharing option widens that boundary.
+Prompt/context goes to the selected model provider, and connected tools use their external services.
+See [privacy and data flow](docs/PRIVACY-AND-DATA-FLOW.md) for storage, credentials and network limits.
 
-<!-- DEMO — PLACEHOLDER, do not commit a stand-in image.
-     A 45-second screen capture (mention the bot → live checklist → streamed reply in the thread)
-     belongs at docs/assets/demo.gif. When it exists, replace the note below with:
-         ![ChannelGate answering in a Slack thread](docs/assets/demo.gif)
-     Capture spec and the second expected asset: docs/assets/README.md. -->
+**Support status:** Slack is the primary supported surface. **Microsoft Teams and Google Chat are
+Beta. Composio SDK mode is Enterprise-only and Beta**; standard Composio MCP mode remains available
+in every tier. OpenCode remains experimental and restricted to its documented read profile.
 
-> **Demo:** a 45-second GIF is expected at `docs/assets/demo.gif` and is not in the repository yet.
-> The capture spec is in [`docs/assets/README.md`](./docs/assets/README.md).
+## Getting started
 
-## Running in 10 minutes
-
-1. **Check the prerequisites.** Node.js ≥ 22.13 and the `claude` CLI installed *and* authenticated
-   on the machine (`claude --version` must work). Codex is optional — details in
-   [INSTALL.md](./INSTALL.md).
+1. **Check the prerequisites.** Linux, Node.js ≥ 22.13, rootless Podman and a `claude` login on
+   the host (or `ANTHROPIC_API_KEY`). The runtime image contains the engine CLIs; Codex is
+   optional — details in [INSTALL.md](./INSTALL.md).
 2. **Get the code and run the installer.**
    ```bash
    git clone https://github.com/makeitfutureDev/channelgate.git
@@ -61,7 +57,7 @@ subscription, and no shared workspace where one channel can read another's files
 | **Channel memory** | A budgeted `MEMORY.md` index plus `memory/<topic>.md` files inside the channel's own folder, injected at session start and reviewed after each reply. Folder-scoped, so nothing bleeds between channels. |
 | **Schedules and background jobs** | Recurring cron and one-time "run at" schedules, acknowledgement reminders, and long jobs that run daemon-side and report back into the original thread — surviving a daemon restart. |
 | **Native charts, Lists and canvases** | Charts, Slack Lists, file snippets and canvases are posted with the gateway's own bot token, hard-scoped to the current channel; broader Slack actions go through the Composio Slack toolkit. |
-| **Three chat platforms** | Slack (GA), Microsoft Teams and Google Chat behind one declared capability contract. Replies are degraded per surface on the way out, so the model writes one dialect. |
+| **Three chat platforms** | Slack (GA), Microsoft Teams (Beta) and Google Chat (Beta) behind one declared capability contract. Replies are degraded per surface on the way out, so the model writes one dialect. |
 | **Three harnesses** | Claude Code by default and OpenAI Codex behind the same gates, with an announced Claude → Codex fallback on usage limits. OpenCode is a proof third engine, restricted to a read-only, network-off profile. |
 | **Admin UI and ledger** | A built-in web UI for channels, users, MCP grants, skills, modes, schedules and tokens, plus a per-run usage ledger (who, where, engine, model, tokens, cost). Changes apply on the next message. |
 
@@ -79,57 +75,49 @@ Slack (Socket Mode)
 ```
 
 - **Per-conversation isolation** (the `channelgate` skill): each folder gets a
-  `.claude/settings.json` that confines the filesystem to that folder, disables persistent
-  memory, and allows only the channel's granted MCP tools.
+  `.claude/settings.json` that sets tool policy, disables automatic global memory, and
+  permits granted MCP tools. The container mounts establish filesystem confinement.
 - **Warm sessions**: a thread's `claude` process stays alive (default 10 min idle,
   `SESSION_KEEPALIVE`) so follow-ups reply fast without a cold restart. A different author
   posting in the same thread transparently relaunches with their own personal token while retaining
   the channel/org shared connection — User A's token never serves User B.
 - **Thread = conversation**: a new Slack thread starts a fresh Claude session; replies resume it.
 
-## How it compares
+## Deployment tradeoffs
 
-| | ChannelGate | Slack's built-in AI | Hosted AI bots | Build it yourself |
-| --- | --- | --- | --- | --- |
-| Data stays on your infrastructure | ✅ | ❌ | ❌ | ✅ |
-| Container per conversation | ✅ | ➖ | ➖ | ❌ |
-| Choice of agent harness | ✅ | ❌ | ➖ | ✅ |
-| Works in Slack, Microsoft Teams and Google Chat | ✅ | ❌ | ➖ | ➖ |
-| No per-seat SaaS fee | ✅ | ❌ | ❌ | ✅ |
-| Needs a server you run | ✅ | ❌ | ❌ | ✅ |
-
-✅ yes · ➖ partly, or vendor-defined · ❌ no. The last row is a cost, not a feature: ChannelGate
-needs a machine you own and keep patched, which the hosted options do not.
-
-> The three comparison columns are **generalisations** about categories of product, not claims about
-> any specific one, and the category moves quickly. Check the current terms of the product you are
-> actually evaluating. The longer, sourced comparison is in [`docs/WHY.md`](./docs/WHY.md).
+ChannelGate gives operators control over local configuration, work folders, retained history and
+backups, and requires them to run and patch the Linux host. Model and connector traffic still
+leaves that host. Provider subscriptions, API charges and external-service terms are separate.
+See [the deployment comparison](docs/WHY.md) for context.
 
 ## Security in five bullets
 
-1. **A container per conversation.** Every channel runs its agent inside its own rootless
-   container — its own home, only that channel's folder mounted — and the folder's lockdown
-   (automatic memory and dreaming off, a curated permission allowlist) is generated before the
-   agent starts. What happens in a client channel cannot read or write the finance channel.
-2. **An explicit tool allowlist.** Only the MCP servers a channel was granted are reachable, passed
-   per run with `--strict-mcp-config` — a runtime boundary, not a prompt instruction.
-3. **Credentials are personal and never at rest in a channel.** Tokens are resolved per run and
-   injected only into their named MCP connection; they are never written into a channel folder and
-   never logged. Listing APIs return `has*`/`last4` only — a secret is revealed one at a time,
-   behind a re-check of the admin password, and the reveal is audit-logged without the value.
-4. **Authorization fails closed.** Unknown or un-approved people are denied everywhere, including
-   DMs; channels start with nobody allowed. `--dangerously-skip-permissions` requires an admin
-   author **and** an admin-mode channel — everyone else runs the folder's allowlist.
-5. **Nothing in the middle.** Chat events arrive over Socket Mode, the prompt and any explicitly
-   downloaded attachments go to the local CLI, and the CLI talks to its own model provider. Config,
-   sessions, usage and audit events stay in local SQLite. Retention, backups and connected apps are
-   the operator's to set — the full description is in
-   [`docs/PRIVACY-AND-DATA-FLOW.md`](./docs/PRIVACY-AND-DATA-FLOW.md).
+1. **A container per conversation.** Rootless containers confine filesystem and process access
+   to declared mounts. Full-access home sharing, off by default, exposes the operator's whole
+   home to every admitted author in those channels. Choose work folders accordingly.
+2. **Tool policy and network policy differ.** The engine's allowlist and MCP configuration restrict
+   its configured tools. The container has bridge networking; *Allow network* is advisory, with
+   no egress firewall or domain filtering in this release.
+3. **Credential scopes are explicit.** The host's Claude credentials file is never copied or
+   mounted into a container: each run receives a relay of the login's short-lived access token
+   (or the daemon's API key). Codex sessions are per channel while its host sign-in file is
+   shared with the containers. MCP secrets can occur in protected transient run artifacts. Listing APIs
+   return presence/masked metadata, and named secret reveal rechecks the current admin password.
+   Per-channel environment secrets have no reveal endpoint. Agents using credentials can access
+   their runtime values; UI masking is not a vault boundary against that agent.
+4. **Authorization fails closed.** Unknown or unapproved people are denied, including in DMs,
+   except explicit channel guest grants. The admin permission bypass requires an admin author
+   and an admin-mode channel. API callers cannot claim personal connector identities or widen
+   a channel's durable tool permissions.
+5. **Storage and transmission are documented.** Configuration, sessions, usage and audit records
+   are stored locally. Model providers receive prompt/context; connectors and chat providers
+   receive the requests/content needed for their enabled features. Licensing verification sends
+   the license key. See [privacy and data flow](docs/PRIVACY-AND-DATA-FLOW.md).
 
 ## Licensing & partners
 
 **ChannelGate is source-available fair-code**, licensed under the
-[Makeitfuture Sustainable Use License](./LICENSE.md) (v1.2) for internal business, personal, and
+[Makeitfuture Sustainable Use License](./LICENSE.md) (v1.3) for internal business, personal, and
 noncommercial use. It is not OSI open-source software, and no version
 is relicensed automatically.
 
@@ -146,7 +134,8 @@ Definitions, the offline grace period, and exactly what a deployment reports are
 [`docs/LICENSE-KEYS.md`](./docs/LICENSE-KEYS.md).
 
 - **Free — run it yourself.** Any team size, any number of channels with a free key, on your own
-  infrastructure. Modify it however you like; there is no obligation to publish your changes.
+  infrastructure. Modify SUL-covered code within the license; the EE directory has separate contribution and
+  redistribution conditions. There is no obligation to publish internal modifications.
 - **Partner — operate it for clients.** Installing, configuring, supporting or running a **dedicated
   deployment for one client** and charging for that work is permitted with no agreement, for any
   number of clients, as long as each deployment runs on **that client's own key**. An optional
@@ -197,9 +186,9 @@ white-label — are described at
 
 - **Node.js ≥ 22.13** (uses the built-in `node:sqlite`, stable from 22.13, plus
   `process.loadEnvFile`).
-- **`claude` CLI installed and authenticated** on this machine (`claude --version` must work).
-  The daemon spawns it directly; auth is whatever the CLI already uses (login or
-  `ANTHROPIC_API_KEY`).
+- **`claude` CLI installed and signed in** on this host as the daemon user (`claude --version`
+  must work); engine CLIs are also installed in the runtime image. Runs authenticate with a relay
+  of that login's access token, a configured `claude setup-token`, or `ANTHROPIC_API_KEY`.
 - **Rootless Podman** (Linux) — every channel's engines run in a container of that channel's own,
   and the daemon refuses to boot without a container CLI: `sudo apt install podman uidmap`; the
   installer builds the channel image (`npm run build:image` by hand — see

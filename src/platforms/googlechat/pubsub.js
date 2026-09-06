@@ -55,17 +55,20 @@ export function createPubSubPuller({
   let running = false;
   let controller = null;
   let loop = null;
+  let generation = 0;
   let attempt = 0;
   let lastError = "";
 
-  async function post(path, body) {
-    controller = new AbortController();
+  async function post(path, body, gen) {
+    const requestController = new AbortController();
+    controller = requestController;
     const token = await auth.token();
+    if (!running || gen !== generation) throw new DOMException("Puller stopped", "AbortError");
     const res = await fetchImpl(`${BASE}/${path}`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: requestController.signal,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -81,46 +84,46 @@ export function createPubSubPuller({
     return res.json().catch(() => ({}));
   }
 
-  async function pullOnce() {
-    const res = await post(`${subscription}:pull`, { maxMessages });
+  async function pullOnce(gen) {
+    const res = await post(`${subscription}:pull`, { maxMessages }, gen);
     const received = res?.receivedMessages || [];
     if (!received.length) return 0;
 
-    // ACK FIRST, then dispatch. A Chat turn can run for many minutes — far past any ack deadline —
-    // so holding the ack until the work finishes guarantees redelivery of a message we are already
-    // answering. The dedupe window plus at-least-once delivery is the trade we accept: a message
-    // acked and then dropped by a crash is lost, which is strictly better than answering it twice.
-    const ackIds = received.map((m) => m.ackId).filter(Boolean);
-    if (ackIds.length) await post(`${subscription}:acknowledge`, { ackIds });
-
+    // The handler accepts durably into the local inbox. ACK only accepted events; engine work
+    // runs independently of the pull loop and cannot hold another conversation or transport stop.
+    const ackIds = [];
     for (const entry of received) {
+      if (!running || gen !== generation) break;
       const message = entry?.message || {};
       let envelope = null;
       try {
         envelope = JSON.parse(Buffer.from(String(message.data || ""), "base64").toString("utf8"));
       } catch {
         log.warn?.("[googlechat] dropping a Pub/Sub payload that is not JSON");
+        if (entry.ackId) ackIds.push(entry.ackId);
         continue;
       }
       try {
         await onEvent(envelope, message.attributes || {}, { messageId: message.messageId || "" });
+        if (entry.ackId) ackIds.push(entry.ackId);
       } catch (err) {
         // One bad event must not kill the subscription; the next message is unrelated to it.
         log.error?.(`[googlechat] event handler threw: ${err?.message || err}`);
       }
     }
+    if (running && gen === generation && ackIds.length) await post(`${subscription}:acknowledge`, { ackIds }, gen);
     return received.length;
   }
 
-  async function run() {
-    while (running) {
+  async function run(gen) {
+    while (running && gen === generation) {
       try {
-        await pullOnce();
+        await pullOnce(gen);
         if (attempt) log.info?.(`[googlechat] Pub/Sub pull recovered after ${attempt} failed attempts`);
         attempt = 0;
         lastError = "";
       } catch (err) {
-        if (!running || err?.name === "AbortError") return;
+        if (!running || gen !== generation || err?.name === "AbortError") return;
         lastError = err?.message || String(err);
         if (err?.fatal) {
           running = false;
@@ -133,7 +136,8 @@ export function createPubSubPuller({
         // reconnecting after the same Google blip should not retry in lockstep.
         const cap = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** Math.min(attempt - 1, 6));
         log.warn?.(`[googlechat] Pub/Sub pull failed (attempt ${attempt}): ${lastError}`);
-        await sleep(random() * cap);
+        controller = new AbortController();
+        try { await sleep(random() * cap, undefined, { signal: controller.signal }); } catch { if (!running) return; }
       }
     }
   }
@@ -143,13 +147,15 @@ export function createPubSubPuller({
       if (running) return;
       running = true;
       attempt = 0;
-      loop = run();
+      loop = run(++generation);
       return loop;
     },
     async stop() {
       running = false;
+      generation++;
       try { controller?.abort(); } catch { /* already gone */ }
-      try { await loop; } catch { /* the loop swallows its own errors */ }
+      // Do not wait for an auth provider or an already accepted engine turn. Both may be slow;
+      // the generation's running flag prevents dispatch after stop and the inbox owns the work.
       loop = null;
     },
     get running() { return running; },

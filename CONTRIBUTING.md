@@ -16,8 +16,8 @@ daemon refuses to boot below it), Git, and Linux — the daemon refuses to boot 
 
 ```bash
 git clone <your fork> && cd <checkout>
-npm install
-cp .env.example .env      # fill in Slack tokens and ADMIN_PASSWORD for a live run
+npm ci
+cp .env.example .env      # full live setup also needs rootless Podman + provider API credentials
 npm start                 # admin UI + health endpoint on http://localhost:4747
 ```
 
@@ -48,23 +48,20 @@ anything a crashed run left in the system temp dir.
 Every one of these must pass before you open a pull request. CI runs the suite on Node 22.13 and 24
 on ubuntu-latest.
 
-## Branch, worktree, landing lock
+## Branches and review
 
-`main` is the served branch — a deployment runs the repository live from it — so it stays clean and
-integration-only.
+Use your own fork, branch and isolated worktree. Start from the latest upstream main, make focused
+commits and open a PR with validation results. You do not need access to the publisher's GitHub
+account, private QA database or production host. Maintainers handle final integration and release.
 
-- One development thread means **one branch and one worktree**, created from current `origin/main`:
-  `git fetch origin && git worktree add -b fix/<slug> ../<slug> origin/main`. Never edit or switch
-  the canonical checkout.
-- Work, test, and commit inside your own worktree. Nothing about another task's state can block
-  your commits.
-- Landing on `main` is serialized behind the repository's landing lock:
-  `npm run with-landing-lock -- <command>`. Put the bounded refresh/test/merge/push script under
-  that wrapper — never an investigation or a long build. As an outside contributor you do not land
-  anything yourself; a maintainer merges your pull request under the same lock.
-- Remove the worktree and delete the branch only after the commit is contained in `main`.
-- `FEATURES.md` and `TEST-PLAN.md` are expected conflict hotspots. Reconcile them at landing and
-  preserve both sides' entries; never resolve a conflict by dropping someone else's line.
+Keep `FEATURES.md` and `TEST-PLAN.md` consistent with behavior. Include exact fixtures, setup,
+prompts/actions and pass rules for applicable Claude and Codex acceptance. Report live cases you
+could not execute explicitly so maintainers can run them; a local unit test is not a live pass.
+Never resolve a shared document conflict by discarding another contributor's evidence.
+
+Deployments that serve a checkout directly may require serialized landing using
+`npm run with-landing-lock -- <command>`. Follow that host's operator instructions; ordinary
+contributors should not deploy or push directly to the upstream main branch.
 
 ## Commit rules
 
@@ -131,7 +128,8 @@ These are not style preferences; a change that breaks one of them does not merge
 
 - **Confinement is the product, and the container is the boundary.** Every turn runs inside the
   channel's own container: a per-channel HOME volume, only the work folder (plus its clean
-  workspace and artifact dir) mounted, no host home and no gateway root on that side. Every channel
+  workspace and artifact dir) mounted, no host home or gateway root by default. The explicit Full-access whole-home option widens
+  this boundary and must remain off unless deliberately selected by the operator. Every channel
   folder still gets the lockdown settings — automatic memory off, curated permission allowlist,
   the MCP allowlist — as policy, never a `sandbox` block. An engine is never exec'd outside a
   container, and nothing a run can do changes what its container mounts. The boundary is

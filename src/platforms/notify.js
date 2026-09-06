@@ -12,6 +12,8 @@
 // latter. That keeps this slice a pure refactor. When the turn pipeline is extracted, the plumbing
 // carries a connector end to end and the wrapping branch goes away.
 import { createSlackConnector, slackAdapter } from "./slack.js";
+import { liveConnector } from "./live.js";
+import { platformOfConversation } from "./ids.js";
 
 const wrapped = new WeakMap();
 
@@ -71,4 +73,14 @@ export async function postDirectMessage(target, { userId, text, blocks = null } 
   const conversationId = await connector.openDm(userId);
   if (!conversationId) return null;
   return postNotice(connector, { conversationId, text, blocks });
+}
+
+// Resolve readiness for the destination surface. An unrelated Slack outage must never hold a
+// Chat/Teams result, and a Slack client must never receive a namespaced foreign conversation id.
+export function automationTarget(slackManager, conversationId) {
+  const platform = platformOfConversation(conversationId);
+  const live = liveConnector(platform);
+  if (live && live.ready?.() !== false) return live;
+  const client = slackManager?.snapshot?.().connected ? slackManager.getClient?.() : null;
+  return asConnector(client)?.platform === platform ? client : null;
 }

@@ -10,11 +10,16 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { requireComposioSdkEntitlement } from "./composio-entitlement.js";
+import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
 import { getComposioSdkApiKey } from "../config/settings.js";
 
 export function validateSessionUrl(value) {
   const url = new URL(String(value || ""));
   if (url.protocol !== "https:") throw new Error("Composio SDK bridge requires an HTTPS URL");
+  if (url.username || url.password || url.search || url.hash || (url.port && url.port !== "443")) {
+    throw new Error("Composio SDK bridge requires an unambiguous session URL");
+  }
   const host = url.hostname.toLowerCase();
   if (host !== "composio.dev" && !host.endsWith(".composio.dev")) {
     throw new Error("Composio SDK bridge requires a hosted Composio URL");
@@ -25,10 +30,22 @@ export function validateSessionUrl(value) {
   return url;
 }
 
-export function createToolHandlers(remote) {
+export function authorizeSdkSession(sessionUrl, checked) {
+  requireComposioSdkEntitlement();
+  const url = validateSessionUrl(sessionUrl).toString();
+  const claims = checked?.ok ? checked.claims : null;
+  if (!claims || !claims.composioSessions?.some((grant) => grant.url === url &&
+    (grant.kind === "channel" || (grant.kind === "user" && claims.principalTrusted === true)))) {
+    throw new Error("Composio SDK session is not authorized by this run capability");
+  }
+  return url;
+}
+
+export function createToolHandlers(remote, authorize) {
+  if (typeof authorize !== "function") throw new Error("Composio SDK bridge requires an authorization check");
   return {
-    listTools: () => remote.listTools(),
-    callTool: (params) => remote.callTool(params),
+    listTools: () => { authorize(); return remote.listTools(); },
+    callTool: (params) => { authorize(); return remote.callTool(params); },
   };
 }
 
@@ -36,8 +53,10 @@ export async function runBridge(sessionUrl, {
   apiKey = getComposioSdkApiKey(),
   remote = null,
   transport = new StdioServerTransport(),
+  verifyCapability = () => verifyGatewayCapability(process.env.CG_GATEWAY_CAPABILITY, { secret: process.env.CG_APPROVAL_SECRET }),
 } = {}) {
-  const url = validateSessionUrl(sessionUrl);
+  const authorize = () => authorizeSdkSession(sessionUrl, verifyCapability());
+  const url = new URL(authorize());
   if (!apiKey) throw new Error("Composio SDK key is not configured");
 
   const client = remote || new Client(
@@ -50,7 +69,7 @@ export async function runBridge(sessionUrl, {
     }));
   }
 
-  const handlers = createToolHandlers(client);
+  const handlers = createToolHandlers(client, authorize);
   const server = new Server(
     { name: "channelgate-composio", version: "1.0.0" },
     { capabilities: { tools: {} } }

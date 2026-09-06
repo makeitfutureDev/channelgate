@@ -1,3 +1,84 @@
+# Remediation status — 7 September 2026
+
+The source changes for findings 1–4, 6, 7 and 9–17 are implemented and landed on `main`.
+Findings **5 and 8** (retiring the shared Codex sign-in mount and the operator Claude login relay
+in favour of provider API credentials) were implemented on the review branch but are **not
+landed**: they change the product's credential model, every existing deployment runs on the
+operator's own subscription login with no provider API key, and applying them would fail every
+Claude and Codex turn closed at the next restart. That remediation is preserved on the
+`fix/release-readiness` branch (PR #11) for the release owner's decision. This does
+**not** certify the release for production: live provider/platform acceptance, a fresh-VM service
+install, the actual tagged image-evidence workflow, and counsel/trademark review remain open.
+The original review below is preserved as historical evidence, including its original priorities.
+
+Product decisions: **Composio SDK is Enterprise-only and Beta**, with its implementation under
+`src/ee` and server-side entitlement checks. **Google Chat and Microsoft Teams are Beta**.
+Standard Composio MCP mode and core security protections remain available in every tier.
+
+| Finding | Implemented remediation | Outstanding acceptance |
+| --- | --- | --- |
+| 1 | Editor leases moved to daemon-owned state; bind sources reject unsafe symlink components | Disposable live container boundary check |
+| 2 | API principals receive no personal SDK session; signed bridge grants restrict destinations and connection management | Both-engine Enterprise SDK fixture; SDK Beta currently uses Slack identities |
+| 3 | Numeric IPv4/IPv6 classification, mapped-address normalization and invalid DNS rejection | Automated fixtures cover the reported failure |
+| 4 | Run mode overrides only reduce stored capabilities; clean mode stays reduced | Both-engine read-only fixture |
+| 5 | **Not landed** — implemented on the review branch; pending the release owner's credential-model decision | Decision, then live two-channel login and image recreation |
+| 6 | Provision/probe/build as final rootless service identity, subordinate mappings, user-runtime boot ordering and checkout preflight | Fresh supported VM install/reboot/update/uninstall |
+| 7 | License 1.3/EE grant permits unchanged bundled enforcement in authorized no-key/free-key use and distribution | Counsel, ownership and trademark review |
+| 8 | **Not landed** — implemented on the review branch; pending the release owner's credential-model decision (provider approval or an API-credential default) | Decision, then operator service credentials and live provider acceptance |
+| 9 | Password replacement/removal verifies current password; transient proof is not persisted; masked UI confirmation | Manual browser confirmation |
+| 10 | Cross-process serialization, bounded nonblocking reads, pinned parent descriptors and rollback on ordinary write failure | Multi-file crash publication remains explicitly non-atomic |
+| 11 | Persist execution/output/delivery separately; unknown interrupted runs require reconciliation instead of replay | Live crash/restart fixtures; delivery remains at least once |
+| 12 | Schedules/background delivery use destination connectors without Slack; fixed actual non-Slack result content | Google Chat/Teams acceptance with Slack disconnected |
+| 13 | Durable Chat acceptance before ACK, bounded parallel conversations, FIFO ordering and prompt intake stop | Live Pub/Sub reconnect/redelivery fixture |
+| 14 | Cache/request state is bound to the active license key; SQLite coordinates verifier generations across processes | Automated reversed-order and child-process tests |
+| 15 | Patched qs override; direct release audit/candidate checks; installed-image SBOM/model hashes and attestations; history/artifact scanning | Run tagged workflow and verify image evidence/notices; root audit alone does not audit all image packages |
+| 16 | Reconciled filesystem/network/credential/provider/licensing statements and migration instructions | Deployment-specific disclosure/retention review |
+| 17 | Public contribution requirements use reproducible PR evidence; private deployment rules belong in an ignored overlay | This session's private QA registry writes still need the selected personal connection |
+
+Independent follow-up review also prompted protection against blocking memory special files,
+service-secret output leakage (including fallback and jobs), plaintext password prompts,
+commit/tag-message scan omissions, repeated scanner findings, and missing installed peer edges
+in the npm inventory. These are included in the candidate's tests and verification record.
+
+Cleanup completed: consolidated launch/asset instructions into `docs/MAINTAINER-RELEASE.md`,
+removed references to nonexistent promotional assets, shortened duplicated legal rationale,
+replaced generic headless UI/widget/Swift scaffolding with the actual runner contract, corrected
+Linux/bootstrap examples, and ignored generated release evidence. Retained migration/backup/
+restore code, the lockfile, `private: true`, tests, notices, authorship and canonical instruction
+symlinks because they still serve supported deployments. Broad monolith rewrites are deferred;
+this change extracts the IP policy and Enterprise implementation without a speculative rewrite.
+
+**Upgrade action:** none for credentials — the landed changes keep the existing login relay and
+Codex mount. Editor leases move to daemon-owned state on their own; a new database migration
+(inbound event inbox) applies at the next restart.
+
+Live acceptance definitions and pass rules are in [RELEASE-ACCEPTANCE.md](docs/RELEASE-ACCEPTANCE.md).
+The 19 scenario definitions specify applicable engines; private fixture IDs and actual results are
+filled in when executed. They are not fabricated live passes or a claim of an Airtable write.
+Legal and release gates remain in [RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md).
+
+## Candidate verification
+
+Local validation on Node 22.22.2, 7 September 2026:
+
+- Full regression with coverage: **2,022 tests; 2,021 passed; zero failed; one opt-in live test skipped**.
+  Aggregate coverage (including test sources) was 92.59% lines, 82.19% branches and 87.14% functions;
+  all configured floors passed. Dedicated security-area coverage gates also passed.
+- Static validation: **523 JavaScript files** passed syntax, undeclared-identifier and whitespace checks.
+- `npm audit`: **zero vulnerabilities** for the patched root lockfile. This is not a full image audit.
+- The opt-in real-container durability test passed separately with no skips. A disposable HOME/tool
+  fixture, `/tmp` and `/var/tmp` survived stop/restart/recreation; its container and volume were
+  removed. This used the existing installed host image, not a newly built candidate image.
+- Local npm inventory/build metadata generation, DCO checks and bundled skill validation passed.
+  The candidate-history/artifact scan and GitHub PR checks are recorded in the PR evidence.
+
+No production restart, provider credential change, private QA registry write, live chat/provider
+acceptance or tagged release publication was performed. The PR is held for the external gates above.
+
+---
+
+# Original review (historical)
+
 ChannelGate public-release review — 6 September 2026
 
 I would hold this release. The primary concerns are broken security boundaries, inconsistent licensing, and an installation path that has not caught up with the container architecture. Removing a few files or adding more documentation would not resolve them.

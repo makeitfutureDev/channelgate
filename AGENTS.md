@@ -290,7 +290,7 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
 - **Only admins get `--dangerously-skip-permissions`.** Non-admins run with the folder's
   `permissions.allow` allowlist (headless can't answer interactive prompts).
 - **Authorization (who may talk):** a user is allowed if they are an **admin** or **approved**
-  (`approved` = on the MakeItFuture list). Approved users may talk in any channel they're a
+  (`approved` = approved by the deployment operator). Approved users may talk in any channel they're a
   member of (membership is implied by posting) **and** in their DM. Unknown/un-approved users
   are denied **everywhere, including DMs** — the only exception is an explicit per-channel guest
   grant (`meta.allowedUsers`, channels only). This is authorization only; dangerous permissions
@@ -307,85 +307,35 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
   line. Still prefer portable Node APIs over shelling out (`child_process` with `detached:true`
   instead of `setsid`, `node:fs`/`node:path` instead of shell utils) and keep any shell
   POSIX-portable.
-- **Secrets** live in `.env` (repo root, gitignored) and per-user tokens in `users.json`
-  (gitignored runtime dir). Never hardcode tokens; never log them.
+- **Secrets** live in gitignored bootstrap/runtime configuration and the SQLite user store,
+  outside published source. `users.json` is a legacy import only. Never hardcode or log tokens.
 - **Project records:** shipped behavior lives in `FEATURES.md`; the cumulative regression lives in
   `TEST-PLAN.md`. Keep both aligned with shipped code. Do not create, consult, or update
   `TASKS.md`, and do not make a brainstorming or standalone plan-writing phase a prerequisite for
   implementation. Use the active request, repository state, focused acceptance criteria, and
   tests as the working source of truth.
-- **Every shipped feature needs live dual-engine acceptance coverage.** In the same slice that
-  changes `FEATURES.md` and `TEST-PLAN.md`, add or update the corresponding records in the
-  `ChannelGate QA` Airtable base. Cover **both Claude and Codex** whenever the behavior can reach
-  either engine; mark a case engine-independent only when the engine truly cannot affect it.
-  Record the exact private test channel or special fixture, setup, human-like prompt/action,
-  expected evidence, and pass rule. A feature is not complete while its applicable Airtable cases
-  are missing. Airtable writes use the requesting user's explicitly selected personal connection;
-  never substitute an agent-side account.
-## Git workflow (isolated worktree per development thread → serialized landing → push)
+- **Behavior changes need acceptance evidence.** Update `FEATURES.md` and `TEST-PLAN.md`, with
+  regression tests and reproducible acceptance instructions for Claude and Codex whenever both
+  can reach the behavior. State exact fixtures, setup, prompt/action, expected evidence and pass
+  rules. Mark engine-independent cases only when the engine cannot affect them. Contributors need
+  no private QA service access: include results and unexecuted live cases in the PR. Maintainers
+  must complete the applicable live release gates before declaring a release ready.
 
-The canonical checkout is `~/Code/channelgate` (the service unit's `WorkingDirectory`). Its
-`origin` is `https://github.com/makeitfutureDev/channelgate.git` — the public repository (public
-since 2026-09-06, release 0.5.0), whose history begins at the 2026-09-03 fresh-start commit of the
-scrubbed tree. The pre-rename repository `makeitfutureDev/claude-gateway-slack` is the read-only
-ARCHIVE of the full history (remote `archive` in the canonical checkout; tag
-`archive/fresh-start-base` there marks the commit the tree was squashed from) — never push to it.
-Because the repository is public, every commit is written for strangers: sign it off
-(`git commit -s`, the CLA acceptance) and keep customer, channel and person names out of commit
-messages; use generic project language for private context.
+## Contributor workflow
 
-`main` is the **served branch** — the daemon runs the repo live from `main`, so whatever is on
-`main` is in production. Keep the canonical checkout permanently on `main`; never use it as a
-feature workspace. Each development thread gets its own branch **and its own worktree**, so tasks
-can edit, test, and commit concurrently without sharing an index or working directory. Only the
-short final landing step is serialized, then verified work is pushed so local production and remote
-stay in sync:
+Use a dedicated branch and worktree from the latest upstream main. Keep shared integration
+checkouts clean, stage only your changes, sign off commits under `CLA.md`, and open a pull request.
+External contributors push to their own fork and never need the publisher's GitHub account or a
+production checkout. See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks and PR requirements.
 
-- **A new message thread means a new branch + worktree when repo files will change.** For every new Slack,
-  assistant, or CLI message thread, decide before editing whether the work will modify code,
-  instructions, docs, tests, config, or other tracked project files. If yes, create a fresh branch
-  and add an isolated worktree for it from current `origin/main`, even if another task is already
-  active. Name the branch for the work (`feature/*`, `fix/*`, `docs/*`, or a short descriptive slug)
-  and put the worktree in a unique temporary sibling directory when the session can write outside
-  the repo; in a sandboxed gateway channel (writes confined to the folder) use `.worktrees/<slug>/`
-  inside the repo root instead, with `.worktrees/` added to `.git/info/exclude`. The generic
-  per-channel protocol every gateway agent receives is `gateway-usage` →
-  `references/git-repos.md`; this section is the repo-specific version of the same discipline.
-  Pure investigation, status checks, and read-only answers do not need a worktree until they turn
-  into edits.
-- **The canonical checkout is integration-only.** It stays clean and checked out on `main`. Feature
-  tasks must never switch its branch, edit files there, or check out `main` in another worktree.
-  Branch creation must not depend on switching the canonical checkout: fetch first, then create the
-  task worktree and branch directly from `origin/main` (for example,
-  `git worktree add -b <branch> <unique-path> origin/main`).
-- **Commits never wait for another task.** Work, test, and commit inside the task's own worktree.
-  Another task occupying the landing lock or changing `main` can delay only merge/push—not edits,
-  tests, or commits. Status messages must say “waiting to land/merge,” never “cannot commit,” unless
-  the task's own worktree has a real commit failure.
-- **Serialize the landing step.** Before merging, acquire the repository's shared landing lock so
-  only one task updates `main` at a time. While holding it: fetch, refresh the task branch against
-  the latest `origin/main` (rebase or merge according to the repository convention), resolve and
-  verify any conflicts in the task worktree, rerun proportionate tests, then merge from the clean
-  canonical checkout and push `main`. Keep the lock only for this bounded integration window; a
-  long build or investigation belongs outside it. If no lock helper exists, wait and report that
-  the task is ready to land rather than switching or editing the canonical checkout concurrently.
-  This repository's portable helper is `npm run with-landing-lock -- <command> [args...]`; it uses
-  an atomic compare-and-swap ref in the shared Git repository, reports the current owner, safely
-  recovers a dead owner on the same host, and drains the wrapped command's complete process group
-  before releasing. Put the bounded refresh/test/merge/push script or command under that
-  wrapper—never acquire the lock around an unrelated investigation.
-- **Push `main` to GitHub at the end of every completed task.** After merge and final status check,
-  push (`git push origin main`) using the `makeitfutureDev` account (`gh auth switch --user
-  makeitfutureDev` if needed). Do not leave finished local commits unpushed unless the user
-  explicitly says not to push or the push is blocked; surface any blocker immediately.
-- **Commit only your own change.** If the tree already holds edits you didn't make, never
-  `git commit -a` / `git add -A`. Stage just the files/hunks for your task and leave everything else
-  untouched and unstaged. Worktree isolation prevents index collisions but does not remove the need
-  for selective staging.
-- **Reconcile shared planning/docs at landing.** `FEATURES.md`, `TEST-PLAN.md`, and
-  other living documents are expected conflict hotspots. Keep the task's updates on its branch,
-  reconcile them against current `main` before the final tests, and preserve both tasks' facts—do
-  not solve conflicts by dropping another task's entries.
-- **Clean up only after landing.** After confirming the task commit is contained in `main`
-  (`git merge-base --is-ancestor <ref> main`), remove its worktree and then delete its branch. If it
-  is not merged, leave both in place and surface it; never delete unmerged work.
+For a checkout actually serving a daemon, follow its deployment-specific landing policy: refresh,
+verify and land under `npm run with-landing-lock -- <command>`. Maintainers serialize production
+integration; this is not a requirement for outside contributors to deploy their own changes.
+Preserve both sides of shared documentation conflicts. Delete task worktrees/branches only after
+confirming their commits are safely integrated, or after an explicit owner-authorized handoff
+that preserves the commits remotely.
+
+A deployment may keep additional private QA account, test-channel and production landing details
+in a gitignored `AGENTS.local.md`. Do not commit customer identities, credentials or private system
+links to public contributor instructions. Session-specific operator instructions remain binding
+for that session even when public documentation is revised.

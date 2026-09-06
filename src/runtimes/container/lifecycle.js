@@ -7,7 +7,7 @@
 // deliberately NOT in it: rotating a channel secret retires the warm engine process through the
 // pool's own fingerprint, and must not tear down a container that background jobs are using.
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
@@ -147,6 +147,24 @@ export function parseInspectLine(line) {
 // `/tmp` and `/var/tmp` are mounts rather than tmpfs so a stop cannot empty them
 // (PERSISTENT_TMP_DIRS). Together with the HOME volume that means NOTHING a channel accumulates —
 // logins, installed CLIs, caches, scratch files — is lost to a stop, a restart or a recreate.
+// Container processes can replace children of a mounted artifact tree. A symlink there must
+// never be resolved by Podman as a new host mount. Reject every symlink component, including
+// ancestors, and fail closed instead of logging and letting the CLI create/follow it itself.
+export function assertSafeBindSource(source) {
+  const absolute = path.resolve(source);
+  let current = path.parse(absolute).root;
+  for (const part of absolute.slice(current.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    try {
+      const entry = lstatSync(current);
+      if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`Unsafe container bind source: ${current} must be a real directory`);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+  }
+}
+
 export function buildMounts(base) {
   const mounts = [
     { kind: "workdir", type: "bind", source: base.workDir, target: base.workDir, mode: "rw" },
@@ -381,11 +399,9 @@ export function createContainerLifecycle({
   function ensureBindSources(target) {
     for (const mount of target.container?.mounts || []) {
       if (mount.type !== "bind" || !mount.source) continue;
-      try {
-        mkdirSync(mount.source, { recursive: true, mode: 0o700 });
-      } catch (e) {
-        log(`[container] could not create mount source ${mount.source}: ${e?.message || e}`);
-      }
+      assertSafeBindSource(mount.source);
+      mkdirSync(mount.source, { recursive: true, mode: 0o700 });
+      assertSafeBindSource(mount.source);
     }
   }
 

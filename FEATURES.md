@@ -2,10 +2,39 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
-- Development acceptance policy: every applicable shipped feature carries live `ChannelGate QA`
-  Airtable cases for both Claude and Codex, including its exact fixture, realistic prompt, evidence,
-  and pass rule; engine-independent cases require a genuine engine-independent boundary.
-  → TEST-PLAN: Development acceptance policy.
+- Development acceptance policy: behavior changes include reproducible Claude and Codex
+  acceptance definitions and clearly separate automated evidence from live operator validation.
+  Public contributors do not need access to a private QA service. → TEST-PLAN: Development acceptance policy.
+
+## Release readiness remediation
+
+- **Enterprise integration scope:** Composio SDK implementation lives under `src/ee`, is labeled
+  **Beta**, and requires Enterprise entitlement at settings, session, runtime and bridge boundaries.
+  Personal API principals cannot claim an author's SDK identity; the bridge permits only signed
+  session destinations. SDK Beta currently supports Slack identities. Standard MCP mode remains free.
+- **Beta surfaces:** Google Chat and Microsoft Teams are labeled Beta in adapter/UI metadata and
+  setup docs. Their replies use the engine's actual result content, and reminders/background
+  delivery resolve their own connector even with Slack disconnected.
+- **Trust boundaries:** numeric destination checks handle mapped IPv6; password replacement and
+  removal require current-password proof; API tool overrides are reduce-only; editor leases live
+  outside agent-writable artifacts; container bind sources reject symlinked path components. The
+  Claude login relay and the shared Codex sign-in mount are unchanged (audit findings 5 and 8 are a
+  pending product decision, not shipped).
+- **Secret handling:** masked dialogs collect password proof. Known credential values are redacted
+  from primary/fallback replies, stream events, errors and background delivery checkpoints. Shell
+  jobs do not inherit engine service credentials. Exact-value redaction is not a vault and does
+  not prevent an engine from transforming a usable credential.
+- **Durable work:** memory mutations serialize across gateway processes. Bounded nonblocking reads
+  reject special files and pin parent directory descriptors before publication. API/schedule/background
+  execution checkpoints distinguish unknown interrupted runs from completed results awaiting
+  delivery. Results retry delivery without replaying unknown tool work. Chat accepts into SQLite
+  before ACK, uses bounded conversation dispatch and stops intake promptly. Individual memory
+  files replace atomically; a multi-file batch is not crash-atomic. Delivery can repeat if a remote
+  acknowledgment is lost after acceptance.
+- **Release controls:** license verification is bound to the current key and request generation;
+  the patched dependency lock, candidate/history scans, runtime SBOM/model inventory and signed
+  artifact workflow supply explicit candidate evidence. License 1.3 reconciles unchanged bundled
+  EE distribution and Enterprise feature use. Live and legal gates remain in the release checklist.
 
 ## Conversation settings and persistent memory
 
@@ -99,7 +128,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   ships a `references/platform.md` stating exactly what renders there.
   → TEST-PLAN: Chat-platform adapter kernel.
 
-## Google Chat and Microsoft Teams transports (preview)
+## Google Chat and Microsoft Teams transports (Beta)
 
 - **Google Chat runs outbound-only**, like Slack: a Cloud Pub/Sub PULL subscription consumes the
   events Google publishes for the Chat app, so there is no inbound endpoint and no tunnel. The pull
@@ -160,17 +189,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 ## Public website
 - The marketing / early-access site (and its lead-routing contract) lives in its own
   repository — this repository ships product code only.
-- **README hero + GitHub repo metadata** (the repository's own landing page): H1, the shared
-  tagline, a five-badge row (license, CI, Node floor, chat platforms, engines), a three-sentence
-  what-it-is, a demo placeholder pointing at `docs/assets/demo.gif`, a seven-step "Running in 10
-  minutes", a ten-row feature grid, the architecture flow, a modest ✅/➖/❌ comparison table with a
-  generalisation footnote, security in five bullets, three licensing lanes, one UTM-tagged
-  Makeitfuture CTA, and a documentation index — every operational section preserved below the fold.
-  `.github/REPO-METADATA.md` holds the ≤ 350-character About text, the website URL, the ten repo
-  topics and the exact `gh repo edit` command; `docs/assets/README.md` specifies the demo GIF and
-  the 1280 × 640 social preview. `test/readme.test.js` guards the H1, the tagline, the single
-  "formerly" attribution, the ban on "open source", the CTA links, relative-link resolution, badge
-  URL shape, and the licensing facts. → TEST-PLAN: README hero guards.
+- **Public entrypoint:** README describes installation, current license/support status and the
+  actual container/credential/data-flow boundary, with working documentation links. Promotional
+  assets are linked only when they exist; maintainer release/presentation instructions live in
+  `docs/MAINTAINER-RELEASE.md`. → TEST-PLAN: README hero guards.
 
 ## Conversation gateway
 - Slack Socket Mode listener across DM / group DM / public channel / private channel
@@ -589,21 +611,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Background jobs survive a daemon restart: each job is persisted in SQLite's `bg_jobs` table; on boot
   a still-running job is watched to completion, and one that exited while the daemon was down gets a
   forced "interrupted by restart" continuation — a thread never silently stalls.
-- **Retired 2026-09-03 (Linux + containers only):** the host-side card variant (`Runs OUTSIDE the engine sandbox as the daemon user`) — every shell
-  job now runs inside its channel's container and the card names the image; the durable single-use
-  card itself is unchanged. Unsandboxed background-shell approval cards are durable and single-use. `run_in_background`
-  persists the exact command, author, channel/thread, working-folder identity, and runtime cap in
-  SQLite and returns immediately so the engine can end its turn. Auto mode requires a gateway admin
-  to click **Run it**; Admin mode starts directly only for an admin author, matching that live
-  foreground turn's explicit sandbox-off tier. The button remains actionable across daemon/engine restarts and starts that exact job
-  directly—without replaying an AI turn—then atomically consumes the authorization. Duplicate clicks
-  cannot execute twice; an interrupted click is reconciled at boot against the durable job record,
-  and fails closed instead of reopening when the gateway cannot prove whether the process started.
-  The card names the environment the job will actually run in: `Runs OUTSIDE the engine sandbox as
-  the daemon user` on the host, and `Runs inside this channel's container (<image>)` when the run's
-  target declares the `isolated` capability — the approver is told which image instead of being
-  warned about a danger that is not there. It is an admin-tier click either way.
-  Permission, plan, and control-plane approvals retain their short-lived synchronous behavior.
+- **Container-only runtime settings.** Settings expose the CLI, image, idle/container limits,
+  resource caps and optional Full-access home mount. There is no host runtime switch or Claude
+  subscription-token field. Boundary validation rejects invalid CLI argument values before save.
+  → TEST-PLAN: Container runtime and Release readiness remediation.
 - Interactive turns survive a daemon restart (auto re-run): cold Claude/Codex engine subprocesses and
   warm Claude sessions run in process groups so their MCP children can be killed as a unit; controlled
   daemon restart/stop terminates those groups, preserves the `active_runs` row, and lets the next boot
@@ -1520,7 +1531,8 @@ are retired, bullet by bullet; everything else stands.
   subscription access-token relay as a chat turn, refreshes it while the window is open, and places
   it behind a channel-local `claude` wrapper which defers to any credential explicitly injected by
   a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
-  → TEST-PLAN: Container runtime (v0.8 P1).
+  The lease record itself lives in daemon-owned metadata under the gateway root, never in the
+  agent-writable artifact directory. → TEST-PLAN: Container runtime (v0.8 P1).
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch
@@ -1555,7 +1567,7 @@ are retired, bullet by bullet; everything else stands.
   self-update rebuilds it automatically (see *The update rebuilds the channel image*).
 - **Boot reconcile and out-of-band removal.** Every engine process inside a container that survived
   a daemon restart belonged to the previous daemon, which can no longer read its stdout — restart
-  recovery replays those turns — so the boot sweep terminates the `run-*` and `warm-*` process
+  recovery records unknown executions for reconciliation — so the boot sweep terminates the `run-*` and `warm-*` process
   groups of every running container of THIS install and leaves detached `job-*` groups alone,
   because a background job is meant to outlive a restart. An exec that fails because the container
   vanished underneath it (an operator `podman rm`, a host reboot) re-runs `ensureUp` and retries

@@ -1,35 +1,46 @@
 # License — `src/ee/` (Enterprise Edition)
 
-**Copyright © MAKEITFUTURE S.R.L. All rights reserved.**
+Copyright © 2026 MAKEITFUTURE S.R.L. All rights reserved.
 
-Everything in this directory (`src/ee/`), including every file added to it in the future, is
-**proprietary, source-visible** code. It is **NOT** covered by the Sustainable Use License in
-[`LICENSE.md`](../../LICENSE.md) at the root of this repository, and it is **not** open source
-and **not** fair-code. The source is published so that operators can read exactly what the
-license check does and what leaves their install — not so that it can be reused, forked,
-modified for redistribution, or re-licensed.
+Version 1.3, effective 2026-09-07. This directory is proprietary, source-visible code licensed
+under these terms, separately from the root [Sustainable Use License](../../LICENSE.md).
+It is not open-source software. Third-party dependencies retain their own licenses.
 
-## What you may do
+## Permission to install, audit and distribute ChannelGate
 
-Use the code in this directory **only** as an unmodified part of a ChannelGate deployment that
-holds a valid license key issued by MAKEITFUTURE S.R.L. through its platform, and only within
-the limits that key carries. Reading it, auditing it, and reporting bugs in it is welcome.
+You may read and audit this code. You may reproduce, install, run and distribute an **unchanged
+copy of this directory as part of a complete ChannelGate distribution** whenever that deployment
+or distribution is permitted by the root license or your written agreement with the Licensor.
+This permission expressly includes no-key evaluation, free-key operation and noncommercial
+redistribution permitted by root license Section 3, item (d). It also covers a permitted modified
+copy of the rest of ChannelGate that preserves this directory and all required notices unchanged.
+No separate paid agreement is required to load or execute the licensing, metering and enforcement
+components needed by those installations.
 
-## What you may not do
+Optional Enterprise features, including **Composio SDK mode (Beta)**, may be enabled and used only
+with a valid Enterprise entitlement issued by the Licensor, within its agreed term and limits.
+The inclusion of their source in a no-key or free-key distribution does not grant that entitlement.
+The standard Composio MCP integration and core security protections remain available in every tier.
 
-Without a separate written agreement from MAKEITFUTURE S.R.L. you may not copy, modify, merge,
-publish, distribute, sublicense, or sell the code in this directory, or any derivative of it,
-and you may not remove, disable, bypass, or circumvent the license-key verification, the usage
-limits, or the usage reporting it implements — see [`LICENSE.md`](../../LICENSE.md) **§3.2
-(License keys and usage limits)** and **§4.5 (Commercial restrictions)**. The code is visible;
-the license is the enforcement.
+## Contributions
 
-Termination, governing law, and the disclaimer of warranties and liability in `LICENSE.md`
-§9–§11 apply to this directory as well.
+You may make modifications solely to develop and test proposed fixes and submit them to the
+Licensor for review under [CLA.md](../../CLA.md), including publishing the corresponding patch or
+review branch for that submission. This limited contribution permission does not authorize
+operating or distributing a deployment with verification, limits, reporting or feature checks
+removed, disabled or circumvented. The Licensor's acceptance and publication of a contribution
+makes it part of the authorized distribution under the applicable published terms.
 
-## Where the rest is described
+## Restrictions
 
-- Tiers, limits, offline grace, and what the deployment sends: [`docs/LICENSE-KEYS.md`](../../docs/LICENSE-KEYS.md)
-- The exact outbound payloads: [`docs/PRIVACY-AND-DATA-FLOW.md`](../../docs/PRIVACY-AND-DATA-FLOW.md)
+Except for the permissions above or a separate written agreement, you may not use this code
+independently, sublicense it, sell it, or publish or distribute modified versions. You may not
+remove, disable, bypass or circumvent license verification, usage limits, usage reporting or
+Enterprise feature checks. Root license Section 3.2 and Section 4, item 5 apply.
 
-Questions, keys, and agreements: `contact@makeitfuture.com`.
+The termination, governing-law, warranty and liability terms in root license Sections 9–11
+apply here. Rights not expressly granted remain reserved.
+
+For tiers and outbound data, see [LICENSE-KEYS.md](../../docs/LICENSE-KEYS.md) and
+[PRIVACY-AND-DATA-FLOW.md](../../docs/PRIVACY-AND-DATA-FLOW.md).
+Questions or commercial agreements: `contact@makeitfuture.com`.

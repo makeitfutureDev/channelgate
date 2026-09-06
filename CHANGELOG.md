@@ -18,6 +18,22 @@ product overview.
 
 ## Unreleased
 
+- Addressed the release audit: isolated runtime credentials and daemon metadata, tightened SDK/API
+  authorization and admin reauthentication, serialized memory saves, and separated interrupted
+  execution from result-delivery recovery. Google Chat intake is durable and bounded; non-Slack
+  automation no longer requires Slack connectivity.
+- Composio SDK is now **Enterprise-only, Beta**. Google Chat and Microsoft Teams are **Beta**.
+- Runtime hardening: editor leases live in daemon-owned state, container bind sources reject
+  symlinked path components, shell background jobs no longer inherit engine service credentials,
+  and service credentials are redacted from replies and job output. The Claude login relay and
+  the shared Codex sign-in mount are unchanged.
+- License 1.3 clarifies no-key/free-key use of unchanged bundled EE enforcement and authorized
+  redistribution. Provider agreements and legal review remain separate release requirements.
+- Patched transitive qs, corrected fresh-service provisioning, and expanded release history scans,
+  built-image inventory/model hashes and signed artifact evidence. Public instructions no longer
+  require private contributor accounts; unused generic skill/UI scaffolding was removed.
+
+
 - Automations are searchable by conversation/person or automation content, resolve DM display
   names, and describe common schedules in plain language. The enlarged editor now updates timing,
   title, notifications, delivery, state, and prompt atomically, including a new direct-to-channel

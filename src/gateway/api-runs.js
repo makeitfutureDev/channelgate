@@ -10,9 +10,8 @@
 //    in Slack too. If the kickoff can't post, it falls back to a headless api-keyed thread.
 //
 // Jobs are tracked in memory AND persisted to the `api_jobs` table so GET keeps working after a
-// restart. A row left running/queued when the daemon died is rehydrated on boot and run again
-// against the stored prompt/attachments; Slack-backed jobs also resume visible progress in the
-// original thread.
+// restart. In-flight work with an unknown outcome is interrupted, never replayed automatically.
+// Completed output has a separate delivery checkpoint so recovery can resend it without a run.
 import { randomUUID } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -60,7 +59,6 @@ const MEM_CAP = 500; // most-recent jobs kept in memory (terminal ones evicted f
 const DB_TTL_MS = 7 * 24 * 60 * 60 * 1000; // prune persisted jobs older than this on each start
 const IDEM_TTL_MS = 15 * 60 * 1000; // an idempotencyKey dedupes repeat POSTs within this window
 const LIST_MAX = 200; // hard cap on GET /api/runs page size
-const MAX_RECOVER_ATTEMPTS = 2;
 const MAX_KICKOFF_CHARS = 11_500;
 const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
 
@@ -81,16 +79,12 @@ function normalizeMode(mode) {
 
 // ── Job persistence ───────────────────────────────────────────────────────────
 function persist(job) {
-  try {
-    getDb()
-      .prepare(
-        "INSERT INTO api_jobs(id, status, created_ms, data) VALUES(?, ?, ?, ?) " +
-          "ON CONFLICT(id) DO UPDATE SET status = excluded.status, data = excluded.data"
-      )
-      .run(job.id, job.status, job.createdMs, toJson(job));
-  } catch {
-    /* best-effort — status durability is a nicety, not a correctness requirement */
-  }
+  // Admission and execution/delivery checkpoints are correctness boundaries. A failed durable
+  // write must stop the caller before it starts work or declares the result recoverable.
+  getDb().prepare(
+    "INSERT INTO api_jobs(id, status, created_ms, data) VALUES(?, ?, ?, ?) " +
+    "ON CONFLICT(id) DO UPDATE SET status = excluded.status, data = excluded.data"
+  ).run(job.id, job.status, job.createdMs, toJson(job));
 }
 
 // Trim the in-memory map and prune old persisted rows. Cheap; called once per start.
@@ -104,7 +98,10 @@ function houseKeep() {
     }
   }
   try {
-    getDb().prepare("DELETE FROM api_jobs WHERE created_ms < ?").run(Date.now() - DB_TTL_MS);
+    getDb().prepare(`DELETE FROM api_jobs WHERE created_ms < ? AND status NOT IN ('running', 'queued')
+      AND coalesce(json_extract(data, '$.deliveryPending'), 0) = 0
+      AND coalesce(json_extract(data, '$.webhookPending'), 0) = 0
+      AND coalesce(json_extract(data, '$.interruptionNoticePending'), 0) = 0`).run(Date.now() - DB_TTL_MS);
   } catch {
     /* best-effort */
   }
@@ -201,85 +198,46 @@ export function stopApiRun(id) {
   return { ok: true, jobId: job.id, status: "stopping" };
 }
 
-// Rehydrate API jobs that were queued/running when the previous daemon exited. Unlike interactive
-// Slack turns, these rows stay in api_jobs; recovery claims them by loading each row into memory and
-// starting a fresh background driver. Slack-backed jobs resume in the original thread when Slack is
-// connected. Headless jobs resume silently and finish through status/webhook.
-export async function recoverApiRuns({ slack, driver = runInBackground } = {}) {
-  let stale = [];
-  try {
-    stale = getDb()
-      .prepare("SELECT data FROM api_jobs WHERE status IN ('running', 'queued') ORDER BY created_ms")
-      .all()
-      .map((r) => fromJson(r.data, null))
-      .filter(Boolean);
-  } catch {
-    return;
-  }
-  if (!stale.length) return;
-  await logEvent("api_run_recover_begin", { count: stale.length }).catch(() => {});
-  const slackState = slack?.snapshot?.() || {};
-  const connectedClient = slackState.connected ? slack.getClient?.() ?? null : null;
+// A saved prompt is not an execution checkpoint: replaying it can repeat external actions.
+// Recover only DELIVERY of durable results. Unknown in-flight work is explicitly interrupted;
+// the caller must reconcile side effects before submitting another execution.
+export async function recoverApiRuns({ slack, deliver = deliverResult, webhook = fireWebhook } = {}) {
+  const stale = getDb().prepare("SELECT data FROM api_jobs ORDER BY created_ms").all()
+    .map((r) => fromJson(r.data, null)).filter((j) => j &&
+      (["running", "queued"].includes(j.status) || j.deliveryPending || j.webhookPending || j.interruptionNoticePending));
+  const state = slack?.snapshot?.() || {};
+  const connectedClient = state.connected ? slack.getClient?.() ?? null : null;
   for (const rec of stale) {
-    const job = { ...rec, status: "running", stopRequested: false };
-    const attempts = (Number(job.recoveryAttempts) || 0) + 1;
-    const client = job.slackThread && connectedClient ? connectedClient : null;
-    if (attempts > MAX_RECOVER_ATTEMPTS) {
-      job.status = "failed";
+    if (controllers.has(rec.id)) continue;
+    const job = { ...rec };
+    if (["running", "queued"].includes(job.status)) {
+      job.status = "interrupted";
       job.completedMs = Date.now();
-      job.error = "The daemon restarted repeatedly while this API run was in flight; recovery stopped. Start a new run.";
-      job.recoveryAttempts = attempts;
-      persist(job);
-      await logEvent("api_run_recover_giveup", { id: job.id, slug: job.slug, attempts }).catch(() => {});
-      if (client) {
-        client.chat
-          .postMessage({
-            channel: job.channelId,
-            thread_ts: job.threadKey,
-            text: `⚠️ API run \`${job.id}\` was interrupted repeatedly by gateway restarts and has stopped retrying.`,
-          })
-          .catch(() => {});
-      }
-      await fireWebhook(job);
-      continue;
+      job.error = "The gateway restarted before saving this run's result. External actions may already have happened. Inspect the target systems before explicitly submitting a new run; this request was not run again.";
+      job.interruptionNoticePending = Boolean(job.slackThread);
+      job.webhookPending = Boolean(job.webhook);
     }
-
-    const attachmentPath = job.attachmentPath || (Array.isArray(job.attachments) ? job.attachments[0] : null) || null;
-    const textForRun = job.textForRun || buildTextForRun({ msg: job.message || "", authorId: job.author || "api", attachmentPath });
-    if (!textForRun || (job.hasAttachment && !attachmentPath && (!Array.isArray(job.attachments) || !job.attachments.length))) {
-      job.status = "failed";
-      job.completedMs = Date.now();
-      job.error = "Could not recover this API run because its persisted request payload is incomplete.";
-      job.recoveryAttempts = attempts;
-      persist(job);
-      await logEvent("api_run_recover_error", { id: job.id, slug: job.slug, error: job.error }).catch(() => {});
-      await fireWebhook(job);
-      continue;
-    }
-
-    job.textForRun = textForRun;
-    job.attachmentPath = attachmentPath;
-    job.attachments = Array.isArray(job.attachments) ? job.attachments : attachmentPath ? [attachmentPath] : [];
-    job.recoveryAttempts = attempts;
-    job.startedMs = Date.now();
-    job.completedMs = null;
-    job.error = null;
     jobs.set(job.id, job);
-    const controller = new AbortController();
-    controllers.set(job.id, controller);
     persist(job);
-    await logEvent("api_run_recover", { id: job.id, slug: job.slug, channel: job.slackThread ? job.channelId : "", attempts }).catch(() => {});
-    driver(job, {
-      textForRun,
-      attachmentPath,
-      client,
-      teamId: slackState.teamId || null,
-      overrides: job.overrides || null,
-      signal: controller.signal,
-      recovering: true,
-    });
+    const client = job.slackThread ? connectedClient : null;
+    try {
+      if (client && job.deliveryPending && job.result) {
+        await deliver(client, { channel: job.channelId, threadKey: job.threadKey,
+          result: { ...job.result, engine: job.engine, cwd: job.cwd, sessionId: job.sessionId }, footer: true });
+        job.deliveryPending = false;
+        persist(job);
+      }
+      if (client && job.interruptionNoticePending) {
+        await postNotice(client, { conversationId: job.channelId, threadKey: job.threadKey,
+          text: `⚠️ API run \`${job.id}\` was interrupted. External actions are unknown; inspect before retrying. It was not run again.` });
+        job.interruptionNoticePending = false;
+        persist(job);
+      }
+    } catch (error) {
+      await logEvent("api_delivery_recovery_error", { id: job.id, error: error.message }).catch(() => {});
+    }
+    if (job.webhookPending) await webhook(job);
   }
-  await logEvent("api_run_recover_done", { count: stale.length }).catch(() => {});
 }
 
 // ── Channel resolution ─────────────────────────────────────────────────────────
@@ -470,7 +428,7 @@ function displayRequest(msg, hasAttachment) {
 
 // ── Webhook ────────────────────────────────────────────────────────────────────
 async function fireWebhook(job) {
-  if (!job.webhook) return;
+  if (!job.webhook || job.webhookPending === false) return;
   const payload = {
     jobId: job.id,
     status: job.status, // "completed" | "failed"
@@ -490,12 +448,16 @@ async function fireWebhook(job) {
   try {
     const { res } = await fetchPublicUrl(job.webhook, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "idempotency-key": job.id },
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
     await logEvent("api_webhook", { id: job.id, status: job.status, code: res.status, ok: res.ok });
     await res.body?.cancel?.().catch(() => {});
+    if (res.ok) {
+      job.webhookPending = false;
+      persist(job);
+    }
   } catch (e) {
     await logEvent("api_webhook_error", { id: job.id, error: e.message }).catch(() => {});
   } finally {
@@ -662,6 +624,8 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     attachments: attachmentPath ? [attachmentPath] : [],
     textForRun,
     webhook: webhook ? String(webhook) : "",
+    webhookPending: Boolean(webhook),
+    deliveryPending: false,
     idempotencyKey: idemKey,
     overrides: overrides || null,
     stopRequested: false,
@@ -702,21 +666,12 @@ export function settleRunCost(result = {}, ledger = null) {
 }
 
 // The floating driver: run, record the outcome, post to Slack (thread runs only), fire the webhook.
-async function runInBackground(job, { textForRun, attachmentPath, client, teamId = null, overrides, signal, recovering = false }) {
+async function runInBackground(job, { textForRun, attachmentPath, client, teamId = null, overrides, signal }) {
   const attachments = Array.isArray(job.attachments) ? job.attachments : attachmentPath ? [attachmentPath] : [];
   let status = null;
   try {
     const dir = client ? await getDirectory(client).catch(() => null) : null;
     if (client) {
-      if (recovering) {
-        await client.chat
-          .postMessage({
-            channel: job.channelId,
-            thread_ts: job.threadKey,
-            text: "🔁 I was interrupted by a gateway restart while working on this API run — picking it back up now…",
-          })
-          .catch(() => {});
-      }
       status = startProgress(getProgressView(), client, job.channelId, job.threadKey, {
         isDM: false,
         authorId: job.author,
@@ -736,11 +691,10 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       overrides,
       signal,
       // The API key authenticates the CALLER, not `job.author` — never escalate on its say-so.
-      // Both origins here are non-escalatable, so both guards hold this line. A boot-time replay
-      // declares `recovery` honestly: nobody is watching it, and origin is an audit field first.
+      // Recovery never re-enters this driver: it only delivers a saved result or interruption notice.
       untrustedPrincipal: true,
-      origin: recovering ? "recovery" : "api_foreground",
-      progressReport: Boolean(status && client && !recovering),
+      origin: "api_foreground",
+      progressReport: Boolean(status && client),
       onDelta: status?.onDelta,
       onEvent: status?.onEvent,
     });
@@ -776,6 +730,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     job.costUSD = cost.costUSD;
     job.costEstimated = cost.estimated;
     job.durationMs = result.durationMs ?? null;
+    job.deliveryPending = Boolean(job.slackThread);
     job.result = { content: result.content || "", costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs ?? null, usage: result.usage || null };
     persist(job);
 
@@ -789,6 +744,8 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
           await status?.stop?.();
           await deliverResult(client, { channel: job.channelId, threadKey: job.threadKey, result, dir, footer: true });
         }
+        job.deliveryPending = false;
+        persist(job);
       } catch (e) {
         await logEvent("api_slack_post_error", { id: job.id, error: e.message }).catch(() => {});
       }

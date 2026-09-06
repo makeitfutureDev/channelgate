@@ -18,7 +18,7 @@ const sign = (payload, secret) => createHmac("sha256", secret).update(payload).d
 // older build (or by a path that still relies on the env) verifies exactly as before and the
 // reader falls back to its environment. Neither can WIDEN anything: an absent/blank toolset is the
 // full control plane (today's default) and progressReport only adds one ack-only tool.
-export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, origin, engine, principalTrusted = true, toolset = "", progressReport = false, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
   if (!secret || !channelId || !slug || !authorId || !threadKey || !ORIGINS.has(origin)) {
     throw new Error("Cannot mint gateway capability without a complete run identity");
   }
@@ -35,13 +35,23 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     principalTrusted: principalTrusted === true,
     toolset: String(toolset || ""),
     progressReport: progressReport === true,
+    composioSessions,
     scope: "gateway-tools",
     iat: now,
     exp: now + ttl,
     jti: randomUUID(),
   };
+  if (!validComposioGrants(claims)) throw new Error("Invalid Composio session grants");
   const payload = encode(JSON.stringify(claims));
   return `${payload}.${sign(payload, secret)}`;
+}
+
+function validComposioGrants(claims) {
+  if (claims.composioSessions === undefined) return true; // old grants authorize no SDK sessions
+  return Array.isArray(claims.composioSessions) && claims.composioSessions.length <= 2 &&
+    claims.composioSessions.every((grant) => grant && typeof grant.url === "string" &&
+      grant.url.length <= 2048 && ["user", "channel"].includes(grant.kind) &&
+      (grant.kind !== "user" || claims.principalTrusted === true));
 }
 
 export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}) {
@@ -65,6 +75,7 @@ export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}
   if (!claims.channelId || !claims.slug || !claims.authorId || !claims.threadKey || !ORIGINS.has(claims.origin) || typeof claims.principalTrusted !== "boolean") {
     return { ok: false, reason: "incomplete capability claims" };
   }
+  if (!validComposioGrants(claims)) return { ok: false, reason: "invalid Composio session grants" };
   // Optional claims (see mint): validate the SHAPE when present so a tampered payload can't smuggle
   // an object/array into the tool-surface decision, but never require them — an older token that
   // omits both is still a valid grant, and the reader falls back to its environment.

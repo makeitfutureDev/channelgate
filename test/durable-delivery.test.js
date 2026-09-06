@@ -233,7 +233,7 @@ test("a background job whose continuation fails keeps its row for redelivery —
   const delivered = [];
   const revived = new BackgroundJobs({
     slack: slack2,
-    runner: async () => ({ content: "carrying on", engine: "claude", usage: { output_tokens: 7 } }),
+    runner: async () => { throw new Error("saved continuation must never execute again"); },
     deliver: async (_client, payload) => delivered.push(payload),
   });
   await revived.recover();
@@ -518,4 +518,17 @@ test("a one-time schedule that fails clears its running flag instead of staying 
   assert.ok(stored, "a postponed one-time schedule keeps its row");
   assert.equal(stored.running, false, "and its durable running claim was released");
   assert.equal(stored.runningSince, "", "…along with the timestamp that went with it");
+});
+
+test("a background continuation interrupted before its result checkpoint is reported without replay", async () => {
+  getDb().exec("DELETE FROM bg_jobs");
+  const { slack, client } = fakeSlack();
+  let executions = 0;
+  const jobs = new BackgroundJobs({ slack, runner: async () => { executions++; return { content: "must not run" }; } });
+  const rec = { ...jobRecord("bg-unknown-continuation"), pendingDelivery: { continuationStarted: new Date().toISOString(), outcome: { ok: true, summary: "completed" } } };
+  jobs.jobs.set(rec.id, rec);
+  await jobs._deliver(rec);
+  assert.equal(executions, 0);
+  assert.match(client.posted.at(-1).text, /external actions are unknown/);
+  assert.equal(jobs.jobs.has(rec.id), false);
 });

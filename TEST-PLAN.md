@@ -3,6 +3,42 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Release readiness remediation (2026-09-07)
+
+The source changes address audit findings 1–4, 6, 7 and 9–17. Findings 5 and 8 (retiring the
+shared Codex sign-in mount and the Claude login relay in favour of provider API credentials) are a
+product decision that is NOT shipped: the credential-relay and shared-auth entries below still
+describe the current contract, and the remediation for 5/8 stays on its review branch.
+`docs/RELEASE-ACCEPTANCE.md` is the live acceptance packet; none of its pending cases is counted as
+a pass.
+
+- [x] Automated: mapped/expanded IPv6 and invalid DNS answers fail closed; password changes/removal
+  require current proof with no proof stored or logged (`ssrf`, `admin-password-change`).
+- [x] Automated: masked password dialog acceptance/cancellation clears the input; dummy service and
+  channel credentials are redacted from primary/fallback deltas, events, errors, shell output and
+  persisted/recovered delivery checkpoints (`admin-password-dialog`, `service-secret-output`).
+- [x] Automated: SDK Enterprise entitlement, signed bridge session scope, API identity restrictions,
+  reduce-only mode overrides and license response ordering (`composio-entitlement`, `run-escalation`,
+  `license-verify`, `codex-failover-e2e`).
+- [x] Automated: daemon-owned editor leases, symlink-safe bind sources and final service-user
+  preflight (`container-bind-boundary`, `vscode-container`, `service-path-preflight`); the existing
+  credential-relay suites (`claude-login`, `claude-token-relay`, `container-credentials`,
+  `engine-runtime-isolated`) still pass unchanged.
+- [x] Automated: independent memory writers retain all facts, execution/delivery recovery separates
+  unknown outcomes, non-Slack delivery works, durable Chat inbox orders and stops correctly
+  (`automation-release-regressions`, `api-recovery`, transport tests).
+- [x] Automated: unchanged EE/no-key licensing compatibility, correct public claims, npm inventory
+  identity/relationships and commit/tag secret detection (`license`, `readme`, `operations-readiness`,
+  `release-secret-history`).
+- [x] Live container lifecycle only: a disposable HOME/tool fixture, `/tmp` and `/var/tmp` survived
+  stop, restart and recreation using the installed host image (2026-09-07,
+  `container-durability.live.test.js`). Container and volume cleanup was verified. This does not
+  validate the rebuilt candidate image or real provider calls.
+- [ ] Live: complete both-engine and Beta-surface cases in `docs/RELEASE-ACCEPTANCE.md`, including a
+  fresh VM installation, restart, update, restore and uninstall. Record actual fixture IDs/results.
+- [ ] Release: execute the tag-bound runtime-image evidence workflow, verify attestations and review
+  candidate-specific dependency/model notices. Counsel and trademark gates remain external.
+
 ## Composio identity and connection discovery
 
 - [x] Automated: both bundled skills define `composio-user` as the active requester's personal
@@ -321,8 +357,8 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       consistently identify the Makeitfuture Sustainable Use License as source-available/fair-code
       rather than OSI open source; `THIRD_PARTY_NOTICES.md` and `public/fonts/OFL.txt` preserve
       Poppins' OFL terms.
-- [x] `test/license.test.js` (v1.2 case, replaces the v1.1 case 2026-08-25): the license is stamped
-      `Version 1.2` and names ChannelGate (formerly Claude Gateway for Slack) with the author line;
+- [x] `test/license.test.js` (v1.3 case, reconciled 2026-09-07): the license is stamped
+      `Version 1.3` and names ChannelGate (formerly Claude Gateway for Slack) with the author line;
       §3.1 keeps the dedicated-deployment conditions, adds the customer's-key condition, and permits
       any number of separate deployments without an agreement; §3.2 defines license keys (no key →
       one conversation), end-user keys, no sharing/pooling, no reduction of an enterprise key's
@@ -331,7 +367,7 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       `TRADEMARK.md`, which states nominative use and the no-own-product-name rule; §6 points at
       `CLA.md` 1.1 (relicensing grant, copyright stays, `Signed-off-by`, no automatic relicensing
       promised); `AUTHORS.md` records the author and the IP assignment and the decision record is
-      the pre-CLA acceptance; §11 sets Romanian law and Bucharest venue. **Control:** no public text
+      a concise public rationale; §11 sets Romanian law and Bucharest venue. **Control:** no public text
       (license, CLA, FAQ, keys, README, CHANGELOG, checklist, trademark, authors) contains the
       operative Change Date wording — no "fourth anniversary", no delayed "additionally available
       under", no Change Date section, no Apache-2.0 grant in the license — and the FAQ, README, and
@@ -393,11 +429,8 @@ shape is asserted, not reviewed by eye.
       `docs/LICENSE-KEYS.md`, `docs/LICENSING-FAQ.md`, `TRADEMARK.md`, `CLA.md`.
 - [x] Hero sections appear in the release-plan order, with `## Prerequisites` (the first
       operational section) below them.
-- [x] The demo block is a placeholder: the HTML comment and the `docs/assets/demo.gif` note exist
-      and no stand-in GIF is committed; `docs/assets/README.md` documents both expected assets.
-- [x] `.github/REPO-METADATA.md` has an About text ≤ 350 characters, the website URL, all ten
-      topics in a `gh repo edit` command whose `--description` matches the About text, and the
-      1280 × 640 social-preview spec.
+- [x] Public README has no links to absent demo/social assets, names Beta support and Enterprise
+      SDK scope, and links to the consolidated maintainer release/attestation procedure.
 
 ### Foundation (Slices 1–3)
 - [ ] Boot creates `~/.channelgate/{config,channels,logs}`.
@@ -3724,12 +3757,14 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       moved). Exit code 0.
 # Development acceptance policy
 
-- [ ] For each feature changed in the candidate, confirm `FEATURES.md` and this regression plan
-  are current and the live `ChannelGate QA` Airtable base contains applicable Claude and Codex
-  cases with exact fixtures, realistic prompts, expected evidence, and objective pass rules.
-- [ ] Confirm any engine-independent case cannot traverse an engine-specific runtime path.
-- [ ] Confirm Airtable writes used the requester's explicitly selected personal connection and did
-  not silently fall back to an agent-side identity.
+- [ ] Each changed feature has reproducible acceptance definitions for applicable Claude/Codex
+  behavior, exact setup, prompt/action, evidence and pass rules. Public contributors put these in
+  the PR and report unexecuted live cases; no private service access is required.
+- [ ] Maintainers record the actual private fixture identifiers and complete required live gates
+  before release. Engine-independent cases must not depend on a harness.
+- [ ] For deployments using a private QA registry, use only the operator's selected personal
+  connection. This remediation session's requested Airtable write remains pending connection
+  selection/access; locally prepared cases are not a claim of an Airtable write.
 
 ## Container update verification and recovery
 

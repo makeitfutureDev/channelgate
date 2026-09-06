@@ -30,7 +30,8 @@ import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort } from "./thread-engine.js";
 import { PROFILE_FLAGS, canManage } from "./modes.js";
 import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
-import { resolveSdkSession } from "./composio-sdk.js";
+import { resolveSdkSession } from "../ee/composio-sdk.js";
+import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
@@ -47,7 +48,8 @@ import { allowedFsRoot } from "../web/security.js";
 import { licenseAdmission } from "../ee/limits.js";
 import { channelEnvFingerprint, resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
 import { browserNamespaceFor } from "./browser-env.js";
-import { createSecretRedactor, redactSecretValues } from "../util/redact.js";
+import { serviceSecretValues } from "../engines/child-env.js";
+import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 
 // For a DM that selected an org template (user/admin), overlay the template's knobs onto its
 // meta. "custom" DMs and regular channels use their own meta unchanged. Engine/model/effort are
@@ -196,9 +198,12 @@ async function engineCredentialReplaced(engine) {
 }
 
 async function rememberAuthFailure(engine) {
-  engineAuthFailedUntil.set(engine, Date.now() + LIMIT_COOLDOWN_MS);
   const state = await engineCredentialState(engine).catch(() => null);
-  engineAuthFailedFingerprint.set(engine, state?.fingerprint || "");
+  // Independently authenticated channel CLIs have no shared service credential. One channel's
+  // sign-in failure must never suppress that engine in every other conversation.
+  if (!state?.known || !state.fingerprint) return;
+  engineAuthFailedUntil.set(engine, Date.now() + LIMIT_COOLDOWN_MS);
+  engineAuthFailedFingerprint.set(engine, state.fingerprint);
 }
 
 // One line for a turn the user pinned: nothing was switched, and here is how to switch it. Kept
@@ -544,12 +549,13 @@ export async function resolveComposioRuntime({
   defaultToken = "",
   noOrg = false,
   isDM = false,
+  principalTrusted = true,
   resolveSdk = resolveSdkSession,
 } = {}) {
   if (clean || mode !== "sdk") {
     const legacy = resolveComposioConnections({
       clean,
-      userToken,
+      userToken: principalTrusted ? userToken : "",
       channelToken,
       defaultToken,
       noOrg,
@@ -562,20 +568,21 @@ export async function resolveComposioRuntime({
     };
   }
 
-  const mayManageShared = canManage(meta, {
+  requireComposioSdkEntitlement();
+  const mayManageShared = principalTrusted && canManage(meta, {
     authorId,
     isAdminUser: authorIsAdmin,
     isApprovedUser: authorIsApproved,
   });
   const [userResult, sharedResult] = await Promise.allSettled([
-    resolveSdk({
+    principalTrusted ? resolveSdk({
       workspaceId,
       kind: "user",
       id: authorId,
       threadKey,
       accessKind: "owner",
       manageConnections: true,
-    }),
+    }) : null,
     // Same rule as personal mode: a DM has no shared audience, so no channel session is minted.
     isDM
       ? null
@@ -591,7 +598,9 @@ export async function resolveComposioRuntime({
 
   return {
     mode: "sdk",
-    user: userResult.status === "fulfilled"
+    user: !principalTrusted
+      ? { token: "", source: "none-untrusted-principal", endpoint: null }
+      : userResult.status === "fulfilled"
       ? { token: "", source: "sdk-user", endpoint: userResult.value }
       : { token: "", source: "sdk-unavailable", endpoint: null },
     shared: isDM
@@ -620,8 +629,16 @@ export function applyRunOverrides(meta, overrides) {
   if (overrides.effort) o.effort = String(overrides.effort);
   if (overrides.engine && ENGINES.includes(overrides.engine)) o.engine = overrides.engine;
   if (overrides.mode && PROFILE_FLAGS[overrides.mode]) {
-    Object.assign(o, PROFILE_FLAGS[overrides.mode], { profile: overrides.mode });
-    if (o.adminMode && !meta.adminMode) o.adminMode = false;
+    const requested = PROFILE_FLAGS[overrides.mode];
+    // Modes express capabilities, not independent booleans: Full and Auto also permit shell
+    // tools. Intersect with the stored maximum, and keep clean mode sticky because disabling it
+    // would restore connectors/skills that the channel deliberately removed.
+    o.adminMode = Boolean(requested.adminMode && meta.adminMode);
+    o.allowBash = Boolean(requested.allowBash && (meta.allowBash || meta.autoMode || meta.adminMode));
+    o.autoMode = Boolean(requested.autoMode && (meta.autoMode || meta.adminMode));
+    o.cleanMode = Boolean(meta.cleanMode || requested.cleanMode);
+    o.profile = Object.entries(PROFILE_FLAGS).find(([, flags]) =>
+      Object.keys(flags).every((key) => Boolean(o[key]) === flags[key]))?.[0] || "custom";
   }
   delete o.runtime; // a mode profile must never carry a backend pin into a run
   return { ...meta, ...o };
@@ -973,8 +990,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // a failing CLI will echo a token into its error line. Redact the values out of everything this
   // turn says, in the stream (holdback, so a value split across two deltas still matches) and in
   // the final content. Both must use the same values or finalize()'s streamed-prefix check breaks.
-  const deltaRedactor = createSecretRedactor(Object.values(channelEnv));
+  const outputSecrets = [...Object.values(channelEnv), ...serviceSecretValues()];
+  // Resolve integration credentials before constructing the streaming holdback. No engine has
+  // started yet, so all values passed to either primary or fallback are covered from its first byte.
+  let deltaRedactor;
   const scopedOnDelta = !onDelta ? onDelta : (text) => {
+    deltaRedactor ||= createSecretRedactor(outputSecrets);
     const safe = deltaRedactor.push(text);
     if (safe) onDelta(safe);
   };
@@ -999,7 +1020,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   });
   const scopedOnEvent = createScopedRunEventHandler((event) => {
     if (event?.kind === "loop_wakeup") {
-      loopWakeup = event;
+      loopWakeup = redactSecretFields(event, outputSecrets);
       return undefined;
     }
     try {
@@ -1007,7 +1028,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     } catch {
       /* telemetry must never affect the turn */
     }
-    return onEvent?.(event);
+    return onEvent?.(redactSecretFields(event, outputSecrets));
   }, { progressReport, clean });
 
   // Composio exposes TWO independent identities: active author (`composio-user`) plus the agent's
@@ -1043,6 +1064,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     meta,
     authorIsAdmin,
     authorIsApproved,
+    principalTrusted: !untrustedPrincipal,
     channelToken: meta.composioToken,
     userToken: personalComposioToken,
     defaultToken: getDefaultComposioToken(),
@@ -1055,11 +1077,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const composioUserEndpoint = composio.user.endpoint;
   const composioEndpoint = composio.shared.endpoint;
   const toolboxToken = toolbox.token;
+  outputSecrets.push(composioUserToken, composioToken, toolboxToken);
   const { makeToolboxUrl, makeToolboxKey } = resolveMakeToolboxRuntime({
     makeToolboxUrl: meta.makeToolboxUrl,
     makeToolboxKey: meta.makeToolboxKey,
     clean,
   });
+  outputSecrets.push(makeToolboxKey);
   // Engine homes are deliberately isolated. Resolve these once in the daemon and carry them into
   // the gateway MCP instead of letting its subprocess derive paths from the disposable HOME.
   const gatewayFsRoot = allowedFsRoot();
@@ -1526,7 +1550,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
     const fallbackResult = {
       ...baseMeta, ...cx,
-      content: licenseWarning + (note || "") + fallbackModelNote + (cx.content || ""),
+      content: redactSecretValues(licenseWarning + (note || "") + fallbackModelNote + (cx.content || ""), outputSecrets),
       sessionId: cx.sessionId ?? null,
       engine: fallbackEngine,
       isNew: !prior,
@@ -1536,7 +1560,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     };
     // `model` = the configured pick that governed the fallback (shown in the footer);
     // `runtimeModel` keeps the CLI-reported model for context-window/cost internals.
-    return { ...fallbackResult, loopWakeup, runtimeModel: resolveCurrentModel(fallbackResult), model: fallbackModel || resolveCurrentModel(fallbackResult) };
+    return { ...redactSecretFields(fallbackResult, outputSecrets), loopWakeup, runtimeModel: resolveCurrentModel(fallbackResult), model: fallbackModel || resolveCurrentModel(fallbackResult) };
   };
 
   // Bring the run environment up, announcing the wait only once it is slow enough to be worth a
@@ -1550,7 +1574,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     let warmupText = "Warming up the channel container…";
     const postWarmupNotice = (text = warmupText) => {
       warmupPosted = true;
-      try { onEvent?.({ kind: "notice", scope: "gateway", text }); } catch { /* a status callback must never block a run */ }
+      try { onEvent?.({ kind: "notice", scope: "gateway", text: redactSecretValues(text, outputSecrets) }); } catch { /* a status callback must never block a run */ }
     };
     try {
       const warmupStartedAt = Date.now();
@@ -1865,18 +1889,27 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // when nothing is configured anywhere, the CLI-reported model (the engine's own default).
     // `runtimeModel` keeps the CLI-reported truth for context-window math and Codex cost rates.
     return {
-      ...finalResult,
-      content: redactSecretValues(licenseWarning + (finalResult.content || ""), Object.values(channelEnv)),
+      ...redactSecretFields(finalResult, outputSecrets),
+      content: redactSecretValues(licenseWarning + (finalResult.content || ""), outputSecrets),
       loopWakeup,
       runtimeModel: resolveCurrentModel(finalResult),
       model: model || resolveCurrentModel(finalResult),
     };
+  } catch (error) {
+    // A provider/CLI can echo a credential in its failure, which callers may post to the thread.
+    // Preserve error identity and classification while making its public text safe.
+    if (error && typeof error === "object") {
+      if (typeof error.message === "string") error.message = redactSecretValues(error.message, outputSecrets);
+      if (typeof error.stack === "string") error.stack = redactSecretValues(error.stack, outputSecrets);
+      if (error.details) error.details = redactSecretFields(error.details, outputSecrets);
+    }
+    throw error;
   } finally {
     // Release whatever the streaming redactor was still holding back, exactly as the mention
     // holdback does — otherwise every answer in a channel with secrets loses its last few
     // characters from the live message.
     try {
-      const tail = deltaRedactor.flush();
+      const tail = deltaRedactor?.flush() || "";
       if (tail && onDelta) onDelta(tail);
     } catch { /* the answer is already delivered; a flush failure must not mask the real outcome */ }
     // The turn no longer needs the run environment up. Releasing is also the activity stamp the

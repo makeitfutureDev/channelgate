@@ -772,6 +772,7 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       ...safeSpawnEnv(extraEnv),
       ...browserSpawnEnv(browserNamespace),
       NODE_USE_ENV_PROXY: "1",
+      ...(source.CODEX_API_KEY || source.OPENAI_API_KEY ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
     }, source);
     return {
       ...dropHostLocationEnv(base),
