@@ -81,3 +81,17 @@ export function buildChildEnv(extra = {}, source = process.env) {
   if (env.PATH) env.PATH = sanitizePath(env.PATH);
   return env;
 }
+
+// The deliberate service credentials above are needed by engine processes. Reuse this exact
+// list for output redaction and strip it from shell-only jobs, which do not authenticate an engine.
+export const ENGINE_SERVICE_SECRET_NAMES = Object.freeze([
+  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY",
+]);
+export function serviceSecretValues(source = process.env) {
+  return ENGINE_SERVICE_SECRET_NAMES.map((name) => source[name]).filter((value) => typeof value === "string" && value);
+}
+export function buildShellEnv(extra = {}, source = process.env) {
+  const env = buildChildEnv(extra, source);
+  for (const name of ENGINE_SERVICE_SECRET_NAMES) delete env[name];
+  return env;
+}

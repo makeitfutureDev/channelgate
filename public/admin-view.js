@@ -3,13 +3,18 @@ import { api } from "./admin-api.js";
 export const escapeHtml = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-export function openDialog({ title, body, confirmLabel, cancelLabel, danger, confirmOnly }) {
+export function openDialog({ title, body, confirmLabel, cancelLabel, danger, confirmOnly, password = false }) {
   return new Promise((resolve) => {
     const modal = document.getElementById("confirm-modal");
     const titleEl = document.getElementById("confirm-title");
     const bodyEl = document.getElementById("confirm-body");
     const okBtn = document.getElementById("confirm-ok");
     const cancelBtn = document.getElementById("confirm-cancel");
+    const passwordField = document.getElementById("confirm-password-field");
+    const passwordInput = document.getElementById("confirm-password");
+    const previousFocus = document.activeElement;
+    passwordField.hidden = !password;
+    passwordInput.value = "";
     titleEl.textContent = title || "Are you sure?";
     bodyEl.textContent = body || "";
     bodyEl.style.display = body ? "" : "none";
@@ -20,29 +25,43 @@ export function openDialog({ title, body, confirmLabel, cancelLabel, danger, con
     modal.hidden = false;
     const done = (value) => {
       modal.hidden = true;
+      passwordInput.value = "";
+      passwordField.hidden = true;
+      previousFocus?.focus?.();
       okBtn.removeEventListener("click", onOk);
       cancelBtn.removeEventListener("click", onCancel);
       modal.removeEventListener("click", onBackdrop);
       document.removeEventListener("keydown", onKey);
       resolve(value);
     };
-    const onOk = () => done(true);
-    const onCancel = () => done(false);
-    const onBackdrop = (event) => { if (event.target === modal) done(false); };
+    const onOk = () => {
+      if (password && !passwordInput.value) { passwordInput.focus(); return; }
+      done(password ? passwordInput.value : true);
+    };
+    const onCancel = () => done(password ? "" : false);
+    const onBackdrop = (event) => { if (event.target === modal) onCancel(); };
     const onKey = (event) => {
-      if (event.key === "Escape") done(false);
-      else if (event.key === "Enter") { event.preventDefault(); done(true); }
+      if (event.key === "Escape") onCancel();
+      else if (event.key === "Enter") { event.preventDefault(); onOk(); }
+      else if (event.key === "Tab") {
+        const controls = [password ? passwordInput : null, confirmOnly ? null : cancelBtn, okBtn].filter(Boolean);
+        const current = controls.indexOf(document.activeElement);
+        const next = (current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+        event.preventDefault();
+        controls[next].focus();
+      }
     };
     okBtn.addEventListener("click", onOk);
     cancelBtn.addEventListener("click", onCancel);
     modal.addEventListener("click", onBackdrop);
     document.addEventListener("keydown", onKey);
-    okBtn.focus();
+    (password ? passwordInput : okBtn).focus();
   });
 }
 
 export const confirmDialog = (options = {}) => openDialog(options);
 export const infoDialog = (options = {}) => openDialog({ ...options, confirmOnly: true });
+export const passwordDialog = (options = {}) => openDialog({ title: "Current admin password", confirmLabel: "Continue", ...options, password: true });
 
 const ICON_EYE = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z"/><circle cx="8" cy="8" r="2"/></svg>`;
 const ICON_EYE_OFF = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6.4 3.7A6.7 6.7 0 0 1 8 3.5c4.5 0 7 4.5 7 4.5a12.4 12.4 0 0 1-2 2.5M3.4 4.8A12.4 12.4 0 0 0 1 8s2.5 4.5 7 4.5a6.7 6.7 0 0 0 2.5-.5M2 2l12 12"/></svg>`;
@@ -53,7 +72,7 @@ const REVEAL_PW_TTL_MS = 5 * 60 * 1000;
 
 async function askRevealPassword() {
   if (revealPassword && Date.now() - revealPasswordAt < REVEAL_PW_TTL_MS) return revealPassword;
-  const password = window.prompt("Admin password (to reveal this secret):", "");
+  const password = await passwordDialog({ body: "Enter your current admin password to reveal this secret." });
   if (!password) return "";
   revealPassword = password;
   revealPasswordAt = Date.now();

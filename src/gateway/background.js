@@ -11,7 +11,7 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { getChannelEntry, getChannelMeta, defaultChannelMeta, isAdmin } from "../config/store.js";
-import { buildChildEnv } from "../engines/child-env.js";
+import { buildShellEnv, serviceSecretValues } from "../engines/child-env.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { killGroup, killTree, processStartTime } from "../util/proc.js";
@@ -29,7 +29,7 @@ import { getDb, toJson, fromJson } from "../db/index.js";
 import { postNotice, automationTarget } from "../platforms/notify.js";
 import { resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
-import { createSecretRedactor, redactSecretValues } from "../util/redact.js";
+import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 
 const MAX_TAIL = 6_000; // chars of combined stdout/stderr fed back to the agent
 const MAX_AGENT_REPORT = 12_000; // chars of a background agent's final report fed back to the thread
@@ -313,7 +313,7 @@ export class BackgroundJobs {
         target = this.resolveTarget(entry.slug, meta);
         isolatedJob = runtimeSupports(target, "isolated");
       } catch (e) {
-        return { ok: false, error: `Background job could not resolve this channel's runtime: ${e.message}` };
+        return { ok: false, error: `Background job could not resolve this channel's runtime: ${redactSecretValues(e.message, serviceSecretValues())}` };
       }
     }
 
@@ -373,7 +373,7 @@ export class BackgroundJobs {
             },
           });
         } catch (e) {
-          return { ok: false, error: `Couldn't request approval for the shell job: ${e.message}` };
+          return { ok: false, error: `Couldn't request approval for the shell job: ${redactSecretValues(e.message, serviceSecretValues())}` };
         }
         if (decision?.pending) {
           return {
@@ -449,6 +449,8 @@ export class BackgroundJobs {
     // The channel's own environment secrets, resolved at THIS spawn rather than inherited from the
     // run that queued the job: a background job outlives its run, and a provider's lease may not.
     const jobEnv = safeSpawnEnv(await resolveChannelEnv(meta));
+    rec.secretValues = [...Object.values(jobEnv), ...serviceSecretValues()];
+    rec.label = redactSecretValues(rec.label, rec.secretValues);
     let onChunk = writeChunk;
     let flushChunks = () => {};
 
@@ -461,7 +463,7 @@ export class BackgroundJobs {
       // This branch is where a CLI echoes a token into its own error line, so its output is
       // value-redacted on the way to the thread and the job log. The agent branch above needs no
       // redactor: everything it emits already came through runMessage, which redacts its own.
-      const shellRedactor = createSecretRedactor(Object.values(jobEnv));
+      const shellRedactor = createSecretRedactor([...Object.values(jobEnv), ...serviceSecretValues()]);
       onChunk = (chunk) => {
         const safe = shellRedactor.push(chunk);
         if (safe) writeChunk(safe);
@@ -478,7 +480,7 @@ export class BackgroundJobs {
         await target.runtime.ensureUp(target, { announce: () => {} });
       } catch (e) {
         logStream?.end();
-        return { ok: false, error: `Background job could not start: this channel's runtime is unavailable (${e.message}).` };
+        return { ok: false, error: `Background job could not start: this channel's runtime is unavailable (${redactSecretValues(e.message, rec.secretValues)}).` };
       }
       rec.runtime = { backend: target.backend, runId, container: target.container?.name || "" };
       rec.lease = target.runtime.acquireLease(target, { kind: "job", id: runId });
@@ -497,7 +499,7 @@ export class BackgroundJobs {
           // exec hands back no stdio (see containerJobScript). Host: today's exact argv.
           args: ["-lc", isolatedJob ? containerJobScript(cmd, logFile) : cmd],
           cwd,
-          env: buildChildEnv(shellEnv),
+          env: buildShellEnv(shellEnv),
           stdio: ["ignore", "pipe", "pipe"],
           detached: true,
           // A job is a BACKGROUND spawn: no client stdio, outlives the daemon, found again by runId
@@ -511,7 +513,7 @@ export class BackgroundJobs {
         rec.lease?.release?.();
         logStream?.end();
         const outcome = describeProcessOutcome({ spawnError: e });
-        return { ok: false, error: `Background job ${outcome.summary}.` };
+        return { ok: false, error: `Background job ${redactSecretValues(outcome.summary, rec.secretValues)}.` };
       }
       rec.child = child;
       rec.pid = child.pid;
@@ -526,7 +528,7 @@ export class BackgroundJobs {
         // start the group and returned), so its exit says nothing about the work. Liveness comes
         // from the backend's probe on the recorded runId, and output from the log file.
         rec.runtimeChild = child;
-        rec.secretValues = Object.values(jobEnv);
+        rec.secretValues = [...Object.values(jobEnv), ...serviceSecretValues()];
         child.on?.("error", (err) => {
           this._finish(rec, { spawnError: err });
         });
@@ -560,8 +562,8 @@ export class BackgroundJobs {
     }
 
     await this._postStarted(rec);
-    await logEvent("bg_start", { id, kind, slug: entry.slug, channel: channelId, label: name, cwd, logFile, approvedBy: approvedBy || "", approvalId: approval.approvalId || "" });
-    return { ok: true, id, label: name };
+    await logEvent("bg_start", { id, kind, slug: entry.slug, channel: channelId, label: rec.label, cwd, logFile, approvedBy: approvedBy || "", approvalId: approval.approvalId || "" });
+    return { ok: true, id, label: rec.label };
   }
 
   // Run an agent-kind job: a full engine turn (Claude/Codex per the channel's config, with the
@@ -614,7 +616,7 @@ export class BackgroundJobs {
         logStream?.end();
         const outcome = rec.timedOut
           ? describeProcessOutcome({ timedOut: true, timeout: fmtDur(Date.now() - rec.startedAt) })
-          : { ok: false, kind: "failed", summary: `failed: ${err.message}` };
+          : { ok: false, kind: "failed", summary: `failed: ${redactSecretValues(err.message, serviceSecretValues())}` };
         await this._finish(rec, { outcome });
       });
   }
@@ -669,19 +671,20 @@ export class BackgroundJobs {
     if (rec.tailTimer) { clearInterval(rec.tailTimer); rec.tailTimer = null; }
     if (rec.watchTimer) { clearInterval(rec.watchTimer); rec.watchTimer = null; }
     const durMs = Date.now() - rec.startedAt;
-    const resolvedOutcome = outcome || describeProcessOutcome({
+    const outputSecrets = [...(rec.secretValues || []), ...serviceSecretValues()];
+    const resolvedOutcome = redactSecretFields(outcome || describeProcessOutcome({
       code,
       signal,
       spawnError,
       timedOut: rec.timedOut,
       timeout: fmtDur(durMs),
-    });
+    }), outputSecrets);
     rec.pendingDelivery = {
       outcome: resolvedOutcome,
       durMs,
       // The agent's final report lives only in memory otherwise; persist it so a redelivery after
       // a restart still carries the report instead of degrading to the log tail.
-      report: rec.kind === "agent" && rec.result?.content ? String(rec.result.content).slice(0, MAX_AGENT_REPORT) : "",
+      report: rec.kind === "agent" && rec.result?.content ? redactSecretValues(rec.result.content, outputSecrets).slice(0, MAX_AGENT_REPORT) : "",
     };
     this._persist();
     await logEvent("bg_finish", {
@@ -704,7 +707,11 @@ export class BackgroundJobs {
   // survives to the next boot.
   async _deliver(rec) {
     if (!this.jobs.has(rec.id) || rec.delivering) return;
-    const pending = rec.pendingDelivery || {};
+    const outputSecrets = [...(rec.secretValues || []), ...serviceSecretValues()];
+    const pending = redactSecretFields(rec.pendingDelivery || {}, outputSecrets);
+    rec.tail = redactSecretValues(rec.tail, outputSecrets);
+    rec.label = redactSecretValues(rec.label, outputSecrets);
+    if (rec.pendingDelivery) rec.pendingDelivery = pending;
     const resolvedOutcome = pending.outcome || describeProcessOutcome();
     const durMs = Number(pending.durMs) || Math.max(0, Date.now() - (rec.startedAt || Date.now()));
     const status = resolvedOutcome.summary;
@@ -812,13 +819,13 @@ export class BackgroundJobs {
               origin: "continuation",
               signal: handle.controller.signal,
             });
-            pending.continuationResult = result;
+            pending.continuationResult = redactSecretFields(result, outputSecrets);
             this._persist({ required: true });
             // The continuation's tokens are spent before Slack sees a word of it — bank them first.
             await bankUsage({ channelId: rec.channelId, slug: rec.slug, authorId: rec.authorId, engine: result.engine, taskKind: "background", result });
             // Same sanitize/chunk pipeline as every unattended reply (deliverResult) — background
             // continuations are prompt-injection bait.
-            await this.deliver(client, { channel: rec.channelId, threadKey: rec.threadKey, result });
+            await this.deliver(client, { channel: rec.channelId, threadKey: rec.threadKey, result: pending.continuationResult });
           }
         } finally {
           runQueue.release(runKey, handle);
@@ -830,9 +837,10 @@ export class BackgroundJobs {
     } catch (err) {
       // Keep the row: the job finished for real, and its thread still hasn't been told properly.
       // Boot recovery redelivers it (up to MAX_DELIVERY_ATTEMPTS).
-      await logEvent("bg_continue_error", { id: rec.id, error: err.message });
+      const failure = redactSecretValues(err.message, outputSecrets);
+      await logEvent("bg_continue_error", { id: rec.id, error: failure });
       try {
-        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${err.message}` });
+        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${failure}` });
       } catch {
         /* ignore */
       }
@@ -870,9 +878,9 @@ export class BackgroundJobs {
     if (!logFile) return "";
     try {
       const txt = await readFile(logFile, "utf8");
-      const tail = txt.slice(-MAX_TAIL);
-      if (!rec?.runtimeChild) return tail;
-      return redactSecretValues(stripContainerJobExit(tail), rec.secretValues || []);
+      if (!rec) return txt.slice(-MAX_TAIL); // internal exit-marker inspection needs the original bytes
+      const safe = redactSecretValues(txt, [...(rec.secretValues || []), ...serviceSecretValues()]);
+      return (rec.runtimeChild ? stripContainerJobExit(safe) : safe).slice(-MAX_TAIL);
     } catch {
       return "";
     }
@@ -964,9 +972,9 @@ export class BackgroundJobs {
       // through the streaming redactor — the channel's secrets are blanked when the tail is READ,
       // and after a restart the values have to be resolved again to do that.
       try {
-        rec.secretValues = Object.values(safeSpawnEnv(await resolveChannelEnv(meta)));
+        rec.secretValues = [...Object.values(safeSpawnEnv(await resolveChannelEnv(meta))), ...serviceSecretValues()];
       } catch {
-        rec.secretValues = [];
+        rec.secretValues = serviceSecretValues();
       }
     } catch {
       /* unresolvable channel/runtime — the job stays unverifiable, which the caller handles */

@@ -77,3 +77,18 @@ export function createSecretRedactor(values = []) {
     },
   };
 }
+
+// Event payloads and provider-error details can contain the same echoed values as reply text.
+// Preserve their structure and the original object; redact only strings that can reach a surface.
+export function redactSecretFields(value, values = [], seen = new WeakMap()) {
+  if (typeof value === "string") return redactSecretValues(value, values);
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+  if (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return value;
+  const copy = Array.isArray(value) ? [] : {};
+  seen.set(value, copy);
+  for (const [key, item] of Object.entries(value)) {
+    Object.defineProperty(copy, key, { value: redactSecretFields(item, values, seen), enumerable: true, writable: true, configurable: true });
+  }
+  return copy;
+}

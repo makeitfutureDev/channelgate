@@ -48,7 +48,8 @@ import { allowedFsRoot } from "../web/security.js";
 import { licenseAdmission } from "../ee/limits.js";
 import { channelEnvFingerprint, resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
 import { browserNamespaceFor } from "./browser-env.js";
-import { createSecretRedactor, redactSecretValues } from "../util/redact.js";
+import { serviceSecretValues } from "../engines/child-env.js";
+import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 
 // For a DM that selected an org template (user/admin), overlay the template's knobs onto its
 // meta. "custom" DMs and regular channels use their own meta unchanged. Engine/model/effort are
@@ -989,8 +990,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // a failing CLI will echo a token into its error line. Redact the values out of everything this
   // turn says, in the stream (holdback, so a value split across two deltas still matches) and in
   // the final content. Both must use the same values or finalize()'s streamed-prefix check breaks.
-  const deltaRedactor = createSecretRedactor(Object.values(channelEnv));
+  const outputSecrets = [...Object.values(channelEnv), ...serviceSecretValues()];
+  // Resolve integration credentials before constructing the streaming holdback. No engine has
+  // started yet, so all values passed to either primary or fallback are covered from its first byte.
+  let deltaRedactor;
   const scopedOnDelta = !onDelta ? onDelta : (text) => {
+    deltaRedactor ||= createSecretRedactor(outputSecrets);
     const safe = deltaRedactor.push(text);
     if (safe) onDelta(safe);
   };
@@ -1015,7 +1020,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   });
   const scopedOnEvent = createScopedRunEventHandler((event) => {
     if (event?.kind === "loop_wakeup") {
-      loopWakeup = event;
+      loopWakeup = redactSecretFields(event, outputSecrets);
       return undefined;
     }
     try {
@@ -1023,7 +1028,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     } catch {
       /* telemetry must never affect the turn */
     }
-    return onEvent?.(event);
+    return onEvent?.(redactSecretFields(event, outputSecrets));
   }, { progressReport, clean });
 
   // Composio exposes TWO independent identities: active author (`composio-user`) plus the agent's
@@ -1072,11 +1077,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const composioUserEndpoint = composio.user.endpoint;
   const composioEndpoint = composio.shared.endpoint;
   const toolboxToken = toolbox.token;
+  outputSecrets.push(composioUserToken, composioToken, toolboxToken);
   const { makeToolboxUrl, makeToolboxKey } = resolveMakeToolboxRuntime({
     makeToolboxUrl: meta.makeToolboxUrl,
     makeToolboxKey: meta.makeToolboxKey,
     clean,
   });
+  outputSecrets.push(makeToolboxKey);
   // Engine homes are deliberately isolated. Resolve these once in the daemon and carry them into
   // the gateway MCP instead of letting its subprocess derive paths from the disposable HOME.
   const gatewayFsRoot = allowedFsRoot();
@@ -1543,7 +1550,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
     const fallbackResult = {
       ...baseMeta, ...cx,
-      content: licenseWarning + (note || "") + fallbackModelNote + (cx.content || ""),
+      content: redactSecretValues(licenseWarning + (note || "") + fallbackModelNote + (cx.content || ""), outputSecrets),
       sessionId: cx.sessionId ?? null,
       engine: fallbackEngine,
       isNew: !prior,
@@ -1553,7 +1560,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     };
     // `model` = the configured pick that governed the fallback (shown in the footer);
     // `runtimeModel` keeps the CLI-reported model for context-window/cost internals.
-    return { ...fallbackResult, loopWakeup, runtimeModel: resolveCurrentModel(fallbackResult), model: fallbackModel || resolveCurrentModel(fallbackResult) };
+    return { ...redactSecretFields(fallbackResult, outputSecrets), loopWakeup, runtimeModel: resolveCurrentModel(fallbackResult), model: fallbackModel || resolveCurrentModel(fallbackResult) };
   };
 
   // Bring the run environment up, announcing the wait only once it is slow enough to be worth a
@@ -1567,7 +1574,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     let warmupText = "Warming up the channel container…";
     const postWarmupNotice = (text = warmupText) => {
       warmupPosted = true;
-      try { onEvent?.({ kind: "notice", scope: "gateway", text }); } catch { /* a status callback must never block a run */ }
+      try { onEvent?.({ kind: "notice", scope: "gateway", text: redactSecretValues(text, outputSecrets) }); } catch { /* a status callback must never block a run */ }
     };
     try {
       const warmupStartedAt = Date.now();
@@ -1882,18 +1889,27 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // when nothing is configured anywhere, the CLI-reported model (the engine's own default).
     // `runtimeModel` keeps the CLI-reported truth for context-window math and Codex cost rates.
     return {
-      ...finalResult,
-      content: redactSecretValues(licenseWarning + (finalResult.content || ""), Object.values(channelEnv)),
+      ...redactSecretFields(finalResult, outputSecrets),
+      content: redactSecretValues(licenseWarning + (finalResult.content || ""), outputSecrets),
       loopWakeup,
       runtimeModel: resolveCurrentModel(finalResult),
       model: model || resolveCurrentModel(finalResult),
     };
+  } catch (error) {
+    // A provider/CLI can echo a credential in its failure, which callers may post to the thread.
+    // Preserve error identity and classification while making its public text safe.
+    if (error && typeof error === "object") {
+      if (typeof error.message === "string") error.message = redactSecretValues(error.message, outputSecrets);
+      if (typeof error.stack === "string") error.stack = redactSecretValues(error.stack, outputSecrets);
+      if (error.details) error.details = redactSecretFields(error.details, outputSecrets);
+    }
+    throw error;
   } finally {
     // Release whatever the streaming redactor was still holding back, exactly as the mention
     // holdback does — otherwise every answer in a channel with secrets loses its last few
     // characters from the live message.
     try {
-      const tail = deltaRedactor.flush();
+      const tail = deltaRedactor?.flush() || "";
       if (tail && onDelta) onDelta(tail);
     } catch { /* the answer is already delivered; a flush failure must not mask the real outcome */ }
     // The turn no longer needs the run environment up. Releasing is also the activity stamp the

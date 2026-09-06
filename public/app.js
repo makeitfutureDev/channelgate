@@ -15,7 +15,7 @@ import {
 } from "./admin-state.js";
 import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
-import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
+import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, passwordDialog, revealSecret, tokenValue } from "./admin-view.js";
 import { loadSkills } from "./admin-skills.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 
@@ -3438,7 +3438,7 @@ function bindSettings() {
     const slackTokenChanged = !!(form.slackBotToken || form.slackAppToken || form.slackSigningSecret);
     try {
       const currentAdminPassword = newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true"
-        ? window.prompt("Current admin password (to change it):", "") : "";
+        ? await passwordDialog({ body: "Enter your current admin password to change it." }) : "";
       if (newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true" && !currentAdminPassword) {
         saved.textContent = "Password change cancelled";
         return;
@@ -4049,7 +4049,7 @@ document.getElementById("remove-password").addEventListener("click", async () =>
     danger: true,
   });
   if (!ok) return;
-  const currentAdminPassword = window.prompt("Current admin password (to remove it):", "");
+  const currentAdminPassword = await passwordDialog({ body: "Enter your current admin password to remove it.", danger: true });
   if (!currentAdminPassword) return;
   try {
     await api("/api/settings", { method: "PUT", body: JSON.stringify({ clearAdminPassword: true, currentAdminPassword, connectSlack: false }) });
