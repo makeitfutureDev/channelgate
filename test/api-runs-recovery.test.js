@@ -64,27 +64,16 @@ test("persisted running API jobs remain running when read after restart", () => 
   getDb().prepare("DELETE FROM api_jobs WHERE id = ?").run(job.id);
 });
 
-test("recoverApiRuns rehydrates running rows and starts the driver", async () => {
+test("recoverApiRuns marks unknown running rows interrupted without starting a driver", async () => {
   const job = baseJob({ id: "api_recover_driver" });
   insertJob(job);
-
-  const started = [];
+  let started = 0;
   await recoverApiRuns({
     slack: { snapshot: () => ({ connected: false }), getClient: () => null },
-    driver: (recovered, args) => {
-      started.push({ recovered, args });
-    },
+    driver: () => { started++; },
   });
-
-  assert.equal(started.length, 1);
-  assert.equal(started[0].recovered.id, job.id);
-  assert.equal(started[0].recovered.recoveryAttempts, 1);
-  assert.equal(started[0].args.textForRun, job.textForRun);
-  assert.equal(started[0].args.client, null);
-  assert.equal(started[0].args.recovering, true);
-  assert.ok(started[0].args.signal);
-
+  assert.equal(started, 0);
   const read = getApiJob(job.id);
-  assert.equal(read.status, "running");
-  assert.equal(read.recoveryAttempts, 1);
+  assert.equal(read.status, "interrupted");
+  assert.match(read.error, /External actions may already have happened/);
 });

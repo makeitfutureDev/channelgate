@@ -72,7 +72,7 @@ test("live foreground Slack and restart recovery keep the progress-report launch
 
   assert.match(slack, /const runArgs = \{[\s\S]*?progressReport: true/);
   assert.match(activeRuns, /progressReport: true/);
-  assert.match(apiRuns, /progressReport: Boolean\(status && client && !recovering\)/);
+  assert.match(apiRuns, /progressReport: Boolean\(status && client\)/);
 });
 
 test("non-visible runMessage callers rely on the false default", async () => {

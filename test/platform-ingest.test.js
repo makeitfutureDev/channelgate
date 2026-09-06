@@ -86,7 +86,7 @@ const chatMessage = (over = {}) => makeInbound({
 test("an empty message and an unmentioned channel message never become a turn", async () => {
   const connector = fakeConnector();
   let runs = 0;
-  const ingest = createIngest({ connector, run: async () => { runs += 1; return { text: "x" }; }, log: { info: () => {} } });
+  const ingest = createIngest({ connector, run: async () => { runs += 1; return { content: "x" }; }, log: { info: () => {} } });
 
   assert.deepEqual(await ingest(chatMessage({ text: "", mentionsBot: true })), { skipped: "empty" });
   assert.deepEqual(await ingest(chatMessage({ mentionsBot: false })), { skipped: "not-mentioned" });
@@ -97,7 +97,7 @@ test("an empty message and an unmentioned channel message never become a turn", 
 test("an unapproved author is told why, and no turn runs", async () => {
   const connector = fakeConnector();
   let runs = 0;
-  const ingest = createIngest({ connector, run: async () => { runs += 1; return { text: "x" }; }, log: { info: () => {} } });
+  const ingest = createIngest({ connector, run: async () => { runs += 1; return { content: "x" }; }, log: { info: () => {} } });
   const result = await ingest(chatMessage({ conversationId: "spaces/INGEST_DENY", userId: "stranger@example.com", userName: "Stranger" }));
   assert.deepEqual(result, { skipped: "unauthorized" });
   assert.equal(runs, 0);
@@ -110,13 +110,13 @@ test("an approved author's message registers the space, runs, and replaces the p
   const seen = [];
   const ingest = createIngest({
     connector,
-    run: async (args) => { seen.push(args); return { text: "All good.", engine: "claude" }; },
+    run: async (args) => { seen.push(args); return { content: "All good.", engine: "claude" }; },
     log: { info: () => {}, warn: () => {} },
   });
 
   const message = chatMessage({ threadKey: "spaces/INGEST1/threads/T" });
   const result = await ingest(message);
-  assert.equal(result.result.text, "All good.");
+  assert.equal(result.result.content, "All good.");
 
   // The run is addressed by the QUALIFIED id and the platform's own thread handle.
   assert.equal(seen[0].channelId, "gchat:spaces/INGEST1");
@@ -155,7 +155,7 @@ test("a DM needs no mention", async () => {
   await setUser("ana@example.com", { name: "Ana Pop", approved: true });
   const connector = fakeConnector();
   let ran = false;
-  const ingest = createIngest({ connector, run: async () => { ran = true; return { text: "hi" }; }, log: { info: () => {}, warn: () => {} } });
+  const ingest = createIngest({ connector, run: async () => { ran = true; return { content: "hi" }; }, log: { info: () => {}, warn: () => {} } });
   await ingest(chatMessage({ conversationId: "spaces/INGEST_DM", kind: "dm", mentionsBot: false, text: "hello" }));
   assert.equal(ran, true);
 });

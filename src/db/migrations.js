@@ -742,4 +742,22 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 22,
+    up(db) {
+      db.exec(`
+        CREATE TABLE inbound_events (
+          namespace TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_ms INTEGER NOT NULL,
+          owner TEXT NOT NULL DEFAULT '',
+          data TEXT NOT NULL,
+          PRIMARY KEY(namespace, event_id)
+        );
+        CREATE INDEX idx_inbound_events_queue ON inbound_events(namespace, status, created_ms);
+      `);
+    },
+  },
 ];
