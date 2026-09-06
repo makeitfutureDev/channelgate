@@ -191,6 +191,30 @@ test("archive rejects a discovery-tree target and a symlinked backup parent", as
   assert.deepEqual(await readdir(outside), []);
 });
 
+test("archiving a conflicting engine container permits daemon backups under the same home workDir", async () => {
+  const home = tempDir("cg-workspace-home-backup-");
+  const backup = path.join(home, ".channelgate", "skill-backups", "fixture");
+  const external = path.join(home, "external");
+  await mkdir(external);
+  await writeFile(path.join(external, "untouched"), "external data");
+  for (const container of [".claude", ".agents"]) {
+    const entry = path.join(home, container);
+    await symlink(external, entry);
+    const archived = await archiveWorkspaceEntry(entry, backup);
+    assert.equal(await readlink(archived), external);
+    await assert.rejects(lstat(entry), { code: "ENOENT" });
+  }
+  assert.deepEqual(await readdir(external), ["untouched"]);
+});
+
+test("backups cannot be placed in another engine's skill discovery tree", async () => {
+  const f = await fixture();
+  await mkdir(f.selected);
+  await assert.rejects(archiveWorkspaceEntry(f.selected, path.join(f.root, ".agents", "skills", "backup")), /outside/);
+  await assert.rejects(archiveWorkspaceEntry(f.selected, path.join(f.root, ".codex", "skills", "backup")), /outside/);
+  assert.equal((await lstat(f.selected)).isDirectory(), true);
+});
+
 test("cross-device archives copy complete directories and preserve symlink nodes", async (t) => {
   const f = await fixture();
   await mkdir(path.join(f.selected, "scripts"), { recursive: true });
