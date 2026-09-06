@@ -211,6 +211,12 @@ test("the admin UI has a Container runtime card wired to the API, and no switch 
   assert.match(client, /clearContainerClaudeOauthToken: true/);
   assert.match(client, /revealSecret\("settings", "containerClaudeOauthToken"\)/);
   assert.match(client, /paintContainerRuntimeHealth/);
+
+  // Containers-only since the host sandbox was retired: the card must not still describe itself as
+  // an alternative to a host sandbox, nor claim admin-mode channels run outside their container.
+  assert.doesNotMatch(html, /host sandbox/);
+  assert.doesNotMatch(html, /stay on the host/);
+  assert.match(html, /Admin-mode channels run in their container too/);
 });
 
 test("/api/health carries the container runtime status through an injected reader", async () => {

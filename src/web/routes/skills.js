@@ -358,7 +358,12 @@ export function createSkillsRouter() {
     const r = await grantSkillsToChannel(req.params.channel, slugs);
     if (!r) return res.status(404).json({ error: "conversation not found" });
     logEvent("skill_granted", { slug: req.params.channel, skills: r.added, author: ADMIN_UI });
-    res.json({ ok: true, ...r });
+    // What the grant COSTS, resolved over the conversation's whole durable tier (organization +
+    // template + its own grants) — the soft-cap warning was computed everywhere else and shown
+    // nowhere, so whoever pushed a channel over the cap never heard about it.
+    const after = await channelGrants(req.params.channel);
+    const profile = after ? resolveSkillProfile(after.skills, { warnTokens: getSkillsContextWarnTokens() }) : null;
+    res.json({ ok: true, ...r, contextTokens: profile?.contextTokens ?? null, warnings: profile?.warnings ?? [] });
   }));
 
   router.post("/skills/profile/:channel/revoke", guard(async (req, res) => {

@@ -35,6 +35,11 @@ test("templates and usage expose searchable selection and understandable views",
   assert.doesNotMatch(js, /Assign a template to a conversation/);
   assert.match(js, /<th>Usage<\/th>/);
   assert.doesNotMatch(js, /<th>Exact<\/th>/);
+  // The report explains how it counts (exact vs inferred, not retroactive); the panel used to
+  // drop `notes` on the floor, so a viewer had no way to know an inferred total is a lower bound.
+  assert.match(js, /How this is counted:<\/strong> \$\{\(r\.notes \|\| \[\]\)\.map/);
+  // …and a grant answers with its own warnings, shown where the grant was made.
+  assert.match(js, /\(r\.warnings \|\| \[\]\)\.length \? ` Warning: \$\{r\.warnings\.join\("; "\)\}\.` : ""/);
   assert.match(js, /skill-discoverable/);
   assert.match(js, /skill-mandatory/);
   assert.match(js, /does not mean a skill failed/);

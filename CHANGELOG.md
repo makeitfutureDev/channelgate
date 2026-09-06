@@ -261,6 +261,34 @@ product overview.
   `src/config/dead-fields.js` in the same change.
 
 ### Fixed
+- **A shell turn that reads two skills in one command now records both.** Codex has no Skill tool:
+  a skill is "used" when the run reads its `SKILL.md`, and the whole shell line arrives as one tool
+  event. The matcher stopped at the FIRST `…/skills/<slug>/SKILL.md` in that line, so the routine
+  shape `sed -n '1,240p' …/gateway-usage/SKILL.md && sed -n '1,320p' …/<granted>/SKILL.md` recorded
+  the always-on guide and silently dropped the granted skill the turn was about — two identical
+  runs of the same skill, one row. Every match in the text is now recorded (deduped per run), and
+  the path pattern accepts a read through either skills directory (`.claude/skills`, the
+  `.agents/skills` symlink Codex follows), absolute or relative, quoted, `~`-relative, or anywhere
+  inside a compound command, while still refusing look-alikes such as `myskills/…`.
+- **The Usage panel explains how it counts.** The report has always carried the notes that make its
+  numbers readable — exact (Claude's Skill tool fired) versus inferred (a shell read of `SKILL.md`,
+  best effort), and that capture is not retroactive — and the admin UI dropped them on the floor, so
+  a total with no context looked like a measurement rather than a lower bound. They now render as a
+  help line under the Usage header. One total per skill is unchanged.
+- **An over-the-cap warning reaches the person who caused it.** Granting a skill resolves the
+  conversation's whole always-on profile, warnings included ("always-on skill descriptions cost
+  about N tokens per turn (soft cap M)", a skill still awaiting review, a missing dependency) — and
+  both grant paths computed them and threw them away. Whoever pushed a conversation over the cap was
+  the one person who never heard about it; the warning surfaced only later, in the admin Usage
+  panel, to somebody else. `POST /api/skills/profile/:channel/grant` now answers with `warnings` and
+  `contextTokens` (resolved over the conversation's whole durable tier: organization + template +
+  its own grants) and the admin UI appends them to the grant confirmation; `add_channel_skills`
+  appends them to its chat reply and reports the same durable-tier cost it warns against.
+- **The Container runtime card describes the runtime the gateway actually has.** Its copy still
+  offered containers as an alternative to "the daemon's host sandbox" and promised that "admin-mode
+  channels always stay on the host" — both untrue since the containers-only change: there is no host
+  sandbox, and an admin-mode channel runs in its own container with the permission bypass applied
+  inside it.
 - **The template skill search filters again, and the Add-source dialog shows one kind of field.**
   Both hide elements by setting the `hidden` property, and the admin stylesheet was quietly
   overriding it: an author `display` declaration beats the user-agent sheet's

@@ -2077,7 +2077,9 @@ are retired, bullet by bullet; everything else stands.
 - **Chat verbs** (`src/mcp/tools/skills.js`, in the lockdown allowlist and the control-plane
   approval map): `list_skills`, `show_channel_skills` (tiers, dependencies, missing/staged, context
   cost), `get_skill_file`, `list_skill_templates`, `preview_skill_template` (open);
-  `add_channel_skills`, `remove_channel_skills`, `apply_skill_template` (managers, approval card);
+  `add_channel_skills`, `remove_channel_skills`, `apply_skill_template` (managers, approval card —
+  a grant answers with the conversation's resulting always-on cost and any warning it crossed, e.g.
+  the context soft cap, so the person who caused it hears about it);
   `create_skill` (any approved member → a local skill granted in the conversation),
   `update_skill` (author / manager / admin, local skills only, partial files merge over the current
   revision), `propose_skill_change` (`change` with files, or `promote` organization-wide),
@@ -2090,7 +2092,10 @@ are retired, bullet by bullet; everything else stands.
   is an **exact** signal (the stream parser now names the skill as the tool target); a Codex/shell
   read of `…/skills/<slug>/SKILL.md` is **inferred** and labelled so; one row per run/skill/signal
   with skill, revision, conversation, user, engine, session, run and origin — never prompt text or
-  content. Reports (chat + admin UI) list what fired and which granted skills **never** fired.
+  content. A shell line that reads several skills at once records **every** one of them, through
+  either skills directory, absolute or relative, quoted or `~`-relative (2026-09-06). Reports
+  (chat + admin UI) list what fired, which granted skills **never** fired, and the notes that make
+  the numbers readable (exact vs inferred, capture is not retroactive).
   → TEST-PLAN: Skills platform (Core).
 - **Admin UI → Skills** (`public/admin-skills.js`, `src/web/routes/skills.js`): catalog (search,
   owner filter, detail with files/frontmatter/revisions, pin/rollback, grant to a conversation,

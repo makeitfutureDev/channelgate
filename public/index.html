@@ -807,7 +807,7 @@
                 </div>
                 <div class="setcard">
                   <h4>Container runtime</h4>
-                  <p class="desc">Run a channel's engine processes inside <strong>its own long-lived Linux container</strong> instead of the daemon's host sandbox — separate HOME, separate CLI logins, its own process namespace, and none of the host's files reachable. Needs <code>podman</code> or <code>docker</code> on this machine plus a built image (<code>npm run build:image</code>). Admin-mode channels always stay on the host.</p>
+                  <p class="desc">Every channel's engine processes run inside <strong>its own long-lived Linux container</strong> — separate HOME, separate CLI logins, its own process namespace, and none of the host's files reachable beyond the channel's own folders. This is the only runtime: the daemon needs <code>podman</code> or <code>docker</code> on this machine plus a built image (<code>npm run build:image</code>). Admin-mode channels run in their container too; the permission bypass applies inside it, never on the host.</p>
                   <label class="field">
                     <span>Container CLI</span>
                     <select id="set-container-cli">

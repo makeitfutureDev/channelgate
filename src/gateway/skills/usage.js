@@ -7,12 +7,31 @@ import { recordSkillUsage, getSkill, usageSummary, usageByChannel, effectiveRevi
 import { resolveSkillProfile } from "./resolve.js";
 
 // `.claude/skills/<slug>/SKILL.md`, `.agents/skills/<slug>/SKILL.md`, or a plugin's
-// `…/skills/<slug>/SKILL.md` — inside a path, a shell command, or a quoted argument.
-const SKILL_FILE_RE = /(?:^|[\s"'`(=:/])skills\/([A-Za-z0-9][A-Za-z0-9._-]{0,119})\/SKILL\.md(?![A-Za-z0-9])/i;
+// `…/skills/<slug>/SKILL.md` — inside a path, a shell command, or a quoted argument. The
+// lookbehind is what keeps `myskills/…` and `agent-skills/…` out while still accepting every
+// separator a shell puts in front of a path (`/`, a space, a quote, `=`, `(`, `;`, `&&`, `|`, `,`).
+const SKILL_FILE_RE = /(?<![A-Za-z0-9_.-])skills\/([A-Za-z0-9][A-Za-z0-9._-]{0,119})\/SKILL\.md(?![A-Za-z0-9])/gi;
+
+// EVERY skill named in the text, in order, deduped. Codex reads skills with the shell, and one
+// `bash -lc` line routinely reads two of them
+// (`sed -n '1,240p' …/gateway-usage/SKILL.md && sed -n '1,320p' …/<granted>/SKILL.md`,
+// `wc -l a/SKILL.md b/SKILL.md`). Matching only the first occurrence recorded the gateway guide
+// and silently dropped the granted skill the run actually came for.
+export function skillSlugsFromText(text) {
+  const out = [];
+  const seen = new Set();
+  SKILL_FILE_RE.lastIndex = 0;
+  for (const m of String(text ?? "").matchAll(SKILL_FILE_RE)) {
+    const key = m[1].toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(m[1]);
+  }
+  return out;
+}
 
 export function skillSlugFromText(text) {
-  const m = SKILL_FILE_RE.exec(String(text ?? ""));
-  return m ? m[1] : "";
+  return skillSlugsFromText(text)[0] || "";
 }
 
 // Claude names a plugin-provided skill as `<plugin>:<slug>` (e.g.
@@ -85,8 +104,9 @@ export function createSkillUsageRecorder({
         note(event.target || event.skill || "", "exact");
         return;
       }
-      const slug = skillSlugFromText([event.path, event.target, event.name].filter(Boolean).join(" "));
-      if (slug) note(slug, "inferred");
+      // Codex puts the WHOLE shell command in `name`, so a compound command can name several
+      // skills at once — record each of them, not just the first.
+      for (const slug of skillSlugsFromText([event.path, event.target, event.name].filter(Boolean).join(" "))) note(slug, "inferred");
     },
     seen() {
       return new Map(seen);
@@ -134,6 +154,7 @@ export function skillUsageReport({ channelSlug = "", days = 30, grants = null, l
     neverUsed,
     notes: [
       "exact = Claude's Skill tool fired the skill; inferred = a Codex (or shell) read of the skill's SKILL.md — best effort, may miss uses.",
+      "Capture is not retroactive: turns that ran before usage capture shipped leave no rows here, and the report covers the selected range only.",
     ],
     ...(profile ? { contextTokens: profile.contextTokens } : {}),
   };
