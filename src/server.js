@@ -17,6 +17,7 @@ if (major < 22 || (major === 22 && minor < 13)) {
 import { ensureRoot } from "./config/store.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
+import { refreshEngineModels } from "./engines/registry.js";
 import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
@@ -204,6 +205,9 @@ async function main() {
     if (check.auth?.login?.summary) console.log(`[gateway] ${id} login: ${check.auth.login.summary}`);
     if (check.auth?.expiring) console.warn(`[gateway] WARNING: ${check.auth.expiring}`);
   }
+  // Prime the shared picker/admin catalog from each harness before chat connects. Discovery is
+  // best-effort and self-contained: an unavailable/old CLI leaves the bundled fallback intact.
+  await refreshEngineModels();
   // Container backend — the only runtime: probe the CLI, reconcile containers left by the previous
   // daemon, start the idle reaper. A host with no usable container CLI cannot run a single turn,
   // so the boot stops here with the remedy instead of coming up as a daemon that answers every

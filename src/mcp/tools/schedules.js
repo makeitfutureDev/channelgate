@@ -38,8 +38,9 @@ export function register(server, ctx) {
         "`cron` empty. `prompt` is what to do; `description` is the title in the 'Running:' " +
         "announcement. It runs as YOU (your tokens/mode) in this channel's folder. `notify`: 'channel' " +
         "(@channel, default), 'user' (pass a Slack user id in `notify_user`), or 'none'. NOTE: recurring " +
-        "tasks may set `delivery:'daily-thread'` to create one top-level Running message per server-local " +
-        "day and thread every run result beneath it; the default `standard` announces every run. " +
+        "tasks may set `delivery:'channel'` to post the result directly at channel level, or " +
+        "`delivery:'daily-thread'` to create one top-level Running message per server-local day and " +
+        "thread every run result beneath it; the default `standard` announces every run. " +
         "schedules must fire no more often than the configured minimum interval (default 60 min). " +
         "Set `kind:'reminder'` to post a SINGLE reminder message instead of running a Claude session " +
         "(no token cost, no restatement). With `ack:true` the reminder requires a ✅: if nobody reacts " +
@@ -53,7 +54,7 @@ export function register(server, ctx) {
         description: z.string().optional(),
         notify: z.enum(["channel", "user", "none"]).optional(),
         notify_user: z.string().optional(),
-        delivery: z.enum(["standard", "daily-thread"]).optional(),
+        delivery: z.enum(["standard", "daily-thread", "channel"]).optional(),
         kind: z.enum(["task", "reminder"]).optional(),
         ack: z.boolean().optional(),
         ack_escalate_minutes: z.number().optional(),
@@ -109,7 +110,7 @@ export function register(server, ctx) {
       const what = reminderFields.kind === "reminder" ? "Reminder" : "Scheduled";
       const next = nextCronRun(cron);
       const nextText = next ? ` · next run ${zonedStamp(next)}` : "";
-      return text(`✅ ${what} (id ${s.id}): "${description || prompt}" — cron \`${cron}\`${nextText}, notifies ${who}${s.delivery === "daily-thread" ? " · one thread per day" : ""}${reminderFields.ack ? " · requires ✅" : ""}.${zoneHint()}`);
+      return text(`✅ ${what} (id ${s.id}): "${description || prompt}" — cron \`${cron}\`${nextText}, notifies ${who}${s.delivery === "daily-thread" ? " · one thread per day" : s.delivery === "channel" ? " · posts directly in channel" : ""}${reminderFields.ack ? " · requires ✅" : ""}.${zoneHint()}`);
     }
   );
 
@@ -121,7 +122,7 @@ export function register(server, ctx) {
       if (!list.length) return text("No schedules in this channel.");
       return text(
         list
-          .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}] cron \`${s.cron}\` — ${s.description || s.prompt} (notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : ""})`)
+          .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}] cron \`${s.cron}\` — ${s.description || s.prompt} (notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""})`)
           .join("\n") + (zoneHint() ? `\n${zoneHint().trim()}` : "")
       );
     }

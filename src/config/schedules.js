@@ -42,7 +42,7 @@ export function addSchedule({ channelId, slug, cron, prompt, description, create
     // Ordinary tasks announce every run at the top level. Opt-in daily-thread delivery creates one
     // anchor per server-local day and sends every run result beneath it. The anchor state lives in
     // the JSON record so a daemon restart cannot create a second thread for the same day.
-    delivery: kind !== "reminder" && !once && delivery === "daily-thread" ? "daily-thread" : "standard",
+    delivery: kind !== "reminder" && ["daily-thread", "channel"].includes(delivery) && (!once || delivery === "channel") ? delivery : "standard",
     dailyThreadDate: "",
     dailyThreadTs: "",
     // Thread-loop binding (all falsy/empty for an ordinary schedule). `resumeThread` is what makes

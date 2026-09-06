@@ -108,16 +108,17 @@ export function createObservabilityRouter() {
   // Dashboard — KPIs + per-bucket/per-user/per-channel rollups for a named `range` (today, last7,
   // last30, month, lastmonth, year, lastyear; default last30), aggregated in SQL. Author/channel
   // ids get their display names attached (as the audit view does) so the UI can render labels
-  // without a second lookup.
+  // without a second lookup. `harness` is all (default), claude or codex and scopes every rollup.
   router.get("/dashboard", async (req, res, next) => {
     try {
       const range = String(req.query.range || "last30");
-      const data = usageDashboard({ range });
+      const harness = String(req.query.harness || "all");
+      const data = usageDashboard({ range, harness });
       const index = await getChannelsIndex();
       const users = await getUsers();
       data.byUser = data.byUser.map((u) => ({ ...u, name: users[u.userId]?.name || u.userId }));
       data.byChannel = data.byChannel.map((c) => ({ ...c, name: index[c.channelId]?.name || c.slug || c.channelId }));
-      data.topSkills = [...usageCountsBySlug({ since: data.start }).values()]
+      data.topSkills = [...usageCountsBySlug({ since: data.start, engine: data.harness === "all" ? "" : data.harness }).values()]
         .sort((a, b) => b.total - a.total || a.slug.localeCompare(b.slug))
         .slice(0, 10)
         .map((s) => ({ name: s.name || s.slug, slug: s.slug, uses: s.total }));

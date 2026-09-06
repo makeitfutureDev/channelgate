@@ -716,7 +716,7 @@ export function recordSkillUsage({ ts = nowIso(), slug, skillId = null, revision
 
 // Per-skill counts since `since` (ISO), optionally for one channel. Exact and inferred are kept
 // apart so the report can be honest about Codex's best-effort signal.
-export function usageSummary({ channelSlug = "", since = "", limit = 500 } = {}) {
+export function usageSummary({ channelSlug = "", since = "", engine = "", limit = 500 } = {}) {
   const where = [];
   const args = [];
   if (channelSlug) {
@@ -726,6 +726,10 @@ export function usageSummary({ channelSlug = "", since = "", limit = 500 } = {})
   if (since) {
     where.push("ts >= ?");
     args.push(since);
+  }
+  if (engine) {
+    where.push("engine = ?");
+    args.push(engine);
   }
   const sql = `SELECT slug,
       SUM(CASE WHEN signal = 'exact' THEN 1 ELSE 0 END) AS exact,
@@ -764,9 +768,9 @@ export function usageByChannel({ channelSlug = "", since = "", limit = 500 } = {
   }));
 }
 
-export function usageCountsBySlug({ since = "" } = {}) {
+export function usageCountsBySlug({ since = "", engine = "" } = {}) {
   const out = new Map();
-  for (const row of usageSummary({ since, limit: 100000 })) out.set(row.slug.toLowerCase(), row);
+  for (const row of usageSummary({ since, engine, limit: 100000 })) out.set(row.slug.toLowerCase(), row);
   return out;
 }
 

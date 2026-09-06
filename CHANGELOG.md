@@ -16,6 +16,13 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- Automations are searchable by conversation/person or automation content, resolve DM display
+  names, and describe common schedules in plain language. The enlarged editor now updates timing,
+  title, notifications, delivery, state, and prompt atomically, including a new direct-to-channel
+  task delivery alongside per-run and per-day threads.
+
 ## [0.5.0] — first public release (2026-09-06)
 
 > **Versioning.** 0.5.0 is the first published version of ChannelGate; the repository became public

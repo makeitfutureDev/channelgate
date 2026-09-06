@@ -215,6 +215,29 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 - [x] Verify complete safe Codex stdio/HTTP MCP serialization and reject credentials/userinfo.
 - [x] Run the full local suite and static parser/whitespace gate.
 
+## Dynamic engine model catalog
+
+- [x] Automated: parse the machine-readable Codex catalog, expose only `visibility=list` entries,
+      reject malformed/empty output, and preserve each visible model's supported/default reasoning
+      levels (`test/model-discovery.test.js`).
+- [x] Automated: a successful discovery replaces the bundled Codex picker list, remains cached
+      inside the refresh window, maps model-specific effort choices, and survives the next failed
+      refresh with the last good snapshot; a cold failure retains the bundled fallback
+      (`test/model-discovery.test.js`).
+- [x] Automated: Claude's picker and browser fallback use rolling aliases (including `best`,
+      `fable`, and `sonnet[1m]`); the Admin UI consumes the registry's model/effort manifests and
+      keeps a valid saved same-engine custom ID available (`test/model-options.test.js`,
+      `test/model-wizard-buttons.test.js`).
+- [ ] Live Codex: in the Codex Auto fixture, open `/model`, choose Codex, and verify the buttons
+      match the authenticated CLI's current visible catalog, include `gpt-6-astra`, and show
+      Astra's reported efforts through `ultra`; select Astra and complete one ordinary turn.
+- [ ] Live Claude: in the Claude Auto fixture, open `/model`, choose Claude, and verify the rolling
+      aliases are offered; select `best`, complete the wizard, and confirm a normal turn runs on
+      the account's resolved current model.
+- [ ] Admin browser: load Settings and a conversation Runtime page after a catalog refresh; verify
+      both show the same Codex models as Slack, model changes narrow the effort selector, and a
+      saved valid full/custom same-engine model ID survives a load/save round trip.
+
 ## OpenCode proof adapter (Phase D)
 
 - [x] Registry/UI manifest exposes OpenCode through the existing adapter-driven selectors and
@@ -1034,6 +1057,21 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       encoded in every button value, exactly one button marked ✓ + primary (the "Gateway/Engine
       default" entry when nothing is overridden), and the patterns still match the retired bare
       `cg_model_pick` / `cg_effort_pick` select ids.
+- [x] Unit: the model and effort steps each carry exactly ONE back button, pointing at the step
+      before them (`cg_mw_back_engine` / `cg_mw_back_model`) and carrying that step's own
+      scope + thread, so a mis-click is corrected without re-running `/model`; the back ids do not
+      collide with the harness-step registration `/^cg_mw_engine_(?!reset$)…/` (a "← Back" click
+      handled as a harness pick would silently rewrite the engine)
+      (`test/model-wizard-buttons.test.js`).
+- [ ] Live: run `@bot /model` in a thread, pick *Just this thread*, then pick the WRONG harness.
+      Press **← Back** twice (to the harness step, then to the scope step) and confirm the same
+      message repaints each earlier step in place — no new message, the scope step still offers
+      *Just this thread*, and the harness step's `Current:` line shows the harness the mis-click
+      actually stored. Finish the wizard on the right harness and confirm the done card's
+      **Change again** reopens step 1 in that same message. Repeat with a channel-scope pick
+      (admin author) and confirm walking back never widens or narrows the scope on its own.
+- [x] Airtable: active dual-engine live definition `UI-MODEL-BACK-01` exercises the same-message
+      Back/Change-again flow in both the Claude and Codex Auto fixtures.
 - [x] Unit: admin-UI model dropdowns (Settings defaults, channel Runtime card, channel/DM config
       editors) list the wizard's curated options for the selected/inherited engine; a saved
       non-curated same-engine id shows as an extra option and stays selected; switching the engine
@@ -1942,8 +1980,9 @@ release, no egress cut-off — so the network entry has no container equivalent 
       reads MEMORY.md / triggers the channel-memory skill and answers from memory.
 - [ ] Admin UI Memory tab describes uncapped Markdown storage plus the derived SQLite FTS index,
       shows stored characters/facts and topic files, and refreshes those counts after save.
-- [ ] Overview is the default landing view: 5 KPI tiles (Est. API value in orange, Runs with avg value,
-      Active users, live Active sessions, Tokens with in/out sub), the orange hero cost chart
+- [ ] Overview is the default landing view: 7 KPI tiles (Token Est Cost in orange, separate Claude
+      Cost and Codex Cost, Runs with avg value, Active users, live Active sessions, Tokens with
+      in/out sub), the orange hero cost chart
       (gridlines + dated peak) and runs/tokens sparklines, runs-per-user bars (descending,
       VISIBLE fills), and
       per-channel runs+estimated-value bars render; the refresh icon button reloads. Large totals show
@@ -1955,11 +1994,23 @@ release, no egress cut-off — so the network entry has no container equivalent 
       text nor attachment paths. Without refreshing the page, the KPI/modal update on start,
       runtime resolution/fallback, and finish; elapsed time ticks while open. Disconnect/reconnect
       `/api/active-runs/stream` and confirm its initial full snapshot reconciles missed changes.
-- [ ] Overview **range dropdown** (Today / Last 7 days / Last 30 days / This month / Last month /      This year / Last year) reloads on change and re-scopes every tile + chart. Bucket granularity
+- [ ] Overview **harness dropdown** defaults to All. Selecting Claude or Codex reloads and scopes
+      every KPI and chart, including active sessions and top skills, to that harness; switching back
+      to All restores the combined totals. Claude Cost and Codex Cost sum to Token Est Cost when all
+      priced runs are included.
+- [ ] Overview **range dropdown** (Today / Last 7 days / Last 30 days / This month / Last month /
+      This year / Last year) reloads on change and re-scopes every tile + chart. Bucket granularity
       adapts: Today = hourly points, week/month = daily, year = monthly; empty ranges (e.g. Last year
       with no data) render zeros/flat without error.
-- [ ] `GET /api/dashboard?range=…` returns `{ range, unit, start, end, totals, series (gap-filled,
-      one point per bucket), byUser, byChannel }`; an unknown range falls back to `last30`.
+- [x] Unit: `usageDashboard` applies `harness=claude|codex` to totals, series, per-user and
+      per-channel rollups; top-skill usage accepts the same engine scope; omitted/unknown harnesses
+      safely resolve to All (`test/dashboard-harness-filter.test.js`).
+- [x] Airtable: active dual-engine live definitions `UI-DASH-01C` (Claude) and `UI-DASH-01X`
+      (Codex) use the Admin UI plus the private `cg-testing-*-auto` fixtures and require matching
+      UI screenshots and API JSON evidence for all seven KPIs, charts, and live Active sessions.
+- [ ] `GET /api/dashboard?range=…&harness=…` returns `{ range, harness, unit, start, end, totals
+      (including Claude/Codex cost), series (gap-filled, one point per bucket), byUser, byChannel }`;
+      an unknown range falls back to `last30` and an unknown harness falls back to `all`.
 - [ ] Settings: vertical section nav (Connection / Agent defaults / Integrations / Access &
       security / System); every section stays in the DOM and ONE sticky Save persists all of them;
       dirty tracking shows "Unsaved changes" on any edit and "All changes saved" after save/boot.
@@ -2063,18 +2114,27 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [ ] Settings chip editors (trusted bot apps, network egress domains): Enter/comma adds a chip,
       × removes, Backspace on empty removes last; saving persists the same comma-separated values
       as before the redesign.
-- [ ] Automations (was Schedules): rows show mono cron chip, "invalid" warn badge when the cron is
-      bad, last-run status dot (green ok / amber warn), enable + notify autosaves flash "saved",
-      Delete confirms via the branded dialog.
-- [ ] Click the non-control area of an automation row: a detail modal opens with channel, timing,
-      task type, last-run status, notification target, description, and the full saved prompt.
+- [ ] Automations search filters live by channel name, resolved DM person, title/prompt, friendly
+      timing, and raw cron; unmatched groups disappear and a junk query shows the no-results card.
+      DM headings say `DM · <person>` rather than `dm-U…`. Rows show Daily / Weekdays / Weekly /
+      Monthly / Hourly wording (raw cron remains available as hover/advanced detail), invalid custom
+      cron still warns, last-run status has a green/amber dot, enable autosaves, and Delete confirms.
+- [ ] Click the non-control area of an automation row: a large editor opens with conversation,
+      task type, last-run status, name, enabled state, timing controls, notification/person,
+      delivery, and the full saved prompt.
       Press Enter/Space on the row's details button to verify the same keyboard path; then use
       Cancel, ✕, Escape, and the backdrop and confirm each closes without saving. Checkbox,
       notification, person-ID, and Delete interactions must not open the modal.
-- [ ] Edit an automation prompt to multiline text and save: the modal closes, a hard reload shows
-      the exact saved text, and the next execution uses it. A whitespace-only prompt is refused;
-      simulate a failed PUT and confirm the error stays visible with the draft intact while Save
-      leaves cron, description, notification settings, enabled state, and last-run data unchanged.
+- [ ] Edit an automation in one save: change name, enabled state, Daily/Weekdays/Weekly/Monthly/
+      Hourly timing (and one custom cron), notification target, direct-channel/new-thread/daily-thread
+      delivery, and multiline prompt. The modal closes and a hard reload shows every value; the next
+      execution uses it. Invalid cron, missing notify person, and whitespace-only prompt are refused
+      with the draft intact and no partial mutation. Direct-channel delivery emits no Running anchor;
+      new-thread emits one per run; daily-thread reuses one per local day.
+- [x] Automated contract: atomic full-edit validation, DM-name resolution, editor/search markup,
+      direct-channel anchor suppression, trusted notification prefix, and daily-thread freshness
+      (`test/schedule-prompt-editor.test.js`, `test/schedule-daily-thread.test.js`,
+      `test/deliver.test.js`). Live dual-engine acceptance: Airtable `AUT-UI-01`.
 - [ ] Activity: totals strip renders; text/channel/user/engine filters combine; "Show more" pages
       50 rows at a time from the cached fetch; Codex Standard API-equivalent values show the `*`
       footnote and are not described as billed spend.

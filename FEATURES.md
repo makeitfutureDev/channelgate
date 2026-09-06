@@ -53,6 +53,20 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   immediate SQLite transaction and skip omitted fields, preventing concurrent writers from
   silently restoring stale security or credential fields. → TEST-PLAN: Phase E module boundaries.
 
+## Dynamic engine model catalog
+
+- **One live catalog for every selector:** Codex's authenticated, installed CLI supplies its current
+  selectable models through `codex debug models`; hidden entries are excluded and each model keeps
+  the exact reasoning efforts the CLI reports. Slack's `/model` wizard and the Admin UI consume the
+  same registry snapshot, so newly available models such as Astra appear without a ChannelGate code
+  change. Discovery is bounded and cached for six hours; a failed refresh retains the last good
+  snapshot, or the bundled fallback on a cold start.
+- **Claude stays current through rolling aliases:** the catalog offers `best`, `opus`, `sonnet`,
+  `haiku`, `fable`, `opusplan`, and the supported 1M aliases instead of pinning dated model IDs.
+  Saved same-engine full IDs remain valid and round-trip through the Admin UI. Provider CLI/package
+  upgrades are deliberately separate and continue through reviewed dependency PRs.
+  → TEST-PLAN: Dynamic engine model catalog.
+
 ## Chat-platform adapter kernel
 
 - Validated `PlatformAdapter` contract with a CLOSED 30-key capability spec: an undeclared
@@ -506,7 +520,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (buttons) → harness: *Claude*/*Codex* (buttons, plus *Use defaults* to clear the scope's
   overrides) → model (one button per model) → effort (one button per level) — every step is a flat
   list of buttons, no dropdowns, with the choice already in force marked ✓ and highlighted;
-  each step persisting as it's clicked; thread scope
+  each step persisting as it's clicked. Because a step persists on click, a mis-click is corrected
+  in place rather than by re-running the command: steps 2–4 carry **← Back** to the step before
+  them and the final card carries **Change again**, both repainting the SAME message (walking back
+  writes nothing and undoes nothing — the re-pick overwrites what the wrong click stored, and the
+  repainted step shows what is actually in force). Thread scope
   writes per-thread engine/model/effort overrides that beat the channel at run time; Settings →
   Access & security chooses whether channel changes are admin-only (default) or available to every
   authorized channel user, while anyone approved may customize their DM; typed `@bot /model` is the command — no manifest slash command is
@@ -1809,14 +1827,18 @@ are retired, bullet by bullet; everything else stands.
   global Settings saves repaint from that PUT's complete settings representation—including a
   literal `showMessageCost:false`—instead of discarding it and issuing a second read.
   → TEST-PLAN: Admin UI.
-- **Automation prompt inspection and editing**: clicking an automation row outside its enable,
-  notification, and delete controls opens a responsive, keyboard-accessible detail modal with the
-  channel, timing, task type, last-run status, notification target, description, and complete saved
-  prompt. The prompt editor preserves multiline text, rejects blank saves, keeps failed drafts
-  visible, and PATCHes only `prompt`; the next scheduler execution reads the updated SQLite record.
+- **Searchable, human-readable automation manager**: Automations filters live by conversation or
+  person, title, prompt, friendly timing, or raw cron. DM groups resolve to the person's display
+  name instead of exposing `dm-U…`, and common schedules lead with Daily / Weekdays / Weekly /
+  Monthly / Hourly wording rather than cron syntax. Clicking a row opens a large, accessible editor
+  for title, enabled state, guided common timing or advanced cron, one-time date, notification,
+  delivery, and the complete prompt. One validated PUT saves the draft atomically; failures keep it
+  visible without partially changing the record. Task delivery supports a direct channel result,
+  a fresh thread per run, or one shared thread per day.
   → TEST-PLAN: Admin UI (redesign).
-- **Overview** (was Dashboard): 5 KPIs (estimated API value — orange hero, runs + average value, users, live active
-  sessions, tokens in/out). Active sessions opens a live modal with conversation, author, elapsed
+- **Overview** (was Dashboard): 7 KPIs (Token Est Cost — orange hero, separate Claude and Codex
+  costs, runs + average value, users, live active sessions, tokens in/out) plus an All / Claude /
+  Codex harness selector that re-scopes every KPI and chart. Active sessions opens a live modal with conversation, author, elapsed
   time, and the effective engine/model; DM conversations use the person's display name rather than
   their internal `dm-U…` slug. An authenticated event stream pushes complete active-run snapshots
   on start, runtime resolution/fallback, finish, and restart recovery; reconnects reconcile from
@@ -2329,12 +2351,13 @@ are retired, bullet by bullet; everything else stands.
   first-boot password is minted whenever no OPERATOR key is in `settings.json` — the installer's
   own pre-boot `whisperEnabled` answer does not count, so `npm run setup` never skips it.
   → TEST-PLAN: A7 boundary hardening.
-- Dashboard admin tab (default landing view): usage overview for a selectable **date range** —
+- Dashboard admin tab (default landing view): usage overview for a selectable **date range** and
+  **harness** (All by default, Claude, or Codex) —
   Today, Last 7 days, Last 30 days, This month, Last month, This year, Last year
-  (`GET /api/dashboard?range=…`, SQL rollups). The bucket granularity adapts to the range: **hour**
+  (`GET /api/dashboard?range=…&harness=…`, SQL rollups). The bucket granularity adapts to the range: **hour**
   for a single day, **day** for weeks/months, **month** for years — series gap-filled so charts stay
-  stable. KPI tiles (total cost, sessions, active users, total tokens, active channels,
-  avg $/session), per-bucket sparklines for sessions/tokens/cost, a sessions-per-user bar list
+  stable. KPI tiles (Token Est Cost, separate Claude and Codex costs, sessions, active users,
+  active sessions, and total tokens), per-bucket sparklines for sessions/tokens/cost, a sessions-per-user bar list
   (descending), and a per-channel sessions+cost bar chart. Pure inline SVG + div bars — no chart
   library, no build step. → TEST-PLAN: Admin UI.
 - Money display: smart currency formatter — whole dollars at $100+ (no "$359.3113" on totals),

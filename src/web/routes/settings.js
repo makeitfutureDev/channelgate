@@ -50,7 +50,7 @@ import { readSecret } from "../secrets.js";
 // The shared admin principal — one password, no personal identity behind an admin-UI action.
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
-import { engineUiManifest } from "../../engines/registry.js";
+import { engineUiManifest, refreshEngineModels } from "../../engines/registry.js";
 
 // The month the license ledger is keyed on — UTC, never the daemon's local zone (a deployment in
 // UTC+13 would otherwise roll its allowance a day early).
@@ -89,8 +89,9 @@ export function createSettingsRouter({
   });
 
   // ── Settings (Slack tokens + daemon options) ─────────────────────────────────
-  router.get("/settings", (_req, res, next) => {
+  router.get("/settings", async (_req, res, next) => {
     try {
+      await refreshEngineModels();
       res.json(settingsPayload());
     } catch (e) {
       next(e);
@@ -134,6 +135,7 @@ export function createSettingsRouter({
 
   router.put("/settings", async (req, res, next) => {
     try {
+      await refreshEngineModels();
       const body = req.body ?? {};
       const patch = {};
       // Tokens are write-only: only overwrite when a non-empty value is provided.

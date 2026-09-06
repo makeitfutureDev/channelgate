@@ -9,6 +9,7 @@ import { commandHealth, validateEngineAdapter } from "./contract.js";
 import { runtimeTargetOr } from "./runtime-target.js";
 import { readCodexAuthState } from "./codex-auth.js";
 import { claudeEngineHome, codexEngineHome } from "../config/paths.js";
+import { discoverCodexModels } from "./model-discovery.js";
 
 // Which Claude login the gateway is using (src/gateway/claude-login.js). Imported LAZILY: that
 // module reads a setting, src/config/settings.js imports the engine registry, and the registry
@@ -52,18 +53,22 @@ const claude = validateEngineAdapter({
   id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", mcpMetaKey: "allowedMcps",
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
   efforts: ["low", "medium", "high", "xhigh"], models: [
+    { label: "Best", value: "best", description: "Claude's current best model for this account." },
     { label: "Opus", value: "opus", description: "Claude Opus alias." },
     { label: "Opus 1M", value: "opus[1m]", description: "Claude Opus with the 1M context alias." },
-    { label: "Fable 5", value: "claude-fable-5", description: "Claude Fable 5." },
     { label: "Sonnet", value: "sonnet", description: "Claude Sonnet alias." },
+    { label: "Sonnet 1M", value: "sonnet[1m]", description: "Claude Sonnet with the 1M context alias." },
     { label: "Haiku", value: "haiku", description: "Claude Haiku alias." },
+    { label: "Fable", value: "fable", description: "Claude Fable alias." },
+    { label: "Opus plan", value: "opusplan", description: "Use Opus for planning and Sonnet for execution." },
   ], mintsOwnSessionId: false,
+  modelCatalogSource: "aliases",
   // Provider-failure kinds (stream.js claudeProviderError) the orchestrator may replay IN PLACE on
   // this engine: the provider did not answer the request. Never the limit/credential kinds (their
   // own failover) and never the catch-all "provider" (a rejected request fails the same way twice).
   transientKinds: Object.freeze(["availability", "connection"]),
   supports: { warmPool: true, interruptSteer: true, permissionPrompt: true, compact: true, realCost: true, usageLimitFallback: true, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
-  modelBelongs: (m) => /^(?:opus|sonnet|haiku|opusplan)(?:\[1m\])?$|^claude-/.test(m),
+  modelBelongs: (m) => /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/.test(m),
   resumeCommand: (id) => `claude --resume ${id}`,
   sessionState: Object.freeze({
     // CLAUDE_CONFIG_DIR on the host is the gateway's stable synthetic one (run-grant-artifacts.js
@@ -178,7 +183,7 @@ const claude = validateEngineAdapter({
 const codex = validateEngineAdapter({
   id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", mcpMetaKey: "allowedCodexMcps",
   instructionFile: "AGENTS.md", skillsDir: ".agents/skills", mcpTransport: "argv", contextWindow: 272_000,
-  efforts: ["none", "low", "medium", "high", "xhigh", "max"], models: [
+  efforts: ["none", "low", "medium", "high", "xhigh", "max", "ultra"], models: [
     ...["codex", "gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"].map((value) => ({ label: value === "codex" ? "Codex" : value.toUpperCase().replace("GPT-", "GPT-"), value, description: `${value} model.` })),
   ], mintsOwnSessionId: true,
   // The runner's own "the provider did not answer" kind (classifyCodexFailure), replayable in place.
@@ -207,6 +212,9 @@ const codex = validateEngineAdapter({
   },
   interrupt: () => false,
   discoverMcps: () => listEngineMcps("codex"),
+  // Run against the daemon's own Codex environment: container channels share that operator login,
+  // and `CODEX_HOME` (when explicitly configured) remains authoritative.
+  discoverModels: () => discoverCodexModels(),
   // Optional per-engine fact: "is this harness's credential usable right now, and is it the SAME
   // one that failed?" The orchestrator only ever compares the opaque fingerprint, so an engine
   // that cannot answer simply doesn't declare this hook.

@@ -9,7 +9,7 @@ import { sanitizeSkillGrantNames } from "../../gateway/access-grants.js";
 // Model/effort validation shared by the channel-meta, DM, and DM-template routes: an arbitrary
 // string stored here goes straight to the engine's --model/--effort flags and breaks every later
 // turn in the channel — same guard as the Slack /model command (isValidModel).
-const EFFORTS = ["", "none", "low", "medium", "high", "xhigh", "max"]; // mirrors the admin UI select
+const EFFORTS = ["", "none", "low", "medium", "high", "xhigh", "max", "ultra"]; // mirrors the admin UI select
 export function invalidModelOrEffort(body) {
   if (typeof body.model === "string" && body.model.trim() && !isValidModel(body.model)) return `unrecognized model "${body.model.trim()}"`;
   if (typeof body.effort === "string" && !EFFORTS.includes(body.effort.trim())) return `effort must be one of: ${EFFORTS.filter(Boolean).join(", ")} (or empty)`;

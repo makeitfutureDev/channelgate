@@ -274,7 +274,7 @@ export function neutralizeSentinels(s) {
 // The /model value flows straight into the engine's --model / -m flag; a typo'd or arbitrary
 // string breaks every later turn in the channel. Accept only the engine aliases and the known
 // model-id families (Claude: opus/sonnet/haiku aliases + claude-*; Codex: gpt-*, o<n>*, codex*).
-const MODEL_RE = /^(?:(?:opus|sonnet|haiku)(?:\[1m\])?|opusplan|claude-[a-z0-9][a-z0-9.[\]-]*|gpt-[a-z0-9][a-z0-9.-]*|o[0-9][a-z0-9.-]*|codex(?:-[a-z0-9.-]+)?|[a-z0-9._-]+\/[a-z0-9._:/-]+)$/;
+const MODEL_RE = /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\]|claude-[a-z0-9][a-z0-9.[\]-]*|gpt-[a-z0-9][a-z0-9.-]*|o[0-9][a-z0-9.-]*|codex(?:-[a-z0-9.-]+)?|[a-z0-9._-]+\/[a-z0-9._:/-]+)$/;
 export function isValidModel(value) {
   const v = String(value || "").trim().toLowerCase();
   if (!v || v.length > 64 || /\s/.test(v)) return false;

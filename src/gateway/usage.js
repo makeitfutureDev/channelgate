@@ -398,12 +398,17 @@ const stepBucket = (d, unit) => (unit === "hour" ? new Date(d.getTime() + 360000
 // Rollups for the Dashboard view over a named `range`. All aggregation is in SQL (cheap even with a
 // large ledger). `series` is gap-filled to one point per bucket (zero on quiet buckets) so the
 // charts stay stable; KPI totals + per-user/per-channel breakdowns use the same [start, end) window.
-export function usageDashboard({ range = "last30" } = {}) {
+export function usageDashboard({ range = "last30", harness = "all" } = {}) {
   const r = DASHBOARD_RANGES.includes(range) ? range : "last30";
+  const selectedHarness = ["claude", "codex"].includes(harness) ? harness : "all";
   const now = new Date();
   const { start, end, unit } = resolveRange(r, now);
-  const params = { start: start.toISOString(), end: end.toISOString() };
-  const win = "ts >= @start AND ts < @end";
+  const params = {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    ...(selectedHarness === "all" ? {} : { harness: selectedHarness }),
+  };
+  const win = "ts >= @start AND ts < @end" + (selectedHarness === "all" ? "" : " AND engine = @harness");
   const db = getDb();
   const totals = db
     .prepare(
@@ -413,6 +418,8 @@ export function usageDashboard({ range = "last30" } = {}) {
               COALESCE(SUM(canonical_tokens_in), 0) AS tokens_in,
               COALESCE(SUM(canonical_tokens_out), 0) AS tokens_out,
               COALESCE(SUM(canonical_cost_usd), 0) AS cost,
+              COALESCE(SUM(CASE WHEN engine = 'claude' THEN canonical_cost_usd ELSE 0 END), 0) AS claude_cost,
+              COALESCE(SUM(CASE WHEN engine = 'codex' THEN canonical_cost_usd ELSE 0 END), 0) AS codex_cost,
               SUM(CASE WHEN canonical_cost_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_runs,
               COUNT(DISTINCT author_id) AS users,
               COUNT(DISTINCT channel_id) AS channels
@@ -463,6 +470,7 @@ export function usageDashboard({ range = "last30" } = {}) {
     .map((row) => ({ ...row, cost: Number((row.cost || 0).toFixed(4)) }));
   return {
     range: r,
+    harness: selectedHarness,
     unit,
     start: params.start,
     end: params.end,
@@ -472,6 +480,8 @@ export function usageDashboard({ range = "last30" } = {}) {
       tokensIn: totals?.tokens_in || 0,
       tokensOut: totals?.tokens_out || 0,
       cost: Number((totals?.cost || 0).toFixed(4)),
+      claudeCost: Number((totals?.claude_cost || 0).toFixed(4)),
+      codexCost: Number((totals?.codex_cost || 0).toFixed(4)),
       unpricedRuns: totals?.unpriced_runs || 0,
       users: totals?.users || 0,
       channels: totals?.channels || 0,

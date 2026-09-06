@@ -67,6 +67,9 @@ export function scheduleDayKey(now = new Date()) {
 // channel-level banner. Persist immediately after Slack accepts the anchor, before the engine run,
 // so a daemon restart mid-run still finds the correct thread.
 export async function taskDeliveryThread(client, sched, title, now = new Date()) {
+  // Channel delivery intentionally skips the "Running" anchor. The result is posted top-level
+  // after the run, giving admins a true channel-vs-thread choice rather than a cosmetic label.
+  if (sched.delivery === "channel") return null;
   if (sched.delivery === "daily-thread") {
     const date = scheduleDayKey(now);
     if (sched.dailyThreadDate === date && sched.dailyThreadTs) return sched.dailyThreadTs;
@@ -245,7 +248,12 @@ async function runSchedule(sched) {
     // as every unattended reply (deliverResult). The tokens are already spent, so the ledger is
     // written before delivery: a Slack failure must not erase the spend.
     await bankUsage({ channelId: sched.channelId, slug: sched.slug, authorId: sched.createdBy, engine: result.engine, taskKind: "scheduled", result });
-    await deliverResult(client, { channel: sched.channelId, threadKey: threadTs || undefined, result });
+    await deliverResult(client, {
+      channel: sched.channelId,
+      threadKey: threadTs || undefined,
+      result,
+      trustedPrefix: sched.delivery === "channel" ? notifyPrefix(sched) : "",
+    });
     updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: "ok" });
     // A loop spends one tick of its budget per delivered fire, then re-arms from whatever pacing
     // decision the model made during THIS tick. `armLoop` replaces the thread's pending row, so a

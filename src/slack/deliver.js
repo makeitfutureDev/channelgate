@@ -12,11 +12,13 @@ import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { postChunkedReply } from "./util.js";
 import { footerText, resumeButton } from "./footer.js";
 
-export async function deliverResult(client, { channel, threadKey, result, dir, footer = false } = {}) {
+export async function deliverResult(client, { channel, threadKey, result, dir, footer = false, trustedPrefix = "" } = {}) {
   // Callers that already resolved the workspace directory pass it; otherwise fetch (best-effort —
   // mentions simply stay plain text without it).
   const directory = dir !== undefined ? dir : await getDirectory(client).catch(() => null);
-  const md = resolveMentions(mdToMrkdwn(result?.content || ""), directory).trim();
+  // The prefix is gateway-authored control markup. Add it only after hostile model content has
+  // passed through the normal control-sequence defanging pipeline.
+  const md = `${trustedPrefix}${resolveMentions(mdToMrkdwn(result?.content || ""), directory).trim()}`.trim();
   if (footer) {
     await postChunkedReply(client, channel, threadKey, md, footerText(result), resumeButton(result.cwd, result.sessionId, result.engine));
   } else {
