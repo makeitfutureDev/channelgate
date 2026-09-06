@@ -49,7 +49,7 @@ function getHealth(headers = {}) {
 }
 
 test("a connected daemon says so to a caller with no session", async () => {
-  snapshot = { status: "connected", connected: true, user: "atlas", team: "Make it Future", teamId: "T0BB", botUserId: "U0BB", error: null };
+  snapshot = { status: "connected", connected: true, user: "gatewaybot", team: "Make it Future", teamId: "T0BB", botUserId: "U0BB", error: null };
   const body = await getHealth();
   assert.deepEqual(body.slack, { status: "connected", connected: true }, "the connection state, exactly — nothing that names the workspace");
   assert.equal(body.ok, true);
@@ -78,7 +78,7 @@ test("a manager with no state yet answers disconnected instead of omitting the f
 
 test("a caller who cannot identify itself still gets no engine or filesystem detail", async () => {
   // The liveness widening is exactly one field wide: everything the narrowing was for stays shut.
-  snapshot = { status: "connected", connected: true, user: "atlas", team: "Make it Future", teamId: "T0BB", botUserId: "U0BB", error: null };
+  snapshot = { status: "connected", connected: true, user: "gatewaybot", team: "Make it Future", teamId: "T0BB", botUserId: "U0BB", error: null };
   const body = await getHealth({ "x-cg-secret": "not-the-secret" });
   assert.deepEqual(Object.keys(body).sort(), ["instanceId", "ok", "slack"]);
 });

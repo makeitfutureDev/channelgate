@@ -16,7 +16,7 @@ const KEY = process.env.CG_API_KEY;
 
 const { createWebApp } = await import("../src/web/app.js");
 
-const slackStub = { snapshot: () => ({ status: "disconnected", connected: false, user: "atlas", team: "Make it Future", teamId: "T0BB", botUserId: "U0BB", error: null }), getClient: () => null };
+const slackStub = { snapshot: () => ({ status: "disconnected", connected: false, user: "gatewaybot", team: "Make it Future", teamId: "T0BB", botUserId: "U0BB", error: null }), getClient: () => null };
 let updateSmokeCalls = 0;
 let updateStartResult = {
   ok: true,

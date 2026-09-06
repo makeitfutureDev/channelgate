@@ -2546,7 +2546,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       mask create args work; the `agent` user sees every channel folder and memory, every repo and the
       gateway logs, can write, and `~/.local/share/containers` is an empty tmpfs while the host store
       is untouched.
-- [ ] Manual (Xavier, both engines): switch on → an admin author in a Full-access channel lists
+- [ ] Manual (production gateway, both engines): switch on → an admin author in a Full-access channel lists
       another channel's `MEMORY.md` under `~/ChannelGate/slack/<slug>/` and a repo under `~/Code/`
       with Read/Bash (Claude) and the shell (Codex); `podman inspect` shows the home bind + the
       tmpfs mask; a Worker channel's container shows neither; switch off → the admin container is
@@ -2574,7 +2574,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [x] Unit: `parseInspectLine` reads the tenth `cg.mounts` field, maps `<no value>` to empty, and
       still parses a nine-field line from a container created before the label existed — an unknown
       mount fingerprint counts as CHANGED, not as matching (automated).
-- [ ] Manual (Xavier): point a channel's `workDir` at a subfolder, send a turn (the container is
+- [ ] Manual (production gateway): point a channel's `workDir` at a subfolder, send a turn (the container is
       created with that folder bind-mounted), restore `workDir` to the default and delete the
       subfolder, then send another turn. Pass when the container is rebuilt before the turn runs
       and the answer arrives normally; fail on `Append system prompt file not found` or any reply
@@ -3137,8 +3137,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       create a skill from chat, confirm the commit lands and the skill shows as owned by that source
       after the next sync; push a change to a source repository with the webhook configured and
       confirm the sync runs within seconds.
-- [ ] Live (two gateways): mint a `sync` token on Xavier, add Xavier as a gateway source on Atlas in
-      review mode, approve a staged skill there, and use it in an Atlas channel.
+- [ ] Live (two gateways): mint a `sync` token on the primary gateway, add it as a gateway source on the
+      second gateway in review mode, approve a staged skill there, and use it in one of that gateway's channels.
 
 ## Security checks
 - [ ] **Retired 2026-09-03 (Linux + containers only):** the sandbox wording — inside the container `~/.ssh` and sibling channel folders do not exist at

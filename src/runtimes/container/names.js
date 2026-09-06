@@ -1,7 +1,7 @@
 // Container, volume and label naming — the one home for "what is this channel's container called".
 //
-// Two gateways can share one host under different users (this box runs @xavier under `management`
-// and @atlas under `tby`) and, with a rootful daemon, they would share ONE container namespace. So
+// Two gateways can share one host under different users (one bot per Linux account, each
+// with its own user systemd unit) and, with a rootful daemon, they would share ONE container namespace. So
 // every name carries the install id: sha256 of the runtime root's real path, not the per-boot
 // instanceId, so a restart finds its own containers again. Discovery is by NAME and then VERIFIED
 // by the `cg.install` label — a container that happens to answer to our name but carries a foreign
