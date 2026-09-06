@@ -23,9 +23,10 @@ product overview.
   execution from result-delivery recovery. Google Chat intake is durable and bounded; non-Slack
   automation no longer requires Slack connectivity.
 - Composio SDK is now **Enterprise-only, Beta**. Google Chat and Microsoft Teams are **Beta**.
-- **Authentication migration:** automated Claude use requires provider API credentials. Host OAuth
-  relaying and shared writable Codex authentication mounts are removed. Codex can use service API
-  credentials or its own channel login. Rebuild the runtime image; see `docs/OPERATIONS.md`.
+- Runtime hardening: editor leases live in daemon-owned state, container bind sources reject
+  symlinked path components, shell background jobs no longer inherit engine service credentials,
+  and service credentials are redacted from replies and job output. The Claude login relay and
+  the shared Codex sign-in mount are unchanged.
 - License 1.3 clarifies no-key/free-key use of unchanged bundled EE enforcement and authorized
   redistribution. Provider agreements and legal review remain separate release requirements.
 - Patched transitive qs, corrected fresh-service provisioning, and expanded release history scans,

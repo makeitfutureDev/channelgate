@@ -22,9 +22,9 @@ in every tier. OpenCode remains experimental and restricted to its documented re
 
 ## Getting started
 
-1. **Check the prerequisites.** Linux, Node.js ≥ 22.13, rootless Podman and organization
-   provider API credentials. The runtime image contains the engine CLIs; details in
-   [INSTALL.md](./INSTALL.md).
+1. **Check the prerequisites.** Linux, Node.js ≥ 22.13, rootless Podman and a `claude` login on
+   the host (or `ANTHROPIC_API_KEY`). The runtime image contains the engine CLIs; Codex is
+   optional — details in [INSTALL.md](./INSTALL.md).
 2. **Get the code and run the installer.**
    ```bash
    git clone https://github.com/makeitfutureDev/channelgate.git
@@ -98,9 +98,10 @@ See [the deployment comparison](docs/WHY.md) for context.
 2. **Tool policy and network policy differ.** The engine's allowlist and MCP configuration restrict
    its configured tools. The container has bridge networking; *Allow network* is advisory, with
    no egress firewall or domain filtering in this release.
-3. **Credential scopes are explicit.** Host subscription files are not shared with containers.
-   Provider API credentials are delivered to the engine; independent Codex/CLI logins persist in
-   each channel's home. MCP secrets can occur in protected transient run artifacts. Listing APIs
+3. **Credential scopes are explicit.** The host's Claude credentials file is never copied or
+   mounted into a container: each run receives a relay of the login's short-lived access token
+   (or the daemon's API key). Codex sessions are per channel while its host sign-in file is
+   shared with the containers. MCP secrets can occur in protected transient run artifacts. Listing APIs
    return presence/masked metadata, and named secret reveal rechecks the current admin password.
    Per-channel environment secrets have no reveal endpoint. Agents using credentials can access
    their runtime values; UI masking is not a vault boundary against that agent.
@@ -185,9 +186,9 @@ white-label — are described at
 
 - **Node.js ≥ 22.13** (uses the built-in `node:sqlite`, stable from 22.13, plus
   `process.loadEnvFile`).
-- **Provider API credentials** for daemon runs; engine CLIs are installed in the runtime image.
-  The daemon spawns it directly; auth is whatever the CLI already uses (login or
-  `ANTHROPIC_API_KEY`).
+- **`claude` CLI installed and signed in** on this host as the daemon user (`claude --version`
+  must work); engine CLIs are also installed in the runtime image. Runs authenticate with a relay
+  of that login's access token, a configured `claude setup-token`, or `ANTHROPIC_API_KEY`.
 - **Rootless Podman** (Linux) — every channel's engines run in a container of that channel's own,
   and the daemon refuses to boot without a container CLI: `sudo apt install podman uidmap`; the
   installer builds the channel image (`npm run build:image` by hand — see
@@ -317,8 +318,7 @@ in the admin **Settings** tab (`engine: claude | codex`).
   `-s read-only`), both Composio identities (bridged to stdio via `npx mcp-remote`), images (`-i`), token counts,
   stop, the progress animation/log. **Caveats for Codex:** no warm sessions (each message
   cold-resumes), no skills (Codex uses `AGENTS.md`, not `SKILL.md`), token counts but **no $
-  cost**. Codex needs a service `CODEX_API_KEY`/`OPENAI_API_KEY` or an independent login
-  inside that channel container.
+  cost**, and `codex` must be authenticated on the machine (`codex login` / `OPENAI_API_KEY`).
 
 Per-channel settings (allowed users, workDir, shared Composio token, adminMode) and all Slack behaviour
 apply to whichever engine is selected. The full per-engine capability matrix is in

@@ -1,6 +1,12 @@
 # Remediation status — 7 September 2026
 
-The source changes for all 17 findings are implemented in the release-readiness PR. This does
+The source changes for findings 1–4, 6, 7 and 9–17 are implemented and landed on `main`.
+Findings **5 and 8** (retiring the shared Codex sign-in mount and the operator Claude login relay
+in favour of provider API credentials) were implemented on the review branch but are **not
+landed**: they change the product's credential model, every existing deployment runs on the
+operator's own subscription login with no provider API key, and applying them would fail every
+Claude and Codex turn closed at the next restart. That remediation is preserved on the
+`fix/release-readiness` branch (PR #11) for the release owner's decision. This does
 **not** certify the release for production: live provider/platform acceptance, a fresh-VM service
 install, the actual tagged image-evidence workflow, and counsel/trademark review remain open.
 The original review below is preserved as historical evidence, including its original priorities.
@@ -15,10 +21,10 @@ Standard Composio MCP mode and core security protections remain available in eve
 | 2 | API principals receive no personal SDK session; signed bridge grants restrict destinations and connection management | Both-engine Enterprise SDK fixture; SDK Beta currently uses Slack identities |
 | 3 | Numeric IPv4/IPv6 classification, mapped-address normalization and invalid DNS rejection | Automated fixtures cover the reported failure |
 | 4 | Run mode overrides only reduce stored capabilities; clean mode stays reduced | Both-engine read-only fixture |
-| 5 | Removed shared writable host Codex authentication; service API or independent channel-native login | Live two-channel login and image recreation |
+| 5 | **Not landed** — implemented on the review branch; pending the release owner's credential-model decision | Decision, then live two-channel login and image recreation |
 | 6 | Provision/probe/build as final rootless service identity, subordinate mappings, user-runtime boot ordering and checkout preflight | Fresh supported VM install/reboot/update/uninstall |
 | 7 | License 1.3/EE grant permits unchanged bundled enforcement in authorized no-key/free-key use and distribution | Counsel, ownership and trademark review |
-| 8 | Retired operator subscription relay/setup-token use for daemon Claude; require supported API/provider credentials | Operator service credentials and live provider acceptance before upgrade |
+| 8 | **Not landed** — implemented on the review branch; pending the release owner's credential-model decision (provider approval or an API-credential default) | Decision, then operator service credentials and live provider acceptance |
 | 9 | Password replacement/removal verifies current password; transient proof is not persisted; masked UI confirmation | Manual browser confirmation |
 | 10 | Cross-process serialization, bounded nonblocking reads, pinned parent descriptors and rollback on ordinary write failure | Multi-file crash publication remains explicitly non-atomic |
 | 11 | Persist execution/output/delivery separately; unknown interrupted runs require reconciliation instead of replay | Live crash/restart fixtures; delivery remains at least once |
@@ -42,10 +48,9 @@ restore code, the lockfile, `private: true`, tests, notices, authorship and cano
 symlinks because they still serve supported deployments. Broad monolith rewrites are deferred;
 this change extracts the IP policy and Enterprise implementation without a speculative rewrite.
 
-**Upgrade action:** configure service API credentials before restarting, and rebuild the runtime
-image. The old shared Codex mount disappears on managed recreation; generated relay artifacts are
-retired by the updated container init. Subscription-only Claude daemon installations now fail
-closed with a configuration remedy. VS Code attachment exports no daemon or channel secrets.
+**Upgrade action:** none for credentials — the landed changes keep the existing login relay and
+Codex mount. Editor leases move to daemon-owned state on their own; a new database migration
+(inbound event inbox) applies at the next restart.
 
 Live acceptance definitions and pass rules are in [RELEASE-ACCEPTANCE.md](docs/RELEASE-ACCEPTANCE.md).
 The 19 scenario definitions specify applicable engines; private fixture IDs and actual results are

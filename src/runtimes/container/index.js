@@ -15,7 +15,7 @@ import { createContainerExec } from "./exec.js";
 import { createContainerCarry, shellQuote } from "./carry.js";
 import { createContainerState } from "./state.js";
 import { createContainerReaper } from "./reaper.js";
-import { credentialError, credentialNotes, intendedCredentialModes } from "./credentials.js";
+import { codexAuthCandidates, codexAuthIdentity, credentialError, credentialNotes, intendedCredentialModes } from "./credentials.js";
 import { containerImagePaths, IMAGE_HELPERS, IMAGE_SPEC_VERSION } from "./image-paths.js";
 
 export { credentialError, credentialNotes } from "./credentials.js";
@@ -132,8 +132,9 @@ export const containerBackend = Object.freeze({
       runtime: containerBackend,
       artifactDir: base.artifactDir || channelArtifactDir(base.slug, base.platform),
       socketDir: runtimeSocketDir(),
-      // Legacy field kept empty for diagnostics compatibility; host auth is never mounted.
-      codexAuthFile: "",
+      // The declared credential source; ensureUp replaces it with the resolved real path, or drops
+      // the mount when the gateway has no Codex login at all.
+      codexAuthFile: codexAuthCandidates()[0],
       container,
     };
     container.mounts = buildMounts(target);
@@ -209,6 +210,21 @@ export const containerBackend = Object.freeze({
       mountsMatch: c.mountFingerprint ? info.mountFingerprint === c.mountFingerprint : null,
       recreatePending: Boolean(c.recreatePending),
     };
+    // Codex shares ONE auth file with the gateway and every other container channel. If the host
+    // has since replaced that file (a fresh `codex login` writes a new inode), a running container
+    // is still holding the old one — say so rather than let a stale login look healthy.
+    if (info.status === "running" && c.credentialMode?.codex === "shared-file" && c.codexAuthFile) {
+      const host = codexAuthIdentity(c.codexAuthFile);
+      try {
+        const seen = await r.exec.runExec(target, [c.name, "stat", "-c", "%i:%s", "/home/agent/.codex/auth.json"], { retry: false, timeoutMs: 10_000 });
+        const [ino, size] = String(seen.stdout || "").trim().split(":");
+        described.codexAuth = seen.code === 0 && host
+          ? { shared: true, current: ino === host.ino, hostIno: host.ino, containerIno: ino || "", size: Number(size) || 0 }
+          : { shared: true, current: null };
+      } catch {
+        described.codexAuth = { shared: true, current: null };
+      }
+    }
     return described;
   },
 

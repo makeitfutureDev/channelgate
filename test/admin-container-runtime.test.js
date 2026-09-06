@@ -192,15 +192,15 @@ test("the admin UI has a Container runtime card wired to the API, and no switch 
   for (const id of ["set-container-cli", "set-container-image",
     "set-container-idle", "set-container-max", "set-container-pids", "set-container-memory", "set-container-cpus",
     "set-container-full-access-home",
-    "container-runtime-health"]) {
+    "set-container-claude-token", "clear-container-claude-token", "container-runtime-health"]) {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
-  assert.match(html, /ANTHROPIC_API_KEY/);
-  assert.match(html, /subscription logins and setup-token values are no longer relayed/);
+  // The token's own instructions live next to the field — an admin should not have to guess.
+  assert.match(html, /claude setup-token/);
   // The kill switch, the default-backend select and the per-channel runtime select are gone from
   // the markup — and the client must not read them either (a save that queried a removed select
   // would throw before it ever reached the API).
-  for (const gone of ["set-container-enabled", "set-container-default", "ch-runtime", "set-container-claude-token", "clear-container-claude-token"]) {
+  for (const gone of ["set-container-enabled", "set-container-default", "ch-runtime"]) {
     assert.doesNotMatch(html, new RegExp(gone), gone);
     assert.doesNotMatch(client, new RegExp(gone), gone);
   }
@@ -208,8 +208,8 @@ test("the admin UI has a Container runtime card wired to the API, and no switch 
 
   assert.match(client, /containerFullAccessHome: document\.getElementById\("set-container-full-access-home"\)\.checked/);
   assert.match(client, /set-container-full-access-home"\)\.checked = s\.containerFullAccessHome === true/);
-  assert.doesNotMatch(client, /clearContainerClaudeOauthToken: true/);
-  assert.doesNotMatch(client, /revealSecret\("settings", "containerClaudeOauthToken"\)/);
+  assert.match(client, /clearContainerClaudeOauthToken: true/);
+  assert.match(client, /revealSecret\("settings", "containerClaudeOauthToken"\)/);
   assert.match(client, /paintContainerRuntimeHealth/);
 
   // Containers-only since the host sandbox was retired: the card must not still describe itself as

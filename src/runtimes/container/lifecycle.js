@@ -13,7 +13,7 @@ import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
 import { channelArtifactDir } from "../../config/paths.js";
 import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM } from "./names.js";
-import { containerEnvDefaults, settleCredentialModes } from "./credentials.js";
+import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
 import { CONTAINER_SOCKET_DIR } from "./image-paths.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
@@ -139,7 +139,8 @@ export function parseInspectLine(line) {
 // What is never mounted: the gateway root, config/, gateway.db, the per-channel metadata folder,
 // the daemon checkout, and the operator's ~/.claude or ~/.codex directories. The only sources under
 // the gateway root are the clean workspace (a bare workdir, mounted so clean mode works in a
-// container) and the MCP socket directory (read-only). No host authentication file is mounted.
+// container) and the MCP socket directory (read-only). The Codex auth FILE is the one credential
+// mount, and it is the resolved real file — see credentials.js for why it is a file and not a dir.
 // The single, deliberate exception is the operator-home grant (operatorHomeMounts below): a
 // Full-access channel, while the gateway-wide switch is on, gets the daemon user's whole home.
 //
@@ -180,6 +181,7 @@ export function buildMounts(base) {
     })),
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
+    { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
     ...operatorHomeMounts(base),
   ];
   return mounts.filter((mount) => mount.type === "tmpfs" || mount.source);
@@ -212,7 +214,9 @@ export function operatorHomeMounts(base) {
 function mountArgs(mounts) {
   const args = [];
   for (const mount of mounts) {
-    // Destinations are applied deepest-last, so masks cover the operator-home subtree.
+    // Destinations are applied deepest-last by both CLIs, so the Codex auth file lands inside the
+    // HOME volume correctly (verified on podman 5.7 rootless) — and a tmpfs mask lands on top of
+    // the operator-home bind it hides a subtree of.
     if (mount.type === "tmpfs") {
       // `notmpcopyup` is load-bearing: podman's --tmpfs default copies the destination's existing
       // contents INTO the tmpfs, and the destination here is the multi-gigabyte container store —
@@ -367,9 +371,10 @@ export function createContainerLifecycle({
     const settled = settleCredentialModes(target.settings, env);
     c.credentialMode = settled.modes;
     c.codexAuthFile = settled.codexAuthFile;
-    // Rebuild rather than patch so obsolete credential mounts are removed on upgrade.
+    // Rebuild rather than patch: ensureUp can run more than once on one target (the out-of-band
+    // retry), and a credential that appeared since the last pass has to come BACK as a mount.
     target.codexAuthFile = settled.codexAuthFile;
-    c.mounts = buildMounts(target);
+    c.mounts = buildMounts(target).map((mount) => (mount.kind === "codex-auth" ? { ...mount, resolved: true } : mount));
     return c;
   }
 

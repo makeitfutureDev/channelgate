@@ -119,14 +119,26 @@ test("the engine home is consulted first, the host state dir second", async () =
 
 // ── 2. The runner ───────────────────────────────────────────────────────────────
 
-test("a missing host Codex login does not suppress the channel's independent native login", async () => {
+test("a container with no Codex sign-in never spawns the turn — it fails over before any work exists", async () => {
+  // The BACKEND answers the sign-in question: it is what mounts the gateway's auth file into the
+  // container. The container backend's real gate is wired to the fake spawner and pointed at a
+  // CODEX_HOME with no auth.json, so the sentence the user gets is the real one.
   const empty = path.join(await scratch(), ".codex");
   const backend = createFakeRuntimeBackend({ credentialError: (target, engine) => containerCredentialError(target, engine, { CODEX_HOME: empty }) });
-  const target = containerTarget(backend, "codex-auth-independent");
-  await runCodex({ cwd: fixtureBin, prompt: "hello", sessionId: "", isNewSession: true, target, artifactDir: target.artifactDir, timeoutMs: 5_000 });
-  assert.equal(backend.calls.spawn.length, 1);
-  const unknown = await readCodexAuthState({ daemonOnly: true, env: {}, readFileImpl: () => assert.fail("no host credential should be read") });
-  assert.equal(unknown.known, false);
+  const target = containerTarget(backend, "codex-auth-out");
+  await assert.rejects(
+    runCodex({ cwd: fixtureBin, prompt: "hello", sessionId: "", isNewSession: true, target, artifactDir: target.artifactDir, timeoutMs: 5_000 }),
+    (error) => {
+      assert.match(error.message, /not signed in/i);
+      assert.match(error.message, /codex login/);
+      assert.equal(error.details?.engine, "codex");
+      assert.equal(error.details?.providerKind, "authentication");
+      assert.equal(error.details?.replaySafe, true);
+      assert.equal(error.details?.toolUseCount, 0);
+      return true;
+    },
+  );
+  assert.equal(backend.calls.spawn.length, 0, "the gate is pre-spawn: no process, no turn");
 });
 
 test("a credential lost MID-FLIGHT ends the turn in seconds instead of heartbeating", async () => {

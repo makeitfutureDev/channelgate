@@ -88,11 +88,15 @@ post/edit Slack message in the thread
   fingerprint, leases, the idle reaper), exec, the per-channel HOME volume and the mounts. It is the
   only runtime: the daemon refuses to boot without a container CLI, and nothing downstream asks
   "is this a container?" — it reads the target's declared capabilities.
-- `src/gateway/claude-login.js` + `claude-token-relay.js` — resolve supported daemon Claude
-  API credentials. Operator subscription files and setup-token relaying are not supported.
-  `claude-token-relay.js` remains a compatibility boundary for callers, not an OAuth relay.
-  Codex containers use service API credentials or their own independent login in their persistent
-  HOME; no host `auth.json` is shared between containers.
+- `src/gateway/claude-login.js` + `claude-token-relay.js` — the one home for "WHICH Claude login
+  does the gateway use, and what does a run receive?". The resolver's order is: a configured
+  `claude setup-token` → the OPERATOR's own `$CLAUDE_CONFIG_DIR`/`~/.claude` login → a login signed
+  in to the gateway's engine home → the daemon's `ANTHROPIC_API_KEY` → a named remedy. The operator's
+  login is NEVER copied, linked or mounted (Claude Code writes `.credentials.json` by rename, so a
+  copy that refreshes logs the original out); every container run receives a RELAY of that login's
+  current ACCESS token in `CLAUDE_CODE_OAUTH_TOKEN`, refreshed by a cheap turn in that login's own
+  config dir. The container credential modes, the engine health probe, the boot log and `/status`
+  all read the same resolver; nothing else may stat a credentials file.
 - `src/gateway/{background,scheduler,followups,nudges}.js` — daemon-side automation (bg jobs that
   outlive the subprocess, cron/one-time schedules, pending-response digests, no-response nudges).
 - `src/gateway/channel-memory.js` + `memory-review.js` — the channel memory system: the budgeted
@@ -274,12 +278,15 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
   retire the warm process (the digest is in the pool fingerprint), a background job resolves at ITS
   own spawn because it outlives the run, and values are redacted out of replies, the live stream,
   and job output — write-only in the UI is not write-only at runtime.
-- **Provider identities have explicit scope.** Claude daemon use requires supported provider API
-  credentials; do not read, copy or relay an operator's subscription authentication file. Codex may
-  use a service API key or an independent native login in its own channel HOME. Never bind a shared
-  writable host refresh credential into a container. A service API key can be shared across the
-  organization's channels; document that shared identity and its billing rather than claiming
-  per-user isolation. Credential resolution belongs in the engine's declared resolver.
+- **The gateway uses the operator's own Claude login, and never copies a credential file.** Which
+  login answers a turn is decided ONLY by `src/gateway/claude-login.js`; no other module may stat,
+  read, link or copy a `.credentials.json`. Claude Code writes that file by RENAME and rotates the
+  refresh token on every refresh, so any second copy that refreshes logs the first one out — that is
+  exactly how the gateway's own engine-home copy silently expired while the operator stayed signed
+  in. A run receives a RELAY of the resolved login's ACCESS token instead, gateway-owned and
+  applied last in the child env so a channel secret cannot displace it. A turn with no resolvable
+  login fails closed with the remedy named; it never runs on a guessed credential. A new consumer
+  asks the resolver; it never adds a second notion of "the login".
 - **Only admins get `--dangerously-skip-permissions`.** Non-admins run with the folder's
   `permissions.allow` allowlist (headless can't answer interactive prompts).
 - **Authorization (who may talk):** a user is allowed if they are an **admin** or **approved**

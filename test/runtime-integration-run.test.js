@@ -104,7 +104,7 @@ test("an isolated turn warms the runtime up, holds a run lease, and releases it"
   void entry;
 });
 
-test("a Claude turn passes only the service API credential into the container", async () => {
+test("a Claude turn relays the OPERATOR's login into the container — never a stale engine-home copy", async () => {
   saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal", engineFallback: false });
   const backend = createFakeRuntimeBackend();
   useBackend(backend);
@@ -116,8 +116,8 @@ test("a Claude turn passes only the service API credential into the container", 
   assert.equal(spawned.cmd, "claude");
   // The whole point: the engine-home file seeded above is hard-expired, the operator's is valid,
   // and the child is handed the OPERATOR's access token rather than being left to read a dead copy.
-  assert.equal(spawned.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
-  assert.equal(spawned.env.ANTHROPIC_API_KEY, "test-service-anthropic-key");
+  assert.equal(spawned.env.CLAUDE_CODE_OAUTH_TOKEN, OPERATOR_RELAY_TOKEN);
+  assert.ok(!spawned.env.CLAUDE_CODE_OAUTH_TOKEN.includes("stale-engine-home"));
   // …and the child's config dir is the IMAGE's, never the daemon's synthetic engine home (which
   // is not mounted, and whose credentials copy is exactly the dead one above).
   assert.equal(spawned.env.CLAUDE_CONFIG_DIR, "/home/agent/.claude");

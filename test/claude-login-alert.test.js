@@ -113,8 +113,8 @@ test("the DM names the login, the UTC expiry and the remedy — and no token mat
   assert.match(text, /operator/);
   assert.match(text, /\/home\/op\/\.claude/);
   assert.match(text, /2026-09-04 12:00 UTC/);
-  assert.match(text, /ANTHROPIC_API_KEY/);
-  assert.match(text, /Restart the daemon/i);
+  assert.match(text, /sign in with `claude` on the gateway host/);
+  assert.match(text, /no restart needed/i);
   assert.doesNotMatch(text, new RegExp(FINGERPRINT));
   assert.doesNotMatch(text, /accessToken|refreshToken|sk-ant/);
 });

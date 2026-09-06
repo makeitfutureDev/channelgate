@@ -105,10 +105,7 @@ test("a Codex sign-in lost mid-turn is answered by Claude, with the reason on th
   assert.match(result.content, /Stub engine reply/);
 });
 
-test("the auth cooldown holds for the SAME service API credential and releases after rotation", async (t) => {
-  const savedKey = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = "test-service-before-rotation";
-  t.after(() => { if (savedKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = savedKey; });
+test("the auth cooldown holds for the SAME credential and releases for a new one", async () => {
   // A cooldown is a memory of a broken credential. Holding it for a fixed window after the
   // operator has already run `codex login` is its own confusing failure ("I fixed it — why is it
   // still answering as Claude?"), so the release is keyed on the credential actually changing.
@@ -135,7 +132,7 @@ test("the auth cooldown holds for the SAME service API credential and releases a
   assert.match(during.content, /authentication is unavailable right now/i);
 
   // `codex login` rewrites auth.json; the engine home reaches it through a symlink.
-  process.env.OPENAI_API_KEY = "test-service-after-rotation";
+  await writeFile(path.join(process.env.CODEX_HOME, "auth.json"), JSON.stringify({ tokens: { refresh_token: `fresh-${Date.now()}` } }));
 
   const after = await send("hello once more", "1901.028");
   assert.equal(after.engine, "codex", "a replaced credential ends the cooldown immediately");
@@ -323,32 +320,4 @@ test("the Codex runner types the plan-limit rejection as a replay-safe provider 
       return true;
     },
   );
-});
-
-
-test("a native Codex login failure in one channel does not suppress another channel", async () => {
-  const oldOpenAiKey = process.env.OPENAI_API_KEY;
-  const oldCodexKey = process.env.CODEX_API_KEY;
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.CODEX_API_KEY;
-  try {
-    resetEngineCooldowns();
-    saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
-    await setUser("U_NATIVE_AUTH", { name: "Native Auth", approved: true, isAdmin: false });
-    await codexChannel("D_NATIVE_AUTH_FIRST", "native-auth-first");
-    await codexChannel("D_NATIVE_AUTH_SECOND", "native-auth-second");
-    const send = (channelId, text, threadKey) => runMessage({
-      channelId, authorId: "U_NATIVE_AUTH", text, threadKey, origin: "slack_foreground", preferCold: true,
-      getFallbackContext: async () => "Conversation context\n\n",
-    });
-    const failed = await send("D_NATIVE_AUTH_FIRST", "CODEX_STUB_AUTH_HANG", "1910.001");
-    assert.equal(failed.engine, "claude");
-    const healthy = await send("D_NATIVE_AUTH_SECOND", "hello", "1910.002");
-    assert.equal(healthy.engine, "codex", "a different container's login must still be tried");
-    assert.match(healthy.content, /Codex stub reply/);
-  } finally {
-    if (oldOpenAiKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = oldOpenAiKey;
-    if (oldCodexKey === undefined) delete process.env.CODEX_API_KEY; else process.env.CODEX_API_KEY = oldCodexKey;
-    resetEngineCooldowns();
-  }
 });

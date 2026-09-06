@@ -5,9 +5,12 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 
 ## Release readiness remediation (2026-09-07)
 
-The source changes address audit findings 1–17. `docs/RELEASE-ACCEPTANCE.md` is the live acceptance
-packet; none of its pending cases is counted as a pass. Older credential-relay/shared-auth entries
-below are historical where marked and do not describe the current authentication contract.
+The source changes address audit findings 1–4, 6, 7 and 9–17. Findings 5 and 8 (retiring the
+shared Codex sign-in mount and the Claude login relay in favour of provider API credentials) are a
+product decision that is NOT shipped: the credential-relay and shared-auth entries below still
+describe the current contract, and the remediation for 5/8 stays on its review branch.
+`docs/RELEASE-ACCEPTANCE.md` is the live acceptance packet; none of its pending cases is counted as
+a pass.
 
 - [x] Automated: mapped/expanded IPv6 and invalid DNS answers fail closed; password changes/removal
   require current proof with no proof stored or logged (`ssrf`, `admin-password-change`).
@@ -17,9 +20,10 @@ below are historical where marked and do not describe the current authentication
 - [x] Automated: SDK Enterprise entitlement, signed bridge session scope, API identity restrictions,
   reduce-only mode overrides and license response ordering (`composio-entitlement`, `run-escalation`,
   `license-verify`, `codex-failover-e2e`).
-- [x] Automated: daemon-owned editor leases, safe bind sources, API/native credential scoping and
-  final service-user preflight (`container-bind-boundary`, `container-credentials`, `claude-login`,
-  `engine-runtime-isolated`, `service-path-preflight`).
+- [x] Automated: daemon-owned editor leases, symlink-safe bind sources and final service-user
+  preflight (`container-bind-boundary`, `vscode-container`, `service-path-preflight`); the existing
+  credential-relay suites (`claude-login`, `claude-token-relay`, `container-credentials`,
+  `engine-runtime-isolated`) still pass unchanged.
 - [x] Automated: independent memory writers retain all facts, execution/delivery recovery separates
   unknown outcomes, non-Slack delivery works, durable Chat inbox orders and stops correctly
   (`automation-release-regressions`, `api-recovery`, transport tests).
@@ -1061,7 +1065,7 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       harness changes (no forced fresh session); an explicit per-thread/per-run ask still switches;
       new/unlabeled/matching sessions never trigger a switch (`test/session-engine.test.js`,
       `decideThreadEngine`).
-- Historical (superseded by Release readiness remediation): E2E: a thread that started on Claude keeps the relayed Claude login when its channel's
+- [x] E2E: a thread that started on Claude keeps the relayed Claude login when its channel's
       harness later moves to Codex ("continuing on claude"): the stub `claude` echoes `oauth=yes`
       on the resumed turn. The credential is resolved for the harness that actually runs, AFTER
       `decideThreadEngine`; before the fix the turn spawned Claude with no `CLAUDE_CODE_OAUTH_TOKEN`
@@ -1157,20 +1161,20 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       `fellBack`/`fallbackFrom` set); the same limit on stderr behaves identically; a limit that
       lands after a tool ran is NOT replayed; failover OFF and a disabled target harness both leave
       the error surfaced (`test/codex-failover-e2e.test.js`).
-- Historical (superseded by Release readiness remediation): Unit: the Claude login resolver picks the OPERATOR's own `~/.claude` login ahead of anything
+- [x] Unit: the Claude login resolver picks the OPERATOR's own `~/.claude` login ahead of anything
       in the gateway's engine home, falls through to the engine-home login only when the operator's
       session has HARD-expired, treats an expired ACCESS token as still usable (refreshing it is the
       relay's job), skips unparseable/tokenless files and names them in the remedy, honours the
       precedence setup-token → operator → gateway → API key → none, and exposes NO token material —
       only paths, expiries and an opaque fingerprint that changes exactly when the credential does
       (`test/claude-login.test.js`).
-- Historical (superseded by Release readiness remediation): Unit: the relay reads and refreshes THAT source — a fresh operator token is handed out as-is
+- [x] Unit: the relay reads and refreshes THAT source — a fresh operator token is handed out as-is
       even with an engine-home copy present, a near-expiry token triggers ONE serialized refresh run
       in the OPERATOR's own config dir (scratch cwd under the gateway root), no login anywhere
       reports the reason with all three remedies, and the warm-pool fingerprint keys on the source
       file + expiry (and a rotated setup-token) but never on the token text
       (`test/claude-token-relay.test.js`).
-- Historical (superseded by Release readiness remediation): Unit: a HOST `buildClaudeEnv` carries the relayed token in the gateway-owned last group, so a
+- [x] Unit: a HOST `buildClaudeEnv` carries the relayed token in the gateway-owned last group, so a
       channel secret named `CLAUDE_CODE_OAUTH_TOKEN` cannot displace it and no token at all still
       leaves the variable unset (`test/engine-runtime-isolated.test.js`).
 - [x] Unit: `stableClaudeState()` links `projects`/`sessions`/`session-env`/`tasks` and NEVER
@@ -2703,7 +2707,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       waits, announces once, then refuses with "all N container slots are busy" rather than killing
       a running job; `startTimer()` is idempotent so a second boot cannot double-sweep (automated:
       `test/container-reaper.test.js`).
-- Historical (superseded by Release readiness remediation): Unit: VS Code's attached-container URI hex-encodes the exact managed container name and opens
+- [x] Unit: VS Code's attached-container URI hex-encodes the exact managed container name and opens
       the identical mounted workdir; a signed external editor lease survives the daemon/process
       boundary and a daemon restart, blocks idle stopping, cannot be confused with a reused PID, and disappears on
       release; the Claude wrapper consumes the refreshed operator/setup-token relay only when the
@@ -3003,7 +3007,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       thread whose row still names the container: the turn answers (healed, as before), the log says
       `session carry-over failed (…) — the resume falls back to the existing heal`, and nothing under
       `~/ChannelGate/.runtime/<platform>/<slug>/carry/` is left behind.
-- Historical (superseded by Release readiness remediation): Live: **credential chain health** — with no `claude setup-token` configured, a container turn
+- [ ] Live: **credential chain health** — with no `claude setup-token` configured, a container turn
       still answers using the copied login and the copy is adopted once (a second turn does not
       re-seed and does not roll the token back); with a token configured, no credential file is
       copied or mounted at all; with neither, the turn ends with the setup-token remedy and does NOT

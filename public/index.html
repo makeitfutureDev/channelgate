@@ -854,7 +854,12 @@
                     <input id="set-container-cpus" type="text" placeholder="blank = no limit" />
                   </label>
                   <label class="toggle"><input type="checkbox" id="set-container-full-access-home" /> <strong>Full-access channels see the gateway home.</strong> While on, every channel in Full access gets this gateway user's whole home directory mounted read-write at its normal path inside its container: every channel's work folder and memory, every repo, the gateway's own logs and metadata — and its credential stores. Every author the channel admits can read it; only an admin author's turn can write with the bypass tools. Off keeps admin channels confined to their own work folder. Changing it recreates those containers at their next turn.</label>
-                  <p class="desc">Claude gateway runs use <code>ANTHROPIC_API_KEY</code> or <code>ANTHROPIC_AUTH_TOKEN</code> configured in the daemon service environment. Host subscription logins and setup-token values are no longer relayed. Codex uses the daemon's <code>OPENAI_API_KEY</code> (or <code>CODEX_API_KEY</code>), or an independently authenticated CLI in this channel's container; host <code>auth.json</code> is never mounted.</p>
+                  <label class="field">
+                    <span>Claude token for container runs <em class="state" id="container-token-state"></em></span>
+                    <input id="set-container-claude-token" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
+                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-container-claude-token">clear</button></div>
+                    <em class="state">How to get it: run <code>claude setup-token</code> on the gateway host and paste the token here. A container has no host <code>~/.claude</code> to borrow, so without this a container run fails closed instead of sharing the operator's own login.</em>
+                  </label>
                   <em class="state" id="container-runtime-health">Checking…</em>
                 </div>
                 <div class="setcard">

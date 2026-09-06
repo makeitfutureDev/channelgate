@@ -68,7 +68,7 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
   const t = target("mounts-chan");
   const allowedUnderRoot = new Set([cleanWorkspaceFolder("mounts-chan", "slack"), runtimeSocketDir()]);
   const kinds = t.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "codex-auth"]);
 
   for (const mount of t.container.mounts) {
     if (mount.type === "volume") continue;
@@ -77,7 +77,7 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
     const underRoot = mount.source === gatewayRoot() || mount.source.startsWith(`${gatewayRoot()}${path.sep}`);
     if (!underRoot) continue;
     assert.ok(
-      allowedUnderRoot.has(mount.source),
+      allowedUnderRoot.has(mount.source) || mount.kind === "codex-auth",
       `${mount.kind} (${mount.source}) is under the gateway root and is not one of the three allowances`,
     );
   }
@@ -90,7 +90,10 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
   const socket = t.container.mounts.find((m) => m.kind === "socket");
   assert.equal(socket.mode, "ro");
   assert.equal(socket.target, SOCKET_MOUNT_TARGET);
-  assert.ok(!t.container.mounts.some((m) => m.type === "bind-file"));
+  const codex = t.container.mounts.find((m) => m.kind === "codex-auth");
+  assert.equal(codex.type, "bind-file");
+  assert.equal(codex.target, CODEX_CONTAINER_AUTH_FILE);
+  assert.equal(codex.source, path.join(codexEngineHome(), "auth.json"));
   // Identical absolute paths on both sides is load-bearing.
   for (const kind of ["workdir", "clean", "artifacts"]) {
     const mount = t.container.mounts.find((m) => m.kind === kind);
@@ -107,7 +110,7 @@ test("operator home: granted only to adminMode channels while the gateway switch
   const admin = resolveRuntime("home-admin", { platform: "slack", channelId: "C2", adminMode: true }, { settings: on });
   assert.equal(operatorHomeGranted(admin), true);
   const kinds = admin.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "operator-home", "mask"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "codex-auth", "operator-home", "mask"]);
   const grant = admin.container.mounts.find((m) => m.kind === "operator-home");
   assert.equal(grant.type, "bind");
   assert.equal(grant.mode, "rw");

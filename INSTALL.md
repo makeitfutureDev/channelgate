@@ -10,10 +10,22 @@ see [README.md](./README.md).
 - **Linux with systemd** (Ubuntu 24.04 tested). The daemon refuses to start anywhere else.
 - **Node.js ≥ 22.13** — `node -v` (the gateway's SQLite store uses the built-in `node:sqlite`,
   stable from 22.13). Install from <https://nodejs.org> or your distribution's packages.
-- **Organization provider API credentials** — Claude daemon runs need `ANTHROPIC_API_KEY` or
-  a supported `ANTHROPIC_AUTH_TOKEN`. Codex can use `CODEX_API_KEY` (preferred) or `OPENAI_API_KEY`,
-  or an independent native login inside its channel container. Engine CLIs are built into the
-  runtime image. Host subscription login files and Claude setup-token relaying are not used.
+- **Claude Code CLI**, installed and signed in on the host as the daemon user. Turns run inside
+  the channel containers (the runtime image ships the engine CLIs), and the gateway relays that
+  host login's short-lived access token into each container — the credentials file itself is
+  never copied or mounted. Alternatives: paste a `claude setup-token` value in *Settings →
+  Container runtime*, or set `ANTHROPIC_API_KEY` for a service install with no interactive login.
+  ```bash
+  npm install -g @anthropic-ai/claude-code
+  claude login          # or set ANTHROPIC_API_KEY
+  claude --version      # must work
+  ```
+- **(Optional) OpenAI Codex CLI** — only if you'll use the Codex engine. Its host sign-in file is
+  bind-mounted into the channel containers (sessions stay per channel; the sign-in is shared):
+  ```bash
+  npm install -g @openai/codex
+  codex login           # or set OPENAI_API_KEY
+  ```
 - **Rootless Podman** — required: every channel runs its engines in a container of its
   own, and the daemon refuses to boot without a container CLI. `sudo apt install podman uidmap`
   and confirm the daemon user has `/etc/subuid` + `/etc/subgid` ranges; the installer then builds

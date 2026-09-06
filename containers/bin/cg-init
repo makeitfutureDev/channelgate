@@ -14,20 +14,9 @@ for d in /home/agent/.claude /home/agent/.codex /home/agent/.npm-global /home/ag
   mkdir -p "$d" 2>/dev/null || true
 done
 
-# Retire only the gateway-generated subscription relay wrapper from older HOME volumes.
-# Cleanup runs inside the container, never through host-side agent-controlled paths.
-legacy_wrapper=/home/agent/.local/bin/claude
-if [ -f "$legacy_wrapper" ] && [ ! -L "$legacy_wrapper" ] && \
-   grep -q 'CLAUDE_CODE_OAUTH_TOKEN' "$legacy_wrapper" && \
-   grep -q '/vscode/claude-token' "$legacy_wrapper" && \
-   grep -q 'exec /usr/local/bin/claude' "$legacy_wrapper"; then
-  rm -f "$legacy_wrapper"
-fi
-if [ -n "${CG_ARTIFACT_DIR:-}" ]; then
-  rm -f "$CG_ARTIFACT_DIR/vscode/claude-token"
-fi
-# Foreground/background gateway Claude processes use service API credentials in their exec
-# environment. Native editor CLI logins are independent and remain in this channel HOME.
+# Claude credentials are NEVER copied in here: the daemon hands the engine a `claude setup-token`
+# value through the exec environment (CLAUDE_CODE_OAUTH_TOKEN). A copy of the gateway's own login
+# would refresh, rotate the refresh token and log the gateway itself out (2026-09-02 incident).
 
 [ $# -gt 0 ] || set -- sleep infinity
 exec "$@"

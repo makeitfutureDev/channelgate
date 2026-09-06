@@ -75,7 +75,6 @@ export function ensureTestEnv() {
     // Both roots are pinned: an unset CG_WORKSPACE_DIR would put channel work folders in the
     // developer's real ~/ChannelGate.
     process.env.CG_WORKSPACE_DIR ||= path.join(dir, "workspace");
-    process.env.ANTHROPIC_API_KEY = "test-service-anthropic-key";
     // A scratch CODEX_HOME with a stub credential. Two reasons: the Codex state dir is otherwise
     // the developer's real ~/.codex (tests would create directories in it), and the runner now
     // refuses to spawn a signed-OUT Codex — without this every Codex test would exercise the

@@ -92,11 +92,13 @@ All containers currently use bridge networking. *Allow network* expresses intend
 it is not an egress firewall and does not constrain arbitrary destinations at the network layer.
 Host-side run-API attachment/webhook requests separately validate and pin public destination IPs.
 
-Claude daemon runs use provider API credentials rather than relayed operator subscription tokens.
-Codex uses service API credentials or its own channel-container login, with no shared writable host
-authentication file. Service API keys can be organization-wide: that is a shared provider identity,
-not an assertion of independent per-user billing. Container-native CLI credentials persist in the
-channel home. Personal/shared MCP credentials are resolved for each run and may be written into
+Claude runs authenticate with a relay of the host user's own `claude` login — its short-lived
+access token, refreshed on the host; the credentials file is never copied or mounted — or with a
+configured `claude setup-token` or the daemon's `ANTHROPIC_API_KEY`. Codex sessions are per channel
+while its host sign-in file is bind-mounted into the channel containers, so that sign-in is one
+shared identity across channels. Either way the provider identity is organization-wide: that is a
+shared provider identity, not an assertion of independent per-user billing. Container-native CLI
+credentials persist in the channel home. Personal/shared MCP credentials are resolved for each run and may be written into
 protected transient runtime bundles; those bundles must be included in the retention assessment.
 Runtime secret redaction reduces accidental output leakage, but an agent given a usable credential
 can access that value and use its granted privileges. UI write-only fields do not change this fact.

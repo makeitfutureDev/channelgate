@@ -175,7 +175,8 @@ test("container backend exposes the pre-spawn credential gate on the backend obj
 
   // Codex, signed out: no auth.json in the engine home or in the host's CODEX_HOME.
   const codex = containerCredentialError(target, "codex", { CODEX_HOME: tempDir("cg-no-codex-home-") });
-  assert.equal(codex, null, "Codex checks its independent container-owned login");
+  assert.match(String(codex?.message || ""), /not signed in/i);
+  assert.match(String(codex?.message || ""), /codex login/);
 
   // Claude, with nothing to relay: the seeded operator login is moved away for the duration, and
   // the empty env carries no API key either. Fail closed, with the remedy in the sentence.
@@ -183,7 +184,7 @@ test("container backend exposes the pre-spawn credential gate on the backend obj
   renameSync(seeded, `${seeded}.away`);
   try {
     const claude = containerCredentialError(target, "claude", {});
-    assert.match(String(claude?.message || ""), /ANTHROPIC_API_KEY/i);
+    assert.match(String(claude?.message || ""), /no Claude login to relay/i);
     assert.match(String(claude?.message || ""), /setup-token/);
   } finally {
     renameSync(`${seeded}.away`, seeded);

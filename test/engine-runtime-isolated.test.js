@@ -69,7 +69,7 @@ test("Claude env inside a container is the IMAGE's, and a channel secret still c
   assert.equal(env.PATH, CONTAINER_PATH, "the daemon's PATH does not exist in the image");
   assert.ok(env.PATH.includes("/opt/channelgate/bin"), "…and the image's own run helpers stay resolvable by name");
   assert.equal(env.TMPDIR, "/tmp", "the container's tmpfs, never the host's per-user temp");
-  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined, "subscription tokens are never injected");
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-gateway", "the gateway's token, not the channel's");
   assert.equal(env.SUPABASE_ACCESS_TOKEN, "sbp_live", "the channel's own secrets still ride in");
   assert.equal(env.XDG_RUNTIME_DIR, undefined, "host locations are dropped, not carried into the image");
   assert.equal(env.SSH_AUTH_SOCK, undefined);
@@ -105,7 +105,7 @@ test("a LOCAL (daemon-own) run relays the gateway's login too, and a channel sec
     extraEnv: { CLAUDE_CODE_OAUTH_TOKEN: "attacker", HOME: "/tmp/hijack" },
     oauthToken: "sk-ant-oat-operator",
   }, SOURCE);
-  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-operator");
   assert.equal(env.HOME, "/gw/home");
   assert.equal(env.CLAUDE_CONFIG_DIR, "/gw/home/.claude", "the child still keeps the gateway's own state dir");
 });
@@ -141,7 +141,7 @@ test("a containerized Claude turn passes the argv it was given, and nothing host
     strictMcp: true,
   }), "run.js decides the per-run files; the runner passes them through unchanged");
   assert.ok(!spec.args.some((arg) => arg.startsWith(gatewayRoot())), "no daemon-root path is ever named to a containerized engine");
-  assert.equal(spec.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+  assert.equal(spec.env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-gateway");
   assert.equal(spec.env.PATH, CONTAINER_PATH);
 
   rt.children[0].stdout.write(`${JSON.stringify({ type: "result", subtype: "success", result: "ok", session_id: "s-1" })}\n`);
