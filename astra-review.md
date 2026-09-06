@@ -54,7 +54,21 @@ Legal and release gates remain in [RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.
 
 ## Candidate verification
 
-Final integrated counts and CI result are recorded here after the last implementation changes.
+Local validation on Node 22.22.2, 7 September 2026:
+
+- Full regression with coverage: **2,022 tests; 2,021 passed; zero failed; one opt-in live test skipped**.
+  Aggregate coverage (including test sources) was 92.59% lines, 82.19% branches and 87.14% functions;
+  all configured floors passed. Dedicated security-area coverage gates also passed.
+- Static validation: **523 JavaScript files** passed syntax, undeclared-identifier and whitespace checks.
+- `npm audit`: **zero vulnerabilities** for the patched root lockfile. This is not a full image audit.
+- The opt-in real-container durability test passed separately with no skips. A disposable HOME/tool
+  fixture, `/tmp` and `/var/tmp` survived stop/restart/recreation; its container and volume were
+  removed. This used the existing installed host image, not a newly built candidate image.
+- Local npm inventory/build metadata generation, DCO checks and bundled skill validation passed.
+  The candidate-history/artifact scan and GitHub PR checks are recorded in the PR evidence.
+
+No production restart, provider credential change, private QA registry write, live chat/provider
+acceptance or tagged release publication was performed. The PR is held for the external gates above.
 
 ---
 

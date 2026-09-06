@@ -2,9 +2,11 @@
 
 Status: **prepared; live execution pending**. These are reproducible definitions, not claimed
 passes. Use disposable private fixtures only. Record the actual channel IDs, host/image revision,
-engine/model versions, timestamps and evidence links when executing. No live fixture was created
-or used during the source remediation. Private QA registry writes require the operator's selected
-personal connection; none was available to this session.
+engine/model versions, timestamps and evidence links when executing. No live chat/provider fixture
+was created or used during the source remediation. A separate disposable container lifecycle test
+passed against the existing installed image; it does not complete the candidate/provider cases
+below. Private QA registry writes require the operator's selected personal connection; none was
+available to this session.
 
 For rows marked **both**, create separate Claude and Codex records and run each with that engine
 explicitly pinned. Use approved non-admin test authors unless the setup names an admin. Suggested

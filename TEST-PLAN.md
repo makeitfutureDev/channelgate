@@ -11,6 +11,9 @@ below are historical where marked and do not describe the current authentication
 
 - [x] Automated: mapped/expanded IPv6 and invalid DNS answers fail closed; password changes/removal
   require current proof with no proof stored or logged (`ssrf`, `admin-password-change`).
+- [x] Automated: masked password dialog acceptance/cancellation clears the input; dummy service and
+  channel credentials are redacted from primary/fallback deltas, events, errors, shell output and
+  persisted/recovered delivery checkpoints (`admin-password-dialog`, `service-secret-output`).
 - [x] Automated: SDK Enterprise entitlement, signed bridge session scope, API identity restrictions,
   reduce-only mode overrides and license response ordering (`composio-entitlement`, `run-escalation`,
   `license-verify`, `codex-failover-e2e`).
@@ -23,6 +26,10 @@ below are historical where marked and do not describe the current authentication
 - [x] Automated: unchanged EE/no-key licensing compatibility, correct public claims, npm inventory
   identity/relationships and commit/tag secret detection (`license`, `readme`, `operations-readiness`,
   `release-secret-history`).
+- [x] Live container lifecycle only: a disposable HOME/tool fixture, `/tmp` and `/var/tmp` survived
+  stop, restart and recreation using the installed host image (2026-09-07,
+  `container-durability.live.test.js`). Container and volume cleanup was verified. This does not
+  validate the rebuilt candidate image or real provider calls.
 - [ ] Live: complete both-engine and Beta-surface cases in `docs/RELEASE-ACCEPTANCE.md`, including a
   fresh VM installation, restart, update, restore and uninstall. Record actual fixture IDs/results.
 - [ ] Release: execute the tag-bound runtime-image evidence workflow, verify attestations and review

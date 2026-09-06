@@ -19,7 +19,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   removal require current-password proof; API tool overrides are reduce-only; editor leases live
   outside agent-writable artifacts; shared writable host Codex authentication and Claude OAuth
   relaying are removed. See provider migration in `docs/OPERATIONS.md` before upgrading.
-- **Durable work:** memory mutations serialize across gateway processes. API/schedule/background
+- **Secret handling:** masked dialogs collect password proof. Known credential values are redacted
+  from primary/fallback replies, stream events, errors and background delivery checkpoints. Shell
+  jobs do not inherit engine service credentials. Exact-value redaction is not a vault and does
+  not prevent an engine from transforming a usable credential.
+- **Durable work:** memory mutations serialize across gateway processes. Bounded nonblocking reads
+  reject special files and pin parent directory descriptors before publication. API/schedule/background
   execution checkpoints distinguish unknown interrupted runs from completed results awaiting
   delivery. Results retry delivery without replaying unknown tool work. Chat accepts into SQLite
   before ACK, uses bounded conversation dispatch and stops intake promptly. Individual memory
@@ -122,7 +127,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   ships a `references/platform.md` stating exactly what renders there.
   → TEST-PLAN: Chat-platform adapter kernel.
 
-## Google Chat and Microsoft Teams transports (preview)
+## Google Chat and Microsoft Teams transports (Beta)
 
 - **Google Chat runs outbound-only**, like Slack: a Cloud Pub/Sub PULL subscription consumes the
   events Google publishes for the Chat app, so there is no inbound endpoint and no tunnel. The pull
