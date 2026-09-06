@@ -2035,6 +2035,8 @@ release, no egress cut-off — so the network entry has no container equivalent 
       a junk query and confirm the explicit no-match row; clear with × and Escape; select a row,
       filter it out and confirm the drawer closes; resize to 390px and confirm search + Add user
       remain usable without horizontal page overflow.
+- [x] Airtable: active engine-independent live definition `UI-USERS-SEARCH-01` covers masked
+      server-side search, UI debounce/race behavior, clear/no-results states, and secret non-match.
 - [ ] Settings danger zone: Reset all channels' access / Remove password / Restart daemon /
       Disconnect Slack live in the red zone; each opens the branded confirm dialog (danger-tinted
       confirm button, Escape cancels, backdrop cancels); reset completion shows an in-app notice
