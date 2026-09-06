@@ -1745,6 +1745,16 @@ are retired, bullet by bullet; everything else stands.
   few + last 4 chars) with an eye toggle (inline SVG) to reveal the full token. Token values are
   returned only to the authenticated admin session; on save a token is overwritten only when a new
   one is actually typed (an untouched masked field keeps the stored value). → TEST-PLAN: Admin UI.
+- **One masker per record shape, and no dead field survives it.** Every channel read — the channel
+  listing, the DM listing and a save's own echo — masks through the single `maskChannelMeta()`;
+  the user listing is built field by field from an explicit allowlist and never spreads a stored
+  record. That matters because a channel meta IS spread: a field belonging to a RETIRED integration
+  is read by nothing, so it is masked by nothing, and it rides out in cleartext beside the fields
+  that are masked (which is what `skillsToken` did until 2026-09-06). Retired fields are therefore
+  listed in `src/config/dead-fields.js`, stripped from every record on the way into the store and
+  on the legacy JSON import, and deleted from the rows that already carry one by schema migration
+  20 — so the value stops existing rather than merely stopping being displayed.
+  → TEST-PLAN: Admin UI.
 - Auto-recording of Slack users (display name resolved) for the access picker.
 - **MIF-branded design system** (2026-07 redesign): #makeitfuture. wordmark, self-hosted Poppins
   (`public/fonts/`, no CDN — works offline), orange `#fe3a02` + dark-teal token palette, inline-SVG

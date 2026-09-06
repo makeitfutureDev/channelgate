@@ -16,6 +16,10 @@ import {
   channelSessionsFile,
 } from "../config/paths.js";
 import { platformFolderNames } from "../platforms/registry.js";
+// The legacy JSON predates the retirement of some integrations, so it can still carry their dead
+// secrets. This import runs AFTER the migration that cleans the existing rows, so it has to strip
+// them itself or it would put one straight back (see ../config/dead-fields.js).
+import { stripDeadFields } from "../config/dead-fields.js";
 
 const readJson = (file, fallback) => {
   try {
@@ -42,7 +46,7 @@ export function importLegacy(db) {
     const users = readJson(usersFile(), {});
     const insUser = db.prepare("INSERT OR IGNORE INTO users(user_id, data) VALUES(?, ?)");
     for (const [uid, rec] of Object.entries(users)) {
-      insUser.run(uid, JSON.stringify(rec));
+      insUser.run(uid, JSON.stringify(stripDeadFields(rec)));
       counts.users++;
     }
 
@@ -78,7 +82,7 @@ export function importLegacy(db) {
     for (const slug of slugs) {
       const meta = readJson(channelMetaFile(slug), null);
       if (meta) {
-        insMeta.run(slug, JSON.stringify(meta));
+        insMeta.run(slug, JSON.stringify(stripDeadFields(meta)));
         counts.meta++;
       }
       const map = readJson(channelSessionsFile(slug), {});

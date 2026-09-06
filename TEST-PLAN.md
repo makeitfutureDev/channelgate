@@ -3057,6 +3057,21 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] **Internal IPC:** `POST /internal/background` returns 403 without the per-process secret.
 - [ ] **Secrets:** `.env` and `~/.channelgate/config/users.json` are gitignored; tokens never
       appear in logs or Slack messages.
+- [x] Automated (OPS-04 regression): a channel meta row that still carries a RETIRED integration's
+      token (`skillsToken`) is served by no channel read — the key is absent from `GET /api/channels`
+      and `GET /api/dms`, and the value appears nowhere in either response body; `GET /api/users`
+      never emits it either (its listing is an allowlist, not a spread). The DM listing masks the
+      Make toolbox key too, which its own drifted copy of the masking shape did not
+      (`test/channel-secret-listing.test.js`).
+- [x] Automated (OPS-04, the value stops existing): the next `saveChannelMeta` / `setUser` write
+      drops the dead field from the stored record while preserving every other key, and schema
+      migration 20 deletes it from the channel and user rows that already hold one — idempotently,
+      leaving rows without one (and an unparseable blob) byte-identical
+      (`test/channel-secret-listing.test.js`).
+- [ ] Live (OPS-04 remediation): on a deployment that stored a Skills Manager token, confirm after
+      the upgrade that `sqlite3 ~/.channelgate/gateway.db "SELECT data FROM channel_meta"` contains
+      no `skillsToken`, and rotate the exposed token in the issuing system (nothing needs
+      re-entering in ChannelGate — the integration is retired).
 - [ ] **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — no host sandbox, no user namespace to exempt. **Linux userns sandbox:** on an Ubuntu 23.10+ host, `sudo sh scripts/apparmor/claude-userns-fix.sh
       --check` reports `RESULT: host OK` (after `--apply` if needed); a sandboxed `claude -p "run:
       echo ok"` in a folder with `{"sandbox":{"enabled":true}}` prints `ok`; with the profile removed
