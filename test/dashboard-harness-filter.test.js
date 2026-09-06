@@ -9,12 +9,16 @@ const { usageDashboard } = await import("../src/gateway/usage.js");
 const { recordSkillUsage, usageCountsBySlug } = await import("../src/gateway/skills/catalog.js");
 
 function addUsage({ engine, channelId, slug, authorId, tokensIn, tokensOut, cost }) {
+  // Keep fixtures strictly inside usageDashboard's [start, now) window. A timestamp created in the
+  // same millisecond as the dashboard snapshot is intentionally equal to its exclusive end bound
+  // and made this test timing-dependent on fast CI runners.
+  const ts = new Date(Date.now() - 1_000).toISOString();
   getDb().prepare(
     `INSERT INTO usage(ts, channel_id, slug, author_id, engine, model, task_kind,
        tokens_in, tokens_out, cost_usd, cost_estimated, duration_ms)
      VALUES(?, ?, ?, ?, ?, ?, 'interactive', ?, ?, ?, ?, 1000)`,
   ).run(
-    new Date().toISOString(), channelId, slug, authorId, engine,
+    ts, channelId, slug, authorId, engine,
     engine === "claude" ? "claude-sonnet-4-6" : "gpt-5.6-sol",
     tokensIn, tokensOut, cost, engine === "codex" ? 1 : 0,
   );
