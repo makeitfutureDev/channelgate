@@ -7,7 +7,7 @@ import { parseFrontmatter } from "../src/gateway/skills/frontmatter.js";
 import { normalizeSkillFiles } from "../src/gateway/skills/files.js";
 import { registerMemoryReadTools } from "../src/mcp/tools/channel-admin.js";
 
-const root = path.resolve(".claude/skills/channelgate");
+const root = path.resolve("src/gateway/skills/bundled/channelgate");
 
 async function skillFiles(dir = root, prefix = "") {
   const out = [];

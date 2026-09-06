@@ -61,8 +61,12 @@ post/edit Slack message in the thread
 - `src/gateway/folders.js` — channel folder provisioning, `.claude/settings.json` generation (tool
   permissions, the MCP allowlist, memory-off and the Stop hook — no `sandbox` block: the container
   is the boundary), the CLAUDE.md/AGENTS.md managed instructions block, and the auto-injected
-  `channel-memory` skill + library skill-stubs. `.claude/skills` is canonical; a guarded relative
-  `.agents/skills` symlink exposes the same complete tree to Codex without duplicate copies.
+  `channel-memory` protocol and selected catalog skills. The real project `.claude/skills` is an
+  authoritative mirror of organization + channel + template grants (never personal grants);
+  `.agents/skills -> ../.claude/skills` exposes the same tree to local Codex. Conflicting local
+  entries are archived under the daemon root `skill-backups/` before replacement; selected files
+  are checked against actual bytes on each run. Bundled source packages live separately in
+  `src/gateway/skills/bundled/`, never in the generated discovery tree.
 - `src/gateway/guide.js` + `gateway-usage/` — the **`gateway-usage` skill**: the chat operating
   manual injected into EVERY channel folder each run, resolved for the channel's PLATFORM
   (`platforms/<id>/<name>.md` overlays the shared `references/<name>.md`, the adapter's `guideDrop`

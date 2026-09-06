@@ -1216,9 +1216,11 @@
           <label class="field">
             <span>Working folder (blank = default gateway folder)</span>
             <div class="row">
-              <input class="ch-workdir" type="text" placeholder="/Users/me/Code/my-project" />
+              <input class="ch-workdir" type="text" placeholder="Default gateway folder" />
               <button type="button" class="ch-browse ghost">Browse…</button>
+              <button type="button" class="ch-workdir-reset ghost" title="Use this conversation's default gateway folder after saving">Reset to default</button>
             </div>
+            <span class="hint">Save to apply a folder change. Existing files stay in their current folders.</span>
           </label>
           <label class="field">
             <span>Google Drive sync folder (blank = off — 2-way synced into a <code>Drive/</code> subfolder; set up the service account under Settings → Google Drive sync)</span>

@@ -56,16 +56,20 @@ The active profile is the union of:
 - transitive `requires` dependencies.
 
 Development, Sales, Marketing, and Management templates are seeded and remain live links: editing
-a template changes following conversations on their next run without removing their additions.
+a template updates following conversations without removing their additions.
 Resolution reports missing/review-pending skills, cycles, compatibility, and estimated always-on
 description context.
 
 ## Materialization and discovery
 
-The gateway materializes the resolved profile as exact files under
-`.claude/skills/<slug>/`, marker-managed and write-on-change. Project-owned skill folders win and
-are never overwritten. A guarded relative `.agents/skills -> ../.claude/skills` link exposes the
-same complete tree to Codex. Claude records exact skill-tool activation; Codex activation is
+The gateway mirrors organization, channel and template grants as exact files in the real project
+`.claude/skills/<slug>/`. Personal grants remain isolated to the author’s run. Selected copies
+replace local versions; unselected local entries and conflicting Codex discovery paths are
+archived under the daemon root `skill-backups/` before removal. The relative
+`.agents/skills -> ../.claude/skills` link exposes the same complete tree to local Codex.
+Admin saves refresh it immediately; daemon reconciliation checks MCP/catalog changes every
+five seconds and reports write failures. Every run verifies actual files and repairs drift even if a revision marker matches.
+Clean runs use a separate bare folder while the normal project stays current. Claude records exact skill-tool activation; Codex activation is
 inferred when it reads a skill entrypoint and is labelled accordingly.
 
 Use the injected `gateway-usage` skills reference for exact tools to list, inspect, grant, revoke,

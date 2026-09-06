@@ -3,7 +3,7 @@
 // display name from creeping back into the tree.
 import { execFileSync } from "node:child_process";
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +20,7 @@ const OLD_NAME = ["Claude", "Gateway"].join(" ");
 const paths = await import("../src/config/paths.js");
 const { platformFolderName, platformFolderNames, PLATFORM_IDS } = await import("../src/platforms/registry.js");
 const { validatePlatformAdapter } = await import("../src/platforms/contract.js");
-const { ensureChannelFolder, RENAMED_MANAGED_SKILLS } = await import("../src/gateway/folders.js");
+const { ensureChannelFolder, workspaceSkillBackupDir, RENAMED_MANAGED_SKILLS } = await import("../src/gateway/folders.js");
 const { channelSettingsFile, workspaceFolder, channelFolder, cleanWorkspaceFolder } = paths;
 
 // Run `fn` with a specific process environment and restore it afterwards. The path helpers read
@@ -200,11 +200,14 @@ test("the bundled lockdown skill's materialised folder is renamed in place, mark
     assert.ok(existsSync(path.join(skillsDir, "channelgate", "SKILL.md")), "the skill must survive under the new name");
     assert.equal(RENAMED_MANAGED_SKILLS["claude-gateway"], "channelgate");
 
-    // A folder with the same name that we did NOT create (no marker) is never touched.
+    // A local copy under the retired name is archived outside discovery.
     await mkdir(path.join(skillsDir, "claude-gateway"), { recursive: true });
     await writeFile(path.join(skillsDir, "claude-gateway", "SKILL.md"), "# hand made\n");
     await ensureChannelFolder(slug, { allowedMcps: [], skills: ["channelgate"] });
-    assert.equal(await readFile(path.join(skillsDir, "claude-gateway", "SKILL.md"), "utf8"), "# hand made\n");
+    assert.equal(existsSync(path.join(skillsDir, "claude-gateway")), false);
+    const backupDir = workspaceSkillBackupDir(cwd);
+    const archived = (await readdir(backupDir)).find((name) => name.startsWith("claude-gateway-"));
+    assert.equal(await readFile(path.join(backupDir, archived, "SKILL.md"), "utf8"), "# hand made\n");
   } finally {
     if (prevSources === undefined) delete process.env.GATEWAY_SKILL_SOURCES;
     else process.env.GATEWAY_SKILL_SOURCES = prevSources;
@@ -213,11 +216,12 @@ test("the bundled lockdown skill's materialised folder is renamed in place, mark
 });
 
 test("the bundled skill ships in the tree under its new name and is not gitignored", () => {
-  const skill = readFileSync(path.join(repoRoot, ".claude/skills/channelgate/SKILL.md"), "utf8");
+  const skill = readFileSync(path.join(repoRoot, "src/gateway/skills/bundled/channelgate/SKILL.md"), "utf8");
   assert.match(skill, /^name: "channelgate"$/m);
   assert.equal(existsSync(path.join(repoRoot, ".claude/skills/claude-gateway")), false);
   const ignore = readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
-  assert.match(ignore, /^!\.claude\/skills\/channelgate\/$/m);
+  assert.match(ignore, /^\.claude\/skills\/\*$/m);
+  assert.doesNotMatch(ignore, /^!\.claude\/skills\//m);
 });
 
 // ── service identities ───────────────────────────────────────────────────────────────────────

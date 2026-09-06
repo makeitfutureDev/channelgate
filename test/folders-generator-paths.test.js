@@ -139,7 +139,7 @@ test("a custom project folder gets a real CLAUDE.md with AGENTS.md mirrored, and
   assert.equal(readlinkSync(agents), "CLAUDE.md");
 
   // A workspace materialised before the product rename still holds the old bundled skill folder
-  // under its old name, marker and all. It is renamed in place; a hand-made folder is not.
+  // under its old name, marker and all. The obsolete copy is pruned; unselected hand-made copies are archived.
   const skillsDir = path.join(custom, ".claude", "skills");
   mkdirSync(path.join(skillsDir, "claude-gateway"), { recursive: true });
   writeFileSync(path.join(skillsDir, "claude-gateway", MANAGED_SKILL_MARKER), "");
@@ -148,7 +148,7 @@ test("a custom project folder gets a real CLAUDE.md with AGENTS.md mirrored, and
   writeFileSync(path.join(skillsDir, "hand-made", "SKILL.md"), "# mine\n");
   await ensureChannelFolder(slug, { name: "Custom project", workDir: custom, allowedMcps: [] });
   assert.equal(existsSync(path.join(skillsDir, "claude-gateway")), false, "the old managed folder is gone");
-  assert.ok(existsSync(path.join(skillsDir, "hand-made", "SKILL.md")), "a project-owned folder survives");
+  assert.equal(existsSync(path.join(skillsDir, "hand-made")), false, "unselected local skills are archived outside discovery");
 });
 
 // ── What the ENGINE is told about its own channel ─────────────────────────────

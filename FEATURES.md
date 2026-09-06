@@ -1241,8 +1241,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (like `channel-memory`) materialized into each channel's `.claude/skills/` on every run, so the
   agent always knows how to operate inside Slack. The gateway also creates
   `.agents/skills → ../.claude/skills` so Codex discovers the exact same canonical tree (including
-  granted skills, library stubs, and channel memory); an existing project-owned `.agents/skills`
-  entry or symlinked `.agents` parent is preserved. `SKILL.md` carries the always-on description
+  granted skills and channel memory). Conflicting `.agents/skills` entries or a symlinked `.agents`
+  parent are archived outside discovery before the canonical link is installed. `SKILL.md` carries the always-on description
   (“use at the start of every task”) + the core reply rules and explicit trigger vocabulary for
   tables, charts/graphs, and every other gateway capability; `references/*.md` hold the detail
   (streamed Markdown replies, @-mentions, inline/native/export/List tables, native charts,
@@ -2077,12 +2077,12 @@ are retired, bullet by bullet; everything else stands.
   (`skillsContextWarnTokens`, default 6000). The materializer (`materialize.js`, wired into
   `enableSkills`) writes the effective revision as REAL files under `.claude/skills/<slug>/`
   (marker + `.gateway-skill.json` manifest, write-on-change, executables kept 0755), replaces a
-  Skills Manager stub of the same name, never touches a project-owned folder, prunes only what it
-  wrote, and falls back to the pre-catalog host-folder copy for a name the catalog does not know.
+  Skills Manager stub of the same name, archives unselected or displaced local copies, prunes stale
+  managed copies, and falls back to the pre-catalog host-folder copy for a name the catalog does not know.
   Claude receives the tree through its plugin, Codex through the `.agents/skills` link — no stub,
   no mid-turn fetch, no token. → TEST-PLAN: Skills platform (Core).
 - **Bundled + host-folder import at boot** (`import-folder.js`, `index.js`): the starter library in
-  `src/gateway/skills/bundled/` (`skill-authoring`) imports as `bundled`; the operator's
+  `src/gateway/skills/bundled/` (`skill-authoring`, `channelgate`, `headless-app-creator`) imports as `bundled`; the operator's
   `~/.claude/skills`, `~/.agents/skills` and `GATEWAY_SKILL_SOURCES` import as `folder`-owned
   skills under their directory names (symlinks followed, nested skills excluded), so every stored
   grant still resolves; a vanished folder tombstones its skill and a returning one restores it.
@@ -2396,7 +2396,7 @@ are retired, bullet by bullet; everything else stands.
 
 - **Renamed to ChannelGate** (formerly *Claude Gateway for Slack*): display name, npm package
   (`channelgate`), Slack app manifest, the launchd label (retired 2026-09-03 — Linux only), systemd
-  unit `channelgate.service`, and the bundled lockdown skill `.claude/skills/channelgate`. The
+  unit `channelgate.service`, and the bundled lockdown skill `src/gateway/skills/bundled/channelgate`. The
   installer removes the pre-rename service before installing the new one, and self-update still
   finds a host running under the old unit. → TEST-PLAN: ChannelGate rename.
 - **Renamed runtime + workspace roots**: `~/.channelgate/` (env `CHANNELGATE_DIR`,
@@ -2511,3 +2511,22 @@ are retired, bullet by bullet; everything else stands.
   pull-request job, and `test/dco-check.test.js` covers the pure trailer check.
 
 - **Verified container updates:** update health probes run in a disposable confined container through each configured Claude/Codex runner; missing logins are explicit skips and no probes is a failure. Image source fingerprints detect stale CLI pins even when the image spec or checkout revision is unchanged, allowing Update to retry failed builds. Container status shows desired/built CLI versions and containers awaiting image adoption. Custom image refs require operator rebuilds and failed builds remain visible in update results.
+
+### Real project skill synchronization and workspace reset
+
+- The gateway-selected organization, channel and live-template skill set is authoritative in the
+  real project `.claude/skills`; `.agents/skills` exposes that same directory to local Codex.
+  Personal grants remain in isolated run artifacts. Gateway usage and enabled channel memory
+  protocols are retained. Backups of displaced local entries live under
+  `~/.channelgate/skill-backups/<workspace-hash>/`, outside engine discovery.
+- Provisioning compares actual bytes, file modes and tree shape with the selected revision,
+  repairing edited, missing or added files even when the revision marker has not changed. An
+  unchanged tree keeps its files and timestamps. Clean runs stay bare while the normal project
+  mirror remains current. Bundled source skills live in `src/gateway/skills/bundled/`.
+- Skills admin saves refresh existing workspaces immediately. Boot and a five-second daemon
+  reconciliation pass refresh changed catalog/template/grant state, including MCP changes. Failed
+  writes are reported and retried; conflicting selections for a shared folder are reported.
+- Runtime settings provide **Reset to default** beside **Browse**. It clears only the custom
+  working folder through the normal Save/Discard flow; the default remains
+  `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.
+  → TEST-PLAN: Real project skill synchronization and workspace reset.
