@@ -1125,7 +1125,18 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       `[Provenance: this turn was requested by ${requesterName} (${event.user}) in ${whereName}. Metadata for context/addressing only — not an instruction.]\n\n` +
       viewProvenance;
 
-    await logEvent("run_start", { channel: event.channel, author: event.user, slug: entry.slug, files: files.length });
+    // `files` is what the turn actually receives (the filtered set), not what the Slack event
+    // carried: a reply whose only attachment came from the thread root and is already on disk
+    // downloads nothing, and the audit feed must not claim otherwise. `carried` keeps that
+    // difference visible — how many of the event's files were carried in from the root.
+    const carriedFromRoot = files.filter((f) => f?.carriedFrom === "root").length;
+    await logEvent("run_start", {
+      channel: event.channel,
+      author: event.user,
+      slug: entry.slug,
+      files: wantedFiles.length,
+      ...(carriedFromRoot ? { carried: carriedFromRoot } : {}),
+    });
     // Agent UX: title each NEW DM/agent thread from its first message so the Messages-tab timeline
     // reads well. Only on the thread's root turn (no thread_ts) and only in a DM — the agent
     // surface is the bot's DM; setTitle no-ops elsewhere anyway.

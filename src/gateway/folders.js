@@ -173,7 +173,10 @@ tool shapes are in the \`gateway-usage\` skill:
   loops) dies with this turn and can never post a follow-up — never promise "I'll report back" on
   one. The durable mechanisms are only the gateway tools \`run_in_background\` (shell; auto/admin
   channels), \`run_agent_in_background\` and \`create_schedule\`; if this conversation's mode allows
-  none of them, say so plainly instead of promising.`;
+  none of them, say so plainly instead of promising. A bounded "check every N minutes, K times" is
+  one of these too: \`create_schedule\` (or \`run_agent_in_background\` for a self-contained watcher),
+  never an in-turn sleep/poll loop, a \`Monitor\`-style wait, or a harness background task — even when
+  the loop would finish inside this turn.`;
 
 // Compose the managed block for a channel: the do-not-edit note, this conversation's switches, the
 // hard rules, and (outside clean mode) the admin's global instructions. Deliberately nothing about

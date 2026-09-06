@@ -149,6 +149,30 @@ product overview.
   browser editor remains the larger workspace.
 
 ### Fixed
+- **A Claude run's skill uses now land on the skill they name.** Claude names a plugin-provided
+  skill as `<plugin>:<slug>` in its `Skill` tool call, and the usage recorder looked that whole
+  string up in the catalog — it matched nothing, so every exact signal Claude produced was stored
+  as an off-catalog name with no skill or revision id, and the usage report marked the skill it had
+  just fired as not in the catalog. The recorder now strips a leading `<plugin>:` prefix before the
+  lookup, so a plugin-qualified use attributes to the catalog skill (and its effective revision)
+  exactly like a bare one; a plugin skill the catalog does not know is still recorded, under its
+  bare slug so repeats aggregate together.
+- **The audit feed's attachment count is what the turn actually received.** `run_start` logged the
+  number of files on the Slack event, not the filtered set that reaches the engine, so a reply whose
+  only attachment was carried in from the thread root and is already on disk logged `files: 1` while
+  nothing was downloaded. It now logs the filtered count and, when the event carried root files at
+  all, a `carried` count beside it, so the difference is visible instead of misreported.
+- **The guide no longer promises a bare `stop` works in a channel.** `/help`, the `/stop` reply, the
+  README/INSTALL notes and the guide's loop and table references all said to "type `stop` in that
+  thread"; in a channel the mention gate drops an un-mentioned message before the stop word is ever
+  read, so only `@bot stop` (or a 🛑 reaction) stops a channel thread — a bare `stop` works in a DM.
+  Every one of those sentences now says which is which. The gate itself is unchanged.
+- **A bounded repeat-check is a schedule, not an in-turn poll loop.** The managed block's
+  "only the gateway can report back" rule named the durable tools but left "check every 10 minutes,
+  6 times" ambiguous, so a run could read an in-turn sleep loop as compliant while the turn is held
+  open. The rule now says a finite repeat-check is `create_schedule` (or `run_agent_in_background`
+  for a self-contained watcher) and never an in-turn sleep/poll loop, a `Monitor`-style wait, or a
+  harness background task — even when the loop would finish inside the turn.
 - **The rules a run must never get wrong are now in the context every run receives.** Guidance that
   lived only in the `gateway-usage` skill reached one engine and not the other: the skill body is
   read when the model chooses to open it, and across a retest wave of failing transcripts the string

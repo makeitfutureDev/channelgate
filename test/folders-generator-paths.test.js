@@ -217,6 +217,10 @@ test("the managed block carries the hard rules a run must never get wrong", () =
     assert.match(block, /`run_in_background`/);
     assert.match(block, /`run_agent_in_background`/);
     assert.match(block, /`create_schedule`/);
+    // …and a FINITE repeat-check ("every 10 minutes, 6 times") is a schedule, not an in-turn poll
+    //  loop the turn would have to stay alive for.
+    assert.match(block, /A bounded "check every N minutes, K times"/);
+    assert.match(block, /never an in-turn sleep\/poll loop/);
 
     // Still the whole block, not a replacement for it: tonight's switches section survives.
     assert.match(block, /This conversation's switches/);

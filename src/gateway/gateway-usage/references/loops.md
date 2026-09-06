@@ -55,7 +55,8 @@ will deliver is not.
 
 - **You** stop it by calling the stop form of the wake-up (`stop: true`) on the iteration where the
   work is done. Say plainly in that reply that the loop is finished.
-- **The user** stops it by saying `stop` in the thread. That cancels the run AND the pending tick.
+- **The user** stops it by saying `stop` in the thread — @mentioning you in a channel, bare in a
+  DM. That cancels the run AND the pending tick.
 - A tick that is superseded is replaced, never stacked: scheduling twice in one turn leaves one
   pending tick, not two.
 

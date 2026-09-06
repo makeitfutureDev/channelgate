@@ -446,6 +446,9 @@ shape is asserted, not reviewed by eye.
       `@bot download F… yourself` with the id of a file shared earlier in the channel → the tool
       returns the local path and the agent reads it; with the id of a file from ANOTHER channel →
       `not shared in this channel`. Both engines (QA: ATT-02).
+      The `run_start` event for that second reply reads `files: 0` (nothing was downloaded) with
+      `carried: 1` beside it — the count is the filtered set the engine receives, never the raw
+      event's attachment list.
 - [ ] Live: attach a ~250 MB screen recording (MP4) with an `@bot` mention in a container channel →
       the assistant status reads `is downloading 1 attachment(s) (… MB)…` while it fetches, the file
       lands under `uploads/<thread>/` with its full size, the daemon's RSS does not grow by the file
@@ -1367,6 +1370,10 @@ release, no egress cut-off — so the network entry has no container equivalent 
       `run_agent_in_background` / `create_schedule` as the only durable follow-ups. Present in clean
       mode too, and the gateway-owned part of the block stays under 4 KB
       (`test/folders-generator-paths.test.js`).
+- [x] Unit: the same rule names the FINITE repeat-check case out loud — "check every N minutes, K
+      times" is `create_schedule` (or `run_agent_in_background` for a self-contained watcher) and
+      never an in-turn sleep/poll loop, a `Monitor`-style wait, or a harness background task, even
+      when the loop would finish inside the turn (`test/folders-generator-paths.test.js`).
 - [x] Unit (CTO-04 regression): the policy module says out loud that nothing enforces the switch —
       `NETWORK_POLICY_ENFORCED` is `false`, `NETWORK_ADVISORY_NOTE` is the one shared phrase, and
       the retired "off runs the container with no network at all" header claim cannot come back
@@ -1411,6 +1418,10 @@ release, no egress cut-off — so the network entry has no container equivalent 
       file browsing, Composio setup, the skill catalog, memory/rules, automatic gateway skills,
       reminders/schedules, durable background work, `/status`, and `/pending`; it distinguishes a
       thread's `stop`/🛑 from the top-level `/stop` sweep.
+- [x] Unit (EN-11/W26 regression): `/help` says a channel thread is stopped with `@agent stop` (or
+      🛑) and that a bare `stop` needs no mention only in a DM — the un-mentioned channel message
+      never reaches the stop check — and the retired "type `stop` in that thread" phrasing cannot
+      come back (`test/help-text.test.js`).
 - [ ] `/clear` drops the session (next message is a cold start); `/help` shows the practical guide
       and lists all commands (including `/status`, `/stop`, and `/pending`).
 - [ ] `/delete` (org-admin only) inside a thread removes the BOT's messages there (replies before the
@@ -2776,6 +2787,11 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       (path, target or shell command) as inferred, dedupes per run, `toolTarget("Skill")` names the
       skill, and the report lists never-used grants, off-catalog names and per-conversation rollups
       (`test/skills-platform.test.js`).
+- [x] Integration (SKL-14 regression): Claude's plugin-qualified skill name
+      (`gateway-shared-skills:<slug>`) attributes to the catalog skill — the prefix is stripped
+      before the lookup, so the row carries the catalog slug with its skill and revision ids and the
+      report marks it `inCatalog` with an exact signal; a plugin skill outside the catalog still
+      records under its bare slug (`test/skills-platform.test.js`).
 - [x] Integration: authoring creates a local skill granted here, refuses an
       existing slug, merges partial files on update, refuses in-place edits of source-owned skills,
       files proposals, approves a change into a pinned override that survives the next source

@@ -7,7 +7,7 @@ test("/help explains the gateway's essential user workflows", () => {
   const essentials = [
     "`@agent your request`",
     "react 🤖",
-    "type `stop`",
+    "`@agent stop`",
     "react 🛑",
     "`@agent /files`",
     "set my Composio token",
@@ -40,7 +40,11 @@ test("/help explains optional local voice transcription and Slack fallback", () 
 });
 
 test("/help distinguishes thread stops from the top-level /stop command", () => {
-  assert.match(HELP_TEXT, /type `stop` in that thread/);
+  // The mention gate drops an un-mentioned channel message before the stop check, so the guide
+  // must not promise that a bare `stop` works in a channel thread (it only does in a DM).
+  assert.match(HELP_TEXT, /send `@agent stop`/);
+  assert.match(HELP_TEXT, /bare `stop` needs no mention only in a DM/);
+  assert.doesNotMatch(HELP_TEXT, /type `stop` in that thread/);
   assert.match(HELP_TEXT, /`\/stop` at top level stops every active run/);
   assert.match(HELP_TEXT, /choose \*Steer Conversation\*, \*Add to Queue\*, or \*Cancel Request\*/i);
   assert.match(HELP_TEXT, /choice card disappears after a valid selection/i);
