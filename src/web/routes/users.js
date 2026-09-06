@@ -4,6 +4,11 @@ import { Router } from "express";
 import { getUsers, setUser } from "../../config/store.js";
 import { cleanAccessGrants } from "./helpers.js";
 
+// The user listing is built field by field, never `...u`. That is the property that matters here:
+// a stored user record can carry secrets this file has never heard of — a personal token from an
+// integration that has since been retired — and only an explicit allowlist keeps those out of the
+// response. Add a field here on purpose or it does not ship. (See config/dead-fields.js for the
+// other half: the retired fields are also removed from the stored records.)
 function maskUsers(users) {
   const out = {};
   for (const [id, u] of Object.entries(users)) {

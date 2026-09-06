@@ -14,6 +14,9 @@ import {
   slugify,
 } from "./paths.js";
 import { getDb, toJson, fromJson } from "../db/index.js";
+// Retired integrations' fields are dropped on the way IN, so a record can never be re-saved with
+// one and no listing has to remember to mask it (see ./dead-fields.js).
+import { stripDeadFields } from "./dead-fields.js";
 import { DEFAULT_PLATFORM, isPlatformId, platformFolderNames } from "../platforms/registry.js";
 const PLATFORM_FOLDER_NAMES = new Set(platformFolderNames());
 
@@ -59,10 +62,11 @@ export async function setUser(userId, patch) {
     for (const [key, value] of Object.entries(patch || {})) {
       if (value !== undefined) next[key] = value;
     }
+    const saved = stripDeadFields(next);
     db.prepare("INSERT INTO users(user_id, data) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data")
-      .run(userId, toJson(next));
+      .run(userId, toJson(saved));
     db.exec("COMMIT");
-    return next;
+    return saved;
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
     throw error;
@@ -215,10 +219,11 @@ export async function getChannelMeta(slug) {
 }
 
 export async function saveChannelMeta(slug, meta) {
+  const record = stripDeadFields(meta);
   getDb()
     .prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
-    .run(slug, toJson(meta));
-  return meta;
+    .run(slug, toJson(record));
+  return record;
 }
 
 // Atomically merge a PARTIAL patch into one channel's meta. The read-modify-write runs inside a
@@ -241,7 +246,7 @@ export async function patchChannelMeta(slug, patch) {
       db.exec("ROLLBACK");
       return null;
     }
-    const next = { ...(current || {}), ...partial };
+    const next = stripDeadFields({ ...(current || {}), ...partial });
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data").run(slug, toJson(next));
     db.exec("COMMIT");
     return next;

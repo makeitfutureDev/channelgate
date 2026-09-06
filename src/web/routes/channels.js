@@ -56,20 +56,30 @@ import { listChannelEnv, normalizeEnvName, patchChannelEnv } from "../../config/
 // Per-channel POLICY changes (Allow-network, Full access, work folder, access lists, engine…) are
 // audited by diffing the record that was replaced against the one now stored — see config/channel-audit.js.
 import { ADMIN_UI_ACTOR, logChannelPolicyChange } from "../../config/channel-audit.js";
+// Retired integrations' fields (config/dead-fields.js). Nothing reads them, so nothing masks them
+// — which is precisely why they must not ride out on a spread of the whole record.
+import { stripDeadFields } from "../../config/dead-fields.js";
 import { cliEnvKeys, cliIntegrationIds } from "../../config/cli-catalog.js";
 
 const WEB_ADMIN_ACTOR = "admin UI";
 
 // Strip stored secrets from a channel meta before it leaves the API, keeping has*/last4 for
-// display. Used by BOTH the list and the save response: a PUT that changes something unrelated
-// would otherwise echo back every preserved token, which is the same disclosure by another route.
+// display. THE one masker: every channel read goes through it — the channel list, the DM list and
+// the save response alike — because each hand-rolled copy of this shape was a separate place to
+// forget a field, and forgetting one is a cleartext disclosure. A PUT that changes something
+// unrelated would otherwise echo back every preserved token, which is the same disclosure by
+// another route.
+//
+// The `...meta` spread is what makes that dangerous: it carries EVERY stored key, including ones
+// no code reads any more. So the dead fields are dropped here too (config/dead-fields.js) — a
+// retired integration's token must not survive as a listing field nobody thought to mask.
 export function maskChannelMeta(meta = {}) {
   const mask = (v) => ({ has: Boolean(v), last4: v ? String(v).slice(-4) : "" });
   const tok = mask(meta.composioToken);
   const tb = mask(meta.toolboxToken);
   const mk = mask(meta.makeToolboxKey);
   return {
-    ...meta,
+    ...stripDeadFields(meta),
     // `...meta` would otherwise spread the env bag — VALUES included — into every save response.
     env: undefined,
     envVars: listChannelEnv(meta),
@@ -142,26 +152,15 @@ export function createChannelsRouter({
         .map((c) => {
           const meta = c.meta || {};
           const uid = meta.dmUserId || resolveDmUserId(c.slug, users);
-          const tok = meta.composioToken || "";
-          const tb = meta.toolboxToken || "";
           return {
             channelId: c.channelId,
             slug: c.slug,
             dmUserId: uid,
             userName: users[uid]?.name || uid || c.slug,
             template: meta.template || "user",
-            meta: {
-              ...meta,
-              // A DM is a channel too: the spread above would otherwise carry its env VALUES.
-              env: undefined,
-              envVars: listChannelEnv(meta),
-              composioToken: undefined,
-              hasComposioToken: Boolean(tok),
-              composioTokenLast4: tok ? tok.slice(-4) : "",
-              toolboxToken: undefined,
-              hasToolboxToken: Boolean(tb),
-              toolboxTokenLast4: tb ? tb.slice(-4) : "",
-            },
+            // A DM is a channel too, so it gets the SAME masker — the copy that used to live here
+            // masked Composio and Toolbox but not the Make toolbox key or a dead field.
+            meta: maskChannelMeta(meta),
           };
         });
       res.json({ dms });
@@ -221,28 +220,12 @@ export function createChannelsRouter({
       // DMs aren't shown here — a DM has no per-channel settings (access is governed by the
       // user's approval in the Users tab, not allowedUsers/MCPs/skills).
       const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im");
-      // Per-channel Composio / Skills / Toolbox / Make toolbox secrets are NOT returned — only
-      // has*/last4 for display. The UI fetches a value on demand via POST /secrets/reveal, which
-      // re-prompts for the admin password. Only overwritten on save when a non-empty value is sent.
+      // Per-channel Composio / Toolbox / Make toolbox secrets are NOT returned — only has*/last4
+      // for display. The UI fetches a value on demand via POST /secrets/reveal, which re-prompts
+      // for the admin password. Only overwritten on save when a non-empty value is sent.
       for (const ch of channels) {
         if (!ch.meta) continue;
-        const tok = ch.meta.composioToken || "";
-        const tb = ch.meta.toolboxToken || "";
-        const makeKey = ch.meta.makeToolboxKey || "";
-        ch.meta = {
-          ...ch.meta,
-          env: undefined,
-          envVars: listChannelEnv(ch.meta),
-          composioToken: undefined,
-          hasComposioToken: Boolean(tok),
-          composioTokenLast4: tok ? tok.slice(-4) : "",
-          toolboxToken: undefined,
-          hasToolboxToken: Boolean(tb),
-          toolboxTokenLast4: tb ? tb.slice(-4) : "",
-          makeToolboxKey: undefined,
-          hasMakeToolboxKey: Boolean(makeKey),
-          makeToolboxKeyLast4: makeKey ? makeKey.slice(-4) : "",
-        };
+        ch.meta = maskChannelMeta(ch.meta);
       }
       res.json({ channels });
     } catch (e) {

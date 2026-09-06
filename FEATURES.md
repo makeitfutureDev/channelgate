@@ -1745,6 +1745,16 @@ are retired, bullet by bullet; everything else stands.
   few + last 4 chars) with an eye toggle (inline SVG) to reveal the full token. Token values are
   returned only to the authenticated admin session; on save a token is overwritten only when a new
   one is actually typed (an untouched masked field keeps the stored value). → TEST-PLAN: Admin UI.
+- **One masker per record shape, and no dead field survives it.** Every channel read — the channel
+  listing, the DM listing and a save's own echo — masks through the single `maskChannelMeta()`;
+  the user listing is built field by field from an explicit allowlist and never spreads a stored
+  record. That matters because a channel meta IS spread: a field belonging to a RETIRED integration
+  is read by nothing, so it is masked by nothing, and it rides out in cleartext beside the fields
+  that are masked (which is what `skillsToken` did until 2026-09-06). Retired fields are therefore
+  listed in `src/config/dead-fields.js`, stripped from every record on the way into the store and
+  on the legacy JSON import, and deleted from the rows that already carry one by schema migration
+  20 — so the value stops existing rather than merely stopping being displayed.
+  → TEST-PLAN: Admin UI.
 - Auto-recording of Slack users (display name resolved) for the access picker.
 - **MIF-branded design system** (2026-07 redesign): #makeitfuture. wordmark, self-hosted Poppins
   (`public/fonts/`, no CDN — works offline), orange `#fe3a02` + dark-teal token palette, inline-SVG
@@ -2140,12 +2150,16 @@ are retired, bullet by bullet; everything else stands.
   coordinated rotation. The
   boot path never awaits it — Slack connects while the check is in flight and the run gate reads
   the cached state, so a slow or dead platform costs the daemon nothing.
-- **State machine** `no_key · valid · invalid · revoked · grace · expired_grace`, all of them
-  healthy daemon states. Unreachable keeps the last verified tier for 14 days (`grace`); past that
-  the tier is STILL kept until the next UTC month boundary and only then falls back to the no-key
-  limits — never mid-month, never silently. `invalid`/`revoked` drop immediately. A response whose
-  signature does not verify changes nothing in either direction. An in-process event fires on every
-  state change.
+- **State machine** `no_key · valid · invalid · revoked · expired · grace · expired_grace`, all of
+  them healthy daemon states. Unreachable keeps the last verified tier for 14 days (`grace`); past
+  that the tier is STILL kept until the next UTC month boundary and only then falls back to the
+  no-key limits — never mid-month, never silently. `invalid`/`revoked` drop immediately. So does
+  `expired`: a licence that passed its own `expiresAt` ran out on its own terms — that is not a
+  deployment that lost contact, and the date was known in advance — so it is resolved BEFORE the
+  unreachable lane, grants the no-key limits, and reports no tier. That ordering is what makes the
+  air-gapped promise true: an offline payload is stamped as verified at read time, so an expired one
+  routed through grace would have looked freshly checked forever. A response whose signature does
+  not verify changes nothing in either direction. An in-process event fires on every state change.
 - **Two enforcement points**, both in `licenseAdmission()` (`src/ee/limits.js`), called from the
   run orchestrator before a turn provisions a folder, mints a session, or spawns an engine:
   conversation admission (the month's first N distinct conversations are the allowed set,
@@ -2176,6 +2190,14 @@ are retired, bullet by bullet; everything else stands.
   restarting brings its schema up to date with no manual step; no native build (portable to any
   Node 24+ host). One-time import of the pre-SQLite JSON/JSONL on first boot (old files kept as
   inert backups). Daemon + MCP-server processes share the DB safely via SQLite locking.
+- **The legacy import reads the legacy layout.** The pre-SQLite tree keeps a channel's files at
+  `channels/<slug>/{meta,sessions}.json` — it predates both SQLite and the per-platform channel
+  folders — so the import spells that path out rather than going through the path helpers, which
+  moved with the folder rename and now resolve to `channels/<platform>/<slug>/`. It has to: the
+  boot migration reads its channel records from the store, which opens the database and runs this
+  import, before it moves a single folder. The current layout is accepted as a fallback for a
+  half-migrated tree, a platform folder is never mistaken for a slug, and both the one-time flag
+  and the untouched source files are unchanged. → TEST-PLAN: Storage / SQLite (Slice 9).
 
 ## Observability
 - Live streaming feedback in Slack + a width-conscious stats footer per reply:

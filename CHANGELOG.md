@@ -222,6 +222,22 @@ product overview.
   (for a policy change: `key: before → after`) — defaulting to the admin/security kinds with a
   toggle for the full feed and 25-row pagination. An unrecognized kind still renders, with its raw
   name opened up, so a newly added event is readable the day it ships.
+- **A retired integration's token is no longer served in cleartext by the admin API.**
+  `GET /api/channels` masked the Composio, Toolbox and Make toolbox secrets by name and then spread
+  the rest of each channel's stored record into the response. `skillsToken` — the Skills Manager MCP
+  token, dead since the local skills catalog replaced that integration — was in neither set: no code
+  read it, so no masker named it, and every channel whose stored meta still carried one handed the
+  full value to anyone who could reach the admin API. **Operators should rotate any Skills Manager
+  token that was ever stored on this deployment**, in the issuing system; the gateway itself no
+  longer uses it, so nothing needs re-entering afterwards. Three changes, because masking alone was
+  what failed: every channel read (the channel list, the DM list and the save response) now goes
+  through the ONE masker instead of three drifted copies of it — which also closes the DM listing's
+  unmasked Make toolbox key; the dead field is stripped from every record on the way into the store
+  and on the legacy JSON import; and a schema migration deletes it from the channel and user records
+  that already hold one, so the value stops existing rather than merely stopping being displayed.
+  The users listing was never affected — it is built from an explicit allowlist, which is now the
+  documented reason it is written that way. Retiring an integration means adding its field to
+  `src/config/dead-fields.js` in the same change.
 
 ### Fixed
 - **A container whose workspace moved is rebuilt before the next turn, never reused.** A channel's
@@ -263,6 +279,29 @@ product overview.
   refusal or a duplicate. Nothing else is forgiven: a dash, a space or a leading digit is still
   refused (quoting what was typed), and the reserved-name check runs on the folded name, so `path`
   cannot smuggle `PATH` past it.
+- **A pre-SQLite upgrade no longer loses every channel's lockdown record and thread→session map.**
+  The one-time JSON→SQLite import listed the legacy channel slugs from `channels/`, then read each
+  one's `meta.json` / `sessions.json` through the path helpers — which moved with the per-platform
+  folder rename and now resolve to `channels/<platform>/<slug>/`. On an authentic legacy tree those
+  files are at `channels/<slug>/`, so the import found none of them: it logged `meta=0 sessions=0`
+  and completed successfully, and the upgraded install came up with every channel's capability
+  settings and every thread's engine session gone. Nothing failed; the data was simply not there.
+  It cannot be avoided by migrating the folders first, either — the boot migration reads its channel
+  records from the store, which opens the database and runs this import, before it moves anything.
+  The legacy paths are now spelled out, with the current layout accepted as a fallback for a
+  half-migrated tree; the import stays one-time and still leaves every source file byte-identical.
+- **An expired licence stops granting its tier.** A licence whose `expiresAt` had passed was routed
+  into the "platform unreachable" grace lane, which keeps the last verified tier for 14 days from
+  the last successful check. For an OFFLINE (air-gapped) payload that check is stamped at read time,
+  so it always looked freshly verified and the 14-day window never closed: an expired enterprise
+  payload kept reporting tier `enterprise` with unlimited conversations indefinitely, and the run
+  gate admitted accordingly. Expiry is now resolved before the unreachable lane, as its own `expired`
+  state: the no-key limits apply from the moment the licence runs out, no tier is reported, and the
+  admin card says on which date it expired. An expiry date is not a network condition — unlike a
+  platform outage it is known in advance — so it gets neither the 14-day window nor the month-boundary
+  courtesy, exactly like `invalid`/`revoked`. The genuine case those courtesies exist for is
+  unchanged: a still-in-date licence that could not be re-checked keeps its tier for 14 days and then
+  until the next UTC month boundary. A licence with no end date, or an unreadable one, never expires.
 - **A daily-thread schedule starts a fresh session on every fire again.** A scheduled run's session
   key was built from the message its result is threaded under, which is a different message per
   fire only for `standard` delivery. `delivery:"daily-thread"` reuses one anchor for the whole

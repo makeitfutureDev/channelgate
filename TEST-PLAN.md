@@ -2209,6 +2209,18 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [ ] **Migration on boot:** starting the daemon on a machine with the pre-SQLite JSON files
       imports them once into `gateway.db` (log line "legacy JSON imported (…)"); counts match the
       old files; the JSON/JSONL files remain on disk untouched as backups.
+- [x] Automated (OPS-02 regression — the legacy layout is what gets read): a fixture tree in the
+      pre-rename shape (`channels/<slug>/meta.json`, `channels/<slug>/sessions.json`, plus
+      `config/users.json` and `config/channels.json`) imports with `meta` and `sessions` counts
+      above zero — both were always 0 — and each imported row equals its source file; an empty
+      session id contributes no row, a channel folder with neither file does not break the sweep,
+      and a `channels/slack/` platform folder is never imported as a phantom channel
+      (`test/import-legacy.test.js`).
+- [x] Automated (OPS-02 — the guarantees around it are unchanged): every legacy source file is
+      byte-identical after the import; a second open does not clobber a later edit or resurrect a
+      cleared thread map; a half-migrated tree whose files already sit at
+      `channels/<platform>/<slug>/` is imported through the fallback
+      (`test/import-legacy.test.js`).
 - [ ] **Idempotent:** restarting does NOT re-import (record counts stay the same; `_meta`
       `legacy_imported=1`).
 - [ ] **Schema versioning:** a fresh machine with no data creates the DB and applies all migrations
@@ -3057,6 +3069,21 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] **Internal IPC:** `POST /internal/background` returns 403 without the per-process secret.
 - [ ] **Secrets:** `.env` and `~/.channelgate/config/users.json` are gitignored; tokens never
       appear in logs or Slack messages.
+- [x] Automated (OPS-04 regression): a channel meta row that still carries a RETIRED integration's
+      token (`skillsToken`) is served by no channel read — the key is absent from `GET /api/channels`
+      and `GET /api/dms`, and the value appears nowhere in either response body; `GET /api/users`
+      never emits it either (its listing is an allowlist, not a spread). The DM listing masks the
+      Make toolbox key too, which its own drifted copy of the masking shape did not
+      (`test/channel-secret-listing.test.js`).
+- [x] Automated (OPS-04, the value stops existing): the next `saveChannelMeta` / `setUser` write
+      drops the dead field from the stored record while preserving every other key, and schema
+      migration 20 deletes it from the channel and user rows that already hold one — idempotently,
+      leaving rows without one (and an unparseable blob) byte-identical
+      (`test/channel-secret-listing.test.js`).
+- [ ] Live (OPS-04 remediation): on a deployment that stored a Skills Manager token, confirm after
+      the upgrade that `sqlite3 ~/.channelgate/gateway.db "SELECT data FROM channel_meta"` contains
+      no `skillsToken`, and rotate the exposed token in the issuing system (nothing needs
+      re-entering in ChannelGate — the integration is retired).
 - [ ] **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — no host sandbox, no user namespace to exempt. **Linux userns sandbox:** on an Ubuntu 23.10+ host, `sudo sh scripts/apparmor/claude-userns-fix.sh
       --check` reports `RESULT: host OK` (after `--apply` if needed); a sandboxed `claude -p "run:
       echo ok"` in a folder with `{"sandbox":{"enabled":true}}` prints `ok`; with the profile removed
@@ -3344,6 +3371,21 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       rolling into the next year; a cached payload past its own `expiresAt` unable to stay `valid`;
       and every declared state being reachable and every reachable state declared
       (`test/license-state.test.js`).
+- [x] Unit (OPS-11 regression — expiry fails CLOSED): a licence past its own `expiresAt` resolves to
+      `expired`, not `grace` — the no-key limits, `license: null` so nothing downstream reads a tier
+      off it, `expiredAt` kept for the card, and an error banner naming the date. Checked at +0.1,
+      +15 and +400 days with the verifiedAt an offline payload actually carries (read time), which is
+      what made the old grace window impossible to leave. The same payload an hour before its expiry
+      is still `valid`; `expiresAt: null` and an unparseable date never expire
+      (`test/license-state.test.js`).
+- [x] Unit (OPS-11 regression — the grace lane is intact): a still-in-date licence the platform
+      could not re-check is `grace` on its own tier at day 9 and `expired_grace` on the same tier at
+      day 20, exactly as before (`test/license-state.test.js`).
+- [x] Unit (OPS-11 regression — end to end through the gate): a real signed OFFLINE enterprise
+      payload with a past `expiresAt` yields `state: "expired"`, a tier that is not `enterprise`,
+      the no-key limits, and an admission that serves the first conversation of the month and
+      refuses the second (`conversation_limit`); the identical payload with a future expiry is the
+      unlimited enterprise tier it always was (`test/license-limits.test.js`).
 - [x] Unit (UTC months): the ledger month is UTC, so 23:30 on 31 December is still December even
       where it is already January locally (`test/license-state.test.js`).
 - [x] Unit (admission, no key): the first conversation of the month is served and every other one

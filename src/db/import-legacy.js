@@ -16,6 +16,10 @@ import {
   channelSessionsFile,
 } from "../config/paths.js";
 import { platformFolderNames } from "../platforms/registry.js";
+// The legacy JSON predates the retirement of some integrations, so it can still carry their dead
+// secrets. This import runs AFTER the migration that cleans the existing rows, so it has to strip
+// them itself or it would put one straight back (see ../config/dead-fields.js).
+import { stripDeadFields } from "../config/dead-fields.js";
 
 const readJson = (file, fallback) => {
   try {
@@ -23,6 +27,16 @@ const readJson = (file, fallback) => {
   } catch {
     return fallback;
   }
+};
+
+// The first of these files that parses, or the fallback. Used for the per-channel files, which
+// exist at two different paths depending on how far a machine got through the folder rename.
+const readFirstJson = (files, fallback) => {
+  for (const file of files) {
+    const value = readJson(file, null);
+    if (value !== null) return value;
+  }
+  return fallback;
 };
 
 export function importLegacy(db) {
@@ -42,7 +56,7 @@ export function importLegacy(db) {
     const users = readJson(usersFile(), {});
     const insUser = db.prepare("INSERT OR IGNORE INTO users(user_id, data) VALUES(?, ?)");
     for (const [uid, rec] of Object.entries(users)) {
-      insUser.run(uid, JSON.stringify(rec));
+      insUser.run(uid, JSON.stringify(stripDeadFields(rec)));
       counts.users++;
     }
 
@@ -75,13 +89,27 @@ export function importLegacy(db) {
     }
     const insMeta = db.prepare("INSERT OR IGNORE INTO channel_meta(slug, data) VALUES(?, ?)");
     const insSess = db.prepare("INSERT OR IGNORE INTO sessions(slug, thread_key, session_id) VALUES(?, ?, ?)");
+    // Read those slugs' files from the LEGACY layout, spelled out rather than through
+    // channelMetaFile()/channelSessionsFile(). Those helpers moved with the platform-folder rename
+    // and now resolve to channels/<platform>/<slug>/…, which is not where the tree this function
+    // exists to read keeps them — a genuine pre-SQLite install has channels/<slug>/meta.json and
+    // no platform level at all. Reading through the helpers silently imported nothing: every
+    // channel's lockdown record and every thread→session mapping was dropped by the one upgrade
+    // that was supposed to carry them across, with counts.meta = counts.sessions = 0 in the log.
+    // The rename is also why the folder move cannot have happened yet: scripts/migrate-channelgate.mjs
+    // reads the channel records from the STORE, which opens the database — running this import —
+    // before it moves a single folder.
+    //
+    // The platform path is kept as a fallback for a half-migrated tree (folders moved, database
+    // still fresh). Legacy first: on such a tree the legacy file is the one the daemon last wrote.
+    const legacyChannelFile = (slug, name) => path.join(channelsDir(), slug, name);
     for (const slug of slugs) {
-      const meta = readJson(channelMetaFile(slug), null);
+      const meta = readFirstJson([legacyChannelFile(slug, "meta.json"), channelMetaFile(slug)], null);
       if (meta) {
-        insMeta.run(slug, JSON.stringify(meta));
+        insMeta.run(slug, JSON.stringify(stripDeadFields(meta)));
         counts.meta++;
       }
-      const map = readJson(channelSessionsFile(slug), {});
+      const map = readFirstJson([legacyChannelFile(slug, "sessions.json"), channelSessionsFile(slug)], {});
       for (const [threadKey, sessionId] of Object.entries(map)) {
         if (!sessionId) continue;
         insSess.run(slug, threadKey, String(sessionId));

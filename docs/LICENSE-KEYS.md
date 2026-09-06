@@ -115,14 +115,19 @@ raises a banner on the admin License card that says what happened and what to do
 | `valid` | the last check succeeded and the payload is in date | the payload's |
 | `invalid` | the platform returned `401 invalid_key` | no-key tier, immediately |
 | `revoked` | the platform returned `403 revoked` | no-key tier, immediately |
+| `expired` | the licence passed its own `expiresAt` | no-key tier, immediately |
 | `grace` | the platform is unreachable, within 14 days of the last success | the last verified tier (no-key tier if there has never been one) |
 | `expired_grace` | unreachable for more than 14 days | the last verified tier **until the next UTC month boundary**, then the no-key tier |
 
 `invalid` and `revoked` drop immediately because the platform has positively stated that the key
-is not valid — that is a Section 3.2 statement, not a network problem. Only the *unreachable* path
-gets the month-boundary courtesy, because that failure is usually the Licensor's, not yours. A
-response whose signature does not verify is treated as unreachable in both directions: it can
-neither raise nor lower a tier.
+is not valid — that is a Section 3.2 statement, not a network problem. `expired` drops immediately
+for the mirror-image reason: a licence that ran out on its own terms did not lose contact with
+anything, and its end date was known in advance, so the offline courtesies do not apply to it. This
+is checked *before* the unreachable lane and holds for an offline payload too — an air-gapped
+deployment's payload stops granting its tier the moment it expires, exactly as this page has always
+said it would. Only the *unreachable* path gets the month-boundary courtesy, because that failure
+is usually the Licensor's, not yours. A response whose signature does not verify is treated as
+unreachable in both directions: it can neither raise nor lower a tier.
 
 ## Counting, exactly
 

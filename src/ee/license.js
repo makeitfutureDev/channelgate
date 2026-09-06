@@ -28,6 +28,7 @@
 //   valid          | last verify returned 200 + a good signature            | the signed payload's
 //   invalid        | last verify returned 401 invalid_key                   | NO_KEY_LIMITS
 //   revoked        | last verify returned 403 revoked                       | NO_KEY_LIMITS
+//   expired        | the licence itself passed its own `expiresAt`          | NO_KEY_LIMITS
 //   grace          | unreachable, verifiedAt within 14 days (or never yet)  | last verified tier
 //   expired_grace  | unreachable, verifiedAt older than 14 days             | last verified tier
 //                  |   …until the next UTC month boundary, then             | NO_KEY_LIMITS
@@ -35,6 +36,9 @@
 // `invalid`/`revoked` drop to the no-key limits immediately: the platform has positively said the
 // key is not valid, which is a §3.2 statement, not a network hiccup. Only the UNREACHABLE path
 // gets the month-boundary courtesy, because that failure is usually ours, not the operator's.
+// `expired` drops immediately for the same reason from the other direction: a licence that ran out
+// on its own terms is not a deployment that lost contact, and the term it was sold for is a date
+// the operator has known in advance.
 import { createHash, createPublicKey, randomUUID, verify as edVerify } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
@@ -62,7 +66,7 @@ const META_INSTALLATION_ID = "license_installation_id";
 const META_CACHE = "license_cache"; // { license, signature, verifiedAt, keyHash }
 const META_LAST_CHECK = "license_last_check"; // { outcome, at, detail, keyHash }
 
-export const LICENSE_STATES = Object.freeze(["no_key", "valid", "invalid", "revoked", "grace", "expired_grace"]);
+export const LICENSE_STATES = Object.freeze(["no_key", "valid", "invalid", "revoked", "expired", "grace", "expired_grace"]);
 
 // In-process state-change notifications for the UI/tools ("license" event with { from, to,
 // status }). An EventEmitter, not a callback list, so more than one consumer can listen without
@@ -193,7 +197,11 @@ export function offlineLicense(now = Date.now()) {
     signature: parsed.signature,
     // Stamped at READ time on purpose: an offline license never ages into the grace window,
     // because there is nothing for it to be out of contact with. Its own `expiresAt` is the clock
-    // that matters, and resolveLicenseState() already honours that.
+    // that matters — and it is resolveLicenseState()'s `expired` branch that honours it. That
+    // branch is load-bearing HERE, not just tidy: a verifiedAt of "now" makes every offline
+    // payload look freshly checked, so without it an expired one fell through to the unreachable
+    // lane, where `now < verifiedAt + 14 days` is true forever and the dead licence kept serving
+    // its own tier and limits indefinitely.
     verifiedAt: new Date(now).toISOString(),
     keyHash: key ? sha256Hex(key) : "",
     offline: true,
@@ -265,6 +273,9 @@ export function nextUtcMonthStart(at) {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0);
 }
 
+// Has the cached payload passed its OWN expiry? A missing or unparseable `expiresAt` means "no
+// end date" — a perpetual licence — and never expires it: an unreadable field must not be able to
+// switch a paying deployment off.
 function cachedLicenseExpired(cache, now) {
   const expiresAt = cache?.license?.expiresAt;
   if (!expiresAt) return false;
@@ -301,8 +312,26 @@ export function resolveLicenseState({ keyPresent, cache, lastCheck, now = Date.n
     };
   }
 
+  // The licence ran out on its own terms. This is checked BEFORE the unreachable lane and never
+  // routed into it: grace exists to cover a platform we cannot reach, and an expiry date is not a
+  // network condition — the deployment knew it was coming. Routing it into grace is how an expired
+  // payload used to keep its tier forever (an offline payload is stamped verifiedAt = now, so
+  // `now < verifiedAt + 14 days` never stopped being true). Fail closed: the no-key limits, and the
+  // licence itself is not returned, so nothing downstream reports a tier this deployment no longer
+  // holds. `expiredAt` keeps the date visible on the admin card and in the banner.
+  if (cache?.license && cachedLicenseExpired(cache, now)) {
+    return {
+      state: "expired",
+      limits: NO_KEY_LIMITS,
+      license: null,
+      verifiedAt: cache.verifiedAt || "",
+      expiredAt: cache.license.expiresAt,
+      reason: "license expired",
+    };
+  }
+
   // Everything below is the UNREACHABLE lane (including "reachable but the response did not
-  // verify" and "the cached payload passed its expiresAt while we could not re-check").
+  // verify"). A payload that is still in date but could not be re-checked keeps its tier here.
   // No cache at all — a key we have never managed to verify. Grace, so a first boot behind a
   // proxy outage is not a lockout; the banner says the check has not landed yet.
   if (!haveCache) {
@@ -359,7 +388,9 @@ export function getLicenseStatus(now = Date.now()) {
     organization: r.license?.organization || "",
     keyId: r.license?.keyId || "",
     issuedAt: r.license?.issuedAt || "",
-    expiresAt: r.license?.expiresAt || null,
+    // An expired resolution deliberately withholds the payload (see resolveLicenseState), so the
+    // date it expired on comes from the resolution itself — the card must still say WHEN.
+    expiresAt: r.license?.expiresAt || r.expiredAt || null,
     limits: r.limits,
     hasLicenseKey: hasLicenseKey(),
     licenseKeyLast4: licenseKeyLast4(),
@@ -391,6 +422,11 @@ export function bannerFor(r) {
       return { level: "error", text: "This license key was rejected by the ChannelGate platform. The no-key limits apply until a valid key is saved." };
     case "revoked":
       return { level: "error", text: "This license key has been revoked. The no-key limits apply until a valid key is saved." };
+    case "expired":
+      return {
+        level: "error",
+        text: `This license expired${r.expiredAt ? ` on ${String(r.expiredAt).slice(0, 10)}` : ""}. The no-key limits apply until a renewed key is saved.`,
+      };
     case "grace":
       return {
         level: "warn",

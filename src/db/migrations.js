@@ -679,4 +679,42 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 20,
+    up(db) {
+      // Remove a retired integration's dead secret from the records that still carry it.
+      // `skillsToken` was the Skills Manager MCP token; nothing has read it since the local skills
+      // catalog replaced that integration, but it stayed inside the channel_meta / users JSON
+      // blobs — where the admin channel listing, which spreads the whole record, handed it back in
+      // cleartext. Deleting the field is the only way to stop a stored value from leaking: masking
+      // a name nobody remembers is exactly what failed the first time.
+      //
+      // Rewrites only the rows that actually have one, so an install without any is untouched.
+      // The field list is config/dead-fields.js, but it is INLINED here on purpose: a migration is
+      // a historical record and must keep doing what it did on the day it shipped, even after that
+      // list grows.
+      const strip = (table, idColumn) => {
+        let rows;
+        try {
+          rows = db.prepare(`SELECT ${idColumn} AS id, data FROM ${table}`).all();
+        } catch {
+          return; // table absent on a partially built DB — nothing to clean
+        }
+        const save = db.prepare(`UPDATE ${table} SET data = ? WHERE ${idColumn} = ?`);
+        for (const row of rows) {
+          let record;
+          try {
+            record = JSON.parse(row.data);
+          } catch {
+            continue; // unparseable blob — left exactly as found rather than rewritten
+          }
+          if (!record || typeof record !== "object" || !Object.hasOwn(record, "skillsToken")) continue;
+          delete record.skillsToken;
+          save.run(JSON.stringify(record), row.id);
+        }
+      };
+      strip("channel_meta", "slug");
+      strip("users", "user_id");
+    },
+  },
 ];
