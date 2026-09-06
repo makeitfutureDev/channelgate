@@ -35,9 +35,10 @@ manager. Keys are never shared, pooled, or transferred across organizations.
 ## What the deployment sends to the platform
 
 Key verification runs at start-up and about once a day; usage is reported as counts. The payload
-contains the key (hashed), an installation id, the software version, and per-conversation
-**hashed** ids with message counts. It never contains message content, user identities, channel
-names, credentials, or files. The full data-flow description is in
+for verification contains the raw license key, installation id and software version. Usage
+reports contain a key hash and per-conversation **hashed** ids with message counts. Licensing
+payloads never contain message content, user identities, channel names, provider credentials or
+files. The stable hashes are pseudonymous, not guaranteed anonymous. The full data-flow description is in
 [`PRIVACY-AND-DATA-FLOW.md`](PRIVACY-AND-DATA-FLOW.md).
 
 ## Offline behaviour
@@ -100,7 +101,7 @@ A deployment with no route to the platform can be issued the **signed payload** 
 it as `CHANNELGATE_LICENSE_PAYLOAD` (the JSON `{"license": …, "signature": …}` the verification
 endpoint would have returned, raw or base64url). It is verified locally against the same public
 key, so it can only ever say what the Licensor signed and it stops working at its own `expiresAt`.
-An install running on one makes **no outbound request at all** — no verification and no usage
+An install running on one makes **no licensing request at all** — no verification and no usage
 report.
 
 ## States
@@ -148,3 +149,10 @@ unreachable in both directions: it can neither raise nor lower a tier.
   check is due, the state banner, and this month's per-conversation usage with the limit line.
 - Chat: the `get_license_status` gateway tool.
 - API: `GET /api/license` (admin session), and `POST /api/license/verify` to check now.
+
+## Enterprise integrations and support status
+
+Composio SDK mode is **Enterprise-only and Beta**, enforced when settings, sessions and bridge
+requests are processed. The standard Composio MCP integration remains available in every tier.
+Microsoft Teams and Google Chat connectors are **Beta**, with platform-specific live acceptance
+required before relying on them for unattended work. Tier changes never weaken core security.

@@ -1,0 +1,16 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+const root = path.resolve(import.meta.dirname, "..");
+const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+const lock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
+if (lock.version !== pkg.version || lock.packages[""].version !== pkg.version) throw new Error("Package and lockfile versions disagree");
+const ref = process.env.GITHUB_REF || "";
+if (!ref.startsWith("refs/tags/") || ref.slice(10) !== `v${pkg.version}`) throw new Error("Release evidence must run against the version's exact v<version> tag (select that tag for manual runs)");
+if (git("status", "--porcelain", "--untracked-files=normal")) throw new Error("Release source must be clean");
+if (git("rev-parse", "HEAD") !== git("rev-parse", `${ref}^{commit}`)) throw new Error("Candidate does not match the tag");
+git("merge-base", "--is-ancestor", "HEAD", "origin/main");
+const changelog = readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
+if (!changelog.includes(pkg.version)) throw new Error("Candidate version is missing from CHANGELOG.md");
+console.log(`Verified release candidate v${pkg.version} at ${git("rev-parse", "HEAD")}`);

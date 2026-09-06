@@ -118,13 +118,16 @@ test("log rotation copy-truncates the live file instead of renaming its inode", 
   assert.equal(statSync(path.join(runtime, "logs", "daemon.out.log.1")).size, 1024 * 1024 + 1);
 });
 
-test("release artifact generator emits deterministic SBOM and provenance checksums", () => {
+test("release inventory names nested dependencies accurately and labels unsigned metadata", () => {
   const out = tempDir("cg-release-test-");
   execFileSync(process.execPath, [path.join(root, "scripts/release-artifacts.mjs"), out]);
-  const sbom = JSON.parse(readFileSync(path.join(out, "sbom.cdx.json"), "utf8"));
+  const sbom = JSON.parse(readFileSync(path.join(out, "npm-lock-inventory.cdx.json"), "utf8"));
   assert.equal(sbom.bomFormat, "CycloneDX");
   assert.ok(sbom.components.length > 0);
-  assert.ok(statSync(path.join(out, "provenance.intoto.jsonl.sha256")).size > 64);
+  assert.ok(sbom.components.every((c) => !c.name.includes("node_modules") && c.purl && c["bom-ref"]));
+  assert.ok(sbom.dependencies.length > 0);
+  assert.match(sbom.metadata.properties[0].value, /excludes runtime image/);
+  assert.ok(statSync(path.join(out, "build-metadata.json.sha256")).size > 64);
 });
 
 test("service packages pin dedicated identities and hardened runtime boundaries", () => {

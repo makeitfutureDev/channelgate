@@ -56,18 +56,16 @@ the wrong identity and the container cannot see the host login anyway.
 
 ## Claude and Codex authentication
 
-Claude login resolution has one owner. Order: configured `claude setup-token`, the operator's own
-Claude login, a gateway engine-home login, then `ANTHROPIC_API_KEY`; otherwise fail closed with the
-named host-side remedy. The operator credential file is never copied, linked, or mounted. A run
-receives a relay of the current access token as `CLAUDE_CODE_OAUTH_TOKEN`, refreshed in the source
-config directory. A channel secret cannot override it.
+Claude daemon authentication uses supported organization API credentials resolved in
+`src/gateway/claude-login.js`: `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`. Operator subscription
+files and legacy setup-token settings are not relayed. If missing, name the service-environment
+remedy rather than attempting to copy host credentials or create a second refresh chain.
 
-Codex reads and rewrites `auth.json` in place, so the container receives the gateway's real auth
-file through its narrow credential mount rather than a copy. Its session/history state remains in
-the conversation HOME. Use `/status` or host-side engine health to diagnose these shared engine
-credentials; a conversation cannot repair them through `/secrets`.
+Codex uses the daemon's `CODEX_API_KEY` (before `OPENAI_API_KEY`), or an independent native login
+in that channel's persistent HOME. There is no shared writable host `auth.json` mount. A native
+channel login may be unknown to daemon health until the engine runs; a failure in one channel
+must not mark every other channel's login unusable.
 
-VS Code attachment opens the existing live container/workdir and holds an editor lease. It sees
-the same channel HOME and provider CLI sessions. Claude gets the access-token relay wrapper; Codex
-keeps its narrow auth mount. Channel environment secrets are deliberately not injected into the
-editor session.
+VS Code attaches to the existing channel container/workdir and holds an editor lease in daemon
+metadata. It sees that channel's existing native CLI sessions, but no daemon auth or channel
+secret environment is exported into the editor. Authenticate natively in the attached terminal.

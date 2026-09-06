@@ -5,9 +5,9 @@ node_modules/
 !.env.example
 *.log
 
-# The roadmap lives in the private companion repo (channelgate-internal) and is symlinked into this
-# checkout as ../channelgate-internal/TASKS.md so the agents' roadmap rule keeps working. Never track it.
-/TASKS.md
+# Generated release evidence and private deployment instructions.
+/dist/
+/AGENTS.local.md
 
 # Runtime gateway root, if a developer points it inside the repo for testing.
 .channelgate/

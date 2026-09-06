@@ -39,51 +39,22 @@ pre-rename names — and leaves the service account and runtime root in place. T
 share credentials or a runtime root with interactive development. ChannelGate runs on Linux only;
 there is no other service packaging.
 
-**Engine credentials — Claude uses the host user's own login.** The gateway authenticates Claude
-with the `claude` sign-in of the user the daemon runs as (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) —
-the same one that user maintains in their own shell. Keep that signed in and there is nothing else
-to configure: the daemon reads the login where it lives, relays its current *access* token to each
-container run, and refreshes it on the host when it gets close to expiry. The
-credentials file is never copied, linked or mounted, because Claude Code rotates the refresh token
-on every refresh and a second copy that refreshes logs the first one out.
+**Engine credentials.** Automated Claude runs require organization API credentials in the daemon
+service environment: `ANTHROPIC_API_KEY` or a supported `ANTHROPIC_AUTH_TOKEN`. The gateway does
+not read or relay operator subscription credentials; legacy setup-token settings are inert.
+Codex uses `CODEX_API_KEY` before `OPENAI_API_KEY`, or its own channel-container native login.
+No writable host `auth.json` is mounted. An unknown container-native login is diagnosed at the
+actual run, not guessed from an operator's host login.
 
-A login *session* expires every few weeks and only a new interactive `claude` login moves that date.
-The daemon prints the source and the date at boot (`[gateway] claude login: operator (…), session
-expires …`), warns three days ahead, and shows the same line in `/status` and `/api/health`. Because
-a daemon that has been up for weeks would otherwise never say it again, an hourly watch re-checks
-the login while it runs: the gateway DMs every admin daily from three days before the login expires,
-and daily while it is missing (once per UTC day per message class, remembered in the database so a
-restart cannot turn it into a spam loop). The DM names the login, its expiry in UTC and in the
-gateway's local timezone, and the remedy — never any token material. When it lapses, run `claude` as
-the daemon's user and sign in again — no restart needed, and the next hourly check goes quiet on its
-own.
+The installer creates a 0600 `<runtime root>/service.env` template for the unit's `EnvironmentFile`.
+Configure provider keys there before restarting for this migration. Rebuild the runtime image;
+container recreation removes the old Codex mount and generated Claude relay wrapper/token.
+Subscription-only Claude installations now fail closed with a provider API credential remedy.
+No migration copies or rotates the operator's credential files.
 
-Two alternatives remain, in this precedence: a `claude setup-token` value pasted into *Settings →
-Container runtime* (long-lived, never rotates), and the daemon's own `ANTHROPIC_API_KEY`. A login
-signed in to the gateway's own engine home (`<runtime root>/engine-state/claude/home/.claude`) also
-still counts, behind the host user's.
-
-*Measured, not assumed:* the relayed token rides the child's environment, but Claude Code strips
-`CLAUDE_CODE_OAUTH_TOKEN` (and `ANTHROPIC_API_KEY`) from the environment of every Bash tool
-subprocess — verified on 2026-09-02 on this host: a tool call running
-`sh -c 'echo ${#CLAUDE_CODE_OAUTH_TOKEN}'` printed 0 while `HOME` was visible — so an agent cannot
-`printenv` it from inside its container. What still inherits the process environment is a
-stdio MCP server Claude Code itself spawns; only the gateway's own bridges and admin-curated catalog
-servers are ever injected, and they run as the same user in any case. The token is the ACCESS half
-only (hours), never the refresh token.
-
-**Engine credentials on Linux:** the service account cannot run `claude login` (no login shell,
-its own empty home), so the engines authenticate via API keys. The installer creates a 0600
-`<runtime root>/service.env` template read by the unit (`EnvironmentFile=`): fill in
-`ANTHROPIC_API_KEY` (and `OPENAI_API_KEY` for Codex), then `systemctl restart channelgate`.
-The installer also resolves the `claude`/`codex` binaries at install time and bakes their
-directories into the unit's `PATH` — prefer system-wide CLI installs (e.g. npm prefix
-`/usr/local`); a CLI inside a user home is exposed to the service read-only with a warning.
-Without keys the daemon starts and serves the admin UI, but every engine turn fails
-authentication — this file is the fix, not `claude login`. The containers honor the same key:
-with no gateway login to relay, `ANTHROPIC_API_KEY` in the daemon's environment authenticates
-Claude inside every container (it crosses through the reviewed passthrough list in
-`src/engines/child-env.js`), so a keyed install never sees "no Claude login to relay".
+Provider terms govern authentication independently of ChannelGate's license. See
+[Claude Code legal/authentication requirements](https://code.claude.com/docs/en/legal-and-compliance).
+Use provider-approved organization accounts and billing for automated team use.
 
 ## Reverse proxies and tunnels
 
@@ -358,19 +329,14 @@ runs too, and the next successful update settles it.
 | Stop an idle channel container after | minutes, default 10 |
 | Max containers running at once | default 8; past it the least-recently-used **idle** container is stopped |
 | Process / memory / CPU limit | `--pids-limit` (default 1024), `--memory` (e.g. `2g`), `--cpus` (e.g. `1.5`); blank = no limit |
-| Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
 | Full-access channels see the gateway home | off by default; on = every Full-access channel's container also mounts the gateway user's whole home read-write (see below) |
 
 Values that would reach the container CLI's argv are validated at the boundary: a flag, a space or a
 shell metacharacter in the image/memory/cpu fields is rejected with an error, not silently cleaned.
 
-**Engine logins.** By default a container Claude run is handed a RELAY of the host user's own
-Claude login — its current access token, in `CLAUDE_CODE_OAUTH_TOKEN` — so keeping `claude` signed
-in on the host is all a channel needs. Nothing is copied or mounted. Optionally run
-`claude setup-token` on the gateway host and paste the value into *Claude token for container runs*:
-that token is then used instead and never needs refreshing. Codex is different — it rewrites
-`auth.json` in place, so every container shares a read-write mount of the gateway's real auth file;
-keep the host signed in with `codex login`. Codex *sessions* and history are still per channel.
+**Engine logins.** Claude uses the daemon's configured API/provider credentials. Codex uses
+service API credentials or its own persistent channel-native login. Host refresh credentials
+are never shared; see [service identities](#service-identities) for migration instructions.
 
 **Network.** Every channel container runs on the default bridge network. The per-channel *Allow
 network* switch (admin UI → the channel → Advanced, or `set_channel_network` in chat) is kept and
@@ -486,13 +452,10 @@ editor lease until that VS Code window closes, preventing idle or capacity evict
 terminal is user `agent` with the same persistent `/home/agent`, so its installed tools, GitHub and
 provider CLI logins, Claude history, and Codex history are the channel's own existing state.
 
-Codex uses the same shared login file already mounted for chat turns. Claude's rotating credential
-file is still never copied or mounted: the helper refreshes the gateway's normal subscription
-access-token relay every 20 minutes and exposes only that access token to interactive `claude`
-commands. Closing VS Code removes the live token and releases the lease; an interrupted helper is
-detected by PID start identity and its stale lease is discarded automatically. A daemon configured
-only with `ANTHROPIC_API_KEY` cannot currently export that key to an interactive editor terminal;
-use the normal operator subscription login or a configured `claude setup-token` for this workflow.
+The editor receives no daemon tokens or channel environment secrets. Authenticate natively in
+that channel container for interactive work. The editor lease is held in daemon-owned metadata,
+outside writable container artifacts; closing the editor releases it, and stale owners are
+identified by process identity.
 
 This is deliberately an operator command, not a remotely callable channel tool: VS Code provides a
 full shell inside the container and bypasses chat tool presets. The container boundary remains the
@@ -524,14 +487,9 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
 - **Per-user Codex skill grants are not delivered in containers.** The per-run Codex skill overlay
   was built for a synthetic host HOME that a container does not have; a Codex run gets the
   channel's skills through the mounted workdir, but not that overlay.
-- **Codex sessions are per channel, but the sign-in is shared.** Every container mounts the same
-  `auth.json` the gateway uses. A `codex login` on the host that *replaces* the file leaves a
-  running container holding the old inode — `/status` and `/api/health` report the drift; restart
-  the channel's container (or let the reaper stop it) to pick the new one up.
-- **A relayed access token is readable by the channel's own agent.** It rides the exec
-  environment, so an agent in that channel can print it. It cannot rotate anything (an access token
-  carries no refresh half) and it dies within hours, but it is a live credential for that window;
-  the P3 egress proxy replaces it with an opaque token.
+- **Service API identity can be shared.** API-key deployments may use an organization-wide
+  billing identity across channels. Independent native Codex authentication persists only in
+  each channel HOME. Runtime credentials are accessible to the engine that uses them.
 - **Egress is not policed per channel.** Every container runs on the default bridge network, and
   the per-channel *Allow network* switch does not cut it — it only tells the engines whether the
   channel is meant to have network. The per-domain allow-list of the retired host sandbox has no
@@ -543,19 +501,11 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   `networkEnforced: false` beside `networkPolicy`. `NETWORK_POLICY_ENFORCED` in
   `src/engines/network-policy.js` is the single flag to flip when the proxy lands.
 
-**Claude login in containers:** with no `containerClaudeOauthToken`, each container Claude run
-receives a RELAY of the gateway's resolved login — normally the host user's own `~/.claude` — as a
-current OAuth access token in `CLAUDE_CODE_OAUTH_TOKEN` (refreshed on the host first by a cheap
-haiku turn, in that login's own config dir, when under 30 minutes remain). The login file is never
-copied: Claude Code rotates refresh tokens,
-and a copy that refreshes logs the original out. A relayed access token cannot rotate anything. A
-`claude setup-token` value, when configured, is used instead and needs no refresh.
-
 **Service unit:** the installer sets `KillMode=mixed`. systemd then sends SIGTERM only to the
 daemon, which drains, marks the shutdown and sweeps its own engine children (the container run
-groups) so interrupted turns replay on the next boot. With the default
+groups) so interrupted execution is recorded for reconciliation on the next boot. With the default
 `control-group` mode systemd signals the engine (or the `podman exec` client) directly and the
-turn is recorded as a plain error instead of being replayed. Existing installs: add
+turn may be recorded as a plain error before orderly state persistence. Existing installs: add
 `KillMode=mixed` under `[Service]` and `systemctl --user daemon-reload`.
 
 ## Retention and log rotation

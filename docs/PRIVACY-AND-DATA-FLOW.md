@@ -1,6 +1,7 @@
 # Privacy and data flow
 
-Slack events enter the local gateway over Socket Mode. Authorization and mention gates run before
+Slack events enter over Socket Mode; the Beta Google Chat and Microsoft Teams connectors use
+Pub/Sub and authenticated webhooks respectively. Authorization and mention gates run before
 the message, explicitly downloaded attachments, thread context, and enabled MCP configuration are
 passed to the selected local CLI process. The CLI may send prompt/context to its configured model
 provider. Composio connections send only tool requests selected during a run to the connected
@@ -17,12 +18,12 @@ deployment-owner responsibilities, not claims made by this repository.
 
 ## License verification and usage reporting
 
-The only outbound traffic the gateway itself originates — as distinct from the CLI's model
-provider and the connectors an operator enables — is the license check described in
-[`LICENSE-KEYS.md`](LICENSE-KEYS.md). It goes to the ChannelGate platform at
+Licensing traffic is separate from chat API calls, attachment downloads, configured webhooks,
+model/engine discovery and health checks, update checks, and enabled connector/Drive requests.
+The licensing requests described in [LICENSE-KEYS.md](LICENSE-KEYS.md) go to the ChannelGate platform at
 `CHANNELGATE_PLATFORM_URL` (default `https://channelgate.dev`) and consists of
-exactly two request shapes. There are no others, and there is no analytics, telemetry, crash
-reporting, or heartbeat.
+the two request shapes below. This section describes licensing only; disabling it does not
+disable other enabled features' outbound requests.
 
 **1. Key verification** — at start-up and about once every 24 hours,
 `POST {base}/v1/license/verify`:
@@ -51,13 +52,13 @@ and expiry dates). Its Ed25519 signature is verified locally against the public 
 This is fire-and-forget: it never blocks a turn, a boot, or a shutdown, and a failure is simply
 retried on the next cycle.
 
-### What is never sent
+### What licensing does not send
 
 Message content, prompts, model output, file names, file contents, attachments, user identifiers,
 display names, email addresses, channel or space names, workspace/tenant identifiers, tokens, API
 keys, IP-address lists, or timestamps of individual messages. Conversation identifiers are sent
-only as SHA-256 hashes, so the platform can count a conversation across months without ever
-learning what or where it is. The license key itself is sent only to the verification endpoint —
+only as SHA-256 hashes. They are stable pseudonymous identifiers that may be correlated or
+guessed from a known identifier; hashing is not a guarantee of anonymity. The license key itself is sent only to the verification endpoint —
 never in a usage report, where it appears as a hash.
 
 ### The installation id
@@ -66,15 +67,41 @@ A random UUID v4 generated once and stored in the local database (`_meta`). It i
 the hostname, MAC address, machine id, workspace, or any other property of the host, and deleting
 the database's `_meta` row simply mints a new one.
 
-### Turning the outbound traffic off entirely
+### Disabling licensing traffic
 
-A deployment that must make no outbound connection at all can run on an offline license: set
+For offline licensing, set
 `CHANNELGATE_LICENSE_PAYLOAD` to the signed payload issued by the Licensor. It is verified locally
-against the same public key and no request is ever made. A deployment with no key and no payload
-also makes no request — it simply runs on the no-key limits.
+against the same public key and no licensing request is made. A deployment with no key and no payload
+also makes no licensing request — it simply runs on the no-key limits.
 
 ### Where this is enforced
 
 `src/ee/license.js` (verification, caching, the offline path) and `src/ee/limits.js` (the counters
 and the report). Both are readable in this repository; the outbound payloads are built by
 `buildUsageReport()` and the `verifyLicense()` request body and by nothing else.
+
+## Runtime boundary and credential retention
+
+Rootless per-conversation containers isolate filesystem and processes, with a private durable home,
+work folder and runtime artifacts. Tool settings are policy; they do not establish those mounts.
+The optional Full-access whole-home mount is off by default and deliberately exposes the daemon
+user's repositories, gateway state and other channels to every author admitted to a Full-access
+channel. Operators must understand this exception before enabling it.
+
+All containers currently use bridge networking. *Allow network* expresses intended engine policy;
+it is not an egress firewall and does not constrain arbitrary destinations at the network layer.
+Host-side run-API attachment/webhook requests separately validate and pin public destination IPs.
+
+Claude daemon runs use provider API credentials rather than relayed operator subscription tokens.
+Codex uses service API credentials or its own channel-container login, with no shared writable host
+authentication file. Service API keys can be organization-wide: that is a shared provider identity,
+not an assertion of independent per-user billing. Container-native CLI credentials persist in the
+channel home. Personal/shared MCP credentials are resolved for each run and may be written into
+protected transient runtime bundles; those bundles must be included in the retention assessment.
+Runtime secret redaction reduces accidental output leakage, but an agent given a usable credential
+can access that value and use its granted privileges. UI write-only fields do not change this fact.
+
+Keep model/connector grants, channel membership and shared work folders within the intended trust
+boundary. Deleting a conversation must include an explicit decision about its home volume,
+artifacts, SQLite records, backups and provider-side retention; removing a chat message is not a
+cross-system deletion request.

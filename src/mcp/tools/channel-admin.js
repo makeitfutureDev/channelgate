@@ -653,7 +653,7 @@ export function registerMemoryTool(server, ctx) {
         "memory is stored as uncapped Markdown and is retrieved on demand; memory/<topic>.md files " +
         "carry depth, referenced from MEMORY.md as [[topic]].\n" +
         "HOW: make ALL changes in ONE call via `operations` (each {action, text?, old?, section?, " +
-        "topic?, content?}). The batch applies atomically and has no character ceiling. The bare " +
+        "topic?, content?}). The complete batch is validated before writing; concurrent gateway saves are serialized. Individual files are replaced atomically, but a process crash may interrupt a multi-file batch and has no character ceiling. The bare " +
         "action/text/old fields are for a single change. Actions: 'add' (one concise declarative " +
         "line in `text`; optional `section`: " + MEMORY_SECTIONS.join(" | ") + "), 'replace' (a " +
         "unique `old` substring → the WHOLE line becomes `text`; prefer this over near-duplicate " +

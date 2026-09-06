@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// Minimal, dependency-free secret scan over git-tracked files. Run by CI (and locally via
+// Dependency-free scan of tracked files, candidate history and release artifacts. Run by CI (and locally via
 // `node scripts/secret-scan.mjs`). Fails with exit 1 when a string shaped like a real credential
 // is found. Patterns are deliberately strict (length + structure) so documentation placeholders
 // like `xoxb-…`, `sk-ant-x`, or test fixtures ("xoxb-test") never trip it — a noisy scanner gets
 // ignored, a quiet one gets trusted.
-import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { createReadStream, lstatSync, readdirSync, readlinkSync } from "node:fs";
+import { createGunzip } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,40 +32,71 @@ const PATTERNS = [
   { name: "Private key block", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----\s+[A-Za-z0-9+/=]{60,}/g },
 ];
 
-// Binary/asset extensions and generated files that cannot leak our secrets but are large/noisy.
-const SKIP = /\.(png|jpe?g|gif|ico|pdf|zip|gz|woff2?|ttf|eot|mp[34]|webm|svg)$/i;
-const SKIP_FILES = new Set(["package-lock.json"]);
-const MAX_BYTES = 2 * 1024 * 1024;
-
-const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8", cwd: repoRoot })
-  .split("\0")
-  .filter((f) => f && !SKIP.test(f) && !SKIP_FILES.has(f));
-
+// Never exempt lockfiles, assets or large blobs: credentials can appear in any of them.
+// History means commits reachable from this release candidate, not the private archive remote.
+const args = process.argv.slice(2);
+const artifactsAt = args.indexOf("--artifacts");
+const artifactDir = artifactsAt >= 0 ? args[artifactsAt + 1] : null;
+if (artifactsAt >= 0 && !artifactDir) throw new Error("--artifacts requires a directory");
 let findings = 0;
-for (const file of files) {
-  const abs = path.join(repoRoot, file);
-  let stats;
-  try {
-    stats = statSync(abs);
-  } catch {
-    continue; // deleted but still listed
-  }
-  if (!stats.isFile() || stats.size > MAX_BYTES) continue;
-  const content = readFileSync(abs, "utf8");
+let checked = 0;
+function scan(content, label, overlap = 0) {
   for (const { name, re } of PATTERNS) {
     re.lastIndex = 0;
     let match;
     while ((match = re.exec(content)) !== null) {
-      const line = content.slice(0, match.index).split("\n").length;
-      // Report the location and pattern only — never echo the matched value.
-      console.error(`SECRET? ${file}:${line} matches "${name}"`);
+      if (match.index + match[0].length <= overlap) continue;
       findings += 1;
+      if (findings <= 100) console.error(`SECRET? ${label} matches "${name}"`);
     }
   }
 }
-
-if (findings > 0) {
-  console.error(`\nSecret scan failed: ${findings} finding(s). If a match is a deliberate fake, make it obviously fake (shorter, or with an invalid character) instead of allowlisting.`);
-  process.exit(1);
+async function scanFile(file, label) {
+  // Streaming keeps image archives and other large release assets bounded in memory.
+  let stream = createReadStream(file);
+  if (file.endsWith(".gz")) stream = stream.pipe(createGunzip());
+  let tail = "";
+  for await (const chunk of stream) {
+    const content = tail + chunk.toString("latin1");
+    scan(content, label, tail.length);
+    tail = content.slice(-2048);
+  }
+  checked += 1;
 }
-console.log(`Secret scan clean (${files.length} tracked files checked).`);
+const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8", cwd: repoRoot }).split("\0").filter(Boolean);
+for (const file of files) {
+  const abs = path.join(repoRoot, file);
+  let stat;
+  try { stat = lstatSync(abs); } catch (error) { if (error.code === "ENOENT") continue; throw error; }
+  // Symlink targets are path text in git; never follow one into a private host directory.
+  if (stat.isSymbolicLink()) { scan(readlinkSync(abs), file); checked += 1; }
+  else if (stat.isFile()) await scanFile(abs, file);
+}
+if (args.includes("--history")) {
+  const objects = execFileSync("git", ["rev-list", "--objects", "HEAD"], { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const names = new Map(objects.trim().split("\n").map((line) => { const [id, ...name] = line.split(" "); return [id, name.join(" ")]; }));
+  const types = execFileSync("git", ["cat-file", "--batch-check=%(objectname) %(objecttype)"], { cwd: repoRoot, input: [...names.keys()].join("\n") + "\n", encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  for (const line of types.trim().split("\n")) {
+    const [id, type] = line.split(" ");
+    if (type !== "blob") continue;
+    const child = spawn("git", ["cat-file", "blob", id], { cwd: repoRoot, stdio: ["ignore", "pipe", "inherit"] });
+    const completion = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`git cat-file failed (${code})`))); });
+    let tail = "";
+    for await (const chunk of child.stdout) { const content = tail + chunk.toString("latin1"); scan(content, `history:${id.slice(0, 12)}:${names.get(id)}`, tail.length); tail = content.slice(-2048); }
+    await completion;
+    checked += 1;
+  }
+}
+async function walk(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) await walk(file);
+    else if (entry.isFile()) await scanFile(file, `artifact:${path.relative(repoRoot, file)}`);
+    else if (entry.isSymbolicLink()) throw new Error(`Release artifact must not be a symlink: ${entry.name}`);
+  }
+}
+if (artifactDir) await walk(path.resolve(repoRoot, artifactDir));
+if (findings) {
+  console.error(`Secret scan failed: ${findings} finding(s). Values are never printed. Review the reported objects before publication.`);
+  process.exitCode = 1;
+} else console.log(`Secret scan clean (${checked} files/blobs checked${args.includes("--history") ? ", including candidate history" : ""}).`);

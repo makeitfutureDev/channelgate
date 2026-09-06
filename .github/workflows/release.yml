@@ -11,18 +11,50 @@ permissions:
 jobs:
   evidence:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22.13"
           cache: npm
+      - run: node scripts/check-release-candidate.mjs
       - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run check:static
-      - run: npm run secret-scan
+      - run: npm run secret-scan -- --history
       - run: npm run test:coverage
       - run: npm run test:security-coverage
       - run: npm run release:artifacts
+      - name: Build the actual runtime image
+        run: npm run build:image -- --cli docker --tag channelgate/release-candidate
+      - name: Inventory model files and identify the image
+        run: |
+          docker image inspect channelgate/release-candidate > dist/release/runtime-image.json
+          docker run --rm -i --network none --read-only --entrypoint node channelgate/release-candidate - < scripts/runtime-model-inventory.mjs > dist/release/runtime-models.json
+          docker save channelgate/release-candidate | gzip > dist/release/runtime-image.tar.gz
+      - name: Inventory installed OS, Python and npm packages in the image
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0 (pinned)
+        with:
+          image: channelgate/release-candidate
+          format: spdx-json
+          output-file: dist/release/runtime-image.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Scan generated publishable evidence
+        run: node scripts/secret-scan.mjs --artifacts dist/release
+      - name: Checksums for the complete evidence set
+        working-directory: dist/release
+        run: sha256sum *.json *.gz > SHA256SUMS
+      - name: Attest exact image archive and evidence bytes to this source revision
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: dist/release/*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-evidence-${{ github.sha }}

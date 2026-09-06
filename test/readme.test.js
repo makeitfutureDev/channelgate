@@ -121,8 +121,8 @@ test("badge URLs are well-formed and the CI badge names a workflow that exists",
 
   const shields = images.map(([, , url]) => url).filter((url) => url.includes("img.shields.io"));
   assert.ok(
-    shields.some((url) => url.includes("/badge/license-Sustainable%20Use%20License%201.2-")),
-    "the license badge must name Sustainable Use License 1.2, URL-encoded",
+    shields.some((url) => url.includes("/badge/license-Sustainable%20Use%20License%201.3-")),
+    "the license badge must name Sustainable Use License 1.3, URL-encoded",
   );
   assert.ok(shields.some((url) => url.includes("/badge/node-%E2%89%A5%2022.13-")), "Node floor badge");
   assert.ok(shields.some((url) => /\/badge\/platforms-Slack.*Teams.*Google%20Chat-/.test(url)), "platforms badge");
@@ -167,10 +167,10 @@ test("the hero sections stay in the order the release plan specifies", async () 
   const readme = await readReadme();
   const order = [
     "# ChannelGate",
-    "## Running in 10 minutes",
+    "## Getting started",
     "## What you get",
     "## How it works",
-    "## How it compares",
+    "## Deployment tradeoffs",
     "## Security in five bullets",
     "## Licensing & partners",
     "## Want it installed and operated for you?",
@@ -189,32 +189,12 @@ test("the hero sections stay in the order the release plan specifies", async () 
   );
 });
 
-test("the demo placeholder points at docs/assets and fabricates no media", async () => {
+test("public entrypoints describe support and do not link absent promotional assets", async () => {
   const readme = await readReadme();
-  assert.match(readme, /<!--\s*DEMO — PLACEHOLDER/, "the demo HTML comment is missing");
-  assert.match(readme, /45-second GIF is expected at `docs\/assets\/demo\.gif`/);
-  assert.ok(existsSync(path.join(repoRoot, "docs/assets/README.md")), "docs/assets/README.md documents the assets");
-  assert.equal(
-    existsSync(path.join(repoRoot, "docs/assets/demo.gif")),
-    false,
-    "the demo GIF is not in the repository yet — do not commit a stand-in",
-  );
-});
-
-test("the GitHub repo metadata file carries the About text, topics, and the apply command", async () => {
-  const metadata = await readFile(path.join(repoRoot, ".github/REPO-METADATA.md"), "utf8");
-  const about = metadata.match(/## About description[^\n]*\n+```text\n([\s\S]*?)\n```/);
-  assert.ok(about, "the About description block is missing");
-  assert.ok(about[1].length <= 350, `the GitHub About box truncates past 350 characters (got ${about[1].length})`);
-  assert.ok(metadata.includes("https://channelgate.dev"), "the website URL is missing");
-  for (const topic of [
-    "slack-bot", "microsoft-teams", "google-chat", "claude-code", "codex",
-    "mcp", "ai-agents", "self-hosted", "fair-code", "agent-gateway",
-  ]) {
-    assert.ok(metadata.includes(`--add-topic ${topic}`), `the apply command must set the topic ${topic}`);
-  }
-  assert.ok(metadata.includes(`gh repo edit makeitfutureDev/channelgate`), "the gh command is missing");
-  assert.ok(metadata.includes(`--description "${about[1]}"`), "the gh command must use the same About text");
-  assert.match(metadata, /1280 × 640/, "the social preview dimensions must be stated");
-  assert.ok(metadata.includes("docs/assets/social-preview.png"), "the social preview path must be stated");
+  assert.doesNotMatch(readme, /docs\/assets\/(demo|social-preview)/);
+  assert.match(readme, /Microsoft Teams and Google Chat are\s+Beta/);
+  assert.match(readme, /Composio SDK mode is Enterprise-only and Beta/);
+  const maintainer = await readFile(path.join(repoRoot, "docs/MAINTAINER-RELEASE.md"), "utf8");
+  assert.match(maintainer, /gh attestation verify/);
+  assert.match(maintainer, /unsigned build metadata/);
 });

@@ -2,7 +2,7 @@
 // input+output mode and accepts many user turns over stdin, so follow-ups skip the cold
 // startup + resume cost. It self-terminates after an idle window (default 10 min); the next
 // message then cold-resumes via -r into a fresh warm process. Patterned on the
-// headless-app-creator PersistentClaudeSession (section 17).
+// headless-app-creator runner contract.
 import { claudeProviderError, createStreamConsumer } from "./stream.js";
 import { buildChildEnv } from "./child-env.js";
 import { appendTail } from "../util/tail.js";

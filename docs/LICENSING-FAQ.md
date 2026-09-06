@@ -40,7 +40,7 @@ to evaluate.
 **A company modifies it heavily and never publishes the changes.** No copyleft, no publication
 duty. The SUL is not AGPL.
 
-**An agency installs and configures it for a client, then hands over the keys.** Classic §3.3
+**An agency installs and configures it for a client, then hands over the keys.** Classic §3, item (c)
 consulting. Bill whatever the work is worth. The client creates the platform account; the agency
 can be added as a manager.
 
@@ -59,7 +59,7 @@ client** and charges for that development. Permitted.
 **Someone runs it for a nonprofit, a school, or a personal Slack.** Noncommercial use, §3.2.
 
 **Someone forks it, renames their fork on GitHub, and gives it away for free.** Permitted under
-§3.4 as long as the license and notices ride along, the modification is disclosed (§5), the fork
+§3, item (d) as long as the license and notices ride along, the modification is disclosed (§5), the fork
 does not present itself as ChannelGate (`TRADEMARK.md`), and the license-key checks stay in place
 (§4.5).
 
@@ -112,8 +112,11 @@ works identically with or without a key.
 platform and the key is issued immediately; it unlocks unlimited conversations at 500 AI messages
 per conversation per month. Tiers and definitions: [`LICENSE-KEYS.md`](LICENSE-KEYS.md).
 
-**What leaves my server?** The key (hashed), an installation id, the version, and per-conversation
-hashed ids with counts. Never content, identities, names, credentials, or files. See
+**What does licensing transmit?** Verification sends the raw license key, installation id and
+version over HTTPS. Usage reports send a key hash and hashed conversation ids with counts.
+Licensing does not send message content or provider credentials. Separately, model and connector
+providers receive the context and tool requests needed for enabled features. Hashes are
+pseudonymous identifiers, not guaranteed anonymity. See
 [`PRIVACY-AND-DATA-FLOW.md`](PRIVACY-AND-DATA-FLOW.md).
 
 **What if the platform is down or my server is offline?** The last verified tier stays valid for
@@ -160,7 +163,13 @@ much* you run, never *how safely*.
 
 **Fair game for the enterprise edition:** SSO/SAML/OIDC/SCIM, multi-admin RBAC, audit-log *export*
 and SIEM streaming, org-wide identity provisioning, multi-workspace operation, budgets and
-chargeback reporting, and white-labeling. Slack, Microsoft Teams, and Google Chat are free.
+chargeback reporting, and white-labeling. Standard chat connectors remain free; Microsoft Teams and Google Chat are **Beta**.
+Composio SDK mode is an **Enterprise-only Beta**; standard Composio MCP mode remains available
+in every tier.
 
-The rule behind the split: **single-team features are free, multi-team and multi-tenant features
-are commercial.** Security is not a feature tier.
+Core security is not a feature tier. Optional Enterprise integrations are listed explicitly,
+so an integration being useful to one team does not imply it is included in the free tier.
+
+**Can a no-key install include the EE directory?** Yes. Its license expressly permits unchanged
+bundled enforcement code in every otherwise permitted install and distribution. Enterprise
+feature use still requires the corresponding entitlement; see [the EE terms](../src/ee/LICENSE-EE.md).
