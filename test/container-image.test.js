@@ -302,3 +302,25 @@ test("needsImageBuild builds when the image spec moved, the sources changed, or 
   assert.ok(buildScript.includes(`tag: "${CONTAINER_DEFAULT_IMAGE.split(":")[0]}"`), "build:image must default to the configured image repo");
   assert.equal(CONTAINER_DEFAULT_IMAGE.endsWith(":latest"), true);
 });
+
+test("image diagnostics expose built and desired toolchains and detect legacy unlabeled images", async () => {
+  const { createContainerImage, expectedImageBuild, IMAGE_INSPECT_FORMAT } = await import("../src/runtimes/container/image.js");
+  const desired = expectedImageBuild(repoRoot);
+  let stdout = `sha256:old|${desired.version}`;
+  const image = createContainerImage({ cli: { async runWith(_caps, args) {
+    assert.equal(args[3], IMAGE_INSPECT_FORMAT);
+    return { code: 0, stdout };
+  } } });
+  const settings = { image: CONTAINER_DEFAULT_IMAGE };
+  const old = await image.inspect({}, settings);
+  assert.equal(old.needsRebuild, true);
+  assert.equal(old.managed, true);
+  assert.deepEqual(old.desiredToolchain, desired.toolchain);
+  stdout = `sha256:new|${desired.version}|${desired.digest}|${JSON.stringify(desired.toolchain)}`;
+  const current = await image.inspect({}, settings, { force: true });
+  assert.equal(current.needsRebuild, false);
+  assert.equal(current.digest, desired.digest);
+  assert.deepEqual(current.toolchain, desired.toolchain);
+  const custom = await image.inspect({}, { image: "private.example/runtime:custom" }, { force: true });
+  assert.equal(custom.managed, false);
+});

@@ -419,7 +419,7 @@ export function createContainerLifecycle({
     if (reason) log(`[container] ${name} stopped (${reason})`);
   }
 
-  async function removeContainer(caps, name, { volumes = "" } = {}) {
+  async function removeContainer(caps, name, { volumes = "", strictVolumes = false } = {}) {
     const result = await cli.runWith(caps, ["rm", "-f", name], { timeoutMs: 120_000 });
     if (result.code !== 0 && !isContainerGoneError(result.stderr)) {
       throw new Error(`could not remove container ${name}: ${String(result.stderr || "").trim()}`);
@@ -428,6 +428,7 @@ export function createContainerLifecycle({
     if (volumes) {
       const removed = await cli.runWith(caps, ["volume", "rm", volumes], { timeoutMs: 60_000 });
       if (removed.code !== 0 && !/no such volume|not found/i.test(String(removed.stderr || ""))) {
+        if (strictVolumes) throw new Error(`could not remove smoke HOME volume ${volumes}`);
         log(`[container] could not remove volume ${volumes}: ${String(removed.stderr || "").trim()}`);
       }
     }
@@ -437,7 +438,7 @@ export function createContainerLifecycle({
   // the memory reviewer both do — the idle reaper must not stop an environment a turn is about to
   // spawn into). It is excluded from "is anyone else inside?", because a turn is not a reason to
   // refuse to rebuild the container that turn is waiting for.
-  async function ensureUp(target, { announce = null, lease = null } = {}) {
+  async function ensureUp(target, { announce = null, lease = null, forceImage = false } = {}) {
     const name = target?.container?.name;
     if (!name) throw new Error("container target is missing its name");
     const ownLeaseId = typeof lease === "string" ? lease : (lease?.id || "");
@@ -448,7 +449,7 @@ export function createContainerLifecycle({
     try {
       const caps = await cli.probe(target.settings, { image: target.settings?.image });
       if (!caps.ok) throw new Error(caps.reason);
-      const img = await image.inspect(caps, target.settings);
+      const img = await image.inspect(caps, target.settings, { force: forceImage });
       if (!img.present) throw new Error(img.reason);
       settleTarget(target, { caps, img });
       const fingerprint = containerFingerprint(target);
@@ -540,12 +541,12 @@ export function createContainerLifecycle({
     }
   }
 
-  async function destroy(target, { volumes = false, reason = "" } = {}) {
+  async function destroy(target, { volumes = false, strictVolumes = false, reason = "" } = {}) {
     const name = target?.container?.name;
     if (!name) return;
     const caps = await cli.probe(target.settings, { image: target.settings?.image });
     if (!caps.ok) throw new Error(caps.reason);
-    await removeContainer(caps, name, { volumes: volumes ? target.container.homeVolume : "" });
+    await removeContainer(caps, name, { volumes: volumes ? target.container.homeVolume : "", strictVolumes });
     log(`[container] removed ${name}${volumes ? " and its HOME volume" : ""}${reason ? ` (${reason})` : ""}`);
   }
 

@@ -161,3 +161,7 @@ test("terminal update results have explicit operator-facing summaries", () => {
   assert.match(formatUpdateResult({ result: "refused", reason: "dirty tree" }), /refused.*dirty tree/i);
   assert.match(formatUpdateResult({ result: "failed", candidateError: "candidate", rollbackError: "rollback" }), /automatic rollback also failed/i);
 });
+
+test("successful code update never hides an image failure", () => {
+  assert.match(formatUpdateResult({ result: "updated", imageWarning: "build failed" }), /⚠️.*image needs attention.*build failed/);
+});

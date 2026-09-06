@@ -127,6 +127,14 @@ const claude = validateEngineAdapter({
   // the SAME one that failed?". `authenticated` is true whenever the gateway resolved SOME usable
   // login (the operator's own, a gateway sign-in, a setup-token or the daemon's API key); the
   // fingerprint is opaque and the orchestrator only ever compares it.
+  async updateSmoke(args) {
+    const { resolveContainerClaudeToken } = await import("../gateway/claude-token-relay.js");
+    const relay = await resolveContainerClaudeToken({ minFreshMs: 0, refresh: async () => {
+      throw new Error("Claude login expired; refresh the operator login before updating");
+    } });
+    if (!relay.token && relay.source !== "api-key") throw new Error(relay.error || "Claude login is unavailable");
+    return runClaude({ ...args, claudeOauthToken: relay.token });
+  },
   async credentialState() {
     const login = await claudeLogin();
     return {
@@ -202,6 +210,7 @@ const codex = validateEngineAdapter({
   // Optional per-engine fact: "is this harness's credential usable right now, and is it the SAME
   // one that failed?" The orchestrator only ever compares the opaque fingerprint, so an engine
   // that cannot answer simply doesn't declare this hook.
+  updateSmoke: (args) => runCodex({ ...args, clean: true, writable: false, networkMode: "off", artifactDir: args.target.artifactDir }),
   credentialState: () => readCodexAuthState({ codexHome: codexEngineHome() }),
   // `codex --version` answers "is the CLI installed", which stays true for a logged-OUT host — so
   // the credential is probed too. It never flips `ready` (an unauthenticated CLI is still present,

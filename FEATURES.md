@@ -1941,8 +1941,8 @@ are retired, bullet by bullet; everything else stands.
   production advisory gate, all tests, and optional provisioning; then restarts through the exact
   systemd `MainPID` (the launchd restart retired 2026-09-03 — Linux only). Success requires a new
   daemon instance on the expected revision,
-  Claude availability, Slack reconnect when it was previously connected, and another real isolated
-  Claude smoke. A post-checkout failure resets the old revision, reinstalls its lockfile, restarts,
+  container runtime availability, Slack reconnect when it was previously connected, and another real
+  container smoke for every engine that passed baseline. A post-checkout failure resets the old revision, reinstalls its lockfile, restarts,
   and proves the restored build with the same checks. Runtime snapshots are operator recovery
   material and are never auto-restored, so writes made while a candidate briefly ran are not
   discarded.
@@ -1953,8 +1953,8 @@ are retired, bullet by bullet; everything else stands.
   `cg.image.version` label, expected version from the CANDIDATE's `containers/versions.json`, never
   a constant the runner imported before the checkout moved). It is the one step that never blocks:
   a failed build reports `run \`npm run build:image\`` and the update continues to the restart,
-  because the image already on disk still runs every container channel. A host-only install skips
-  it entirely and never probes the container CLI. → TEST-PLAN: Container runtime (v0.8 P1).
+  because the image already on disk still runs every container channel. Failed builds remain visible
+  and digest drift triggers a retry even when the checkout revision is unchanged. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Truthful update status and final reporting**: atomic, non-secret phase/result state lives in
   `~/.channelgate/update-state.json`; logs live in `logs/update.log`; `/api/health` exposes the
   boot-captured serving revision plus the sanitized transaction. The dashboard follows the exact
@@ -2470,3 +2470,5 @@ are retired, bullet by bullet; everything else stands.
   and a pull-request template. A dependency-free `scripts/check-dco.mjs` (`npm run check:dco`)
   fails any commit range that lacks a well-formed `Signed-off-by` trailer, wired into CI as a
   pull-request job, and `test/dco-check.test.js` covers the pure trailer check.
+
+- **Verified container updates:** update health probes run in a disposable confined container through each configured Claude/Codex runner; missing logins are explicit skips and no probes is a failure. Image source fingerprints detect stale CLI pins even when the image spec or checkout revision is unchanged, allowing Update to retry failed builds. Container status shows desired/built CLI versions and containers awaiting image adoption. Custom image refs require operator rebuilds and failed builds remain visible in update results.

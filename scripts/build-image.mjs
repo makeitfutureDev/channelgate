@@ -15,6 +15,7 @@
 //     (the Codex secret-env bridge, the Composio SDK bridge, the Claude Stop hook). Inside a
 //     container those cannot come from the checkout — the checkout is never mounted — so their
 //     IMPORT CLOSURE is resolved here and only those files are staged into /opt/channelgate.
+import { expectedImageBuild } from "../src/runtimes/container/image.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -187,6 +188,8 @@ function main() {
     "--build-arg", `FASTER_WHISPER_VERSION=${versions.python?.["faster-whisper"]}`,
     "--build-arg", `WHISPER_MODEL=${versions.whisperModel}`,
     "--build-arg", `IMAGE_SPEC_VERSION=${specVersion}`,
+    "--build-arg", `IMAGE_BUILD_DIGEST=${expectedImageBuild(repoRoot).digest}`,
+    "--build-arg", `IMAGE_TOOLCHAIN=${JSON.stringify(npmPins)}`,
   ];
   if (options.noCache) args.push("--no-cache");
   args.push(staged.dir);

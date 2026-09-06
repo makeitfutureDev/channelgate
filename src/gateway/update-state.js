@@ -31,6 +31,7 @@ const PUBLIC_FIELDS = [
   "runningRevision",
   "changed",
   "reason",
+  "imageWarning",
   "candidateError",
   "rollbackError",
   "advisories",

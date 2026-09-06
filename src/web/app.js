@@ -135,7 +135,8 @@ export function createWebApp({
   app.post("/internal/update-smoke", async (req, res) => {
     if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
     try {
-      const result = await updateSmoke();
+      const requiredEngines = Array.isArray(req.body?.requiredEngines) ? req.body.requiredEngines.filter((id) => typeof id === "string") : [];
+      const result = await updateSmoke({ requiredEngines });
       res.status(result.ok ? 200 : 503).json(result);
     } catch (error) {
       res.status(503).json({ ok: false, error: String(error?.message || "update smoke failed").split(/\r?\n/, 1)[0].slice(0, 240) });

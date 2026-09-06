@@ -26,7 +26,7 @@ import {
   updateUpdateState,
 } from "../src/gateway/update-state.js";
 import { gatewayRoot, whisperModelPath } from "../src/config/paths.js";
-import { CONTAINER_DEFAULT_IMAGE, needsImageBuild } from "../src/runtimes/container/image.js";
+import { CONTAINER_DEFAULT_IMAGE, needsImageBuild, expectedImageBuild, IMAGE_INSPECT_FORMAT, parseImageBuild } from "../src/runtimes/container/image.js";
 import { processFailureMessage } from "../src/util/process-outcome.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -70,7 +70,7 @@ export function readinessFailure(health, {
   if (!health.instanceId) return "gateway health response has no instance id";
   if (previousInstanceId && health.instanceId === previousInstanceId) return "gateway instance has not restarted";
   if (expectedRevision && health.revision !== expectedRevision) return `gateway is running revision ${health.revision || "(unknown)"} instead of ${expectedRevision}`;
-  if (health.claude?.available !== true) return "Claude CLI is unavailable after restart";
+  if (health.containerRuntime?.cli?.ok === false) return "Container runtime is unavailable after restart";
   if (requireSlack && health.slack?.connected !== true) return "Slack did not reconnect after restart";
   return "";
 }
@@ -81,7 +81,7 @@ export function baselineFailure(health, { expectedRevision = "" } = {}) {
   if (expectedRevision && health.revision !== expectedRevision) {
     return `serving daemon revision ${health.revision || "(unknown)"} does not match checkout ${expectedRevision}`;
   }
-  if (health.claude?.available !== true) return "Claude CLI is unavailable before update";
+  if (health.containerRuntime?.cli?.ok === false) return "Container runtime is unavailable before update";
   return "";
 }
 
@@ -207,12 +207,12 @@ export async function healthAt(auth) {
   );
 }
 
-async function smokeAt(root) {
+async function smokeAt(root, requiredEngines = []) {
   const auth = internalAuth(root); // refreshed after every restart; the secret rotates per process.
   return fetchJson(
     `http://127.0.0.1:${auth.port}/internal/update-smoke`,
-    { method: "POST", headers: { "content-type": "application/json", "x-cg-secret": auth.secret }, body: "{}" },
-    100_000,
+    { method: "POST", headers: { "content-type": "application/json", "x-cg-secret": auth.secret }, body: JSON.stringify({ requiredEngines }) },
+    15 * 60_000,
   );
 }
 
@@ -259,7 +259,7 @@ function freeBytes(folder) {
 }
 
 async function defaultPreflight({ root, repoRoot }) {
-  logStep("→ Preflight: Git, runtime, configuration, service, disk, and Claude smoke…");
+  logStep("→ Preflight: Git, runtime, configuration, service, disk, and container engine smoke…");
   await runCommand("git", ["--version"], { cwd: repoRoot, quiet: true });
   await runCommand("npm", ["--version"], { cwd: repoRoot, quiet: true });
   const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
@@ -309,7 +309,7 @@ async function defaultPreflight({ root, repoRoot }) {
     throw refusal(`insufficient disk space: need ${(needBytes / GIB).toFixed(1)} GiB, have ${(availableBytes / GIB).toFixed(1)} GiB`);
   }
   const smoke = await smokeAt(root).catch((error) => ({ ok: false, error: safeMessage(error) }));
-  if (!smoke.ok) throw refusal(`pre-update Claude smoke failed: ${smoke.error || "unknown error"}`);
+  if (!smoke.ok) throw refusal(`pre-update container engine smoke failed: ${smoke.error || "unknown error"}`);
 
   return {
     branch,
@@ -319,6 +319,7 @@ async function defaultPreflight({ root, repoRoot }) {
     previousInstanceId: baselineHealth.instanceId || "",
     requireSlack: baselineHealth.slack?.connected === true,
     baselineHealth,
+    smokeEngines: (smoke.engines || []).filter((entry) => entry.ok).map((entry) => entry.engine),
     service,
     needBytes,
     availableBytes,
@@ -418,20 +419,21 @@ export function containerSettings(root) {
 // The spec version of the image the daemon would actually run, from the image's own
 // `cg.image.version` label (src/runtimes/container/image.js). "" means no image, no readable label,
 // or no usable CLI — all of which needsImageBuild() treats as "build it".
-export async function builtImageSpecVersion({ cli = "auto", image = "", run = runCommand } = {}) {
-  if (!image) return "";
+export async function builtImageInfo({ cli = "auto", image = "", run = runCommand } = {}) {
+  if (!image) return parseImageBuild("");
   const candidates = cli === "auto" ? CONTAINER_CLI_CANDIDATES : [cli];
   for (const bin of candidates) {
-    const result = await run(bin, ["image", "inspect", "--format", '{{index .Config.Labels "cg.image.version"}}', image], {
-      allowFailure: true,
-      quiet: true,
-      timeoutMs: 30_000,
+    const result = await run(bin, ["image", "inspect", "--format", IMAGE_INSPECT_FORMAT, image], {
+      allowFailure: true, quiet: true, timeoutMs: 30_000,
     });
-    if (result.code !== 0) continue; // missing binary, unreachable socket, or no such image
-    const version = String(result.stdout || "").trim();
-    return version === "<no value>" ? "" : version;
+    if (result.code !== 0) continue;
+    return { ...parseImageBuild(result.stdout), cli: bin };
   }
-  return "";
+  return parseImageBuild("");
+}
+
+export async function builtImageSpecVersion(options = {}) {
+  return (await builtImageInfo(options)).version;
 }
 
 // The spec version the CANDIDATE expects, read from disk rather than from the IMAGE_SPEC_VERSION
@@ -461,34 +463,33 @@ export async function defaultImageBuild({
     quiet: true,
     timeoutMs: 60_000,
   })).stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-  const builtSpecVersion = await builtImageSpecVersion({ cli: settings.cli, image: settings.image, run });
-  const expectedSpecVersion = expectedImageSpecVersion(repoRoot);
-  if (!needsImageBuild({ changedPaths, builtSpecVersion, expectedSpecVersion })) {
-    log(`→ Channel image ${settings.image} is current (spec ${builtSpecVersion || "unknown"}) — no rebuild needed.`);
+  const before = await builtImageInfo({ cli: settings.cli, image: settings.image, run });
+  const desired = expectedImageBuild(repoRoot);
+  const drift = (built) => needsImageBuild({ builtSpecVersion: built.version, expectedSpecVersion: desired.version, builtDigest: built.digest, expectedDigest: desired.digest });
+  if (!needsImageBuild({ changedPaths, builtSpecVersion: before.version, expectedSpecVersion: desired.version, builtDigest: before.digest, expectedDigest: desired.digest })) {
+    log(`→ Channel image ${settings.image} is current (spec ${before.version}, digest ${before.digest}) — no rebuild needed.`);
     return { built: false, needed: false, reason: "the built image already matches this revision" };
   }
+  if (settings.image !== CONTAINER_DEFAULT_IMAGE) {
+    const reason = `custom image ${settings.image} needs an operator rebuild or replacement; the automatic builder only owns ${CONTAINER_DEFAULT_IMAGE}`;
+    log(`⚠ ${reason}. Continuing with the configured image.`);
+    return { built: false, needed: true, manual: true, reason };
+  }
 
-  // Only now does the phase change: an update that skips the build must not tell the dashboard it
-  // is building one.
   if (owner) updateUpdateState({ root, owner, patch: { phase: "image" } });
-  log(`→ Rebuilding the channel image ${settings.image} (spec ${builtSpecVersion || "none built"} → ${expectedSpecVersion || "unknown"}). This takes several minutes; the restart waits for it…`);
+  log(`→ Rebuilding the channel image ${settings.image} (spec ${before.version || "none built"} → ${desired.version}, digest ${before.digest || "unknown"} → ${desired.digest}). This takes several minutes; the restart waits for it…`);
   try {
-    await run(process.execPath, [path.join(repoRoot, "scripts", "build-image.mjs")], { cwd: repoRoot, timeoutMs: IMAGE_BUILD_TIMEOUT_MS });
+    const result = await run(process.execPath, [path.join(repoRoot, "scripts", "build-image.mjs"), "--cli", before.cli || settings.cli], { cwd: repoRoot, timeoutMs: IMAGE_BUILD_TIMEOUT_MS });
+    if (result.code !== 0) throw new Error(`image builder exited ${result.code}`);
+    const after = await builtImageInfo({ cli: before.cli || settings.cli, image: settings.image, run });
+    if (!after.id || drift(after)) throw new Error(`built image ${settings.image} does not match the requested toolchain digest ${desired.digest}`);
+    log(`→ Channel image rebuilt: ${settings.image} → ${after.id}. Idle channels pick it up on their next turn.`);
+    return { built: true, needed: true, imageId: after.id, digest: after.digest };
   } catch (error) {
-    // Never blocking. The previously built image still runs every container channel, so the worst
-    // case is the toolchain an operator was going to get late — far better than a daemon left on
-    // the old revision because a container build failed.
     const reason = safeMessage(error);
-    log(`⚠ channel image build failed — run \`npm run build:image\` (${reason}). Continuing with the update; container channels keep running the image they have.`);
+    log(`⚠ channel image build failed — run \`npm run build:image\` (${reason}). Continuing with the update; container channels keep running the image they have. The next update will retry while the image digest differs.`);
     return { built: false, needed: true, failed: true, reason };
   }
-  const imageId = (await run(
-    settings.cli === "auto" ? CONTAINER_CLI_CANDIDATES[0] : settings.cli,
-    ["image", "inspect", "--format", "{{.Id}}", settings.image],
-    { allowFailure: true, quiet: true, timeoutMs: 30_000 },
-  )).stdout.trim();
-  log(`→ Channel image rebuilt: ${settings.image}${imageId ? ` → ${imageId}` : ""}. Each channel picks it up on its next turn.`);
-  return { built: true, needed: true, imageId };
 }
 
 async function defaultRestart({ service, root = gatewayRoot() }) {
@@ -521,8 +522,8 @@ async function defaultVerify({ root, context, expectedRevision }) {
         requireSlack: context.requireSlack,
       });
       if (!lastReason) {
-        const smoke = await smokeAt(root).catch((error) => ({ ok: false, error: safeMessage(error) }));
-        if (!smoke.ok) throw new Error(`post-restart Claude smoke failed: ${smoke.error || "unknown error"}`);
+        const smoke = await smokeAt(root, context.smokeEngines || []).catch((error) => ({ ok: false, error: safeMessage(error) }));
+        if (!smoke.ok) throw new Error(`post-restart container engine smoke failed: ${smoke.error || "unknown error"}`);
         return health;
       }
     } catch (error) {
@@ -556,6 +557,10 @@ function defaultOps({ root, repoRoot }) {
     },
     provision: () => runCommand("bash", [path.join(repoRoot, "scripts", "update-provision.sh")], { cwd: repoRoot, timeoutMs: 90 * 60_000 }),
     image: ({ context, owner }) => defaultImageBuild({ root, repoRoot, context, owner }),
+    verifyImage: async ({ context }) => {
+      const smoke = await smokeAt(root, context.smokeEngines || []);
+      if (!smoke.ok) throw new Error(`Rebuilt image smoke failed: ${smoke.error || "unknown error"}`);
+    },
     restart: ({ context }) => defaultRestart({ service: context.service, root }),
     verify: ({ context, expectedRevision }) => defaultVerify({ root, context, expectedRevision }),
     restore: ({ context }) => runCommand("git", ["reset", "--hard", context.oldRevision], { cwd: repoRoot, quiet: true, timeoutMs: 60_000 }),
@@ -595,11 +600,22 @@ export async function executeUpdateTransaction({
       },
     });
     if (context.oldRevision === context.targetRevision) {
+      let imageResult;
+      try {
+        imageResult = await ops.image?.({ context, owner });
+        if (imageResult?.built) {
+          phase(root, owner, "verifying");
+          await ops.verifyImage({ context, owner });
+        }
+      } catch (error) {
+        imageResult = { failed: true, reason: safeMessage(error) };
+        logStep(`⚠ channel image check failed: ${imageResult.reason}`);
+      }
       return finishUpdate({
         root,
         owner,
         result: "updated",
-        patch: { phase: "complete", changed: false, runningRevision: context.oldRevision, reason: "Already up to date." },
+        patch: { phase: "complete", changed: false, runningRevision: context.oldRevision, imageWarning: imageResult?.failed || imageResult?.manual ? imageResult.reason : "", reason: imageResult?.failed || imageResult?.manual ? `Checkout is up to date; image needs attention: ${imageResult.reason}` : imageResult?.built ? "Checkout is up to date; channel image rebuilt and verified." : "Already up to date." },
       });
     }
 
@@ -625,9 +641,11 @@ export async function executeUpdateTransaction({
     // that fails must not leave the daemon on the old revision — the previously built image still
     // runs every container channel, and the operator is told exactly which command to re-run. The
     // step reports its own phase only when it actually builds.
+    let imageResult;
     try {
-      await ops.image?.({ context, owner });
+      imageResult = await ops.image?.({ context, owner });
     } catch (error) {
+      imageResult = { needed: true, failed: true, reason: safeMessage(error) };
       logStep(`⚠ channel image build failed — run \`npm run build:image\` (${safeMessage(error)}). Continuing with the update.`);
     }
     phase(root, owner, "restarting");
@@ -642,7 +660,10 @@ export async function executeUpdateTransaction({
         phase: "complete",
         changed: true,
         runningRevision: health?.revision || context.targetRevision,
-        reason: "Candidate passed daemon, Slack, and Claude smoke checks.",
+        imageWarning: imageResult?.failed || imageResult?.manual ? imageResult.reason : "",
+        reason: imageResult?.failed || imageResult?.manual
+          ? `Daemon updated; container image needs attention: ${imageResult.reason}`
+          : "Candidate passed daemon, Slack, and configured container engine smoke checks.",
       },
     });
   } catch (error) {

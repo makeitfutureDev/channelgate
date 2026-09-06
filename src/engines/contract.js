@@ -93,7 +93,7 @@ export function createAdapterRegistry(adapters) {
     },
     // `sessionState` is stripped like the other behaviour-bearing fields: it holds functions, and
     // structuredClone throws on those. The UI has no use for where a transcript lives on disk.
-    manifests: () => [...map.values()].map(({ run, interrupt, discoverMcps, health, credentialState, compileConfinement, modelBelongs, resumeCommand, sessionState, ...manifest }) => structuredClone(manifest)),
+    manifests: () => [...map.values()].map(({ run, interrupt, discoverMcps, health, credentialState, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, ...manifest }) => structuredClone(manifest)),
   });
 }
 

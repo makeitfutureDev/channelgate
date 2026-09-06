@@ -625,3 +625,20 @@ Deleting the `_meta` installation-id row simply mints a new random one.
 it is also logged: `license_run_refused` in the event log carries the conversation, the reason
 (`conversation_limit` or `monthly_cap`), the UTC month, and the run count. Cross-check it against
 Settings → License → *Usage this month*.
+
+### Verifying and recovering a container toolchain update
+
+The image carries a digest of its container build sources and its pinned CLI versions. Update
+compares this with the desired checkout even when no Git revision changed. A failed image build
+is retried by the next Update; a zero exit with stale labels is reported as a failure. Custom image
+references are operator-managed and are never silently replaced with the default image.
+
+Container runtime status displays built/desired Claude and Codex versions, whether a rebuild is
+needed, and how many existing containers await adoption. Active turns keep their image until idle.
+Update results retain image-build warnings even when the daemon update succeeds.
+
+Update smoke checks use a disposable channel container and the same Claude/Codex runners as live
+turns. Each configured engine must return `CG_UPDATE_SMOKE_OK`; absent logins are explicit skips,
+and zero tested engines fails. No smoke engine runs on the host. The fixture's container, HOME
+volume and working files are removed afterwards. An expired operator Claude token must be
+refreshed before updating; the smoke probe does not launch a host token-refresh turn.

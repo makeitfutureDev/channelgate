@@ -137,11 +137,12 @@ export function readTerminalUpdateMarker({
 export function formatUpdateResult(transaction = {}) {
   const revision = transaction.runningRevision ? ` \`${transaction.runningRevision}\`` : "";
   const reason = safeMessage(transaction.reason || transaction.candidateError || "");
+  if (transaction.result === "updated" && transaction.imageWarning) return `⚠️ Gateway code is current${revision}; container image needs attention: ${transaction.imageWarning}`;
   if (transaction.result === "updated" && transaction.changed === false) {
-    return `✅ Gateway already up to date${revision}. Preflight and the isolated Claude smoke check passed.`;
+    return `✅ Gateway already up to date${revision}. ${transaction.reason || "Preflight and configured container engine smoke checks passed."}`;
   }
   if (transaction.result === "updated") {
-    return `✅ Update complete — running${revision}. Extended health checks passed: daemon revision, Slack reconnect, and isolated Claude smoke.`;
+    return `✅ Update complete — running${revision}. ${transaction.reason || "Daemon revision, Slack reconnect, and configured container engine smoke checks passed."}`;
   }
   if (transaction.result === "rolled_back") {
     const failure = safeMessage(transaction.candidateError || reason);

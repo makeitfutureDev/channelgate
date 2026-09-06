@@ -176,7 +176,7 @@ test("durability: a fingerprint mismatch recreates the container onto the SAME H
   assert.ok(h.logs.some((m) => /configuration changed — recreating/.test(m)));
 });
 
-test("durability: destroy() removes the HOME volume only when a caller explicitly asks — and no production caller does", async () => {
+test("durability: destroy() removes the HOME volume only when a caller explicitly asks — and only the ephemeral smoke fixture opts in", async () => {
   const h = harness({ state: { exists: true, status: "running" } });
   const t = target("dur-destroy");
   await h.lifecycle.destroy(t, { reason: "rollback" });
@@ -201,6 +201,7 @@ test("durability: destroy() removes the HOME volume only when a caller explicitl
           const text = line.trim();
           // Comments DESCRIBE the switch (contract.js documents it); only code may flip it.
           if (text.startsWith("//") || text.startsWith("*") || text.startsWith("/*")) continue;
+          if (child === "src/gateway/update-smoke.js") continue; // owns a unique ephemeral fixture, never a stored channel
           if (/volumes\s*:\s*true/.test(text)) offenders.push(`${child}:${index + 1}: ${text}`);
         }
       }

@@ -334,7 +334,7 @@ export async function containerRuntimeStatus(settings = bootSettings) {
   if (!caps.ok) return out;
   try {
     const img = await r.image.inspect(caps, effective);
-    out.image = { ref: img.ref, id: img.id, present: img.present, reason: img.reason };
+    out.image = { ...img };
   } catch (error) {
     out.image.reason = String(error?.message || error);
   }
@@ -348,10 +348,13 @@ export async function containerRuntimeStatus(settings = bootSettings) {
       state: entry.status,
       upSince: entry.startedAt,
       image: entry.labels["cg.image"] || "",
+      imageId: entry.imageId || "",
+      awaitingImage: Boolean(out.image.id && entry.imageId !== out.image.id),
       leases: leases.get(entry.name)?.leases ?? 0,
       idleMs: leases.get(entry.name)?.idleMs ?? null,
     }));
     out.running = out.containers.filter((entry) => entry.state === "running").length;
+    out.awaitingImage = out.containers.filter((entry) => entry.awaitingImage).length;
   } catch (error) {
     out.cli.reason = out.cli.reason || String(error?.message || error);
   }

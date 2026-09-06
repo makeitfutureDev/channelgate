@@ -3253,12 +3253,12 @@ Manual checks for the daemon-level behavior:
 
 - [x] Unit: exclusive reservation, live-owner refusal, dead/abandoned-owner recovery, ownership
       checks, atomic state transitions, terminal idempotency, and strict non-secret public status.
-- [x] Unit: isolated Claude smoke creates a temporary gated folder with memory/dreaming off,
-      sandbox on, no network/MCP/bypass, a fixed exact response, bounded timeouts, and unconditional
-      cleanup. Internal route requires loopback plus the daemon secret.
+- [x] Unit: configured Claude/Codex smoke uses a disposable confined container with memory/dreaming off,
+      no MCP/bypass, a fixed exact response, the shared stall watchdog, and unconditional cleanup.
+      Engines that passed baseline must pass after restart. Internal route requires loopback plus the daemon secret.
 - [x] Unit: disk sizing covers dependency/recovery staging plus explicit missing-Whisper space;
       high/critical audit counts block while moderate counts are preserved; readiness requires a
-      replacement instance on the expected boot revision, Claude, and prior Slack connectivity.
+      replacement instance on the expected boot revision, container runtime, and prior Slack connectivity.
 - [x] Unit: successful candidate phases, preflight refusal before mutation, post-checkout rollback,
       rollback failure, targeted systemd `MainPID`, wrapper/provisioning contracts (launchd support
       retired 2026-09-03 — Linux only),
@@ -3657,3 +3657,10 @@ the suite runs as an enterprise deployment because it holds a license it actuall
 - [ ] Confirm any engine-independent case cannot traverse an engine-specific runtime path.
 - [ ] Confirm Airtable writes used the requester's explicitly selected personal connection and did
   not silently fall back to an agent-side identity.
+
+## Container update verification and recovery
+
+- Both Claude and Codex fixtures: configure each login, invoke the internal authenticated update smoke route, require exact CG_UPDATE_SMOKE_OK responses per engine. Verify isolated target, no bypass/MCP injection, no host engine child, and removal of the ephemeral container, HOME volume and work folders. Invalid configured credentials must fail; absent credentials must be explicitly skipped; zero probes fails.
+- Image recovery: build old pins, change the desired Codex pin without changing imageSpecVersion, make the first build fail, then run Update again on the same checkout revision. Require retry and matching built/desired source digest; a build exiting zero with stale labels fails verification. Existing channels retain HOME and adopt the new image when idle.
+- Admin container status: require actual built and desired Claude/Codex versions, rebuild-needed status, and count of containers awaiting adoption. A custom image reference must never report a successful default-image rebuild.
+- Live acceptance fixtures: private disposable `update-smoke-<uuid>` container per gateway; authenticated local IPC only, no Slack posting. Run both engine cases on each deployment. Airtable cases must mirror these actions and exact pass evidence using the requester's personal connection.

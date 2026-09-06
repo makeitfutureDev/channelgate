@@ -3501,6 +3501,14 @@ function paintContainerRuntimeHealth(state) {
     bits.push(`${who} · ${state.running || 0} channel container${state.running === 1 ? "" : "s"} running.`);
     bits.push(image.present ? `Image ${image.ref} ready.` : `Image ${image.ref || "(unset)"} is not built — ${image.reason || "run npm run build:image on the gateway host"}.`);
   }
+  if (image.desiredToolchain || image.toolchain) {
+    for (const [name, wanted] of Object.entries(image.desiredToolchain || {})) {
+      if (name !== "@openai/codex" && name !== "@anthropic-ai/claude-code") continue;
+      bits.push(`${name === "@openai/codex" ? "Codex" : "Claude"}: built ${image.toolchain?.[name] || "unknown"}, desired ${wanted}.`);
+    }
+    if (image.needsRebuild) bits.push(image.managed ? "Image rebuild required; run Update to retry." : "Custom image needs an operator rebuild.");
+    if (state.awaitingImage) bits.push(`${state.awaitingImage} container(s) awaiting the built image; adopted on the next idle start.`);
+  }
   if (state.socket && state.socket.listening === false) bits.push("The gateway control socket is not listening — container runs would have no gateway tools.");
   el.textContent = bits.join(" ");
 }
@@ -3512,7 +3520,7 @@ function paintContainerRuntimeHealth(state) {
 // treating any replacement daemon as success.
 const UPDATE_PHASES = {
   queued: "queued",
-  preflight: "checking Git, disk, config, service, and Claude",
+  preflight: "checking Git, disk, config, service, and container engines",
   snapshotting: "creating a recovery snapshot",
   checkout: "checking out the candidate",
   installing: "installing exact dependencies",
@@ -3521,12 +3529,15 @@ const UPDATE_PHASES = {
   provisioning: "provisioning optional components",
   image: "rebuilding the channel container image",
   restarting: "restarting the gateway",
-  verifying: "checking daemon, Slack, and Claude",
+  verifying: "checking daemon, Slack, and container engines",
   rolling_back: "rolling back to the previous revision",
 };
 
 function updateResultHtml(transaction) {
   const revision = transaction.runningRevision ? ` <code>${escapeHtml(transaction.runningRevision)}</code>` : "";
+  if (transaction.result === "updated" && transaction.imageWarning) {
+    return `<span class="statuschip"><span class="dot warn"></span>container image needs attention — ${escapeHtml(transaction.imageWarning)}</span>`;
+  }
   if (transaction.result === "updated" && transaction.changed === false) {
     return `<span class="statuschip"><span class="dot ok"></span>already up to date${revision}; checks passed</span>`;
   }

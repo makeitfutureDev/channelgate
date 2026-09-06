@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { expectedImageBuild } from "../src/runtimes/container/image.js";
 import { readUpdateState, reserveUpdate } from "../src/gateway/update-state.js";
 import { tempDir } from "./helpers.js";
 import {
@@ -79,7 +80,7 @@ test("readiness requires a replacement instance on the expected revision with Cl
   assert.equal(readinessFailure(base, { previousInstanceId: "old-instance", expectedRevision: "target", requireSlack: true }), "");
   assert.match(readinessFailure({ ...base, instanceId: "old-instance" }, { previousInstanceId: "old-instance", expectedRevision: "target" }), /instance/i);
   assert.match(readinessFailure({ ...base, revision: "wrong" }, { previousInstanceId: "old-instance", expectedRevision: "target" }), /revision/i);
-  assert.match(readinessFailure({ ...base, claude: { available: false } }, { previousInstanceId: "old-instance", expectedRevision: "target" }), /Claude/i);
+  assert.match(readinessFailure({ ...base, containerRuntime: { cli: { ok: false } } }, { previousInstanceId: "old-instance", expectedRevision: "target" }), /Container/i);
   assert.match(
     readinessFailure({ ...base, slack: { connected: false } }, { previousInstanceId: "old-instance", expectedRevision: "target", requireSlack: true }),
     /Slack/i,
@@ -101,7 +102,7 @@ test("preflight health must be the healthy daemon actually serving the checkout 
   assert.match(baselineFailure({ ...base, ok: false }, { expectedRevision: "old" }), /health/i);
   assert.match(baselineFailure({ ...base, instanceId: "" }, { expectedRevision: "old" }), /instance/i);
   assert.match(baselineFailure({ ...base, revision: "other" }, { expectedRevision: "old" }), /revision/i);
-  assert.match(baselineFailure({ ...base, claude: { available: false } }, { expectedRevision: "old" }), /Claude/i);
+  assert.match(baselineFailure({ ...base, containerRuntime: { cli: { ok: false } } }, { expectedRevision: "old" }), /Container/i);
 });
 
 test("systemd restart accepts only a safe positive MainPID", () => {
@@ -343,18 +344,20 @@ function candidateCheckout(spec) {
 }
 
 // A `run` stand-in: answers `git diff` and the image-label inspect, records the build invocation.
-function fakeRun({ changed = [], builtVersion = "1.1.1", buildFails = false } = {}) {
+function fakeRun({ changed = [], builtVersion = "1.1.1", buildFails = false, desired = expectedImageBuild(candidateCheckout("1.1.1")), builtDigest = desired.digest, staleAfterBuild = false } = {}) {
+  let rebuilt = false;
   const calls = [];
   const run = async (command, args = []) => {
     calls.push([command, ...args].join(" "));
     if (command === "git") return { code: 0, stdout: `${changed.join("\n")}\n`, stderr: "" };
     if (args[0] === "image" && args[1] === "inspect") {
       const format = String(args[3] || "");
-      if (format.includes("cg.image.version")) return { code: builtVersion === null ? 1 : 0, stdout: builtVersion === null ? "" : `${builtVersion}\n`, stderr: "" };
+      if (format.includes("cg.image.version")) return { code: builtVersion === null && !rebuilt ? 1 : 0, stdout: `sha256:deadbeef|${rebuilt ? desired.version : builtVersion}|${rebuilt && !staleAfterBuild ? desired.digest : builtDigest}|{}\n`, stderr: "" };
       return { code: 0, stdout: "sha256:deadbeef\n", stderr: "" };
     }
     if (String(args[0] || "").endsWith("build-image.mjs")) {
       if (buildFails) throw new Error("podman build exploded");
+      rebuilt = true;
       return { code: 0, stdout: "", stderr: "" };
     }
     return { code: 0, stdout: "", stderr: "" };
@@ -366,7 +369,7 @@ test("the update rebuilds the channel image when this revision's image spec move
   const root = containerRoot();
   const repoRoot = candidateCheckout("1.2.0");
   const logs = [];
-  const fake = fakeRun({ builtVersion: "1.1.1", changed: ["src/gateway/run.js"] });
+  const fake = fakeRun({ builtVersion: "1.1.1", changed: ["src/gateway/run.js"], desired: expectedImageBuild(repoRoot) });
 
   const result = await defaultImageBuild({
     root, repoRoot, context: { oldRevision: "old", targetRevision: "new" }, run: fake.run, log: (m) => logs.push(m),
@@ -466,4 +469,70 @@ test("container settings and the built image label come from the running install
   const autoRun = fakeRun({ builtVersion: null });
   await builtImageSpecVersion({ cli: "auto", image: "cg:1", run: autoRun.run });
   assert.deepEqual(autoRun.calls.map((c) => c.split(" ")[0]), ["podman", "docker"]);
+});
+
+test("a failed pin rebuild is retried on the next update even with an unchanged checkout", async () => {
+  const root = containerRoot();
+  const repoRoot = candidateCheckout("1.1.1");
+  const desired = expectedImageBuild(repoRoot);
+  const context = { oldRevision: "same", targetRevision: "same", smokeEngines: ["claude", "codex"] };
+  let verified = false;
+  const failed = fakeRun({ desired, builtDigest: "old-pins", buildFails: true });
+  assert.equal((await defaultImageBuild({ root, repoRoot, context, run: failed.run, log: () => {} })).failed, true);
+  const retry = fakeRun({ desired, builtDigest: "old-pins" });
+  const reserved = reserveUpdate({ root, source: "test", pidAlive: () => false });
+  const state = await executeUpdateTransaction({ root, owner: reserved.owner, ops: {
+    preflight: async () => context,
+    image: () => defaultImageBuild({ root, repoRoot, context, run: retry.run, log: () => {} }),
+    verifyImage: async ({ context: received }) => { assert.deepEqual(received.smokeEngines, ["claude", "codex"]); verified = true; },
+    checkout: () => assert.fail("must not change an up-to-date checkout"),
+    restart: () => assert.fail("an image-only repair does not restart active turns"),
+  } });
+  assert.equal(retry.built(), true);
+  assert.equal(verified, true);
+  assert.match(state.reason, /image rebuilt and verified/);
+});
+
+test("a successful builder exit cannot claim a still-stale image was rebuilt", async () => {
+  const root = containerRoot();
+  const repoRoot = candidateCheckout("1.1.1");
+  const fake = fakeRun({ desired: expectedImageBuild(repoRoot), builtDigest: "old-pins", staleAfterBuild: true });
+  const result = await defaultImageBuild({ root, repoRoot, context: { oldRevision: "a", targetRevision: "b" }, run: fake.run, log: () => {} });
+  assert.equal(result.failed, true);
+  assert.match(result.reason, /does not match/);
+});
+
+test("custom image refs require explicit operator replacement and never rebuild the default tag", async () => {
+  const root = containerRoot({ image: "registry.example:5000/custom@sha256:abc" });
+  const repoRoot = candidateCheckout("1.1.1");
+  const fake = fakeRun({ desired: expectedImageBuild(repoRoot), builtDigest: "old-pins" });
+  const result = await defaultImageBuild({ root, repoRoot, context: { oldRevision: "a", targetRevision: "b" }, run: fake.run, log: () => {} });
+  assert.equal(result.manual, true);
+  assert.equal(result.built, false);
+  assert.equal(fake.built(), false);
+});
+
+test("image digest detects pin and helper changes without a spec bump", () => {
+  const repoRoot = candidateCheckout("1.1.1");
+  const original = expectedImageBuild(repoRoot);
+  writeFileSync(path.join(repoRoot, "containers", "versions.json"), JSON.stringify({ imageSpecVersion: "1.1.1", npm: { "@openai/codex": "1.2.3" } }));
+  const pinned = expectedImageBuild(repoRoot);
+  assert.equal(original.version, pinned.version);
+  assert.notEqual(original.digest, pinned.digest);
+  assert.equal(pinned.toolchain["@openai/codex"], "1.2.3");
+  writeFileSync(path.join(repoRoot, "containers", "Containerfile"), "FROM node:22\n");
+  assert.notEqual(expectedImageBuild(repoRoot).digest, pinned.digest);
+  assert.equal(expectedImageBuild(repoRoot).digest, expectedImageBuild(repoRoot).digest);
+});
+
+test("image-only repair preserves a failed post-build smoke as a visible warning", async () => {
+  const root = containerRoot();
+  const reserved = reserveUpdate({ root, source: "test", pidAlive: () => false });
+  const state = await executeUpdateTransaction({ root, owner: reserved.owner, ops: {
+    preflight: async () => ({ oldRevision: "same", targetRevision: "same", smokeEngines: ["codex"] }),
+    image: async () => ({ built: true }),
+    verifyImage: async () => { throw new Error("Codex failed in rebuilt image"); },
+  } });
+  assert.match(state.imageWarning, /Codex failed/);
+  assert.match(state.reason, /needs attention/);
 });

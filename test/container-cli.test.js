@@ -112,7 +112,11 @@ test("image: a present image yields the id and the spec-version label", async ()
   });
   const cli = createContainerCli({ exec: fake.exec });
   const info = await createContainerImage({ cli }).inspect(await cli.probe(SETTINGS), SETTINGS);
-  assert.deepEqual(info, { ref: "channelgate/runtime:latest", id: "sha256:deadbeef", version: "1.0.0", present: true, reason: "" });
+  assert.equal(info.id, "sha256:deadbeef");
+  assert.equal(info.version, "1.0.0");
+  assert.equal(info.present, true);
+  assert.equal(info.needsRebuild, true, "legacy image without toolchain digest needs rebuild");
+  assert.equal(info.desiredDigest.length, 64);
 });
 
 test("create argv: podman keep-id vs docker --user, with the hardening flags and no secret on the command line", async () => {
