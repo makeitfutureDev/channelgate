@@ -1,16 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, clearTestLicense, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
 
-const { resolveSdkSession } = await import("../src/gateway/composio-sdk.js");
+const { resolveSdkSession } = await import("../src/ee/composio-sdk.js");
 const {
   composioIdentity,
   composioSessionKey,
   saveComposioSession,
   getComposioSession,
-} = await import("../src/gateway/composio-sessions.js");
+} = await import("../src/ee/composio-sessions.js");
 
 function remoteSession(id) {
   return {
@@ -193,4 +193,15 @@ test("concurrent resolution shares one remote create", async () => {
   const [a, b] = await Promise.all([first, second]);
   assert.deepEqual(a, b);
   assert.equal(creates, 1);
+});
+
+
+test("SDK session entrypoint fails before contacting Composio without Enterprise", async () => {
+  let calls = 0;
+  const client = { sessions: { create: async () => { calls++; }, use: async () => { calls++; } } };
+  try {
+    clearTestLicense();
+    await assert.rejects(resolveSdkSession({ workspaceId: "T1", kind: "user", id: "U1", threadKey: "1.001", accessKind: "owner", client }), /Enterprise/);
+    assert.equal(calls, 0);
+  } finally { testLicenseEnv(); }
 });

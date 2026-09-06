@@ -205,3 +205,19 @@ test("remote http MCP entries are identical on both backends", async () => {
     assert.deepEqual(isolated.mcpServers[name], host.mcpServers[name], name);
   }
 });
+
+
+test("untrusted run MCP config omits personal endpoints and cannot grant their URLs", async () => {
+  const personalUrl = "https://app.composio.dev/tool_router/v3/trs_personal/mcp";
+  const sharedUrl = "https://app.composio.dev/tool_router/v3/trs_shared/mcp";
+  const config = JSON.parse(await buildMcpConfig({ principalTrusted: false,
+    composioUserEndpoint: { mode: "sdk", url: personalUrl }, composioUserToken: "personal-token",
+    composioEndpoint: { mode: "sdk", url: sharedUrl },
+  }));
+  assert.equal(config.mcpServers["composio-user"], undefined);
+  const { verifyGatewayCapability } = await import("../src/gateway/mcp-capability.js");
+  const verified = verifyGatewayCapability(config.mcpServers.gateway.env.CG_GATEWAY_CAPABILITY, { secret: process.env.CG_APPROVAL_SECRET });
+  assert.equal(verified.ok, true);
+  assert.deepEqual(verified.claims.composioSessions, [{ kind: "channel", url: sharedUrl }]);
+  assert.doesNotMatch(JSON.stringify(config), /personal-token|trs_personal/);
+});

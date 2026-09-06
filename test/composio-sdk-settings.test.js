@@ -1,7 +1,7 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, clearTestLicense, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
 
@@ -69,4 +69,21 @@ test("saving only Composio mode through the admin route preserves every credenti
   assert.equal(settings.getComposioSdkApiKey(), "sdk-secret");
   assert.equal((await getUser("U_TEST")).composioToken, "legacy-user-token");
   assert.equal((await getChannelMeta("sdk-test")).composioToken, "legacy-channel-token");
+});
+
+
+test("settings reject SDK activation/key storage without Enterprise and expose availability", async () => {
+  try {
+    for (const tier of ["none", "free"]) {
+      if (tier === "none") clearTestLicense(); else testLicenseEnv({ tier: "free" });
+      for (const patch of [{ composioMode: "sdk" }, { composioSdkApiKey: "replacement-sdk-key" }]) {
+        const response = await fetch(`${base}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...patch, connectSlack: false }) });
+        assert.equal(response.status, 403);
+        assert.match((await response.json()).error, /Enterprise/);
+      }
+      const allowed = await fetch(`${base}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ composioMode: "personal", connectSlack: false }) });
+      assert.equal(allowed.status, 200);
+      assert.deepEqual((await allowed.json()).composioSdk, { tier: "enterprise", status: "beta", entitled: false });
+    }
+  } finally { testLicenseEnv(); }
 });

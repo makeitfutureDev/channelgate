@@ -2651,12 +2651,13 @@ function tokenState(has, last4 = "") {
 function syncComposioModeUi() {
   const mode = document.getElementById("set-composio-mode")?.value === "sdk" ? "sdk" : "personal";
   GLOBAL_COMPOSIO_MODE = mode;
+  const entitled = document.getElementById("set-composio-mode")?.dataset.sdkEntitled === "true";
   const sdkField = document.getElementById("composio-sdk-key-field");
   if (sdkField) sdkField.hidden = mode !== "sdk";
   const help = document.getElementById("composio-mode-help");
   if (help) {
     help.textContent = mode === "sdk"
-      ? "Stable identity per Slack user/channel; a separate Composio session is reused per Slack thread. Only channel managers can manage shared connections."
+      ? (entitled ? "Enterprise · Beta. Stable identity per Slack user/channel; separate sessions per Slack thread. Only channel managers manage shared connections." : "Enterprise · Beta. An active Enterprise license is required. Save Personal tokens mode or activate an Enterprise license to restore integrations.")
       : "Uses the saved token on each user and channel, with the organization token as the shared fallback.";
   }
   const note = document.getElementById("composio-personal-token-note");
@@ -2995,9 +2996,6 @@ function readSettingsForm() {
     containerMemory: document.getElementById("set-container-memory").value,
     containerCpus: document.getElementById("set-container-cpus").value,
     containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
-    // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
-    ...(tokenValue(document.getElementById("set-container-claude-token")) ? { containerClaudeOauthToken: tokenValue(document.getElementById("set-container-claude-token")) } : {}),
-    ...(document.getElementById("clear-container-claude-token").classList.contains("armed") ? { clearContainerClaudeOauthToken: true } : {}),
     agentsFile: document.getElementById("set-agentsfile").checked,
     agentsInstructions: document.getElementById("set-agents-instructions").value,
     agentMemory: document.getElementById("set-agentmemory").checked,
@@ -3054,6 +3052,9 @@ function paintSettings(s) {
   document.getElementById("set-trusted-apps").value = (s.trustedBotApps || []).join(", ");
   if (s.defaultChannelAccess) document.getElementById("set-channel-access").value = s.defaultChannelAccess;
   document.getElementById("set-composio-mode").value = s.composioMode === "sdk" ? "sdk" : "personal";
+  document.getElementById("set-composio-mode").dataset.sdkEntitled = String(s.composioSdk?.entitled === true);
+  document.querySelector('#set-composio-mode option[value="sdk"]').disabled = s.composioSdk?.entitled !== true;
+  document.getElementById("set-composio-sdk-key").disabled = s.composioSdk?.entitled !== true;
   GLOBAL_COMPOSIO_MODE = document.getElementById("set-composio-mode").value;
   document.getElementById("composio-sdk-key-state").textContent = tokenState(s.hasComposioSdkApiKey, s.composioSdkApiKeyLast4);
   attachReveal(document.getElementById("set-composio-sdk-key"), "");
@@ -3108,8 +3109,7 @@ function paintSettings(s) {
   document.getElementById("set-container-memory").value = s.containerMemory || "";
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
   document.getElementById("set-container-full-access-home").checked = s.containerFullAccessHome === true;
-  document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
-  attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
+  document.getElementById("set-adminpw").dataset.hasPassword = String(s.hasAdminPassword === true);
   document.getElementById("adminpw-state").textContent = s.hasAdminPassword ? "· set" : "· not set (UI open)";
   // HTTP run API key: a revealable field seeded with the stored token (so it can be copied into an
   // automation) plus a set/not-set state. Generated client-side, persisted on Save (write-only).
@@ -3212,6 +3212,10 @@ const fmtLicenseTime = (v) => (v ? new Date(v).toLocaleString() : "—");
 
 function paintLicense(l) {
   document.getElementById("license-state-chip").textContent = LICENSE_STATE_LABEL[l.state] || `· ${l.state}`;
+  document.getElementById("set-composio-mode").dataset.sdkEntitled = String(l.features?.composioSdk === true);
+  document.querySelector('#set-composio-mode option[value="sdk"]').disabled = l.features?.composioSdk !== true;
+  document.getElementById("set-composio-sdk-key").disabled = l.features?.composioSdk !== true;
+  syncComposioModeUi();
 
   const banner = document.getElementById("license-banner");
   banner.className = `license-banner ${l.banner?.level || ""}`.trim();
@@ -3297,7 +3301,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -3433,10 +3437,17 @@ function bindSettings() {
     // settings change just persists and takes effect on the next message, no reconnect.
     const slackTokenChanged = !!(form.slackBotToken || form.slackAppToken || form.slackSigningSecret);
     try {
+      const currentAdminPassword = newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true"
+        ? window.prompt("Current admin password (to change it):", "") : "";
+      if (newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true" && !currentAdminPassword) {
+        saved.textContent = "Password change cancelled";
+        return;
+      }
       const r = await api("/api/settings", {
         method: "PUT",
         body: JSON.stringify({
           ...patch,
+          ...(newPw ? { currentAdminPassword } : {}),
           // Echo the version this page was painted from: the server refuses the save (409) if
           // anything wrote settings in the meantime, instead of landing it on a newer state.
           ...(SETTINGS_VERSION ? { settingsVersion: SETTINGS_VERSION } : {}),
@@ -3447,7 +3458,7 @@ function bindSettings() {
       // Reset only the write-only password box; the token fields are repainted (masked) by the
       // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
       document.getElementById("set-adminpw").value = "";
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret"]) disarmClearTok(document.getElementById(id));
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.
       loadLicense().catch(() => { /* the save itself succeeded — the card refreshes on reload */ });
@@ -4038,10 +4049,16 @@ document.getElementById("remove-password").addEventListener("click", async () =>
     danger: true,
   });
   if (!ok) return;
-  await api("/api/settings", { method: "PUT", body: JSON.stringify({ clearAdminPassword: true, connectSlack: false }) });
-  document.getElementById("daemon-msg").textContent = "✓ password removed";
-  await loadSettings();
-  await loadHealth();
+  const currentAdminPassword = window.prompt("Current admin password (to remove it):", "");
+  if (!currentAdminPassword) return;
+  try {
+    await api("/api/settings", { method: "PUT", body: JSON.stringify({ clearAdminPassword: true, currentAdminPassword, connectSlack: false }) });
+    document.getElementById("daemon-msg").textContent = "✓ password removed";
+    await loadSettings();
+    await loadHealth();
+  } catch (error) {
+    document.getElementById("daemon-msg").textContent = "✗ " + error.message;
+  }
 });
 
 // ── Boot ─────────────────────────────────────────────────────────────────────────

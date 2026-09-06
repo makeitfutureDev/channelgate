@@ -26,7 +26,7 @@ export const teamsAdapter = validatePlatformAdapter({
   // An Azure Relay Hybrid Connection would remove the public-URL requirement and swaps in FRONT of
   // the same handler — it stays on the roadmap rather than blocking the surface.
   transport: "bot-framework",
-  status: "preview",
+  status: "beta",
   conversationKinds: ["channel", "groupChat", "personal"],
   capabilities: {
     // Native token streaming DOES exist on Teams, but only in 1:1 chats, at 1 req/sec, with a

@@ -26,9 +26,9 @@ export const googleChatAdapter = validatePlatformAdapter({
   idPrefix: "gchat:",
   folderName: "google-chat",
   transport: "pubsub-pull",
-  // preview, not ga: the transport is implemented and tested against fakes, but it has not yet run
+  // Beta: the transport is implemented and tested against fakes, but it has not yet run
   // against a live Google Workspace tenant. Claiming ga before that is how a surface ships broken.
-  status: "preview",
+  status: "beta",
   // `space` = a named/threaded space, `groupChat` = an unnamed multi-person chat, `dm` = 1:1.
   // spaceThreadingState is what distinguishes threaded spaces from flat ones at runtime.
   conversationKinds: ["space", "groupChat", "dm"],

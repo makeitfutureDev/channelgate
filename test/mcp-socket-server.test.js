@@ -257,3 +257,13 @@ test("an over-long socket path degrades to a warning instead of failing the boot
   assert.match(warnings.join("\n"), /unix socket path limit/);
   assert.equal(mcpSocketStatus().listening, false);
 });
+
+
+test("gateway capability alone cannot select an arbitrary SDK session on the daemon socket", async (t) => {
+  const socketPath = await serverOn(t);
+  const reply = await rawExchange(socketPath, `${JSON.stringify({
+    channelgate: "hello", v: 1, service: "composio-sdk", cap: capability(),
+    args: ["https://app.composio.dev/tool_router/v3/trs_ungranted/mcp"],
+  })}\n`);
+  assert.equal(JSON.parse(reply.trim()).reason, "composio bridge unavailable");
+});

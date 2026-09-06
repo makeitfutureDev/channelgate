@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, clearTestLicense, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
 
@@ -152,4 +152,34 @@ test("personal mode in a DM drops the channel and organization tokens", async ()
   assert.equal(result.shared.token, "");
   assert.equal(result.shared.source, "none-dm");
   assert.equal(result.shared.endpoint, null);
+});
+
+
+test("untrusted API author cannot mint a personal session or manage shared connections", async () => {
+  const calls = [];
+  const result = await resolveComposioRuntime({
+    mode: "sdk", workspaceId: "T1", channelId: "C1", authorId: "U1", threadKey: "1.001",
+    principalTrusted: false, authorIsAdmin: true, authorIsApproved: true,
+    meta: { manageAccess: "admins", managers: ["U1"] },
+    resolveSdk: async (input) => { calls.push(input); return { mode: "sdk", url: "https://app.composio.dev/tool_router/v3/trs_channel/mcp" }; },
+  });
+  assert.equal(result.user.endpoint, null);
+  assert.equal(result.user.source, "none-untrusted-principal");
+  assert.deepEqual(calls.map(({ kind, accessKind, manageConnections }) => ({ kind, accessKind, manageConnections })), [
+    { kind: "channel", accessKind: "member", manageConnections: false },
+  ]);
+  calls.length = 0;
+  await resolveComposioRuntime({ mode: "sdk", principalTrusted: false, isDM: true, resolveSdk: async (input) => calls.push(input) });
+  assert.equal(calls.length, 0);
+});
+
+test("SDK runtime requires Enterprise even when SDK resolver is injected", async () => {
+  let calls = 0;
+  try {
+    for (const tier of ["none", "free"]) {
+      if (tier === "none") clearTestLicense(); else testLicenseEnv({ tier: "free" });
+      await assert.rejects(resolveComposioRuntime({ mode: "sdk", resolveSdk: async () => { calls++; } }), /Enterprise/);
+    }
+    assert.equal(calls, 0);
+  } finally { testLicenseEnv(); }
 });

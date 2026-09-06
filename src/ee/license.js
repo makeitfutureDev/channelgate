@@ -44,7 +44,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { metaGet, metaSet } from "../db/index.js";
+import { getDb, metaGet, metaSet } from "../db/index.js";
 import { getLicenseKey, getSettings, saveSettings } from "../config/settings.js";
 import { licensePublicKeyPem, isPlaceholderKey } from "./license-public-key.js";
 import {
@@ -65,6 +65,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const META_INSTALLATION_ID = "license_installation_id";
 const META_CACHE = "license_cache"; // { license, signature, verifiedAt, keyHash }
 const META_LAST_CHECK = "license_last_check"; // { outcome, at, detail, keyHash }
+const META_VERIFY_GENERATION = "license_verification_generation";
 
 export const LICENSE_STATES = Object.freeze(["no_key", "valid", "invalid", "revoked", "expired", "grace", "expired_grace"]);
 
@@ -108,6 +109,7 @@ export function licenseKeyLast4() {
 // forbids. A fresh verification is kicked off but NOT awaited — the admin save must not block on
 // the platform, and the state machine already has an answer for "not verified yet" (grace).
 export function onLicenseKeyChanged({ fetchImpl = globalThis.fetch, verify = true } = {}) {
+  metaSet(META_VERIFY_GENERATION, randomUUID());
   clearCacheIfKeyChanged();
   if (!hasLicenseKey()) {
     metaSet(META_CACHE, "");
@@ -212,22 +214,28 @@ export function readCache(now = Date.now()) {
   const offline = offlineLicense(now);
   if (offline) return offline;
   const cache = readJsonMeta(META_CACHE);
-  if (!cache || !cache.license || !cache.verifiedAt) return null;
+  if (!cache || !cache.license || !cache.verifiedAt || cache.keyHash !== currentKeyHash()) return null;
   return cache;
 }
 
 export function readLastCheck(now = Date.now()) {
   if (offlineLicense(now)) return { outcome: "verified", at: new Date(now).toISOString(), detail: "offline payload", keyHash: "" };
-  return readJsonMeta(META_LAST_CHECK);
+  const last = readJsonMeta(META_LAST_CHECK);
+  return last?.keyHash === currentKeyHash() ? last : null;
+}
+
+function currentKeyHash() {
+  const key = getLicenseKey();
+  return key ? sha256Hex(key) : "";
 }
 
 function clearCacheIfKeyChanged() {
   if (offlineLicense()) return; // the offline payload lives in the environment, not in _meta
   const key = getLicenseKey();
   const hash = key ? sha256Hex(key) : "";
-  const cache = readCache();
+  const cache = readJsonMeta(META_CACHE);
   if (cache && cache.keyHash !== hash) metaSet(META_CACHE, "");
-  const last = readLastCheck();
+  const last = readJsonMeta(META_LAST_CHECK);
   if (last && last.keyHash !== hash) metaSet(META_LAST_CHECK, "");
 }
 
@@ -392,6 +400,7 @@ export function getLicenseStatus(now = Date.now()) {
     // date it expired on comes from the resolution itself — the card must still say WHEN.
     expiresAt: r.license?.expiresAt || r.expiredAt || null,
     limits: r.limits,
+    features: { composioSdk: r.license?.tier === "enterprise" && !r.fellBack && ["valid", "grace", "expired_grace"].includes(r.state) },
     hasLicenseKey: hasLicenseKey(),
     licenseKeyLast4: licenseKeyLast4(),
     licenseKeySource: getSettings().licenseKey ? "settings" : hasLicenseKey() ? "env" : "",
@@ -480,6 +489,8 @@ export async function verifyLicense({ fetchImpl = globalThis.fetch, now = () => 
   // An offline payload is already a verified license. Never make the request — the whole point of
   // that mode is that this install has no route to the platform.
   if (offlineLicense(now())) return { ...announceState(now()), outcome: "verified", detail: "offline payload" };
+  const generation = randomUUID();
+  metaSet(META_VERIFY_GENERATION, generation);
   const key = getLicenseKey();
   if (!key) {
     metaSet(META_LAST_CHECK, JSON.stringify({ outcome: "no_key", at: new Date(now()).toISOString(), detail: "", keyHash: "" }));
@@ -490,6 +501,7 @@ export async function verifyLicense({ fetchImpl = globalThis.fetch, now = () => 
   const at = new Date(now()).toISOString();
   let outcome = "unreachable";
   let detail = "";
+  let verifiedCache = null;
 
   try {
     const res = await fetchImpl(`${platformBaseUrl()}/v1/license/verify`, {
@@ -515,7 +527,7 @@ export async function verifyLicense({ fetchImpl = globalThis.fetch, now = () => 
         detail = "signature verification failed";
       } else {
         outcome = "verified";
-        metaSet(META_CACHE, JSON.stringify({ license: body.license, signature: body.signature, verifiedAt: at, keyHash }));
+        verifiedCache = { license: body.license, signature: body.signature, verifiedAt: at, keyHash };
       }
     } else {
       detail = `HTTP ${res.status}`;
@@ -524,7 +536,24 @@ export async function verifyLicense({ fetchImpl = globalThis.fetch, now = () => 
     detail = e?.name === "TimeoutError" ? "timeout" : String(e?.message || e);
   }
 
-  metaSet(META_LAST_CHECK, JSON.stringify({ outcome, at, detail, keyHash }));
+  // The daemon and MCP processes verify concurrently. Compare the durable request generation
+  // and commit both records under one SQLite write lock; a module-local counter cannot order
+  // another process's verification. No network or other await is allowed inside this transaction.
+  const db = getDb();
+  let superseded = false;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    superseded = metaGet(META_VERIFY_GENERATION) !== generation || keyHash !== currentKeyHash() || Boolean(offlineLicense(now()));
+    if (!superseded) {
+      if (verifiedCache) metaSet(META_CACHE, JSON.stringify(verifiedCache));
+      metaSet(META_LAST_CHECK, JSON.stringify({ outcome, at, detail, keyHash }));
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  if (superseded) return { ...getLicenseStatus(now()), outcome: "superseded", detail: "verification superseded" };
   const status = announceState(now());
   if (outcome !== "verified" && outcome !== "invalid" && outcome !== "revoked") {
     console.warn(`[license] platform check failed (${detail || "unreachable"}) — state: ${status.state}`);

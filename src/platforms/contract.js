@@ -96,7 +96,7 @@ const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITY_SPEC));
 // browses, so "teams"/"google-chat" beat "msteams"/"googlechat".
 const REQUIRED_MANIFEST = ["id", "label", "transport", "status", "conversationKinds", "folderName"];
 const REQUIRED_METHODS = ["formatOutbound", "createConnector", "health"];
-export const PLATFORM_STATUSES = Object.freeze(["ga", "preview", "scaffold"]);
+export const PLATFORM_STATUSES = Object.freeze(["ga", "beta", "preview", "scaffold"]);
 
 function normalizeCapabilities(id, declared) {
   const caps = {};

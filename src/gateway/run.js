@@ -30,7 +30,8 @@ import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort } from "./thread-engine.js";
 import { PROFILE_FLAGS, canManage } from "./modes.js";
 import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
-import { resolveSdkSession } from "./composio-sdk.js";
+import { resolveSdkSession } from "../ee/composio-sdk.js";
+import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
@@ -196,9 +197,12 @@ async function engineCredentialReplaced(engine) {
 }
 
 async function rememberAuthFailure(engine) {
-  engineAuthFailedUntil.set(engine, Date.now() + LIMIT_COOLDOWN_MS);
   const state = await engineCredentialState(engine).catch(() => null);
-  engineAuthFailedFingerprint.set(engine, state?.fingerprint || "");
+  // Independently authenticated channel CLIs have no shared service credential. One channel's
+  // sign-in failure must never suppress that engine in every other conversation.
+  if (!state?.known || !state.fingerprint) return;
+  engineAuthFailedUntil.set(engine, Date.now() + LIMIT_COOLDOWN_MS);
+  engineAuthFailedFingerprint.set(engine, state.fingerprint);
 }
 
 // One line for a turn the user pinned: nothing was switched, and here is how to switch it. Kept
@@ -544,12 +548,13 @@ export async function resolveComposioRuntime({
   defaultToken = "",
   noOrg = false,
   isDM = false,
+  principalTrusted = true,
   resolveSdk = resolveSdkSession,
 } = {}) {
   if (clean || mode !== "sdk") {
     const legacy = resolveComposioConnections({
       clean,
-      userToken,
+      userToken: principalTrusted ? userToken : "",
       channelToken,
       defaultToken,
       noOrg,
@@ -562,20 +567,21 @@ export async function resolveComposioRuntime({
     };
   }
 
-  const mayManageShared = canManage(meta, {
+  requireComposioSdkEntitlement();
+  const mayManageShared = principalTrusted && canManage(meta, {
     authorId,
     isAdminUser: authorIsAdmin,
     isApprovedUser: authorIsApproved,
   });
   const [userResult, sharedResult] = await Promise.allSettled([
-    resolveSdk({
+    principalTrusted ? resolveSdk({
       workspaceId,
       kind: "user",
       id: authorId,
       threadKey,
       accessKind: "owner",
       manageConnections: true,
-    }),
+    }) : null,
     // Same rule as personal mode: a DM has no shared audience, so no channel session is minted.
     isDM
       ? null
@@ -591,7 +597,9 @@ export async function resolveComposioRuntime({
 
   return {
     mode: "sdk",
-    user: userResult.status === "fulfilled"
+    user: !principalTrusted
+      ? { token: "", source: "none-untrusted-principal", endpoint: null }
+      : userResult.status === "fulfilled"
       ? { token: "", source: "sdk-user", endpoint: userResult.value }
       : { token: "", source: "sdk-unavailable", endpoint: null },
     shared: isDM
@@ -620,8 +628,16 @@ export function applyRunOverrides(meta, overrides) {
   if (overrides.effort) o.effort = String(overrides.effort);
   if (overrides.engine && ENGINES.includes(overrides.engine)) o.engine = overrides.engine;
   if (overrides.mode && PROFILE_FLAGS[overrides.mode]) {
-    Object.assign(o, PROFILE_FLAGS[overrides.mode], { profile: overrides.mode });
-    if (o.adminMode && !meta.adminMode) o.adminMode = false;
+    const requested = PROFILE_FLAGS[overrides.mode];
+    // Modes express capabilities, not independent booleans: Full and Auto also permit shell
+    // tools. Intersect with the stored maximum, and keep clean mode sticky because disabling it
+    // would restore connectors/skills that the channel deliberately removed.
+    o.adminMode = Boolean(requested.adminMode && meta.adminMode);
+    o.allowBash = Boolean(requested.allowBash && (meta.allowBash || meta.autoMode || meta.adminMode));
+    o.autoMode = Boolean(requested.autoMode && (meta.autoMode || meta.adminMode));
+    o.cleanMode = Boolean(meta.cleanMode || requested.cleanMode);
+    o.profile = Object.entries(PROFILE_FLAGS).find(([, flags]) =>
+      Object.keys(flags).every((key) => Boolean(o[key]) === flags[key]))?.[0] || "custom";
   }
   delete o.runtime; // a mode profile must never carry a backend pin into a run
   return { ...meta, ...o };
@@ -1043,6 +1059,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     meta,
     authorIsAdmin,
     authorIsApproved,
+    principalTrusted: !untrustedPrincipal,
     channelToken: meta.composioToken,
     userToken: personalComposioToken,
     defaultToken: getDefaultComposioToken(),
