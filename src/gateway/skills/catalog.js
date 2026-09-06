@@ -201,11 +201,11 @@ export function getSkill(key) {
     const slug = slugFromName(k);
     if (slug && slug !== k) row = db.prepare(`${SKILL_SELECT} WHERE s.slug = ?`).get(slug);
   }
-  return rowToSkill(row);
+  return withPinnedMetadata(rowToSkill(row));
 }
 
 export function getSkillById(id) {
-  return rowToSkill(getDb().prepare(`${SKILL_SELECT} WHERE s.id = ?`).get(Number(id)));
+  return withPinnedMetadata(rowToSkill(getDb().prepare(`${SKILL_SELECT} WHERE s.id = ?`).get(Number(id))));
 }
 
 // `viewer` narrows personal skills: "" (nobody) hides every personal skill, a user id shows that
@@ -248,7 +248,7 @@ export function listSkills({ includeDeleted = false, ownerKind = "", sourceId = 
     args.push(q, q, q, q, q, q);
   }
   const sql = `${SKILL_SELECT}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY s.slug${limit > 0 ? ` LIMIT ${Number(limit)}` : ""}`;
-  return getDb().prepare(sql).all(...args).map(rowToSkill);
+  return getDb().prepare(sql).all(...args).map((r) => withPinnedMetadata(rowToSkill(r)));
 }
 
 export function setSkillDiscoverable(key, discoverable) {
@@ -292,6 +292,21 @@ export function effectiveRevisionFor(skill) {
   if (!skill) return null;
   const id = skill.pinnedRevisionId ?? skill.currentRevisionId;
   return id == null ? null : getRevision(id);
+}
+
+// …and the metadata it ADVERTISES follows that same revision. The `skills` row's frontmatter
+// columns are a derived index rebuilt from the newest ACTIVATED revision (activateRow), so a
+// skill pinned to an older one — an operator's rollback, or the pinned override an approved
+// proposal writes — would otherwise keep showing the newest revision's name and description next
+// to files nobody receives. Read the pin's own SKILL.md instead; an unpinned skill (the common
+// case) is returned untouched and costs nothing.
+function withPinnedMetadata(skill) {
+  if (!skill?.pinnedRevisionId || skill.pinnedRevisionId === skill.currentRevisionId) return skill;
+  const manifest = revisionFile(skill.pinnedRevisionId, "SKILL.md");
+  if (!manifest) return skill;
+  const parsed = parseFrontmatter(manifest.content.toString("utf8"));
+  const md = skillMetadata(parsed.data);
+  return { ...skill, name: md.name, description: md.description, category: md.category, tags: md.tags, requires: md.requires, version: md.version, meta: parsed.data };
 }
 
 function latestRevisionRow(db, skillId) {

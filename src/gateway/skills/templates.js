@@ -10,6 +10,7 @@
 import { getTemplate, listTemplates, upsertTemplate, resolveTemplateSkills, listSkills } from "./catalog.js";
 import { withDependencies } from "./resolve.js";
 import { patchChannelMeta, listChannels } from "../../config/store.js";
+import { getOrgAccessGrants, getSkillsContextWarnTokens } from "../../config/settings.js";
 import { sanitizeSkillGrantNames } from "../access-grants.js";
 
 export const BUILTIN_TEMPLATES = Object.freeze([
@@ -108,7 +109,12 @@ export function withTemplateSkills(meta) {
 // the RESOLVED profile (dependencies included) because that is what the conversation would end up
 // running; nothing here is ever stored — assigning writes only the template slug, and the
 // conversation's own grant list keeps holding explicit grants only.
-export function previewTemplate(templateKey, meta = {}, { additions = null } = {}) {
+//
+// `context` is the always-on cost in three labelled numbers, never one ambiguous total: what THIS
+// tier's skill descriptions cost, what the ORGANIZATION tier costs (it loads in every conversation
+// whatever the template says), and the EFFECTIVE union the conversation actually pays. Reporting
+// the tier alone understated a real conversation by the whole organization tier.
+export function previewTemplate(templateKey, meta = {}, { additions = null, orgSkills = null } = {}) {
   const template = templateKey ? getTemplate(templateKey) : null;
   if (templateKey && !template) return null;
   const currentTier = channelSkillGrants(meta);
@@ -117,6 +123,10 @@ export function previewTemplate(templateKey, meta = {}, { additions = null } = {
   const have = new Set(own.map((s) => s.toLowerCase()));
   const base = [...skills.map((s) => s.slug).filter((s) => !have.has(s.toLowerCase())), ...own];
   const { names, profile } = withDependencies(base);
+  const org = sanitizeSkillGrantNames(orgSkills ?? getOrgAccessGrants().skills ?? []);
+  const warnTokens = getSkillsContextWarnTokens();
+  const orgProfile = withDependencies(org, { warnTokens }).profile;
+  const effective = withDependencies([...org, ...names], { warnTokens });
   const current = new Set(currentTier.map((s) => s.toLowerCase()));
   const next = new Set(names.map((s) => s.toLowerCase()));
   return {
@@ -127,6 +137,13 @@ export function previewTemplate(templateKey, meta = {}, { additions = null } = {
     names,
     missing,
     profile,
+    context: {
+      tier: profile.contextTokens,
+      organization: orgProfile.contextTokens,
+      effective: effective.profile.contextTokens,
+      names: effective.names,
+      warnings: effective.profile.warnings,
+    },
   };
 }
 

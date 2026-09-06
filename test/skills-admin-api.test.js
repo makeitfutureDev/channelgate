@@ -76,8 +76,15 @@ test("catalog: create a local skill, read it back with its files, update it, pin
   assert.equal(pinned.status, 200);
   assert.ok(pinned.json.skill.pinnedRevisionId);
   assert.deepEqual((await request("/skills/catalog/api-skill")).json.files.map((f) => f.path), ["SKILL.md", "references/r.md"], "the pinned revision is the effective one");
+  // …and so is the text beside them: a row that advertised the newest name/description next to the
+  // pinned revision's files described a skill nobody receives.
+  const pinnedRow = (await request("/skills/catalog?q=api-skill")).json.skills.find((s) => s.slug === "api-skill");
+  assert.equal(pinnedRow.description, "created over the API", "the catalog row follows the pin");
+  assert.equal(pinnedRow.category, "Development", "and so does every other derived column");
+  assert.equal((await request("/skills/catalog/api-skill")).json.skill.description, "created over the API");
   assert.equal((await request("/skills/catalog/api-skill/pin", { method: "POST", body: { revisionNo: 9 } })).status, 404);
   await request("/skills/catalog/api-skill/pin", { method: "POST", body: { revisionNo: null } });
+  assert.equal((await request("/skills/catalog?q=api-skill")).json.skills.find((s) => s.slug === "api-skill").description, "updated over the API", "unpinning follows the current revision again");
 
   assert.equal((await request("/skills/catalog/api-skill", { method: "DELETE" })).status, 200);
   assert.equal((await request("/skills/catalog?deleted=1")).json.skills.find((s) => s.slug === "api-skill").excluded, true, "an admin removal is a sticky exclusion");

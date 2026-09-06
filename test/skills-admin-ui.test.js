@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
 const js = await readFile(new URL("../public/admin-skills.js", import.meta.url), "utf8");
+const css = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
 
 test("source dialog offers only GitHub and ChannelGate with kind-specific fields", () => {
   assert.match(js, /<option value="git">GitHub repository<\/option><option value="gateway">Other ChannelGate<\/option>/);
@@ -37,4 +38,16 @@ test("templates and usage expose searchable selection and understandable views",
   assert.match(js, /skill-discoverable/);
   assert.match(js, /skill-mandatory/);
   assert.match(js, /does not mean a skill failed/);
+});
+
+// An author `display` declaration beats the UA stylesheet's `[hidden] { display: none }` whatever
+// its specificity, so every class the admin JS hides by setting `.hidden` needs a companion rule.
+// Without it the template skill search hid nothing (every row stayed on screen while filtering) and
+// the source dialog showed the GitHub and ChannelGate fields at the same time.
+test("what the admin JS hides with the hidden property is actually hidden", () => {
+  assert.match(js, /for \(const row of root\.querySelectorAll\("\.skills-picker-row"\)\) row\.hidden = /);
+  assert.match(css, /\.skills-picker-row \{[^}]*display: flex/);
+  assert.match(css, /\.skills-picker-row\[hidden\] \{ display: none; \}/);
+  assert.match(js, /querySelectorAll\("\[data-source-kind\]"\)\) field\.hidden = /);
+  assert.match(css, /\.field\[hidden\] \{ display: none; \}/);
 });

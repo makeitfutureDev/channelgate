@@ -240,6 +240,36 @@ product overview.
   `src/config/dead-fields.js` in the same change.
 
 ### Fixed
+- **The template skill search filters again, and the Add-source dialog shows one kind of field.**
+  Both hide elements by setting the `hidden` property, and the admin stylesheet was quietly
+  overriding it: an author `display` declaration beats the user-agent sheet's
+  `[hidden] { display: none }` whatever its specificity, so `.skills-picker-row { display: flex }`
+  and `.field { display: block }` kept every row and every field on screen. Typing in Skills →
+  Templates' skill search filtered nothing at all, and choosing GitHub or Other ChannelGate in the
+  Add source dialog left both kinds' fields visible at once. Both classes now carry a `[hidden]`
+  companion rule.
+- **A skill pinned to an older revision describes THAT revision.** The `skills` row's frontmatter
+  columns (name, description, category, tags, requires, version) are a derived index rebuilt from
+  the newest ACTIVATED revision, so a rollback — or the pinned override an approved proposal writes
+  — kept advertising the newest revision's name and description beside the pinned revision's files,
+  in the catalog table, the skill detail, the chat listings and the peer-sync manifest. Every
+  catalog read now overlays the pinned revision's own `SKILL.md` frontmatter, exactly as the file
+  list already followed the pin; an unpinned skill is returned untouched.
+- **A template preview says what the conversation will actually pay in context.** The always-on
+  estimate counted only the template's own skills and their dependencies, while the organization
+  tier loads in EVERY conversation whatever the template says — with a few dozen mandatory skills
+  configured, the number an admin sizes a template against was short by most of the real cost.
+  `preview_skill_template`, `set_channel_skill_template` and `GET /api/skills/templates/:slug/preview`
+  now report labelled numbers instead of one: what this tier adds, what the organization tier costs,
+  and the effective union (dependencies included, a skill in both tiers counted once), measured
+  against the configured context soft cap.
+- **Saving a channel environment secret no longer claims the conversation card has unsaved edits.**
+  The card marks itself dirty on any input or change inside it, and the Environment tokens pane is
+  inside that card — so typing a variable name or value, and storing it with its own request, left
+  an "Unsaved changes" bar hanging over a card with nothing to save. Controls that save through
+  their OWN request (a write-only value must never round-trip through the card's Save) are now
+  exempt in all three dirty-trackers: the conversation card, the DM/template card and the Settings
+  page. Nothing else about the bar changed.
 - **A container whose workspace moved is rebuilt before the next turn, never reused.** A channel's
   work folder was pointed at a subfolder, used for a few turns, then restored and the subfolder
   deleted. The warm container had been created with that subfolder bind-mounted as its workspace;
