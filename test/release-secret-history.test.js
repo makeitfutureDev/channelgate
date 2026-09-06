@@ -1,0 +1,29 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync, copyFileSync } from "node:fs";
+import path from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { tempDir } from "./helpers.js";
+
+test("release scanning covers commit and candidate tag messages without echoing values", () => {
+  const root = tempDir("cg-scan-history-");
+  mkdirSync(path.join(root, "scripts"));
+  copyFileSync(new URL("../scripts/secret-scan.mjs", import.meta.url), path.join(root, "scripts/secret-scan.mjs"));
+  const git = (...args) => execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...args], { cwd: root, stdio: "pipe" });
+  git("init"); writeFileSync(path.join(root, "file.txt"), "safe fixture\n"); git("add", "file.txt");
+  const fake = "gh" + "p_" + "A".repeat(36);
+  git("commit", "-m", fake);
+  const run = () => spawnSync(process.execPath, ["scripts/secret-scan.mjs", "--history"], { cwd: root, encoding: "utf8" });
+  let result = run();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /history:/);
+  assert.equal((result.stderr.match(/SECRET\?/g) || []).length, 1, "one match is reported once");
+  assert.ok(!result.stderr.includes(fake));
+  git("commit", "--amend", "-m", "clean fixture");
+  assert.equal(run().status, 0, "unreachable replaced commit is outside candidate history");
+  git("tag", "-a", "v-fixture", "-m", fake);
+  result = run();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /tag:/);
+  assert.ok(!result.stderr.includes(fake));
+});

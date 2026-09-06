@@ -137,6 +137,8 @@ function stageContext({ closure }) {
       type: "module",
       version: "0.0.0",
       dependencies,
+      // Carry reviewed transitive security pins into the independently installed helper bundle.
+      overrides: JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")).overrides || {},
     }, null, 2)}\n`,
   );
   return { dir, bundleDir, dependencies };

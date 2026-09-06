@@ -17,7 +17,7 @@ license key.
 ## The test that decides the hard cases
 
 For a paid engagement, work through all five. The deployment is permitted service work under
-Section 3.3/3.1 only if every answer is on the left.
+Section 3, item (c)/3.1 only if every answer is on the left.
 
 | | Permitted (§3.1) | Requires an agreement (§4) |
 |---|---|---|

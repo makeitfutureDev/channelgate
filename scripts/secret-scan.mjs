@@ -47,9 +47,14 @@ function scan(content, label, overlap = 0) {
     while ((match = re.exec(content)) !== null) {
       if (match.index + match[0].length <= overlap) continue;
       findings += 1;
-      if (findings <= 100) console.error(`SECRET? ${label} matches "${name}"`);
+      if (findings <= 100) console.error(`SECRET? ${safeLabel(label)} matches "${name}"`);
     }
   }
+}
+function safeLabel(label) {
+  let value = String(label);
+  for (const { re } of PATTERNS) value = value.replace(new RegExp(re.source, re.flags), "[redacted]");
+  return value;
 }
 async function scanFile(file, label) {
   // Streaming keeps image archives and other large release assets bounded in memory.
@@ -75,11 +80,20 @@ for (const file of files) {
 if (args.includes("--history")) {
   const objects = execFileSync("git", ["rev-list", "--objects", "HEAD"], { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   const names = new Map(objects.trim().split("\n").map((line) => { const [id, ...name] = line.split(" "); return [id, name.join(" ")]; }));
+  // Annotated tags pointing at the candidate are published too, but private archive tags are not.
+  const tags = execFileSync("git", ["for-each-ref", "--points-at", "HEAD", "--format=%(objectname) %(objecttype)", "refs/tags"], { cwd: repoRoot, encoding: "utf8" });
+  for (const line of tags.trim().split("\n")) {
+    const [id, type] = line.split(" ");
+    if (type !== "tag") continue;
+    const message = execFileSync("git", ["cat-file", "tag", id], { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    scan(message, `tag:${id.slice(0, 12)}`);
+    checked += 1;
+  }
   const types = execFileSync("git", ["cat-file", "--batch-check=%(objectname) %(objecttype)"], { cwd: repoRoot, input: [...names.keys()].join("\n") + "\n", encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   for (const line of types.trim().split("\n")) {
     const [id, type] = line.split(" ");
-    if (type !== "blob") continue;
-    const child = spawn("git", ["cat-file", "blob", id], { cwd: repoRoot, stdio: ["ignore", "pipe", "inherit"] });
+    if (!["blob", "commit"].includes(type)) continue;
+    const child = spawn("git", ["cat-file", type, id], { cwd: repoRoot, stdio: ["ignore", "pipe", "inherit"] });
     const completion = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`git cat-file failed (${code})`))); });
     let tail = "";
     for await (const chunk of child.stdout) { const content = tail + chunk.toString("latin1"); scan(content, `history:${id.slice(0, 12)}:${names.get(id)}`, tail.length); tail = content.slice(-2048); }

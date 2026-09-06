@@ -2,10 +2,33 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
-- Development acceptance policy: every applicable shipped feature carries live `ChannelGate QA`
-  Airtable cases for both Claude and Codex, including its exact fixture, realistic prompt, evidence,
-  and pass rule; engine-independent cases require a genuine engine-independent boundary.
-  → TEST-PLAN: Development acceptance policy.
+- Development acceptance policy: behavior changes include reproducible Claude and Codex
+  acceptance definitions and clearly separate automated evidence from live operator validation.
+  Public contributors do not need access to a private QA service. → TEST-PLAN: Development acceptance policy.
+
+## Release readiness remediation
+
+- **Enterprise integration scope:** Composio SDK implementation lives under `src/ee`, is labeled
+  **Beta**, and requires Enterprise entitlement at settings, session, runtime and bridge boundaries.
+  Personal API principals cannot claim an author's SDK identity; the bridge permits only signed
+  session destinations. SDK Beta currently supports Slack identities. Standard MCP mode remains free.
+- **Beta surfaces:** Google Chat and Microsoft Teams are labeled Beta in adapter/UI metadata and
+  setup docs. Their replies use the engine's actual result content, and reminders/background
+  delivery resolve their own connector even with Slack disconnected.
+- **Trust boundaries:** numeric destination checks handle mapped IPv6; password replacement and
+  removal require current-password proof; API tool overrides are reduce-only; editor leases live
+  outside agent-writable artifacts; shared writable host Codex authentication and Claude OAuth
+  relaying are removed. See provider migration in `docs/OPERATIONS.md` before upgrading.
+- **Durable work:** memory mutations serialize across gateway processes. API/schedule/background
+  execution checkpoints distinguish unknown interrupted runs from completed results awaiting
+  delivery. Results retry delivery without replaying unknown tool work. Chat accepts into SQLite
+  before ACK, uses bounded conversation dispatch and stops intake promptly. Individual memory
+  files replace atomically; a multi-file batch is not crash-atomic. Delivery can repeat if a remote
+  acknowledgment is lost after acceptance.
+- **Release controls:** license verification is bound to the current key and request generation;
+  the patched dependency lock, candidate/history scans, runtime SBOM/model inventory and signed
+  artifact workflow supply explicit candidate evidence. License 1.3 reconciles unchanged bundled
+  EE distribution and Enterprise feature use. Live and legal gates remain in the release checklist.
 
 ## Conversation settings and persistent memory
 
@@ -160,17 +183,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 ## Public website
 - The marketing / early-access site (and its lead-routing contract) lives in its own
   repository — this repository ships product code only.
-- **README hero + GitHub repo metadata** (the repository's own landing page): H1, the shared
-  tagline, a five-badge row (license, CI, Node floor, chat platforms, engines), a three-sentence
-  what-it-is, a demo placeholder pointing at `docs/assets/demo.gif`, a seven-step "Running in 10
-  minutes", a ten-row feature grid, the architecture flow, a modest ✅/➖/❌ comparison table with a
-  generalisation footnote, security in five bullets, three licensing lanes, one UTM-tagged
-  Makeitfuture CTA, and a documentation index — every operational section preserved below the fold.
-  `.github/REPO-METADATA.md` holds the ≤ 350-character About text, the website URL, the ten repo
-  topics and the exact `gh repo edit` command; `docs/assets/README.md` specifies the demo GIF and
-  the 1280 × 640 social preview. `test/readme.test.js` guards the H1, the tagline, the single
-  "formerly" attribution, the ban on "open source", the CTA links, relative-link resolution, badge
-  URL shape, and the licensing facts. → TEST-PLAN: README hero guards.
+- **Public entrypoint:** README describes installation, current license/support status and the
+  actual container/credential/data-flow boundary, with working documentation links. Promotional
+  assets are linked only when they exist; maintainer release/presentation instructions live in
+  `docs/MAINTAINER-RELEASE.md`. → TEST-PLAN: README hero guards.
 
 ## Conversation gateway
 - Slack Socket Mode listener across DM / group DM / public channel / private channel
@@ -589,21 +605,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Background jobs survive a daemon restart: each job is persisted in SQLite's `bg_jobs` table; on boot
   a still-running job is watched to completion, and one that exited while the daemon was down gets a
   forced "interrupted by restart" continuation — a thread never silently stalls.
-- **Retired 2026-09-03 (Linux + containers only):** the host-side card variant (`Runs OUTSIDE the engine sandbox as the daemon user`) — every shell
-  job now runs inside its channel's container and the card names the image; the durable single-use
-  card itself is unchanged. Unsandboxed background-shell approval cards are durable and single-use. `run_in_background`
-  persists the exact command, author, channel/thread, working-folder identity, and runtime cap in
-  SQLite and returns immediately so the engine can end its turn. Auto mode requires a gateway admin
-  to click **Run it**; Admin mode starts directly only for an admin author, matching that live
-  foreground turn's explicit sandbox-off tier. The button remains actionable across daemon/engine restarts and starts that exact job
-  directly—without replaying an AI turn—then atomically consumes the authorization. Duplicate clicks
-  cannot execute twice; an interrupted click is reconciled at boot against the durable job record,
-  and fails closed instead of reopening when the gateway cannot prove whether the process started.
-  The card names the environment the job will actually run in: `Runs OUTSIDE the engine sandbox as
-  the daemon user` on the host, and `Runs inside this channel's container (<image>)` when the run's
-  target declares the `isolated` capability — the approver is told which image instead of being
-  warned about a danger that is not there. It is an admin-tier click either way.
-  Permission, plan, and control-plane approvals retain their short-lived synchronous behavior.
+- **Container-only runtime settings.** Settings expose the CLI, image, idle/container limits,
+  resource caps and optional Full-access home mount. There is no host runtime switch or Claude
+  subscription-token field. Boundary validation rejects invalid CLI argument values before save.
+  → TEST-PLAN: Container runtime and Release readiness remediation.
 - Interactive turns survive a daemon restart (auto re-run): cold Claude/Codex engine subprocesses and
   warm Claude sessions run in process groups so their MCP children can be killed as a unit; controlled
   daemon restart/stop terminates those groups, preserves the `active_runs` row, and lets the next boot
@@ -844,56 +849,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   one-line explanation above it. Channel and gateway defaults are NOT pins — failover is exactly
   what they are for — and neither is a stale thread model belonging to the other harness (it never
   reaches the CLI, so it must not silently disable failover either). → TEST-PLAN: Engines.
-- **Claude runs on the operator's OWN subscription — one login, resolved in one place.** The gateway
-  authenticates Claude with the `claude` sign-in of the user the daemon runs as
-  (`$CLAUDE_CONFIG_DIR`, else `~/.claude`): the login that person keeps alive in their own shell. It
-  is read where it lives and never copied, linked or mounted — the previous design symlinked
-  `.credentials.json` into the gateway's synthetic engine home, Claude Code replaced the link with a
-  plain file on its first rename-on-refresh, and the resulting independent session quietly aged out
-  while the operator's own login stayed perfectly valid (every Claude turn on one gateway had been
-  failing over to Codex for hours before anyone noticed). `src/gateway/claude-login.js` is now the
-  single resolver — a configured `claude setup-token`, else the operator's login, else a login signed
-  in to the gateway's engine home, else the daemon's `ANTHROPIC_API_KEY`, else a named remedy — and
-  every consumer reads it: the token relay, the container credential modes, the engine health probe,
-  the boot log and `/status`. What a run receives is a RELAY of that login's current ACCESS token in
-  `CLAUDE_CODE_OAUTH_TOKEN`, on the host exactly as in a container, refreshed under 30 minutes of
-  remaining life by a cheap haiku turn in that login's own config dir (the only sanctioned way, and
-  byte-for-byte what the operator's own shell does). An access token carries no refresh half, so the
-  operator's chain stays the only chain; the warm pool keys on the login's source file and the
-  token's expiry — never the token text — so a refresh retires a warm process holding the old one.
-  Fail-closed stays CONTAINER-only: a container has no other way in, while a host turn with no login
-  still runs and lets the engine raise its own error, with the remedy logged once an hour. The login
-  SESSION itself dies every few weeks and only a new interactive `claude` login moves that date, so
-  the source and the date are printed at boot, warned about three days ahead, and carried on
-  `/status` and `/api/health`. → TEST-PLAN: Engines.
-- **The login expiry reaches a human before turns start failing.** Boot logs and `/status` only warn
-  when somebody restarts or asks; a daemon that has been up for a month never said a word, and the
-  first symptom was Claude turns quietly failing over to Codex. An hourly watch
-  (`src/gateway/login-watch.js`) now re-resolves the login while the daemon runs and DMs every admin
-  once per UTC day — from three days before the session expires, and daily while there is no usable
-  login at all (then the message is the resolver's own remedy list). The DM names which login
-  (kind + config dir), when it dies in UTC *and* in the gateway's local timezone, and the fix (sign
-  in with `claude` on the gateway host; the gateway picks it up on its next turn, no restart). The
-  log line is written on every tick; only the DM is rationed, and the "already told them today"
-  marker lives in the database, so a daemon restarted hourly cannot spam. A class change (expiring →
-  missing) is news the same day, and a login that goes healthy again clears the class so the next
-  expiry notifies afresh. One unreachable admin never costs the others their alert, and a tick that
-  reached nobody stays due. No token material ever rides the DM. → TEST-PLAN: Engines.
-- **Codex sign-in is detected before, during, and after a turn** — a lost credential can no longer
-  present as a hang. Before spawn, the runner reads the same `auth.json` the CLI reads (the stable
-  engine `CODEX_HOME` first, the host state dir it is linked from second) and turns a signed-out
-  host into a replay-safe `authentication` failure without burning a turn; the probe fails OPEN, so
-  an unreadable or unfamiliar credential file never blocks a run. During a turn, Codex's own
-  sign-in phrasing on stderr ends the run within seconds — but only while no tool has run and
-  nothing has streamed, and only on wording no MCP child would produce (a bare `401` is not enough
-  to blame the harness's credential). Engine stderr is liveness, not progress, on every runner: a
-  process retrying an expired credential forever still exhausts its silence budget, and a wedged
-  turn's buffered stderr is classified on the way out — naming the cause and, when nothing ran,
-  letting it fail over instead of dead-ending in "produced no output". Codex's diagnostics (retry,
-  backoff, sign-in) are redacted, capped, and shown on the Slack heartbeat row in place of
-  "starting". Boot logs warn about an installed-but-signed-out CLI, `/api/health` reports every
-  harness (available · signed in · enabled), and the admin rail shows one chip per enabled harness
-  ("Codex · signed out"). → TEST-PLAN: Engines.
+- **Claude daemon authentication uses supported organization API credentials.** The one resolver
+  accepts `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`, and missing credentials produce a named
+  service-environment remedy. It never opens or refreshes operator subscription files. Legacy
+  setup-token configuration is inert. → TEST-PLAN: Release readiness remediation.
+- **Missing service credentials are visible.** The shared resolver feeds boot, status and health
+  diagnostics; alerts name the required service configuration without exposing its value.
+  → TEST-PLAN: Release readiness remediation.
+- **Codex authentication follows its runtime.** A service `CODEX_API_KEY` takes precedence over
+  `OPENAI_API_KEY`; otherwise the engine uses the independent native login in its channel HOME.
+  Daemon health reports that native state as unknown until a run diagnoses it. A channel's missing
+  native login never poisons a different channel through a global auth cooldown.
+  → TEST-PLAN: Release readiness remediation.
 - **Per-harness on/off switch** (Settings → Engine & runtime): turn off an engine you don't have set
   up. A disabled harness disappears from every picker (admin UI global + per channel, and the Slack
   `/model` wizard), is never used as a failover target, and any channel/thread still pointing at it
@@ -1443,7 +1410,7 @@ are retired, bullet by bullet; everything else stands.
 - **Retired 2026-09-03 (Linux + containers only):** the kill-switch clause only — a missing container CLI is now a refused BOOT rather than a refused
   turn; the rest of the bullet stands. **Fail closed, never a silent fallback.** No usable container CLI, no built image, or no engine
   login ends the turn with the sentence that names the remedy (`npm run build:image` on the gateway
-  host; `claude setup-token`; `codex login`) — the backend never quietly demotes the channel to the
+  service environment; channel-native Codex login) — the backend never quietly demotes the channel to the
   host, because a confinement boundary that disappears without saying so is worse than a refused
   turn. Only the explicit kill switch returns channels to the host. A missing engine credential is
   raised as a CONFIGURATION failure (`details.runtimeCredential`), not a provider outage, so
@@ -1508,19 +1475,10 @@ are retired, bullet by bullet; everything else stands.
   `destroy()` removes the container, and the HOME volume ONLY on channel deletion — never on a
   rollback or a reconfiguration, so a channel switched back to the host and later returned to a
   container finds its CLI logins where it left them. → TEST-PLAN: Container runtime (v0.8 P1).
-- **VS Code attaches to the channel, not a look-alike development container.** An operator runs
-  `npm run vscode -- <channel id, slug, or exact name>` to start the existing channel container and
-  open its identical mounted work directory through VS Code Dev Containers. The helper holds a
-  signed cross-process editor lease for the lifetime of the window (including across a daemon
-  restart), so neither the idle reaper nor
-  the max-running eviction can stop it; stale markers are rejected by Linux process start identity
-  and removed automatically. `/home/agent` is the same persistent volume the chat engines use, so
-  installed tools, dotfiles and CLI logins remain identical. Codex keeps the gateway's shared
-  read-write login mount. Claude keeps the safer no-copy design: the helper obtains the same normal
-  subscription access-token relay as a chat turn, refreshes it while the window is open, and places
-  it behind a channel-local `claude` wrapper which defers to any credential explicitly injected by
-  a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
-  → TEST-PLAN: Container runtime (v0.8 P1).
+- **VS Code attaches to the existing channel container.** `npm run vscode -- <channel>` holds
+  an editor lease in daemon-owned metadata and opens the real channel workdir/HOME. It exports no
+  daemon tokens or channel secret environment; interactive authentication is native to that HOME.
+  → TEST-PLAN: Release readiness remediation.
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch
@@ -1555,27 +1513,15 @@ are retired, bullet by bullet; everything else stands.
   self-update rebuilds it automatically (see *The update rebuilds the channel image*).
 - **Boot reconcile and out-of-band removal.** Every engine process inside a container that survived
   a daemon restart belonged to the previous daemon, which can no longer read its stdout — restart
-  recovery replays those turns — so the boot sweep terminates the `run-*` and `warm-*` process
+  recovery records unknown executions for reconciliation — so the boot sweep terminates the `run-*` and `warm-*` process
   groups of every running container of THIS install and leaves detached `job-*` groups alone,
   because a background job is meant to outlive a restart. An exec that fails because the container
   vanished underneath it (an operator `podman rm`, a host reboot) re-runs `ensureUp` and retries
   exactly once, in one place, rather than failing the turn. → TEST-PLAN: Container runtime (v0.8 P1).
-- **Engine logins: per-channel where it can be, shared only where the CLI forces it.** Claude is
-  never copied into a container. A configured `claude setup-token` (write-only in Settings) is used
-  when present; otherwise the mode is **relay** — the container receives the current ACCESS token of
-  whichever login the gateway resolved, normally the host user's own `~/.claude`
-  (`src/gateway/claude-login.js`), injected as `CLAUDE_CODE_OAUTH_TOKEN` at exec. No credential mount
-  at all, and no forked refresh chain: an access token cannot rotate anything, whereas a copy that
-  refreshes would log the gateway out (it did, live, on 2026-09-02). The daemon's own
-  `ANTHROPIC_API_KEY` is the third mode, for service installs with no login. With none of them the
-  mode is **missing** and a Claude turn fails closed. Codex is the opposite case — it rewrites `auth.json`
-  IN PLACE, so a copy would fork the refresh chain and one side would eventually lose the race — and
-  therefore gets a shared read-write FILE mount of the gateway's real auth file. What is ISOLATED
-  per channel: the whole HOME volume — CLI logins, npm prefix, dotfiles, caches, the Claude config
-  dir (transcripts, prompt history, todos, shell snapshots) and `CODEX_HOME` (sessions, history).
-  What is SHARED: the Codex sign-in file, and nothing else; `describe()` compares its inode so a
-  container still holding a login the host has since replaced is visible rather than silently stale,
-  and `/status` carries the caveat in words. → TEST-PLAN: Container runtime (v0.8 P1).
+- **Engine identity is explicit.** Claude uses supported organization service credentials;
+  Codex uses service credentials or its own native channel login. Host rotating authentication
+  files are not mounted or copied. Organization service keys remain a shared provider identity
+  across channels where configured. → TEST-PLAN: Release readiness remediation.
 - **Inside the container, each engine's OWN sandbox is off** — the vendor-sanctioned pattern, and the
   only correct one here: a second sandbox inside a cap-dropped rootless container would need the
   nested namespaces that container forbids, and every path it names (home, the gateway root, sibling

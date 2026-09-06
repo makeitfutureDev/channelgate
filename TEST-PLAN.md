@@ -3,6 +3,31 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Release readiness remediation (2026-09-07)
+
+The source changes address audit findings 1–17. `docs/RELEASE-ACCEPTANCE.md` is the live acceptance
+packet; none of its pending cases is counted as a pass. Older credential-relay/shared-auth entries
+below are historical where marked and do not describe the current authentication contract.
+
+- [x] Automated: mapped/expanded IPv6 and invalid DNS answers fail closed; password changes/removal
+  require current proof with no proof stored or logged (`ssrf`, `admin-password-change`).
+- [x] Automated: SDK Enterprise entitlement, signed bridge session scope, API identity restrictions,
+  reduce-only mode overrides and license response ordering (`composio-entitlement`, `run-escalation`,
+  `license-verify`, `codex-failover-e2e`).
+- [x] Automated: daemon-owned editor leases, safe bind sources, API/native credential scoping and
+  final service-user preflight (`container-bind-boundary`, `container-credentials`, `claude-login`,
+  `engine-runtime-isolated`, `service-path-preflight`).
+- [x] Automated: independent memory writers retain all facts, execution/delivery recovery separates
+  unknown outcomes, non-Slack delivery works, durable Chat inbox orders and stops correctly
+  (`automation-release-regressions`, `api-recovery`, transport tests).
+- [x] Automated: unchanged EE/no-key licensing compatibility, correct public claims, npm inventory
+  identity/relationships and commit/tag secret detection (`license`, `readme`, `operations-readiness`,
+  `release-secret-history`).
+- [ ] Live: complete both-engine and Beta-surface cases in `docs/RELEASE-ACCEPTANCE.md`, including a
+  fresh VM installation, restart, update, restore and uninstall. Record actual fixture IDs/results.
+- [ ] Release: execute the tag-bound runtime-image evidence workflow, verify attestations and review
+  candidate-specific dependency/model notices. Counsel and trademark gates remain external.
+
 ## Composio identity and connection discovery
 
 - [x] Automated: both bundled skills define `composio-user` as the active requester's personal
@@ -321,8 +346,8 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       consistently identify the Makeitfuture Sustainable Use License as source-available/fair-code
       rather than OSI open source; `THIRD_PARTY_NOTICES.md` and `public/fonts/OFL.txt` preserve
       Poppins' OFL terms.
-- [x] `test/license.test.js` (v1.2 case, replaces the v1.1 case 2026-08-25): the license is stamped
-      `Version 1.2` and names ChannelGate (formerly Claude Gateway for Slack) with the author line;
+- [x] `test/license.test.js` (v1.3 case, reconciled 2026-09-07): the license is stamped
+      `Version 1.3` and names ChannelGate (formerly Claude Gateway for Slack) with the author line;
       §3.1 keeps the dedicated-deployment conditions, adds the customer's-key condition, and permits
       any number of separate deployments without an agreement; §3.2 defines license keys (no key →
       one conversation), end-user keys, no sharing/pooling, no reduction of an enterprise key's
@@ -331,7 +356,7 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       `TRADEMARK.md`, which states nominative use and the no-own-product-name rule; §6 points at
       `CLA.md` 1.1 (relicensing grant, copyright stays, `Signed-off-by`, no automatic relicensing
       promised); `AUTHORS.md` records the author and the IP assignment and the decision record is
-      the pre-CLA acceptance; §11 sets Romanian law and Bucharest venue. **Control:** no public text
+      a concise public rationale; §11 sets Romanian law and Bucharest venue. **Control:** no public text
       (license, CLA, FAQ, keys, README, CHANGELOG, checklist, trademark, authors) contains the
       operative Change Date wording — no "fourth anniversary", no delayed "additionally available
       under", no Change Date section, no Apache-2.0 grant in the license — and the FAQ, README, and
@@ -393,11 +418,8 @@ shape is asserted, not reviewed by eye.
       `docs/LICENSE-KEYS.md`, `docs/LICENSING-FAQ.md`, `TRADEMARK.md`, `CLA.md`.
 - [x] Hero sections appear in the release-plan order, with `## Prerequisites` (the first
       operational section) below them.
-- [x] The demo block is a placeholder: the HTML comment and the `docs/assets/demo.gif` note exist
-      and no stand-in GIF is committed; `docs/assets/README.md` documents both expected assets.
-- [x] `.github/REPO-METADATA.md` has an About text ≤ 350 characters, the website URL, all ten
-      topics in a `gh repo edit` command whose `--description` matches the About text, and the
-      1280 × 640 social-preview spec.
+- [x] Public README has no links to absent demo/social assets, names Beta support and Enterprise
+      SDK scope, and links to the consolidated maintainer release/attestation procedure.
 
 ### Foundation (Slices 1–3)
 - [ ] Boot creates `~/.channelgate/{config,channels,logs}`.
@@ -1032,7 +1054,7 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       harness changes (no forced fresh session); an explicit per-thread/per-run ask still switches;
       new/unlabeled/matching sessions never trigger a switch (`test/session-engine.test.js`,
       `decideThreadEngine`).
-- [x] E2E: a thread that started on Claude keeps the relayed Claude login when its channel's
+- Historical (superseded by Release readiness remediation): E2E: a thread that started on Claude keeps the relayed Claude login when its channel's
       harness later moves to Codex ("continuing on claude"): the stub `claude` echoes `oauth=yes`
       on the resumed turn. The credential is resolved for the harness that actually runs, AFTER
       `decideThreadEngine`; before the fix the turn spawned Claude with no `CLAUDE_CODE_OAUTH_TOKEN`
@@ -1128,20 +1150,20 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       `fellBack`/`fallbackFrom` set); the same limit on stderr behaves identically; a limit that
       lands after a tool ran is NOT replayed; failover OFF and a disabled target harness both leave
       the error surfaced (`test/codex-failover-e2e.test.js`).
-- [x] Unit: the Claude login resolver picks the OPERATOR's own `~/.claude` login ahead of anything
+- Historical (superseded by Release readiness remediation): Unit: the Claude login resolver picks the OPERATOR's own `~/.claude` login ahead of anything
       in the gateway's engine home, falls through to the engine-home login only when the operator's
       session has HARD-expired, treats an expired ACCESS token as still usable (refreshing it is the
       relay's job), skips unparseable/tokenless files and names them in the remedy, honours the
       precedence setup-token → operator → gateway → API key → none, and exposes NO token material —
       only paths, expiries and an opaque fingerprint that changes exactly when the credential does
       (`test/claude-login.test.js`).
-- [x] Unit: the relay reads and refreshes THAT source — a fresh operator token is handed out as-is
+- Historical (superseded by Release readiness remediation): Unit: the relay reads and refreshes THAT source — a fresh operator token is handed out as-is
       even with an engine-home copy present, a near-expiry token triggers ONE serialized refresh run
       in the OPERATOR's own config dir (scratch cwd under the gateway root), no login anywhere
       reports the reason with all three remedies, and the warm-pool fingerprint keys on the source
       file + expiry (and a rotated setup-token) but never on the token text
       (`test/claude-token-relay.test.js`).
-- [x] Unit: a HOST `buildClaudeEnv` carries the relayed token in the gateway-owned last group, so a
+- Historical (superseded by Release readiness remediation): Unit: a HOST `buildClaudeEnv` carries the relayed token in the gateway-owned last group, so a
       channel secret named `CLAUDE_CODE_OAUTH_TOKEN` cannot displace it and no token at all still
       leaves the variable unset (`test/engine-runtime-isolated.test.js`).
 - [x] Unit: `stableClaudeState()` links `projects`/`sessions`/`session-env`/`tasks` and NEVER
@@ -2674,7 +2696,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       waits, announces once, then refuses with "all N container slots are busy" rather than killing
       a running job; `startTimer()` is idempotent so a second boot cannot double-sweep (automated:
       `test/container-reaper.test.js`).
-- [x] Unit: VS Code's attached-container URI hex-encodes the exact managed container name and opens
+- Historical (superseded by Release readiness remediation): Unit: VS Code's attached-container URI hex-encodes the exact managed container name and opens
       the identical mounted workdir; a signed external editor lease survives the daemon/process
       boundary and a daemon restart, blocks idle stopping, cannot be confused with a reused PID, and disappears on
       release; the Claude wrapper consumes the refreshed operator/setup-token relay only when the
@@ -2974,7 +2996,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       thread whose row still names the container: the turn answers (healed, as before), the log says
       `session carry-over failed (…) — the resume falls back to the existing heal`, and nothing under
       `~/ChannelGate/.runtime/<platform>/<slug>/carry/` is left behind.
-- [ ] Live: **credential chain health** — with no `claude setup-token` configured, a container turn
+- Historical (superseded by Release readiness remediation): Live: **credential chain health** — with no `claude setup-token` configured, a container turn
       still answers using the copied login and the copy is adopted once (a second turn does not
       re-seed and does not roll the token back); with a token configured, no credential file is
       copied or mounted at all; with neither, the turn ends with the setup-token remedy and does NOT
@@ -3724,12 +3746,14 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       moved). Exit code 0.
 # Development acceptance policy
 
-- [ ] For each feature changed in the candidate, confirm `FEATURES.md` and this regression plan
-  are current and the live `ChannelGate QA` Airtable base contains applicable Claude and Codex
-  cases with exact fixtures, realistic prompts, expected evidence, and objective pass rules.
-- [ ] Confirm any engine-independent case cannot traverse an engine-specific runtime path.
-- [ ] Confirm Airtable writes used the requester's explicitly selected personal connection and did
-  not silently fall back to an agent-side identity.
+- [ ] Each changed feature has reproducible acceptance definitions for applicable Claude/Codex
+  behavior, exact setup, prompt/action, evidence and pass rules. Public contributors put these in
+  the PR and report unexecuted live cases; no private service access is required.
+- [ ] Maintainers record the actual private fixture identifiers and complete required live gates
+  before release. Engine-independent cases must not depend on a harness.
+- [ ] For deployments using a private QA registry, use only the operator's selected personal
+  connection. This remediation session's requested Airtable write remains pending connection
+  selection/access; locally prepared cases are not a claim of an Airtable write.
 
 ## Container update verification and recovery
 

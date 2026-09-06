@@ -41,7 +41,7 @@ const inventory = {
     properties: [{ name: "channelgate:scope", value: "npm lockfile only; excludes runtime image, OS, Python, model weights and global CLIs" }] },
   components,
   dependencies: Object.entries(lock.packages).map(([location, value]) => ({
-    ref: ref(location), dependsOn: [...new Set(Object.keys({ ...value.dependencies, ...value.optionalDependencies, ...(location ? {} : value.devDependencies) })
+    ref: ref(location), dependsOn: [...new Set(Object.keys({ ...value.dependencies, ...value.optionalDependencies, ...value.peerDependencies, ...(location ? {} : value.devDependencies) })
       .map((name) => dependencyRef(location, name)).filter(Boolean))].sort(),
   })),
 };

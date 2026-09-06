@@ -134,7 +134,7 @@ test("version 1.3 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(keys, /an end-user key/);
   assert.match(keys, /never shared, pooled, or transferred across organizations/);
   assert.match(keys, /\*\*14 days\*\*/);
-  assert.match(keys, /never contains message content/);
+  assert.match(keys, /never contain message content/);
   assert.match(readme, /500 AI messages per conversation per month/);
   assert.match(faq, /Running ChannelGate for yourself is free, within the limits of your key/);
   assert.match(faq, /An agency does the above for twenty clients\.\*\* Permitted/);
