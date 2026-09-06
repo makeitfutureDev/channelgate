@@ -176,12 +176,14 @@ test("frontend skill options preserve saved names missing from discovery", () =>
   );
 });
 
-test("conversation tools remove the grant-tier switch and expose focused sub-tabs", () => {
+test("conversation tool categories are first-class channel pages", () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(html, /id="org-grant-tier"[\s\S]*Organization[\s\S]*Channel[\s\S]*Individual user/);
   assert.doesNotMatch(html, /class="ch-grant-tier"/);
-  for (const label of ["Connections", "MCP servers", "Environment tokens", "Skills"]) assert.match(html, new RegExp(`>${label}<`));
+  assert.match(html, /data-pane="access">Access<[\s\S]*data-pane="connections">Connections<[\s\S]*data-pane="mcps">MCP servers<[\s\S]*data-pane="environment">Environment tokens<[\s\S]*data-pane="skills">Skills<[\s\S]*data-pane="runtime">Runtime<[\s\S]*data-pane="instructions">Instructions<[\s\S]*data-pane="memory">Memory</);
+  assert.doesNotMatch(html, /data-pane="tools"|tool-subtab|data-tool-pane/);
+  assert.doesNotMatch(client, /toolSections|tool-subtab|dataToolPane/);
   assert.match(html, /class="ud-row ud-grants"/);
   assert.match(client, /function buildAccessGrantsEditor/);
   assert.match(client, /captureGrantMcpSelection\(/, "the executable loading-state helper must drive the editor");

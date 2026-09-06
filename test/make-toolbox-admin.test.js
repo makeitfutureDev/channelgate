@@ -143,7 +143,7 @@ test("connection test uses unsaved or saved channel credentials and only returns
   });
 });
 
-test("Admin Tools tab exposes per-channel Make toolbox URL, key, test, and clear controls", async () => {
+test("Admin Connections page exposes per-channel Make toolbox URL, key, test, and clear controls", async () => {
   const [html, client] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),

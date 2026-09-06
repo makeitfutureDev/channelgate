@@ -58,14 +58,16 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 - [x] The registered search and read MCP handlers return formatted content through their injected
       response helper (regression: neither can fail with `text is not defined`).
 - [x] Untrusted/API-spoofed principals cannot call memory retrieval tools.
-- [x] Conversation Tools exposes four focused categories and no channel Grant Tier selector;
-      enabled skills appear first.
+- [x] The channel editor exposes Access, Connections, MCP servers, Environment tokens, Skills,
+      Runtime, Instructions, and Memory as first-class pages in that order, with no nested Tools
+      navigation or channel Grant Tier selector; enabled skills appear first and one shared save
+      lifecycle preserves edits across the first six pages.
 - [x] Approved channel members render selected, admins render selected and locked, and inherited
       access is not persisted as an explicit guest grant.
 - [ ] Live Claude: start a fresh test thread, ask a question whose answer exists only in a topic
       file, and verify search → one-source read → correct answer without bulk memory injection.
 - [ ] Live Codex: repeat the same retrieval proof in the Codex Auto fixture.
-- [ ] Admin browser: verify Access special-mode boxes, all four Tool tabs, guest lock state, and
+- [ ] Admin browser: verify Access special-mode boxes, all four promoted tool pages, guest lock state, and
       the uncapped Memory explanation/save behavior at desktop and narrow widths.
 
 ## ChannelGate skill package
