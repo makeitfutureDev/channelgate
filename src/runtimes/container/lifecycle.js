@@ -7,13 +7,13 @@
 // deliberately NOT in it: rotating a channel secret retires the warm engine process through the
 // pool's own fingerprint, and must not tear down a container that background jobs are using.
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
 import { channelArtifactDir } from "../../config/paths.js";
 import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM } from "./names.js";
-import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
+import { containerEnvDefaults, settleCredentialModes } from "./credentials.js";
 import { CONTAINER_SOCKET_DIR } from "./image-paths.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
@@ -139,14 +139,31 @@ export function parseInspectLine(line) {
 // What is never mounted: the gateway root, config/, gateway.db, the per-channel metadata folder,
 // the daemon checkout, and the operator's ~/.claude or ~/.codex directories. The only sources under
 // the gateway root are the clean workspace (a bare workdir, mounted so clean mode works in a
-// container) and the MCP socket directory (read-only). The Codex auth FILE is the one credential
-// mount, and it is the resolved real file — see credentials.js for why it is a file and not a dir.
+// container) and the MCP socket directory (read-only). No host authentication file is mounted.
 // The single, deliberate exception is the operator-home grant (operatorHomeMounts below): a
 // Full-access channel, while the gateway-wide switch is on, gets the daemon user's whole home.
 //
 // `/tmp` and `/var/tmp` are mounts rather than tmpfs so a stop cannot empty them
 // (PERSISTENT_TMP_DIRS). Together with the HOME volume that means NOTHING a channel accumulates —
 // logins, installed CLIs, caches, scratch files — is lost to a stop, a restart or a recreate.
+// Container processes can replace children of a mounted artifact tree. A symlink there must
+// never be resolved by Podman as a new host mount. Reject every symlink component, including
+// ancestors, and fail closed instead of logging and letting the CLI create/follow it itself.
+export function assertSafeBindSource(source) {
+  const absolute = path.resolve(source);
+  let current = path.parse(absolute).root;
+  for (const part of absolute.slice(current.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    try {
+      const entry = lstatSync(current);
+      if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`Unsafe container bind source: ${current} must be a real directory`);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+  }
+}
+
 export function buildMounts(base) {
   const mounts = [
     { kind: "workdir", type: "bind", source: base.workDir, target: base.workDir, mode: "rw" },
@@ -163,7 +180,6 @@ export function buildMounts(base) {
     })),
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
-    { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
     ...operatorHomeMounts(base),
   ];
   return mounts.filter((mount) => mount.type === "tmpfs" || mount.source);
@@ -196,9 +212,7 @@ export function operatorHomeMounts(base) {
 function mountArgs(mounts) {
   const args = [];
   for (const mount of mounts) {
-    // Destinations are applied deepest-last by both CLIs, so the Codex auth file lands inside the
-    // HOME volume correctly (verified on podman 5.7 rootless) — and a tmpfs mask lands on top of
-    // the operator-home bind it hides a subtree of.
+    // Destinations are applied deepest-last, so masks cover the operator-home subtree.
     if (mount.type === "tmpfs") {
       // `notmpcopyup` is load-bearing: podman's --tmpfs default copies the destination's existing
       // contents INTO the tmpfs, and the destination here is the multi-gigabyte container store —
@@ -353,10 +367,9 @@ export function createContainerLifecycle({
     const settled = settleCredentialModes(target.settings, env);
     c.credentialMode = settled.modes;
     c.codexAuthFile = settled.codexAuthFile;
-    // Rebuild rather than patch: ensureUp can run more than once on one target (the out-of-band
-    // retry), and a credential that appeared since the last pass has to come BACK as a mount.
+    // Rebuild rather than patch so obsolete credential mounts are removed on upgrade.
     target.codexAuthFile = settled.codexAuthFile;
-    c.mounts = buildMounts(target).map((mount) => (mount.kind === "codex-auth" ? { ...mount, resolved: true } : mount));
+    c.mounts = buildMounts(target);
     return c;
   }
 
@@ -381,11 +394,9 @@ export function createContainerLifecycle({
   function ensureBindSources(target) {
     for (const mount of target.container?.mounts || []) {
       if (mount.type !== "bind" || !mount.source) continue;
-      try {
-        mkdirSync(mount.source, { recursive: true, mode: 0o700 });
-      } catch (e) {
-        log(`[container] could not create mount source ${mount.source}: ${e?.message || e}`);
-      }
+      assertSafeBindSource(mount.source);
+      mkdirSync(mount.source, { recursive: true, mode: 0o700 });
+      assertSafeBindSource(mount.source);
     }
   }
 

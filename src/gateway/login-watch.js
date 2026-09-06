@@ -1,21 +1,5 @@
-// The Claude login expiry has to reach a HUMAN, without a restart.
-//
-// The gateway authenticates every Claude run with the operator's own `claude` sign-in
-// (src/gateway/claude-login.js). That login SESSION hard-expires every few weeks and only a new
-// interactive sign-in moves the date — nothing the daemon does can renew it. Until this module the
-// three-day warning was evaluated exactly twice: at boot, and whenever somebody typed `/status`. A
-// daemon that has been up for a month therefore never warned at all, and the first symptom was
-// Claude turns quietly failing over to Codex (which is precisely how one gateway spent hours on the
-// wrong harness before anyone noticed).
-//
-// So: an hourly watch that resolves the login and, while it is inside the warning window or missing
-// altogether, DMs every admin — once per UTC day per message class, remembered in the shared `_meta`
-// table so a restart cannot turn the reminder into a spam loop. The LOG line is written on every
-// tick (an operator reading journalctl should see the state continuously); the DM is the rationed
-// half. A login that goes healthy again clears the class, so a later expiry notifies afresh.
-//
-// Nothing here touches token material: the resolver hands out paths, expiries and an opaque
-// fingerprint, and this module forwards only the kind, the config dir, the expiry and the remedy.
+// Periodic service credential health alerts, rationed durably per day and message class.
+// The resolver never reads subscription tokens or host credential files.
 import { getUsers } from "../config/store.js";
 import { metaGet, metaSet } from "../db/index.js";
 import { logEvent } from "../util/logger.js";
@@ -102,7 +86,7 @@ function localStamp(ms) {
  * when it dies, and what to do about it.
  */
 export function loginAlertText({ login, alertClass, warning = "", now = Date.now() } = {}) {
-  const remedy = `Fix: ${claudeLoginHint()}. The gateway picks the new login up on its next turn — no restart needed.`;
+  const remedy = `Fix: ${claudeLoginHint()}. Restart the daemon after changing its service environment.`;
   if (alertClass === "missing") {
     return [
       "🚨 *ChannelGate — no usable Claude login*",

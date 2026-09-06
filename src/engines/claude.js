@@ -32,12 +32,11 @@ export function canUseClaudeWarmPool(runtime = {}) {
 // so they win outright. `browserNamespace` is gateway-owned for the same reason and sits in the
 // same last group: it decides which channel's browser daemon a browser MCP child attaches to
 // (gateway/browser-env.js), so a channel secret must not be able to name it.
-export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, browserNamespace = "", target = null, oauthToken = "" } = {}, source = process.env) {
+export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, browserNamespace = "", target = null } = {}, source = process.env) {
   // An ISOLATED runtime (a channel container) has none of the host's layout: HOME, the config dir
   // and PATH are the image's, the daemon's toolchain launcher dir does not exist there, and the
-  // engine authenticates with the gateway-held OAuth token rather than the operator's own login
-  // (brief §14 — the synthetic Claude HOME symlinks into the operator's real ~/.claude and is
-  // never mounted). The channel's own secrets still ride in, still re-filtered by safeSpawnEnv,
+  // engine authenticates with the daemon's service API credential. Host subscription state is
+  // never mounted or relayed. The channel's own secrets still ride in, still re-filtered by safeSpawnEnv,
   // and the gateway-owned values are still applied LAST so a channel secret cannot displace them.
   if (isIsolatedTarget(target)) {
     const image = containerPaths(target);
@@ -48,7 +47,6 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
       CLAUDE_CONFIG_DIR: image.claudeConfigDir,
       PATH: image.path,
       TMPDIR: image.tmpDir,
-      ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
     };
   }
   return buildChildEnv({
@@ -56,10 +54,6 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
     ...browserSpawnEnv(browserNamespace),
     ...(home ? { HOME: home } : {}),
     ...(configDir ? { CLAUDE_CONFIG_DIR: configDir } : {}),
-    // The daemon's OWN turns (the update smoke probe — the only non-container spawn left) relay
-    // the resolved login the same way. Same last group as HOME — gateway-owned, so a channel
-    // secret can never displace it — and absent when there is nothing to relay.
-    ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
   }, source);
 }
 

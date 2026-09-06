@@ -1,9 +1,6 @@
-// Durable, host-authenticated leases for tools which live outside the daemon process (currently
-// the VS Code attach helper). In-memory run leases cannot cross that process boundary. The marker
-// is inside the channel artifact directory so it survives a daemon restart, but it is HMAC signed
-// with a key under the gateway root: an agent in the mounted channel directory cannot forge one
-// and pin its container forever.
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+// Durable editor leases live only in daemon-owned state. Never scan or delete files through
+// a directory mounted into a channel: signed record contents cannot authenticate a pathname.
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gatewayRoot } from "../../config/paths.js";
@@ -49,7 +46,9 @@ function valid(record, target) {
 }
 
 export function editorLeaseDir(target) {
-  return target?.artifactDir ? path.join(target.artifactDir, LEASE_DIR) : "";
+  if (!target?.container?.name) return "";
+  const key = createHash("sha256").update(target.container.name).digest("hex");
+  return path.join(gatewayRoot(), "runtime", LEASE_DIR, key);
 }
 
 export function createEditorLease(target, { pid = process.pid, now = Date.now } = {}) {

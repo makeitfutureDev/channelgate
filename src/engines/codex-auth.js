@@ -1,22 +1,12 @@
-// Codex credential state, read from the same auth.json the CLI itself reads.
-//
-// Why a FILE probe and not `codex login status`: the runner needs an answer BEFORE it spawns a
-// turn, on a path that can never itself hang or need a network round-trip, and the CLI's status
-// output is not a stable contract across versions. auth.json IS the contract — the CLI reads
-// exactly this file, and the gateway symlinks the host's copy into its engine home
-// (run-grant-artifacts.stableCodexState).
-//
-// It fails OPEN by design. Unreadable, unparseable, or unfamiliar contents return `known:false`
-// and the run proceeds exactly as before; only a positively ABSENT or positively EMPTY credential
-// reports "not signed in". A wrong "logged out" would divert every channel on the host to the
-// other harness at once, so the probe never guesses: a token whose grant was revoked server-side
-// still looks fine here, and is caught later by the runner's live stderr classification.
+// Read an explicitly requested native Codex credential without logging its contents. Production
+// health/cooldown callers set daemonOnly: service API keys are known, while a native channel
+// login is deliberately unknown on the host and is validated by the CLI inside that container.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-export const CODEX_LOGIN_HINT = "run `codex login` on the gateway host";
+export const CODEX_LOGIN_HINT = "authenticate Codex inside the channel container or set OPENAI_API_KEY for the daemon";
 
 // Where the CLI would look, in the order the gateway resolves it: the stable engine home it
 // spawns with (CODEX_HOME), then the host state dir that gets symlinked into it on the next run.
@@ -70,10 +60,11 @@ function credentialFrom(parsed, source, fingerprint) {
 
 // → { known, authenticated, method, detail, source, fingerprint }. `known:false` means "could not
 // tell" and must never block a run or fail a health check.
-export async function readCodexAuthState({ codexHome = "", hostCodexHome = "", env = process.env, readFileImpl = readFile } = {}) {
-  const apiKey = String(env?.OPENAI_API_KEY || "").trim();
-  if (apiKey) return { known: true, authenticated: true, method: "api-key", detail: "OPENAI_API_KEY is set in the daemon environment", source: "env", fingerprint: fingerprintOf(apiKey) };
+export async function readCodexAuthState({ codexHome = "", hostCodexHome = "", env = process.env, readFileImpl = readFile, daemonOnly = false } = {}) {
+  const apiKey = String(env?.CODEX_API_KEY || env?.OPENAI_API_KEY || "").trim();
+  if (apiKey) return { known: true, authenticated: true, method: "api-key", detail: "a service API key is set in the daemon environment", source: "env", fingerprint: fingerprintOf(apiKey) };
 
+  if (daemonOnly) return unknown("Codex authentication is channel-owned; inspect the CLI inside the channel container");
   const candidates = codexAuthCandidates({ codexHome, hostCodexHome, env });
   const missing = [];
   for (const file of candidates) {
