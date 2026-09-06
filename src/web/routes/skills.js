@@ -53,6 +53,7 @@ import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { getChannelMeta, listChannels } from "../../config/store.js";
 import { skillSourceDirs } from "../../gateway/folders.js";
 import { logEvent } from "../../util/logger.js";
+import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
 
 // The one spelling of the admin-UI principal across the whole audit trail (config/channel-audit.js).
 const ADMIN_UI = ADMIN_UI_ACTOR;
@@ -62,10 +63,15 @@ function guard(fn) {
     try {
       await fn(req, res, next);
     } catch (err) {
+      if (err?.code === "workspace_sync_failed") return res.status(503).json({ error: err.message, code: err.code, saved: true, workspaceSync: err.workspaceSync });
       if (err instanceof SkillCatalogError || err instanceof SkillFileError) return res.status(err.status || 400).json({ error: err.message, path: err.path || undefined });
       next(err);
     }
   };
+}
+
+async function synced(payload) {
+  return { ...payload, workspaceSync: await syncWorkspaceSkillsOrThrow() };
 }
 
 function skillToApi(skill, usage = null) {
@@ -142,7 +148,7 @@ export function createSkillsRouter() {
         grantSkillsToOrg([skill.slug]);
       } else revokeSkillsFromOrg([skill.slug]);
     }
-    res.json({ ok: true, skill: skillToApi(getSkill(skill.slug)) });
+    res.json(await synced({ ok: true, skill: skillToApi(getSkill(skill.slug)) }));
   }));
 
   router.get("/skills/catalog/:slug", guard(async (req, res) => {
@@ -174,10 +180,10 @@ export function createSkillsRouter() {
     const existing = body.slug ? getSkill(body.slug) : null;
     if (existing && !existing.deleted) {
       const r = await updateLocalSkill({ skill: existing, files, remove: body.remove || [], note: body.note || "", createdBy: ADMIN_UI, publish: body.publish !== false });
-      return res.json({ ok: true, changed: r.changed, skill: skillToApi(r.skill), revision: r.revision, published: r.published });
+      return res.json(await synced({ ok: true, changed: r.changed, skill: skillToApi(r.skill), revision: r.revision, published: r.published }));
     }
     const r = await createLocalSkill({ slug: body.slug || "", files, note: body.note || "", createdBy: ADMIN_UI, personal: body.personal === true, publish: body.publish !== false });
-    res.status(201).json({ ok: true, created: r.created, skill: skillToApi(r.skill), revision: r.revision, published: r.published });
+    res.status(201).json(await synced({ ok: true, created: r.created, skill: skillToApi(r.skill), revision: r.revision, published: r.published }));
   }));
 
   router.delete("/skills/catalog/:slug", guard(async (req, res) => {
@@ -185,20 +191,20 @@ export function createSkillsRouter() {
     if (!skill) return res.status(404).json({ error: "skill not found" });
     excludeSkill(skill.slug); // sticky: a sync or import that delivers it again keeps it out
     logEvent("skill_removed", { skill: skill.slug, author: ADMIN_UI });
-    res.json({ ok: true });
+    res.json(await synced({ ok: true }));
   }));
 
   router.post("/skills/catalog/:slug/restore", guard(async (req, res) => {
     const skill = getSkill(req.params.slug);
     if (!skill) return res.status(404).json({ error: "skill not found" });
     restoreSkill(skill.slug);
-    res.json({ ok: true, skill: skillToApi(getSkill(skill.slug)) });
+    res.json(await synced({ ok: true, skill: skillToApi(getSkill(skill.slug)) }));
   }));
 
   router.post("/skills/catalog/:slug/visibility", guard(async (req, res) => {
     const visibility = String(req.body?.visibility || "");
     if (!VISIBILITIES.includes(visibility)) return res.status(400).json({ error: `visibility must be one of ${VISIBILITIES.join(", ")}` });
-    res.json({ ok: true, skill: skillToApi(setSkillVisibility(req.params.slug, visibility)) });
+    res.json(await synced({ ok: true, skill: skillToApi(setSkillVisibility(req.params.slug, visibility)) }));
   }));
 
   // Move between the shared library and a channel's section: { channelId } ('' = library).
@@ -206,20 +212,20 @@ export function createSkillsRouter() {
     const skill = getSkill(req.params.slug);
     if (!skill) return res.status(404).json({ error: "skill not found" });
     const r = await moveSkillScope({ slug: skill.slug, channelId: String(req.body?.channelId || ""), actor: ADMIN_UI });
-    res.json({ ok: true, moved: r.moved, repo: r.repo, kept: r.kept, skill: skillToApi(r.skill) });
+    res.json(await synced({ ok: true, moved: r.moved, repo: r.repo, kept: r.kept, skill: skillToApi(r.skill) }));
   }));
 
   router.post("/skills/catalog/:slug/publish", guard(async (req, res) => {
     const skill = getSkill(req.params.slug);
     if (!skill) return res.status(404).json({ error: "skill not found" });
-    res.json({ ok: true, result: await publishRevision({ slug: skill.slug, actor: ADMIN_UI }) });
+    res.json(await synced({ ok: true, result: await publishRevision({ slug: skill.slug, actor: ADMIN_UI }) }));
   }));
 
   router.post("/skills/catalog/:slug/pin", guard(async (req, res) => {
     const revisionNo = req.body?.revisionNo == null || req.body?.revisionNo === "" ? null : Number(req.body.revisionNo);
     const skill = pinSkill(req.params.slug, revisionNo);
     logEvent("skill_pinned", { skill: skill.slug, revision: revisionNo, author: ADMIN_UI });
-    res.json({ ok: true, skill: skillToApi(skill) });
+    res.json(await synced({ ok: true, skill: skillToApi(skill) }));
   }));
 
   // ── Revisions (staged review) ─────────────────────────────────────────────────────────────
@@ -235,12 +241,12 @@ export function createSkillsRouter() {
   router.post("/skills/revisions/:id/approve", guard(async (req, res) => {
     const rev = approveRevision(Number(req.params.id), { decidedBy: ADMIN_UI });
     logEvent("skill_revision_approved", { revision: rev.id, skill: rev.skillId, author: ADMIN_UI });
-    res.json({ ok: true, revision: rev });
+    res.json(await synced({ ok: true, revision: rev }));
   }));
 
   router.post("/skills/revisions/:id/reject", guard(async (req, res) => {
     const rev = rejectRevision(Number(req.params.id), { note: String(req.body?.note || "rejected in the admin UI") });
-    res.json({ ok: true, revision: rev });
+    res.json(await synced({ ok: true, revision: rev }));
   }));
 
   // ── Sources ───────────────────────────────────────────────────────────────────────────────
@@ -258,7 +264,7 @@ export function createSkillsRouter() {
     logEvent("skill_source_added", { source: source.id, kind: source.kind, author: ADMIN_UI });
     let sync = null;
     if (b.syncNow !== false) sync = await syncOneSource(source.id, { log: () => {} });
-    res.status(201).json({ ok: true, source: getSource(source.id), sync });
+    res.status(201).json(await synced({ ok: true, source: getSource(source.id), sync }));
   }));
 
   router.put("/skills/sources/:id", guard(async (req, res) => {
@@ -268,28 +274,28 @@ export function createSkillsRouter() {
     if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
     if (typeof b.secret === "string" && b.secret) patch.secret = b.secret;
     if (b.clearSecret === true) patch.clearSecret = true;
-    res.json({ ok: true, source: updateSource(Number(req.params.id), patch) });
+    res.json(await synced({ ok: true, source: updateSource(Number(req.params.id), patch) }));
   }));
 
   router.delete("/skills/sources/:id", guard(async (req, res) => {
     const r = removeSource(Number(req.params.id));
     logEvent("skill_source_removed", { source: Number(req.params.id), tombstoned: r.tombstoned, author: ADMIN_UI });
-    res.json({ ok: true, ...r });
+    res.json(await synced({ ok: true, ...r }));
   }));
 
   router.post("/skills/sources/:id/sync", guard(async (req, res) => {
     const source = getSource(Number(req.params.id));
     if (!source) return res.status(404).json({ error: "source not found" });
     const result = await syncOneSource(source.id, { log: () => {} });
-    res.json({ ok: true, result, source: getSource(source.id) });
+    res.json(await synced({ ok: true, result, source: getSource(source.id) }));
   }));
 
   router.post("/skills/sources/sync-all", guard(async (_req, res) => {
-    res.json({ ok: true, results: await runScheduledSkillSync({ log: () => {} }) });
+    res.json(await synced({ ok: true, results: await runScheduledSkillSync({ log: () => {} }) }));
   }));
 
   router.post("/skills/sources/refresh-host", guard(async (_req, res) => {
-    res.json({ ok: true, result: await importHostSkillFolders(skillSourceDirs()) });
+    res.json(await synced({ ok: true, result: await importHostSkillFolders(skillSourceDirs()) }));
   }));
 
   // ── Templates ─────────────────────────────────────────────────────────────────────────────
@@ -302,14 +308,14 @@ export function createSkillsRouter() {
     const b = req.body || {};
     const existing = b.slug ? getTemplate(b.slug) : null;
     const t = upsertTemplate({ slug: b.slug, name: b.name, description: b.description || "", skills: b.skills || [], categories: [], builtin: existing ? existing.builtin : false });
-    res.json({ ok: true, template: templateSummary(t) });
+    res.json(await synced({ ok: true, template: templateSummary(t) }));
   }));
 
   router.delete("/skills/templates/:slug", guard(async (req, res) => {
     const t = getTemplate(req.params.slug);
     if (!t) return res.status(404).json({ error: "template not found" });
     deleteTemplate(t.slug);
-    res.json({ ok: true });
+    res.json(await synced({ ok: true }));
   }));
 
   // What a conversation would get if it followed this template (its own additions kept).
@@ -329,7 +335,7 @@ export function createSkillsRouter() {
     const r = await assignTemplateToChannel(channel, req.params.slug);
     if (!r) return res.status(404).json({ error: "template or conversation not found" });
     logEvent("skill_template_assigned", { slug: channel, template: req.params.slug, author: ADMIN_UI });
-    res.json({ ok: true, assigned: r, applied: r });
+    res.json(await synced({ ok: true, assigned: r, applied: r }));
   });
   router.post("/skills/templates/:slug/assign", assign);
   router.post("/skills/templates/:slug/apply", assign);
@@ -339,7 +345,7 @@ export function createSkillsRouter() {
     const r = await assignTemplateToChannel(req.params.channel, String(req.body?.template ?? ""));
     if (!r) return res.status(404).json({ error: "template or conversation not found" });
     logEvent("skill_template_assigned", { slug: req.params.channel, template: r.skillTemplate || "none", author: ADMIN_UI });
-    res.json({ ok: true, assigned: r });
+    res.json(await synced({ ok: true, assigned: r }));
   }));
 
   // ── Profiles + usage ──────────────────────────────────────────────────────────────────────
@@ -363,7 +369,7 @@ export function createSkillsRouter() {
     // nowhere, so whoever pushed a channel over the cap never heard about it.
     const after = await channelGrants(req.params.channel);
     const profile = after ? resolveSkillProfile(after.skills, { warnTokens: getSkillsContextWarnTokens() }) : null;
-    res.json({ ok: true, ...r, contextTokens: profile?.contextTokens ?? null, warnings: profile?.warnings ?? [] });
+    res.json(await synced({ ok: true, ...r, contextTokens: profile?.contextTokens ?? null, warnings: profile?.warnings ?? [] }));
   }));
 
   router.post("/skills/profile/:channel/revoke", guard(async (req, res) => {
@@ -372,7 +378,7 @@ export function createSkillsRouter() {
     const r = await revokeSkillsFromChannel(req.params.channel, slugs);
     if (!r) return res.status(404).json({ error: "conversation not found" });
     logEvent("skill_revoked", { slug: req.params.channel, skills: r.removed, author: ADMIN_UI });
-    res.json({ ok: true, ...r });
+    res.json(await synced({ ok: true, ...r }));
   }));
 
   router.get("/skills/profiles", guard(async (_req, res) => {
@@ -398,24 +404,24 @@ export function createSkillsRouter() {
   }));
 
   router.post("/skills/proposals/:id/approve", guard(async (req, res) => {
-    res.json({ ok: true, ...(await decideSkillProposal(Number(req.params.id), { decision: "approve", decidedBy: ADMIN_UI, note: String(req.body?.note || "") })) });
+    res.json(await synced({ ok: true, ...(await decideSkillProposal(Number(req.params.id), { decision: "approve", decidedBy: ADMIN_UI, note: String(req.body?.note || "") })) }));
   }));
 
   router.post("/skills/proposals/:id/reject", guard(async (req, res) => {
-    res.json({ ok: true, ...(await decideSkillProposal(Number(req.params.id), { decision: "reject", decidedBy: ADMIN_UI, note: String(req.body?.note || "") })) });
+    res.json(await synced({ ok: true, ...(await decideSkillProposal(Number(req.params.id), { decision: "reject", decidedBy: ADMIN_UI, note: String(req.body?.note || "") })) }));
   }));
 
   // ── Organization tier ─────────────────────────────────────────────────────────────────────
   router.post("/skills/org/grant", guard(async (req, res) => {
     const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
     if (!slugs.length) return res.status(400).json({ error: "slugs is required" });
-    res.json({ ok: true, ...grantSkillsToOrg(slugs) });
+    res.json(await synced({ ok: true, ...grantSkillsToOrg(slugs) }));
   }));
 
   router.post("/skills/org/revoke", guard(async (req, res) => {
     const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
     if (!slugs.length) return res.status(400).json({ error: "slugs is required" });
-    res.json({ ok: true, ...revokeSkillsFromOrg(slugs) });
+    res.json(await synced({ ok: true, ...revokeSkillsFromOrg(slugs) }));
   }));
 
   // ── Access tokens for /mcp/skills ─────────────────────────────────────────────────────────

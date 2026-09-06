@@ -4,6 +4,7 @@
 // mounted by createAdminRouter so every URL is unchanged.
 import { hasComposioSdkEntitlement } from "../../ee/composio-entitlement.js";
 import { Router } from "express";
+import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
 import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -468,8 +469,12 @@ export function createSettingsRouter({
         slackSnap = await slack.connect(resolveSlackConfig());
       }
 
-      res.json({ ok: true, ...settingsPayload(slackSnap) });
+      const workspaceSync = patch.accessGrants
+        ? await syncWorkspaceSkillsOrThrow()
+        : undefined;
+      res.json({ ok: true, ...settingsPayload(slackSnap), ...(workspaceSync ? { workspaceSync } : {}) });
     } catch (e) {
+      if (e?.code === "workspace_sync_failed") return res.status(503).json({ error: e.message, code: e.code, saved: true, workspaceSync: e.workspaceSync });
       next(e);
     }
   });

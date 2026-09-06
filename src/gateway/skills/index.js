@@ -12,6 +12,7 @@ import { skillSourceDirs } from "../folders.js";
 import { getSkillsSyncIntervalMinutes } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
 import { retireStandaloneGatewaySkills } from "./retire.js";
+import { syncWorkspaceSkills, startWorkspaceSkillSync } from "./workspace-sync.js";
 
 function packageVersion() {
   try {
@@ -48,6 +49,12 @@ export async function bootSkillsPlatform({ log = console.log } = {}) {
     summary.stats = catalogStats();
   } catch {
     /* stats are informational */
+  }
+  try {
+    summary.workspaces = await syncWorkspaceSkills({ log });
+    summary.errors.push(...summary.workspaces.failed.map((item) => `workspace ${item.slug}: ${item.error}`));
+  } catch (err) {
+    summary.errors.push(`workspaces: ${err?.message || err}`);
   }
   const hostImported = (summary.host?.results || []).reduce((n, r) => n + r.imported.length, 0);
   const hostSkills = (summary.host?.results || []).reduce((n, r) => n + r.presentSlugs.length, 0);
@@ -122,6 +129,7 @@ export function triggerSourceSync(id, { delayMs = 5000, log = console.log } = {}
 // The sync timer. Interval comes from settings (minutes; 0 = off). A first pass runs shortly
 // after boot when any git source exists, so a restart never leaves sources stale for an hour.
 export function startSkillsSync({ log = console.log, initialDelayMs = 30_000, fetchImpl = fetch } = {}) {
+  const workspaces = startWorkspaceSkillSync({ log });
   let timer = null;
   let running = false;
   const tick = async () => {
@@ -144,6 +152,7 @@ export function startSkillsSync({ log = console.log, initialDelayMs = 30_000, fe
   }
   return {
     stop() {
+      workspaces.stop();
       if (timer) clearInterval(timer);
       timer = null;
     },
