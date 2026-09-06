@@ -279,6 +279,18 @@ product overview.
   refusal or a duplicate. Nothing else is forgiven: a dash, a space or a leading digit is still
   refused (quoting what was typed), and the reserved-name check runs on the folded name, so `path`
   cannot smuggle `PATH` past it.
+- **An expired licence stops granting its tier.** A licence whose `expiresAt` had passed was routed
+  into the "platform unreachable" grace lane, which keeps the last verified tier for 14 days from
+  the last successful check. For an OFFLINE (air-gapped) payload that check is stamped at read time,
+  so it always looked freshly verified and the 14-day window never closed: an expired enterprise
+  payload kept reporting tier `enterprise` with unlimited conversations indefinitely, and the run
+  gate admitted accordingly. Expiry is now resolved before the unreachable lane, as its own `expired`
+  state: the no-key limits apply from the moment the licence runs out, no tier is reported, and the
+  admin card says on which date it expired. An expiry date is not a network condition — unlike a
+  platform outage it is known in advance — so it gets neither the 14-day window nor the month-boundary
+  courtesy, exactly like `invalid`/`revoked`. The genuine case those courtesies exist for is
+  unchanged: a still-in-date licence that could not be re-checked keeps its tier for 14 days and then
+  until the next UTC month boundary. A licence with no end date, or an unreadable one, never expires.
 - **A daily-thread schedule starts a fresh session on every fire again.** A scheduled run's session
   key was built from the message its result is threaded under, which is a different message per
   fire only for `standard` delivery. `delivery:"daily-thread"` reuses one anchor for the whole

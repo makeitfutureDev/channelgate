@@ -3065,6 +3065,7 @@ const LICENSE_STATE_LABEL = {
   valid: "· verified",
   invalid: "· key rejected",
   revoked: "· key revoked",
+  expired: "· license expired",
   grace: "· offline grace",
   expired_grace: "· grace expired",
 };

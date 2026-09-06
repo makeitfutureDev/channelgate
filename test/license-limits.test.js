@@ -16,7 +16,7 @@ const {
   isExemptRun,
   WARN_AT,
 } = await import("../src/ee/limits.js");
-const { getEffectiveLimits, utcMonth, resetLicenseAnnouncements } = await import("../src/ee/license.js");
+const { getEffectiveLimits, getLicenseStatus, utcMonth, resetLicenseAnnouncements } = await import("../src/ee/license.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { signupUrl } = await import("../src/ee/tiers.js");
 
@@ -176,4 +176,47 @@ test("an empty conversation id is never charged to anybody", () => {
   const result = licenseAdmission({ conversationId: "", origin: "slack_foreground" });
   assert.equal(result.allowed, true);
   assert.equal(usageTotals().conversations, 0);
+});
+
+test("an EXPIRED offline payload grants nothing — the no-key limits, immediately", () => {
+  // The live failure (QA OPS-11): an air-gapped enterprise payload whose `expiresAt` had passed
+  // weeks earlier still resolved to tier `enterprise` with unlimited conversations, and admission
+  // let every conversation through. An offline payload is stamped verifiedAt = READ time, so it
+  // always looks freshly verified; routing an expired one into the "platform unreachable" grace
+  // lane therefore meant `now < verifiedAt + 14 days` was true forever. It now fails closed.
+  resetLicenseUsage();
+  resetLicenseAnnouncements();
+  saveSettings({ licenseKey: "" });
+  process.env.CHANNELGATE_LICENSE_PUBLIC_KEY = testLicensePublicKeyPem();
+  testLicenseEnv({
+    tier: "enterprise",
+    limits: { conversations: null, messagesPerConversationPerMonth: null },
+    expiresAt: "2020-01-01T00:00:00.000Z",
+  });
+
+  const status = getLicenseStatus();
+  assert.equal(status.state, "expired");
+  assert.notEqual(status.tier, "enterprise", "a dead licence does not report the tier it was sold as");
+  assert.equal(status.expiresAt, "2020-01-01T00:00:00.000Z", "…while still saying when it ran out");
+  assert.equal(status.banner.level, "error");
+
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500 });
+  assert.equal(admit("C_EXPIRED_FIRST").allowed, true, "the free allowance still works");
+  const second = admit("C_EXPIRED_SECOND");
+  assert.equal(second.allowed, false);
+  assert.equal(second.reason, "conversation_limit");
+
+  // The identical payload with a FUTURE expiry is the enterprise tier it always was — the fix
+  // turns on the date, not on the payload being offline.
+  resetLicenseUsage();
+  resetLicenseAnnouncements();
+  testLicenseEnv({
+    tier: "enterprise",
+    limits: { conversations: null, messagesPerConversationPerMonth: null },
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  assert.equal(getLicenseStatus().state, "valid");
+  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: null });
+  assert.equal(admit("C_STILL_VALID_1").allowed, true);
+  assert.equal(admit("C_STILL_VALID_2").allowed, true);
 });

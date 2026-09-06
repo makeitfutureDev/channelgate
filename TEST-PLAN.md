@@ -3359,6 +3359,21 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       rolling into the next year; a cached payload past its own `expiresAt` unable to stay `valid`;
       and every declared state being reachable and every reachable state declared
       (`test/license-state.test.js`).
+- [x] Unit (OPS-11 regression — expiry fails CLOSED): a licence past its own `expiresAt` resolves to
+      `expired`, not `grace` — the no-key limits, `license: null` so nothing downstream reads a tier
+      off it, `expiredAt` kept for the card, and an error banner naming the date. Checked at +0.1,
+      +15 and +400 days with the verifiedAt an offline payload actually carries (read time), which is
+      what made the old grace window impossible to leave. The same payload an hour before its expiry
+      is still `valid`; `expiresAt: null` and an unparseable date never expire
+      (`test/license-state.test.js`).
+- [x] Unit (OPS-11 regression — the grace lane is intact): a still-in-date licence the platform
+      could not re-check is `grace` on its own tier at day 9 and `expired_grace` on the same tier at
+      day 20, exactly as before (`test/license-state.test.js`).
+- [x] Unit (OPS-11 regression — end to end through the gate): a real signed OFFLINE enterprise
+      payload with a past `expiresAt` yields `state: "expired"`, a tier that is not `enterprise`,
+      the no-key limits, and an admission that serves the first conversation of the month and
+      refuses the second (`conversation_limit`); the identical payload with a future expiry is the
+      unlimited enterprise tier it always was (`test/license-limits.test.js`).
 - [x] Unit (UTC months): the ledger month is UTC, so 23:30 on 31 December is still December even
       where it is already January locally (`test/license-state.test.js`).
 - [x] Unit (admission, no key): the first conversation of the month is served and every other one

@@ -2150,12 +2150,16 @@ are retired, bullet by bullet; everything else stands.
   coordinated rotation. The
   boot path never awaits it — Slack connects while the check is in flight and the run gate reads
   the cached state, so a slow or dead platform costs the daemon nothing.
-- **State machine** `no_key · valid · invalid · revoked · grace · expired_grace`, all of them
-  healthy daemon states. Unreachable keeps the last verified tier for 14 days (`grace`); past that
-  the tier is STILL kept until the next UTC month boundary and only then falls back to the no-key
-  limits — never mid-month, never silently. `invalid`/`revoked` drop immediately. A response whose
-  signature does not verify changes nothing in either direction. An in-process event fires on every
-  state change.
+- **State machine** `no_key · valid · invalid · revoked · expired · grace · expired_grace`, all of
+  them healthy daemon states. Unreachable keeps the last verified tier for 14 days (`grace`); past
+  that the tier is STILL kept until the next UTC month boundary and only then falls back to the
+  no-key limits — never mid-month, never silently. `invalid`/`revoked` drop immediately. So does
+  `expired`: a licence that passed its own `expiresAt` ran out on its own terms — that is not a
+  deployment that lost contact, and the date was known in advance — so it is resolved BEFORE the
+  unreachable lane, grants the no-key limits, and reports no tier. That ordering is what makes the
+  air-gapped promise true: an offline payload is stamped as verified at read time, so an expired one
+  routed through grace would have looked freshly checked forever. A response whose signature does
+  not verify changes nothing in either direction. An in-process event fires on every state change.
 - **Two enforcement points**, both in `licenseAdmission()` (`src/ee/limits.js`), called from the
   run orchestrator before a turn provisions a folder, mints a session, or spawns an engine:
   conversation admission (the month's first N distinct conversations are the allowed set,
