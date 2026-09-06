@@ -1833,8 +1833,9 @@ are retired, bullet by bullet; everything else stands.
   prompt. The prompt editor preserves multiline text, rejects blank saves, keeps failed drafts
   visible, and PATCHes only `prompt`; the next scheduler execution reads the updated SQLite record.
   → TEST-PLAN: Admin UI (redesign).
-- **Overview** (was Dashboard): 5 KPIs (estimated API value — orange hero, runs + average value, users, live active
-  sessions, tokens in/out). Active sessions opens a live modal with conversation, author, elapsed
+- **Overview** (was Dashboard): 7 KPIs (Token Est Cost — orange hero, separate Claude and Codex
+  costs, runs + average value, users, live active sessions, tokens in/out) plus an All / Claude /
+  Codex harness selector that re-scopes every KPI and chart. Active sessions opens a live modal with conversation, author, elapsed
   time, and the effective engine/model; DM conversations use the person's display name rather than
   their internal `dm-U…` slug. An authenticated event stream pushes complete active-run snapshots
   on start, runtime resolution/fallback, finish, and restart recovery; reconnects reconcile from
@@ -2347,12 +2348,13 @@ are retired, bullet by bullet; everything else stands.
   first-boot password is minted whenever no OPERATOR key is in `settings.json` — the installer's
   own pre-boot `whisperEnabled` answer does not count, so `npm run setup` never skips it.
   → TEST-PLAN: A7 boundary hardening.
-- Dashboard admin tab (default landing view): usage overview for a selectable **date range** —
+- Dashboard admin tab (default landing view): usage overview for a selectable **date range** and
+  **harness** (All by default, Claude, or Codex) —
   Today, Last 7 days, Last 30 days, This month, Last month, This year, Last year
-  (`GET /api/dashboard?range=…`, SQL rollups). The bucket granularity adapts to the range: **hour**
+  (`GET /api/dashboard?range=…&harness=…`, SQL rollups). The bucket granularity adapts to the range: **hour**
   for a single day, **day** for weeks/months, **month** for years — series gap-filled so charts stay
-  stable. KPI tiles (total cost, sessions, active users, total tokens, active channels,
-  avg $/session), per-bucket sparklines for sessions/tokens/cost, a sessions-per-user bar list
+  stable. KPI tiles (Token Est Cost, separate Claude and Codex costs, sessions, active users,
+  active sessions, and total tokens), per-bucket sparklines for sessions/tokens/cost, a sessions-per-user bar list
   (descending), and a per-channel sessions+cost bar chart. Pure inline SVG + div bars — no chart
   library, no build step. → TEST-PLAN: Admin UI.
 - Money display: smart currency formatter — whole dollars at $100+ (no "$359.3113" on totals),

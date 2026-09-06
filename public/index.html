@@ -45,6 +45,11 @@
               <p class="hint">Gateway usage — every interactive, scheduled, and background run.</p>
             </div>
             <div class="dash-tools">
+              <select id="dash-harness" class="dash-range" title="Harness" aria-label="Harness">
+                <option value="all" selected>All harnesses</option>
+                <option value="claude">Claude</option>
+                <option value="codex">Codex</option>
+              </select>
               <select id="dash-range" class="dash-range" title="Date range">
                 <option value="today">Today</option>
                 <option value="last7">Last 7 days</option>

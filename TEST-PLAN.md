@@ -1980,8 +1980,9 @@ release, no egress cut-off — so the network entry has no container equivalent 
       reads MEMORY.md / triggers the channel-memory skill and answers from memory.
 - [ ] Admin UI Memory tab describes uncapped Markdown storage plus the derived SQLite FTS index,
       shows stored characters/facts and topic files, and refreshes those counts after save.
-- [ ] Overview is the default landing view: 5 KPI tiles (Est. API value in orange, Runs with avg value,
-      Active users, live Active sessions, Tokens with in/out sub), the orange hero cost chart
+- [ ] Overview is the default landing view: 7 KPI tiles (Token Est Cost in orange, separate Claude
+      Cost and Codex Cost, Runs with avg value, Active users, live Active sessions, Tokens with
+      in/out sub), the orange hero cost chart
       (gridlines + dated peak) and runs/tokens sparklines, runs-per-user bars (descending,
       VISIBLE fills), and
       per-channel runs+estimated-value bars render; the refresh icon button reloads. Large totals show
@@ -1993,11 +1994,23 @@ release, no egress cut-off — so the network entry has no container equivalent 
       text nor attachment paths. Without refreshing the page, the KPI/modal update on start,
       runtime resolution/fallback, and finish; elapsed time ticks while open. Disconnect/reconnect
       `/api/active-runs/stream` and confirm its initial full snapshot reconciles missed changes.
-- [ ] Overview **range dropdown** (Today / Last 7 days / Last 30 days / This month / Last month /      This year / Last year) reloads on change and re-scopes every tile + chart. Bucket granularity
+- [ ] Overview **harness dropdown** defaults to All. Selecting Claude or Codex reloads and scopes
+      every KPI and chart, including active sessions and top skills, to that harness; switching back
+      to All restores the combined totals. Claude Cost and Codex Cost sum to Token Est Cost when all
+      priced runs are included.
+- [ ] Overview **range dropdown** (Today / Last 7 days / Last 30 days / This month / Last month /
+      This year / Last year) reloads on change and re-scopes every tile + chart. Bucket granularity
       adapts: Today = hourly points, week/month = daily, year = monthly; empty ranges (e.g. Last year
       with no data) render zeros/flat without error.
-- [ ] `GET /api/dashboard?range=…` returns `{ range, unit, start, end, totals, series (gap-filled,
-      one point per bucket), byUser, byChannel }`; an unknown range falls back to `last30`.
+- [x] Unit: `usageDashboard` applies `harness=claude|codex` to totals, series, per-user and
+      per-channel rollups; top-skill usage accepts the same engine scope; omitted/unknown harnesses
+      safely resolve to All (`test/dashboard-harness-filter.test.js`).
+- [x] Airtable: active dual-engine live definitions `UI-DASH-01C` (Claude) and `UI-DASH-01X`
+      (Codex) use the Admin UI plus the private `cg-testing-*-auto` fixtures and require matching
+      UI screenshots and API JSON evidence for all seven KPIs, charts, and live Active sessions.
+- [ ] `GET /api/dashboard?range=…&harness=…` returns `{ range, harness, unit, start, end, totals
+      (including Claude/Codex cost), series (gap-filled, one point per bucket), byUser, byChannel }`;
+      an unknown range falls back to `last30` and an unknown harness falls back to `all`.
 - [ ] Settings: vertical section nav (Connection / Agent defaults / Integrations / Access &
       security / System); every section stays in the DOM and ONE sticky Save persists all of them;
       dirty tracking shows "Unsaved changes" on any edit and "All changes saved" after save/boot.

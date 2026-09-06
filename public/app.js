@@ -672,22 +672,30 @@ const UNIT_WORD = { hour: "hour", day: "day", month: "month" };
 
 const DASH_TOP_N = 12;
 let dashRange = "last30"; // remembered across nav so switching away and back keeps the selection
+let dashHarness = "all"; // all | claude | codex; scopes every dashboard KPI and chart
 let ACTIVE_RUNS = []; // live in-flight turns, for the "Active sessions" KPI + its modal
 let activeRunsVersion = 0;
 let activeRunsLive = false;
 let activeRunsSource = null;
 let activeModalTimer = null;
 
+function dashboardActiveRuns() {
+  return dashHarness === "all"
+    ? ACTIVE_RUNS
+    : ACTIVE_RUNS.filter((run) => String(run.engine || run.engineName || "").toLowerCase() === dashHarness);
+}
+
 function renderActiveSessions() {
   const modal = document.getElementById("active-modal");
   const bodyEl = document.getElementById("active-body");
   if (!modal || modal.hidden || !bodyEl) return;
-  if (!ACTIVE_RUNS.length) {
+  const visibleRuns = dashboardActiveRuns();
+  if (!visibleRuns.length) {
     bodyEl.innerHTML = `<p class="hint">No sessions are running right now.</p>`;
     return;
   }
   const now = Date.now();
-  bodyEl.innerHTML = ACTIVE_RUNS
+  bodyEl.innerHTML = visibleRuns
     .map((r) => {
       const conv = r.channelName || r.slug || "?";
       const who = r.authorName || r.authorId || "?";
@@ -701,7 +709,7 @@ function renderActiveSessions() {
 function setActiveRuns(runs) {
   ACTIVE_RUNS = Array.isArray(runs) ? runs : [];
   activeRunsVersion += 1;
-  const count = ACTIVE_RUNS.length;
+  const count = dashboardActiveRuns().length;
   const value = document.querySelector('[data-live-active="value"]');
   const sub = document.querySelector('[data-live-active="sub"]');
   if (value) value.textContent = fmtNum(count);
@@ -828,10 +836,12 @@ async function resolveApprovalFromDash(target) {
 async function loadDashboard() {
   const body = document.getElementById("dash-body");
   const rangeSel = document.getElementById("dash-range");
+  const harnessSel = document.getElementById("dash-harness");
   if (rangeSel) dashRange = rangeSel.value;
+  if (harnessSel) dashHarness = harnessSel.value;
   let d;
   try {
-    d = await api(`/api/dashboard?range=${encodeURIComponent(dashRange)}`);
+    d = await api(`/api/dashboard?range=${encodeURIComponent(dashRange)}&harness=${encodeURIComponent(dashHarness)}`);
   } catch (e) {
     body.innerHTML = `<p class="hint">Couldn't load dashboard: ${escapeHtml(e.message)}</p>`;
     return;
@@ -858,14 +868,16 @@ async function loadDashboard() {
   const spanDays = Math.max(1, (new Date(d.end) - new Date(d.start)) / 86400000);
   const multiDay = spanDays >= 1.5;
   const avgCost = t.runs ? t.cost / t.runs : 0;
-  const pricingCoverage = t.unpricedRuns ? `${fmtNum(t.unpricedRuns)} runs unpriced` : "standard tier";
+  const pricingCoverage = t.unpricedRuns ? `${fmtNum(t.unpricedRuns)} runs unpriced` : "all runs priced";
 
   // KPIs — tokens in/out demoted to the Tokens sub-line. Some cards drill in: value/runs/tokens
   // open the Activity run history (view), "Active sessions" opens the live in-flight list (action).
   // "Active users" is a plain read-only tile (per user request — clicking it does nothing).
-  const activeCount = ACTIVE_RUNS.length;
+  const activeCount = dashboardActiveRuns().length;
   const kpis = [
-    { label: "Est. API value", value: fmtUSD(t.cost), cls: "cost", sub: multiDay ? `≈ ${fmtUSD(t.cost / spanDays)}/day · ${pricingCoverage}` : pricingCoverage, view: "audit" },
+    { label: "Token Est Cost", value: fmtUSD(t.cost), cls: "cost", sub: multiDay ? `≈ ${fmtUSD(t.cost / spanDays)}/day · ${pricingCoverage}` : pricingCoverage, view: "audit" },
+    { label: "Claude Cost", value: fmtUSD(t.claudeCost), cls: "cost", sub: "provider-reported", view: "audit" },
+    { label: "Codex Cost", value: fmtUSD(t.codexCost), cls: "cost", sub: "Standard API estimate", view: "audit" },
     { label: "Runs", value: fmtNum(t.runs), sub: multiDay ? `≈ ${(t.runs / spanDays).toFixed(1)}/day · ${fmtUSD(avgCost)} avg value` : `${fmtUSD(avgCost)} avg value`, view: "audit" },
     { label: "Active users", value: fmtNum(t.users), sub: `across ${fmtNum(t.channels)} channels` },
     { label: "Active sessions", value: fmtNum(activeCount), sub: activeCount ? "running now — view" : "none running now", action: "active", liveActive: true },
@@ -882,14 +894,14 @@ async function loadDashboard() {
   </div>`;
   }).join("");
 
-  // API-equivalent value is the hero (2fr wide, gridlines, peak dated). Runs + tokens ride at 1fr but share the
+  // Token cost is the hero (2fr wide, gridlines, peak dated). Runs + tokens ride at 1fr but share the
   // hero's chart height so all three axis labels line up along the same bottom edge.
   const costPeak = peakBucket((x) => x.cost);
   const costPeakLabel = costPeak && costPeak.cost > 0
     ? `peak ${fmtUSD(costPeak.cost)}${costPeak.key ? " · " + bucketLabel(costPeak.key, unit) : ""}`
     : "no value yet";
   const charts = [
-    chartCard(`Est. value per ${per}`, series.map((x) => x.cost), "var(--orange)", costPeakLabel, axis, { height: 110, grid: true, tall: true }),
+    chartCard(`Token est. cost per ${per}`, series.map((x) => x.cost), "var(--orange)", costPeakLabel, axis, { height: 110, grid: true, tall: true }),
     chartCard("Runs", series.map((x) => x.runs), "#91c9ce", `peak ${peakOf((x) => x.runs, fmtNum)}`, axis, { height: 110, tall: true }),
     chartCard("Tokens", series.map((x) => x.tokens), "#317b80", `peak ${peakOf((x) => x.tokens, fmtCompact)}`, axis, { height: 110, tall: true }),
   ].join("");
@@ -918,8 +930,8 @@ async function loadDashboard() {
         ${moreUsers > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreUsers} more</p>` : ""}
       </div>
       <div class="chart-card">
-        <div class="chart-title"><h3>Channels — runs, est. value &amp; tokens</h3>
-          <span class="legend"><span><span class="dot" style="background:#91c9ce"></span>runs</span><span><span class="dot" style="background:var(--orange)"></span>est. value</span><span><span class="dot" style="background:#317b80"></span>tokens</span></span>
+        <div class="chart-title"><h3>Channels — runs, token cost &amp; tokens</h3>
+          <span class="legend"><span><span class="dot" style="background:#91c9ce"></span>runs</span><span><span class="dot" style="background:var(--orange)"></span>token cost</span><span><span class="dot" style="background:#317b80"></span>tokens</span></span>
         </div>
         ${channelBars(channels)}
         ${moreChannels > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreChannels} more</p>` : ""}
@@ -3941,6 +3953,7 @@ document.getElementById("dash-refresh").addEventListener("click", (e) => {
 });
 
 document.getElementById("dash-range").addEventListener("change", () => loadDashboard().catch(() => {}));
+document.getElementById("dash-harness").addEventListener("change", () => loadDashboard().catch(() => {}));
 
 document.getElementById("remove-password").addEventListener("click", async () => {
   const ok = await confirmDialog({
