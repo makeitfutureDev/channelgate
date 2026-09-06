@@ -28,7 +28,17 @@ const ABSENT_CODES = new Set(["ENOENT", "ELOOP", "EMLINK", "EISDIR", "ENOTDIR"])
 export async function readNoFollow(file) {
   let fh;
   try {
-    fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // Agent-writable paths may be special nodes. NONBLOCK prevents opening a FIFO from occupying
+    // a libuv worker indefinitely; inspect the opened descriptor before performing any data read.
+    // Normal regular-file size policy remains with each caller (attachments and memory differ).
+    fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = await fh.stat();
+    if (info.isDirectory()) return null; // preserve the existing absent-managed-file behavior
+    if (!info.isFile()) {
+      const error = new Error("Refusing to read a managed path that is not a regular file.");
+      error.code = "ENOTREG";
+      throw error;
+    }
     return await fh.readFile("utf8");
   } catch (error) {
     if (ABSENT_CODES.has(error?.code)) return null;
