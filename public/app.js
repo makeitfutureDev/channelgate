@@ -1547,6 +1547,13 @@ function renderChannelDetail(ch) {
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
   card.querySelector(".ch-browse").addEventListener("click", () => openFolderPicker(workdirInput));
+  card.querySelector(".ch-workdir-reset").addEventListener("click", () => {
+    if (!workdirInput.value) return;
+    workdirInput.value = "";
+    // Follow the same pending-edit flow as Browse: Save applies it; Discard restores the path.
+    workdirInput.dispatchEvent(new Event("input", { bubbles: true }));
+    workdirInput.focus();
+  });
   card.querySelector(".ch-syncdrive").value = meta.syncDriveFolder || "";
   card.querySelector(".ch-synctest").addEventListener("click", async () => {
     const result = card.querySelector(".ch-synctest-result");
