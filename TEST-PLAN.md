@@ -2209,6 +2209,18 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [ ] **Migration on boot:** starting the daemon on a machine with the pre-SQLite JSON files
       imports them once into `gateway.db` (log line "legacy JSON imported (…)"); counts match the
       old files; the JSON/JSONL files remain on disk untouched as backups.
+- [x] Automated (OPS-02 regression — the legacy layout is what gets read): a fixture tree in the
+      pre-rename shape (`channels/<slug>/meta.json`, `channels/<slug>/sessions.json`, plus
+      `config/users.json` and `config/channels.json`) imports with `meta` and `sessions` counts
+      above zero — both were always 0 — and each imported row equals its source file; an empty
+      session id contributes no row, a channel folder with neither file does not break the sweep,
+      and a `channels/slack/` platform folder is never imported as a phantom channel
+      (`test/import-legacy.test.js`).
+- [x] Automated (OPS-02 — the guarantees around it are unchanged): every legacy source file is
+      byte-identical after the import; a second open does not clobber a later edit or resurrect a
+      cleared thread map; a half-migrated tree whose files already sit at
+      `channels/<platform>/<slug>/` is imported through the fallback
+      (`test/import-legacy.test.js`).
 - [ ] **Idempotent:** restarting does NOT re-import (record counts stay the same; `_meta`
       `legacy_imported=1`).
 - [ ] **Schema versioning:** a fresh machine with no data creates the DB and applies all migrations

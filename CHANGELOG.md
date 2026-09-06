@@ -279,6 +279,17 @@ product overview.
   refusal or a duplicate. Nothing else is forgiven: a dash, a space or a leading digit is still
   refused (quoting what was typed), and the reserved-name check runs on the folded name, so `path`
   cannot smuggle `PATH` past it.
+- **A pre-SQLite upgrade no longer loses every channel's lockdown record and thread→session map.**
+  The one-time JSON→SQLite import listed the legacy channel slugs from `channels/`, then read each
+  one's `meta.json` / `sessions.json` through the path helpers — which moved with the per-platform
+  folder rename and now resolve to `channels/<platform>/<slug>/`. On an authentic legacy tree those
+  files are at `channels/<slug>/`, so the import found none of them: it logged `meta=0 sessions=0`
+  and completed successfully, and the upgraded install came up with every channel's capability
+  settings and every thread's engine session gone. Nothing failed; the data was simply not there.
+  It cannot be avoided by migrating the folders first, either — the boot migration reads its channel
+  records from the store, which opens the database and runs this import, before it moves anything.
+  The legacy paths are now spelled out, with the current layout accepted as a fallback for a
+  half-migrated tree; the import stays one-time and still leaves every source file byte-identical.
 - **An expired licence stops granting its tier.** A licence whose `expiresAt` had passed was routed
   into the "platform unreachable" grace lane, which keeps the last verified tier for 14 days from
   the last successful check. For an OFFLINE (air-gapped) payload that check is stamped at read time,

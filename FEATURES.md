@@ -2190,6 +2190,14 @@ are retired, bullet by bullet; everything else stands.
   restarting brings its schema up to date with no manual step; no native build (portable to any
   Node 24+ host). One-time import of the pre-SQLite JSON/JSONL on first boot (old files kept as
   inert backups). Daemon + MCP-server processes share the DB safely via SQLite locking.
+- **The legacy import reads the legacy layout.** The pre-SQLite tree keeps a channel's files at
+  `channels/<slug>/{meta,sessions}.json` — it predates both SQLite and the per-platform channel
+  folders — so the import spells that path out rather than going through the path helpers, which
+  moved with the folder rename and now resolve to `channels/<platform>/<slug>/`. It has to: the
+  boot migration reads its channel records from the store, which opens the database and runs this
+  import, before it moves a single folder. The current layout is accepted as a fallback for a
+  half-migrated tree, a platform folder is never mistaken for a slug, and both the one-time flag
+  and the untouched source files are unchanged. → TEST-PLAN: Storage / SQLite (Slice 9).
 
 ## Observability
 - Live streaming feedback in Slack + a width-conscious stats footer per reply:
