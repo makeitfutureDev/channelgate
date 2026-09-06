@@ -28,6 +28,13 @@ test("deliverResult escapes model-authored Slack control sequences (injection gu
   assert.doesNotMatch(client.posts[0].text, /<!channel>/);
 });
 
+test("deliverResult permits only a caller-supplied trusted notification prefix", async () => {
+  const client = fakeClient();
+  await deliverResult(client, { channel: "C1", result: { content: "model says <!channel>" }, dir: null, trustedPrefix: "<!channel> " });
+  assert.match(client.posts[0].text, /^<!channel> /);
+  assert.doesNotMatch(client.posts[0].text.slice("<!channel> ".length), /<!channel>/);
+});
+
 test("deliverResult falls back to a visible placeholder on an empty result", async () => {
   const client = fakeClient();
   await deliverResult(client, { channel: "C1", threadKey: "1.2", result: { content: "" }, dir: null });

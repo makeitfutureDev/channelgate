@@ -730,6 +730,8 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 #confirm-ok.danger-btn { background: var(--danger); }
 
 /* ── Automations (slice 4): restyled schedule rows ─────────────────────────── */
+.schedule-search-wrap { margin: 2px 0 16px; }
+.schedule-search-wrap .search { width: min(520px, 100%); }
 .sched-row { border-radius: 8px; padding: 8px 6px; transition: background .15s; }
 .sched-row:hover { background: rgba(145, 201, 206, .035); }
 .sched-open {
@@ -739,7 +741,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 }
 .sched-open:hover { background: rgba(145, 201, 206, .07); filter: none; }
 .sched-open:focus-visible { background: rgba(145, 201, 206, .07); }
-.sched-row .sched-cron { white-space: nowrap; }
+.sched-friendly { flex: 0 0 auto; min-width: 132px; color: var(--blue); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .sched-badge { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--warn); border: 1px solid rgba(232, 176, 75, .4); border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
 .sched-run { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sched-saved { font-size: 11px; color: var(--ok); white-space: nowrap; min-width: 0; opacity: 0; transition: opacity .15s; }
@@ -747,11 +749,11 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .sched-row .sched-del { font: 600 11.5px var(--font); color: var(--danger); background: none; border: 1px solid rgba(229, 96, 77, .5); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
 .sched-row .sched-del:hover { filter: none; background: rgba(229, 96, 77, .1); }
 
-/* Automation detail modal — compact metadata above a roomy prompt editor. */
-.schedule-card { width: min(760px, 92vw); max-height: 88vh; overflow: hidden; }
+/* Automation editor — nearly full-screen so timing and long prompts remain visible together. */
+.schedule-card { width: min(1080px, 96vw); height: min(900px, 94vh); max-height: 94vh; overflow-y: auto; }
 .schedule-details {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px;
-  margin: 2px 0 16px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 8px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px;
+  margin: 2px 0 12px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 8px;
   background: var(--line-soft);
 }
 .schedule-detail { min-width: 0; padding: 9px 11px; background: var(--panel-dark); }
@@ -759,7 +761,16 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .schedule-detail strong { display: block; overflow-wrap: anywhere; color: var(--ink); font-size: 12px; font-weight: 500; }
 .schedule-prompt-field { min-height: 0; display: flex; flex: 1; flex-direction: column; }
 .schedule-prompt-field > span { margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
-.schedule-prompt-field textarea { min-height: 220px; max-height: 44vh; resize: vertical; font: 12.5px/1.55 var(--mono); }
+.schedule-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.schedule-form-grid .field > span, .schedule-timing .field > span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.schedule-wide { grid-column: 1 / -1; }
+.schedule-enabled { align-self: end; min-height: 37px; }
+.schedule-timing { min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: 8px; }
+.schedule-timing legend { padding: 0 5px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.schedule-timing-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.schedule-timing small { display: block; margin-top: 4px; color: var(--faint); font-size: 10.5px; }
+.schedule-prompt-field textarea { flex: 1; min-height: 260px; max-height: none; resize: vertical; font: 12.5px/1.55 var(--mono); }
+.schedule-empty { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
 .schedule-modal-error { margin: 8px 0 0; color: var(--danger); font-size: 12px; }
 #schedule-modal-save:disabled { cursor: wait; opacity: .65; }
 
@@ -795,6 +806,8 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
   #view-users .dash-head { flex-direction: column; }
   #view-users .dash-tools { width: 100%; flex-wrap: wrap; }
   #view-users .user-search { flex: 1 1 220px; width: auto; }
+  .schedule-form-grid, .schedule-timing-grid { grid-template-columns: 1fr; }
+  .schedule-wide { grid-column: auto; }
 }
 
 /* Gateway version chip + one-click update (rail footer) */

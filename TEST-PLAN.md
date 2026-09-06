@@ -2114,18 +2114,27 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [ ] Settings chip editors (trusted bot apps, network egress domains): Enter/comma adds a chip,
       × removes, Backspace on empty removes last; saving persists the same comma-separated values
       as before the redesign.
-- [ ] Automations (was Schedules): rows show mono cron chip, "invalid" warn badge when the cron is
-      bad, last-run status dot (green ok / amber warn), enable + notify autosaves flash "saved",
-      Delete confirms via the branded dialog.
-- [ ] Click the non-control area of an automation row: a detail modal opens with channel, timing,
-      task type, last-run status, notification target, description, and the full saved prompt.
+- [ ] Automations search filters live by channel name, resolved DM person, title/prompt, friendly
+      timing, and raw cron; unmatched groups disappear and a junk query shows the no-results card.
+      DM headings say `DM · <person>` rather than `dm-U…`. Rows show Daily / Weekdays / Weekly /
+      Monthly / Hourly wording (raw cron remains available as hover/advanced detail), invalid custom
+      cron still warns, last-run status has a green/amber dot, enable autosaves, and Delete confirms.
+- [ ] Click the non-control area of an automation row: a large editor opens with conversation,
+      task type, last-run status, name, enabled state, timing controls, notification/person,
+      delivery, and the full saved prompt.
       Press Enter/Space on the row's details button to verify the same keyboard path; then use
       Cancel, ✕, Escape, and the backdrop and confirm each closes without saving. Checkbox,
       notification, person-ID, and Delete interactions must not open the modal.
-- [ ] Edit an automation prompt to multiline text and save: the modal closes, a hard reload shows
-      the exact saved text, and the next execution uses it. A whitespace-only prompt is refused;
-      simulate a failed PUT and confirm the error stays visible with the draft intact while Save
-      leaves cron, description, notification settings, enabled state, and last-run data unchanged.
+- [ ] Edit an automation in one save: change name, enabled state, Daily/Weekdays/Weekly/Monthly/
+      Hourly timing (and one custom cron), notification target, direct-channel/new-thread/daily-thread
+      delivery, and multiline prompt. The modal closes and a hard reload shows every value; the next
+      execution uses it. Invalid cron, missing notify person, and whitespace-only prompt are refused
+      with the draft intact and no partial mutation. Direct-channel delivery emits no Running anchor;
+      new-thread emits one per run; daily-thread reuses one per local day.
+- [x] Automated contract: atomic full-edit validation, DM-name resolution, editor/search markup,
+      direct-channel anchor suppression, trusted notification prefix, and daily-thread freshness
+      (`test/schedule-prompt-editor.test.js`, `test/schedule-daily-thread.test.js`,
+      `test/deliver.test.js`). Live dual-engine acceptance: Airtable `AUT-UI-01`.
 - [ ] Activity: totals strip renders; text/channel/user/engine filters combine; "Show more" pages
       50 rows at a time from the cached fetch; Codex Standard API-equivalent values show the `*`
       footnote and are not described as billed spend.

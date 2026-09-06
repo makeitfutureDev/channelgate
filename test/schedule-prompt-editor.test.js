@@ -8,6 +8,7 @@ ensureTestEnv();
 
 const { createAdminRouter } = await import("../src/web/routes/admin.js");
 const { addSchedule, getSchedules } = await import("../src/config/schedules.js");
+const { setUser, upsertChannelEntry } = await import("../src/config/store.js");
 
 const app = express();
 app.use(express.json());
@@ -114,6 +115,38 @@ test("schedule prompt updates return 404 for an unknown schedule", async () => {
   assert.match((await response.json()).error, /unknown schedule/i);
 });
 
+test("one automation update atomically edits timing, title, notification, delivery, state, and prompt", async () => {
+  const created = addSchedule({ channelId: "C_FULL_EDITOR", slug: "full-editor", cron: "0 9 * * *", prompt: "Old", description: "Old title", createdBy: "U_ADMIN", notify: "none" });
+  const response = await fetch(`${base}/schedules/${created.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cron: "30 14 * * 1-5", prompt: "New prompt", description: "New title", notify: "user", notifyUserId: "<@U_PERSON>", delivery: "channel", enabled: false }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    Object.fromEntries(["cron", "prompt", "description", "notify", "notifyUserId", "delivery", "enabled"].map((key) => [key, schedule(created.id)[key]])),
+    { cron: "30 14 * * 1-5", prompt: "New prompt", description: "New title", notify: "user", notifyUserId: "U_PERSON", delivery: "channel", enabled: false },
+  );
+});
+
+test("an invalid full edit is rejected without partially mutating the schedule", async () => {
+  const created = addSchedule({ channelId: "C_ATOMIC_EDITOR", slug: "atomic-editor", cron: "0 9 * * *", prompt: "Keep", description: "Keep title", createdBy: "U_ADMIN", notify: "none" });
+  const response = await fetch(`${base}/schedules/${created.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cron: "not cron", description: "Must not save", prompt: "Must not save" }),
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual({ cron: schedule(created.id).cron, description: schedule(created.id).description, prompt: schedule(created.id).prompt }, { cron: "0 9 * * *", description: "Keep title", prompt: "Keep" });
+});
+
+test("automation listings resolve a DM slug to the person's display name", async () => {
+  await setUser("UDMPERSON", { name: "Ada Lovelace", approved: true });
+  await upsertChannelEntry("DDMPERSON", { name: "dm-UDMPERSON", type: "im", isDM: true });
+  addSchedule({ channelId: "DDMPERSON", slug: "dm-UDMPERSON", cron: "0 8 * * *", prompt: "Brief me", description: "Daily briefing", createdBy: "UDMPERSON", notify: "none" });
+  const response = await fetch(`${base}/schedules`);
+  const body = await response.json();
+  assert.equal(body.schedules.find((item) => item.channelId === "DDMPERSON").channelName, "DM · Ada Lovelace");
+});
+
 test("the Automations page provides a dedicated accessible prompt editor modal", () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 
@@ -122,6 +155,11 @@ test("the Automations page provides a dedicated accessible prompt editor modal",
   assert.match(html, /id="schedule-modal-title"/);
   assert.match(html, /id="schedule-modal-close"[^>]*aria-label="Close"/);
   assert.match(html, /id="schedule-modal-details"/);
+  assert.match(html, /id="schedule-search"/);
+  assert.match(html, /id="schedule-frequency"/);
+  assert.match(html, /id="schedule-modal-description"/);
+  assert.match(html, /id="schedule-modal-notify"/);
+  assert.match(html, /id="schedule-modal-delivery"/);
   assert.match(html, /textarea id="schedule-modal-prompt"/);
   assert.match(html, /id="schedule-modal-error"[^>]*role="alert"/);
   assert.match(html, /id="schedule-modal-cancel"/);
@@ -136,7 +174,10 @@ test("automation row activation and modal saves preserve control isolation and p
   assert.match(client, /<button type="button" class="sched-open"/);
   assert.match(client, /querySelector\("\.sched-open"\)\.addEventListener\("click", \(\) => openScheduleEditor\(s\)\)/);
   assert.match(client, /row\.addEventListener\("click", \(e\) => \{[\s\S]*?closest\("input, select, button, label"\)[\s\S]*?openScheduleEditor\(s\)/);
-  assert.match(client, /body: JSON\.stringify\(\{ prompt \}\)/);
+  assert.match(client, /function friendlySchedule\(schedule\)/);
+  assert.match(client, /function cronFromScheduleEditor\(\)/);
+  assert.match(client, /schedule-search[\s\S]*?addEventListener\("input", renderSchedules\)/);
+  assert.match(client, /body: JSON\.stringify\(body\)/);
   assert.match(client, /Object\.assign\(scheduleEditor\.schedule, result\.schedule\)/);
   assert.match(client, /catch \(error\) \{[\s\S]*?schedule-modal-error[\s\S]*?error\.message/);
   assert.match(client, /if \(e\.target === scheduleModal\) closeScheduleEditor\(\)/);

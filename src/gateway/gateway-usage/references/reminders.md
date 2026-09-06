@@ -30,7 +30,8 @@ converting or relabelling it.
 - `description` — short title shown in the "Running:" announcement.
 - `notify` — who gets pinged: `"channel"` (@channel, default), `"user"` (pass a Slack user id in
   `notify_user`), or `"none"` (quiet).
-- `delivery` (task schedules only) — `"standard"` announces every run; `"daily-thread"` creates
+- `delivery` (task schedules only) — `"channel"` posts the result directly at channel level;
+  `"standard"` announces every run and threads its result; `"daily-thread"` creates
   one top-level “Running” message on the first run of each server-local day and threads every run
   result for that day beneath it. Each run still starts a fresh, context-less agent session.
 - Reminder acknowledgement (only when `kind:"reminder"`): `ack:true` requires someone to react

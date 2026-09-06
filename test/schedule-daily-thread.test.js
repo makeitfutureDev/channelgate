@@ -119,3 +119,11 @@ test("the session key is per-fire and never derived from the delivery thread", (
   const now = Date.now();
   assert.notEqual(scheduler.scheduleSessionKey(sched, now), scheduler.scheduleSessionKey(sched, now));
 });
+
+test("channel delivery creates no announcement thread", async () => {
+  let posts = 0;
+  const client = { chat: { postMessage: async () => { posts += 1; return { ok: true, ts: "unexpected" }; } } };
+  const thread = await scheduler.taskDeliveryThread(client, { delivery: "channel", channelId: "C_DIRECT" }, "Direct result");
+  assert.equal(thread, null);
+  assert.equal(posts, 0, "the eventual result itself is the only top-level post");
+});

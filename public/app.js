@@ -2239,37 +2239,106 @@ function renderDmDetail(id) {
 
 // ── Schedules ──────────────────────────────────────────────────────────────────
 let scheduleEditor = null;
+let scheduleRows = [];
 
 function scheduleDetail(label, value) {
   return `<div class="schedule-detail"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`;
+}
+
+function scheduleTime(hour, minute) {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parseScheduleCron(cron) {
+  const [minute, hour, monthDay, month, weekDay] = String(cron || "").trim().split(/\s+/);
+  if ([minute, hour, monthDay, month, weekDay].some((part) => part === undefined) || month !== "*") return { frequency: "advanced" };
+  if (/^\d+$/.test(minute) && hour === "*" && monthDay === "*" && weekDay === "*") return { frequency: "hourly", minute };
+  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return { frequency: "advanced" };
+  const time = scheduleTime(hour, minute);
+  if (monthDay === "*" && weekDay === "*") return { frequency: "daily", time };
+  if (monthDay === "*" && weekDay === "1-5") return { frequency: "weekdays", time };
+  if (monthDay === "*" && /^[0-6]$/.test(weekDay)) return { frequency: "weekly", day: weekDay, time };
+  if (/^\d+$/.test(monthDay) && weekDay === "*") return { frequency: "monthly", monthDay, time };
+  return { frequency: "advanced" };
+}
+
+function friendlySchedule(schedule) {
+  if (schedule.once) return `Once · ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
+  const parsed = parseScheduleCron(schedule.cron);
+  const at = parsed.time ? ` at ${parsed.time}` : "";
+  if (parsed.frequency === "daily") return `Daily${at}`;
+  if (parsed.frequency === "weekdays") return `Weekdays${at}`;
+  if (parsed.frequency === "weekly") return `Weekly on ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][Number(parsed.day)]}${at}`;
+  if (parsed.frequency === "monthly") return `Monthly on day ${Number(parsed.monthDay)}${at}`;
+  if (parsed.frequency === "hourly") return `Hourly at :${String(parsed.minute).padStart(2, "0")}`;
+  return "Custom schedule";
+}
+
+function localDateTimeValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function syncScheduleTimingFields() {
+  const once = Boolean(scheduleEditor?.schedule.once);
+  const frequency = document.getElementById("schedule-frequency").value;
+  document.getElementById("schedule-recurring-fields").hidden = once;
+  document.getElementById("schedule-once-wrap").hidden = !once;
+  document.getElementById("schedule-day-wrap").hidden = once || frequency !== "weekly";
+  document.getElementById("schedule-month-day-wrap").hidden = once || frequency !== "monthly";
+  document.getElementById("schedule-time-wrap").hidden = once || ["hourly", "advanced"].includes(frequency);
+  document.getElementById("schedule-minute-wrap").hidden = once || frequency !== "hourly";
+  document.getElementById("schedule-cron-wrap").hidden = once || frequency !== "advanced";
+}
+
+function cronFromScheduleEditor() {
+  const frequency = document.getElementById("schedule-frequency").value;
+  const [hour = "0", minute = "0"] = document.getElementById("schedule-time").value.split(":");
+  if (frequency === "daily") return `${Number(minute)} ${Number(hour)} * * *`;
+  if (frequency === "weekdays") return `${Number(minute)} ${Number(hour)} * * 1-5`;
+  if (frequency === "weekly") return `${Number(minute)} ${Number(hour)} * * ${document.getElementById("schedule-day").value}`;
+  if (frequency === "monthly") return `${Number(minute)} ${Number(hour)} ${Number(document.getElementById("schedule-month-day").value)} * *`;
+  if (frequency === "hourly") return `${Number(document.getElementById("schedule-minute").value)} * * * *`;
+  return document.getElementById("schedule-modal-cron").value.trim();
 }
 
 function openScheduleEditor(schedule) {
   const modal = document.getElementById("schedule-modal");
   const prompt = document.getElementById("schedule-modal-prompt");
   const error = document.getElementById("schedule-modal-error");
-  const timing = schedule.once
-    ? `Once · ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`
-    : `Recurring · ${schedule.cron || "schedule unavailable"}`;
   const status = schedule.lastRun
     ? `${schedule.lastStatus || "unknown"} · ${new Date(schedule.lastRun).toLocaleString()}`
     : "Never run";
-  const notification = schedule.notify === "user"
-    ? `Person · ${schedule.notifyUserId || "unspecified"}`
-    : schedule.notify === "none" ? "Quiet" : "Channel";
-
   scheduleEditor = { schedule };
   document.getElementById("schedule-modal-title").textContent = schedule.description || "Automation details";
   document.getElementById("schedule-modal-details").innerHTML = [
     scheduleDetail("Channel", schedule.channelName || schedule.slug || schedule.channelId),
-    scheduleDetail("Timing", timing),
     scheduleDetail("Type", schedule.kind === "reminder" ? "Reminder" : "Task"),
     scheduleDetail("Status", status),
-    scheduleDetail("Notifies", notification),
-    scheduleDetail("Delivery", schedule.delivery === "daily-thread" ? "One thread per day" : "New thread each run"),
-    scheduleDetail("Description", schedule.description),
   ].join("");
+  document.getElementById("schedule-modal-description").value = schedule.description || "";
+  document.getElementById("schedule-modal-enabled").checked = Boolean(schedule.enabled);
+  const parsed = parseScheduleCron(schedule.cron);
+  document.getElementById("schedule-frequency").value = parsed.frequency;
+  document.getElementById("schedule-time").value = parsed.time || "09:00";
+  document.getElementById("schedule-day").value = parsed.day || "1";
+  document.getElementById("schedule-month-day").value = parsed.monthDay || "1";
+  document.getElementById("schedule-minute").value = parsed.minute || "0";
+  document.getElementById("schedule-modal-cron").value = schedule.cron || "";
+  document.getElementById("schedule-modal-run-at").value = localDateTimeValue(schedule.runAt);
+  document.getElementById("schedule-modal-notify").value = schedule.notify || "channel";
+  document.getElementById("schedule-modal-notify-user").value = schedule.notifyUserId || "";
+  document.getElementById("schedule-modal-notify-user-wrap").hidden = schedule.notify !== "user";
+  const deliveryWrap = document.getElementById("schedule-modal-delivery-wrap");
+  deliveryWrap.hidden = schedule.kind === "reminder";
+  const delivery = document.getElementById("schedule-modal-delivery");
+  delivery.value = schedule.delivery || "standard";
+  delivery.querySelector('option[value="daily-thread"]').disabled = Boolean(schedule.once);
   prompt.value = schedule.prompt || "";
+  syncScheduleTimingFields();
   error.textContent = "";
   error.hidden = true;
   modal.hidden = false;
@@ -2282,7 +2351,7 @@ function closeScheduleEditor() {
   scheduleEditor = null;
 }
 
-async function saveSchedulePrompt() {
+async function saveScheduleEditor() {
   if (!scheduleEditor) return;
   const input = document.getElementById("schedule-modal-prompt");
   const errorEl = document.getElementById("schedule-modal-error");
@@ -2299,29 +2368,51 @@ async function saveSchedulePrompt() {
   save.textContent = "Saving…";
   errorEl.hidden = true;
   try {
+    const schedule = scheduleEditor.schedule;
+    const body = {
+      prompt,
+      description: document.getElementById("schedule-modal-description").value.trim(),
+      enabled: document.getElementById("schedule-modal-enabled").checked,
+      notify: document.getElementById("schedule-modal-notify").value,
+      notifyUserId: document.getElementById("schedule-modal-notify-user").value,
+    };
+    if (schedule.once) body.runAt = document.getElementById("schedule-modal-run-at").value;
+    else body.cron = cronFromScheduleEditor();
+    if (schedule.kind !== "reminder") body.delivery = document.getElementById("schedule-modal-delivery").value;
     const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
       method: "PUT",
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(body),
     });
     Object.assign(scheduleEditor.schedule, result.schedule);
     closeScheduleEditor();
     await loadSchedules();
   } catch (error) {
     const modalError = document.getElementById("schedule-modal-error");
-    modalError.textContent = error.message || "Could not save the prompt.";
+    modalError.textContent = error.message || "Could not save the automation.";
     modalError.hidden = false;
     input.focus();
   } finally {
     save.disabled = false;
-    save.textContent = "Save prompt";
+    save.textContent = "Save automation";
   }
 }
 
 async function loadSchedules() {
-  const wrap = document.getElementById("schedules");
   const { schedules } = await api("/api/schedules");
-  if (!schedules.length) {
+  scheduleRows = schedules;
+  renderSchedules();
+}
+
+function renderSchedules() {
+  const wrap = document.getElementById("schedules");
+  const query = document.getElementById("schedule-search").value.trim().toLocaleLowerCase();
+  if (!scheduleRows.length) {
     wrap.innerHTML = `<p class="hint">No schedules yet. In a channel, ask the bot something like "every weekday at 9am, post a standup reminder".</p>`;
+    return;
+  }
+  const schedules = scheduleRows.filter((schedule) => !query || [schedule.channelName, schedule.description, schedule.prompt, friendlySchedule(schedule), schedule.cron].some((value) => String(value || "").toLocaleLowerCase().includes(query)));
+  if (!schedules.length) {
+    wrap.innerHTML = `<div class="card schedule-empty"><strong>No matching automations</strong><span>Try a channel, person, automation name, or timing.</span></div>`;
     return;
   }
   const groups = {};
@@ -2341,30 +2432,13 @@ async function loadSchedules() {
       row.innerHTML = `
         <label class="toggle inline"><input type="checkbox" class="sched-enabled" ${s.enabled ? "checked" : ""}/></label>
         <button type="button" class="sched-open" title="View details and edit prompt">
-          <code class="sched-cron">${escapeHtml(s.cron)}</code>${s.cronValid ? "" : ' <span class="sched-badge">invalid</span>'}
+          <span class="sched-friendly" title="${escapeHtml(s.cron || "")}">${escapeHtml(friendlySchedule(s))}</span>${s.cronValid || s.once ? "" : ' <span class="sched-badge">invalid</span>'}
           <span class="sched-desc">${escapeHtml(s.description || s.prompt)}</span>
           ${runHtml}
         </button>
-        <select class="sched-notify" title="who to notify on each run">
-          <option value="channel">@channel</option>
-          <option value="user">@person</option>
-          <option value="none">quiet</option>
-        </select>
-        <input class="sched-notify-user" placeholder="user id" value="${escapeHtml(s.notifyUserId || "")}" />
-        ${s.kind === "reminder" || s.once ? "" : `<select class="sched-delivery" title="where recurring run results are grouped">
-          <option value="standard">new thread/run</option>
-          <option value="daily-thread">one thread/day</option>
-        </select>`}
         <span class="sched-saved">saved</span>
         <button class="sched-del">Delete</button>`;
-      const notifySel = row.querySelector(".sched-notify");
-      const notifyUser = row.querySelector(".sched-notify-user");
-      const deliverySel = row.querySelector(".sched-delivery");
       const savedFlash = row.querySelector(".sched-saved");
-      notifySel.value = s.notify || "channel";
-      if (deliverySel) deliverySel.value = s.delivery || "standard";
-      const syncVis = () => (notifyUser.style.display = notifySel.value === "user" ? "" : "none");
-      syncVis();
       row.querySelector(".sched-open").addEventListener("click", () => openScheduleEditor(s));
       row.addEventListener("click", (e) => {
         if (e.target.closest("input, select, button, label")) return;
@@ -2372,10 +2446,6 @@ async function loadSchedules() {
       });
       // Brief "saved" flash next to the row on a successful autosave PUT (notify + enable).
       const flashSaved = () => { savedFlash.classList.add("show"); setTimeout(() => savedFlash.classList.remove("show"), 1400); };
-      const saveNotify = () => api(`/api/schedules/${s.id}`, { method: "PUT", body: JSON.stringify({ notify: notifySel.value, notifyUserId: notifyUser.value }) }).then(flashSaved).catch(() => {});
-      notifySel.addEventListener("change", () => { syncVis(); saveNotify(); });
-      notifyUser.addEventListener("change", saveNotify);
-      deliverySel?.addEventListener("change", () => api(`/api/schedules/${s.id}`, { method: "PUT", body: JSON.stringify({ delivery: deliverySel.value }) }).then(flashSaved).catch(() => {}));
       row.querySelector(".sched-enabled").addEventListener("change", async (e) => {
         await api(`/api/schedules/${s.id}`, { method: "PUT", body: JSON.stringify({ enabled: e.target.checked }) });
         flashSaved();
@@ -3737,9 +3807,14 @@ window.addEventListener("popstate", async () => {
 const scheduleModal = document.getElementById("schedule-modal");
 document.getElementById("schedule-modal-close").addEventListener("click", closeScheduleEditor);
 document.getElementById("schedule-modal-cancel").addEventListener("click", closeScheduleEditor);
-document.getElementById("schedule-modal-save").addEventListener("click", saveSchedulePrompt);
+document.getElementById("schedule-modal-save").addEventListener("click", saveScheduleEditor);
 document.getElementById("schedule-modal-prompt").addEventListener("input", () => {
   document.getElementById("schedule-modal-error").hidden = true;
+});
+document.getElementById("schedule-search").addEventListener("input", renderSchedules);
+document.getElementById("schedule-frequency").addEventListener("change", syncScheduleTimingFields);
+document.getElementById("schedule-modal-notify").addEventListener("change", (event) => {
+  document.getElementById("schedule-modal-notify-user-wrap").hidden = event.target.value !== "user";
 });
 scheduleModal.addEventListener("click", (e) => {
   if (e.target === scheduleModal) closeScheduleEditor();

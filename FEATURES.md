@@ -1827,11 +1827,14 @@ are retired, bullet by bullet; everything else stands.
   global Settings saves repaint from that PUT's complete settings representation—including a
   literal `showMessageCost:false`—instead of discarding it and issuing a second read.
   → TEST-PLAN: Admin UI.
-- **Automation prompt inspection and editing**: clicking an automation row outside its enable,
-  notification, and delete controls opens a responsive, keyboard-accessible detail modal with the
-  channel, timing, task type, last-run status, notification target, description, and complete saved
-  prompt. The prompt editor preserves multiline text, rejects blank saves, keeps failed drafts
-  visible, and PATCHes only `prompt`; the next scheduler execution reads the updated SQLite record.
+- **Searchable, human-readable automation manager**: Automations filters live by conversation or
+  person, title, prompt, friendly timing, or raw cron. DM groups resolve to the person's display
+  name instead of exposing `dm-U…`, and common schedules lead with Daily / Weekdays / Weekly /
+  Monthly / Hourly wording rather than cron syntax. Clicking a row opens a large, accessible editor
+  for title, enabled state, guided common timing or advanced cron, one-time date, notification,
+  delivery, and the complete prompt. One validated PUT saves the draft atomically; failures keep it
+  visible without partially changing the record. Task delivery supports a direct channel result,
+  a fresh thread per run, or one shared thread per day.
   → TEST-PLAN: Admin UI (redesign).
 - **Overview** (was Dashboard): 7 KPIs (Token Est Cost — orange hero, separate Claude and Codex
   costs, runs + average value, users, live active sessions, tokens in/out) plus an All / Claude /

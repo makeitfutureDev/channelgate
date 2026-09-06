@@ -139,6 +139,9 @@
             <h2>Automations</h2>
             <p class="hint">Cron jobs, grouped by channel. Users create these by asking the bot (e.g. "every weekday at 9am, summarize yesterday"); it runs the saved prompt and posts to the channel. Server local time.</p>
           </div>
+          <div class="schedule-search-wrap">
+            <input id="schedule-search" class="search" type="search" placeholder="Search by channel, person, or automation…" aria-label="Search automations" autocomplete="off" />
+          </div>
           <div id="schedules" class="cards">Loading…</div>
         </section>
 
@@ -983,6 +986,25 @@
           <button id="schedule-modal-close" class="ghost icon-btn" type="button" aria-label="Close" title="Close">✕</button>
         </div>
         <div id="schedule-modal-details" class="schedule-details"></div>
+        <div class="schedule-form-grid">
+          <label class="field schedule-wide"><span>Automation name</span><input id="schedule-modal-description" type="text" /></label>
+          <label class="toggle schedule-enabled"><input id="schedule-modal-enabled" type="checkbox" /> <strong>Enabled</strong></label>
+          <fieldset id="schedule-modal-timing" class="schedule-timing schedule-wide">
+            <legend>Timing</legend>
+            <div id="schedule-recurring-fields" class="schedule-timing-grid">
+              <label class="field"><span>Frequency</span><select id="schedule-frequency"><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="hourly">Hourly</option><option value="advanced">Advanced cron</option></select></label>
+              <label id="schedule-day-wrap" class="field"><span id="schedule-day-label">Day</span><select id="schedule-day"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
+              <label id="schedule-month-day-wrap" class="field"><span>Day of month</span><input id="schedule-month-day" type="number" min="1" max="31" value="1" /></label>
+              <label id="schedule-time-wrap" class="field"><span>Time</span><input id="schedule-time" type="time" step="60" /></label>
+              <label id="schedule-minute-wrap" class="field"><span>Minute past the hour</span><input id="schedule-minute" type="number" min="0" max="59" value="0" /></label>
+              <label id="schedule-cron-wrap" class="field schedule-wide"><span>Advanced cron</span><input id="schedule-modal-cron" type="text" spellcheck="false" /><small>minute hour day-of-month month day-of-week</small></label>
+            </div>
+            <label id="schedule-once-wrap" class="field"><span>Run once at</span><input id="schedule-modal-run-at" type="datetime-local" /></label>
+          </fieldset>
+          <label class="field"><span>Notification</span><select id="schedule-modal-notify"><option value="channel">Notify channel</option><option value="user">Notify person</option><option value="none">Quiet</option></select></label>
+          <label id="schedule-modal-notify-user-wrap" class="field"><span>Person ID</span><input id="schedule-modal-notify-user" type="text" placeholder="U…" /></label>
+          <label id="schedule-modal-delivery-wrap" class="field schedule-wide"><span>Delivery</span><select id="schedule-modal-delivery"><option value="channel">Post directly in channel</option><option value="standard">Start a new thread for every run</option><option value="daily-thread">Reuse one thread per day</option></select></label>
+        </div>
         <label class="field schedule-prompt-field">
           <span>Prompt</span>
           <textarea id="schedule-modal-prompt" rows="12" spellcheck="false"></textarea>
@@ -991,7 +1013,7 @@
         <div class="modal-foot">
           <span style="flex:1"></span>
           <button id="schedule-modal-cancel" class="ghost" type="button">Cancel</button>
-          <button id="schedule-modal-save" type="button">Save prompt</button>
+          <button id="schedule-modal-save" type="button">Save automation</button>
         </div>
       </div>
     </div>
