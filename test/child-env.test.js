@@ -1,7 +1,14 @@
 // Unit tests for the child-process env allowlist (C1). Run with: node --test test/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildChildEnv } from "../src/engines/child-env.js";
+import { buildChildEnv, buildShellEnv, serviceSecretValues } from "../src/engines/child-env.js";
+
+test("shell-only jobs never inherit service engine credentials, including explicit extras", () => {
+  const source = { PATH: "/usr/bin", ANTHROPIC_API_KEY: "fake-service-anthropic-key", ANTHROPIC_AUTH_TOKEN: "fake-service-anthropic-token", OPENAI_API_KEY: "fake-service-openai-key", CODEX_API_KEY: "fake-service-codex-key" };
+  assert.deepEqual(buildShellEnv({ ...source, CHANNEL_CLI_TOKEN: "fake-channel-owned-token" }, source), { PATH: "/usr/bin", CHANNEL_CLI_TOKEN: "fake-channel-owned-token" });
+  assert.deepEqual(serviceSecretValues(source), Object.values(source).slice(1));
+  assert.equal(buildChildEnv({}, source).OPENAI_API_KEY, source.OPENAI_API_KEY, "engine spawns retain the credentials they require");
+});
 
 test("passes through base session + engine vars", () => {
   const env = buildChildEnv(
