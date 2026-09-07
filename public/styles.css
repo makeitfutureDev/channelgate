@@ -807,6 +807,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
   .setlayout { display: flex; flex-direction: column; gap: 20px; }
   .setnav { position: static; width: 100%; flex-direction: row; flex-wrap: wrap; }
   .setnav a.on::before { left: 11px; right: 11px; top: auto; bottom: 2px; width: auto; height: 2px; }
+  .setcontent { width: 100%; }
   .setbody { max-width: none; }
 }
 
@@ -1006,3 +1007,22 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .skills-context-warnings p { margin: 8px 0; }
 .skills-context-warnings div { padding: 7px 0; border-top: 1px solid var(--line-soft); }
 @media (max-width: 720px) { .skills-table .desc { max-width: 200px; } }
+
+/* Searchable Settings user multi-select: compact chips and a bounded results list. */
+.user-picker { max-width: 640px; min-width: 0; }
+.user-picker-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.user-picker-chips[hidden], .user-picker-results[hidden] { display: none; }
+.user-picker-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border: 1px solid var(--line); background: var(--panel-2); border-radius: 16px; padding: 3px 5px 3px 10px; font-size: 12px; }
+.user-picker-chip > span { overflow-wrap: anywhere; min-width: 0; }
+.user-picker-chip button { flex: 0 0 auto; border: 0; background: transparent; color: var(--muted); padding: 2px 6px; font: inherit; font-size: 18px; cursor: pointer; }
+.field .user-picker-search { margin-bottom: 0; }
+.user-picker-results { max-height: 240px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); margin-top: 6px; }
+.user-picker-option { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; font-size: 13px; }
+.user-picker-option strong { font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.user-picker-option small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.user-picker-option:hover, .user-picker-option.active { background: var(--line); }
+.user-picker-status { color: var(--faint); font-size: 12px; margin: 6px 0 0; }
+.user-picker button:focus-visible, .user-picker input:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .user-picker-option { align-items: flex-start; flex-direction: column; gap: 3px; }
+}

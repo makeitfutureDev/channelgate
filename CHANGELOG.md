@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Settings: replace the Testing with AI checkbox list with a compact searchable user selector,
+  removable selection chips, keyboard navigation and a bounded results list that fits narrow screens.
+
 - Settings: add **Testing with AI**, an opt-in Slack user list for supplemental approval and
   busy-thread browser links. Empty by default; both auto and always link modes respect the list,
   including for admins. Native buttons and non-native approval surfaces keep their behavior.

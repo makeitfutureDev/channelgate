@@ -1449,7 +1449,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   other request, with per-IP backoff on bad tokens; responses are `no-store` + `noindex`. Settings →
   Connection → **Approval links**: `auto` (default — where there are no native buttons, plus selected
   Slack testers once `publicUrl` is set), `always` (eligible recipients, with loopback fallback), `off`.
-  **Testing with AI** is a named Slack user checklist (`aiTestingUsers`, empty by default). Only
+  **Testing with AI** is a compact searchable Slack user selector (`aiTestingUsers`, empty by default).
+  Search names or IDs, choose results with a click or arrow keys + Enter, and remove selected-user
+  chips with ×. Results are bounded and scrollable; search alone does not mark Settings dirty.
+  Saved users missing from the directory remain visible and removable. Only
   selected users receive supplemental permission, control-plane, durable-shell and busy-thread
   links; both `auto` and `always` enforce it, including for admins. Removing a user stops links
   on subsequent cards immediately. Native buttons and existing link expiry remain unchanged;

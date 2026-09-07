@@ -1656,7 +1656,7 @@ the bridge network and *Allow network* is only a switch the engines are told abo
 - [ ] Live, Claude AND Codex: use two approved Slack test users in separate Worker fixtures,
       auto approval disabled, public URL set, fresh threads and no cached/forever tool approvals.
       In Settings → Connection → Testing with AI select only user A; save and reload, verify A
-      remains checked and B does not. As each user prompt: "Ask me to approve a test using
+      remains a selected chip and B does not. As each user prompt: "Ask me to approve a test using
       request_approval with approve text Continue and deny text Stop; wait for my decision."
       Pass: both get native buttons, only A gets private browser links, and either control resolves
       the request. Next prompt "Run sleep 30 then say finished" and send "Also say hello" while
@@ -1666,6 +1666,17 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       approval: role alone must not enable links. Verify an unrelated Settings save preserves the
       list, and saved IDs remain visible/removable if directory loading fails. Restore fixture
       settings. Capture cards, private-message evidence, decisions and settings reload for both engines.
+
+- [x] Browser regression (engine-independent UI): `test/ai-testing-picker-browser.test.js` uses
+      the real admin UI/API and disposable users Alpha Tester (`UTESTALPHA`), Beta Tester
+      (`UTESTBETA`), 40 Sample Users and a saved missing ID (`USAVEDMISSING`). Run with
+      `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test test/ai-testing-picker-browser.test.js`.
+      Search Alpha case-insensitively, ArrowDown + Enter to select; search Beta's ID and click;
+      selected users disappear from results and remain as removable chips. Save/reload preserves
+      all selections; missing IDs can be removed and clearing all persists. Search alone stays
+      clean; no-match and Escape work; 30-result cap, 240px scroll region and no horizontal
+      overflow at 1440px/390px. Optional `CG_UI_SCREENSHOTS` writes evidence images.
+      The existing Claude/Codex live link-delivery cases above still apply to the saved list.
 
 ### Sandbox boundaries (bash / network)
 **Retired 2026-09-03 (Linux + containers only):** the host sandbox is gone. The boundary is the

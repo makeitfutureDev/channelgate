@@ -17,6 +17,7 @@ import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, passwordDialog, revealSecret, tokenValue } from "./admin-view.js";
 import { loadSkills } from "./admin-skills.js";
+import { mountUserPicker } from "./admin-user-picker.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 
 // ── Inline SVG icon ─────────────────────────────────────────────────────────────
@@ -28,6 +29,7 @@ let SKILL_TEMPLATES = []; // { slug, name, description, skills, categories, reso
 let AVAILABLE_MCPS = { claude: null, codex: null }; // engine → catalog (null until loaded)
 const MCP_CATALOG_LOADS = {}; // engine → in-flight Promise (dedupe open channel/template editors)
 let USERS = {};
+let aiTestingPicker = null;
 let USER_RESULTS = {}; // server-filtered subset for the Users table; USERS stays the full directory
 let CHANNELS = [];
 let DMS = [];
@@ -2975,7 +2977,7 @@ function readSettingsForm() {
     toolboxMcpUrl: document.getElementById("set-toolbox").value,
     publicUrl: document.getElementById("set-public-url").value,
     approvalLinks: document.getElementById("set-approval-links").value,
-    aiTestingUsers: checkedValues(document.getElementById("set-ai-testing-users")),
+    aiTestingUsers: aiTestingPicker?.getValues() || [],
     ...(document.getElementById("set-gchat-key").value.trim() ? { googleChatServiceAccountJson: document.getElementById("set-gchat-key").value } : {}),
     ...(document.getElementById("clear-gchat-key").classList.contains("armed") ? { clearGoogleChatServiceAccountJson: true } : {}),
     googleChatSubscription: document.getElementById("set-gchat-sub").value,
@@ -3075,12 +3077,9 @@ function paintSettings(s) {
   document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
   document.getElementById("set-approval-links").value = s.approvalLinks || "auto";
-  const testingUsers = s.aiTestingUsers || [];
-  // Keep saved IDs visible even if a directory lookup fails or a user was removed.
-  const testingOptions = [...new Set([...Object.keys(USERS).filter((id) => /^[UW][A-Z0-9]+$/.test(id)), ...testingUsers])]
-    .map((id) => ({ value: id, label: USERS[id]?.name ? `${USERS[id].name} (${id})` : id }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-  checkboxList(document.getElementById("set-ai-testing-users"), testingOptions, testingUsers);
+  aiTestingPicker = mountUserPicker(document.getElementById("set-ai-testing-users"), {
+    users: USERS, selected: s.aiTestingUsers || [], onChange: markSettingsDirty,
+  });
   // ── Google Chat + Teams ────────────────────────────────────────────────────
   const platformById = Object.fromEntries((s.platforms || []).map((p) => [p.id, p]));
   renderPlatformStatus("gchat-status", platformById.googlechat);
