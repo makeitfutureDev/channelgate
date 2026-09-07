@@ -30,6 +30,11 @@ remains deferred; stable promotion is not approved.
   cannot break a dedicated-account installation.
 - Export the release image with pipeline failure propagation and verify gzip integrity before
   generating its checksums and attestations.
+- Recognize exact reviewed public vendor fixtures during release-artifact scanning, including
+  complete self-test/development keys and compiler-adjacent constants. Unknown values still fail,
+  and repository files and Git history receive no exceptions.
+- Add disposable Linux installation, encrypted backup/restore, real updater rollback and actual
+  OS reboot checks; authenticated engine and chat acceptance remains a separate live gate.
 
 ## 0.6.0-rc.1 — 2026-09-08 (release candidate)
 
