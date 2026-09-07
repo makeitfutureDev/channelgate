@@ -707,6 +707,50 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     if (timelineStreamer.ts && timelineStartedAt === null) timelineStartedAt = Date.now();
     shimmer?.afterMessageActivity?.({ immediate: true });
   };
+  // Slack can end a stream on its own — an append delayed past its window by rate limiting, or an
+  // undocumented age cap the local rollover clock did not beat. Every later append/stop on that
+  // message then fails `message_not_in_streaming_state` (or `message_not_found` if it is gone).
+  // The message does not merely stop updating: Slack's client renders an abandoned stream as a
+  // bare "Something went wrong", so a turn that recovered and answered correctly is left with a
+  // red error banner sitting above its answer for the life of the thread. That is a delivery
+  // accident, never the run's verdict, and it must not be presented as one.
+  const isDeadStreamError = (error) => {
+    const code = String(error?.data?.error || error?.code || "");
+    return code === "message_not_in_streaming_state" || code === "message_not_found";
+  };
+  // Slack ended the card's stream under us. The MESSAGE is dead; the card's state is not. Treat it
+  // exactly like a scheduled rollover: reseed the complete snapshot into a fresh stream, then
+  // remove the stranded copy (replacement first, never a gap). `seal` closes the replacement
+  // immediately — the terminal path has nothing more to stream into it. The stranded copy is
+  // removed either way: it shows an error banner and none of the rows it was carrying, so keeping
+  // it can only mislead.
+  const reseedTimeline = async ({ seal = false } = {}) => {
+    const stranded = timelineStreamer?.ts;
+    timelineStreamer = null;
+    timelineStartedAt = null;
+    if (stranded) retiredStreamTs.add(stranded);
+    const chunks = timelineOff ? [] : timeline.snapshot();
+    if (chunks.length) {
+      try {
+        timeline.resetDelivered(); // the successor message has rendered nothing yet
+        const next = client.chatStream(streamArgs);
+        if (seal) await next.stop({ chunks });
+        else {
+          await next.append({ chunks });
+          timelineStreamer = next;
+          if (next.ts) timelineStartedAt = Date.now();
+        }
+        shimmer?.afterMessageActivity?.({ immediate: true });
+      } catch (error) {
+        // The replacement could not be made durable either. Degrade the way every other card
+        // failure degrades — quietly, with answer delivery untouched.
+        reportStreamFailure("task-card reseed", error);
+        timelineOff = true;
+        timelineStreamer = null;
+      }
+    }
+    await cleanupRetiredStreams();
+  };
   const pushTimeline = (chunks) => {
     if (timelineOff) return;
     // The ordering contract is "card first, answer beneath it", and a card created after the
@@ -719,9 +763,12 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     timelineRequested = true;
     // Serialized on the shared chain, so a flushActive() enqueued during finalize still lands
     // before timelineStreamer.stop() closes the message.
-    chain = chain.then(() => appendTimeline(chunks)).catch((error) => {
+    chain = chain.then(() => appendTimeline(chunks)).catch(async (error) => {
       reportStreamFailure("task-card append", error);
-      timelineOff = true;
+      // A stream Slack has already ended is a dead MESSAGE, not a dead card: reseed rather than
+      // abandoning the toolbox behind a permanent "Something went wrong".
+      if (isDeadStreamError(error)) await reseedTimeline();
+      else timelineOff = true;
     });
   };
   const stopTimeline = async (site = "task-card stop") => {
@@ -731,6 +778,9 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       await timelineStreamer.stop(terminalChunks.length ? { chunks: terminalChunks } : undefined);
     } catch (error) {
       reportStreamFailure(site, error);
+      // The seal itself found the stream already gone: publish the finished toolbox as a
+      // replacement instead of leaving the reader with an error banner and no card at all.
+      if (isDeadStreamError(error)) await reseedTimeline({ seal: true });
     }
   };
   // The toolbox is durable message content regardless of whether the thread supports the
@@ -831,9 +881,13 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           await cleanupRetiredStreams();
         }
       })
-      .catch((error) => {
+      .catch(async (error) => {
         reportStreamFailure("task-card rollover", error);
-        timelineOff = true;
+        // Slack got there first and ended the message we were about to retire by hand. The
+        // rollover's own job — a fresh stream carrying the whole snapshot — is still exactly the
+        // right move, so finish it instead of dropping the card.
+        if (isDeadStreamError(error)) await reseedTimeline();
+        else timelineOff = true;
       })
       .finally(() => { timelineRolloverQueued = false; });
   };

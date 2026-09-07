@@ -371,6 +371,167 @@ test("a failed tool labels its own row without flagging the whole card as an err
     "not even a transient append may flag an error status");
 });
 
+// A dead stream is a delivery accident, not the run's verdict. Slack ends a stream on its own
+// (an append delayed past its window by rate limiting, an age cap) and then renders that message
+// as a bare "Something went wrong" — which is how a recovered turn came to sit under a red error
+// banner while its correct answer was posted right below. The card state is still perfectly good,
+// so it is republished into a fresh stream and the stranded copy is removed.
+function deadStreamError() {
+  return Object.assign(new Error("message_not_in_streaming_state"), {
+    data: { error: "message_not_in_streaming_state" },
+  });
+}
+
+test("a card stream Slack ends mid-run is republished instead of stranded as 'Something went wrong'", async () => {
+  const calls = [];
+  const streams = [];
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: (args) => {
+      const id = `stream-${streams.length + 1}`;
+      const stream = {
+        id,
+        ts: `1720000000.00020${streams.length + 1}`,
+        // Slack ends the FIRST card stream after its opening append; everything sent to it later
+        // fails, exactly as the live gateway saw under heavy chat.appendStream rate limiting.
+        append: async (payload) => {
+          calls.push(["append", payload, id]);
+          if (id === "stream-1" && calls.filter((c) => c[0] === "append" && c[2] === "stream-1").length > 1) {
+            throw deadStreamError();
+          }
+        },
+        stop: async (payload) => calls.push(["stopStream", payload, id]),
+      };
+      streams.push(stream);
+      calls.push(["chatStream", args, id]);
+      return stream;
+    },
+    chat: {
+      postMessage: async () => {},
+      update: async () => {},
+      delete: async (payload) => calls.push(["delete", payload]),
+    },
+  };
+
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", {
+    authorId: "U1",
+    teamId: "T1",
+  });
+  progress.onEvent({ kind: "tool_use", id: "tool-1", name: "Bash", target: "cat missing.txt" });
+  await cardReady();
+  // The tool the model went on to handle: the harness reports it as an error, so the row is
+  // labelled — and that alone must never cost the turn its card.
+  progress.onEvent({ kind: "tool_result", id: "tool-1", name: "Bash", target: "cat missing.txt", status: "failed" });
+  progress.onEvent({ kind: "tool_use", id: "tool-2", name: "Read", target: "notes.md" });
+  progress.onEvent({ kind: "tool_result", id: "tool-2", name: "Read", target: "notes.md", status: "completed" });
+  await cardReady();
+  await cardReady();
+  await progress.finalize({ content: "Answered anyway." });
+
+  const cardStreams = [...new Set(calls.filter((call) => call[0] === "append" || call[0] === "stopStream")
+    .filter((call) => (call[1]?.chunks || []).length)
+    .map((call) => call[2]))];
+  assert.ok(cardStreams.includes("stream-2"),
+    "a card whose stream Slack ended must be republished, not abandoned mid-run");
+  const replacement = calls
+    .filter((call) => call[2] === "stream-2")
+    .flatMap((call) => call[1]?.chunks || [])
+    .filter((chunk) => chunk.type === "task_update");
+  assert.ok(replacement.some((row) => /^⚠️ Bash\(cat missing\.txt\).*· failed$/.test(row.title)),
+    "the replacement carries the full history, warning row included");
+  assert.ok(replacement.some((row) => /Read\(notes\.md\)/.test(row.title)),
+    "rows that never reached the dead message are recovered too");
+  assert.equal(replacement.some((row) => row.status === "error"), false,
+    "a handled tool failure is a row label, never a card-wide error state");
+  assert.deepEqual(calls.filter((call) => call[0] === "delete").map((call) => call[1].ts), [streams[0].ts],
+    "the stranded message renders an error banner and nothing else, so it must not survive");
+  const deleteAt = calls.findIndex((call) => call[0] === "delete");
+  const replacementAt = calls.findIndex((call) => call[2] === "stream-2" && call[0] === "append");
+  assert.ok(replacementAt >= 0 && deleteAt > replacementAt,
+    "the replacement is made durable before the stranded copy is removed");
+  const sealed = calls.find((call) => call[0] === "stopStream" && call[2] === "stream-2");
+  assert.ok((sealed?.[1]?.chunks || []).some((chunk) => chunk.type === "task_update"),
+    "the replacement is sealed with the finished toolbox");
+});
+
+test("a terminal seal that finds the stream already gone republishes the finished toolbox", async () => {
+  const calls = [];
+  const streams = [];
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: (args) => {
+      const id = `stream-${streams.length + 1}`;
+      const stream = {
+        id,
+        ts: `1720000000.00030${streams.length + 1}`,
+        append: async (payload) => calls.push(["append", payload, id]),
+        stop: async (payload) => {
+          calls.push(["stopStream", payload, id]);
+          if (id === "stream-1") throw deadStreamError();
+        },
+      };
+      streams.push(stream);
+      calls.push(["chatStream", args, id]);
+      return stream;
+    },
+    chat: {
+      postMessage: async () => {},
+      update: async () => {},
+      delete: async (payload) => calls.push(["delete", payload]),
+    },
+  };
+
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", {
+    authorId: "U1",
+    teamId: "T1",
+  });
+  progress.onEvent({ kind: "tool_use", id: "tool-1", name: "Bash", target: "npm test" });
+  progress.onEvent({ kind: "tool_result", id: "tool-1", name: "Bash", target: "npm test", status: "failed" });
+  await cardReady();
+  await progress.finalize({ content: "Recovered and answered." });
+
+  const republished = calls.find((call) =>
+    call[0] === "stopStream" && call[2] !== "stream-1" && (call[1]?.chunks || []).some((chunk) => chunk.type === "task_update"));
+  assert.ok(republished, "a toolbox whose seal found a dead stream is published to a live one");
+  assert.ok(republished[1].chunks.some((chunk) => /^⚠️ Bash\(npm test\).*· failed$/.test(chunk.title)),
+    "the republished card keeps the warning on the row that actually failed");
+  assert.equal(republished[1].chunks.some((chunk) => chunk.status === "error"), false,
+    "and still reports no card-level failure for a turn that answered");
+  assert.deepEqual(calls.filter((call) => call[0] === "delete").map((call) => call[1].ts), [streams[0].ts],
+    "the stranded 'Something went wrong' copy is removed");
+});
+
+// The other half of the contract: the card CAN report a failure — when the agent itself declares
+// the stage failed through `report_progress`. Suppressing that too would trade one wrong signal
+// for another.
+test("a stage the agent itself declares failed keeps its error status", async () => {
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000400",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => streamer,
+    chat: { postMessage: async () => {}, update: async () => {} },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", {
+    authorId: "U1",
+    teamId: "T1",
+  });
+  progress.onEvent({
+    kind: "report_progress",
+    title: "Migration",
+    steps: [{ id: "verify", title: "Verify the migration", status: "error", details: "", output: "", sources: [] }],
+  });
+  await cardReady();
+  await progress.finalize({ content: "The migration could not be verified." });
+
+  assert.equal(terminalTaskUpdates(calls).find((row) => row.id === "report-verify")?.status, "error",
+    "`error` stays available for a stage the agent declares failed");
+});
+
 test("answer-stream appends restore the temporary status on a bounded cadence", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"] });
   let visibleStatus = "";

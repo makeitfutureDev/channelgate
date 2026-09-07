@@ -708,6 +708,13 @@ shape is asserted, not reviewed by eye.
       the successor before deleting the retired bot message. Cleanup failure keeps both safe copies,
       successor-seed failure delivers the complete classic fallback, and final delivery closes only
       the newest healthy stream (`test/slack-progress.test.js`).
+- [x] Unit: a progress card whose stream Slack ended first (`message_not_in_streaming_state` on an
+      append, on the scheduled rollover, or on the terminal seal) is republished into a fresh stream
+      carrying the complete toolbox — warning rows and rows that never reached the dead message
+      included — and the stranded copy, which Slack renders as a bare "Something went wrong", is
+      deleted only after the replacement is durable; the replacement is sealed with the finished
+      toolbox, and a handled tool failure still produces no `error` row anywhere
+      (`test/slack-progress.test.js`).
 - [x] Unit: the shared strict `report_progress` schema accepts object/JSON snapshots and bounded
       rich fields, rejects duplicate IDs, invalid sources, oversized collections, and multiple
       active steps; Claude and Codex emit the same normalized event while suppressing the
@@ -725,7 +732,8 @@ shape is asserted, not reviewed by eye.
       fields, chunk failures disable only the toolbox, interruption drains queued writes and seals
       only the active step as a terminal ⚠️-titled row (never `error`, which Slack would render as a
       card-wide "Something went wrong" header), final answer-delivery failure interrupts it exactly
-      once, and terminal intake ignores late snapshots
+      once, and terminal intake ignores late snapshots. A stage the agent itself declares `error`
+      keeps that status, so the card can still report a genuinely failed run
       (`test/slack-progress.test.js`).
 - [x] Unit: the injected `gateway-usage` guide instructs agents to use Plans only for substantive
       work with 3+ meaningful stages, materializes the reference into channel folders,
