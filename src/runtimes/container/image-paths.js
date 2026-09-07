@@ -8,7 +8,7 @@
 // pins the two together. The daemon COMPARES it at boot: an image built from an older spec still
 // runs, but the operator is told to rebuild rather than left wondering why a channel is missing
 // this build's toolchain.
-export const IMAGE_SPEC_VERSION = "1.2.1";
+export const IMAGE_SPEC_VERSION = "1.3.0";
 
 export const CONTAINER_HOME = "/home/agent";
 // Where a channel's OWN installs land, in precedence order, ahead of the image's root-owned
@@ -25,6 +25,13 @@ export const CONTAINER_CODEX_HOME = "/home/agent/.codex";
 export const CONTAINER_CODEX_AUTH_FILE = "/home/agent/.codex/auth.json";
 export const CONTAINER_NPM_PREFIX = "/home/agent/.npm-global";
 export const CONTAINER_BUNDLE_ROOT = "/opt/channelgate";
+// Browser automation lives under /opt, root-owned and shared by every channel, rather than in the
+// per-channel HOME volume — one copy instead of ~400 MB each, and a channel cannot swap the
+// browser it is driven by. CONTAINER_CHROMIUM is a STABLE symlink the build points at whatever
+// executable the pinned Playwright resolved: the chromium revision changes with the Playwright
+// version, so nothing outside the Containerfile may name a revision.
+export const CONTAINER_BROWSERS_DIR = "/opt/channelgate/browsers";
+export const CONTAINER_CHROMIUM = "/opt/channelgate/browsers/bin/chromium";
 export const CONTAINER_BIN_DIR = "/opt/channelgate/bin";
 export const CONTAINER_SOCKET_DIR = "/run/channelgate";
 export const CONTAINER_SOCKET_FILE = "/run/channelgate/mcp.sock";

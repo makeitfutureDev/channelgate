@@ -2692,6 +2692,28 @@ scripted stand-in for `podman`/`docker` that records every argv, and `test/runti
 actual spawn to the daemon-internal local runtime, so orchestration tests really run a turn. The LIVE checks below
 are the v0.8 production deployment gate and are executed in the QA loop that follows this slice.
 
+### Browser toolchain in the image (spec 1.3.0, 2026-09-07)
+
+- [x] Unit: the Containerfile installs the pinned `playwright` and `agent-browser`, takes its
+      distro dependency set from `playwright install --with-deps chromium` (never a hand-copied
+      library list), and launches the browser once at BUILD time so a missing shared library fails
+      the build (automated: `test/container-image.test.js`).
+- [x] Unit: `PLAYWRIGHT_BROWSERS_PATH` and the stable chromium path agree with
+      `src/runtimes/container/image-paths.js`; the browsers live under the root-owned bundle root
+      and NOT in the per-channel HOME volume; `chmod -R a+rX` keeps them readable by the agent
+      user; neither the Containerfile nor the image contract names a chromium revision (automated).
+- [x] Unit: `AGENT_BROWSER_EXECUTABLE_PATH` is set in the image's FINAL `ENV` and points at that
+      stable path, so every exec inherits it instead of the driver discovering an unmanaged
+      download in the channel's volume (automated).
+- [x] Unit: `PLAYWRIGHT_VERSION` and `AGENT_BROWSER_VERSION` are declared as ARGs and passed by
+      `scripts/build-image.mjs`; both pins are exact (automated).
+- [ ] Manual (host, after `npm run build:image`): in a fresh channel with no setup of its own,
+      `agent-browser open https://example.com` succeeds and `agent-browser snapshot -i` returns the
+      accessibility tree — the pre-fix failure was `error while loading shared libraries:
+      libnspr4.so`. Repeat in a SECOND channel to prove it is the image and not one volume.
+- [ ] Manual (host): `podman image inspect` reports `cg.image.version=1.3.0`, and a channel whose
+      container predates the rebuild is recreated on its next run by the image-id fingerprint.
+
 - [x] Unit: the backend contract fails closed — a missing declared capability, a missing method, an
       unknown capability key, and an unknown backend id each throw; `runtimeSupports()` reads a
       declared capability, accepts a target wrapper, and throws on an unknown KEY; the registry

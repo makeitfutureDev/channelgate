@@ -22,6 +22,8 @@ ARG CODEX_VERSION
 ARG MCP_REMOTE_VERSION
 ARG VERCEL_VERSION
 ARG SUPABASE_VERSION
+ARG PLAYWRIGHT_VERSION
+ARG AGENT_BROWSER_VERSION
 ARG OPENCV_VERSION
 ARG FASTER_WHISPER_VERSION
 ARG WHISPER_MODEL=small
@@ -76,6 +78,37 @@ RUN npm install -g --no-fund --no-audit \
       "supabase@${SUPABASE_VERSION}" \
  && npm cache clean --force
 
+# Browser automation, for testing a web app and for reading a page a channel is working on.
+# Before this, a channel could not open a page at all, and the reason was not obvious: a browser
+# downloaded into the channel's own HOME volume STARTED and then died with
+# `error while loading shared libraries: libnspr4.so` — the image carried none of Chrome's shared
+# libraries, and there is no root inside a container to apt-get them (verified 2026-09-07: eight
+# libs missing, apt has no lists, uid is not 0). Both halves are fixed HERE, root-owned like the
+# engine CLIs above:
+#   * `playwright install --with-deps` is the only maintained source of truth for the exact distro
+#     dependency set — never a hand-copied library list, which is what silently rots.
+#   * The browsers live under /opt, not /home/agent, so every channel shares ONE copy instead of
+#     paying for its own in every per-channel volume. That also makes them root-owned: a channel
+#     uses the browser but cannot replace it.
+# The chromium revision is a function of the Playwright version, so the build resolves the real
+# executable once and puts a STABLE symlink beside it. Everything downstream — the image contract
+# in src/runtimes/container/image-paths.js, AGENT_BROWSER_EXECUTABLE_PATH below — points at that
+# symlink and never at a revision number.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/channelgate/browsers
+RUN npm install -g --no-fund --no-audit \
+      "playwright@${PLAYWRIGHT_VERSION}" \
+      "agent-browser@${AGENT_BROWSER_VERSION}" \
+ && apt-get update \
+ && playwright install --with-deps chromium \
+ && install -d /opt/channelgate/browsers/bin \
+ && ln -sf "$(NODE_PATH="$(npm root -g)" node -e 'console.log(require("playwright").chromium.executablePath())')" \
+      /opt/channelgate/browsers/bin/chromium \
+ && test -x /opt/channelgate/browsers/bin/chromium \
+ && /opt/channelgate/browsers/bin/chromium --version \
+ && chmod -R a+rX /opt/channelgate/browsers \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/*
+
 # Organization-wide local video analysis. These packages are root-owned and pinned just like the
 # engine CLIs above; channels use them but cannot replace them. Preload the default speech model so
 # the first video in a network-restricted channel does not wait for or depend on a download.
@@ -104,6 +137,7 @@ RUN chmod 0755 /opt/channelgate/bin/* \
 # (Inside a hand-made venv, `pip install` needs PIP_USER=0 — see docs/OPERATIONS.md.)
 ENV CG_RUNTIME=container \
     HOME=/home/agent \
+    AGENT_BROWSER_EXECUTABLE_PATH=/opt/channelgate/browsers/bin/chromium \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \

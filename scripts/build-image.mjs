@@ -186,6 +186,8 @@ function main() {
     "--build-arg", `MCP_REMOTE_VERSION=${npmPins["mcp-remote"]}`,
     "--build-arg", `VERCEL_VERSION=${npmPins.vercel}`,
     "--build-arg", `SUPABASE_VERSION=${npmPins.supabase}`,
+    "--build-arg", `PLAYWRIGHT_VERSION=${npmPins.playwright}`,
+    "--build-arg", `AGENT_BROWSER_VERSION=${npmPins["agent-browser"]}`,
     "--build-arg", `OPENCV_VERSION=${versions.python?.["opencv-python-headless"]}`,
     "--build-arg", `FASTER_WHISPER_VERSION=${versions.python?.["faster-whisper"]}`,
     "--build-arg", `WHISPER_MODEL=${versions.whisperModel}`,
