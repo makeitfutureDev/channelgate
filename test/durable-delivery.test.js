@@ -379,7 +379,7 @@ test("a one-time schedule survives a Slack outage and is deleted only after it p
   scheduler.resetSchedulerState();
 
   // Slack down: the row used to be deleted up front, so the reminder was lost for good.
-  scheduler.startScheduler({ slack: { snapshot: () => ({ connected: false }) } });
+  scheduler.startScheduler({ immediate: false, slack: { snapshot: () => ({ connected: false }) } });
   await scheduler.tick(Date.now());
   const survived = getSchedules().find((s) => s.id === sched.id);
   assert.ok(survived, "an outage must not consume a one-time schedule");
@@ -387,7 +387,7 @@ test("a one-time schedule survives a Slack outage and is deleted only after it p
 
   // Slack back: it fires, posts, and only then disappears.
   const { slack, client } = fakeSlack();
-  scheduler.startScheduler({ slack });
+  scheduler.startScheduler({ immediate: false, slack });
   await scheduler.tick(Date.now() + 60_000);
   assert.equal(client.posted.length, 1);
   assert.match(client.posted[0].text, /Stand-up in 5 minutes/);
@@ -424,7 +424,7 @@ test("the concurrency cap defers a due minute instead of retiring it unevaluated
     kind: "reminder", cron: `${at.getMinutes()} ${at.getHours()} * * *`, notify: "none",
   });
 
-  scheduler.startScheduler({ slack: { snapshot: () => ({ connected: true }), getClient: () => slowClient } });
+  scheduler.startScheduler({ immediate: false, slack: { snapshot: () => ({ connected: true }), getClient: () => slowClient } });
   const firstTick = scheduler.tick(base);
   release();
   await firstTick;
@@ -511,7 +511,7 @@ test("a one-time schedule that fails clears its running flag instead of staying 
   // No Slack client → runSchedule postpones. The row survives (that is the point) but used to
   // survive with running:true forever, because only runDueForMinute ever set the flag.
   scheduler.resetSchedulerState();
-  scheduler.startScheduler({ slack: { snapshot: () => ({ connected: false }) } });
+  scheduler.startScheduler({ immediate: false, slack: { snapshot: () => ({ connected: false }) } });
   await scheduler.tick(Date.now());
 
   const stored = getSchedules().find((s) => s.id === sched.id);

@@ -3443,6 +3443,46 @@ Manual checks for the daemon-level behavior:
       the next message in the thread works.
 - [ ] **Scheduler catch-up:** a tick delayed past a minute boundary still fires that minute's
       cron exactly once; one-time schedules never double-fire.
+### Scheduling restart durability
+
+- [x] Automated: `node --test test/scheduler-restart.test.js test/cron-catchup.test.js
+      test/durable-delivery.test.js test/schedule-daily-thread.test.js
+      test/automation-release-regressions.test.js` covers a restart spanning the due minute,
+      replay refusal in a fresh process using the same scratch SQLite database, the five-minute
+      limit, creation/re-enable/cron-edit boundaries, legacy last-run markers, epoch-minute claims,
+      queued-versus-running crash checkpoints, saved-output delivery, brief transport outage,
+      busy-run admission, immediate startup and nested provider error sentences. No live providers.
+- [ ] **SCH-RESTART-01 — Claude and Codex, separately.** Fixture: an isolated acceptance daemon
+      with a connected Slack test channel, approved creator, and channel engine explicitly set to
+      the engine under test. Create a daily task at the next daemon-local minute after T+2:
+      prompt `Append one line SCH-RESTART-01 to uploads/schedule-restart.txt and report the line count.`
+      Record schedule ID, cron and daemon zone. Stop the acceptance daemon ten seconds before the
+      due minute and start it one minute after, keeping total outage under five minutes. Pass:
+      one scheduled engine execution, one added line, one delivered result, durable
+      `lastCronFireMs` equals the missed minute. Restart again within that minute; no second
+      execution, line or result. Never use the production daemon for this crash fixture.
+- [ ] **SCH-RESTART-02 — Claude and Codex, separately.** Same isolated daemon/channel and prompt
+      with marker SCH-RESTART-02. Arrange two daily tasks: one due two minutes before boot and one
+      due ten minutes before boot, both created earlier. Pass: only the recent task executes.
+      Also create/re-enable/edit a cron after its matching minute; restart within five minutes.
+      Pass: no task runs for a minute before its current eligibility boundary.
+- [ ] **SCH-RESTART-03 — Claude and Codex, separately.** Same isolated fixture. Use prompt
+      `Append SCH-RESTART-03 to uploads/schedule-effects.txt, then wait for further instructions.`
+      Kill only the acceptance daemon once its persisted schedule says `executionState:running`,
+      then restart. Pass: schedule becomes disabled/interrupted, the channel explains unknown
+      external effects, and no second engine execution or append occurs. Separately interrupt
+      after a saved `pendingDelivery` checkpoint using a transport failure fixture. On restart,
+      pass only if the saved result delivers without a new engine execution or tool side effect.
+- [ ] **SCH-RESTART-04 — engine-independent reminder delivery.** Same isolated daemon/channel;
+      create a reminder due next minute. Confirm its `lastCronFireMs` persists before the mock
+      transport accepts the post. Simulate a crash at that boundary and restart. Pass: no replay
+      post. Record the intentional at-most-once limit: an ambiguous external post can be lost;
+      this case must never be described as guaranteed exactly-once delivery.
+- [ ] **SCH-ERROR-01 — Claude and Codex, separately.** Isolated acceptance daemon with a synthetic
+      engine/provider fixture failing with `{"error":{"message":"The selected model is unavailable."}}`.
+      Fire an ordinary scheduled task. Pass: failure notice contains the sentence only, without
+      raw JSON, and the execution checkpoint is interrupted rather than automatically replayed.
+
 - [ ] **Daily schedule threads:** create an hourly task with `delivery:"daily-thread"`; its first
       run today creates one top-level “Running” anchor and threads the result, later runs today add
       results to that same thread without another top-level banner, a daemon restart preserves the

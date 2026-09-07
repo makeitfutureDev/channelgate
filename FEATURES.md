@@ -687,6 +687,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - One-time ("run at") schedules: `create_schedule` accepts `in_minutes`/`run_at` to fire once and
   auto-delete (e.g. "remind this channel in 2h") alongside recurring cron; recurring crons are held
   to a minimum interval (default 60 min) with per-channel + concurrency caps.
+- Scheduler startup immediately checks the durable cursor, including cron minutes missed during
+  restart recovery. Catch-up is bounded to the five most recent minutes and never predates a
+  schedule's creation, re-enable, or cron edit. Durable epoch-minute claims prevent replay after
+  restart, including repeated local clock labels at a daylight-saving fold. A queued task can
+  start safely after restart; an interrupted engine execution is paused for reconciliation, and a
+  saved result retries delivery without rerunning tools. Reminder claims precede posting: a crash
+  at that external delivery boundary can lose a reminder but cannot automatically duplicate it.
+  Short transport outages defer unclaimed recurring work within the same five-minute window.
+  → TEST-PLAN: Scheduling restart durability.
 - Schedule times are the GATEWAY's local zone, and they say so. Crons are matched against the
   daemon's own clock, so every container receives the daemon's IANA zone as `TZ` (at create and on
   every exec) instead of the image's `Etc/UTC` — `date` and both engines read the same wall time as

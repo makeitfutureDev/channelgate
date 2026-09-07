@@ -5,13 +5,14 @@
 // mirrored into columns so the hot filters index. Row order (rowid) preserves insertion order.
 // Shape: { id, channelId, slug, cron, runAt, once, prompt, description, createdBy, kind, ack,
 //          ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, notify, notifyUserId,
-//          delivery, dailyThreadDate, dailyThreadTs, enabled, createdAt, lastRun, lastStatus }
+//          delivery, dailyThreadDate, dailyThreadTs, enabled, createdAt, lastRun, lastStatus,
+//          cronEligibleSince, lastCronFireMs, lastFireMinute, executionState, pendingDelivery }
 // Thread-loop rows (see ../gateway/loops.js) add: { loop, loopId, threadTs, resumeThread,
 //          ticksRemaining, loopReason, loopNoop }. They live in this same table on purpose — one
 //          tick loop, one concurrency cap, one per-channel ceiling — and are declared here so the
 //          record shape stays defined in exactly one place.
 import { randomUUID } from "node:crypto";
-import { getDb, toJson, fromJson } from "../db/index.js";
+import { getDb, toJson, fromJson, metaGet, metaSet } from "../db/index.js";
 
 export function getSchedules() {
   return getDb().prepare("SELECT data FROM schedules ORDER BY rowid").all().map((r) => fromJson(r.data, {}));
@@ -77,7 +78,13 @@ export function listForChannel(channelId) {
 export function updateSchedule(id, patch) {
   const row = getDb().prepare("SELECT data FROM schedules WHERE id = ?").get(id);
   if (!row) return null;
-  const next = { ...fromJson(row.data, {}), ...patch };
+  const previous = fromJson(row.data, {});
+  const next = { ...previous, ...patch };
+  // Re-enabling or changing a cron is a new eligibility boundary, never permission to replay
+  // minutes that passed while disabled or under a different expression.
+  if ((!previous.enabled && next.enabled) || previous.cron !== next.cron) {
+    next.cronEligibleSince = new Date().toISOString();
+  }
   getDb()
     .prepare("UPDATE schedules SET channel_id = ?, enabled = ?, data = ? WHERE id = ?")
     .run(next.channelId || "", next.enabled ? 1 : 0, toJson(next), id);
@@ -89,4 +96,33 @@ export function deleteSchedule(id, channelId = null) {
     ? getDb().prepare("DELETE FROM schedules WHERE id = ? AND channel_id = ?").run(id, channelId)
     : getDb().prepare("DELETE FROM schedules WHERE id = ?").run(id);
   return info.changes > 0;
+}
+
+// The scheduler's cursor and per-schedule claim are operational JSON state, not a new schema.
+// Re-read the last evaluated minute at boot: it might have been only partially processed when
+// the daemon died. Per-fire high-water marks make that overlap safe.
+export function getSchedulerCursor() {
+  const value = Number(metaGet("scheduler:last-tick-ms"));
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+export function saveSchedulerCursor(value) {
+  metaSet("scheduler:last-tick-ms", value);
+}
+
+// CAS on the complete row avoids overwriting a concurrent MCP/admin edit. The caller retries a
+// lost race on a later tick. Epoch minutes distinguish the two occurrences of a DST-fold minute.
+export function claimScheduleMinute(id, minuteMs, legacyMinuteKey, expected) {
+  const db = getDb();
+  const row = db.prepare("SELECT data FROM schedules WHERE id = ?").get(id);
+  if (!row) return null;
+  const sched = fromJson(row.data, {});
+  if (expected && (sched.cron !== expected.cron ||
+    (sched.cronEligibleSince || sched.createdAt) !== (expected.cronEligibleSince || expected.createdAt))) return null;
+  if (!sched.enabled || Number(sched.lastCronFireMs || 0) >= minuteMs || (!sched.lastCronFireMs && sched.lastFireMinute === legacyMinuteKey)) return null;
+  const next = { ...sched, lastCronFireMs: minuteMs, lastFireMinute: legacyMinuteKey,
+    ...(sched.kind !== "reminder" ? { executionState: "queued" } : {}) };
+  const result = db.prepare("UPDATE schedules SET data = ? WHERE id = ? AND data = ?")
+    .run(toJson(next), id, row.data);
+  return result.changes ? next : null;
 }

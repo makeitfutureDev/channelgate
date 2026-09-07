@@ -24,6 +24,12 @@ product overview.
 - Public project policy: license v1.4 uses Cluj-Napoca venue; trademark registration is deferred;
   direct requests use contact@makeitfuture.com and contracted support requires an active
   Makeitfuture or approved-partner agreement. Existing published releases retain their terms.
+- Scheduler restart recovery checks due work immediately and persists its cursor and cron-minute
+  claims. A restart spanning the due minute now catches up within a five-minute window without
+  replaying claimed work, backfilling before creation/re-enable/cron edits, or rerunning uncertain
+  engine effects. Queued tasks resume, saved results redeliver, short transport outages defer
+  unclaimed recurring work, and scheduled failure notifications show a sentence instead of JSON.
+  Reminder claims remain at-most-once across an ambiguous remote-post crash boundary.
 
 - Admin UI: the Pending approvals rows wrap the command being approved (monospace, a few lines)
   instead of running it underneath the Approve/Deny buttons; the Automations search box uses the

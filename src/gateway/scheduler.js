@@ -2,8 +2,9 @@
 // server may have just written from a gated AI run) and fires any enabled schedule whose cron
 // matches the current minute: it runs the saved prompt as a fresh Claude session in that channel
 // (as the schedule's creator) and posts the result to the channel.
-import { getSchedules, updateSchedule, deleteSchedule } from "../config/schedules.js";
+import { getSchedules, updateSchedule, deleteSchedule, getSchedulerCursor, saveSchedulerCursor, claimScheduleMinute } from "../config/schedules.js";
 import { getAcks, addAck, updateAck, deleteAck } from "../config/acks.js";
+import { plainFailureText } from "../util/process-outcome.js";
 import { cronMatches, elapsedMinutes } from "../util/cron.js";
 import { runMessage as defaultRunMessage } from "./run.js";
 import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops } from "./loops.js";
@@ -286,7 +287,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       ...(sched.executionState === "running" ? { enabled: false, executionState: "interrupted" } : {}) });
     await logEvent("schedule_error", { id: sched.id, error: err.message });
     try {
-      if (client) await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${err.message}` });
+      if (client) await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${plainFailureText(err.message) || "the run failed"}` });
     } catch {
       /* ignore */
     }
@@ -399,7 +400,7 @@ async function processAcks(now) {
 // Is this schedule due right now? One-time ("run at") schedules fire once their runAt has passed;
 // recurring schedules fire when their cron matches the current minute.
 function isDue(sched, now) {
-  if (sched.pendingDelivery || sched.executionState === "running") return true;
+  if (needsRecovery(sched)) return true;
   if (sched.once || sched.runAt) {
     const t = Date.parse(sched.runAt);
     return Number.isFinite(t) && t <= now.getTime();
@@ -407,24 +408,44 @@ function isDue(sched, now) {
   return cronMatches(sched.cron, now);
 }
 
+function needsRecovery(sched) {
+  return Boolean(sched.pendingDelivery || ["queued", "running"].includes(sched.executionState));
+}
+
 // Evaluate one minute's due schedules against a shared per-tick snapshot (`scheds`) — the table
 // is read once per tick, not once per caught-up minute. `now` is the wall-clock the cron/runAt
 // checks run against — the live minute keeps full seconds precision; caught-up (past) minutes use
-// the minute start. `firedOnce` collects one-time schedule ids already fired THIS tick: their rows
+// the minute start. `firedOnce` collects schedule ids already started THIS tick: their rows
 // may already be gone, but the snapshot still contains them, so a later caught-up minute in the
 // same tick must skip them (firedThisMinute is keyed per minute and won't).
 // Returns { deferred, started }: `deferred` is true when the concurrency cap cut the minute short,
 // which the caller MUST NOT treat as "this minute is done".
-function runDueForMinute(now, scheds, firedOnce) {
+function runDueForMinute(now, scheds, firedOnce, runOptions) {
   const mk = minuteKey(now);
   const started = [];
   let deferred = false;
   for (const sched of scheds) {
     if (!sched.enabled) continue;
     if (firedOnce.has(sched.id)) continue;
-    if (firedThisMinute.get(sched.id) === mk) continue;
-    if (sched.lastFireMinute === mk && !sched.pendingDelivery && sched.executionState !== "running") continue;
+    if (running.has(sched.id)) continue; // never claim a minute for work that cannot start
     if (!isDue(sched, now)) continue;
+    const recurring = !isOneTime(sched);
+    const recovering = needsRecovery(sched);
+    const minuteMs = Math.floor(now.getTime() / 60_000) * 60_000;
+    if (!recovering) {
+      if (firedThisMinute.get(sched.id) === minuteMs) continue;
+      if (!sched.lastCronFireMs && sched.lastFireMinute === mk) continue;
+      if (recurring) {
+        // Minute precision preserves existing cron semantics for newly created schedules in
+        // the current minute, while preventing startup catch-up before creation/re-enable.
+        const eligible = Date.parse(sched.cronEligibleSince || sched.createdAt);
+        if (Number.isFinite(eligible) && minuteMs < Math.floor(eligible / 60_000) * 60_000) continue;
+        if (Number(sched.lastCronFireMs || 0) >= minuteMs) continue;
+        // Upgrade bridge: older daemons wrote lastRun but had no epoch claim. Conservatively
+        // exclude already executed minutes before enabling bounded startup catch-up.
+        if (!sched.lastCronFireMs && Date.parse(sched.lastRun) >= minuteMs) continue;
+      }
+    }
     // Fan-out ceiling: if too many schedules are already executing, leave the rest for the next
     // tick rather than stampeding the host.
     if (running.size >= MAX_CONCURRENT_SCHED) {
@@ -432,35 +453,51 @@ function runDueForMinute(now, scheds, firedOnce) {
       deferred = true;
       break;
     }
-    firedThisMinute.set(sched.id, mk);
-    sched.lastFireMinute = mk;
-    updateSchedule(sched.id, { lastFireMinute: mk });
-    // A one-time schedule is claimed (not deleted) up front so a slow run can't double-fire on the
-    // next tick; runSchedule deletes it once its output has actually been delivered.
+    if (recurring && !recovering) {
+      // No connected transport means no attempt: leave the cursor behind this minute so a
+      // brief outage recovers it within the same bounded catch-up window.
+      if (!automationTarget(slackRef, sched.channelId)) {
+        deferred = true;
+        continue;
+      }
+      const claimed = claimScheduleMinute(sched.id, minuteMs, mk, sched);
+      if (!claimed) { deferred = true; continue; }
+      Object.assign(sched, claimed);
+    } else if (!recovering) {
+      updateSchedule(sched.id, { lastFireMinute: mk });
+    }
+    firedThisMinute.set(sched.id, minuteMs);
+    // A schedule can start only once per tick. A catch-up snapshot must not pretend a busy
+    // run started again, overwrite its checkpoint, or consume another cron minute's claim.
+    firedOnce.add(sched.id);
     if (isOneTime(sched)) {
       updateSchedule(sched.id, { running: true, runningSince: new Date().toISOString() });
-      firedOnce.add(sched.id);
     }
-    started.push(runSchedule(sched));
+    started.push(runSchedule(sched, runOptions));
   }
   return { deferred, started };
 }
 
-let lastTickMs = 0; // when the previous tick ran — lets a late tick catch up skipped minutes
+let lastTickMs = null; // when the previous tick ran — lets a late tick catch up skipped minutes
 
 // Run one scheduler tick. Returns a promise that settles when every schedule this tick started has
 // finished (used by tests; the interval ignores it).
-export function tick(nowMs = Date.now()) {
+export function tick(nowMs = Date.now(), runOptions = {}) {
   // Evaluate every minute elapsed since the last tick, not just "now": setInterval drifts, and a
   // tick pair at 08:59:58 / 09:01:02 would otherwise never test 09:00, silently skipping a
   // "0 9 * * *" cron for the whole day. elapsedMinutes caps the catch-up window (5 min) so a long
   // sleep doesn't replay hours of crons, and firedThisMinute guards double-fires per minute key.
+  if (lastTickMs === null) {
+    const saved = getSchedulerCursor();
+    // First upgraded boot has no cursor; consider only the same five-minute bounded window.
+    lastTickMs = saved > 0 ? Math.min(saved, nowMs) - 60_000 : nowMs - 5 * 60_000;
+  }
   const scheds = getSchedules(); // one table read per tick, shared across caught-up minutes
   const firedOnce = new Set();
   const started = [];
   let nextTickFrom = nowMs;
   for (const minuteMs of elapsedMinutes(lastTickMs, nowMs)) {
-    const outcome = runDueForMinute(nowMs - minuteMs < 60_000 ? new Date(nowMs) : new Date(minuteMs), scheds, firedOnce);
+    const outcome = runDueForMinute(nowMs - minuteMs < 60_000 ? new Date(nowMs) : new Date(minuteMs), scheds, firedOnce, runOptions);
     started.push(...outcome.started);
     if (outcome.deferred) {
       // The cap left due schedules unprocessed in THIS minute. Advancing lastTickMs past it would
@@ -472,6 +509,7 @@ export function tick(nowMs = Date.now()) {
       break;
     }
   }
+  saveSchedulerCursor(nextTickFrom);
   lastTickMs = nextTickFrom;
   // Drive any due reminder-acknowledgment escalations (independent of schedule firing).
   processAcks(new Date(nowMs));
@@ -482,23 +520,23 @@ export function tick(nowMs = Date.now()) {
 
 // Reset the module's tick bookkeeping (tests only — the daemon has exactly one scheduler).
 export function resetSchedulerState() {
-  lastTickMs = 0;
+  lastTickMs = null;
   firedThisMinute.clear();
   running.clear();
 }
 
-// KNOWN LIMITATION (boot window). server.js starts the scheduler only after restart recovery has
-// finished, and the first tick then lands a further 60s later with `lastTickMs` still 0 — which
-// elapsedMinutes reads as "no previous tick", i.e. evaluate only the current minute. So a cron
-// matching a minute that passed while the daemon was booting (recovery re-runs whole interrupted
-// turns and can straddle a minute boundary) is skipped until its next match. It is not fixed here
-// because the obvious fix is not safe on its own: `firedThisMinute` is in-memory, so firing the
-// boot minute would re-fire a schedule that had ALREADY fired in that same minute before the
-// restart. Making the boot window safe needs a durable per-minute fire record, not an extra tick.
-export function startScheduler({ slack } = {}) {
+// Start immediately after restart recovery, rather than waiting another minute. Catch-up reads
+// the durable cursor, and claims are saved before any reminder post or task execution begins.
+// `immediate:false` lets deterministic tests supply their own clock through tick().
+export function startScheduler({ slack, immediate = true } = {}) {
   slackRef = slack;
-  const timer = setInterval(tick, 60_000);
+  const runTick = async () => {
+    try { await tick(); }
+    catch (error) { console.error("[scheduler] tick failed:", error.message); }
+  };
+  const timer = setInterval(runTick, 60_000);
   timer.unref?.();
+  if (immediate) runTick();
   console.log("[scheduler] cron loop started (checks every minute)");
   return timer;
 }
