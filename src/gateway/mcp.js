@@ -70,6 +70,45 @@ function composioServer(endpoint, legacyToken, { socketBridge = null, gatewayCap
   };
 }
 
+// Which Composio identities THIS run actually injects — the one predicate behind both the server
+// map below and the per-run identity line run.js prepends to the prompt. It lives here on purpose:
+// the line names `composio-user` / `composio-agent`, the exact keys assigned a few dozen lines
+// down, so a rename cannot leave the prompt describing servers that no longer exist. The
+// conditions mirror composioServer() above (an SDK session, a remote endpoint, or a legacy token),
+// plus the two gates the caller applies: clean mode injects nothing at all, and an untrusted
+// principal never gets the author's personal identity. Codex reaches the same answer through its
+// own transport (`addComposio` in src/engines/codex.js) because run.js zeroes the user token and
+// endpoint for an untrusted principal before either builder sees them.
+export function composioIdentitiesForRun({ clean = false, principalTrusted = true, composioUserEndpoint = null, composioUserToken = "", composioEndpoint = null, composioToken = "" } = {}) {
+  const present = (endpoint, legacyToken) => Boolean((endpoint?.mode === "sdk" && endpoint.url) || endpoint?.url || legacyToken);
+  return {
+    user: !clean && principalTrusted && present(composioUserEndpoint, composioUserToken),
+    agent: !clean && present(composioEndpoint, composioToken),
+  };
+}
+
+// The per-run counterpart of the managed block's first hard rule (src/gateway/folders.js). The
+// block states the RULE; this states the FACT the rule has to be applied to — which identities this
+// turn received — because `composio-user` is per AUTHOR and cannot be written into the channel's
+// shared instruction file without two concurrent authors racing each other's sentence. The prompt
+// is built per run, per author, so there is no shared file to race. Deliberately engine-neutral and
+// content-free: server names and roles only, never a token, an address or an account label.
+export function composioIdentityPreamble({ user = false, agent = false } = {}) {
+  if (user && agent) {
+    return "[Composio identities in THIS run: `composio-user` (the requester's own accounts) and `composio-agent` (the shared agent's own). " +
+      "A request that names neither and could be served by either is answered with the question \"which account?\" — no tool call, no read-only peek.]\n\n";
+  }
+  if (user) {
+    return "[Composio identities in THIS run: `composio-user` only (the requester's own accounts). " +
+      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop.]\n\n";
+  }
+  if (agent) {
+    return "[Composio identities in THIS run: `composio-agent` only (the shared agent's own accounts, which hold OTHER people's data — never the requester's). " +
+      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it.]\n\n";
+  }
+  return "";
+}
+
 export async function buildMcpConfig({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null } = {}) {
   // Identity claim — fail closed on garbage instead of silently signing as Claude.
   const normalizedEngine = requireAdapter(engine || "claude").id;
@@ -133,9 +172,12 @@ export async function buildMcpConfig({ composioUserEndpoint = null, composioEndp
     },
   };
   const composioOpts = { socketBridge: gatewayHelper, gatewayCapability };
-  const userComposio = principalTrusted ? composioServer(composioUserEndpoint, composioUserToken, composioOpts) : null;
+  // Same predicate the prompt's identity line is built from — one answer to "which identities does
+  // this run have?", never two that can drift apart.
+  const identities = composioIdentitiesForRun({ principalTrusted, composioUserEndpoint, composioUserToken, composioEndpoint, composioToken });
+  const userComposio = identities.user ? composioServer(composioUserEndpoint, composioUserToken, composioOpts) : null;
   if (userComposio) servers["composio-user"] = userComposio;
-  const sharedComposio = composioServer(composioEndpoint, composioToken, composioOpts);
+  const sharedComposio = identities.agent ? composioServer(composioEndpoint, composioToken, composioOpts) : null;
   if (sharedComposio) servers["composio-agent"] = sharedComposio;
   if (toolboxToken) {
     servers["makeitfuture-toolbox"] = { type: "http", url: toolboxUrl(), headers: { Authorization: `Bearer ${toolboxToken}` } };

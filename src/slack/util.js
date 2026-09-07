@@ -262,10 +262,12 @@ export function createRunQueue({ waitNoticeMs = 1500, maxQueued = 20 } = {}) {
 // ── Replay-sentinel neutralization (H5) ───────────────────────────────────────────────────────
 // Replayed thread text and display names are untrusted: a participant can embed the exact framing
 // markers the gateway wraps context/provenance in ("[End of earlier thread context.]",
-// "[Thread context — …]", "[Provenance: …]") to forge a framing boundary and smuggle
-// instructions. Defang by rewriting the opening bracket of any such marker so the model never
-// sees a fake sentinel; legitimate brackets elsewhere are untouched.
-const SENTINEL_RE = /\[(?=\s*(?:end of earlier thread context|thread context\b|provenance\b))/gi;
+// "[Thread context — …]", "[Provenance: …]", "[Composio identities in THIS run: …]") to forge a
+// framing boundary and smuggle instructions. The identity line is the one that would pay best —
+// forging "both identities are the requester's own" would undo the ask-first rule it exists to
+// state — so it is defanged with the rest. Rewrite the opening bracket of any such marker so the
+// model never sees a fake sentinel; legitimate brackets elsewhere are untouched.
+const SENTINEL_RE = /\[(?=\s*(?:end of earlier thread context|thread context\b|provenance\b|composio identities\b))/gi;
 export function neutralizeSentinels(s) {
   return String(s || "").replace(SENTINEL_RE, "(");
 }

@@ -170,14 +170,18 @@ export function channelSwitchesNote(meta = {}) {
 // the shared identity is exactly where OTHER people's accounts live. One engine refused; the other
 // substituted, because the rule against it lived only in the skill body.
 //
-// It is stated as a rule and not enforced structurally on purpose. The only per-run lever the
-// gateway has here would be a note about WHICH identities this run received — but the file this
-// block is written into is the channel's shared CLAUDE.md (Claude reads it via
-// --append-system-prompt-file, Codex through the AGENTS.md symlink), and `composio-user` is
-// per-AUTHOR: two people messaging the same channel concurrently would race a per-author sentence
-// through one shared file. Nothing per-run exists to carry it (the MCP config has no place for a
-// tool-description note, and both remote and socket-bridged Composio servers are opaque), so the
-// rule is written to be checkable by the model against its OWN tool list.
+// It is stated as a rule and not enforced structurally on purpose, and it is written to be
+// checkable by the model against its OWN tool list — this file is the channel's shared CLAUDE.md
+// (Claude reads it via --append-system-prompt-file, Codex through the AGENTS.md symlink), so it can
+// never name WHICH identities a given run received: `composio-user` is per-AUTHOR, and two people
+// messaging the same channel concurrently would race a per-author sentence through one shared file.
+//
+// That per-run fact rides the PROMPT instead (CO-04, 2026-09-07: with both identities injected, one
+// engine answered "check the calendar" from the shared identity and posted a colleague's week into
+// the channel, where the other asked "which account?" first). `run.js` prepends one line naming the
+// identities this turn actually received, next to the fresh-session memory catalog and the
+// caller's provenance note — per run, per author, so there is no shared file to race. Its text and
+// the predicate behind it live in src/gateway/mcp.js, beside the code that names those servers.
 const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; the reasoning and the
 tool shapes are in the \`gateway-usage\` skill:
 - **Two Composio identities.** \`composio-user\` = the REQUESTER's own accounts; \`composio-agent\` = the
