@@ -36,11 +36,14 @@ export function register(server, ctx) {
         "`in_minutes` (run N minutes from now — e.g. " +
         "120 for 'in 2 hours') OR `run_at` (an ISO-8601 local datetime like '2026-06-26T15:30'); leave " +
         "`cron` empty. `prompt` is what to do; `description` is the title in the 'Running:' " +
-        "announcement. It runs as YOU (your tokens/mode) in this channel's folder. `notify`: 'channel' " +
-        "(@channel, default), 'user' (pass a Slack user id in `notify_user`), or 'none'. NOTE: recurring " +
-        "tasks may set `delivery:'channel'` to post the result directly at channel level, or " +
-        "`delivery:'daily-thread'` to create one top-level Running message per server-local day and " +
-        "thread every run result beneath it; the default `standard` announces every run. " +
+        "announcement. It runs as YOU (your tokens/mode) in this channel's folder. LEAVE `notify` AND " +
+        "`delivery` UNSET unless the user explicitly asked for them: the defaults (`notify:'channel'` = " +
+        "@channel in the run's own thread; `delivery:'standard'` = a 'Running:' announcement with the " +
+        "result threaded beneath it) are what a plain 'remind me' / 'every morning do X' means. " +
+        "`notify:'user'` (pass a Slack user id in `notify_user`) or `notify:'none'` only when the user " +
+        "asked for that person or for silence. `delivery:'channel'` (result posted top-level, no thread) " +
+        "and `delivery:'daily-thread'` (one top-level Running message per server-local day, every run " +
+        "threaded beneath it; recurring tasks only) are opt-in, only when the user asked for them. " +
         "schedules must fire no more often than the configured minimum interval (default 60 min). " +
         "Set `kind:'reminder'` to post a SINGLE reminder message instead of running a Claude session " +
         "(no token cost, no restatement). With `ack:true` the reminder requires a ✅: if nobody reacts " +
