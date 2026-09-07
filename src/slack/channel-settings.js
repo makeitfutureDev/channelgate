@@ -214,7 +214,7 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
   return blocks;
 }
 
-function mcpBlocks(snapshot = {}, state = {}) {
+function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false } = {}) {
   const c = snapshot.connections || {};
   const cloud = snapshot.cloudMcp || {};
   const composio = c.composioMode === "sdk"
@@ -269,17 +269,19 @@ function mcpBlocks(snapshot = {}, state = {}) {
       ],
     },
     ...(remove.length ? [{ type: "actions", elements: remove }] : []),
-    { type: "divider" },
-    { type: "header", text: plain("Cloud MCP") },
-    fieldBlock("Claude · configured for this channel", listLabel(cloud.claude?.channel)),
-    fieldBlock("Claude · inherited from organization", listLabel(cloud.claude?.organization)),
-    fieldBlock("Codex · configured for this channel", listLabel(cloud.codex?.channel)),
-    fieldBlock("Codex · inherited from organization", listLabel(cloud.codex?.organization)),
-    {
-      type: "actions",
-      elements: [button(CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID, "Manage Cloud MCP", state, "cloud_manage", {}, { style: "primary" })],
-    },
-    { type: "context", elements: [mrkdwn("Gateway, Composio, Toolbox, and Make toolbox are injected separately from the Cloud MCP picker.")] },
+    ...(canManageCloudMcp ? [
+      { type: "divider" },
+      { type: "header", text: plain("Cloud MCP") },
+      fieldBlock("Claude · configured for this channel", listLabel(cloud.claude?.channel)),
+      fieldBlock("Claude · inherited from organization", listLabel(cloud.claude?.organization)),
+      fieldBlock("Codex · configured for this channel", listLabel(cloud.codex?.channel)),
+      fieldBlock("Codex · inherited from organization", listLabel(cloud.codex?.organization)),
+      {
+        type: "actions",
+        elements: [button(CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID, "Manage Cloud MCP", state, "cloud_manage", {}, { style: "primary" })],
+      },
+      { type: "context", elements: [mrkdwn("Gateway, Composio, Toolbox, and Make toolbox are injected separately from the Cloud MCP picker.")] },
+    ] : []),
   ];
 }
 
@@ -363,11 +365,12 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   canEditRuntime = true,
   canEnableAdmin = false,
   canEditSecrets = false,
+  canManageCloudMcp = false,
   notice = "",
 } = {}) {
   const active = normalizeTab(tab);
   const content = active === "mcp"
-    ? mcpBlocks(snapshot, state)
+    ? mcpBlocks(snapshot, state, { canManageCloudMcp })
     : active === "skills"
       ? skillsBlocks(snapshot, state)
       : active === "secrets"
@@ -380,7 +383,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     title: plain("Channel settings"),
     close: plain("Done"),
     blocks: [
-      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Only current channel managers can open or change this view.`)] },
+      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Admin mode and Cloud MCP are admin-only.`)] },
       ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
       tabButtons(state, active),
       { type: "divider" },

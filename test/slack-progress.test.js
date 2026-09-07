@@ -726,7 +726,7 @@ test("stream progress updates its model label when the runtime falls back to Cod
   assert.ok(loadingMessages.includes("gpt-5.4 · Gathering information…"));
 });
 
-test("completed-run footer always puts Files and Secrets beside the resume computer", async () => {
+test("completed-run footer carries authorized-user Settings beside Files and Secrets", async () => {
   const calls = [];
   const streamer = {
     ts: "1720000000.000100",
@@ -740,6 +740,7 @@ test("completed-run footer always puts Files and Secrets beside the resume compu
   };
   const progress = startProgress("stream", client, "C_FILES", "111.222", {
     isDM: false,
+    mayUseSettings: true,
     authorId: "U_REQUESTER",
     teamId: "T1",
     dir: null,
@@ -758,7 +759,9 @@ test("completed-run footer always puts Files and Secrets beside the resume compu
   const stop = calls.find((call) => call[0] === "stopStream");
   assert.deepEqual(stop[1].blocks.map((block) => block.type), ["context", "actions"]);
   const buttons = stop[1].blocks[1].elements;
-  assert.deepEqual(buttons.map((button) => button.text.text), ["💻", "📂", "🔑"]);
+  assert.deepEqual(buttons.map((button) => button.text.text), ["💻", "📂", "🔑", "⚙️ Settings"]);
+  const settings = buttons.find((button) => button.action_id === "cg_channel_settings");
+  assert.deepEqual(JSON.parse(settings.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
   const files = buttons.find((button) => button.text.text === "📂");
   assert.equal(files.action_id, "cg_channel_files");
   assert.equal(files.accessibility_label, "Open channel files");

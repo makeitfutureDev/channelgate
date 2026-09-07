@@ -48,7 +48,7 @@ import {
 } from "../src/slack/channel-settings.js";
 import { footerButtons, settingsButton } from "../src/slack/footer.js";
 
-const [{ channelSettingsContext, cloudSelectionsAfterToggle, connectionSettingsPatch, runtimeSettingsPatch }, store] = await Promise.all([
+const [{ channelSettingsContext, channelSettingsEditOptions, secretsContext, cloudSelectionsAfterToggle, connectionSettingsPatch, runtimeSettingsPatch }, store] = await Promise.all([
   import("../src/slack/app.js"),
   import("../src/config/store.js"),
 ]);
@@ -99,7 +99,7 @@ const snapshot = {
 const allButtons = (view) => view.blocks.flatMap((block) => block.elements || []).filter((item) => item.type === "button");
 const rendered = (view) => JSON.stringify(view);
 
-test("Settings footer button is manager-only and requester-bound", () => {
+test("Settings footer button is authorized-user-only and requester-bound", () => {
   assert.equal(settingsButton("C1", "1.1", "U1", false), null);
   assert.equal(settingsButton("C1", "1.1", "", true), null);
 
@@ -109,22 +109,22 @@ test("Settings footer button is manager-only and requester-bound", () => {
   assert.deepEqual(parseActionValue(button.value), { o: "open", c: "C1", t: "1.1", u: "U1" });
 });
 
-test("manager reply footer adds Settings after the existing workspace controls", () => {
+test("authorized user reply footer adds Settings after the existing workspace controls", () => {
   const buttons = footerButtons(
     { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
-    { channel: "C1", threadTs: "1.1", authorId: "U1", mayManage: true },
+    { channel: "C1", threadTs: "1.1", authorId: "U1", mayUseSettings: true },
   );
   assert.deepEqual(buttons.map((button) => button.text.text), ["💻", "📂", "🔑", "⚙️ Settings"]);
 
   const ordinary = footerButtons(
     { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
-    { channel: "C1", threadTs: "1.1", authorId: "U1", mayManage: false },
+    { channel: "C1", threadTs: "1.1", authorId: "U1", mayUseSettings: false },
   );
   assert.equal(ordinary.some((button) => button.action_id === CHANNEL_SETTINGS_ACTION_ID), false);
 });
 
 test("Channel Settings modal renders four working tabs with one active state", () => {
-  const view = buildChannelSettingsView(snapshot, state, { channelName: "project-alpha", tab: "mcp" });
+  const view = buildChannelSettingsView(snapshot, state, { channelName: "project-alpha", tab: "mcp", canManageCloudMcp: true });
   const buttons = allButtons(view).filter((button) => button.action_id.startsWith("cg_channel_settings_tab_"));
   assert.equal(buttons.length, CHANNEL_SETTINGS_TABS.length);
   assert.equal(new Set(buttons.map((button) => button.action_id)).size, CHANNEL_SETTINGS_TABS.length);
@@ -312,7 +312,7 @@ test("credential snapshots retain only a safe tail", () => {
   assert.deepEqual(maskedCredential(""), { configured: false, last4: "" });
 });
 
-test("historic Settings controls re-check current manager access and membership", async () => {
+test("Settings and secrets admit authorized members and guests, but Cloud MCP requires a current admin", async () => {
   await store.ensureRoot();
   const entry = await store.upsertChannelEntry("C_SETTINGS_AUTH", {
     name: "settings-auth",
@@ -347,6 +347,25 @@ test("historic Settings controls re-check current manager access and membership"
   assert.equal(current.entry.slug, entry.slug);
 
   await store.saveChannelMeta(entry.slug, { ...base, managers: [] });
+  const args = { channelId: "C_SETTINGS_AUTH", userId: "U_SETTINGS_MANAGER", expectedSlug: entry.slug, verifyMembership: true };
+  assert.equal((await channelSettingsContext(memberClient, args)).entry.slug, entry.slug);
+  await assert.rejects(() => channelSettingsContext(memberClient, { ...args, cloudMcp: true }), /Only administrators/);
+  for (const flags of [{}, { allowBash: true }, { autoMode: true }, { adminMode: true }]) {
+    await store.saveChannelMeta(entry.slug, { ...base, managers: [], ...flags });
+    assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
+    assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
+      canEnableAdmin: false, canEditRuntime: true, canEditSecrets: true, canManageCloudMcp: false,
+    });
+  }
+  await store.setUser(args.userId, { approved: false });
+  await store.saveChannelMeta(entry.slug, { ...base, managers: [], allowedUsers: [args.userId] });
+  assert.equal((await channelSettingsContext(memberClient, args)).entry.slug, entry.slug);
+  assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
+  await store.setUser(args.userId, { isAdmin: true });
+  assert.equal((await channelSettingsContext(memberClient, { ...args, cloudMcp: true })).userIsAdmin, true);
+  await store.setUser(args.userId, { isAdmin: false });
+  await assert.rejects(() => channelSettingsContext(memberClient, { ...args, cloudMcp: true }), /Only administrators/);
+  await store.saveChannelMeta(entry.slug, { ...base, managers: [] });
   await assert.rejects(
     () => channelSettingsContext(memberClient, {
       channelId: "C_SETTINGS_AUTH",
@@ -356,7 +375,9 @@ test("historic Settings controls re-check current manager access and membership"
     }),
     /not authorized to view this channel's settings/i,
   );
+  await assert.rejects(() => secretsContext(memberClient, args), /not authorized/);
 
+  await store.setUser(args.userId, { approved: true });
   await store.saveChannelMeta(entry.slug, base);
   const formerMemberClient = {
     conversations: { members: async () => ({ members: [], response_metadata: {} }) },
@@ -382,4 +403,13 @@ test("Settings has three base modes for admins and independent Auto/Lean control
   for (const label of ["☑ Auto", "☑ Lean"]) assert.ok(buttons.some((b) => b.text.text === label));
   const member = buildChannelSettingsView(data, state, { tab: "runtime", canEnableAdmin: false });
   assert.equal(allButtons(member).some((b) => b.action_id === "cg_channel_settings_mode_admin"), false);
+});
+
+test("non-admin Settings hides Cloud MCP while keeping connection editing", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "mcp", ...channelSettingsEditOptions({}, false) });
+  assert.ok(allButtons(view).some((button) => button.action_id === CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID));
+  assert.equal(allButtons(view).some((button) => button.action_id.startsWith("cg_channel_settings_cloud_")), false);
+  assert.doesNotMatch(rendered(view), /github|figma/);
+  const adminView = buildChannelSettingsView(snapshot, state, { tab: "mcp", ...channelSettingsEditOptions({}, true) });
+  assert.ok(allButtons(adminView).some((button) => button.action_id === "cg_channel_settings_cloud_manage"));
 });

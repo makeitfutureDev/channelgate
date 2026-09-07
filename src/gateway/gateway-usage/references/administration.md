@@ -144,8 +144,8 @@ instead of sharing whatever login the gateway host has. They are stored per chan
 every run here as environment variables, so a CLI picks them up by itself: `supabase`, `vercel`
 and friends read `SUPABASE_ACCESS_TOKEN` / `VERCEL_TOKEN` without being told to.
 
-- Anyone who can run commands here manages them with the `/secrets` Slack command (or the 🔑
-  button on a reply footer, shown once the channel has at least one). Admins can also use the
+- Anyone authorized to use the agent here manages them in Settings → Secrets, with `/secrets`,
+  or the 🔑 reply button, in every channel mode. Admins can also use the
   Admin UI → the channel's card.
 - **You cannot read them and neither can anyone else.** Every surface shows the NAME and the last
   four characters only; there is no reveal anywhere, deliberately. A lost token is re-issued at the
@@ -155,6 +155,14 @@ and friends read `SUPABASE_ACCESS_TOKEN` / `VERCEL_TOKEN` without being told to.
   `/secrets` — do not ask anyone to paste a token into the conversation.
 - The values are stripped out of your replies automatically, so do not try to echo one to confirm
   it: you will get `[REDACTED]` and you will have taught the user a bad habit.
+
+## Settings inside Slack
+
+The Slack **Settings** reply button is available to every authorized agent user, including channel
+guests. It allows editing engine/model/effort, channel skills and templates, MCP connection tokens
+and labels, and write-only secrets. Cloud MCP is visible and editable only by current admins.
+Every interaction re-checks agent access and channel membership. This console does not grant
+admin rights or change the permissions required by separate gateway control tools.
 
 ## Updating the gateway itself (admin)
 - `update_gateway` starts the same locked transaction as Slack `/update`, the Admin UI, and

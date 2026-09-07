@@ -17,7 +17,7 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 - Slack Settings acceptance (engine-independent): as an admin fixture actor open a recent reply's
   Settings button, choose Admin, and toggle Auto/Lean independently. Reopen and verify persistence
   and the `slack-settings` audit event. A member-manager sees Read-only/Worker and both options;
-  a forged Admin action or revoked manager/membership grant is rejected before mutation.
+  a forged Admin action or revoked authorization/membership grant is rejected before mutation.
 - Runtime acceptance (Claude AND Codex): in an isolated fixture set Admin + Auto + Lean. As the
   approved non-admin fixture actor ask "Create mode-check.txt containing MODE_OK, read it back,
   and reply with its contents." Pass only with matching saved bytes, no approval click/card,
@@ -154,8 +154,8 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       lifecycle preserves edits across the first six pages.
 - [x] Approved channel members render selected, admins render selected and locked, and inherited
       access is not persisted as an explicit guest grant.
-- [x] A manager-authored reply adds one requester-bound **⚙️ Settings** footer button; ordinary
-      authorized members do not receive it. Its modal has Engine & model, combined MCP
+- [x] Every authorized agent user's reply adds one requester-bound **⚙️ Settings** footer button,
+      including approved members and explicitly allowed guests. Its modal has Engine & model, combined MCP
       Connections/Cloud MCP, Skills, and masked Secrets tabs with unique action IDs. Runtime
       selection validates engine/model/effort compatibility; direct MCP and skill grants toggle
       without altering inherited/template tiers; skill templates can be assigned/cleared; the
@@ -163,23 +163,28 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       saved tokens while replacements are never prefilled or echoed. Composio labels can be
       prefilled, edited, or cleared without revealing a token; label-only saves keep
       the token, and submissions from older forms without a label field keep the saved label.
-      Credential snapshots retain no recoverable short-secret tail. Historic controls re-check both current manager rights and
-      current Slack membership before every mutation.
-- [ ] Live Claude: in `cg-testing-claude-auto`, have Contact temporarily make Apps a custom
-      channel manager, then let Apps request a fresh reply and open **⚙️ Settings**. Pass when Apps
-      can change to another valid engine/model/effort and restore it; activate/deactivate one direct
-      Cloud MCP grant for each engine without changing inherited grants; activate/deactivate one
+      Credential snapshots retain no recoverable short-secret tail. Historic controls re-check agent
+      authorization and Slack membership before every mutation. Cloud MCP is hidden from non-admins
+      and its controls reject revoked admin status; all authorized users can edit runtime and secrets
+      in every channel mode regardless of manager policy.
+- [ ] Live Claude: in `cg-testing-claude-auto`, keep Who can manage set to Admins and Apps approved
+      but not a manager. Let Apps request a fresh reply and open **⚙️ Settings**. Pass when Apps
+      can change to another valid engine/model/effort and restore it; cannot see or operate Cloud MCP;
+      and can activate/deactivate one
       direct skill and assign/restore a template; rotate then remove disposable Composio, Toolbox,
       and Make MCP credentials without any value being prefilled/echoed; disable/restore inherited
       credentials; and add/update/remove one disposable environment secret through the nested
-      manager. After Contact revokes Apps, every historic mutation is refused and the next
-      Apps-authored reply has no Settings button. Restore all fixture state and never use production
+      manager. Repeat secrets editing in Read and Full modes, then restore Auto. As Contact, verify
+      direct Cloud MCP toggles for both engines; revoke the test admin role with its modal open and
+      verify old Cloud MCP controls fail. Repeat ordinary access with an explicit channel guest, then
+      revoke agent access: every historic mutation must fail and new requests must be denied.
+      Restore all fixture state and never use production
       credentials in this case.
       Also set the Composio label to `QA shared account`, reopen it in Slack and the web editor,
       rename it, then clear it with the token input blank. Pass when both surfaces agree, the
       summary shows the saved label, and the disposable token stays configured throughout.
 - [ ] Live Codex: repeat the same editable four-tab, tier-isolation, write-only credential,
-      reversible mutation, historic-control revocation, and non-manager-hidden checks in
+      reversible mutation, historic-control revocation, and admin-only Cloud MCP checks in
       `cg-testing-codex-auto`, then restore every fixture setting.
 - [ ] Live Claude: start a fresh test thread, ask a question whose answer exists only in a topic
       file, and verify search → one-source read → correct answer without bulk memory injection.
