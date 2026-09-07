@@ -30,7 +30,7 @@
 // (src/slack/approvals.js posts the links as an ephemeral to the requester).
 import crypto from "node:crypto";
 
-import { getApprovalLinks, getPublicUrl } from "../config/settings.js";
+import { getApprovalLinks, getAiTestingUsers, getPublicUrl } from "../config/settings.js";
 import { recordApprovalLinkToken } from "../gateway/approval-link-tokens.js";
 
 // A link lives as long as the card it belongs to plus a little slack for a person who is reading
@@ -166,12 +166,14 @@ export function approvalLinkUrl(baseUrl, token) {
 //
 //   off     — never.
 //   auto    — a platform whose buttons we actually drive (Slack) gets links only as an ADDITION,
-//             and only once `publicUrl` is set; a platform without working buttons gets them from
+//             for selected Testing with AI users only, once `publicUrl` is set; a platform without working buttons gets them from
 //             whatever base URL exists, because there they are the only way to decide.
-//   always  — links wherever a base URL can be built, loopback included.
-export function approvalLinkBase({ mode = getApprovalLinks(), capabilities = null, publicUrl = getPublicUrl() } = {}) {
+//   always  — eligible recipients get links wherever a base can be built, loopback included.
+// Neither mode bypasses the opt-in list for a surface with working native buttons.
+export function approvalLinkBase({ mode = getApprovalLinks(), capabilities = null, publicUrl = getPublicUrl(), requester = "" } = {}) {
   if (mode === "off") return "";
   const nativeButtons = Boolean(capabilities?.buttons) && capabilities?.richCards === "block-kit";
+  if (nativeButtons && !getAiTestingUsers().includes(requester)) return "";
   if (mode === "auto" && nativeButtons) return publicUrl || "";
   return publicUrl || localBaseUrl();
 }

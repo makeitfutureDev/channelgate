@@ -170,3 +170,24 @@ test("the Settings page sends a diff against what it was painted from", () => {
   // Nothing pending may survive a repaint, or the baseline would swallow it.
   assert.match(paint, /clear-tok\.armed/);
 });
+
+
+test("Testing with AI defaults closed and validates, deduplicates, persists and clears Slack users", async () => {
+  assert.deepEqual(settings.getAiTestingUsers(), []);
+  assert.deepEqual((await getSettings()).aiTestingUsers, []);
+  const saved = await putSettings({ aiTestingUsers: [" UTEST123 ", "UTEST123", "WTEST456"] });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.aiTestingUsers, ["UTEST123", "WTEST456"]);
+  assert.deepEqual((await getSettings()).aiTestingUsers, ["UTEST123", "WTEST456"]);
+  for (const value of ["UTEST123", null, [42], ["*"], ["CTEST123"], [""], ["UTEST123", {}]]) {
+    assert.equal((await putSettings({ aiTestingUsers: value })).status, 400);
+    assert.deepEqual(settings.getAiTestingUsers(), ["UTEST123", "WTEST456"]);
+  }
+  assert.equal((await putSettings({ aiTestingUsers: [] })).status, 200);
+  assert.deepEqual((await getSettings()).aiTestingUsers, []);
+  settings.saveSettings({ aiTestingUsers: "UTEST123" });
+  assert.deepEqual(settings.getAiTestingUsers(), [], "malformed hand-edited settings fail closed");
+  settings.saveSettings({ aiTestingUsers: [null, "*", "UTEST123", "UTEST123"] });
+  assert.deepEqual(settings.getAiTestingUsers(), ["UTEST123"]);
+  settings.saveSettings({ aiTestingUsers: [] });
+});

@@ -24,6 +24,7 @@ import {
   isEngineEnabled,
   getDmTemplates,
   APPROVAL_LINK_MODES,
+  AI_TESTING_USER_ID_RE,
   CHANNEL_ACCESS_MODES,
   MODEL_CHANGE_ACCESS_MODES,
   ENGINE_FALLBACK_MODES,
@@ -203,6 +204,12 @@ export function createSettingsRouter({
       if (typeof body.publicUrl === "string") patch.publicUrl = normalizePublicUrl(body.publicUrl);
       // Link-based approvals: auto (default) / always / off. See src/web/approval-links.js.
       if (typeof body.approvalLinks === "string" && APPROVAL_LINK_MODES.includes(body.approvalLinks)) patch.approvalLinks = body.approvalLinks;
+      if (body.aiTestingUsers !== undefined) {
+        if (!Array.isArray(body.aiTestingUsers) || body.aiTestingUsers.some((id) => typeof id !== "string" || !AI_TESTING_USER_ID_RE.test(id.trim()))) {
+          return res.status(400).json({ error: "Testing with AI must be a list of Slack user IDs" });
+        }
+        patch.aiTestingUsers = [...new Set(body.aiTestingUsers.map((id) => id.trim()))];
+      }
       // Self-diagnosis target channel slug ("" turns the feature off).
       if (typeof body.errorDiagnosisChannel === "string") patch.errorDiagnosisChannel = body.errorDiagnosisChannel.trim();
       // Org-default access policy applied to each channel the bot newly joins.

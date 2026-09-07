@@ -190,7 +190,7 @@ async function approvalLinkChoices(entry, { durable = false, approveText = "Appr
 // answerable by its buttons, so a failure here must never fail the approval.
 async function deliverApprovalLinks(client, entry, { id, threadKey, durable = false, approveText, denyText } = {}) {
   try {
-    const baseUrl = approvalLinkBase({ capabilities: slackAdapter.capabilities });
+    const baseUrl = approvalLinkBase({ capabilities: slackAdapter.capabilities, requester: entry.authorId });
     if (!baseUrl || !client) return [];
     const choices = await approvalLinkChoices(entry, { durable, approveText, denyText });
     if (!choices.length) return [];

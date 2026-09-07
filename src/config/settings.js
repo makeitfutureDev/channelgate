@@ -214,14 +214,23 @@ export function getPublicUrl() {
 // Link-based approvals: whether an approval card is ALSO delivered as signed, single-use URLs in
 // an ephemeral message to the person who raised it (src/web/approval-links.js).
 //   "auto"   (default) — links on a surface whose buttons the gateway does not drive (Teams,
-//                        Google Chat), and on Slack as an addition once `publicUrl` is set
-//   "always"           — links everywhere, falling back to the loopback address when no public
+//                        Google Chat), and for selected Slack testers once `publicUrl` is set
+//   "always"           — links for eligible recipients, falling back to loopback when no public
 //                        URL is configured (useful for local automation and QA)
 //   "off"              — native controls only
 export const APPROVAL_LINK_MODES = ["auto", "always", "off"];
 export function getApprovalLinks() {
   const v = getSettings().approvalLinks;
   return APPROVAL_LINK_MODES.includes(v) ? v : "auto";
+}
+
+// Opt-in recipients of supplemental Slack button links. Missing/invalid legacy values fail closed.
+export const AI_TESTING_USER_ID_RE = /^[UW][A-Z0-9]+$/;
+export function getAiTestingUsers() {
+  const ids = getSettings().aiTestingUsers;
+  return Array.isArray(ids)
+    ? [...new Set(ids.filter((id) => typeof id === "string" && AI_TESTING_USER_ID_RE.test(id)))]
+    : [];
 }
 
 // Native Slack text streaming is the only in-progress display mode. Keep the exported shape for
@@ -785,6 +794,7 @@ export function settingsForApi() {
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
     approvalLinks: getApprovalLinks(),
+    aiTestingUsers: getAiTestingUsers(),
     progressView: getProgressView(),
     mentionReactions: getMentionReactions(),
     trustedBotApps: getTrustedBotApps(),

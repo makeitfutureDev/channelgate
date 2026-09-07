@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Settings: add **Testing with AI**, an opt-in Slack user list for supplemental approval and
+  busy-thread browser links. Empty by default; both auto and always link modes respect the list,
+  including for admins. Native buttons and non-native approval surfaces keep their behavior.
+
 - Skills: restore Source and Category catalog filters alongside governance filters. Sources now
   use clickable cards opening a searchable skill list with persistent Enabled, organization-wide
   Discoverable and Mandatory switches, including disabled skills. Source configuration is grouped

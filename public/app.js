@@ -2974,6 +2974,7 @@ function readSettingsForm() {
     toolboxMcpUrl: document.getElementById("set-toolbox").value,
     publicUrl: document.getElementById("set-public-url").value,
     approvalLinks: document.getElementById("set-approval-links").value,
+    aiTestingUsers: checkedValues(document.getElementById("set-ai-testing-users")),
     ...(document.getElementById("set-gchat-key").value.trim() ? { googleChatServiceAccountJson: document.getElementById("set-gchat-key").value } : {}),
     ...(document.getElementById("clear-gchat-key").classList.contains("armed") ? { clearGoogleChatServiceAccountJson: true } : {}),
     googleChatSubscription: document.getElementById("set-gchat-sub").value,
@@ -3073,6 +3074,12 @@ function paintSettings(s) {
   document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
   document.getElementById("set-approval-links").value = s.approvalLinks || "auto";
+  const testingUsers = s.aiTestingUsers || [];
+  // Keep saved IDs visible even if a directory lookup fails or a user was removed.
+  const testingOptions = [...new Set([...Object.keys(USERS).filter((id) => /^[UW][A-Z0-9]+$/.test(id)), ...testingUsers])]
+    .map((id) => ({ value: id, label: USERS[id]?.name ? `${USERS[id].name} (${id})` : id }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  checkboxList(document.getElementById("set-ai-testing-users"), testingOptions, testingUsers);
   // ── Google Chat + Teams ────────────────────────────────────────────────────
   const platformById = Object.fromEntries((s.platforms || []).map((p) => [p.id, p]));
   renderPlatformStatus("gchat-status", platformById.googlechat);
@@ -3192,7 +3199,12 @@ function paintSettings(s) {
 }
 
 async function loadSettings() {
-  paintSettings(await api("/api/settings"));
+  const [settings, directory] = await Promise.all([
+    api("/api/settings"),
+    api("/api/users").catch(() => ({ users: USERS })),
+  ]);
+  USERS = directory.users || {};
+  paintSettings(settings);
   await loadLicense();
 }
 

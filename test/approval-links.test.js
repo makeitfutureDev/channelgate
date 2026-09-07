@@ -39,8 +39,8 @@ const { readEvents } = await import("../src/util/logger.js");
 
 const SLUG = "approval-links";
 const CHANNEL = "C_APPROVAL_LINKS";
-const ADMIN = "U_AL_ADMIN";
-const MEMBER = "U_AL_MEMBER";
+const ADMIN = "UALADMIN";
+const MEMBER = "UALMEMBER";
 
 await setUser(ADMIN, { name: "AL Admin", approved: true, isAdmin: true });
 await setUser(MEMBER, { name: "AL Member", approved: true, isAdmin: false });
@@ -80,7 +80,7 @@ const base = `http://127.0.0.1:${server.address().port}`;
 after(() => server.close());
 
 // The links must point at THIS server, so the settings' public URL is the test server's own base.
-saveSettings({ publicUrl: base, approvalLinks: "auto" });
+saveSettings({ publicUrl: base, approvalLinks: "auto", aiTestingUsers: [ADMIN, MEMBER] });
 
 const settle = async (rounds = 6) => {
   for (let i = 0; i < rounds; i++) await new Promise((r) => setImmediate(r));
@@ -467,7 +467,7 @@ test("approvalLinks: off mints nothing, auto needs a public URL on Slack, always
   const textOnly = { buttons: false, richCards: "none" };
 
   saveSettings({ approvalLinks: "off" });
-  assert.equal(approvalLinkBase({ capabilities: slackCaps }), "");
+  assert.equal(approvalLinkBase({ capabilities: slackCaps, requester: MEMBER }), "");
   assert.equal(approvalLinkBase({ capabilities: textOnly }), "");
   const before = ephemerals.length;
   const off = await raise("3.400");
@@ -483,14 +483,56 @@ test("approvalLinks: off mints nothing, auto needs a public URL on Slack, always
   // auto: an addition on a surface that already has working buttons, and only once the operator
   // has said where the gateway is reachable from.
   saveSettings({ approvalLinks: "auto", publicUrl: "" });
-  assert.equal(approvalLinkBase({ capabilities: slackCaps }), "");
+  assert.equal(approvalLinkBase({ capabilities: slackCaps, requester: MEMBER }), "");
   // …but on a surface with no buttons to press, links are the only way, so they are built anyway.
   assert.match(approvalLinkBase({ capabilities: textOnly }), /^http:\/\/127\.0\.0\.1:/);
   saveSettings({ publicUrl: "https://gw.example" });
-  assert.equal(approvalLinkBase({ capabilities: slackCaps }), "https://gw.example");
+  assert.equal(approvalLinkBase({ capabilities: slackCaps, requester: MEMBER }), "https://gw.example");
 
   // always: everywhere, loopback included.
   saveSettings({ approvalLinks: "always", publicUrl: "" });
-  assert.match(approvalLinkBase({ capabilities: slackCaps }), /^http:\/\/127\.0\.0\.1:/);
+  assert.match(approvalLinkBase({ capabilities: slackCaps, requester: MEMBER }), /^http:\/\/127\.0\.0\.1:/);
   saveSettings({ approvalLinks: "auto", publicUrl: base });
+});
+
+
+test("Slack testing allowlist gates minting and delivery for both card types, including admins and always mode", async () => {
+  const { getDb } = await import("../src/db/index.js");
+  const countTokens = () => getDb().prepare("SELECT count(*) AS n FROM approval_link_tokens").get().n;
+  let thread = 500;
+  try {
+    for (const mode of ["auto", "always", "off"]) {
+      for (const selected of [[], [MEMBER], [ADMIN, MEMBER], []]) {
+        saveSettings({ approvalLinks: mode, aiTestingUsers: selected, publicUrl: base });
+        for (const authorId of [MEMBER, ADMIN]) {
+          const allowed = mode !== "off" && selected.includes(authorId);
+          const before = ephemerals.length;
+          const tokens = countTokens();
+          const approval = await raise(`5.${thread++}`, "Bash", { command: "echo testing" }, authorId);
+          assert.equal(ephemerals.length - before, allowed ? 1 : 0, `${mode}: approval for ${authorId}`);
+          assert.equal(countTokens() > tokens, allowed, "unlisted recipients mint no bearer tokens");
+          assert.ok(posted.at(-1).blocks.some((b) => b.type === "actions"), "native buttons remain available");
+          await handleApprovalClick({
+            ack: async () => {},
+            body: { user: { id: authorId }, channel: { id: CHANNEL }, message: { ts: posted.at(-1).ts } },
+            action: { action_id: "cg_deny", value: approval.id }, client,
+          });
+          assert.equal((await approval.pending).allow, false);
+          const busyBefore = ephemerals.length;
+          const busyTokens = countTokens();
+          const links = await deliverBusyThreadChoiceLinks(client, `testing-${thread++}`, { channelId: CHANNEL, userId: authorId });
+          assert.equal(links.length, allowed ? 3 : 0);
+          assert.equal(ephemerals.length - busyBefore, allowed ? 1 : 0);
+          assert.equal(countTokens() - busyTokens, allowed ? 3 : 0);
+          if (allowed) assert.equal(ephemerals.at(-1).user, authorId);
+        }
+      }
+    }
+    saveSettings({ approvalLinks: "always", aiTestingUsers: [MEMBER] });
+    assert.equal(approvalLinkBase({ capabilities: { buttons: true, richCards: "block-kit" } }), "", "missing requester fails closed");
+    saveSettings({ aiTestingUsers: [] });
+    assert.equal(approvalLinkBase({ capabilities: { buttons: false, richCards: "none" }, publicUrl: base }), base, "non-native surfaces retain their links");
+  } finally {
+    saveSettings({ approvalLinks: "auto", publicUrl: base, aiTestingUsers: [ADMIN, MEMBER] });
+  }
 });

@@ -1628,7 +1628,7 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       (429 + `Retry-After`, and a perfectly valid token is refused while the backoff holds, because
       the limiter is about the address); the `approvalLinks` setting's three values behave — `off`
       mints nothing at all, `auto` needs a public URL before adding links to a surface that already
-      has buttons but builds them anyway where there are none, `always` falls back to this
+      has buttons (selected Testing with AI recipients only) but builds them anyway where there are none, `always` falls back to this
       machine's own address.
 - [x] Automated (`test/approval-links.test.js`, `test/web-security.test.js`): that backoff buckets
       the REAL client, not the loopback proxy hop every public caller shares. Two bad tokens
@@ -1641,12 +1641,31 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       the confirmation page's *Conversation* row shows the slug and never the raw channel id, and
       the `approval_resolved_by_link` row carries the same slug (the record itself has none; it is
       resolved from the channels index).
-- [ ] Live: in a channel with a `publicUrl` configured, trigger a permission card. Pass when the
+- [ ] Live: in a channel with a `publicUrl` configured and the requester selected under Testing with AI, trigger a permission card. Pass when the
       requester (and nobody else) sees an ephemeral with three links; opening one shows the
       confirmation page with the command preview and leaves the card in the thread PENDING; pressing
       Confirm resolves it, the card is edited to name the requester with "(approval link)", the
       Activity feed shows `approval_resolved_by_link`, and reloading the link says it was already
       used.
+
+- [x] Automated: `test/approval-links.test.js` exercises empty, selected, unlisted and removed
+      Testing with AI recipients for permission and busy-thread cards in `auto`, `always`, `off`;
+      includes admins, checks no tokens are minted for excluded users, and resolves native buttons.
+      `test/settings-save-version.test.js` covers API default, persistence, clearing, deduplication,
+      invalid inputs and malformed stored settings. No-native-button surfaces retain link behavior.
+- [ ] Live, Claude AND Codex: use two approved Slack test users in separate Worker fixtures,
+      auto approval disabled, public URL set, fresh threads and no cached/forever tool approvals.
+      In Settings → Connection → Testing with AI select only user A; save and reload, verify A
+      remains checked and B does not. As each user prompt: "Ask me to approve a test using
+      request_approval with approve text Continue and deny text Stop; wait for my decision."
+      Pass: both get native buttons, only A gets private browser links, and either control resolves
+      the request. Next prompt "Run sleep 30 then say finished" and send "Also say hello" while
+      it runs. Pass: both get Steer/Queue/Cancel, only A gets private links. Remove A and repeat
+      on fresh cards: neither gets links. Repeat in `always`; an empty list still excludes everyone.
+      Set `off` with A selected: no links. Repeat with an unlisted admin requesting an explicit
+      approval: role alone must not enable links. Verify an unrelated Settings save preserves the
+      list, and saved IDs remain visible/removable if directory loading fails. Restore fixture
+      settings. Capture cards, private-message evidence, decisions and settings reload for both engines.
 
 ### Sandbox boundaries (bash / network)
 **Retired 2026-09-03 (Linux + containers only):** the host sandbox is gone. The boundary is the

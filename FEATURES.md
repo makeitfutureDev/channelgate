@@ -1429,7 +1429,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Link-based approvals — the same card, as URLs, on every surface.** Native buttons are Slack's
   primitive; Teams and Google Chat do not have one the gateway drives, and automation cannot click
   anything at all. Every approval card (permission, control-plane, durable background-shell) and
-  every busy-thread card is therefore ALSO minted as short-lived, single-use, HMAC-signed links —
+  every busy-thread card can therefore ALSO be minted as short-lived, single-use, HMAC-signed links —
   one per action the recipient may actually take (*Approve once* / *Approve for this thread* /
   *Approve forever* / *Deny*, and *Steer* / *Queue* / *Cancel* for a busy thread) — and delivered
   **privately to the person who raised the request**: a Slack ephemeral in the same thread, or a
@@ -1447,8 +1447,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   own authority is re-checked on every POST, so an admin-tier sign-off gets a Deny link and no
   Approve link at all. Unknown/used/expired → a plain page and 404/410 that says nothing about any
   other request, with per-IP backoff on bad tokens; responses are `no-store` + `noindex`. Settings →
-  Connection → **Approval links**: `auto` (default — where there are no native buttons, plus Slack
-  once `publicUrl` is set), `always` (everywhere, falling back to this machine's address), `off`.
+  Connection → **Approval links**: `auto` (default — where there are no native buttons, plus selected
+  Slack testers once `publicUrl` is set), `always` (eligible recipients, with loopback fallback), `off`.
+  **Testing with AI** is a named Slack user checklist (`aiTestingUsers`, empty by default). Only
+  selected users receive supplemental permission, control-plane, durable-shell and busy-thread
+  links; both `auto` and `always` enforce it, including for admins. Removing a user stops links
+  on subsequent cards immediately. Native buttons and existing link expiry remain unchanged;
+  membership grants no additional permissions. Surfaces without native buttons retain their links.
   Every link decision logs `approval_resolved_by_link` (ids, decision, scope — never a value).
   → TEST-PLAN: Modes & approvals.
 - Admin-only dangerous permissions (admin author **and** adminMode channel); non-admins run the

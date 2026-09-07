@@ -170,7 +170,7 @@ export function busyThreadChoiceBlocks(id) {
 // construction — the links are minted for, and delivered only to, that sender.
 export async function deliverBusyThreadChoiceLinks(client, choiceId, { channelId, threadTs = "", userId } = {}) {
   try {
-    const baseUrl = approvalLinkBase({ capabilities: slackAdapter.capabilities });
+    const baseUrl = approvalLinkBase({ capabilities: slackAdapter.capabilities, requester: userId });
     if (!baseUrl || !client || !userId) return [];
     const links = buildApprovalLinks({
       baseUrl,
