@@ -207,39 +207,32 @@ function explicitCheckedValues(container) {
 }
 
 // Channel "mode" — a friendly name over the flags (kept in sync with src/gateway/modes.js).
-const MODE_LABEL = { read: "Read-only", bash: "Bash", auto: "Auto", admin: "Admin" };
+const MODE_LABEL = { read: "Read-only", worker: "Worker", admin: "Admin" };
 function channelMode(m = {}) {
   if (m.adminMode) return "admin";
-  if (m.autoMode) return "auto";
-  if (m.allowBash) return "bash";
+  if (m.allowBash || m.autoMode) return "worker";
   return "read";
 }
 function modeLabelOf(m = {}) {
-  const base = MODE_LABEL[channelMode(m)];
+  const base = [MODE_LABEL[channelMode(m)], m.autoMode ? "Auto" : "", m.cleanMode ? "Lean" : ""].filter(Boolean).join(" · ");
   const network = m.adminMode
     ? " · unrestricted network"
     : m.allowNetwork
       ? ` · ${["claude", "codex"].includes(String(m.engine || "claude")) ? "approved-domain network" : "network unsupported"}`
       : "";
-  return base + network + (m.cleanMode ? " · clean" : "");
+  return base + network;
 }
 
-// Capability profiles — mirror of src/gateway/modes.js (kept in sync). A preset expands to these
-// flags; "custom" uses the stored flags verbatim. channelProfileOf derives the preset for a meta.
+// Base mode flags mirror src/gateway/modes.js. Auto and Lean are separate options.
 const PROFILE_FLAGS = {
-  read: { adminMode: false, allowBash: false, autoMode: false, cleanMode: false },
-  worker: { adminMode: false, allowBash: true, autoMode: false, cleanMode: false },
-  auto: { adminMode: false, allowBash: true, autoMode: true, cleanMode: false },
-  full: { adminMode: true, allowBash: false, autoMode: false, cleanMode: false },
-  lean: { adminMode: false, allowBash: false, autoMode: false, cleanMode: true },
+  read: { adminMode: false, allowBash: false },
+  worker: { adminMode: false, allowBash: true },
+  admin: { adminMode: true, allowBash: true },
 };
 const PROFILE_HELP = {
-  read: "Answers and reads files in this channel's folder. Can't edit or run commands; anything riskier asks you to approve. Safest.",
-  worker: "Runs commands and edits files, locked to this channel's folder. Still asks before unusual actions. For channels that build things.",
-  auto: "Like Worker but doesn't stop to ask — auto-approves and keeps going. Still sandboxed. For trusted, multi-step tasks.",
-  full: "Every tool, no permission prompts. Only works when an org admin sends the message; otherwise falls back to Worker behaviour. The channel container is still the boundary — unless the gateway's \"Full-access channels see the gateway home\" switch (Settings → Container runtime) is on, in which case this channel also reaches the gateway user's whole home. Use only for trusted ops channels.",
-  lean: "Bare model — no skills or connectors. Cheapest and fastest, but can't use HubSpot/Gmail/etc.",
-  custom: "Set every capability yourself with the checkboxes below.",
+  read: "Reads files. Edits and commands need approval. Selecting Read-only turns Auto off.",
+  worker: "Runs commands and edits files inside the channel container. Enable Auto to approve tool requests automatically.",
+  admin: "Admins get full tools without permission prompts. Other members get Worker with the selected Auto and Lean options.",
 };
 // Per-option descriptions for the two access dropdowns (shown live under each, like the profile help).
 const ACCESS_HELP = {
@@ -252,26 +245,17 @@ const MANAGE_HELP = {
   members: "Any approved member of this channel can change the safe settings (capability up to Autonomous, skills, connectors) — but never Full access, network or work-dir.",
 };
 function channelProfileOf(m = {}) {
-  if (m.profile && PROFILE_FLAGS[m.profile]) return m.profile;
-  if (m.cleanMode) return "lean";
-  if (m.adminMode) return "full";
-  if (m.autoMode) return "auto";
-  if (m.allowBash) return "worker";
+  if (m.adminMode) return "admin";
+  if (m.allowBash || m.autoMode) return "worker";
   return "read";
 }
 
 // Capability → color/label, used identically in the list capdot, the header pill, and the picker
 // cards. capKeyOf collapses a meta (preset OR custom flags) to one of read/worker/auto/full/lean.
-const PROFILE_LABEL = { read: "Read-only", worker: "Worker", auto: "Autonomous", full: "Full access", lean: "Lean", custom: "Custom" };
+const PROFILE_LABEL = { read: "Read-only", worker: "Worker", admin: "Admin" };
 const CAP_RGB = { read: "145,201,206", worker: "78,163,169", auto: "232,176,75", full: "229,96,77", lean: "122,146,148" };
 function capKeyOf(m = {}) {
-  const p = channelProfileOf(m);
-  if (p !== "custom") return p;
-  if (m.cleanMode) return "lean";
-  if (m.adminMode) return "full";
-  if (m.autoMode) return "auto";
-  if (m.allowBash) return "worker";
-  return "read";
+  return channelProfileOf(m) === "admin" ? "full" : channelProfileOf(m);
 }
 const capColorOf = (m) => `var(--cap-${capKeyOf(m)})`;
 // Inline style for a capability .pill: solid cap color text over the same color at low alpha.
@@ -282,7 +266,7 @@ function capPillStyle(m) {
 // Friendly capability label for a meta (e.g. "Autonomous · network").
 function capLabelOf(m = {}) {
   const p = channelProfileOf(m);
-  const base = PROFILE_LABEL[p] || PROFILE_LABEL[capKeyOf(m)];
+  const base = [PROFILE_LABEL[p], m.autoMode ? "Auto" : "", m.cleanMode ? "Lean" : ""].filter(Boolean).join(" · ");
   if (m.adminMode) return base + " · unrestricted network";
   if (!m.allowNetwork) return base;
   return base + ` · ${["claude", "codex"].includes(String(m.engine || "claude")) ? "approved-domain network" : "network unsupported"}`;
@@ -1485,7 +1469,7 @@ function renderChannelDetail(ch) {
   wireChecksTools(skillsBox, card.querySelector(".ch-skills-filter"), card.querySelector(".ch-skills-count"));
   fillSkillTemplateSelect(card.querySelector(".ch-skill-template"), meta.skillTemplate || "", card.querySelector(".ch-skill-template-state"));
 
-  // Raw capability flags (edited directly only in Custom; a preset drives them via applyProfileUI).
+  // The base picker owns admin/shell flags; Auto and Lean are independent controls.
   const flagEls = {
     adminMode: card.querySelector(".ch-admin"),
     allowBash: card.querySelector(".ch-bash"),
@@ -1500,7 +1484,7 @@ function renderChannelDetail(ch) {
   networkBox.checked = !!meta.allowNetwork;
 
   // Capability radio cards drive the hidden <select class="ch-profile"> (what the save reads).
-  // Picking a preset flips the hidden flag checkboxes; "Custom" reveals them for hand-editing.
+  // Picking a base preserves the independent Auto/Lean controls.
   const profSel = card.querySelector(".ch-profile");
   const profHelp = card.querySelector(".ch-profile-help");
   const capCards = [...card.querySelectorAll(".cap-card")];
@@ -1517,15 +1501,17 @@ function renderChannelDetail(ch) {
       const f = PROFILE_FLAGS[p];
       flagEls.adminMode.checked = f.adminMode;
       flagEls.allowBash.checked = f.allowBash;
-      flagEls.autoMode.checked = f.autoMode;
-      flagEls.cleanMode.checked = f.cleanMode;
+      if (p === "read") flagEls.autoMode.checked = false;
     }
     paintModePill(liveMeta());
   };
   applyProfileUI(channelProfileOf(meta));
   for (const c of capCards) c.addEventListener("click", () => { applyProfileUI(c.dataset.cap); markDirty(); });
-  // Editing a custom flag directly re-paints the header pill (mode may change).
-  for (const el of Object.values(flagEls)) el.addEventListener("change", () => paintModePill(liveMeta()));
+  // Option changes repaint the summary and keep Read-only/Auto coherent.
+  for (const el of Object.values(flagEls)) el.addEventListener("change", () => {
+    if (flagEls.autoMode.checked && profSel.value === "read") applyProfileUI("worker");
+    paintModePill(liveMeta());
+  });
   networkBox.addEventListener("change", () => paintModePill(liveMeta()));
 
   // Access: who can USE + who can MANAGE, each with a live description of the selected option.
@@ -1972,23 +1958,20 @@ function buildConfigEditor(cfg = {}) {
   const el = document.createElement("div");
   el.className = "cfg-editor";
   el.innerHTML = `
-    <p class="fldlab">Capability — what the bot may do here</p>
-    <div class="cap-cards cfg-capcards">
-      <div class="cap-card" data-cap="read"><h5><i style="background:var(--cap-read)"></i>Read-only</h5><p>Answers &amp; reads files. Can't edit or run commands.</p></div>
-      <div class="cap-card" data-cap="worker"><h5><i style="background:var(--cap-worker)"></i>Worker</h5><p>Runs commands &amp; edits files, sandboxed to this folder.</p></div>
-      <div class="cap-card" data-cap="auto"><h5><i style="background:var(--cap-auto)"></i>Autonomous</h5><p>Worker that doesn't stop to ask. Still sandboxed.</p></div>
+<div class="mode-layout">
+    <div><p class="fldlab">Mode</p><div class="cap-cards cfg-capcards">
+      <button type="button" class="cap-card" data-cap="read"><h5>Read-only</h5><p>Reads files. Changes need approval.</p></button>
+      <button type="button" class="cap-card" data-cap="worker"><h5>Worker</h5><p>Runs commands and edits files in the channel container.</p></button>
+      <button type="button" class="cap-card danger" data-cap="admin"><h5>Admin</h5><p>Admins get full access. Other members get Worker plus the selected options.</p></button>
+    </div></div>
+    <div class="mode-options"><p class="fldlab">Special modes</p>
+      <label class="togglerow"><input type="checkbox" class="cfg-auto" /><span class="switch"></span><span class="t"><b>Auto</b><small>Automatically approve tool requests for all members. Enables Worker when Read-only is selected.</small></span></label>
+      <label class="togglerow"><input type="checkbox" class="cfg-clean" /><span class="switch"></span><span class="t"><b>Lean</b><small>Bare model without skills or connectors. In Admin mode, applies to non-admins.</small></span></label>
     </div>
-    <p class="fldlab">Special modes</p>
-    <div class="cap-cards cap-options">
-      <div class="cap-card danger" data-cap="full"><h5><i style="background:var(--cap-full)"></i>Full access <span class="box-mark">□</span></h5><p>Admin authors bypass prompts; the container remains the boundary.</p><span class="tag">admin</span></div>
-      <div class="cap-card" data-cap="lean"><h5><i style="background:var(--cap-lean)"></i>Lean <span class="box-mark">□</span></h5><p>Bare testing mode with no MCP servers or skills.</p></div>
-    </div>
-    <select class="cfg-profile" hidden aria-hidden="true">
-      <option value="read">Read-only</option><option value="worker">Worker</option><option value="auto">Autonomous</option><option value="full">Full access</option><option value="lean">Lean</option>
-    </select>
-    <em class="state cfg-profile-help" style="display:block;margin:0 0 16px"></em>
-    <input type="checkbox" class="cfg-admin" hidden /><input type="checkbox" class="cfg-bash" hidden />
-    <input type="checkbox" class="cfg-auto" hidden /><input type="checkbox" class="cfg-clean" hidden />
+  </div>
+  <select class="cfg-profile" hidden aria-hidden="true"><option value="read">Read-only</option><option value="worker">Worker</option><option value="admin">Admin</option></select>
+  <em class="state cfg-profile-help" style="display:block;margin:0 0 16px"></em>
+  <input type="checkbox" class="cfg-admin" hidden /><input type="checkbox" class="cfg-bash" hidden />
     <label class="togglerow cfg-network-wrap">
       <input type="checkbox" class="cfg-network" />
       <span class="switch"></span>
@@ -2100,8 +2083,7 @@ function buildConfigEditor(cfg = {}) {
       const f = PROFILE_FLAGS[p];
       flags.adminMode.checked = f.adminMode;
       flags.allowBash.checked = f.allowBash;
-      flags.autoMode.checked = f.autoMode;
-      flags.cleanMode.checked = f.cleanMode;
+      if (p === "read") flags.autoMode.checked = false;
     }
   };
   applyProfileUI(channelProfileOf(cfg));
@@ -2112,6 +2094,10 @@ function buildConfigEditor(cfg = {}) {
       // one so the host's dirty tracking (settings global save / DM detail savebar) notices.
       el.dispatchEvent(new Event("change", { bubbles: true }));
     });
+
+  flags.autoMode.addEventListener("change", () => {
+    if (flags.autoMode.checked && profSel.value === "read") applyProfileUI("worker");
+  });
 
   const getValues = () => ({
     skills: checkedValues(skillsBox),

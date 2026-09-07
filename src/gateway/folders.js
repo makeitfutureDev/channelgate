@@ -115,7 +115,7 @@ const GW_NOTE = `> ⚙️ Gateway-managed block — do NOT edit between these ma
 // tell a model what it may do.
 const MODE_NOTE = {
   read: "read-only tools; anything else asks this conversation for approval first",
-  bash: "shell commands and file writes inside this conversation's container",
+  worker: "shell commands and file writes inside this conversation's container",
   auto: "autonomous — permission prompts are auto-approved, so nothing stops to ask",
   admin: "every tool with permission prompts bypassed, for an admin author's live turns",
 };
@@ -141,6 +141,8 @@ export function channelSwitchesNote(meta = {}) {
   return [
     "**This conversation's switches** (an admin sets them; they apply from the next message):",
     `- Mode: **${mode}** — ${MODE_NOTE[mode]}.`,
+    `- Auto: **${meta.autoMode ? "on" : "off"}** — ${meta.autoMode ? "tool requests are automatically approved for every authorized member" : "tools outside the mode allowlist require approval"}.`,
+    `- Lean: **${meta.cleanMode ? "on" : "off"}** — ${meta.cleanMode ? "bare model without skills or connectors" : "configured skills and connectors are available"}.`,
     `- Network: ${networkLine}`,
   ].join("\n");
 }
@@ -537,7 +539,7 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
   // sets adminMode alone (never allowBash/autoMode), the variant inherited read mode's
   // `ask: ["Bash"]`, and Claude Code kept evaluating that rule for the bypassed run — a bare `pwd`
   // came back denied and the admin turn fell back to read-only (QA, 2026-09-07).
-  const bashy = Boolean(meta.allowBash || meta.autoMode || allowBypass);
+  const bashy = Boolean(meta.allowBash || meta.autoMode || meta.adminMode || allowBypass);
 
   // Folder-scoped memory: when on (and the channel isn't already bash-enabled, which grants Write/
   // Edit broadly), grant a NARROW Write/Edit limited to MEMORY.md so the agent can persist memory

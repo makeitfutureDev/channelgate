@@ -3,6 +3,32 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Base modes and independent options (2026-09-08)
+
+- Automated: `modes`, `channel-settings-modal`, `mode-command-audit`, `folders-settings`,
+  `folders-generator-paths`, `run-grant-isolation`, `runtime-integration-surfaces`, and `run-api`
+  cover legacy flag interpretation, three base selections, toggle persistence, admin-only selection,
+  untrusted-author boundaries, per-run settings, and engine-independent settings rendering.
+- UI acceptance (engine-independent): in the web channel editor and DM/template editor, select
+  Worker, check Auto and Lean, then select Admin. Exactly three base choices appear, with both
+  options still checked. Save/reopen and verify all flags. Select Read-only: Auto clears, Lean
+  stays. Enable Auto: Worker is selected. At wide widths options sit beside the base choices;
+  narrow screens stack without overflow.
+- Slack Settings acceptance (engine-independent): as an admin fixture actor open a recent reply's
+  Settings button, choose Admin, and toggle Auto/Lean independently. Reopen and verify persistence
+  and the `slack-settings` audit event. A member-manager sees Read-only/Worker and both options;
+  a forged Admin action or revoked manager/membership grant is rejected before mutation.
+- Runtime acceptance (Claude AND Codex): in an isolated fixture set Admin + Auto + Lean. As the
+  approved non-admin fixture actor ask "Create mode-check.txt containing MODE_OK, read it back,
+  and reply with its contents." Pass only with matching saved bytes, no approval click/card,
+  `autoMode=true`, `clean=true`, and `dangerouslySkip=false`. Repeat as an admin fixture actor:
+  matching file, no approval click/card, `clean=false`, `dangerouslySkip=true`. Check run-private
+  MCP/skill artifacts to distinguish Lean from a model merely claiming it ran bare. Restore the
+  fixture configuration. A direct harness run establishes runtime behavior, not Slack delivery.
+- Legacy acceptance: start with `profile=full`, `adminMode=true`, `allowBash=false`, Auto off.
+  An ordinary member can edit and run shell commands as Worker; their bypass remains disabled.
+  Existing `profile=auto` and `profile=lean` records retain their respective modifiers on reopen.
+
 ## Release readiness remediation (2026-09-07)
 
 The source changes address audit findings 1–4, 6, 7 and 9–17. Findings 5 and 8 (retiring the

@@ -186,3 +186,27 @@ test("the MCP admin-mode and workdir twins are audited too", async () => {
   assert.deepEqual(e.changes.workDir, { from: PROJECT_DIR, to: "" });
   assert.equal(e.actor, ADMIN_ID);
 });
+
+
+test("web base-mode saves preserve independent options and canonicalize the Worker fallback", async () => {
+  const fixture = await upsertChannelEntry("C_MODE_OPTIONS_WEB", { name: "mode-options-web", type: "channel", isDM: false });
+  await saveChannelMeta(fixture.slug, { ...defaultChannelMeta({ channelId: "C_MODE_OPTIONS_WEB", name: "mode-options-web", type: "channel" }), autoMode: true, cleanMode: true });
+  for (const profile of ["admin", "worker", "admin"]) {
+    const result = await request("/channels/C_MODE_OPTIONS_WEB/meta", { method: "PUT", body: { profile } });
+    assert.equal(result.response.status, 200);
+    const stored = await getChannelMeta(fixture.slug);
+    assert.equal(stored.autoMode, true);
+    assert.equal(stored.cleanMode, true);
+    assert.equal(stored.allowBash, true);
+    assert.equal(stored.adminMode, profile === "admin");
+  }
+  await request("/channels/C_MODE_OPTIONS_WEB/meta", { method: "PUT", body: { profile: "read" } });
+  const read = await getChannelMeta(fixture.slug);
+  assert.equal(read.autoMode, false);
+  assert.equal(read.cleanMode, true);
+  assert.equal(read.allowBash, false);
+  await request("/channels/C_MODE_OPTIONS_WEB/meta", { method: "PUT", body: { profile: "worker", autoMode: true, cleanMode: false } });
+  const auto = await getChannelMeta(fixture.slug);
+  assert.equal(auto.autoMode, true);
+  assert.equal(auto.cleanMode, false);
+});

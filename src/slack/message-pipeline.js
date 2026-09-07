@@ -9,7 +9,7 @@ import { engineSupports, engineLabel, ENGINE_IDS } from "../engines/registry.js"
 import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult } from "../gateway/run.js";
-import { modeLabel, MODE_FLAGS, MODES, canManage, isAuthorized } from "../gateway/modes.js";
+import { modeLabel, MODES, modeSettingsPatch, canManage, isAuthorized } from "../gateway/modes.js";
 
 import { postModelWizard } from "./model-wizard.js";
 import { getSessionMap, clearSession, hasThreadSession, getSessionEngine, saveSession } from "../gateway/sessions.js";
@@ -852,21 +852,22 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           `🚀 Update transaction \`${started.transaction.id}\` started. I’ll run preflight, snapshot, dependency audit/tests, restart, Slack + isolated Claude health checks, and automatic rollback if needed. I’ll report the final result here. Details: \`~/.channelgate/logs/update.log\`.`,
         );
       } else if (sc.cmd === "mode") {
-        const arg = (sc.arg || "").trim().toLowerCase();
+        const rawMode = (sc.arg || "").trim().toLowerCase();
+        const arg = rawMode === "bash" ? "worker" : rawMode;
         if (!arg) {
           await reply(
             `Current mode: *${modeLabel(meta, { detail: true })}*.\n` +
-              "Set with `/mode read|bash|auto|admin` (admin):\n" +
+              "Set with `/mode read|worker|admin` (admin):\n" +
               "• *read* — read-only; other tools ask for approval\n" +
-              "• *bash* — Bash + file writes, sandboxed to the folder\n" +
-              "• *auto* — autonomous: prompts auto-approved, sandboxed\n" +
-              "• *admin* — full tools, sandbox off (admin authors only)\n" +
+              "• *worker* — commands and file writes inside the channel container\n" +
+              "Auto and Lean are separate options in Settings.\n" +
+              "• *admin* — full tools for admins; Worker plus selected options for other members\n" +
               "_Network is a separate switch (channel settings, or `set_channel_network`). It tells the agent whether this channel is meant to use the internet; the container is not cut off yet, so it is an instruction, not a boundary._"
           );
           return;
         }
         if (!MODES.includes(arg)) {
-          await reply("Mode must be one of: `read`, `bash`, `auto`, `admin`.");
+          await reply("Mode must be one of: `read`, `worker`, `admin`. Set Auto and Lean in Settings.");
           return;
         }
         // `admin` (Full access, sandbox off) is org-admin-only; the safe modes honor "who can
@@ -882,10 +883,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         let replaced = null;
         const moded = await patchChannelMeta(entry.slug, (current) => {
           replaced = current;
-          return {
-            ...MODE_FLAGS[arg],
-            profile: arg === "admin" ? "full" : arg === "bash" ? "worker" : arg, // keep the UI preset in sync
-          };
+          return modeSettingsPatch(current, { mode: arg }, { isAdminUser: authorIsAdmin });
         });
         Object.assign(meta, moded);
         await ensureChannelFolder(entry.slug, meta); // re-provision the lockdown now
@@ -894,7 +892,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await logChannelPolicyChange({ channelId: event.channel, slug: entry.slug, actor: event.user, before: replaced, after: moded, source: "slack-command" });
         await reply(
           `✅ Mode set to *${arg}* (${modeLabel(meta)}) for this channel — applies to new turns.` +
-            (arg === "admin" ? "\n⚠️ Full tools, sandbox off — only honored for admin authors' live turns. An admin's background agents, continuations, and schedules run at the *auto* tier: writable + auto-approved, but always sandboxed." : "")
+            (arg === "admin" ? "\nAdmins get full tools; other members get Worker with the selected Auto and Lean options. The channel container remains the boundary." : "")
         );
       }
       return;

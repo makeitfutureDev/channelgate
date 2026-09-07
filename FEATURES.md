@@ -1345,37 +1345,27 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Customized/restored via the **`get_gateway_guide`** (anyone) / **`update_gateway_guide`** /
   **`reset_gateway_guide`** (admins) gateway MCP tools — per-file or whole-guide restore-to-default.
   → TEST-PLAN: Gateway-usage skill.
-- **Retired 2026-09-03 (Linux + containers only):** the OS-sandbox half of this bullet — the four modes stay as TOOL-permission presets (read =
-  read-only tools, bash = shell + file writes, auto = prompts auto-approved, admin =
-  `--dangerously-skip-permissions` for an admin author), and none of them changes what the channel's
-  container can see. Four channel **modes** (set with `/mode`): `read` (Read/Glob/Grep only, every
-  other tool asks for approval — the shell is named in the lockdown's `permissions.ask`, not merely
-  left out of `permissions.allow`: Claude Code answers a simple command whose argv head is on its
-  own built-in read-only list (`id`, `cat`, `head`, `strings`, …) BEFORE consulting
-  `--permission-prompt-tool`, so omission alone let a read-mode turn run `id -un` with no approval
-  card; an `ask` rule outranks that layer and routes every command — simple or compound — to the
-  approval card), `bash` (Bash + file writes, sandboxed to the folder), `auto`
-  (autonomous — permission prompts auto-approve, still fully sandboxed), and `admin` (full tools,
-  sandbox off — requires an **admin author** as well). `admin` is org-admin-only to select; the safe
-  modes honor the channel's "who can manage" policy. The **admin-run settings variant** — the file
-  handed only to an admin author's escalated turn in an admin-mode channel — grants the shell tools
-  outright and carries no `ask` rule at all: that turn spawns with
-  `--dangerously-skip-permissions`, so the rule widens nothing, and inheriting read mode's
-  `ask: ["Bash"]` instead made Claude Code deny a bare `pwd` and demote the whole turn to read-only
-  (the `full` profile sets `adminMode` alone, never `allowBash`). The SHARED file of the same
-  channel is unchanged — a non-admin author there still routes every command to the approval card.
-  → TEST-PLAN: Modes & approvals.
+- **Three base modes with independent options:** Read-only, Worker, and Admin. Read-only
+  routes edits and commands to approval; Worker grants commands and file writes inside the channel
+  container. Admin grants Worker to non-admin members and the permission bypass only to trusted
+  admin authors. The shared settings file always disables bypass, even when it grants Worker tools.
+  **Auto** and **Lean** are independent side toggles: Auto approves tool requests for every admitted
+  member; Lean removes optional skills and connectors. In Admin mode, Lean applies to non-admins,
+  while admins retain their configured tools and context. Changing Worker ↔ Admin preserves both
+  toggles. Choosing Read-only clears Auto; enabling Auto on Read-only selects Worker. Existing Full
+  access records gain the documented Worker fallback; existing Auto and Lean flags are preserved.
+  Network remains a separate setting. → TEST-PLAN: Base modes and independent options.
 - Read mode's filesystem contract is engine-neutral: ordinary runs get bounded gateway MCP tools
   to list, read, and literal-search the effective channel workdir. They realpath-check every target,
   refuse traversal and escaping symlinks, cap file/search output, and expose no write or shell
   operation. Claude may keep using its native Read/Glob/Grep; Codex uses these tools when its
   read-only permission profile intentionally withholds command execution. → TEST-PLAN: Engines.
-- **Capability profiles** (admin UI, one dropdown instead of a grid of toggles): **Read-only** /
-  **Worker** / **Autonomous** / **Full access** / **Lean** — each with example help text — expand to
-  the underlying `adminMode`/`allowBash`/`autoMode`/`cleanMode` flags; **Custom…** unlocks the flags
-  for hand-editing. Legacy channels derive their profile from existing flags (no DB migration). The
-  network toggle + the rarely-touched knobs (memory, nudges, refuse-org-tokens, work-dir, engine/
-  model/effort) live under an **Advanced** disclosure. → TEST-PLAN: channel access model.
+- The web channel editor, custom DMs, and default templates share the three-mode picker and
+  side toggles. The Slack reply's **Settings** button exposes Read-only/Worker/Admin plus Auto/Lean
+  on its Runtime tab; only current gateway admins can select Admin. Every click rechecks manager
+  access and channel membership, and every change is audited. `/mode read|worker|admin` changes the
+  base while preserving applicable options (`bash` remains a compatibility alias). Legacy run-API
+  presets remain accepted with their existing capability-reduction boundary.
 - **Two-axis access model** (per channel, both editable in the admin UI): **Who can use** (`meta.access`:
   Approved members / Admins only / Locked) and **Who can manage** (`meta.manageAccess`: Org admins only /
   Channel members / Custom + `meta.managers[]`). A channel manager may change SAFE settings (capability

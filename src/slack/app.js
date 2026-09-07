@@ -9,7 +9,7 @@ const { App, LogLevel } = pkg;
 import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, isAdmin, isApproved, listChannels, getComposioToken, getToolboxToken } from "../config/store.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { effectiveMeta } from "../gateway/run.js";
-import { modeLabel, canManage, isAuthorized } from "../gateway/modes.js";
+import { modeLabel, canManage, isAuthorized, modeSettingsPatch } from "../gateway/modes.js";
 // Re-exported: the authorization contract moved to gateway/modes.js (beside canManage).
 export { isAuthorized };
 import { requestApproval, handleApprovalClick, handleApprovalCommentSubmit, APPROVAL_ACTIONS, setApprovalClient } from "./approvals.js";
@@ -54,6 +54,7 @@ import {
   buildConnectionsEditorView, buildRuntimeEditorView, buildTemplateEditorView, maskedCredential,
   parseActionValue as parseChannelSettingsActionValue, parseEditorMetadata, parseSettingsMetadata,
   readConnectionsForm, readRuntimeForm, readTemplateForm,
+  CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
@@ -390,6 +391,7 @@ function channelSettingsSnapshot(meta = {}) {
   const shared = resolveAccessGrants({ organization, channel: channelTier });
   const template = templateOfMeta(effective);
   return {
+    mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
     runtime: {
       configuredEngineId: effective.engine || "",
       configuredEngine: effective.engine ? engineLabel(effective.engine) : "",
@@ -431,6 +433,7 @@ function channelSettingsSnapshot(meta = {}) {
 
 function channelSettingsEditOptions(meta, userIsAdmin) {
   return {
+    canEnableAdmin: userIsAdmin,
     canEditRuntime: Boolean(meta?.isDM) || canChangeChannelRuntime(userIsAdmin),
     canEditSecrets: canEditChannelFiles(effectiveMeta(meta), { isAdminUser: userIsAdmin }),
   };
@@ -1051,6 +1054,27 @@ async function connectAndWire(app) {
       if (command.o === "tab") {
         const tab = String(command.p || "runtime");
         await updateCurrent(settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
+        return;
+      }
+
+      if (actionId.startsWith(CHANNEL_SETTINGS_MODE_PREFIX) || actionId.startsWith(CHANNEL_SETTINGS_OPTION_PREFIX)) {
+        let change;
+        if (actionId.startsWith(CHANNEL_SETTINGS_MODE_PREFIX)) {
+          change = { mode: actionId.slice(CHANNEL_SETTINGS_MODE_PREFIX.length) };
+        } else {
+          const key = { auto: "autoMode", lean: "cleanMode" }[actionId.slice(CHANNEL_SETTINGS_OPTION_PREFIX.length)];
+          if (!key || typeof command.enabled !== "boolean") throw new Error("Invalid mode option.");
+          change = { [key]: command.enabled };
+        }
+        meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
+          const baseline = effectiveMeta(current);
+          const patch = modeSettingsPatch(baseline, change, { isAdminUser: userIsAdmin });
+          // A DM following a template becomes custom when its own mode is edited.
+          return current.isDM && ["user", "admin"].includes(current.template)
+            ? { ...baseline, ...patch, template: "custom" }
+            : patch;
+        });
+        await updateCurrent(settingsRootView(entry, meta, state, userIsAdmin, { notice: "Mode updated. Applies to the next turn." }));
         return;
       }
 

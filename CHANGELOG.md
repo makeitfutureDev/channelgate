@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Channels: use Read-only, Worker, and Admin as the three base modes, with independent Auto and
+  Lean side toggles in channel, DM, and template editors. Slack Settings can now select Admin
+  for authorized admins. Admin gives other members Worker plus their selected options; Auto
+  approves tools for both roles, while Lean applies only to non-admins in an Admin channel.
+  Existing Full access records now get the promised Worker fallback.
+
 - Settings: replace the Testing with AI checkbox list with a compact searchable user selector,
   removable selection chips, keyboard navigation and a bounded results list that fits narrow screens.
 
