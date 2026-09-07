@@ -4285,3 +4285,20 @@ acceptance gates; no production restart or external message was performed by the
   both files successfully and returned the exact marker CG_PERSONAL_REFERENCE_OK_7319. The
   fixture was removed. This verifies catalog/reference readability in an existing container;
   the deployed author-grant, resume/revocation and Slack cases above remain unexecuted.
+
+
+## Reviewed public fixtures in release artifacts (2026-09-08)
+
+- Engine-independent automated acceptance: run `node --test test/release-artifact-fixtures.test.js
+  test/release-secret-history.test.js`. Disposable repositories use synthetic token/PEM fixtures
+  with a private test copy of the exception catalog. Pass when exact fixtures are waived only
+  for generated artifacts; tracked files and history still reject them; an unknown token,
+  incomplete key or same-prefix/different-body key fails with values redacted; gzip stream
+  boundaries preserve complete-key matching and report each finding once. No engine participates.
+- Candidate gate: run the exact-tag Release evidence workflow. Download the actual image archive,
+  inventory, model hashes and checksums; verify provenance and inspect the scan's reviewed-fixture
+  count. All unrecognized findings must fail the job. The checked-in catalog records public
+  source/binary URLs and fingerprints; adding an exception requires identifying its purpose and
+  verifying exact upstream bytes, not merely finding the value on the internet. Do not exempt
+  entire paths, packages, credential patterns or repository/history scans.
+- Candidate execution remains pending; this regression does not waive the separate live QA campaign.

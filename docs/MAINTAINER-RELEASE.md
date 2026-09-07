@@ -19,6 +19,14 @@ It is not evidence of a built image or signed provenance. No local run should be
 successful release workflow. Review upstream runtime licenses and model notices for the actual
 candidate before distributing its image.
 
+Generated-artifact secret scanning has a narrow reviewed-public-fixture catalog in
+`scripts/reviewed-artifact-fixtures.json`. Each entry binds an exact matched value to public
+upstream evidence and an identified purpose; private keys require the complete PEM fingerprint.
+Repository/history scans never apply those exceptions. On a new finding, keep the gate failed
+until provenance and purpose are verified; add no directory, package or pattern-wide exclusions.
+Review the new image's count and digests after a toolchain update rather than carrying an
+unexplained match forward. The catalog contains hashes and public evidence links, never values.
+
 ## Repository presentation
 
 Repository maintainers can edit the About description, homepage and topics with GitHub settings

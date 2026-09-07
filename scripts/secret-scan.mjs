@@ -5,8 +5,9 @@
 // like `xoxb-…`, `sk-ant-x`, or test fixtures ("xoxb-test") never trip it — a noisy scanner gets
 // ignored, a quiet one gets trusted.
 import { execFileSync, spawn } from "node:child_process";
-import { createReadStream, lstatSync, readdirSync, readlinkSync } from "node:fs";
+import { createReadStream, lstatSync, readdirSync, readlinkSync, readFileSync } from "node:fs";
 import { createGunzip } from "node:zlib";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,6 +33,14 @@ const PATTERNS = [
   { name: "Private key block", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----\s+[A-Za-z0-9+/=]{60,}/g },
 ];
 
+// Exceptions identify complete reviewed public values, never paths, key prefixes or patterns.
+// They apply ONLY to generated artifacts; repository files and history always stay strict.
+const reviewedFixtures = JSON.parse(readFileSync(new URL("./reviewed-artifact-fixtures.json", import.meta.url), "utf8"));
+const reviewedHashes = new Set(reviewedFixtures.map(({ pattern, sha256 }) => `${pattern}:${sha256}`));
+const LOOKAHEAD = 64 * 1024; // Larger/truncated PEMs remain findings; never waive a partial key.
+const COMPLETE_PEM = /^-----BEGIN ([A-Z ]*PRIVATE KEY)-----[ \t]*\r?\n(?:[A-Za-z0-9+/=]+[ \t]*\r?\n)+-----END \1-----/;
+const digest = (value) => createHash("sha256").update(value, "latin1").digest("hex");
+
 // Never exempt lockfiles, assets or large blobs: credentials can appear in any of them.
 // History means commits reachable from this release candidate, not the private archive remote.
 const args = process.argv.slice(2);
@@ -40,32 +49,56 @@ const artifactDir = artifactsAt >= 0 ? args[artifactsAt + 1] : null;
 if (artifactsAt >= 0 && !artifactDir) throw new Error("--artifacts requires a directory");
 let findings = 0;
 let checked = 0;
-function scan(content, label, overlap = 0) {
+let reviewed = 0;
+function scan(content, label, limit = content.length, artifact = false, start = 0) {
   for (const { name, re } of PATTERNS) {
     re.lastIndex = 0;
     let match;
     while ((match = re.exec(content)) !== null) {
-      if (match.index + match[0].length <= overlap) continue;
+      if (match.index >= limit) break;
+      if (match.index < start) continue;
+      // A PEM prefix matches the detection pattern, but only a COMPLETE key can be reviewed.
+      // The same first base64 line with a different body must always remain a finding.
+      const complete = name === "Private key block"
+        ? COMPLETE_PEM.exec(content.slice(match.index, match.index + LOOKAHEAD))?.[0]
+        : match[0];
+      const sha256 = digest(complete || match[0]);
+      if (artifact && complete && reviewedHashes.has(`${name}:${sha256}`)) {
+        reviewed += 1;
+        continue;
+      }
       findings += 1;
-      if (findings <= 100) console.error(`SECRET? ${safeLabel(label)} matches "${name}"`);
+      if (findings <= 100) console.error(`SECRET? ${safeLabel(label)} matches "${name}" sha256=${sha256}`);
     }
   }
+}
+async function scanStream(stream, label, artifact = false) {
+  // Keep forward context, not just an overlap of already-scanned bytes: a complete public PEM
+  // must be available before deciding whether to waive its header, including at chunk edges.
+  let pending = "";
+  let start = 0;
+  for await (const chunk of stream) {
+    pending += chunk.toString("latin1");
+    const limit = Math.max(0, pending.length - LOOKAHEAD);
+    if (limit) {
+      scan(pending, label, limit, artifact, start);
+      // Retain one already-scanned byte so word-boundary patterns see their real left context.
+      pending = pending.slice(limit - 1);
+      start = 1;
+    }
+  }
+  scan(pending, label, pending.length, artifact, start);
 }
 function safeLabel(label) {
   let value = String(label);
   for (const { re } of PATTERNS) value = value.replace(new RegExp(re.source, re.flags), "[redacted]");
   return value;
 }
-async function scanFile(file, label) {
+async function scanFile(file, label, artifact = false) {
   // Streaming keeps image archives and other large release assets bounded in memory.
   let stream = createReadStream(file);
   if (file.endsWith(".gz")) stream = stream.pipe(createGunzip());
-  let tail = "";
-  for await (const chunk of stream) {
-    const content = tail + chunk.toString("latin1");
-    scan(content, label, tail.length);
-    tail = content.slice(-2048);
-  }
+  await scanStream(stream, label, artifact);
   checked += 1;
 }
 const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8", cwd: repoRoot }).split("\0").filter(Boolean);
@@ -95,8 +128,7 @@ if (args.includes("--history")) {
     if (!["blob", "commit"].includes(type)) continue;
     const child = spawn("git", ["cat-file", type, id], { cwd: repoRoot, stdio: ["ignore", "pipe", "inherit"] });
     const completion = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`git cat-file failed (${code})`))); });
-    let tail = "";
-    for await (const chunk of child.stdout) { const content = tail + chunk.toString("latin1"); scan(content, `history:${id.slice(0, 12)}:${names.get(id)}`, tail.length); tail = content.slice(-2048); }
+    await scanStream(child.stdout, `history:${id.slice(0, 12)}:${names.get(id)}`);
     await completion;
     checked += 1;
   }
@@ -105,7 +137,7 @@ async function walk(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) await walk(file);
-    else if (entry.isFile()) await scanFile(file, `artifact:${path.relative(repoRoot, file)}`);
+    else if (entry.isFile()) await scanFile(file, `artifact:${path.relative(repoRoot, file)}`, true);
     else if (entry.isSymbolicLink()) throw new Error(`Release artifact must not be a symlink: ${entry.name}`);
   }
 }
@@ -113,4 +145,4 @@ if (artifactDir) await walk(path.resolve(repoRoot, artifactDir));
 if (findings) {
   console.error(`Secret scan failed: ${findings} finding(s). Values are never printed. Review the reported objects before publication.`);
   process.exitCode = 1;
-} else console.log(`Secret scan clean (${checked} files/blobs checked${args.includes("--history") ? ", including candidate history" : ""}).`);
+} else console.log(`Secret scan clean (${checked} files/blobs checked${args.includes("--history") ? ", including candidate history" : ""}; ${reviewed} exact reviewed public artifact fixtures).`);
