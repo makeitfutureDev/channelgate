@@ -777,7 +777,7 @@ async function renameLegacyManagedSkills(skillsDir) {
 // grant that names nothing in the catalog falls back to the pre-catalog host-folder copy so an
 // un-imported folder keeps working. Managed copies whose grant ended are pruned; a project-owned
 // folder of the same name is preserved only for callers that opt out of authoritative mirroring.
-export async function enableSkills(skillsDir, skillNames, { authoritative = false, backupDir = "" } = {}) {
+export async function enableSkills(skillsDir, skillNames, { authoritative = false, backupDir = "", recordMaterializationTime = true } = {}) {
   const sources = skillSourceDirs();
   // Defense at the filesystem sink: web writes and run-time grant resolution already normalize
   // names, but legacy/manual config and direct callers must not turn a grant into `../` traversal.
@@ -812,7 +812,7 @@ export async function enableSkills(skillsDir, skillNames, { authoritative = fals
     if (authoritative && reserved.has(name.toLowerCase())) continue;
     let result;
     try {
-      result = await materializeSkill(skillsDir, name, { authoritative, backupDir });
+      result = await materializeSkill(skillsDir, name, { authoritative, backupDir, recordMaterializationTime });
     } catch (err) {
       if (authoritative) throw new Error(`Could not synchronize skill "${name}": ${err?.message || err}`, { cause: err });
       result = { state: "error", slug: name, error: err?.message || String(err) };
@@ -846,7 +846,7 @@ export async function enableSkills(skillsDir, skillNames, { authoritative = fals
           const hash = hashSkillFiles(files);
           const revision = { id: `host:${hash}`, contentHash: hash, revisionNo: 1, version: "" };
           const fallback = await materializeSkill(skillsDir, name, {
-            authoritative, backupDir, lookup: () => ({ slug: name }), bundleFor: () => ({ revision, files }),
+            authoritative, backupDir, recordMaterializationTime, lookup: () => ({ slug: name }), bundleFor: () => ({ revision, files }),
           });
           states[name] = fallback.state;
           enabled.push(name);

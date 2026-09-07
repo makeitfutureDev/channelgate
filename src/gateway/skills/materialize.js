@@ -190,7 +190,7 @@ async function writeBundleFile(root, file) {
 
 // Stage the complete validated tree before replacing the prior node. All traversal is relative
 // to pinned directory descriptors, including comparisons of agent-writable files.
-export async function materializeBundle(skillsDir, slug, input) {
+export async function materializeBundle(skillsDir, slug, input, { recordMaterializationTime = true } = {}) {
   validateSlug(slug);
   const bundle = validateBundle(input);
   const parent = await openWorkspaceDirectory(skillsDir);
@@ -206,7 +206,7 @@ export async function materializeBundle(skillsDir, slug, input) {
     const revision = bundle.revision;
     await writeBundleFile(stage, {
       path: SKILL_MANIFEST_FILE,
-      content: `${JSON.stringify({ slug, revisionId: revision.id, revisionNo: revision.revisionNo, hash: revision.contentHash, version: revision.version, materializedAt: new Date().toISOString() })}\n`,
+      content: `${JSON.stringify({ slug, revisionId: revision.id, revisionNo: revision.revisionNo, hash: revision.contentHash, version: revision.version, ...(recordMaterializationTime ? { materializedAt: new Date().toISOString() } : {}) })}\n`,
     });
     await stage.chmod(0o755);
     const destination = path.join(directoryPath(parent), slug);
@@ -224,7 +224,7 @@ export async function materializeBundle(skillsDir, slug, input) {
 //   { state: "written" | "unchanged", slug }   — the catalog copy is in place
 //   { state: "project", slug }                  — a project-owned folder of that name wins
 //   { state: "staged" | "removed" | "unknown" } — nothing written (no approved revision / tombstoned / not in catalog)
-export async function materializeSkill(skillsDir, name, { lookup = getSkill, bundleFor = skillBundle, authoritative = false, backupDir = "" } = {}) {
+export async function materializeSkill(skillsDir, name, { lookup = getSkill, bundleFor = skillBundle, authoritative = false, backupDir = "", recordMaterializationTime = true } = {}) {
   const skill = lookup(name);
   if (!skill) return { state: "unknown", slug: String(name) };
   if (skill.deleted) return { state: "removed", slug: skill.slug };
@@ -248,7 +248,7 @@ export async function materializeSkill(skillsDir, name, { lookup = getSkill, bun
       await archiveWorkspaceEntry(dest, backupDir);
     }
   }
-  const state = await materializeBundle(skillsDir, skill.slug, bundle);
+  const state = await materializeBundle(skillsDir, skill.slug, bundle, { recordMaterializationTime });
   return { state, slug: skill.slug, revisionNo: bundle.revision.revisionNo };
 }
 

@@ -1916,7 +1916,11 @@ are retired, bullet by bullet; everything else stands.
 
 ## Performance
 - Warm session pool: a thread's `claude` process stays alive (default 10 min idle) for fast
-  follow-ups; relaunches on author/permission change. → verified: warm reuse retains context.
+  follow-ups; relaunches on author/permission change. Shared catalog plugins contain immutable
+  revision metadata without the generated `materializedAt` observation timestamp, so repeated
+  materialization of identical skills keeps the same plugin path and warm process. Workspace skill
+  manifests retain their real materialization times; content, revision, grant and permission changes
+  still invalidate reuse. → TEST-PLAN: catalog plugin warm reuse.
 - Clean mode (per channel / DM): run bare for the lowest token cost — no MCP servers injected
   (gateway control, Composio, Toolbox), no skills copied, no skills-favorites block, and no
   per-author tokens. The per-run `--mcp-config` is empty + `--strict-mcp-config` (so global servers

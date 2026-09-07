@@ -340,6 +340,48 @@ test("unchanged shared gateway skills reuse an immutable warm-safe plugin path",
   assert.equal(await readFile(path.join(a.claudePluginDirs[0], "skills", "gateway-usage", "references", "slack.md"), "utf8"), "stable support\n");
 });
 
+test("catalog skill materialization timestamps do not retire warm plugins; content and grants still do", async (t) => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { enableSkills } = await import("../src/gateway/folders.js");
+  const temp = await mkdtemp(path.join(os.tmpdir(), "cg-catalog-warm-"));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const slug = "catalog-warm-regression";
+  const files = (body) => [{ path: "SKILL.md", content: `---\nname: Warm Catalog Probe\ndescription: Verify stable catalog plugins\n---\n${body}\n` }];
+  putSkillRevision({ files: files("Read the prepared fixture."), ownerKind: "local" });
+  t.mock.timers.enable({ apis: ["Date"], now: 1_700_000_000_000 });
+  const workspaceSkillsDir = path.join(temp, "workspace-skills");
+  await mkdir(workspaceSkillsDir);
+  await enableSkills(workspaceSkillsDir, ["warm-catalog-probe"]);
+  const workspaceManifest = path.join(workspaceSkillsDir, "warm-catalog-probe", ".gateway-skill.json");
+  const workspaceMetadata = JSON.parse(await readFile(workspaceManifest, "utf8"));
+  assert.equal(workspaceMetadata.materializedAt, "2023-11-14T22:13:20.000Z");
+  const options = { slug, sharedSkills: ["warm-catalog-probe"], needsClaudeSettings: true };
+  const artifacts = [];
+  t.after(() => Promise.all(artifacts.map((artifact) => artifact.cleanup())));
+  const materialize = async (extra = {}) => {
+    const artifact = await grants({ ...options, ...extra });
+    artifacts.push(artifact);
+    return artifact;
+  };
+  const first = await materialize();
+  t.mock.timers.setTime(1_700_000_010_000);
+  const repeated = await materialize();
+  assert.deepEqual(repeated.claudePluginDirs, first.claudePluginDirs, "equivalent catalog materialization must retain the warm fingerprint");
+  assert.equal(repeated.settingsFile, first.settingsFile);
+  const manifest = JSON.parse(await readFile(path.join(first.claudePluginDirs[0], "skills", "warm-catalog-probe", ".gateway-skill.json"), "utf8"));
+  const { materializedAt: _timestamp, ...revisionMetadata } = workspaceMetadata;
+  assert.deepEqual(manifest, revisionMetadata, "immutable plugin metadata contains revision facts, without a misleading timestamp");
+  assert.deepEqual(JSON.parse(await readFile(workspaceManifest, "utf8")), workspaceMetadata, "workspace observation timestamp stays intact");
+
+  putSkillRevision({ files: files("Read the changed prepared fixture."), ownerKind: "local" });
+  const changed = await materialize();
+  assert.notDeepEqual(changed.claudePluginDirs, first.claudePluginDirs, "real skill bytes must retire the warm process");
+  const revoked = await materialize({ sharedSkills: [] });
+  assert.notDeepEqual(revoked.claudePluginDirs, changed.claudePluginDirs, "revoked grants must retire the warm process");
+  const permissions = await materialize({ meta: { allowBash: true } });
+  assert.notEqual(permissions.settingsFile, changed.settingsFile, "permission changes must retire the warm process");
+});
+
 test("a channel's custom agents ride the plugin, since --setting-sources \"\" hides .claude/agents", async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "cg-plugin-agents-"));
   t.after(() => rm(temp, { recursive: true, force: true }));
