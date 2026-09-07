@@ -18,6 +18,22 @@ product overview.
 
 ## Unreleased
 
+- A finished answer is never held back by Slack's temporary status line. The assistant-status
+  writes used to queue without bound on one serial chain, and because each write sleeps its own
+  retry-after while the workspace is rate-limited, the terminal clear ended up behind a backlog
+  thousands of calls deep — and finalize waited for it BEFORE posting the reply, so turns that had
+  finished were delivered tens of minutes later or not at all. The status queue now keeps one write
+  in flight and one pending slot holding the LATEST phase (a superseded phrase is dropped, never
+  sent late), and delivery waits at most a few seconds for the clear before going ahead; the clear
+  still runs afterwards.
+- A Slack-ended answer stream no longer costs the rest of the reply. When Slack completes a
+  message's stream server-side (a window blown by rate limiting, or its undocumented age cap), the
+  first refused append used to abandon the answer: every later delta was dropped and the reply was
+  left ending mid-word, with no footer, under a red "Something went wrong". The answer now gets the
+  same republish the progress card already had — a fresh stream carrying the complete compiled
+  answer, the footer on the surviving message, and the stranded copy removed only once the
+  replacement is durable. A failed finalization still ends with exactly one complete, footered
+  answer.
 - Codex subagents get their own progress-card rows again. `codex exec --json` never puts a child's
   identity on stdout — a turn that spawned two subagents sent one anonymous coordination item and
   nothing else — so the card showed a single generic `wait_agent` row where Claude showed a row per

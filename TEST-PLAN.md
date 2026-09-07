@@ -636,6 +636,17 @@ shape is asserted, not reviewed by eye.
 - [ ] Live (SLK-206): force a rate-limited/failed `stopStream` on a long turn — the thread ends with
       the progress card plus exactly one complete answer message carrying the footer, with no
       truncated partial copy and no stats-only message.
+- [ ] Live (SLK-207, both engines): while the workspace is being rate-limited on
+      `assistant.threads.setStatus` (many concurrent turns), a finishing turn posts its answer
+      within seconds of the engine's last token — the answer must not wait for the status surface —
+      and the shimmering status is cleared once Slack answers again. Evidence: the answer's Slack
+      timestamp against the run's `run_done`/usage row, and no lingering status line in the thread.
+- [x] Unit (SLK-207): with `assistant.threads.setStatus` stuck (a request that never returns),
+      finalize still posts the complete answer with its footer block and no classic fallback, only
+      one status request is ever outstanding, and the terminal clear is still written once Slack
+      answers; twenty-five rapid activity phases queued behind one stuck write collapse into a
+      single later request carrying the LATEST phase, followed by the clear
+      (`test/slack-progress.test.js`).
 - [ ] Native Slack streaming: on a routine turn, the reply is written live
       (chat.startStream/appendStream), the footer appears as a block at stopStream, and no extra
       activity-log/Plan messages are posted; a run with progress has one separate first task-card
@@ -708,6 +719,11 @@ shape is asserted, not reviewed by eye.
       the successor before deleting the retired bot message. Cleanup failure keeps both safe copies,
       successor-seed failure delivers the complete classic fallback, and final delivery closes only
       the newest healthy stream (`test/slack-progress.test.js`).
+- [x] Unit (SLK-208): an ANSWER stream Slack ended first — `message_not_in_streaming_state` on a
+      mid-answer append, and on the terminal stop that carries the footer — is republished into a
+      fresh stream holding the whole compiled answer plus the refused delta; the footer lands on
+      that surviving message, the stranded partial is deleted, and no duplicate answer is posted
+      beneath it (`test/slack-progress.test.js`).
 - [x] Unit: a progress card whose stream Slack ended first (`message_not_in_streaming_state` on an
       append, on the scheduled rollover, or on the terminal seal) is republished into a fresh stream
       carrying the complete toolbox — warning rows and rows that never reached the dead message

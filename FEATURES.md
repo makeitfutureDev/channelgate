@@ -388,7 +388,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   terminal call outright (a rate-limited `stopStream`), the classic recovery removes the partial
   streamed message before posting the complete answer and puts the footer on that answer, so a
   failed finalization still leaves exactly one reply rather than a truncated copy, a duplicate and a
-  stats-only trailer. Alongside the answer, tool calls
+  stats-only trailer. If Slack has ENDED the answer's stream instead
+  (`message_not_in_streaming_state` / `message_not_found` on an append or on the terminal stop), the
+  answer is republished rather than abandoned: a fresh stream receives the complete compiled answer,
+  the refused delta is replayed onto it, the footer lands on that surviving message and the stranded
+  copy is deleted only once the replacement is durable — a lost streaming window costs a message,
+  never a delta or the footer. Alongside the answer, tool calls
   and the agent's plan render in Slack's native
   **task_update card**, streamed as its own message directly ABOVE the answer — a turn with progress
   is two bot messages (the live card, then the uninterrupted answer beneath it), a text-only turn
@@ -444,9 +449,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   activity (model label first). Because Slack wipes the status whenever the app writes in the
   thread, tool and semantic progress-report toolbox writes restore it immediately, while streamed answer
   appends restore it on a bounded cadence; the liveness tick also re-asserts it when unchanged.
-  Status writes are serialized so activity cannot race the terminal clear or resurrect the box
-  after completion. Finalize and stop explicitly clear that temporary status; ordinary channel
-  threads simply no-op that surface while keeping the same persistent toolbox.
+  Status writes are serialized AND bounded: one write is in flight at a time and exactly one
+  pending slot holds the latest phase, so a phrase superseded before it reached Slack is dropped
+  instead of being sent late, and a rate-limited workspace cannot build a backlog. Activity can
+  never race the terminal clear or resurrect the box after completion. Finalize and stop clear that
+  temporary status, but DELIVERY IS NEVER GATED ON IT: the clear is fired and waited on only for a
+  few seconds before the answer goes out, and it still lands afterwards (posting in the thread
+  clears the box on Slack's side anyway). Ordinary channel threads simply no-op that surface while
+  keeping the same persistent toolbox.
   → TEST-PLAN: Slack gateway.
 - Long-turn liveness without Slack's five-minute red-card failure: the 20-second heartbeat is a
   succession of completed native task pulses rather than one indefinitely open task. Pulse IDs
@@ -463,7 +473,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   banner above the correct answer of a turn that merely hit (and handled) a failing tool. The
   replacement receives the complete row snapshot, the stranded copy is deleted only after it is
   durable, and a terminal seal that finds the stream already gone republishes the finished toolbox
-  the same way. Only a replacement that cannot be made durable degrades to no card at all.
+  the same way. The ANSWER stream recovers identically — the compiled reply is reseeded, the refused
+  delta replayed, the footer sealed onto the survivor — so a stream Slack ends first can cost a
+  message but never the answer or its footer. Only a replacement that cannot be made durable
+  degrades: to no card at all, or, for the answer, to the complete classic fallback (which also
+  removes the stranded partial).
   → TEST-PLAN: Observability.
 - Dedicated progress report inside the unified toolbox: for long/substantive domain work,
   the always-injected `gateway-usage` guide teaches skills to publish authoritative semantic-stage
