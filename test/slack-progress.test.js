@@ -978,9 +978,13 @@ test("task timeline keeps native subagents concurrent and updates each stable ro
 });
 
 test("real Codex multi-agent JSONL becomes one card row per child", async () => {
-  // Verbatim lines from a Codex turn (CLI 0.152.0, multi_agent_version v2) whose two children left
-  // no trace on the card: the spawn arrives as a collaboration function call, the lifecycle as
-  // SubAgentActivity items, and the only collab tool call is an EMPTY `wait`.
+  // Lines from the ROLLOUT of a Codex turn (CLI 0.152.0, multi_agent_version v2) whose two children
+  // left no trace on the card: the spawn is a collaboration function call, the lifecycle rides
+  // SubAgentActivity items, and the only collab tool call is an EMPTY `wait`. NOTE what this test
+  // does and does not prove: `codex exec --json` forwards NONE of the identity-bearing lines below
+  // (verified against CLI 0.153.4 — see the SLK-203 test further down), so this covers the mapping
+  // for a stream that does carry them, and the live card is covered by the runner-level test in
+  // test/codex-message-to-reply-e2e.js instead.
   const lines = [
     { type: "response_item", payload: { type: "function_call", name: "spawn_agent", namespace: "collaboration", arguments: "{\"task_name\":\"sandbox_reviewer\",\"fork_turns\":\"all\",\"message\":\"gAAAAABqnJuNTot2…\"}", call_id: "call_A" } },
     { type: "event_msg", payload: { type: "item_completed", item: { type: "SubAgentActivity", id: "call_A", kind: "started", agent_thread_id: "thread-A", agent_path: "/root/sandbox_reviewer" } } },
@@ -1028,6 +1032,52 @@ test("real Codex multi-agent JSONL becomes one card row per child", async () => 
   // The children's names must never be an encrypted spawn payload.
   assert.ok(!rows.some((row) => /gAAAA/.test(row.title)), "an encrypted spawn message must never reach a row title");
   assert.ok(rows.some((row) => row.title === "wait_agent"), "the coordination step is visible too");
+});
+
+test("SLK-203: a Codex turn's subagent rows survive the anonymous wait item", async () => {
+  // What the runner really emits for a Codex turn with two children, in order: the coordination
+  // tool row (all `codex exec --json` reports), then a named row per child announced live from the
+  // children's own rollouts, then the terminal row carrying the metrics the rollouts hold. Before
+  // the fix the card had the first of those three and nothing else.
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000101",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => streamer,
+    chat: { postMessage: async () => {}, update: async () => {} },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.223", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+  progress.onRuntimeResolved({ engine: "codex", model: "gpt-5.6-codex" });
+
+  progress.onEvent({ kind: "tool_use", id: "item_1", name: "wait_agent" });
+  progress.onEvent({ kind: "agent_activity", id: "child-sandbox", engine: "codex", name: "sandbox_reviewer", status: "running" });
+  progress.onEvent({ kind: "agent_activity", id: "child-connector", engine: "codex", name: "connector_reviewer", status: "running" });
+  progress.onEvent({ kind: "tool_result", id: "item_1", name: "wait_agent", status: "completed" });
+  progress.onEvent({ kind: "agent_activity", id: "child-sandbox", engine: "codex", name: "sandbox_reviewer", status: "completed", elapsedMs: 24_000, tokens: 4_010 });
+  progress.onEvent({ kind: "agent_activity", id: "child-connector", engine: "codex", name: "connector_reviewer", status: "completed", elapsedMs: 20_000, tokens: 6_010 });
+  progress.onDelta("Both reviews are in.");
+  await progress.finalize({ content: "Both reviews are in.", durationMs: 10, usage: { input_tokens: 1, output_tokens: 1 } });
+
+  const rows = terminalTaskUpdates(calls);
+  const sandbox = rows.find((row) => /sandbox_reviewer/.test(row.title));
+  const connector = rows.find((row) => /connector_reviewer/.test(row.title));
+  assert.ok(sandbox && connector, "each child owns a card row of its own");
+  assert.equal(rows.filter((row) => row.id.startsWith("agent-")).length, 2);
+  assert.equal(sandbox.status, "complete");
+  assert.equal(connector.status, "complete");
+  // The rollout metrics reach the row: how long the child ran and what it spent.
+  assert.match(sandbox.title, /24s/);
+  assert.match(sandbox.title, /4k tokens/);
+  assert.match(connector.title, /20s/);
+  // A live announcement followed by the terminal one is ONE row, never two.
+  assert.equal(new Set(rows.filter((row) => row.id.startsWith("agent-")).map((row) => row.id)).size, 2);
+  // And the coordination step the model actually called stays on the card next to them.
+  assert.ok(rows.some((row) => row.title === "wait_agent"));
 });
 
 test("in an assistant thread the shimmer makes parallel agent work visible", async () => {

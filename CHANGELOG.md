@@ -27,6 +27,11 @@ product overview.
   shared identity and posted someone else's week into the channel. A channel with no Composio gets
   no line, and forging the line in replayed thread text is defanged like the other framing markers.
 
+- Codex subagents get their own progress-card rows again. `codex exec --json` never puts a child's
+  identity on stdout — a turn that spawned two subagents sent one anonymous coordination item and
+  nothing else — so the card showed a single generic `wait_agent` row where Claude showed a row per
+  child. The Codex runner now reads each child's own session record for its name, opens a row while
+  the children work, and closes each row with the child's elapsed time and token spend.
 - The "🛑 Stopped." card's resume command now names the harness the stopped thread was actually
   running on, resolved per thread (per-thread override, then the engine that started the thread's
   session, then the channel's engine, then the gateway default). A session belongs to one harness,
