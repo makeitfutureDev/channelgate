@@ -28,7 +28,10 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
+import { resolveAccessGrants } from "../gateway/access-grants.js";
+import { channelSkillGrants, templateOfMeta } from "../gateway/skills/templates.js";
+import { engineLabel } from "../engines/registry.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
@@ -41,6 +44,11 @@ import {
   SECRETS_FORM_CALLBACK_ID, SECRETS_NAME_BLOCK_ID, SECRETS_REMOVE_ACTION_PREFIX, SECRETS_SHORTCUT_ID,
   SECRETS_VALUE_BLOCK_ID,
 } from "./secret-explorer.js";
+import {
+  buildChannelSettingsErrorView, buildChannelSettingsView, maskedCredential,
+  parseActionValue as parseChannelSettingsActionValue, parseSettingsMetadata,
+  CHANNEL_SETTINGS_ACTION_PATTERN,
+} from "./channel-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
 
@@ -54,11 +62,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { gatewayRoot } from "../config/paths.js";
 
-import { buildResumeCommand, resumeButton, filesButton, secretsButton, footerButtons, footerText, footerBlocks } from "./footer.js";
+import { buildResumeCommand, resumeButton, filesButton, secretsButton, settingsButton, footerButtons, footerText, footerBlocks } from "./footer.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
 // Re-exported for existing importers (moved to slack/footer.js + slack/progress.js in the
 // 2026-08 restructure split).
-export { buildResumeCommand, resumeButton, filesButton, secretsButton, footerButtons, footerText, footerBlocks };
+export { buildResumeCommand, resumeButton, filesButton, secretsButton, settingsButton, footerButtons, footerText, footerBlocks };
 export { setAssistantStatus, startProgress };
 import { processMessageEvent, runQueue, stopRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
 import { appContextForMessage, appContextObservedAt, appContextUserId, createAppContextStore } from "./app-context.js";
@@ -327,6 +335,86 @@ async function openSecretsManager(client, triggerId, { channelId, userId, thread
   });
   // The names are worth an audit line; there is no value to omit, because we never had one.
   await logEvent("channel_secrets_opened", { channel: channelId, author: userId, slug: entry.slug });
+}
+
+// ── Read-only channel settings ──────────────────────────────────────────────
+// The footer control is visible only when the authenticated request author may manage this
+// channel. Re-check on every modal open/tab click because old Slack messages remain interactive
+// after a person's role or the channel's manageAccess policy changes.
+const SETTINGS_PURPOSE = {
+  expired: "This channel settings view expired. Open it again from a recent reply.",
+  denied: "You're not authorized to view this channel's settings.",
+};
+
+export async function channelSettingsContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false } = {}) {
+  const ctx = await fileExplorerContext(client, {
+    channelId,
+    userId,
+    expectedSlug,
+    verifyMembership,
+    purpose: SETTINGS_PURPOSE,
+  });
+  const approved = await isApproved(userId);
+  if (!canManage(ctx.meta, { authorId: userId, isAdminUser: ctx.userIsAdmin, isApprovedUser: approved })) {
+    throw new Error(SETTINGS_PURPOSE.denied);
+  }
+  return ctx;
+}
+
+function channelSettingsSnapshot(meta = {}) {
+  const effective = effectiveMeta(meta);
+  const effectiveEngine = effective.engine || getEngine();
+  const organization = getOrgAccessGrants();
+  const channelTier = { ...effective, skills: channelSkillGrants(effective) };
+  const shared = resolveAccessGrants({ organization, channel: channelTier });
+  const template = templateOfMeta(effective);
+  return {
+    runtime: {
+      configuredEngine: effective.engine ? engineLabel(effective.engine) : "",
+      effectiveEngine: engineLabel(effectiveEngine),
+      configuredModel: effective.model || "",
+      gatewayModel: getDefaultModel(effectiveEngine),
+      configuredEffort: effective.effort || "",
+    },
+    connections: {
+      composioMode: getComposioMode(),
+      composioSdkReady: hasComposioSdkEntitlement() && Boolean(getComposioSdkApiKey()),
+      composioChannel: maskedCredential(meta.composioToken),
+      composioOrg: maskedCredential(getDefaultComposioToken()),
+      toolboxChannel: maskedCredential(meta.toolboxToken),
+      toolboxOrg: maskedCredential(getDefaultToolboxToken()),
+      makeToolboxUrl: String(meta.makeToolboxUrl || ""),
+      makeToolboxKey: maskedCredential(meta.makeToolboxKey),
+      noDefaultTokens: Boolean(effective.noDefaultTokens),
+    },
+    cloudMcp: {
+      claude: { channel: effective.allowedMcps || [], organization: organization.allowedMcps || [] },
+      codex: { channel: effective.allowedCodexMcps || [], organization: organization.allowedCodexMcps || [] },
+    },
+    skills: {
+      template: template?.name || effective.skillTemplate || "",
+      additional: effective.skills || [],
+      channel: channelTier.skills || [],
+      organization: organization.skills || [],
+      effective: shared.skills || [],
+    },
+    // listChannelEnv is the write-only subsystem's public shape: no value/ref can cross this line.
+    secrets: listChannelEnv(meta),
+  };
+}
+
+async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "runtime" } = {}) {
+  const { entry, meta } = await channelSettingsContext(client, {
+    channelId,
+    userId,
+    verifyMembership: true,
+  });
+  const state = { channelId, slug: entry.slug, threadTs, ownerId: userId, tab };
+  await client.views.open({
+    trigger_id: triggerId,
+    view: buildChannelSettingsView(channelSettingsSnapshot(meta), state, { channelName: entry.name, tab }),
+  });
+  await logEvent("channel_settings_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
 async function updateFileExplorerView(client, body, view) {
@@ -707,6 +795,55 @@ async function connectAndWire(app) {
       if (channelId && userId) await client.chat.postEphemeral({ channel: channelId, user: userId, text: e.message }).catch(() => {});
     }
   });
+
+  const handleChannelSettingsAction = async ({ ack, body, action, client }) => {
+    await ack();
+    const clicker = body?.user?.id;
+    const command = parseChannelSettingsActionValue(action?.value);
+    try {
+      if (command.o === "open") {
+        if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This settings button isn't for you.");
+        await openChannelSettings(client, body.trigger_id, {
+          channelId: command.c,
+          userId: clicker,
+          threadTs: command.t || "",
+        });
+        return;
+      }
+
+      const state = parseSettingsMetadata(body?.view?.private_metadata);
+      if (command.o !== "tab" || !clicker || state.ownerId !== clicker) {
+        throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
+      }
+      const { entry, meta } = await channelSettingsContext(client, {
+        channelId: state.channelId,
+        userId: clicker,
+        expectedSlug: state.slug,
+        verifyMembership: true,
+      });
+      const tab = String(command.p || "runtime");
+      await client.views.update({
+        view_id: body.view.id,
+        ...(body.view.hash ? { hash: body.view.hash } : {}),
+        view: buildChannelSettingsView(channelSettingsSnapshot(meta), { ...state, tab }, {
+          channelName: entry.name,
+          tab,
+        }),
+      });
+    } catch (e) {
+      console.warn(`[slack] channel settings error: ${e.message}`);
+      if (body?.view?.id) {
+        await client.views.update({
+          view_id: body.view.id,
+          ...(body.view.hash ? { hash: body.view.hash } : {}),
+          view: buildChannelSettingsErrorView(e.message),
+        }).catch(() => {});
+      } else if ((body?.channel?.id || command?.c) && clicker) {
+        await client.chat.postEphemeral(fileButtonNoticePayload(body, command, clicker, e.message)).catch(() => {});
+      }
+    }
+  };
+  app.action(CHANNEL_SETTINGS_ACTION_PATTERN, handleChannelSettingsAction);
 
   // Submitting the add/update form is the only moment a value exists in this process outside the
   // store. It is validated, written, and dropped — never put back into a view.

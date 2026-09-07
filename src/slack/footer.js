@@ -10,6 +10,7 @@ import { normalizeUsage } from "../gateway/usage.js";
 import { contextWindowFor, modelLabel } from "../gateway/model-info.js";
 import { actionValue as fileActionValue, FILES_ACTION_ID } from "./file-explorer.js";
 import { actionValue as secretActionValue, SECRETS_ACTION_ID } from "./secret-explorer.js";
+import { actionValue as settingsActionValue, CHANNEL_SETTINGS_ACTION_ID } from "./channel-settings.js";
 
 // The terminal command that reopens a thread's session locally. It `cd`s into the channel's
 // working folder first, because Claude/Codex locate a session by the directory you run them in
@@ -67,6 +68,20 @@ export function secretsButton(channelId, threadTs, authorId, label = "🔑") {
     text: { type: "plain_text", text: String(label).slice(0, 75), emoji: true },
     accessibility_label: "Manage channel secrets",
     value: secretActionValue("open", { c: channelId, t: threadTs || "", u: authorId }),
+  };
+}
+
+// Channel managers get one compact route from the reply footer to the current channel setup.
+// `mayManage` is resolved by the authenticated message pipeline before the run starts; the action
+// handler repeats the live authorization check so a stale button never preserves old privileges.
+export function settingsButton(channelId, threadTs, authorId, mayManage = false, label = "⚙️ Settings") {
+  if (!channelId || !authorId || !mayManage) return null;
+  return {
+    type: "button",
+    action_id: CHANNEL_SETTINGS_ACTION_ID,
+    text: { type: "plain_text", text: String(label).slice(0, 75), emoji: true },
+    accessibility_label: "View channel settings",
+    value: settingsActionValue("open", { c: channelId, t: threadTs || "", u: authorId }),
   };
 }
 
@@ -147,11 +162,12 @@ export function reviewFileButtons(result, { channel = "", threadTs = "", authorI
   }));
 }
 
-export function footerButtons(result, { channel = "", threadTs = "", authorId = "" } = {}) {
+export function footerButtons(result, { channel = "", threadTs = "", authorId = "", mayManage = false } = {}) {
   return [
     resumeButton(result.cwd, result.sessionId, result.engine),
     filesButton(channel, threadTs, authorId),
     secretsButton(channel, threadTs, authorId),
+    settingsButton(channel, threadTs, authorId, mayManage),
     ...reviewFileButtons(result, { channel, threadTs, authorId }),
   ].filter(Boolean);
 }

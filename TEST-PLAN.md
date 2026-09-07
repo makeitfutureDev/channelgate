@@ -112,7 +112,7 @@ a pass.
 Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 `test/memory-snapshot-run.test.js`, `test/channel-members-ui.test.js`,
 `test/access-grants.test.js`, `test/gateway-mcp-authz.test.js`,
-`test/mcp-control-plane-approval.test.js`.
+`test/mcp-control-plane-approval.test.js`, `test/channel-settings-modal.test.js`.
 
 - [x] Large MEMORY.md and topic writes succeed without a character-capacity failure.
 - [x] On an engine without FTS5 (Node 22.13) the database opens, migration 17 is skipped with a warning, and `search_channel_memory` answers from the plain scan with AND semantics, diacritic folding and bracketed excerpts; `ensureMemoryFtsTable` is idempotent and creates the index the moment the engine supports it.
@@ -128,6 +128,17 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       lifecycle preserves edits across the first six pages.
 - [x] Approved channel members render selected, admins render selected and locked, and inherited
       access is not persisted as an explicit guest grant.
+- [x] A manager-authored reply adds one requester-bound **⚙️ Settings** footer button; ordinary
+      authorized members do not receive it. Its read-only modal has Engine & model, combined MCP
+      Connections/Cloud MCP, Skills, and masked Secrets tabs with unique action IDs, and credential
+      snapshots retain no recoverable short-secret tail.
+- [ ] Live Claude: in `cg-testing-claude-auto`, have Contact temporarily make Apps a custom
+      channel manager, then let Apps request a fresh reply and open **⚙️ Settings**. Pass when all
+      four tabs show the channel's configured/inherited engine, model, MCP, skill, and masked
+      environment-secret state; after Contact revokes Apps, the historic button is refused and the
+      next Apps-authored reply has no Settings button. Restore the fixture's manage policy.
+- [ ] Live Codex: repeat the same manager-visible, four-tab, masked-secret, historic-button
+      revocation, and non-manager-hidden checks in `cg-testing-codex-auto`, then restore the fixture.
 - [ ] Live Claude: start a fresh test thread, ask a question whose answer exists only in a topic
       file, and verify search → one-source read → correct answer without bulk memory injection.
 - [ ] Live Codex: repeat the same retrieval proof in the Codex Auto fixture.

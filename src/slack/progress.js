@@ -616,7 +616,7 @@ function createTaskTimeline(push) {
 // All append/stop calls are serialized through a promise chain (the streamer's buffer is not
 // concurrency-safe). Any API failure flips `failed`, and finalize() falls back to a plain
 // postMessage so an answer is never lost if streaming is unavailable (missing scope / not enabled).
-function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir }) {
+function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, mayManage = false }) {
   // Resolve "@Name" → "<@id>" as the answer streams in; the holdback buffer keeps a mention whole
   // even when it straddles two delta slices (flushed in finalize).
   const mentionStream = createMentionStream(dir);
@@ -1192,7 +1192,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         };
         const stopWithFooter = () => answerStreamer.stop({
           ...terminalPayload,
-          blocks: footerBlocks(result, { channel, threadTs, authorId }),
+          blocks: footerBlocks(result, { channel, threadTs, authorId, mayManage }),
         });
         try {
           if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
@@ -1242,8 +1242,8 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           // streamed copy this fallback replaces, so nothing of it survives to be duplicated.
           resolveMentions(mdToMrkdwn(fullRaw.trim()), dir).trim() + tag,
           footerText(result),
-          footerButtons(result, { channel, threadTs, authorId }),
-          { footerBlocks: footerBlocks(result, { channel, threadTs, authorId }) },
+          footerButtons(result, { channel, threadTs, authorId, mayManage }),
+          { footerBlocks: footerBlocks(result, { channel, threadTs, authorId, mayManage }) },
         );
         await stopTimeline();
       } catch (error) {

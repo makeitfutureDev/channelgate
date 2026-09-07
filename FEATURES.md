@@ -63,6 +63,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   longer offered. MCP Connections, Cloud MCP, Environment tokens, and Skills are separate first-class
   channel pages rather than nested beneath Tools; enabled skills sort first and the channel-level
   Grant Tier switch is gone.
+- **Manager-only Slack settings snapshot:** replies requested by a current channel manager add a
+  requester-bound **⚙️ Settings** footer button. It opens a read-only Block Kit modal with four
+  tabs: Engine & model; MCP Connections plus Cloud MCP; Skills; and Secrets. The view follows the
+  web setup concepts, distinguishes channel configuration from organization inheritance, and
+  exposes credentials only as configured/masked state. Opening it and every tab change re-check
+  current channel membership plus `canManage`, so a historic button cannot retain revoked access.
+  → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
   admins are selected and locked, while explicit guest grants remain independently editable.
 - **Uncapped, on-demand channel memory:** Markdown remains the portable source of truth. Fresh
@@ -313,7 +320,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
   *Browse channel files* message shortcut opens it for a selected thread, typed `@bot /files` posts
   an ephemeral *Open files* button for thread-aware use, and every interactive run footer carries a
-  requester-bound `📂` button beside `💻` for one-click access; gateway admins may also open a
+  requester-bound `📂` button beside `💻` for one-click access; managers also receive the
+  requester-bound **⚙️ Settings** snapshot button described above, and gateway admins may open a
   control attached to another user's bot reply. When an agent names up to five
   existing files inside its effective working folder for review, the same footer adds deduplicated
   `📄 filename` buttons in mention order. A named path may be absolute or written relative to the

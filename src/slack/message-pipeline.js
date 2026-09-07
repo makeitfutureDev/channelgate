@@ -582,6 +582,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       });
       return;
     }
+    const authorMayManage = canManage(meta, {
+      authorId: event.user,
+      isAdminUser: authorIsAdmin,
+      isApprovedUser: authorApproved,
+    });
 
     // Only an authorized trigger may spend Slack read/file API calls. Hydrate it from the exact
     // canonical message so omitted/incomplete attachment fields cannot produce a text-only agent
@@ -1304,6 +1309,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         authorId: event.user,
         teamId,
         dir,
+        mayManage: authorMayManage,
       });
       // First time the bot is EVER pulled into an existing thread → replay its earlier messages
       // for context. Gated on the persistent has-ever-had-a-session marker (not "no current
@@ -1433,7 +1439,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // footer; a long answer is split into multiple threaded messages instead of truncated.
         const md = resolveMentions(mdToMrkdwn(result.content || ""), dir).trim() || "_(no output)_";
         if (await stopSuppressedDelivery()) return;
-        await postChunkedReply(client, event.channel, threadKey, md, footerText(result), footerButtons(result, { channel: event.channel, threadTs: threadKey, authorId: event.user }));
+        await postChunkedReply(client, event.channel, threadKey, md, footerText(result), footerButtons(result, {
+          channel: event.channel,
+          threadTs: threadKey,
+          authorId: event.user,
+          mayManage: authorMayManage,
+        }));
       }
       // User-visible delivery is the durable terminal boundary. If force-stop begins while usage
       // bookkeeping finishes, boot must not replay an answer Slack already received.
