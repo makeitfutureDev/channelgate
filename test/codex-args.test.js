@@ -794,3 +794,24 @@ test("Codex event mapping without a progress state leaves the text untouched", (
   const mapped = progressFromCodexEvent({ type: "item.completed", item: { id: "item_9", type: "agent_message", text: "Answer." } });
   assert.deepEqual(mapped, { delta: "Answer." });
 });
+
+
+test("personal skill catalogs supplement fresh/resumed prompts, replace old grants, and disappear in clean mode", () => {
+  const personalSkills = [{ name: "private-proof", description: "Synthetic private instructions", path: "/artifact/run/skills/private-proof/SKILL.md" }];
+  for (const isNewSession of [true, false]) {
+    const args = argsFor({ prompt: "Use private-proof", isNewSession, personalSkills });
+    const prompt = args.find((value) => value.includes("[Current personal skill grants"));
+    assert.ok(prompt);
+    assert.match(prompt, /supplement your native repository and system skills/);
+    assert.match(prompt, /read its SKILL.md/);
+    assert.match(prompt, /earlier personal catalogs and paths have expired/);
+    assert.ok(prompt.includes(JSON.stringify(personalSkills)));
+    assert.ok(prompt.endsWith("Use private-proof"));
+  }
+  const revoked = argsFor({ prompt: "Next turn", personalSkills: [], isNewSession: false }).join("\n");
+  assert.match(revoked, /earlier personal catalogs and paths have expired/);
+  assert.ok(!revoked.includes("private-proof"));
+  const clean = argsFor({ prompt: "Raw clean prompt", personalSkills, clean: true });
+  assert.ok(clean.includes("Raw clean prompt"));
+  assert.ok(!clean.join("\n").includes("private-proof"));
+});

@@ -4109,3 +4109,32 @@ acceptance gates; no production restart or external message was performed by the
   scan and DCO checks passed. Default `/tmp` in the development container is private (0700),
   causing the unrelated service-path preflight fixture to fail on unchanged main too; the
   isolated run uses public ancestors without modifying container/production permissions.
+
+
+### Personal Codex skill catalog delivery — REL-SKILLS-01 (2026-09-07)
+
+- [x] Automated: `node --test test/run-grant-isolation.test.js test/codex-args.test.js
+  test/codex-message-to-reply-e2e.test.js`. Two concurrent authors get only their own catalog
+  paths, copied support files and cleanup; shared project skills are unchanged. Fresh/resumed
+  prompts include the current catalog, empty catalogs supersede previous grants, clean prompts
+  omit it, and the persistent HOME/CODEX_HOME remain unchanged. An absent selected personal
+  skill throws a named error before engine launch instead of silently delivering an empty list.
+- [ ] Live Codex, ordinary read mode: in a disposable QA channel grant `shared-proof` to the
+  channel and `personal-proof` only to author A. Shared SKILL.md says return SHARED-COPPER-18;
+  personal SKILL.md requires reading its `references/word.txt`, containing PERSONAL-COBALT-73.
+  Ask A: "Use shared-proof and personal-proof and report both fixture words." Pass: both words
+  are correct, the personal SKILL.md/reference are actually read, HOME/CODEX_HOME stay the
+  persistent channel paths, and no personal file appears in project .agents/skills. Native
+  read-only shell remains available for reading the artifact; the workspace-scoped gateway
+  reader is not widened. Repeat as author B with no personal grant: no personal catalog entry.
+- [ ] Live Codex resume: rotate A's personal reference to PERSONAL-AMBER-29 and repeat in the same
+  provider thread after prior artifacts have been removed. Pass: the new skill/reference path is
+  read and the new word returned; auth/session roots remain unchanged. Remove the grant and
+  repeat: the current catalog is empty. Clean mode must not inject the catalog.
+- [ ] Live Claude regression: use the same author/channel fixture on Claude; native personal
+  plugin loading, reference reading and per-run cleanup must still work. A missing selected
+  personal skill fails by name on both engines.
+
+Native personal-catalog provider proof was attempted but the execution session ended without a
+completion artifact; these live cases remain unverified. This is separate from the successful
+native Astra child-accounting schema check above.

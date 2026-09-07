@@ -37,6 +37,11 @@ product overview.
 - Recognize natural-language loop Stop, cancel loops before Slack delivery waits, record per-turn
   Stop outcomes, and release stream cleanup after a bounded grace while preserving partial text.
 - Render numeric progress counts in replaceable titles and normalize secondary provider failures.
+- Codex now receives usable personal skill instructions through a per-turn catalog alongside
+  native shared skills. Ephemeral files include references, remain outside shared project skills,
+  and are cleaned up after the run. Auth/session homes stay unchanged; missing selected personal
+  grants fail visibly. Personal catalog delivery does not register native slash commands.
+
 - Codex reads child identities and token accounting inside the channel runtime, including resumed
   turn baselines. Rootless HOME volumes no longer need to be readable by the daemon. Named child
   rows and elapsed/token totals use the same reducer without new mounts or an image rebuild;
