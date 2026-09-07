@@ -21,6 +21,10 @@ from streamed/final replies and background output. A rotation retires the affect
 process; it does not recreate the container. Ask the human to enter a named variable through
 `/secrets`; never ask them to paste its value into chat or a repository file.
 
+Write-only is the listing/reveal contract, not a claim that a spawned process cannot read its
+environment. When injected, these credentials are usable by the channel's process and CLI;
+verify availability with non-secret status checks and never print values.
+
 ## Saved CLI sessions and device login
 
 The image ships the supported toolchain, while installs under `~/.npm-global`, `~/.local`, pipx,

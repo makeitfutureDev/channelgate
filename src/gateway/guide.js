@@ -14,6 +14,7 @@
 import { fileURLToPath } from "node:url";
 import { mkdir, readFile, writeFile, readdir, rm, access } from "node:fs/promises";
 import path from "node:path";
+import { containerAccessNote } from "./runtime-access.js";
 import { gatewayRoot } from "../config/paths.js";
 import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 import { DEFAULT_PLATFORM, platformOr, isPlatformId } from "../platforms/registry.js";
@@ -138,18 +139,6 @@ export async function resolvedGuideFiles(platform = DEFAULT_PLATFORM) {
 
 // Placeholders every guide source may use, so a shared file can name the surface it is running on
 // without being forked per platform.
-function containerAccessNote(target) {
-  if (!Array.isArray(target?.container?.mounts)) {
-    return "**Container access:** no resolved runtime target was supplied when this guide was generated. Do not infer host access from the author's role; check the current runtime before claiming a path is mounted or absent.";
-  }
-  const homes = target.container.mounts.filter((m) => m.kind === "operator-home").map((m) => m.target);
-  const setting = target.settings?.fullAccessHome === true ? "on" : "off";
-  const access = homes.length
-    ? `This channel's resolved runtime includes the operator-home mount at ${homes.map((home) => JSON.stringify(home)).join(", ")}. Every admitted author can read that mounted home; write-capable bypass tools still require an admin author in Admin mode.`
-    : "This channel's resolved runtime has no operator-home mount. The working folder, clean workspace and artifacts remain its host directory mounts; the author's admin role alone adds no mount.";
-  return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access} \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See \`references/administration.md\` for the boundary and the optional grant.`;
-}
-
 function substitutePlatform(content, adapter, target) {
   return String(content)
     .replaceAll("{{PLATFORM}}", adapter.label)

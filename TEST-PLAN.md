@@ -3090,6 +3090,23 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       paths, ordinary and clean workspaces, missing-target uncertainty and override/reset
       precedence (`test/container-access-guide.test.js`). Runtime readiness and confinement are
       unchanged; this checks the instructions delivered to engines.
+- [x] Resumed access facts: exact stub-engine argv contains current resolved access on every
+      fresh/resumed attempt across global off→on→off changes, with explicit stale-claim correction
+      and conditional Admin qualification. The same facts appear for ordinary clean runs without
+      optional context, model retries, session healing and cross-engine fallback/retry
+      (`test/runtime-identity-preamble.test.js`); these tests make no real provider call.
+- [ ] Live resumed access facts (Claude AND Codex): keep the original failing thread where the
+      model claimed Full access can never expose the operator home. On the fixed revision, ask
+      the same confinement/network question in that SAME thread and also a fresh thread. Use a
+      reserved Worker fixture with the gateway home switch on; both must report the current
+      absence of a home mount AND that changing to Admin qualifies for the explicit home grant,
+      with the container still the filesystem/process boundary and Allow network still advisory.
+      They must not repeat the prior universal no-home claim. Repeat off→on→off on a disposable
+      gateway/Full-access fixture: compare each same-thread answer with resolved mounts and the
+      per-attempt prompt. If environment credentials are discussed, state usable when injected,
+      masked listings and redacted outputs; never print a value. Preserve original failures,
+      append exact retests and restore the fixture. A fresh-thread pass alone does not close a
+      failing resumed-thread case.
 - [ ] Live operator-home guide acceptance (Claude AND Codex): reserve a Worker channel and an
       Admin/Full-access channel on a disposable gateway. Prepare a harmless sibling-home sentinel;
       snapshot global switch and channel modes. Ask each engine: “Does Full access let this channel

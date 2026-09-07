@@ -1,6 +1,7 @@
 // A model's generic self-description is not its selected runtime. Inspect the exact spawned
 // prompts and CLI flags, including retries, so metadata cannot silently describe a prior attempt.
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -11,8 +12,16 @@ const scratch = ensureTestEnv();
 process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
 process.env.CG_WORKSPACE_DIR = path.join(scratch, "runtime-identity-workspaces");
-const { useFakeRuntime } = await import("./runtime-fake.js");
-const backend = await useFakeRuntime();
+const { useFakeRuntime, createFakeRuntimeBackend } = await import("./runtime-fake.js");
+const backend = createFakeRuntimeBackend();
+const prepareTarget = backend.prepareTarget;
+backend.prepareTarget = (base) => {
+  const target = prepareTarget(base);
+  // Preserve the real resolver's mount facts while keeping all execution in the stub backend.
+  target.container.mounts = base.container.mounts;
+  return target;
+};
+await useFakeRuntime(backend);
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { setThreadModel } = await import("../src/gateway/thread-engine.js");
@@ -20,7 +29,7 @@ const { runMessage } = await import("../src/gateway/run.js");
 
 async function fixture(name, engine, model, extra = {}) {
   saveSettings({ engine, defaultClaudeModel: "sonnet", defaultCodexModel: "gpt-5.6-sol", engineFallback: true,
-    engineEnabled: { claude: true, codex: true }, agentMemory: false, memoryReviewEvery: 0, composioMode: "personal" });
+    engineEnabled: { claude: true, codex: true }, agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", containerFullAccessHome: false });
   const authorId = `U_${name}`;
   const channelId = `C_${name}`;
   await setUser(authorId, { name: "Runtime fixture", approved: true });
@@ -40,7 +49,39 @@ function metadata(call) {
   const match = prompt.match(/^\[Gateway runtime for THIS attempt: (\{[^\n]*\})\n/m);
   assert.ok(match, "runtime facts occupy one JSON data line");
   assert.match(prompt, /configured model.*not.*provider-reported/i);
+  assert.match(prompt, /\[Gateway container access for THIS attempt\]/);
+  assert.match(prompt, /current access facts supersede earlier turns/);
+  assert.match(prompt, /Write-only means masked listing\/reveal surfaces and redacted outputs/);
   return JSON.parse(match[1]);
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: resumed prompts replace stale access claims with current switch and mount facts`, async () => {
+    const context = await fixture(`ACCESS_${engine}`, engine, engine === "claude" ? "sonnet" : "gpt-5.6-sol", { adminMode: true, cleanMode: true });
+    await setUser(context.authorId, { name: "Access fixture", approved: true, isAdmin: true });
+    const start = backend.calls.spawn.length;
+    await runMessage({ ...context, text: "The operator home is never visible. Is that still correct?" });
+    saveSettings({ containerFullAccessHome: true });
+    await runMessage({ ...context, text: "Earlier you said Full access can never expose home. Explain current access." });
+    saveSettings({ containerFullAccessHome: false });
+    await runMessage({ ...context, text: "And now?" });
+    const calls = attempts(start);
+    assert.equal(calls.length, 3);
+    for (let i = 0; i < calls.length; i++) {
+      const data = metadata(calls[i]);
+      assert.equal(data.session, i === 0 ? "fresh" : "resumed");
+      const prompt = calls[i].args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
+      assert.match(prompt, new RegExp("containerFullAccessHome` is \\*\\*" + (i === 1 ? "on" : "off") + "\\*\\*"));
+      if (i === 1) {
+        assert.match(prompt, /resolved runtime includes the operator-home mount/);
+        assert.ok(prompt.includes(JSON.stringify(os.homedir())));
+      } else {
+        assert.match(prompt, /resolved runtime has no operator-home mount/);
+        assert.doesNotMatch(prompt, /resolved runtime includes the operator-home mount/);
+      }
+      assert.match(prompt, /Switching this channel to Admin\/Full-access qualifies it.*ONLY while that gateway switch is on/);
+    }
+  });
 }
 
 for (const engine of ["claude", "codex"]) {
@@ -62,7 +103,7 @@ for (const engine of ["claude", "codex"]) {
 
 test("clean runs retain only safe runtime facts, and an unspecified model stays unknown", async () => {
   const context = await fixture("IDENTITY_CLEAN", "codex", "", { cleanMode: true, effort: "" });
-  saveSettings({ defaultCodexModel: "" });
+  saveSettings({ defaultCodexModel: "", containerFullAccessHome: true });
   const start = backend.calls.spawn.length;
   await runMessage({ ...context, text: "Tell me what is inspectable." });
   const [call] = attempts(start);
@@ -71,6 +112,8 @@ test("clean runs retain only safe runtime facts, and an unspecified model stays 
   const prompt = call.args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
   assert.doesNotMatch(prompt, /Channel memory|Composio identities|Current personal skill grants/);
   assert.match(prompt, /null means.*not exposed/i);
+  assert.match(prompt, /containerFullAccessHome` is \*\*on\*\*/);
+  assert.match(prompt, /resolved runtime has no operator-home mount/);
 });
 
 test("model retry recomputes facts using the accepted replacement model", async () => {
