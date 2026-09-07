@@ -405,6 +405,7 @@ function channelSettingsSnapshot(meta = {}) {
       composioMode: getComposioMode(),
       composioSdkReady: hasComposioSdkEntitlement() && Boolean(getComposioSdkApiKey()),
       composioChannel: maskedCredential(meta.composioToken),
+      composioTokenLabel: String(meta.composioTokenLabel || ""),
       composioOrg: maskedCredential(getDefaultComposioToken()),
       toolboxChannel: maskedCredential(meta.toolboxToken),
       toolboxOrg: maskedCredential(getDefaultToolboxToken()),
@@ -499,9 +500,11 @@ export function connectionSettingsPatch(current = {}, form = {}) {
   }
   const patch = { ...make };
   if (form.composioToken) patch.composioToken = form.composioToken;
+  if (typeof form.composioTokenLabel === "string") patch.composioTokenLabel = form.composioTokenLabel.trim();
   if (form.toolboxToken) patch.toolboxToken = form.toolboxToken;
   const changed = [
     form.composioToken ? "Composio" : "",
+    typeof patch.composioTokenLabel === "string" && patch.composioTokenLabel !== String(current.composioTokenLabel || "") ? "Composio label" : "",
     form.toolboxToken ? "Toolbox" : "",
     form.makeToolboxKey || form.makeToolboxUrl !== String(current.makeToolboxUrl || "") ? "Make MCP" : "",
   ].filter(Boolean);
@@ -1286,7 +1289,7 @@ async function connectAndWire(app) {
         response_action: "update",
         view: settingsRootView(entry, saved, { ...state, tab: "mcp" }, userIsAdmin, {
           tab: "mcp",
-          notice: changed.length ? `✅ Updated ${changed.join(", ")} connection credentials.` : "No credential values changed.",
+          notice: changed.length ? `✅ Updated connection settings: ${changed.join(", ")}.` : "No connection settings changed.",
         }),
       });
     } catch (error) {

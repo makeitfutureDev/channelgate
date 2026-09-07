@@ -134,8 +134,10 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       selection validates engine/model/effort compatibility; direct MCP and skill grants toggle
       without altering inherited/template tiers; skill templates can be assigned/cleared; the
       Secrets tab reaches the existing write-only manager; and blank credential inputs preserve
-      saved tokens while replacements are never prefilled or echoed. Credential snapshots retain
-      no recoverable short-secret tail. Historic controls re-check both current manager rights and
+      saved tokens while replacements are never prefilled or echoed. Composio labels can be
+      prefilled, edited, or cleared without revealing a token; label-only saves keep
+      the token, and submissions from older forms without a label field keep the saved label.
+      Credential snapshots retain no recoverable short-secret tail. Historic controls re-check both current manager rights and
       current Slack membership before every mutation.
 - [ ] Live Claude: in `cg-testing-claude-auto`, have Contact temporarily make Apps a custom
       channel manager, then let Apps request a fresh reply and open **⚙️ Settings**. Pass when Apps
@@ -147,6 +149,9 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       manager. After Contact revokes Apps, every historic mutation is refused and the next
       Apps-authored reply has no Settings button. Restore all fixture state and never use production
       credentials in this case.
+      Also set the Composio label to `QA shared account`, reopen it in Slack and the web editor,
+      rename it, then clear it with the token input blank. Pass when both surfaces agree, the
+      summary shows the saved label, and the disposable token stays configured throughout.
 - [ ] Live Codex: repeat the same editable four-tab, tier-isolation, write-only credential,
       reversible mutation, historic-control revocation, and non-manager-hidden checks in
       `cg-testing-codex-auto`, then restore every fixture setting.
