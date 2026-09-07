@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Admin UI: the Pending approvals rows wrap the command being approved (monospace, a few lines)
+  instead of running it underneath the Approve/Deny buttons; the Automations search box uses the
+  same styled search component as the Users page, with a clear button and Escape to clear.
 - A model the provider refuses no longer answers as a different model in silence, and never
   answers in JSON. Two halves of the same live failure (a channel whose model id did not exist):
   the gateway did substitute its default and logged the substitution, but the ⚠️ note was only
