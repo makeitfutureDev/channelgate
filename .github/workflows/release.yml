@@ -60,3 +60,6 @@ jobs:
           name: release-evidence-${{ github.sha }}
           path: dist/release/
           if-no-files-found: error
+          # The image is already gzipped; recompressing it wastes runner time and CPU.
+          compression-level: 0
+          retention-days: 30

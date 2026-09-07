@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+No changes recorded after the current candidate.
+
+## 0.6.0-rc.1 — 2026-09-08 (release candidate)
+
+Candidate source and build evidence for review. The GitHub Release remains a draft; the planned
+full live QA campaign is pending. This is not approval for stable-release promotion.
+
 - Add a manager/admin-only Access page to Slack channel settings for base mode (including Admin), Auto, Lean,
   network, use/manage policy, and named guest/manager lists. Recheck live membership and current
   roles on save; immediately acknowledge submissions while validation runs. Admin-author-only
