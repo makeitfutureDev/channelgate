@@ -3,6 +3,21 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## QA fixture readiness and contract reconciliation (2026-09-08)
+
+- [x] `container-image.test.js` publishes the escaped child's PID only after entering its new
+  session. The prior parent-side `$!` publication could race `setsid` under parallel-suite load,
+  failing before the stop behavior was exercised. The real process-group/session assertions and
+  descendant cleanup checks remain intact. Focused suite: 13 passed; full suite: 2,186 passed,
+  4 optional cases skipped, 0 failed. This is engine-independent test-fixture evidence.
+- [x] Real Chromium disposable-admin fixtures: `user-skills-browser.test.js` and
+  `ai-testing-picker-browser.test.js`, with `CG_BROWSER_MODULE` pointing to the installed
+  Playwright module: 2 passed, no skips. These prove their browser/API fixtures, not live Slack
+  approval-link delivery or production UI acceptance.
+- [x] Reconciled older restart, watchdog and OpenCode confinement expectations with the current
+  execution/delivery and container contracts. RR-15 artifact evidence is separate from remaining
+  release notice/legal reviews; live conversation gates remain explicitly unexecuted until proven.
+
 ## Disposable Linux lifecycle workflow
 
 - [x] Real fresh-install/restart/encrypted fixture backup/restore/uninstall acceptance passed on
@@ -142,8 +157,11 @@ a pass.
   validate the rebuilt candidate image or real provider calls.
 - [ ] Live: complete both-engine and Beta-surface cases in `docs/RELEASE-ACCEPTANCE.md`, including a
   fresh VM installation, restart, update, restore and uninstall. Record actual fixture IDs/results.
-- [ ] Release: execute the tag-bound runtime-image evidence workflow, verify attestations and review
-  candidate-specific dependency/model notices. Counsel and trademark gates remain external.
+- [x] Release artifact evidence: the tag-bound runtime-image workflow and downloaded checksums /
+  exact-source attestations passed for `v0.6.0-rc.2`; see RR-15 in
+  `docs/RELEASE-ACCEPTANCE.md` for the immutable evidence and scope.
+- [ ] Release review: complete candidate-specific dependency/model notice review. Counsel and
+  trademark gates remain external; artifact verification does not satisfy these reviews.
 
 ## Composio identity and connection discovery
 
@@ -3693,8 +3711,11 @@ Manual checks for the daemon-level behavior:
 - [ ] **Thread serialization + stop:** a second message gets the steer-or-queue card; choosing queue
       runs it sequentially after the active turn. `stop` kills the running turn AND discards accepted
       queued ones — including a turn parked on the global semaphore (no late side effects/answer).
-- [ ] **Restart durability:** restart the daemon while one turn runs and a second is queued —
-      boot recovery re-runs BOTH; neither message is lost.
+- [ ] **Restart durability (both engines):** in disposable fixtures restart while one turn runs
+      and another is durably queued. Verify recovery distinguishes an unknown execution outcome
+      from work that never started: unknown side effects are not blindly replayed, queued work
+      follows its recovery policy, and the originating thread receives the recovery outcome.
+      Preserve pre/post execution and delivery checkpoints as evidence; a second side effect fails.
 - [ ] **Long answers:** a >12k-char answer arrives as multiple messages with valid code fences
       in every part (stream + tool-only + scheduled paths); nothing silently truncated.
 - [ ] **Event dedupe:** a redelivered Socket Mode envelope (kill the socket mid-ack) does not
@@ -3706,8 +3727,11 @@ Manual checks for the daemon-level behavior:
       admin-only.
 - [ ] **Model validation:** saving a bogus model in the admin UI (channel/DM/template) returns
       400; Slack `/model` only exposes validated picker values, and valid values still save.
-- [ ] **Warm watchdog:** a wedged warm turn times out (COMMAND_TIMEOUT), the session dies, and
-      the next message in the thread works.
+- [ ] **Warm watchdog (Claude warm runner; Codex shared-watchdog regression):** in a disposable
+      fixture keep the engine process alive without stdout past `COMMAND_TIMEOUT`. Require a
+      visible wait report and continued execution. Then exhaust the fixture's `CG_MAX_SILENCE`
+      budget or remove its engine process: require the classified terminal outcome and a working
+      next message. Stderr chatter must not reset the stdout silence budget.
 - [ ] **Scheduler catch-up:** a tick delayed past a minute boundary still fires that minute's
       cron exactly once; one-time schedules never double-fire.
 ### Scheduling restart durability

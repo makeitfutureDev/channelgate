@@ -18,12 +18,14 @@ expose OpenCode shell, edit, web, subagent, LSP, code-execute, skill, external-d
 actions. `--pure` disables external plugins. The inline config carries both stable V1
 `permission`/`agent` and current V2 `permissions`/`agents` forms; both the global policy and the
 selected `gateway-readonly` agent default-deny every action, then allow only workspace-local read,
-glob, grep, and list while denying `.env` reads. Requests for gateway write mode, approved-domain network, admin bypass, or MCP are
+glob, grep, and list while denying `.env` reads. Requests for gateway write mode, network access, admin bypass, or MCP are
 rejected before process spawn. Unknown capabilities remain denied by the adapter contract.
 
-This restriction still trusts OpenCode itself to enforce its read-action path boundary. OpenCode
-must not be enabled for hostile repositories or multi-tenant secrets until the gateway can wrap it
-in a real OS-level sandbox and verify that boundary on Linux.
+Like every engine, OpenCode is spawned through the shared runtime target inside the channel's
+rootless Podman container. Container mounts and process isolation provide the OS boundary;
+OpenCode's read-action policy restricts access within that boundary. The network-off setting is
+engine policy, not an egress cut-off. Broader adapter admission still requires its own acceptance
+evidence; the container does not make unsupported tools or permissions available.
 
 ## Supported runtime contract
 
@@ -52,4 +54,4 @@ gateway/Composio/Skills/Toolbox credential bundle.
 | Model tool network access | Refused |
 | Admin/bypass mode | Refused |
 | MCP and external plugins | Omitted/refused |
-| OS-level confinement | Not provided; required before broader admission |
+| OS-level confinement | Shared per-channel rootless Podman runtime; mount policy applies |

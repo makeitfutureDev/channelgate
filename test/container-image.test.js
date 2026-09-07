@@ -258,7 +258,9 @@ test(
 
     const client = spawn(
       bin("cg-exec"),
-      [runId, "/bin/sh", "-c", 'setsid sleep 300 & echo $! > "$1"; wait', "cg-test", escapedFile],
+      // Publish readiness from INSIDE the new session. The parent's `$!` is available before
+      // setsid has run, so recording it there can race the process-group assertions under load.
+      [runId, "/bin/sh", "-c", 'setsid /bin/sh -c \'echo $$ > "$1"; exec sleep 300\' cg-escaped "$1" & wait', "cg-test", escapedFile],
       { env, stdio: "ignore" },
     );
     let leader = null;
