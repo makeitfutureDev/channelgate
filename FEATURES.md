@@ -216,10 +216,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 ## Public website
 - The marketing / early-access site (and its lead-routing contract) lives in its own
   repository — this repository ships product code only.
-- **Public entrypoint:** README describes installation, current license/support status and the
-  actual container/credential/data-flow boundary, with working documentation links. Promotional
-  assets are linked only when they exist; maintainer release/presentation instructions live in
-  `docs/MAINTAINER-RELEASE.md`. → TEST-PLAN: README hero guards.
+- **Public entrypoint:** README leads with a descriptive product heading, team benefits and setup,
+  followed by eight feature groups, practical use cases and explicit platform/engine support.
+  Searchable product terms and descriptive documentation links cover self-hosted AI agents, Slack,
+  Teams, Google Chat, Claude Code, Codex, MCP and workflow automation. The homepage distinguishes
+  Codex skills/estimated costs, on-demand memory, SQLite storage, background restart outcomes,
+  bot artifacts versus Composio canvases, and the actual container/credential/data-flow boundary.
+  License, partner links and support status stay visible; promotional assets are linked only when
+  they exist. Maintainer release/presentation instructions live in `docs/MAINTAINER-RELEASE.md`.
+  → TEST-PLAN: README hero guards.
 
 ## Conversation gateway
 - Slack Socket Mode listener across DM / group DM / public channel / private channel

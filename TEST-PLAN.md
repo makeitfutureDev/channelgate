@@ -514,13 +514,13 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 
 ### README hero guards
 `node --test test/readme.test.js` — the repository landing page is an external promise, so its
-shape is asserted, not reviewed by eye.
-- [x] Exactly one H1 (`# ChannelGate`), and the tagline the site's meta description repeats is
-      present as its own bolded line.
+structural invariants are automated; rendered navigation and feature claims also receive review.
+- [x] Exactly one descriptive H1 names ChannelGate, self-hosted AI agents and its chat platforms;
+      the value proposition is present as its own bolded line.
 - [x] The `formerly <pre-rename name>` attribution appears exactly once.
 - [x] "open source" never appears except inside the exact `not OSI open-source` disclaimer.
 - [x] The CTA carries the URL-encoded discovery-call `mailto:` and both UTM-tagged links
-      (product page + `partners.html`), with exactly one campaign-tagged CTA block.
+      (product page + `/partners`), with exactly one campaign-tagged CTA block.
 - [x] Every relative Markdown link (anchors stripped) resolves to a file that exists.
 - [x] Badge URLs are absolute https, whitespace-free, every percent-escape complete; static
       shields.io badges match `label-message-hexcolour`; the CI badge names `.github/workflows/ci.yml`,
@@ -529,10 +529,20 @@ shape is asserted, not reviewed by eye.
 - [x] The licensing section keeps `500 AI messages per conversation per month`, "no version is
       relicensed automatically", the no-key tier row, the three lanes, and links to `LICENSE.md`,
       `docs/LICENSE-KEYS.md`, `docs/LICENSING-FAQ.md`, `TRADEMARK.md`, `CLA.md`.
-- [x] Hero sections appear in the release-plan order, with `## Prerequisites` (the first
-      operational section) below them.
+- [x] Homepage sections present benefits, setup, the full feature list, use cases, support,
+      architecture, privacy, deployment tradeoffs, licensing, documentation and configuration in order.
 - [x] Public README has no links to absent demo/social assets, names Beta support and Enterprise
       SDK scope, and links to the consolidated maintainer release/attestation procedure.
+
+- README editorial acceptance (engine-independent: GitHub renders static Markdown; no model run):
+  fixture is the committed `README.md` plus linked repository docs. Run
+  `node --test test/readme.test.js test/license.test.js test/channelgate-rename.test.js`, then open
+  the README on GitHub. Follow the top navigation and documentation links; inspect heading order,
+  tables, badge rendering, setup steps and the eight feature groups. Pass when all automated
+  guards pass, navigation resolves, and claims match the shipped catalog/source: supported Codex
+  skills and estimated costs, on-demand memory, SQLite, explicit restart outcomes, bot/Composio
+  artifact separation, configurable access, and Beta/experimental/Enterprise labels. Confirm the
+  license badge matches `LICENSE.md`. No live Claude/Codex acceptance is required for this copy edit.
 
 ### Foundation (Slices 1–3)
 - [ ] Boot creates `~/.channelgate/{config,channels,logs}`.
