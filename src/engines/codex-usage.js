@@ -2,7 +2,7 @@
 // thread, so it must never be written as one gateway run. Rollouts retain request-level
 // `last_token_usage`, the actual model, child ancestry, and fork baselines.
 import { createReadStream } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import { DatabaseSync } from "node:sqlite";
@@ -63,7 +63,7 @@ function safeJson(line) {
 
 async function walkJsonl(dir, out = []) {
   let entries = [];
-  try { entries = await readdir(dir, { withFileTypes: true }); } catch { return out; }
+  try { entries = await readdir(dir, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") return out; throw error; }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) await walkJsonl(full, out);
@@ -399,3 +399,35 @@ export async function listCodexRollouts(stateDir) {
 export const codexUsageKey = usageKey;
 export const codexParentId = parentId;
 export const codexFirstOwnTaskIndex = firstOwnTaskIndex;
+
+// Use the exact same reducer on the side that OWNS the files. Inline module source requires no
+// image refresh, transcript copy, new mount, or daemon permission on a rootless HOME volume.
+let reducerSource;
+export function createCodexUsageReader(target, stateDir = "") {
+  const read = async (operation, args = {}) => {
+    if (!target) return reduceCodexUsage({ operation, ...args, stateDir });
+    if (typeof target.runtime?.inspectUsage !== "function") throw new Error("runtime cannot inspect Codex usage");
+    reducerSource ||= readFile(new URL("./codex-usage.js", import.meta.url), "utf8");
+    return target.runtime.inspectUsage(target, {
+      source: `${await reducerSource}\nprocess.stdout.write(JSON.stringify(await reduceCodexUsage(JSON.parse(process.argv[1]))));`,
+      args: { ...args, operation, stateDir: target.container?.codexHome || "" },
+    });
+  };
+  return {
+    snapshot: (sessionId) => read("snapshot", { sessionId }),
+    children: (args) => read("children", args),
+    root: (args) => read("root", args),
+    accounting: (args) => read("accounting", args),
+  };
+}
+
+export async function reduceCodexUsage({ operation, ...args }) {
+  if (!args.stateDir) throw new Error("Codex state directory is required");
+  switch (operation) {
+    case "snapshot": return snapshotCodexUsage(args.stateDir, args.sessionId);
+    case "children": return listCodexChildThreads(args);
+    case "root": return readCodexRootAccounting(args);
+    case "accounting": return collectCodexChildAccounting(args);
+    default: throw new Error("unknown Codex usage inspection");
+  }
+}

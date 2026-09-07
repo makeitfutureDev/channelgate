@@ -97,8 +97,8 @@ export const containerBackend = Object.freeze({
     const container = {
       name,
       homeVolume: homeVolumeName(base),
-      // The host-side path of that volume's data dir, so run.js can point host-side Codex
-      // accounting at the channel's rollouts. "" until the CLI has been probed — ensureUp fills it.
+      // Host volume location for legacy adoption discovery only. Usage reads inside the
+      // runtime; this location is commonly unreadable under rootless Podman.
       homeVolumeHostPath: volumeHostPath(runtime().cli.peek(), homeVolumeName(base)),
       image: String(settings.image || ""),
       // Always the bridge network for now: the per-channel "Allow network" switch is enforced by the
@@ -255,6 +255,10 @@ export const containerBackend = Object.freeze({
   // The read-only twin (contract.js OPTIONAL_METHODS): which engine state files this channel's
   // container holds, and the first lines of each. `/resume` adoption asks this because the HOME
   // volume itself is unreachable from the daemon — see ./state.js.
+  async inspectUsage(target, request) {
+    return runtime().state.inspectUsage(target, request);
+  },
+
   async inspectState(target, request) {
     return runtime().state.inspectState(target, request);
   },

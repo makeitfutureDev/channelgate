@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Codex reads child identities and token accounting inside the channel runtime, including resumed
+  turn baselines. Rootless HOME volumes no longer need to be readable by the daemon. Named child
+  rows and elapsed/token totals use the same reducer without new mounts or an image rebuild;
+  inspection failures are visible instead of silently reporting an empty child list.
+
 - Admin UI: the Pending approvals rows wrap the command being approved (monospace, a few lines)
   instead of running it underneath the Approve/Deny buttons; the Automations search box uses the
   same styled search component as the Users page, with a clear button and Escape to clear.

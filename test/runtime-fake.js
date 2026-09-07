@@ -11,6 +11,7 @@
 // It validates against src/runtimes/contract.js on construction: a fake that drifted from the
 // contract would prove the wrong thing.
 import path from "node:path";
+import { reduceCodexUsage } from "../src/engines/codex-usage.js";
 import { attachRuntime, validateRuntimeBackend } from "../src/runtimes/contract.js";
 import { copyCarryEntries } from "../src/runtimes/copy.js";
 import { localRuntime } from "../src/runtimes/local.js";
@@ -131,6 +132,9 @@ export function createFakeRuntimeBackend({
     },
 
     async destroy() {},
+    async inspectUsage(target, { args }) {
+      return reduceCodexUsage({ ...args, stateDir: fakeContainerPath(target, args.stateDir) });
+    },
 
     // The carry pair. A real container stages through the bind-mounted artifact dir and execs a
     // copy inside; the fake's "inside" is a scratch mirror on this filesystem, so the copy itself

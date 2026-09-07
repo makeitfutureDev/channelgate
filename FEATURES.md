@@ -2604,3 +2604,15 @@ are retired, bullet by bullet; everything else stands.
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.
   → TEST-PLAN: Real project skill synchronization and workspace reset.
+
+
+### Codex usage inside the runtime
+
+Codex resume baselines, live child identities, per-request root usage and final child usage are
+read inside the channel container through the runtime's read-only `inspectUsage` seam. Rootless
+HOME permissions do not require daemon access to the volume, new mounts or transcript copies.
+The reducer is supplied by the running checkout, so this fix requires no image rebuild. Each
+child retains its name/thread identity and final elapsed/token metrics; copied fork prefixes
+remain excluded. A failed baseline stops a resumed turn before it can incur ambiguously attributed
+usage. A failed live/final inspection preserves the answer and emits one visible incomplete
+accounting notice. Claude's existing native child progress/accounting path is unchanged.
