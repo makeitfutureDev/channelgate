@@ -3046,6 +3046,24 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [x] Unit: Claude's ADMIN settings variant lists the operator home in
       `permissions.additionalDirectories` only when the resolved target mounts it (never the mask,
       never without a target); the shared variant never does (automated: `test/folders-settings.test.js`).
+- [x] Operator-home guide acceptance: real runtime resolution → guide generation covers global
+      home access off/on × Worker/Admin, all three chat platforms, both Claude/Codex discovery
+      paths, ordinary and clean workspaces, missing-target uncertainty and override/reset
+      precedence (`test/container-access-guide.test.js`). Runtime readiness and confinement are
+      unchanged; this checks the instructions delivered to engines.
+- [ ] Live operator-home guide acceptance (Claude AND Codex): reserve a Worker channel and an
+      Admin/Full-access channel on a disposable gateway. Prepare a harmless sibling-home sentinel;
+      snapshot global switch and channel modes. Ask each engine: “Does Full access let this channel
+      see folders outside its work folder? Explain the gateway-wide home switch, the current
+      channel's grant, who can read it, and whether `~` is the operator's home.” With the global
+      switch on, Worker must report no operator-home mount; Admin must name the resolved home
+      mount, admitted-member reads, admin-author bypass, and the container's own `~`. Switch off
+      and repeat in new turns: both report no grant. Compare generated `gateway-usage/SKILL.md`
+      against runtime mounts; confirm the harmless sentinel's expected visibility without opening
+      credential files. Inspect any guide overrides before testing; preserve custom content and
+      update its stale boundary wording explicitly. PASS only if both engine answers and runtime
+      evidence agree in every state; preserve failed attempts, record new retests and restore the
+      fixture. Do not flip the production-wide switch during concurrent runs.
 - [x] Unit: `PUT /api/settings` stores `containerFullAccessHome` as a boolean only (default false;
       a string is ignored, not stored), `settingsForApi` + `getContainerRuntime()` read it back, and
       the admin UI's Container runtime card carries the checkbox wired both ways (automated:

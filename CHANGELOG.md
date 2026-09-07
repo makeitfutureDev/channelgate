@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Correct the operating guide's unconditional denial of host access in Full-access channels.
+  Generated guidance now reports the resolved operator-home grant and global switch, while
+  preserving the default container boundary, channel-wide read scope and admin-author tool bypass.
+
 - Supply the running assistant with its current engine, configured model/effort and session
   state on every attempt, so model-identity answers can use the same configured selection as
   the footer. Recompute after retries, recovery and fallback; never infer a provider model

@@ -106,21 +106,29 @@ Every run remains inside its channel container.
 
 ## Admin access & the container (read this before diagnosing "file not found")
 
-**Every turn runs inside this channel's container — admin mode included.** What exists on your
-side of the boundary: the working folder (bind-mounted from the host at the same absolute path),
-your own home directory (`/home/agent`, a per-channel volume — your CLI logins, installed tools,
-sessions), `/tmp`, and the image's toolchain. The operator's home, the gateway's own files, other
-channels' folders and every other host path are NOT permission-denied — they **do not exist** in
-your filesystem view, whoever the author is and whatever the mode. If a real host file seems
-missing, say "not visible inside this channel's container", not "deleted / a host mount / a
-permissions problem" — and do not diagnose host configuration from inside the container. There
-is no turn that sees the whole machine; a file the channel needs has to be put in the working
-folder by someone who can reach it.
+**Every turn runs inside this channel's container — Admin/Full-access mode included.** By default,
+the host directory mounts are this channel's working folder, clean workspace and artifact folder
+(also backing `/tmp` and `/var/tmp`). The container also has its own home volume (`/home/agent`),
+the image's toolchain and a read-only control socket. A host directory chosen as the working folder
+is visible in full at its identical absolute path; unrelated host directories are normally absent.
 
-**An admin channel sees one host directory: its own working folder.** An admin channel whose
-working folder is a host directory (a repo checkout, say) has that directory mounted read-write —
-everything in it, and nothing beside it. That is the intended trust model for admin channels; it
-is not a route to the rest of the host.
+**The operator can deliberately widen Full-access channels to the gateway user's whole home.**
+Settings → Container runtime → **Full-access channels see the gateway home**
+(`containerFullAccessHome`, off by default) adds a read-write bind mount of that home at its
+identical absolute path ONLY when this channel is in Admin/Full-access mode. It includes other
+channels' folders and memory, repositories, gateway configuration, logs, metadata and credential
+stores under that home. The container engine's storage is masked. This does not mount the whole
+host filesystem. The switch is gateway-wide and no MCP tool can flip it; an admin author alone,
+Auto, Lean or a tool permission cannot enable the grant. Changing the switch or channel mode
+changes the required container mounts; readiness checks reconcile them before the next run.
+
+**The mount belongs to the channel, not the author.** While granted, every admitted author can
+read the mounted home through file tools; only an admin author's turn in Admin mode receives
+write-capable bypass tools. The container remains the filesystem/process boundary. Read the
+**Container access for this run** note in `SKILL.md` for the gateway switch and this resolved
+runtime's operator-home mount. If that note has no resolved target, verify current runtime state
+before asserting access. Diagnose only paths this runtime actually mounts: an absent host path
+does not prove that it was deleted, and a mounted path must not be described as impossible.
 
 **`$HOME` is this channel's home, not the operator's account home.** `~` is `/home/agent` inside
 the container and belongs to this channel alone: a login you make there (`gh auth login`,

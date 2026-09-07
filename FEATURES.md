@@ -1548,6 +1548,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   per-channel guest. New users are recorded as un-approved pending an admin's approval.
 
 ## Container runtime (v0.8 P1)
+- **Accurate container access instructions:** the shared operating guide states the default
+  boundary and the optional Admin/Full-access operator-home grant. Each generated guide names the
+  resolved runtime's `containerFullAccessHome` setting and operator-home mount, including a gateway
+  with the switch on but a Worker channel without the mount. It distinguishes the channel's own
+  `$HOME` from the mounted operator home, channel-wide reads from admin-author bypass tools, and
+  a missing runtime target from a known absent grant. The same facts reach Claude and Codex skill
+  discovery, including clean workspaces. Admin guide overrides keep their documented precedence.
+  → TEST-PLAN: Container runtime (operator-home guide acceptance).
 **Since 2026-09-03 this is the ONLY runtime (Linux + containers only):** the `host` backend, the
 gateway-wide kill switch, the per-channel runtime pin and the host↔container session carry below
 are retired, bullet by bullet; everything else stands.

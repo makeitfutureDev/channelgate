@@ -25,7 +25,7 @@ test("the ChannelGate skill is a valid, fully routed package", async () => {
   const { data, body } = parseFrontmatter(manifest);
 
   assert.equal(data.name, "channelgate");
-  assert.equal(data.metadata.version, "3.0.0");
+  assert.equal(data.metadata.version, "3.0.1");
   assert.match(data.description, /device-login links/);
   assert.match(data.description, /Do not use for ordinary work/);
 
@@ -41,6 +41,19 @@ test("the ChannelGate skill is a valid, fully routed package", async () => {
     "references/conversation-operations.md",
     "references/folder-headless.md",
   ]) assert.ok(references.has(required), `${required} is missing`);
+});
+
+test("the domain skill states the same conditional home grant as the operating guide", async () => {
+  const skill = await readFile(path.join(root, "SKILL.md"), "utf8");
+  const architecture = await readFile(path.join(root, "references/architecture-security.md"), "utf8");
+  assert.match(skill, /operator-home mount ONLY while the\s+gateway-wide `containerFullAccessHome` switch is on/);
+  assert.match(skill, /Host visibility follows the resolved mounts/);
+  assert.doesNotMatch(skill, /Admin mode changes tool approval, not\s+mounts|other conversations are absent/);
+  assert.match(architecture, /containerFullAccessHome/);
+  assert.match(architecture, /No MCP tool can flip/);
+  assert.match(architecture, /every admitted author can read/);
+  assert.match(architecture, /\$HOME.*~.*\s+remain the channel's own home/);
+  assert.doesNotMatch(architecture, /Modes are tool presets, never mount profiles/);
 });
 
 test("the memory retrieval tools retain the gateway text response adapter", async () => {

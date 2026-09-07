@@ -138,10 +138,23 @@ export async function resolvedGuideFiles(platform = DEFAULT_PLATFORM) {
 
 // Placeholders every guide source may use, so a shared file can name the surface it is running on
 // without being forked per platform.
-function substitutePlatform(content, adapter) {
+function containerAccessNote(target) {
+  if (!Array.isArray(target?.container?.mounts)) {
+    return "**Container access:** no resolved runtime target was supplied when this guide was generated. Do not infer host access from the author's role; check the current runtime before claiming a path is mounted or absent.";
+  }
+  const homes = target.container.mounts.filter((m) => m.kind === "operator-home").map((m) => m.target);
+  const setting = target.settings?.fullAccessHome === true ? "on" : "off";
+  const access = homes.length
+    ? `This channel's resolved runtime includes the operator-home mount at ${homes.map((home) => JSON.stringify(home)).join(", ")}. Every admitted author can read that mounted home; write-capable bypass tools still require an admin author in Admin mode.`
+    : "This channel's resolved runtime has no operator-home mount. The working folder, clean workspace and artifacts remain its host directory mounts; the author's admin role alone adds no mount.";
+  return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access} \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See \`references/administration.md\` for the boundary and the optional grant.`;
+}
+
+function substitutePlatform(content, adapter, target) {
   return String(content)
     .replaceAll("{{PLATFORM}}", adapter.label)
-    .replaceAll("{{PLATFORM_ID}}", adapter.id);
+    .replaceAll("{{PLATFORM_ID}}", adapter.id)
+    .replaceAll("{{CONTAINER_ACCESS}}", containerAccessNote(target));
 }
 
 // Is any file currently overridden by an admin?
@@ -188,7 +201,7 @@ async function writeIfChanged(file, content) {
 // for the channel's PLATFORM. Syncs the active file set write-on-change and prunes stale files, so
 // an admin edit/reset — or a channel moving between surfaces — propagates on the next message. Marker-guarded: if a real (granted) skill of the same name is already there
 // (no marker), leave it untouched. Best-effort — a source read failure skips that file, never wipes.
-export async function applyGatewayGuide(cwd, { platform = DEFAULT_PLATFORM } = {}) {
+export async function applyGatewayGuide(cwd, { platform = DEFAULT_PLATFORM, target } = {}) {
   const adapter = platformOr(platform);
   const skillDir = path.join(cwd, ".claude", "skills", SKILL);
   // Respect a foreign skill of the same name: exists, has a SKILL.md, but isn't ours.
@@ -204,7 +217,7 @@ export async function applyGatewayGuide(cwd, { platform = DEFAULT_PLATFORM } = {
   for (const [rel, { src }] of files) {
     let content;
     try {
-      content = substitutePlatform(await readFile(src, "utf8"), adapter);
+      content = substitutePlatform(await readFile(src, "utf8"), adapter, target);
     } catch {
       continue; // unreadable source — skip (don't prune the existing copy either)
     }

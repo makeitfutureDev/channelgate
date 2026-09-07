@@ -35,10 +35,10 @@ git worktree add -b <type>/<slug> .worktrees/<slug> origin/main
   descriptive slug. If the branch already exists (another thread owns it), pick a different slug.
 - Branch from `origin/main` when a remote exists, else from `main` (or the repo's default branch —
   `git symbolic-ref --short HEAD` in a fresh clone shows it).
-- Worktrees live in `.worktrees/` **inside** the repo folder — only the working folder is
-  mounted into your container, so there is nowhere outside it to put them. The `info/exclude`
-  line keeps them out of `git status` without touching the repo's
-  `.gitignore`.
+- By default, put worktrees in `.worktrees/` **inside** the repo folder so they remain inside its
+  mounted working folder. A project's own convention may choose another location within this
+  runtime's mounts (including the optional operator-home grant; see `references/administration.md`).
+  The `info/exclude` line keeps them out of `git status` without touching the repo's `.gitignore`.
 - The canonical checkout (the folder root) stays on `main`, clean. **Never switch its branch and
   never edit files there while a task worktree is open.**
 

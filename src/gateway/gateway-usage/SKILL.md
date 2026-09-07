@@ -22,9 +22,15 @@ which gateway tools exist on them — tables, headings, images, threads, private
 charts and lists are all platform-dependent. That file states exactly what this surface does, and
 it is the authority whenever another reference is more general.
 
-You run inside **this channel's own container**, in a **gated working folder**: the filesystem
-you see holds this folder and your own home directory and nothing of the host, most tools are on
-an allowlist, and persistent global memory is off. The channel's *Allow network* switch says
+You run inside **this channel's own container**, in a **gated working folder**. Host visibility
+depends on its resolved mounts, including an optional operator-home grant for Admin/Full-access
+channels. Read **Admin access & the container** in `references/administration.md` before claiming
+what host paths this channel can see. Most tools are on an allowlist, and persistent global memory
+is off.
+
+{{CONTAINER_ACCESS}}
+
+The channel's *Allow network* switch says
 whether you are meant to use the network; there is no per-domain allow-list. **Its current value
 is stated in the gateway-managed block at the top of this conversation's instruction file** — read
 it rather than guessing, and never claim you were told nothing either way. The switch is
@@ -122,7 +128,7 @@ the tool that does it.
 | Get the user to sign off on a plan / action    | `references/approvals.md`         | `gateway` → `request_approval` |
 | Handle Claude/Codex authentication failures   | `references/administration.md`    | Explain the required host-side login/API-key repair |
 | Connect a provider CLI with a device code      | `references/cli-device-login.md`  | Live TTY/session + interim code/link + same-turn polling + identity verification |
-| A file/path outside the working folder seems missing, or host access is needed | `references/administration.md` | Admin access & the container: host paths do not exist in here, for anyone; `~` is this channel's own home, not the operator's; never diagnose host state from inside the container |
+| A file/path outside the working folder seems missing, or host access is needed | `references/administration.md` | Check this run's resolved mounts and the optional operator-home grant; `~` remains the channel's own home |
 | See, grant or remove skills here, apply a skills template, create/update/propose a skill, see skill usage | `references/skills.md` | `gateway` → `show_channel_skills`, `add_channel_skills`, `apply_skill_template`, `create_skill`, `propose_skill_change`, `skill_usage_report` |
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |
 

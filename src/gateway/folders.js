@@ -696,7 +696,7 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
       // clean mode — since the bot always replies into a conversation. Resolved for the channel's
       // PLATFORM, so a Teams channel is never told to post a Slack List. Marker-guarded +
       // write-on-change, so a channel that changes surface re-materializes on its next message.
-      await applyGatewayGuide(cwd, { platform: workspaceMeta?.platform || DEFAULT_PLATFORM });
+      await applyGatewayGuide(cwd, { platform: workspaceMeta?.platform || DEFAULT_PLATFORM, target });
       await ensureInstructionFiles(cwd, slug, workspaceMeta);
       await applyChannelMemory(cwd, { ...workspaceMeta, _slug: slug });
       if (skillSync.missing.length) console.warn(`[skills] ${slug}: unavailable selected skills: ${skillSync.missing.join(", ")}`);

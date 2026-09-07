@@ -4,23 +4,26 @@
 
 ChannelGate targets Linux with systemd and rootless Podman. Each conversation gets one lazily
 created container with dropped capabilities, no `sudo`, a durable HOME volume at `/home/agent`, and
-only these bind mounts at identical host/container paths:
+by default these directory bind mounts at identical host/container paths:
 
 - the conversation work folder;
 - its clean workspace;
 - its artifact directory, which also backs `/tmp` and `/var/tmp`.
 
 The operator HOME, gateway runtime root/database, daemon checkout, sibling conversations, and host
-credential stores are not mounted. An admin conversation may deliberately point its work folder at
+credential stores are normally not mounted. An admin conversation may deliberately point its work folder at
 a host repository; that one directory is then visible read-write, but nothing beside it.
 
 One operator-chosen exception: with the gateway-wide **Full-access channels see the gateway home**
-switch on (Settings → Container runtime, off by default), every Full-access conversation's
+switch on (`containerFullAccessHome`, Settings → Container runtime, off by default), every Full-access conversation's
 container also mounts the gateway user's whole home read-write at its identical path — every
 conversation's work folder and memory, every repository under that home, the gateway root
 (logs, metadata, credential stores) — with only the container engine's storage masked. It is a
 boolean, never a path; it changes the container fingerprint (recreate at the next turn); and it is
-per conversation, so every admitted author can read it while only an admin author's turn writes.
+per conversation, so every admitted author can read it while only an admin author's turn receives
+write-capable bypass tools. No MCP tool can flip this gateway-wide switch. The injected
+`gateway-usage` runtime note states the current resolved operator-home grant; `$HOME` and `~`
+remain the channel's own home volume even when the operator home is mounted at another path.
 
 Containers are stopped when idle and recreated when their create-time fingerprint changes. The
 HOME volume and mounted workspace/artifacts survive both. Active foreground runs, background work,
@@ -36,7 +39,8 @@ isolation.
 
 ## Permission modes
 
-Modes are tool presets, never mount profiles:
+Modes are tool presets. Admin/Full-access additionally qualifies for the operator-home grant
+described above when the operator has enabled its separate gateway-wide switch:
 
 - Read-only: read tools; Codex uses its read-only sandbox mode.
 - Worker: shell and file writes allowed within mounted state.
@@ -70,4 +74,3 @@ reports continuing waits, and keeps the user informed through heartbeat/status u
 on process disappearance or the absolute silence budget. Stderr is diagnostic commentary and does
 not reset stdout activity. Replay/failover is permitted only when the failure classification and
 tool/output state make it safe.
-

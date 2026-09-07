@@ -7,12 +7,12 @@ description: >-
   grants/templates/sources, channel memory, background work, schedules, attachments, or strict
   headless MCP configuration. Do not use for ordinary work merely performed through ChannelGate.
 metadata:
-  version: 3.0.0
+  version: 3.0.1
   category: claude-code
   complexity: advanced
   tags: channelgate, containers, claude-code, codex, mcp, skills, memory, security
   created: 2026-06-16
-  updated: 2026-09-05
+  updated: 2026-09-08
 ---
 
 # ChannelGate
@@ -46,10 +46,13 @@ the product contracts and decision points; it does not replace either source.
 ## Invariants that apply everywhere
 
 - Every foreground turn, background agent, shell job, scheduled run, and memory review executes
-  inside that conversation's own rootless Podman container. Admin mode changes tool approval, not
-  mounts. Never propose running an engine directly on the host.
+  inside that conversation's own rootless Podman container. Admin mode grants an admin author's
+  tool bypass; it also qualifies the channel for the optional operator-home mount ONLY while the
+  gateway-wide `containerFullAccessHome` switch is on. See the architecture/security reference and
+  the injected `gateway-usage` runtime note for the exact grant. Never run an engine on the host.
 - The container is the filesystem/process boundary. Its persistent HOME belongs to one
-  conversation; the operator's home, gateway database/root, and other conversations are absent.
+  conversation. Host visibility follows the resolved mounts: normally just this conversation's
+  directories, or the operator's whole home when the explicit Full-access grant applies.
   The current bridge network has no domain filtering or enforced egress cut-off, so never claim
   that *Allow network* is a firewall.
 - `<folder>/.claude/settings.json` carries policy: permissions, MCP allowlisting, memory-off, and
@@ -71,7 +74,7 @@ the product contracts and decision points; it does not replace either source.
 2. Separate missing mounts/files from missing permission, missing credentials, missing MCP grants,
    and provider/engine failure. `$HOME` inside a run is the conversation HOME, not the host HOME.
 3. Prefer `/status`, the Admin UI, gateway audit/events, and the engine's own error. Do not infer
-   host state from inside a container.
+   the state of unmounted host paths from inside a container.
 4. Preserve explicit engine pins. Defaults may fail over; a user-pinned engine reports its own
    failure and offers a manual switch.
 5. Keep remediation inside the affected scope. Credential repair, skill grants, network intent,
