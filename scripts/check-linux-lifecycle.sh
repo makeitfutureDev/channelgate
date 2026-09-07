@@ -147,7 +147,9 @@ pass 'live encrypted fixture snapshot, disposable drill, replacement restore and
 
 # Existing injected transaction tests are separately labelled: these do not claim a real update
 # across authenticated engine versions or an induced failure in a production deployment.
-as_service bash -c 'cd "$1" && node --test test/update-runner.test.js test/update-state.test.js test/update-smoke.test.js' bash "$APP_DIR" \
+as_service env -u CHANNELGATE_DIR -u CHANNELGATE_DB -u CLAUDE_GATEWAY_DIR -u CLAUDE_GATEWAY_DB \
+  -u CG_WORKSPACE_DIR -u CG_TEST_SCRATCH \
+  bash -c 'cd "$1" && node --test test/update-runner.test.js test/update-state.test.js test/update-smoke.test.js' bash "$APP_DIR" \
   > "$EVIDENCE/update-fixture-tests.tap" 2>&1
 pass 'injected update failure/rollback and container smoke regression tests'
 sudo bash "$APP_DIR/scripts/uninstall-systemd.sh" --system
