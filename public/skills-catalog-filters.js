@@ -14,7 +14,7 @@ const directAssignmentSlugs = (overview = {}, profiles = []) => {
   return assigned;
 };
 
-const matchesBoolean = (value, filter) => filter === "all" || filter === "" || Boolean(value) === (filter === "1");
+const matchesBoolean = (value, filter) => filter == null || filter === "all" || filter === "" || Boolean(value) === (filter === "1");
 
 // The API applies these filters too, but the browser deliberately enforces them on the returned
 // rows. Static assets can be served from a newly landed checkout before the long-running daemon
@@ -29,5 +29,7 @@ export function filterSkillCatalog(skills = [], filters = {}, { overview = {}, p
     && matchesBoolean(skill.discoverable, filters.discoverable)
     && matchesBoolean(skill.mandatory, filters.mandatory)
     && matchesBoolean(skill.assigned, filters.assigned)
+    && (!filters.source || String(skill.sourceId) === String(filters.source))
+    && (!filters.category || skill.category === filters.category)
   ));
 }

@@ -49,3 +49,14 @@ test("Assigned means direct grants, templates and channel sections, not dependen
   assert.deepEqual(slugs({ assigned: "1" }), ["ordinary", "mandatory-one", "template-skill", "section-skill"]);
   assert.ok(slugs({ assigned: "0" }).includes("dependency-only"));
 });
+
+test("source and category compose with governance and preserve unfiltered defaults", () => {
+  const rows = [
+    { slug: "a", sourceId: 1, category: "Sales", enabled: true, mandatory: true },
+    { slug: "b", sourceId: 2, category: "Sales", enabled: true, mandatory: true },
+    { slug: "c", sourceId: 1, category: "Development", enabled: false, mandatory: false },
+  ];
+  assert.equal(filterSkillCatalog(rows).length, 3);
+  assert.deepEqual(filterSkillCatalog(rows, { source: "1", category: "Sales", mandatory: "1" }).map((s) => s.slug), ["a"]);
+  assert.deepEqual(filterSkillCatalog(rows, { source: "1", enabled: "0" }).map((s) => s.slug), ["c"]);
+});

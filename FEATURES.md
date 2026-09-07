@@ -2240,12 +2240,14 @@ are retired, bullet by bullet; everything else stands.
   the numbers readable (exact vs inferred, capture is not retroactive).
   → TEST-PLAN: Skills platform (Core).
 - **Admin UI → Skills** (`public/admin-skills.js`, `src/web/routes/skills.js`): catalog (search,
-  owner plus Enabled / Discoverable / Mandatory / Assigned state filters (Assigned means a direct
+  owner, source, category plus Enabled / Discoverable / Mandatory / Assigned state filters (Assigned means a direct
   organization, conversation, template, or channel-section grant), detail with
   files/frontmatter/revisions, pin/rollback, grant to a conversation,
   remove/restore, create a local skill), **Review** (staged source revisions and proposals with
-  approve/reject), focused **Sources** (scannable list + Add source modal offering only GitHub or
-  another ChannelGate, with kind-specific inputs), separate **Sync settings** (catalog timing,
+  approve/reject), focused **Sources** (clickable source cards with sync status; each opens its own
+  searchable skill list including disabled rows, with Enabled, organization-wide Discoverable and
+  Mandatory switches; source credentials/mode/pin/removal are grouped in collapsible settings;
+  Add source offers GitHub or another ChannelGate with kind-specific inputs), separate **Sync settings** (catalog timing,
   publishing, webhook) and **MCP** (endpoint + tokens),
   selection-first **Templates** with searchable skill/category controls and assignment preview,
   and searchable/alphabetic **Usage** with By skill / By channel rollups, compact comparison bars,

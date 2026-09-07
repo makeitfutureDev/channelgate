@@ -56,7 +56,9 @@ test("catalog filters keep owner and expose governance plus assignment states", 
   assert.match(js, /import \{ filterSkillCatalog \} from "\.\/skills-catalog-filters\.js"/);
   assert.match(js, /api\(`\/api\/skills\/catalog\?\$\{filters\}&deleted=1`\)/);
   assert.match(js, /skills: filterSkillCatalog\(catalog\.skills/);
-  assert.doesNotMatch(js, /id="skills-category"|id="skills-source"|id="skills-removed"/);
+  assert.match(js, /id="skills-category"/);
+  assert.match(js, /id="skills-source"/);
+  assert.doesNotMatch(js, /id="skills-removed"/);
 });
 
 // An author `display` declaration beats the UA stylesheet's `[hidden] { display: none }` whatever

@@ -17,6 +17,11 @@ const state = {
   fileView: null,
   query: "",
   owner: "",
+  source: "",
+  category: "",
+  sourceSelected: "",
+  sourceSkills: [],
+  sourceQuery: "",
   enabled: "1",
   discoverable: "all",
   mandatory: "all",
@@ -66,6 +71,8 @@ async function refreshAll() {
   const filters = [
     `q=${encodeURIComponent(state.query)}`,
     state.owner ? `owner=${encodeURIComponent(state.owner)}` : "",
+    state.source ? `source=${encodeURIComponent(state.source)}` : "",
+    state.category ? `category=${encodeURIComponent(state.category)}` : "",
     state.enabled ? `enabled=${state.enabled}` : "",
     state.discoverable ? `discoverable=${state.discoverable}` : "",
     state.mandatory ? `mandatory=${state.mandatory}` : "",
@@ -85,10 +92,16 @@ async function refreshAll() {
       discoverable: state.discoverable,
       mandatory: state.mandatory,
       assigned: state.assigned,
+      source: state.source,
+      category: state.category,
     }, { overview, profiles: profiles.profiles }),
   };
   state.catalogAll = catalogAll;
   state.profiles = profiles.profiles;
+  if (state.sourceSelected) {
+    const result = await api(`/api/skills/catalog?source=${encodeURIComponent(state.sourceSelected)}&deleted=1`);
+    state.sourceSkills = result.skills.filter((skill) => String(skill.sourceId) === state.sourceSelected);
+  }
   if (!state.usage) state.usage = (await api("/api/skills/usage?days=30")).report;
   if (state.selected) await loadDetail(state.selected).catch(() => { state.selected = ""; state.detail = null; });
 }
@@ -171,6 +184,8 @@ function renderCatalog() {
     <div class="skills-toolbar">
       <input type="search" id="skills-q" placeholder="Search slug, name, description, tags…" value="${esc(state.query)}" />
       <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(o) : "every owner"}</option>`).join("")}</select>
+      <select id="skills-source" aria-label="Source"><option value="">Every source</option>${(state.overview?.sources || []).map((source) => `<option value="${source.id}"${String(source.id) === state.source ? " selected" : ""}>${esc(source.label || source.url)}</option>`).join("")}</select>
+      <select id="skills-category" aria-label="Category"><option value="">Every category</option>${(state.catalog?.categories || []).map((category) => `<option value="${esc(category.category)}"${category.category === state.category ? " selected" : ""}>${esc(category.category)}</option>`).join("")}</select>
       <select id="skills-enabled" aria-label="Enabled status">${binaryOptions(state.enabled, "enabled or disabled", "Enabled", "Disabled")}</select>
       <select id="skills-discoverable" aria-label="Discoverability">${binaryOptions(state.discoverable, "discoverable or not", "Discoverable", "Not discoverable")}</select>
       <select id="skills-mandatory" aria-label="Mandatory status">${binaryOptions(state.mandatory, "mandatory or not", "Mandatory", "Not mandatory")}</select>
@@ -284,26 +299,57 @@ function renderReview() {
     ${state.fileView?.kind === "proposal" ? `<div class="card skills-detail"><h3>Proposal #${state.fileView.id} files</h3>${state.fileView.files.map((f) => `<p><strong>${esc(f.path)}</strong></p><pre>${esc(f.encoding === "base64" ? "(binary)" : f.content)}</pre>`).join("")}</div>` : ""}`;
 }
 
+function sourceName(source) {
+  return source.label || source.url || `Source #${source.id}`;
+}
+
+function renderSourceSettings(source) {
+  return `<details class="skills-source-settings">
+    <summary>Source settings</summary>
+    <div class="skills-form">
+      <label class="field"><span>Sync mode</span><select data-action="source-mode" data-id="${source.id}"><option value="review"${source.mode === "review" ? " selected" : ""}>Review changes before activation</option><option value="auto"${source.mode === "auto" ? " selected" : ""}>Activate changes automatically</option></select></label>
+      <label class="skills-inline"><input type="checkbox" data-action="source-enabled" data-id="${source.id}"${source.enabled ? " checked" : ""}/> Source sync enabled</label>
+      ${source.kind !== "folder" ? `<label class="field"><span>${source.kind === "git" ? "GitHub token" : "Peer access token"}</span><input id="source-secret-${source.id}" type="password" autocomplete="off" placeholder="${source.hasSecret ? "Token saved — leave blank to keep" : "Optional access token"}" /></label>
+      <div class="skills-inline"><button type="button" class="ghost" data-action="save-source-secret" data-id="${source.id}">Save token</button>${source.hasSecret ? `<button type="button" class="ghost" data-action="clear-source-secret" data-id="${source.id}">Clear token</button>` : ""}</div>` : ""}
+      ${source.kind === "git" ? `<label class="field"><span>Pin revision (optional)</span><input placeholder="Commit SHA; blank follows current" value="${esc(source.pinnedRef || "")}" data-field="pinnedRef" data-id="${source.id}" /></label><div class="skills-inline"><button type="button" class="ghost" data-action="source-pin" data-id="${source.id}">Save pin</button></div>` : ""}
+    </div>
+    <div class="skills-actions"><button type="button" class="ghost" data-action="remove-source" data-id="${source.id}">Remove source</button></div>
+  </details>`;
+}
+
+function renderSourceSkills(source) {
+  const all = state.sourceSkills;
+  const q = state.sourceQuery.trim().toLowerCase();
+  const skills = all.filter((skill) => !q || `${skill.slug} ${skill.name} ${skill.description}`.toLowerCase().includes(q));
+  const toggle = (skill, key, label) => `<label class="skills-governance-toggle" title="${key === "mandatory" ? "Load in every conversation" : key === "discoverable" ? "Members and agents across the organization can find and grant this skill" : "Allow this skill to be used"}"><input type="checkbox" role="switch" aria-label="${esc(label)}: ${esc(skill.slug)}" data-action="skill-${key}" data-slug="${esc(skill.slug)}"${skill[key] ? " checked" : ""}${key === "discoverable" && skill.mandatory ? " disabled" : ""}/><span aria-hidden="true">${skill[key] ? "On" : "Off"}</span></label>`;
+  return `<button type="button" class="ghost" data-action="back-to-sources">← All sources</button>
+    <div class="skills-source-heading"><div><span class="pill">${esc(source.kind)}</span><h3>${esc(sourceName(source))}</h3><p class="skills-source-url">${esc(source.url)}</p></div><button type="button" class="ghost" data-action="sync-source" data-id="${source.id}">Sync now</button></div>
+    <div class="skills-source-stats"><span><b>${all.length}</b> skills</span><span><b>${all.filter((s) => s.enabled).length}</b> enabled</span><span><b>${all.filter((s) => s.discoverable).length}</b> discoverable</span><span><b>${all.filter((s) => s.mandatory).length}</b> mandatory</span></div>
+    ${source.lastSyncError ? `<p class="skills-error">${esc(source.lastSyncError)}</p>` : ""}
+    ${renderSourceSettings(source)}
+    <div class="skills-toolbar"><input type="search" id="source-skills-q" aria-label="Search this source’s skills" placeholder="Search this source’s skills…" value="${esc(state.sourceQuery)}" /><span class="skills-note">${skills.length} of ${all.length} skills</span></div>
+    <p class="skills-note">Discoverable applies across the organization. Mandatory loads a skill in every conversation and also enables discovery. Disabled skills stay listed here so you can enable them again.</p>
+    <div class="skills-source-table-wrap"><table class="skills-table skills-source-table"><thead><tr><th>Skill</th><th>Enabled</th><th>Discoverable · org-wide</th><th>Mandatory</th></tr></thead><tbody>
+    ${skills.map((skill) => `<tr><td><button type="button" class="skills-skill-link" data-action="select" data-slug="${esc(skill.slug)}">${esc(skill.name || skill.slug)}</button><code>${esc(skill.slug)}</code><p class="skills-source-description">${esc(skill.description)}</p>${skill.deleted ? '<span class="pill">disabled</span>' : ""}${skill.currentRevisionId == null && !skill.deleted ? '<span class="pill">awaiting approval</span>' : ""}</td><td>${toggle(skill, "enabled", "Enabled")}</td><td>${toggle(skill, "discoverable", "Discoverable organization-wide")}</td><td>${toggle(skill, "mandatory", "Mandatory")}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${all.length ? "No skills match your search." : "No catalog skills from this source yet. Sync the source to import them."}</td></tr>`}
+    </tbody></table></div>
+    ${state.detail && all.some((skill) => skill.slug === state.selected) ? renderDetail() : ""}`;
+}
+
 function renderSources() {
   const o = state.overview || {};
   const sources = o.sources || [];
-  const rows = sources.map((s) => {
-    const st = s.lastSyncStats || {};
-    return `
-    <tr>
-      <td><span class="pill">${esc(s.kind)}</span> ${esc(s.label || "")}<br/><code>${esc(s.url)}</code>${s.ref ? `<br/><span class="muted">ref ${esc(s.ref)}</span>` : ""}${s.subpath ? `<span class="muted"> · ${esc(s.subpath)}</span>` : ""}
-        ${s.kind !== "folder" ? `<div class="skills-inline" style="margin-top:6px"><input id="source-secret-${s.id}" type="password" autocomplete="off" placeholder="${s.hasSecret ? "•••••••• (leave empty to keep)" : s.kind === "git" ? "optional GitHub token" : "peer access token"}" style="width:190px"/><button type="button" class="ghost" data-action="save-source-secret" data-id="${s.id}">Save token</button>${s.hasSecret ? `<button type="button" class="ghost" data-action="clear-source-secret" data-id="${s.id}">Clear</button>` : ""}</div>` : ""}</td>
-      <td><span class="skills-inline"><select data-action="source-mode" data-id="${s.id}"><option value="review"${s.mode === "review" ? " selected" : ""}>review</option><option value="auto"${s.mode === "auto" ? " selected" : ""}>auto</option></select>
-        <label><input type="checkbox" data-action="source-enabled" data-id="${s.id}"${s.enabled ? " checked" : ""}/> enabled</label></span>
-        ${s.kind === "git" ? `<div class="skills-inline" style="margin-top:6px"><input placeholder="pin to commit sha" value="${esc(s.pinnedRef)}" data-field="pinnedRef" data-id="${s.id}" style="width:150px"/><button type="button" class="ghost" data-action="source-pin" data-id="${s.id}">pin</button></div>` : ""}</td>
-      <td class="muted">${s.lastSyncAt ? `${fmtWhen(s.lastSyncAt)}${s.lastSyncRef ? ` · ${esc(s.lastSyncRef.slice(0, 7))}` : ""}<br/>${st.discovered ?? "?"} skills, ${st.created ?? 0} new, ${st.updated ?? 0} updated, ${st.staged ?? 0} staged${st.tombstoned ? `, ${st.tombstoned} removed` : ""}${st.conflicts?.length ? `, ${st.conflicts.length} conflicts` : ""}` : "never"}${s.lastSyncError ? `<br/><span class="skills-error">${esc(s.lastSyncError)}</span>` : ""}</td>
-      <td><span class="skills-inline"><button type="button" class="ghost" data-action="sync-source" data-id="${s.id}">Sync now</button><button type="button" class="ghost" data-action="remove-source" data-id="${s.id}">Remove</button></span></td>
-    </tr>`;
+  const selected = sources.find((source) => String(source.id) === state.sourceSelected);
+  const cards = sources.map((source) => {
+    const stats = source.lastSyncStats || {};
+    const status = source.lastSyncError ? "Sync failed" : !source.enabled ? "Paused" : source.lastSyncAt ? "Synced" : "Not synced yet";
+    return `<button type="button" class="skills-source-card" data-action="select-source" data-id="${source.id}">
+      <span class="skills-source-card-title"><span class="pill">${esc(source.kind)}</span><strong>${esc(sourceName(source))}</strong><span class="skills-source-status${source.lastSyncError ? " has-error" : ""}">${status}</span></span>
+      <span class="skills-source-url">${esc(source.url)}</span>
+      <span class="skills-source-card-footer"><span>${source.mode === "auto" ? "Automatic sync" : "Review changes"} · ${source.lastSyncAt ? esc(fmtWhen(source.lastSyncAt)) : "Never synced"}${stats.conflicts?.length ? ` · ${stats.conflicts.length} conflicts` : ""}</span><span class="skills-source-open">Manage skills →</span></span>
+    </button>`;
   }).join("");
   return `
-    <div class="skills-section-head"><div><h3>Sources</h3><p class="skills-note">GitHub repositories and other ChannelGate catalogs that feed this catalog.</p></div><button type="button" data-action="open-source">+ Add source</button></div>
-    <table class="skills-table"><thead><tr><th>Source</th><th>Mode</th><th>Last sync</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No sources yet.</td></tr>'}</tbody></table>
-    <p class="skills-note">Host folders imported at boot (folder-owned skills, kept in sync by content): ${(o.hostFolders || []).map((d) => `<code>${esc(d)}</code>`).join(", ") || "none"}</p>
+    ${selected ? renderSourceSkills(selected) : `<div class="skills-section-head"><div><h3>Sources</h3><p class="skills-note">Choose a source to browse its skills and manage how they are used.</p></div><button type="button" data-action="open-source">+ Add source</button></div><div class="skills-source-grid">${cards || '<p class="skills-note">No sources yet. Add a repository or another ChannelGate.</p>'}</div>`}
     ${state.sourceModal ? `<div class="skills-modal" data-action="close-source"><div class="card skills-modal-card" role="dialog" aria-modal="true" aria-labelledby="add-source-title" data-modal-card>
       <div class="skills-section-head"><h3 id="add-source-title">Add a source</h3><button type="button" class="ghost" data-action="close-source" aria-label="Close">✕</button></div>
       <div class="skills-form">
@@ -455,6 +501,19 @@ async function act(action, el) {
   const id = el.dataset.id;
   const slug = el.dataset.slug;
   switch (action) {
+    case "select-source":
+      state.sourceSelected = String(id);
+      state.sourceQuery = "";
+      state.selected = "";
+      state.detail = null;
+      await refreshAll();
+      break;
+    case "back-to-sources":
+      state.sourceSelected = "";
+      state.sourceSkills = [];
+      state.selected = "";
+      state.detail = null;
+      break;
     case "select":
       await withStatus(() => loadDetail(slug));
       break;
@@ -765,9 +824,11 @@ function wire() {
       for (const field of root.querySelectorAll("[data-source-kind]")) field.hidden = field.dataset.sourceKind !== el.value;
       return;
     }
-    if (["skills-q", "skills-owner", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned"].includes(el.id)) {
+    if (["skills-q", "skills-owner", "skills-source", "skills-category", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned"].includes(el.id)) {
       state.query = val("skills-q");
       state.owner = val("skills-owner");
+      state.source = val("skills-source");
+      state.category = val("skills-category");
       state.enabled = val("skills-enabled");
       state.discoverable = val("skills-discoverable");
       state.mandatory = val("skills-mandatory");
@@ -777,7 +838,9 @@ function wire() {
     }
     if (["skill-enabled", "skill-discoverable", "skill-mandatory"].includes(el.dataset.action)) {
       const key = el.dataset.action.replace("skill-", "");
-      withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(el.dataset.slug)}/governance`, { method: "POST", body: JSON.stringify({ [key]: el.checked }) }), "Skill governance updated.").then(refreshAll).then(render);
+      el.disabled = true;
+      withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(el.dataset.slug)}/governance`, { method: "POST", body: JSON.stringify({ [key]: el.checked }) }), "Skill governance updated.")
+        .then(refreshAll).catch((err) => setMessage(err.message, true)).finally(render);
       return;
     }
     if (el.id === "apply-template" || el.id === "apply-channel" || el.id === "apply-mode") {
@@ -804,6 +867,12 @@ function wire() {
     }
   });
   root.addEventListener("input", (event) => {
+    if (event.target.id === "source-skills-q") {
+      state.sourceQuery = event.target.value;
+      render();
+      document.getElementById("source-skills-q")?.focus();
+      return;
+    }
     if (event.target.id === "usage-q") {
       state.usageQuery = event.target.value;
       render();

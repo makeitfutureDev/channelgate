@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Skills: restore Source and Category catalog filters alongside governance filters. Sources now
+  use clickable cards opening a searchable skill list with persistent Enabled, organization-wide
+  Discoverable and Mandatory switches, including disabled skills. Source configuration is grouped
+  in collapsible settings.
+
 - Dependency compatibility: update mcp-remote to 0.8.3 in both daemon and image, Slack Bolt to
   5.1.0 and Zod to 4.5.4. Keep Composio 0.14.0 for the supported Node 22.13 floor. Nightly
   pinned engine probes now read the actual image manifest, preventing version drift.
