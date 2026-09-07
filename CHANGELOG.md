@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- `create_schedule` now tells the model that `notify` and `delivery` are opt-in: a plain "remind
+  me" keeps the defaults (@channel ping, result threaded under the Running announcement). One
+  engine had been choosing `delivery:'channel'` + `notify:'none'` unprompted, so the scheduled
+  result landed top-level with no thread and no ping.
 - A finished answer is never held back by Slack's temporary status line. The assistant-status
   writes used to queue without bound on one serial chain, and because each write sleeps its own
   retry-after while the workspace is rate-limited, the terminal clear ended up behind a backlog

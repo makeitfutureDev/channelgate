@@ -29,9 +29,11 @@ converting or relabelling it.
 - `prompt` — what to do (task) or the reminder text (reminder). Required.
 - `description` — short title shown in the "Running:" announcement.
 - `notify` — who gets pinged: `"channel"` (@channel, default), `"user"` (pass a Slack user id in
-  `notify_user`), or `"none"` (quiet).
-- `delivery` (task schedules only) — `"channel"` posts the result directly at channel level;
-  `"standard"` announces every run and threads its result; `"daily-thread"` creates
+  `notify_user`), or `"none"` (quiet). Leave it unset unless the user asked for a specific person
+  or for silence — a plain "remind me" means the default.
+- `delivery` (task schedules only) — leave it unset (`"standard"`: announces every run and threads
+  its result) unless the user asked otherwise. `"channel"` posts the result directly at channel
+  level with no thread and no ping — only when explicitly requested; `"daily-thread"` creates
   one top-level “Running” message on the first run of each server-local day and threads every run
   result for that day beneath it. Each run still starts a fresh, context-less agent session.
 - Reminder acknowledgement (only when `kind:"reminder"`): `ack:true` requires someone to react
