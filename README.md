@@ -117,7 +117,7 @@ See [the deployment comparison](docs/WHY.md) for context.
 ## Licensing & partners
 
 **ChannelGate is source-available fair-code**, licensed under the
-[Makeitfuture Sustainable Use License](./LICENSE.md) (v1.3) for internal business, personal, and
+[Makeitfuture Sustainable Use License](./LICENSE.md) (v1.4) for internal business, personal, and
 noncommercial use. It is not OSI open-source software, and no version
 is relicensed automatically.
 

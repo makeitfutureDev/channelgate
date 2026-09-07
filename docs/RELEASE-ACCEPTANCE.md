@@ -41,7 +41,8 @@ filesystem transaction. Individual memory files and mutation batches are bounded
 channel storage remains operator-managed. Result delivery is at least once where the provider
 cannot deduplicate an accepted request whose local acknowledgment was lost.
 
-Release owner gates outside these source tests: legal counsel review of license 1.3/CLA and
-trademark rights; provider-account authorization; candidate image/license notice review; actual
+Release owner evidence outside these source tests: legal review of the current license/CLA;
+the recorded name/registration decision in RELEASE-CHECKLIST.md; an account arrangement authorized
+by each provider for the admitted users; candidate image/license notice review; actual
 private fixture execution above. Record failures and waivers explicitly. A Beta label does not
 convert an unexecuted acceptance case into a pass.

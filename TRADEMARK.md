@@ -1,7 +1,8 @@
 # Trademark guidance
 
-**ChannelGate** and the ChannelGate logo are trademarks of MAKEITFUTURE S.R.L. (registration in
-progress). **Makeitfuture** is a trademark of MAKEITFUTURE S.R.L. The
+**ChannelGate** and the ChannelGate logo are marks used by MAKEITFUTURE S.R.L.; registration is
+planned for a later date. This notice does not claim a registered ChannelGate mark.
+**Makeitfuture** is a trademark of MAKEITFUTURE S.R.L. The
 [Makeitfuture Sustainable Use License](LICENSE.md) grants no trademark rights (§5, §8); this page
 says what you may do without asking.
 

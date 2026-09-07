@@ -34,7 +34,7 @@ test("package and public documentation identify the source-available license con
   }
 });
 
-test("version 1.3 names ChannelGate, adds license keys, keeps control, and has no Change Date", async () => {
+test("version 1.4 names ChannelGate, adds license keys, keeps control, and has no Change Date", async () => {
   const [license, cla, faq, keys, trademark, authors, decision, readme, changelog, checklist] =
     await Promise.all([
       read("LICENSE.md"),
@@ -50,7 +50,7 @@ test("version 1.3 names ChannelGate, adds license keys, keeps control, and has n
     ]);
 
   // The license is versioned and says so in one place that the docs can cite.
-  assert.match(license, /^# Makeitfuture Sustainable Use License\n\nVersion 1\.3$/m);
+  assert.match(license, /^# Makeitfuture Sustainable Use License\n\nVersion 1\.4 — 2026-09-07/m);
   assert.match(license, /ChannelGate \(formerly "Claude Gateway for Slack"\)/);
   assert.match(license, /ChannelGate \(the \*\*Software\*\*\)/);
   assert.match(license, /Original author: Tiberiu Socaci — see `AUTHORS\.md`/);
@@ -86,7 +86,7 @@ test("version 1.3 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(license, /remove, replace, or obscure the Software's names, marks, or attribution/);
   assert.match(license, /Rebranding or white-labeling\s+the Software requires a separate written agreement/);
   assert.match(license, /by `TRADEMARK\.md`/);
-  assert.match(trademark, /trademarks of MAKEITFUTURE S\.R\.L\./);
+  assert.match(trademark, /marks used by MAKEITFUTURE S\.R\.L\./);
   assert.match(trademark, /we install, host, and support\s+ChannelGate/);
   assert.match(trademark, /must not use the name as its own product name/);
 
@@ -119,13 +119,13 @@ test("version 1.3 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(license, /Nothing in this license obliges the Licensor to publish future versions/);
   assert.match(license, /## 11\. Governing law and venue/);
   assert.match(license, /laws of Romania/);
-  assert.match(license, /courts\s+of Bucharest/);
+  assert.match(license, /courts\s+of Cluj-Napoca/);
   assert.match(license, /removed the former Section 7\s+Change Date — no version is relicensed automatically/);
   assert.match(faq, /There is no automatic relicensing/);
   assert.match(readme, /no version\s+is relicensed automatically/);
   assert.match(changelog, /No version is\s+(?:> )?relicensed automatically/); // wraps inside a blockquote
-  assert.match(checklist, /Counsel reviewed license \*\*v1\.3\*\*/);
-  assert.match(checklist, /Word-mark clearance for \*\*ChannelGate\*\*/);
+  assert.match(checklist, /Counsel reviewed license \*\*v1\.4\*\*/);
+  assert.match(checklist, /Owner confirmed \*\*ChannelGate\*\*/);
 
   // Tiers are documented once, consistently, with end-user keys and offline grace.
   assert.match(keys, /\| \*\*No key\*\* \| install and run \| 1 \| 500 \|/);

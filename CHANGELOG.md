@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- Dependency compatibility: update mcp-remote to 0.8.3 in both daemon and image, Slack Bolt to
+  5.1.0 and Zod to 4.5.4. Keep Composio 0.14.0 for the supported Node 22.13 floor. Nightly
+  pinned engine probes now read the actual image manifest, preventing version drift.
+- Public project policy: license v1.4 uses Cluj-Napoca venue; trademark registration is deferred;
+  direct requests use contact@makeitfuture.com and contracted support requires an active
+  Makeitfuture or approved-partner agreement. Existing published releases retain their terms.
+
 - Admin UI: the Pending approvals rows wrap the command being approved (monospace, a few lines)
   instead of running it underneath the Approve/Deny buttons; the Automations search box uses the
   same styled search component as the Users page, with a clear button and Escape to clear.

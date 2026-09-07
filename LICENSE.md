@@ -1,6 +1,6 @@
 # Makeitfuture Sustainable Use License
 
-Version 1.3
+Version 1.4 — 2026-09-07 (Cluj-Napoca venue; prior versions remain in release history)
 
 Copyright © 2026 MAKEITFUTURE S.R.L. All rights reserved.
 Original author: Tiberiu Socaci — see `AUTHORS.md`.
@@ -154,7 +154,7 @@ special, exemplary, or consequential loss arising from the Software or this lice
 ## 11. Governing law and venue
 
 This license is governed by the laws of Romania, excluding its conflict-of-law rules. The courts
-of Bucharest, Romania, have exclusive jurisdiction over any dispute arising from it, without
+of Cluj-Napoca, Romania, have exclusive jurisdiction over any dispute arising from it, without
 prejudice to mandatory protections that apply to you as a consumer in your country of residence.
 
 ## 12. Definitions
@@ -174,6 +174,9 @@ identifies the organization operating a deployment and the limits that apply to 
 platform, as identified by the Software.
 
 ## 13. Version history
+
+- **1.4** (2026-09-07) — changed Section 11 venue from Bucharest to Cluj-Napoca, Romania;
+  software-use permissions are unchanged. Earlier releases retain their published terms.
 
 - **1.3** (2026-09-07) — disambiguated Section 3 list references; reconciled the separately
   licensed EE directory with permitted no-key/free-key installations and unchanged bundled

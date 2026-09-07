@@ -5,11 +5,12 @@
 
 - [x] Authorized owner selected and documented the Makeitfuture Sustainable Use License; the
       bundled Poppins OFL notice is present and third-party components retain upstream terms.
-- [ ] Counsel reviewed license **v1.3** — specifically §3.1 (dedicated deployments, per customer,
+- [ ] Counsel reviewed license **v1.4** — specifically §3.1 (dedicated deployments, per customer,
       customer's key), §3.2 + §4.5 (license keys, usage limits, anti-circumvention), §6 + `CLA.md`
-      (inbound contribution terms), and §11 (Romanian law, Bucharest venue).
-- [ ] Word-mark clearance for **ChannelGate** (CIPO and EUIPO, classes 9 + 42) recorded; the
-      cancelled USPTO registration 5640807 (Cymax) and Cymax's continued use assessed by counsel.
+      (inbound contribution terms), and §11 (Romanian law, Cluj-Napoca venue).
+      This is review evidence, not a claim that the existing text is unfinished.
+- [x] Owner confirmed **ChannelGate** as the name and deferred registration to a later date
+      (2026-09-07). This records the release decision, not trademark clearance or registration.
 - [x] Every commit in the candidate carries a `Signed-off-by` trailer per `CLA.md`, and any
       contribution predating the CLA has a recorded acceptance (all authorship is the Licensor's).
 - [x] The published version's public-availability date is recorded in `CHANGELOG.md` (0.5.0 — 2026-09-06).
@@ -20,6 +21,10 @@
 - [ ] Encrypted backup completed and `npm run restore:drill` passed off production data.
 - [ ] The Linux systemd service package passed install/restart/uninstall checks.
 - [ ] Canary passed health, Slack, engine, approval, confinement, update, and rollback checks.
-- [ ] Security/privacy contacts, subprocessors, retention, incident response, and support owner confirmed.
+- [x] Project requests use GitHub; direct security/privacy/legal/support requests use
+      `contact@makeitfuture.com`. Contracted support requires an active Makeitfuture or approved
+      partner agreement (owner decision, 2026-09-07; `SUPPORT.md`).
+- [ ] Candidate deployment retention, restore and incident procedures verified against
+      `docs/OPERATIONS.md`; project contact details do not prove a deployment's deletion behavior.
 - [ ] Independent review has no unresolved critical/high finding (or documented authorized acceptance).
 - [ ] Previous release and runtime snapshot retained for the rollback window.

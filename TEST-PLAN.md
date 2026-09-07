@@ -381,7 +381,7 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       consistently identify the Makeitfuture Sustainable Use License as source-available/fair-code
       rather than OSI open source; `THIRD_PARTY_NOTICES.md` and `public/fonts/OFL.txt` preserve
       Poppins' OFL terms.
-- [x] `test/license.test.js` (v1.3 case, reconciled 2026-09-07): the license is stamped
+- [x] `test/license.test.js` (v1.4 case, reconciled 2026-09-07): the license is stamped
       `Version 1.3` and names ChannelGate (formerly Claude Gateway for Slack) with the author line;
       §3.1 keeps the dedicated-deployment conditions, adds the customer's-key condition, and permits
       any number of separate deployments without an agreement; §3.2 defines license keys (no key →
