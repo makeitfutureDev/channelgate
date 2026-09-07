@@ -1821,6 +1821,16 @@ are retired, bullet by bullet; everything else stands.
   `npm run build:image` as the remedy; a failed build never aborts the install), so a new gateway
   never reaches its first message without the toolchain. The former standalone catalog skill is
   excluded and removed from all durable grant tiers at boot. → TEST-PLAN: Container runtime (v0.8 P1).
+- **Built-in browser automation (image spec 1.3.0).** Every conversation image ships a pinned
+  Playwright chromium plus the `agent-browser` driver, so a channel can open, drive and screenshot a
+  web page with no per-channel setup. Both halves are baked in: the browser itself AND the distro
+  libraries it needs to start — a browser downloaded into a channel's own HOME volume used to die on
+  `libnspr4.so`, and a container has no root with which to install it. The dependency set comes from
+  `playwright install --with-deps` rather than a hand-copied library list, the browsers live under
+  `/opt` so every channel shares one root-owned copy instead of paying ~400 MB per volume, and the
+  build launches the binary once so a missing library fails the BUILD rather than the first
+  navigation. `AGENT_BROWSER_EXECUTABLE_PATH` points every run at that stable path — never at a
+  chromium revision, which changes with the Playwright pin. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Retired 2026-09-03 (Linux + containers only):** the daemon refuses every platform but Linux
   (`src/platform-gate.js`) and refuses to boot without a usable container CLI — Linux with rootless
   Podman is the only deployment target, so there is no "everywhere" left. **The daemon still runs
