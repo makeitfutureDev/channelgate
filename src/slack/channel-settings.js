@@ -198,7 +198,7 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
       button(`${CHANNEL_SETTINGS_OPTION_PREFIX}auto`, `${mode.autoMode ? "☑" : "☐"} Auto`, state, "option", { key: "autoMode", enabled: !mode.autoMode }),
       button(`${CHANNEL_SETTINGS_OPTION_PREFIX}lean`, `${mode.cleanMode ? "☑" : "☐"} Lean`, state, "option", { key: "cleanMode", enabled: !mode.cleanMode }),
     ] },
-    { type: "context", elements: [mrkdwn("Auto approves tool requests for all members. Lean removes skills and connectors. In Admin mode, admins get full access; other members get Worker with the selected options.")] },
+    { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option shared by all admitted members, not host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
     { type: "divider" },
     ] : []),
     fieldBlock("Engine", configuredEngine),
