@@ -450,7 +450,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   stream with the complete compiled answer and full toolbox, then removes the retired bot message.
   Rollover repeats for arbitrarily long turns, final delivery closes the newest stream, an
   unseedable successor falls back to complete classic delivery, and sanitized failure codes are
-  logged once per site without exposing payloads. → TEST-PLAN: Observability.
+  logged once per site without exposing payloads. When Slack ends a card's stream FIRST — an
+  append delayed past its window by rate limiting, or an age cap the local clock did not beat, both
+  reported as `message_not_in_streaming_state` — the card is republished rather than abandoned:
+  Slack renders an abandoned stream as a bare "Something went wrong", which would leave a red error
+  banner above the correct answer of a turn that merely hit (and handled) a failing tool. The
+  replacement receives the complete row snapshot, the stranded copy is deleted only after it is
+  durable, and a terminal seal that finds the stream already gone republishes the finished toolbox
+  the same way. Only a replacement that cannot be made durable degrades to no card at all.
+  → TEST-PLAN: Observability.
 - Dedicated progress report inside the unified toolbox: for long/substantive domain work,
   the always-injected `gateway-usage` guide teaches skills to publish authoritative semantic-stage
   snapshots through one shared, strict `report_progress` MCP contract used by Claude and Codex.
