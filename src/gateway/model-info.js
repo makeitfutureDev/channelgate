@@ -73,7 +73,9 @@ function modelFromRaw(raw) {
 // This is the RUNTIME truth — context-window math and Codex cost rates key on it. The label
 // shown to the user is modelLabel below, which prefers the CONFIGURED model instead.
 export function resolveCurrentModel(result = {}) {
-  return firstNonEmpty(modelFromRaw(result.raw), result.runtimeModel, result.model);
+  // A runner's primary provider message is authoritative over a terminal aggregate that can
+  // include larger auxiliary-model calls. Older CLIs without that message keep their fallback.
+  return firstNonEmpty(result.primaryModel, modelFromRaw(result.raw), result.runtimeModel, result.model);
 }
 
 // Short human label for the model shown on a reply. Prefers the CONFIGURED runtime the run

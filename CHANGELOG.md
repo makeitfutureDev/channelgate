@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Deliver resolved home-access facts directly on every engine attempt, including resumed threads
+  that retain stale isolation claims. The guide and prompt share one note; injected environment
+  credentials are described as usable with masked listings and redacted output.
+
 - Correct the operating guide's unconditional denial of host access in Full-access channels.
   Generated guidance now reports the resolved operator-home grant and global switch, while
   preserving the default container boundary, channel-wide read scope and admin-author tool bypass.

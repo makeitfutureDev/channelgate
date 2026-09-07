@@ -1561,6 +1561,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a missing runtime target from a known absent grant. The same facts reach Claude and Codex skill
   discovery, including clean workspaces. Admin guide overrides keep their documented precedence.
   → TEST-PLAN: Container runtime (operator-home guide acceptance).
+- **Current access facts on resumed turns:** every engine attempt also receives the resolved
+  home-access setting/mount in its prompt, with explicit precedence over stale thread claims.
+  Guide generation and attempt prompts share one access-note generator. Fresh/resumed, clean,
+  model-retry, healed and fallback attempts retain these facts; an enabled gateway switch is
+  distinguished from the current channel's actual grant and a proposed switch to Admin mode.
+  Environment credentials are described as usable when injected, with masked listing/reveal
+  surfaces and redacted outputs. → TEST-PLAN: Container runtime (resumed access facts).
 **Since 2026-09-03 this is the ONLY runtime (Linux + containers only):** the `host` backend, the
 gateway-wide kill switch, the per-channel runtime pin and the host↔container session carry below
 are retired, bullet by bullet; everything else stands.
@@ -1919,6 +1926,12 @@ are retired, bullet by bullet; everything else stands.
   materialization of identical skills keeps the same plugin path and warm process. Workspace skill
   manifests retain their real materialization times; content, revision, grant and permission changes
   still invalidate reuse. → TEST-PLAN: catalog plugin warm reuse.
+- Claude runtime model attribution follows the primary assistant/provider stream, with the
+  CLI's initialization model as a fallback. Both cold and warm runners preserve that identity
+  ahead of terminal accounting that also includes auxiliary models: a short Opus reply cannot
+  be relabeled Haiku because a title or child agent generated more tokens. Provider usage and
+  total cost remain intact, and the footer continues to name the governing configured variant.
+  → TEST-PLAN: primary model attribution.
 - Clean mode (per channel / DM): run bare for the lowest token cost — no MCP servers injected
   (gateway control, Composio, Toolbox), no skills copied, no skills-favorites block, and no
   per-author tokens. The per-run `--mcp-config` is empty + `--strict-mcp-config` (so global servers

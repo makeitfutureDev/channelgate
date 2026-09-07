@@ -297,6 +297,7 @@ export class PersistentClaudeSession {
         endReason: String(p.subtype || ""),
         engineError: p.is_error === true,
         toolUseCount: t.stream.toolUseCount,
+        primaryModel: t.stream.model,
         // Only when the turn produced no answer: on an abort the CLI never exits, so no error path
         // ever reads what it wrote to stderr (redacted + capped by conciseProcessDiagnostic).
         ...(t.stream.text || p.result ? {} : { diagnostic: conciseProcessDiagnostic((this.stderr || "").slice(t.stderrAt)) }),
