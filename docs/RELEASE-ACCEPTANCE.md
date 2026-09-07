@@ -9,6 +9,21 @@ passed against the existing installed image; it does not complete the candidate/
 below. Private QA registry actions require the operator's selected personal connection. Current
 release preparation does not execute or modify that registry; existing definitions remain pending.
 
+Completed candidate evidence (2026-09-08): RR-15 passed for immutable tag `v0.6.0-rc.2`, source
+`7842559b0350434a3651f66ce32e4bb74468c439`, in the
+[release workflow](https://github.com/makeitfutureDev/channelgate/actions/runs/34165366930).
+The downloaded nine subjects passed checksum and exact-source/tag/workflow attestation checks;
+all 15 image layers and all 17 model entries matched their recorded hashes. Tagged CI reported
+2,186 passes, zero failures and four explicit browser/live skips.
+
+The [Linux lifecycle run](https://github.com/makeitfutureDev/channelgate/actions/runs/34165355246)
+and [actual guest reboot](https://github.com/makeitfutureDev/channelgate/actions/runs/34165355203)
+passed fresh installation, restart, encrypted synthetic database/config backup and restore,
+real updater rollback, reboot/autostart, database/container-volume persistence and uninstall.
+These cover operational portions of RR-06/RR-19, not all their live acceptance: updater fixtures
+control engine smoke and test/pretest commands, and no authenticated first-message or real
+channel/session recovery campaign ran. All other live rows remain unexecuted by this preparation.
+
 For rows marked **both**, create separate Claude and Codex records and run each with that engine
 explicitly pinned. Use approved non-admin test authors unless the setup names an admin. Suggested
 fixture labels below are provisioning instructions; they are not assertions that those channels
