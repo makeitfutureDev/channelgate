@@ -26,7 +26,7 @@ git("config", "user.email", "fixture@example.invalid");
 const appFile = `${repo}/src/web/app.js`;
 const packageFile = `${repo}/package.json`;
 const settingsFile = `${root}/config/settings.json`;
-const settings = JSON.parse(readFileSync(settingsFile));
+const settings = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile)) : {};
 writeFileSync(settingsFile, `${JSON.stringify({ ...settings, whisperEnabled: false, driveSyncEnabled: false }, null, 2)}\n`);
 const appSource = readFileSync(appFile, "utf8");
 assert.equal(appSource.split("updateSmoke = runUpdateSmoke,").length, 2);
