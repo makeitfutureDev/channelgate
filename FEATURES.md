@@ -827,6 +827,20 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
    or tool attempt; generic failures and partially executed turns are never replayed. Slack status,
    the reply note/footer, and the audit event identify the default that actually ran. If the default
    also fails, the original model error remains authoritative. → TEST-PLAN: Engines.
+ - **The substitution is always visible in the thread.** The note is announced to the delivery
+   layer (`answer_note`) before the retry spawns, so it leads the STREAMED answer a reader actually
+   sees — a note only prepended to the finished reply text reaches surfaces that render that text,
+   never a natively streamed Slack message. Both retry paths announce it (the channel's own harness
+   and the cross-engine fallback's own model), it is delivered exactly once whichever way the
+   answer arrives, and a note that could no longer lead the answer becomes a durable task-card row
+   instead of being dropped. → TEST-PLAN: Engines.
+ - **A refused model reads as a setting to fix, never as raw JSON.** Codex reports some provider
+   refusals by handing back the whole HTTP response body as its error message; the runner unwraps
+   that document (status, provider error type, sentence) before classifying, so a model the account
+   cannot use is a `model_rejected` rejection with the same fallback + note instead of an
+   unclassifiable failure. Whatever still ends as an error is posted as a sentence — the provider's
+   own words, never a JSON document — and a model rejection names the model and the remedy
+   (`/model`, or the admin UI). → TEST-PLAN: Engines.
 - **Transient provider failures are retried in place (2026-09-03).** When the provider does not
   answer a request — a 5xx or 529 "overloaded", a connection reset or timeout, or an unexplained
   404 from the Codex backend (the 2026-09-03 ChatGPT Codex outage answered every request that way

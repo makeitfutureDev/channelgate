@@ -51,6 +51,60 @@ function spawnErrorCode(error) {
     .find((code) => message.includes(code)) || "";
 }
 
+// A failing provider answers with a JSON document, and a CLI often hands that document back
+// verbatim as its error "message". Two callers need the same unwrapping for opposite reasons: the
+// runner needs the fields INSIDE it (the HTTP status, the provider's error type) to classify the
+// failure at all, and every surface that shows a person what went wrong needs the sentence rather
+// than the document. Returns the parsed object, or null when the text is already prose.
+// Deliberately tolerant: the body is often quoted inside a line of prose ("unexpected status 400
+// Bad Request: {…}"), so the first `{` through the last `}` is what is parsed.
+export function embeddedJsonObject(value) {
+  const text = String(value ?? "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// The human sentence such a body carries, wherever the provider put it. Providers nest one level
+// (`{ error: { message } }`) or none, and name the field `message`, `detail` or `error`; a body
+// whose message is ITSELF a quoted body (a CLI wrapping what it received) is unwrapped once more.
+function providerSentence(body, depth = 0) {
+  if (!body || typeof body !== "object") return "";
+  const nested = body.error && typeof body.error === "object" ? body.error : null;
+  const candidate = [nested?.message, nested?.detail, body.message, body.detail, body.error]
+    .find((value) => typeof value === "string" && value.trim());
+  const text = String(candidate || "").trim();
+  if (!text) return "";
+  if (depth >= 2) return text;
+  const inner = embeddedJsonObject(text);
+  return (inner && providerSentence(inner, depth + 1)) || text;
+}
+
+// One readable line for a person: never a JSON document, never a stack, never unbounded. Used by
+// every surface that reports a failed turn — a thread message is read by someone who has to decide
+// what to do next, and `{"type":"error","status":400,…}` tells them nothing they can act on.
+export function plainFailureText(value, maxChars = 400) {
+  const limit = Number.isFinite(Number(maxChars)) ? Math.max(1, Number(maxChars)) : 400;
+  const raw = String(value ?? "").trim();
+  const body = embeddedJsonObject(raw);
+  const sentence = body ? providerSentence(body) : "";
+  // Keep the prose the CLI wrapped around the body ("Codex provider error: {…}") and replace only
+  // the document itself, so a message that was already a sentence is returned untouched.
+  const prose = sentence ? raw.slice(0, raw.indexOf("{")).trim() : "";
+  const text = sentence
+    ? `${prose}${prose ? " " : ""}${sentence}`.trim()
+    : body
+      ? raw.replace(/\{[\s\S]*\}/, "").trim() || "the provider rejected the request"
+      : raw;
+  return text.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
 export function conciseProcessDiagnostic(value, maxChars = 600) {
   const limit = Number.isFinite(Number(maxChars)) ? Math.max(1, Number(maxChars)) : 600;
   return redactLogValue(value || "")

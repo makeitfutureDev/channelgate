@@ -35,7 +35,7 @@ import { isProgressReportTool, normalizeProgressReport } from "./progress-report
 import { thinkingSummary } from "./stream.js";
 import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 import { redactLogValue } from "../util/redact.js";
-import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
+import { conciseProcessDiagnostic, embeddedJsonObject, plainFailureText, processFailureMessage } from "../util/process-outcome.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { collectCodexChildAccounting, listCodexChildThreads, readCodexRootAccounting, snapshotCodexUsage, subtractCodexTokenUsage } from "./codex-usage.js";
 
@@ -213,10 +213,19 @@ export function codexProcessFailureMessage(kind, stderr = "") {
 // turn to the other harness instead of collapsing it into an opaque error.
 export function codexTurnError(event) {
   const raw = event?.error;
-  const message = String(raw?.message || event?.message || "codex error").trim();
-  const providerType = String(raw?.type || raw?.code || "").trim();
-  const status = Number(event?.status ?? raw?.status ?? 0) || 0;
-  const providerError = Boolean(raw && typeof raw === "object") || event?.type === "error";
+  const reported = String(raw?.message || event?.message || (typeof raw === "string" ? raw : "") || "codex error").trim();
+  // A ChatGPT-account Codex reports some provider refusals by handing the response BODY back
+  // verbatim: the whole `{"type":"error","status":400,"error":{…}}` document arrives as the event's
+  // message, with the status and the error type INSIDE it instead of on the event. Read them from
+  // there, or a model the account cannot use looks like an unclassifiable failure — which is how a
+  // misconfigured channel came to dead-end on raw JSON instead of falling back to the gateway
+  // default (and saying so).
+  const body = embeddedJsonObject(reported);
+  const nested = body?.error && typeof body.error === "object" ? body.error : null;
+  const message = plainFailureText(reported, 600) || reported;
+  const providerType = String(raw?.type || raw?.code || nested?.type || nested?.code || body?.type || "").trim();
+  const status = Number(event?.status ?? raw?.status ?? body?.status ?? nested?.status ?? 0) || 0;
+  const providerError = Boolean(raw && typeof raw === "object") || event?.type === "error" || Boolean(body);
   return {
     message,
     details: {

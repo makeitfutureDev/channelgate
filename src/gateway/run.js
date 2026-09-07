@@ -255,6 +255,14 @@ export function replaySafeGatewayDefaultModel(error, { engine = "", model = "", 
   return fallback;
 }
 
+// The one sentence a substituted model gets — the primary retry and the cross-engine retry say it
+// the same way. A silent substitution is the failure mode this exists to prevent: the channel's
+// configured model is gone, every later turn will be answered by a different one, and only the
+// person who can fix the setting is in a position to notice.
+export function gatewayDefaultModelNote(rejectedModel, defaultModel) {
+  return `⚠️ _${rejectedModel} was rejected before the turn started — using gateway default ${defaultModel}._\n\n`;
+}
+
 // A result that did literally NO work — empty content AND zero tokens in/out. The CLI can exit 0
 // with such a result when a resume lands in a broken session state (e.g. a turn killed mid-write)
 // or an API error gets swallowed into an empty result line. Callers must treat it as a FAILURE:
@@ -1031,6 +1039,19 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     }
     return onEvent?.(redactSecretFields(event, outputSecrets));
   }, { progressReport, clean });
+  // The gateway's own statement about THIS turn, addressed to the reader rather than to the card:
+  // a surface that streams its answer writes the message from the live stream, so a note the
+  // orchestrator only prepends to the finished `content` is delivered to nobody. Emitted before
+  // the engine that will answer is spawned (the note describes a decision already taken), so it
+  // lands at the head of the answer; a surface with no stream ignores the event and renders the
+  // same sentence from `content`.
+  const announceAnswerNote = (text) => {
+    try {
+      onEvent?.({ kind: "answer_note", scope: "gateway", text: redactSecretValues(text, outputSecrets) });
+    } catch {
+      /* a status callback must never block a run */
+    }
+  };
 
   // Composio exposes TWO independent identities: active author (`composio-user`) plus the agent's
   // own account (`composio-agent`, backed by the channel token, else the org token). Personal mode resolves the existing user/channel→org tokens; SDK mode
@@ -1552,10 +1573,16 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         crossEngineFallback: true,
       });
       try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+      // Told to the delivery layer BEFORE the retry spawns, because a Slack answer is written from
+      // the live stream: a note added to the finished `content` below never reaches the message a
+      // streamed turn produced. Nothing has streamed yet (the rejection landed before generation),
+      // so it lands as the head of the answer. `content` keeps it too — for every surface that
+      // has no stream to write into.
+      announceAnswerNote(gatewayDefaultModelNote(rejectedModel, defaultModel));
       try {
         cx = await execWithSessionHeal(defaultModel);
         fallbackModel = defaultModel;
-        fallbackModelNote = `⚠️ _${rejectedModel} was rejected before the turn started — using gateway default ${defaultModel}._\n\n`;
+        fallbackModelNote = gatewayDefaultModelNote(rejectedModel, defaultModel);
       } catch (defaultModelError) {
         console.warn(`[gateway] gateway-default fallback model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
         err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
@@ -1713,6 +1740,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           toModel: defaultModel,
         });
         try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+        // Same reason as the cross-engine path above: the answer the reader gets is STREAMED, so
+        // the substitution has to be announced before the retry writes its first token — a prefix
+        // on the finished content is only ever seen by a surface that renders that content.
+        announceAnswerNote(gatewayDefaultModelNote(rejectedModel, defaultModel));
         try {
           // The rejected attempt already consumed a FRESH session's id (see remintFreshSession).
           await remintFreshSession();
@@ -1720,7 +1751,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           model = defaultModel;
           result = {
             ...result,
-            content: `⚠️ _${rejectedModel} was rejected before the turn started — using gateway default ${defaultModel}._\n\n${result.content || ""}`,
+            content: `${gatewayDefaultModelNote(rejectedModel, defaultModel)}${result.content || ""}`,
           };
         } catch (defaultModelError) {
           console.warn(`[gateway] gateway-default model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);

@@ -658,6 +658,11 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   let chain = Promise.resolve();
   let rawLen = 0; // raw answer chars accepted into the live stream
   let streamed = ""; // the accepted deltas themselves — finalize() prefix-checks against the final content
+  // Gateway text written at the HEAD of the answer message before the engine produced a token (a
+  // substituted model). It is part of the delivered answer but not part of what the engine
+  // streamed, and the orchestrator also carries it on the final content — so finalize() subtracts
+  // it there rather than delivering the same sentence twice.
+  let preface = "";
   let truncated = false; // the live stream hit the length cap — the rest arrives as follow-up messages
   let failed = false;
   let stopped = false;
@@ -1071,6 +1076,22 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       } else if (e.kind === "thinking") {
         lastActivity = e.summary ? `thinking — ${e.summary}` : "thinking";
         timeline.flushActive();
+      } else if (e.kind === "answer_note" && e.text) {
+        // The gateway's own line about this turn (see run.js announceAnswerNote). It belongs in the
+        // answer the reader keeps, so it streams as the head of the answer message — but it is not
+        // the MODEL writing: `answerStarted` stays false so a later liveness pulse can still open
+        // the task card, and it is not counted into `rawLen`, so a tool-only turn still delivers
+        // its answer through finalize()'s one-shot path.
+        if (stopped || failed || truncated) return;
+        // Once the answer itself has begun, a preface is no longer possible (a stream only ever
+        // appends). Such a note becomes a durable card row instead of being lost.
+        if (rawLen > 0) {
+          lastActivity = e.text;
+          timeline.notice(e.text);
+          return;
+        }
+        preface += e.text;
+        enqueue(() => appendCurrent({ markdown_text: e.text }));
       } else if (e.kind === "notice") {
         // Durable row, not just a status blip: the stop-hook safety valve says work is being
         // abandoned, and that has to still be readable once the turn has finished.
@@ -1112,7 +1133,11 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       stopHeartbeat();
       await clearShimmer();
       const fullRaw = result?.content || "";
-      const full = fullRaw.trim();
+      // What is still OWED to this message. A gateway note (a substituted model) was streamed as
+      // the head of the answer and the orchestrator also carries it on `content` for surfaces with
+      // no stream — so it is subtracted here, and the sentence lands exactly once.
+      const pending = preface && fullRaw.startsWith(preface) ? fullRaw.slice(preface.length) : fullRaw;
+      const full = pending.trim();
       // Release any "@name" the holdback buffer was still waiting on (already counted in rawLen).
       const remainder = mentionStream.flush();
       if (remainder && !failed && rawLen > 0) enqueue(() => appendCurrent({ markdown_text: remainder }));
@@ -1131,9 +1156,9 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         // streamed deltas (true for Claude; Codex deltas are best-effort and the limit-fallback
         // prepends a notice that never streamed). On divergence, deliver the full authoritative
         // answer below instead of a mis-sliced tail.
-        overflow = fullRaw.startsWith(streamed)
-          ? fullRaw.slice(streamed.length)
-          : "_(the live stream above was truncated — full answer:)_\n\n" + fullRaw;
+        overflow = pending.startsWith(streamed)
+          ? pending.slice(streamed.length)
+          : "_(the live stream above was truncated — full answer:)_\n\n" + pending;
       }
       // The requester @-mention rides the LAST message of the reply so they get a notification even
       // in a channel thread they aren't watching (requesterTag is "" in a DM / author-less post, so
@@ -1213,7 +1238,9 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           client,
           channel,
           threadTs,
-          resolveMentions(mdToMrkdwn(full), dir).trim() + tag,
+          // The COMPLETE content, gateway note included: discardPartialAnswer() above removed the
+          // streamed copy this fallback replaces, so nothing of it survives to be duplicated.
+          resolveMentions(mdToMrkdwn(fullRaw.trim()), dir).trim() + tag,
           footerText(result),
           footerButtons(result, { channel, threadTs, authorId }),
           { footerBlocks: footerBlocks(result, { channel, threadTs, authorId }) },

@@ -24,6 +24,9 @@ transient_times=0
 transient_after_tool="no"
 reject_model="no"
 reject_all_models="no"
+stream_text="no"
+reject_model_body="no"
+reject_all_models_body="no"
 reject_after_tool="no"
 limit_fail="no"
 limit_stderr="no"
@@ -49,6 +52,8 @@ for arg in "$@"; do
     *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
     *CODEX_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
     *CODEX_STUB_TRANSIENT_AFTER_TOOL*) transient_after_tool="yes" ;;
+    *CODEX_STUB_REJECT_MODEL_BODY*) reject_model_body="yes" ;;
+    *CODEX_STUB_REJECT_ALL_MODELS_BODY*) reject_all_models_body="yes" ;;
     *CODEX_STUB_REJECT_MODEL*) reject_model="yes" ;;
     *CODEX_STUB_REJECT_ALL_MODELS*) reject_all_models="yes" ;;
     *CODEX_STUB_REJECT_AFTER_TOOL*) reject_after_tool="yes" ;;
@@ -61,6 +66,10 @@ for arg in "$@"; do
   esac
   previous="$arg"
 done
+# Checked outside the loop's case: a `case` runs only its FIRST matching branch per argument, so a
+# prompt that carries this sentinel ALONGSIDE another one (a rejection to stream the retry of)
+# would otherwise silence the other.
+case "$*" in *CODEX_STUB_STREAM_TEXT*) stream_text="yes" ;; esac
 if [ "$cancel" = "yes" ]; then
   exec sleep 30
 fi
@@ -158,7 +167,21 @@ if [ "$reject_all_models" = "yes" ] || { [ "$reject_model" = "yes" ] && [ "$mode
   printf '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The '\''%s'\'' model is not supported for this account."}}\n' "$model"
   exit 1
 fi
+# The SAME rejection as reported by a real ChatGPT-account Codex: the provider's whole JSON response
+# body arrives as the MESSAGE of a turn.failed event, so the status and the error type sit inside
+# that document instead of on the event. Unwrapping it is what keeps this a classified model
+# rejection (and keeps a JSON document out of the thread).
+if [ "$reject_all_models_body" = "yes" ] || { [ "$reject_model_body" = "yes" ] && [ "$model" = "gpt-5.6" ]; }; then
+  printf '{"type":"turn.failed","error":{"message":"{\\"type\\":\\"error\\",\\"status\\":400,\\"error\\":{\\"type\\":\\"invalid_request_error\\",\\"message\\":\\"The '\''%s'\'' model is not supported when using Codex with a ChatGPT account.\\"}}"}}\n' "$model"
+  exit 1
+fi
 printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-session"}'
 printf '%s\n' '{"type":"item.started","item":{"type":"mcp_tool_call","server":"gateway","tool":"slack_channel_history"}}'
+# The answer as a streamed assistant message, the way a real turn reports it: the Slack message is
+# written from these deltas, so anything the gateway adds to the finished reply afterwards is NOT
+# in what the reader sees unless the delivery layer is told about it.
+if [ "$stream_text" = "yes" ]; then
+  printf '{"type":"item.completed","item":{"id":"item_answer","type":"agent_message","text":"Codex stub reply; resume=%s; gateway_mcp=%s; model=%s; network_proxy=%s; approved_domain=%s"}}\n' "$resume" "$mcp" "$model" "$network_proxy" "$network_domain"
+fi
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":9,"output_tokens":3}}'
 printf 'Codex stub reply; resume=%s; gateway_mcp=%s; model=%s; network_proxy=%s; approved_domain=%s\n' "$resume" "$mcp" "$model" "$network_proxy" "$network_domain" > "$out"

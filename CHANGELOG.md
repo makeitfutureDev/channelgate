@@ -18,6 +18,22 @@ product overview.
 
 ## Unreleased
 
+- A model the provider refuses no longer answers as a different model in silence, and never
+  answers in JSON. Two halves of the same live failure (a channel whose model id did not exist):
+  the gateway did substitute its default and logged the substitution, but the ⚠️ note was only
+  prepended to the finished reply text — and a natively streamed Slack answer is written from the
+  live stream, so the thread never mentioned that a different model had answered. The note is now
+  announced to the delivery layer before the retry spawns, so it leads the streamed answer, on both
+  the channel's own harness and a cross-engine fallback whose own model is refused; it is still
+  carried on the reply text for surfaces that have no stream, and delivered exactly once either
+  way. On the Codex side the same misconfiguration dead-ended instead: that CLI reports some
+  provider refusals by handing back the whole HTTP response body as its error message, which the
+  classifier — reading status and error type from the event, not from the document inside it — saw
+  as an unclassifiable failure, so the turn failed after minutes with the raw JSON posted in the
+  thread. The runner now unwraps that body before classifying (same fallback, same visible note),
+  and any failure that still reaches the thread is rendered as a sentence — the provider's own
+  words, never a document — with a model rejection naming the model and the remedy (`/model`, or
+  the admin UI).
 - Loop guidance: the schedule tool's minimum-interval refusal now points at the thread's native
   loop pacing for short repeats, the loops reference says a sub-floor repeat is never a background
   agent or an in-turn sleep, and a loop's stop reply must state the iterations run and the pending
