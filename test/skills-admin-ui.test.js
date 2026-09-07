@@ -45,6 +45,17 @@ test("templates and usage expose searchable selection and understandable views",
   assert.match(js, /does not mean a skill failed/);
 });
 
+test("catalog filters keep owner and expose governance plus assignment states", () => {
+  for (const id of ["skills-owner", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned"]) {
+    assert.match(js, new RegExp(`id="${id}"`));
+  }
+  assert.match(js, /binaryOptions\(state\.enabled, "enabled or disabled", "Enabled", "Disabled"\)/);
+  assert.match(js, /binaryOptions\(state\.discoverable, "discoverable or not", "Discoverable", "Not discoverable"\)/);
+  assert.match(js, /binaryOptions\(state\.mandatory, "mandatory or not", "Mandatory", "Not mandatory"\)/);
+  assert.match(js, /binaryOptions\(state\.assigned, "assigned or not", "Assigned", "Not assigned"\)/);
+  assert.doesNotMatch(js, /id="skills-category"|id="skills-source"|id="skills-removed"/);
+});
+
 // An author `display` declaration beats the UA stylesheet's `[hidden] { display: none }` whatever
 // its specificity, so every class the admin JS hides by setting `.hidden` needs a companion rule.
 // Without it the template skill search hid nothing (every row stayed on screen while filtering) and

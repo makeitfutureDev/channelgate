@@ -3322,6 +3322,12 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       searchable and usage-descending with By skill / By channel rollups, compact bars,
       and context-warning explanations. The profile API supplies warning text rather
       than only a count (`test/skills-admin-ui.test.js`, `test/skills-admin-api.test.js`).
+- [x] Admin UI + API: Catalog keeps its Owner filter and replaces Category / Source / show-removed
+      controls with independent Enabled, Discoverable, Mandatory and Assigned tri-state filters.
+      The API fixture toggles `governed-skill` through discoverability, mandatory and disabled
+      states, then grants it to one conversation; each positive and negative query proves the row
+      is included or excluded, and Disabled includes normally hidden catalog rows
+      (`test/skills-admin-ui.test.js`, `test/skills-admin-api.test.js`).
 - [x] Admin UI (SKL-13 regression): every class the admin JS hides by setting `.hidden` carries a
       `[hidden] { display: none }` companion rule — an author `display` declaration beats the UA
       sheet's `[hidden]` whatever the specificity, so without it the template skill search filtered
@@ -3540,12 +3546,13 @@ Manual checks for the daemon-level behavior:
 ### Skills platform (governance and usage)
 
 - [x] Unit/API: migration 19 preserves existing discoverability; catalog search covers source
-      label and filters by source/category; Enabled, Discoverable and Mandatory transitions enforce
-      Mandatory ⇒ Enabled + Discoverable, while disabling removes the mandatory grant.
+      label and filters by source/category; catalog governance/assignment queries filter Enabled,
+      Discoverable, Mandatory and Assigned independently; transitions enforce Mandatory ⇒ Enabled
+      + Discoverable, while disabling removes the mandatory grant.
 - [x] UI: Usage is the first tab and auto-loads the top 20 for 30 days, Templates is second and has
-      no category or conversation-assignment controls, Catalog exposes category/source filters and
-      the three governance checkboxes, all usage lists sort descending, and user-facing tables have
-      one Usage column.
+      no category or conversation-assignment controls, Catalog keeps Owner and exposes Enabled,
+      Discoverable, Mandatory and Assigned filters plus the three governance checkboxes, all usage
+      lists sort descending, and user-facing tables have one Usage column.
 - [x] MCP: ordinary users search discoverable skills plus skills already active here by query,
       category or source; managers change channel skills/templates; only admins may call
       `set_skill_governance`.

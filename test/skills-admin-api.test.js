@@ -142,13 +142,26 @@ test("catalog governance controls enabled, discoverable and mandatory invariants
   await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Governed Skill", "governance test") }], publish: false } });
   let changed = await request("/skills/catalog/governed-skill/governance", { method: "POST", body: { discoverable: false } });
   assert.equal(changed.json.skill.discoverable, false);
+  assert.ok((await request("/skills/catalog?q=governed-skill&discoverable=0")).json.skills.some((s) => s.slug === "governed-skill"));
+  assert.ok(!(await request("/skills/catalog?q=governed-skill&discoverable=1")).json.skills.some((s) => s.slug === "governed-skill"));
+  assert.ok((await request("/skills/catalog?q=governed-skill&assigned=0")).json.skills.some((s) => s.slug === "governed-skill"));
   changed = await request("/skills/catalog/governed-skill/governance", { method: "POST", body: { mandatory: true } });
   assert.equal(changed.json.skill.mandatory, true);
   assert.equal(changed.json.skill.discoverable, true);
   assert.equal(changed.json.skill.enabled, true);
+  assert.ok((await request("/skills/catalog?q=governed-skill&mandatory=1&assigned=1")).json.skills.some((s) => s.slug === "governed-skill"));
   changed = await request("/skills/catalog/governed-skill/governance", { method: "POST", body: { enabled: false } });
   assert.equal(changed.json.skill.enabled, false);
   assert.equal(changed.json.skill.mandatory, false);
+  assert.ok((await request("/skills/catalog?q=governed-skill&enabled=0")).json.skills.some((s) => s.slug === "governed-skill"), "the disabled filter includes normally hidden catalog rows");
+  assert.ok((await request("/skills/catalog?q=governed-skill&enabled=all")).json.skills.some((s) => s.slug === "governed-skill"), "the all-status option includes disabled rows too");
+  assert.ok(!(await request("/skills/catalog?q=governed-skill&enabled=1")).json.skills.some((s) => s.slug === "governed-skill"));
+
+  await request("/skills/catalog/governed-skill/governance", { method: "POST", body: { enabled: true } });
+  await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["governed-skill"] } });
+  assert.ok((await request("/skills/catalog?q=governed-skill&assigned=1")).json.skills.some((s) => s.slug === "governed-skill"), "a conversation grant counts as assigned");
+  assert.ok(!(await request("/skills/catalog?q=governed-skill&assigned=0")).json.skills.some((s) => s.slug === "governed-skill"));
+  await request(`/skills/profile/${entry.slug}/revoke`, { method: "POST", body: { slugs: ["governed-skill"] } });
 });
 
 test("templates: preview and assign to a conversation, grant/revoke, profile and usage endpoints", async () => {
