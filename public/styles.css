@@ -747,9 +747,11 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 }
 .sched-open:hover { background: rgba(145, 201, 206, .07); filter: none; }
 .sched-open:focus-visible { background: rgba(145, 201, 206, .07); }
-.sched-friendly { flex: 0 0 auto; min-width: 132px; color: var(--blue); font-size: 12px; font-weight: 600; white-space: nowrap; }
+/* Fixed column widths so the timing, title and last-run cells line up down a card like a table
+   instead of each row's description starting wherever its timing label happens to end. */
+.sched-friendly { flex: 0 0 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--blue); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .sched-badge { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--warn); border: 1px solid rgba(232, 176, 75, .4); border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
-.sched-run { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sched-run { flex: 0 0 210px; display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sched-saved { font-size: 11px; color: var(--ok); white-space: nowrap; min-width: 0; opacity: 0; transition: opacity .15s; }
 .sched-saved.show { opacity: 1; }
 .sched-row .sched-del { font: 600 11.5px var(--font); color: var(--danger); background: none; border: 1px solid rgba(229, 96, 77, .5); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
@@ -807,6 +809,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
   .sched-row { align-items: flex-start; flex-wrap: wrap; }
   .sched-open { order: -1; flex-basis: calc(100% - 34px); align-items: flex-start; flex-wrap: wrap; }
   .sched-open .sched-desc { flex-basis: 100%; white-space: normal; }
+  .sched-friendly, .sched-run { flex-basis: auto; }
   .schedule-card { width: calc(100vw - 24px); max-height: 92vh; }
   .schedule-details { grid-template-columns: 1fr; }
   #view-users .dash-head { flex-direction: column; }

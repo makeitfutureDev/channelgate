@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Admin UI: Automations rows use fixed timing and last-run columns so the titles line up down a
+  card.
 - Admin UI: the Pending approvals rows wrap the command being approved (monospace, a few lines)
   instead of running it underneath the Approve/Deny buttons; the Automations search box uses the
   same styled search component as the Users page, with a clear button and Escape to clear.
