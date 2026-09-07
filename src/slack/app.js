@@ -46,6 +46,7 @@ import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
 
 import { uploadLocalFile } from "./upload.js";
 import { BROWSER_EDIT_MAX_BYTES, BROWSER_EDIT_MAX_CHARS, createFileEditorGrantUrl } from "../web/file-editor.js";
+import { createFileDownloadGrantUrl } from "../web/file-download.js";
 import { createFileUploadGrantUrl } from "../web/file-upload.js";
 import path from "node:path";
 
@@ -358,6 +359,18 @@ function filePreviewOptions({ state, entry, mayEdit, notice = "" }) {
   return {
     notice,
     canEdit: mayEdit,
+    ...(baseUrl
+      ? {
+          createDownloadUrl: ({ relative }) => createFileDownloadGrantUrl({
+            baseUrl,
+            channelId: state.channelId,
+            slug: entry.slug,
+            ownerId: state.ownerId,
+            relative,
+            threadTs: state.threadTs,
+          }),
+        }
+      : {}),
     ...(mayEdit && baseUrl
       ? {
           browserEditLimits: { maxChars: BROWSER_EDIT_MAX_CHARS, maxBytes: BROWSER_EDIT_MAX_BYTES, label: "Browser editing" },
@@ -601,6 +614,8 @@ async function connectAndWire(app) {
           mayEdit,
           notice: `✅ Sent the complete ${name} file to your Slack DM.`,
         }));
+      } else if (command.o === "browser_download") {
+        return; // Slack opens the URL; the browser route repeats every authorization check.
       } else if (command.o === "browser_edit") {
         if (!mayEdit) throw new Error("Editing is no longer enabled for you in this channel mode.");
         return; // Slack opens the button URL; the browser route repeats every security check.

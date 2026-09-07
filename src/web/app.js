@@ -16,6 +16,7 @@ import { mountSkillsPublicRoutes } from "./skills-mcp.js";
 import { triggerSourceSync } from "../gateway/skills/index.js";
 import { createRunsRouter } from "./routes/runs.js";
 import { createFileEditorRouter } from "./file-editor.js";
+import { createFileDownloadRouter } from "./file-download.js";
 import { createApprovalLinkRouter } from "./routes/approve.js";
 import { createFileUploadRouter } from "./file-upload.js";
 import { poolStats } from "../engines/session-pool.js";
@@ -75,7 +76,7 @@ export function createWebApp({
   mountSkillsPublicRoutes(app, { triggerSync: (id) => triggerSourceSync(id) });
 
   const jsonParser = express.json({ limit: "1mb" });
-  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") || req.path.startsWith("/approve/") || req.path === "/api/skills/webhook/github" || req.path === "/mcp/skills" ? next() : jsonParser(req, res, next)));
+  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-download") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") || req.path.startsWith("/approve/") || req.path === "/api/skills/webhook/github" || req.path === "/mcp/skills" ? next() : jsonParser(req, res, next)));
 
   // Auth: login/logout are always reachable; everything else is gated when ADMIN_PASSWORD is set.
   app.post("/api/login", handleLogin);
@@ -182,6 +183,22 @@ export function createWebApp({
         throw new Error("Editing is no longer enabled for you in this channel mode.");
       }
       return context;
+    },
+  }));
+
+  // Direct downloads are available in every channel mode when Public URL is configured. The
+  // one-use link repeats the explorer's authorization and membership check before streaming one
+  // re-confined file; it grants no write capability and creates no Slack file copy.
+  app.use("/file-download", createFileDownloadRouter({
+    authorize: async (grant) => {
+      const client = slack?.getClient?.();
+      if (!client) throw new Error("Slack is disconnected; reconnect the gateway and reopen the file preview.");
+      return fileExplorerContext(client, {
+        channelId: grant.channelId,
+        userId: grant.ownerId,
+        expectedSlug: grant.slug,
+        verifyMembership: true,
+      });
     },
   }));
 

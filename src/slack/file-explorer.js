@@ -18,6 +18,7 @@ export const FILES_NEXT_ACTION_ID = "cg_channel_files_next";
 export const FILES_BACK_ACTION_ID = "cg_channel_files_back";
 export const FILES_SHARE_ACTION_ID = "cg_channel_files_share";
 export const FILES_SEND_DM_ACTION_ID = "cg_channel_files_send_dm";
+export const FILES_DOWNLOAD_ACTION_ID = "cg_channel_files_download";
 export const FILES_EDIT_ACTION_ID = "cg_channel_files_edit";
 export const FILES_BROWSER_EDIT_ACTION_ID = "cg_channel_files_browser_edit";
 export const FILES_BROWSER_UPLOAD_ACTION_ID = "cg_channel_files_browser_upload";
@@ -784,7 +785,7 @@ function safeCodeBlock(text) {
   return String(text || "").replaceAll("```", "ˋˋˋ").slice(0, PREVIEW_BYTES);
 }
 
-export async function buildFilePreviewView(root, state, relative, { notice = "", canEdit = false, createEditUrl = null, browserEditLimits = null } = {}) {
+export async function buildFilePreviewView(root, state, relative, { notice = "", canEdit = false, createDownloadUrl = null, createEditUrl = null, browserEditLimits = null } = {}) {
   const file = await readFilePreview(root, relative);
   const parent = path.posix.dirname(file.relative);
   const parentRelative = parent === "." ? "" : parent;
@@ -808,6 +809,23 @@ export async function buildFilePreviewView(root, state, relative, { notice = "",
   const elements = [
     { type: "button", action_id: FILES_BACK_ACTION_ID, text: plain("← Back"), value: actionValue("directory", { p: parentRelative }) },
   ];
+  let downloadUrl = "";
+  if (typeof createDownloadUrl === "function") {
+    try {
+      downloadUrl = String(await createDownloadUrl({ relative: file.relative })) || "";
+    } catch {
+      downloadUrl = "";
+    }
+  }
+  if (downloadUrl) {
+    elements.push({
+      type: "button",
+      action_id: FILES_DOWNLOAD_ACTION_ID,
+      text: plain("Download"),
+      value: actionValue("browser_download", { p: file.relative }),
+      url: downloadUrl,
+    });
+  }
   if (file.shareable) {
     elements.push({
       type: "button",

@@ -18,6 +18,7 @@ import {
   FILES_ACTION_PATTERN,
   FILES_BROWSER_UPLOAD_ACTION_ID,
   FILES_BROWSER_EDIT_ACTION_ID,
+  FILES_DOWNLOAD_ACTION_ID,
   FILES_EDIT_ACTION_ID,
   FILES_NEW_FOLDER_ACTION_ID,
   FILES_NEW_FOLDER_BLOCK_ID,
@@ -209,14 +210,19 @@ test("modal carries compact channel state and builds native navigation controls"
 
 test("file explorer propagates authoritative channel names through loading and refreshed views", () => {
   const appSource = readFileSync(new URL("../src/slack/app.js", import.meta.url), "utf8");
+  const webSource = readFileSync(new URL("../src/web/app.js", import.meta.url), "utf8");
   const openExplorerSource = appSource.match(/async function openFileExplorer[\s\S]*?\n}\n\nasync function updateFileExplorerView/)?.[0] || "";
   const viewOptionsSource = appSource.match(/function fileExplorerViewOptions[\s\S]*?\n}\n\nfunction filePreviewOptions/)?.[0] || "";
+  const previewOptionsSource = appSource.match(/function filePreviewOptions[\s\S]*?\n}\n\nfunction fileExplorerErrorView/)?.[0] || "";
   const navigationSource = appSource.match(/const handleFileExplorerAction[\s\S]*?\n\s*app\.action\(FILES_ACTION_PATTERN/)?.[0] || "";
   const folderRefreshSource = appSource.match(/app\.view\("cg_channel_files_new_folder_modal"[\s\S]*?\n\s*for \(const a of APPROVAL_ACTIONS\)/)?.[0] || "";
 
   assert.match(openExplorerSource, /buildFilesLoadingView\(state,\s*{\s*channelName:\s*entry\.name\s*}\)/);
   assert.match(openExplorerSource, /relativeFile[\s\S]*?buildFilePreviewView\(root,\s*state,\s*relativeFile/);
   assert.match(viewOptionsSource, /channelName:\s*entry\.name/);
+  assert.match(previewOptionsSource, /createDownloadUrl:[\s\S]*?createFileDownloadGrantUrl\(\{[\s\S]*?ownerId:\s*state\.ownerId/);
+  assert.match(navigationSource, /command\.o === "browser_download"[\s\S]*?return;/);
+  assert.match(webSource, /app\.use\("\/file-download",\s*createFileDownloadRouter\(\{[\s\S]*?fileExplorerContext\(client,[\s\S]*?verifyMembership:\s*true/);
   assert.match(openExplorerSource, /buildFilesView\(root,\s*state,\s*fileExplorerViewOptions\(\{\s*state,\s*entry,\s*mayEdit\s*}\)\)/);
   assert.equal(
     navigationSource.match(/buildFilesView\(root,\s*nextState,\s*fileExplorerViewOptions\(\{\s*state:\s*nextState,\s*entry,\s*mayEdit\s*}\)\)/g)?.length,
@@ -394,6 +400,40 @@ test("text preview offers thread share, private delivery, and eligible editing",
   assert.equal(send.action_id, FILES_SEND_DM_ACTION_ID);
   assert.match(send.confirm.text.text, /complete.*Slack DM/i);
   assert.equal(edit.action_id, FILES_EDIT_ACTION_ID);
+  assertUniqueActionIds(view);
+});
+
+test("file preview offers a direct browser download whenever Public URL minted one", async (t) => {
+  const { root } = await fixture(t);
+  const state = { channelId: "C123", slug: "channel", threadTs: "123.456", ownerId: "U123", relative: "", page: 0 };
+  let granted = null;
+  const view = await buildFilePreviewView(root, state, "readme.txt", {
+    createDownloadUrl: (file) => {
+      granted = file;
+      return "https://gateway.example/file-download/open/opaque";
+    },
+  });
+  const download = view.blocks.flatMap((block) => block.elements || []).find((item) => item.action_id === FILES_DOWNLOAD_ACTION_ID);
+  assert.equal(download.text.text, "Download");
+  assert.equal(download.url, "https://gateway.example/file-download/open/opaque");
+  assert.equal(JSON.parse(download.value).o, "browser_download");
+  assert.equal(granted.relative, "readme.txt");
+  assertUniqueActionIds(view);
+});
+
+test("direct download remains available for files too large to copy into Slack", async (t) => {
+  const { root } = await fixture(t);
+  const huge = path.join(root, "huge.bin");
+  await writeFile(huge, "");
+  await truncate(huge, MAX_SHARED_FILE_BYTES + 1);
+  const state = { channelId: "C123", slug: "channel", threadTs: "", ownerId: "U123", relative: "", page: 0 };
+  const view = await buildFilePreviewView(root, state, "huge.bin", {
+    createDownloadUrl: () => "https://gateway.example/file-download/open/opaque",
+  });
+  const actions = view.blocks.flatMap((block) => block.elements || []);
+  assert.ok(actions.some((item) => item.action_id === FILES_DOWNLOAD_ACTION_ID));
+  assert.equal(actions.some((item) => item.action_id === FILES_SHARE_ACTION_ID), false);
+  assert.equal(actions.some((item) => item.action_id === FILES_SEND_DM_ACTION_ID), false);
   assertUniqueActionIds(view);
 });
 

@@ -346,7 +346,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   nested folder paths (browser pickers omit empty folders). Selected files travel directly from
   the browser to the gateway folder and are never staged in Slack file storage. These flows
   refuse protected/traversal names, never overwrite collisions, and audit every result. Read-only
-  mode hides write controls and Full remains admin-only. A confirmed *Share* copies a
+  mode hides write controls and Full remains admin-only. With a Public URL configured, every file
+  preview also offers *Download*: a requester-bound, 10-minute, single-use URL rechecks channel
+  authorization + membership and realpath confinement, then streams the complete file directly
+  from the gateway with no Slack file copy, including files above Slack's 25 MB sharing limit; each
+  accepted transfer audits `channel_file_downloaded`. A confirmed *Share* copies a
   selected regular file (≤25 MB) only into the originating channel/thread; *Send to me* delivers the
   complete selected file privately through the bot's Slack DM, independent of the user's network.
   Preview truncation is explicitly presentation-only. In
