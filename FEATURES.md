@@ -410,8 +410,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `SubAgentActivity` start/finish lifecycle (keyed on the child's thread id, so the spawning call
   and the completion merge into one row) and the `collaboration` spawn call whose task name titles
   it — while a collab call that names no child (Codex multi-agent v2 waits) renders the
-  coordination step itself rather than nothing; completed rows remain visible,
-  elapsed/token/tool metadata appears when supplied, and
+  coordination step itself rather than nothing. Because `codex exec --json` forwards NONE of those
+  identity-bearing shapes (CLI 0.153.4 sends one anonymous `wait` item and hides the spawn call
+  entirely), the Codex runner takes a child's identity from the only place it exists on the
+  daemon's side: the child's OWN rollout, whose `session_meta` names it (`agent_path`,
+  `agent_nickname`) and its parent. A collaboration item is the cue to read those rollouts and open
+  a named row per child while they work; the end-of-turn accounting pass — the same one that bills
+  subagent tokens — closes each row with the child's elapsed time and token spend. Completed rows
+  remain visible, elapsed/token/tool metadata appears when supplied, and
   failed/stopped/missing-terminal lifecycles close with an explicit warning instead of leaving a
   spinner behind. The assistant shimmer also reports how many native agents are active. These
   joined children are distinct from durable `run_agent_in_background` jobs, which retain their

@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Codex subagents get their own progress-card rows again. `codex exec --json` never puts a child's
+  identity on stdout — a turn that spawned two subagents sent one anonymous coordination item and
+  nothing else — so the card showed a single generic `wait_agent` row where Claude showed a row per
+  child. The Codex runner now reads each child's own session record for its name, opens a row while
+  the children work, and closes each row with the child's elapsed time and token spend.
+
 - Addressed the release audit: isolated runtime credentials and daemon metadata, tightened SDK/API
   authorization and admin reauthentication, serialized memory saves, and separated interrupted
   execution from result-delivery recovery. Google Chat intake is durable and bounded; non-Slack

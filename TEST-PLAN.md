@@ -758,10 +758,18 @@ shape is asserted, not reviewed by eye.
       padded twice, mapping without a run state injects nothing, and the authoritative `-o` final
       message is unchanged (`test/codex-args.test.js`,
       `test/codex-message-to-reply-e2e.test.js`).
+- [x] Unit + stub e2e (SLK-203): a Codex turn whose stdout is what `codex exec --json` really sends
+      for two subagents — the spawn calls absent and one anonymous `wait` item with empty
+      `receiver_thread_ids`/`agents_states` — still yields a named row per child: the runner reads
+      the children's own rollouts, announces `sandbox_reviewer`/`connector_reviewer` live while the
+      parent waits, closes each row with its elapsed time and token spend from the same accounting
+      pass, keys both events on the child's thread id so it stays ONE row, keeps the `wait_agent`
+      coordination row, and still bills the children by name
+      (`test/codex-message-to-reply-e2e.test.js`, `test/slack-progress.test.js`).
 - [ ] Live Codex: in a Codex channel, ask for work that spawns two subagents. Verify the card shows
-      the subagent/coordination rows for the whole wait instead of a silent card, and that the
-      answer's stage narration and final answer are separate paragraphs (no
-      "…sentence.NextSentence" glue).
+      a named row per child (not just one `wait_agent` row) for the whole wait, that each row ends
+      with its elapsed/token metrics, and that the answer's stage narration and final answer are
+      separate paragraphs (no "…sentence.NextSentence" glue).
 - [x] Unit: the native task card keeps two subagent rows `in_progress` concurrently, updates and
       completes them independently, formats available elapsed/token/tool metadata, shows
       failed/stopped warnings, terminalizes missing lifecycle events, drives the assistant shimmer

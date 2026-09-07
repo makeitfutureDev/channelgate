@@ -37,7 +37,7 @@ import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from ".
 import { redactLogValue } from "../util/redact.js";
 import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
-import { collectCodexChildAccounting, readCodexRootAccounting, snapshotCodexUsage, subtractCodexTokenUsage } from "./codex-usage.js";
+import { collectCodexChildAccounting, listCodexChildThreads, readCodexRootAccounting, snapshotCodexUsage, subtractCodexTokenUsage } from "./codex-usage.js";
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 const MAX_RETAINED = 64_000; // stdout/stderr/delta kept for error context — tail only, never unbounded
@@ -240,6 +240,12 @@ function codexItemKey(value) {
 function codexItemMayExecuteTool(item = {}) {
   const type = codexItemKey(item.type);
   return ["mcptoolcall", "commandexecution", "filechange", "websearch", "collabtoolcall", "collabagenttoolcall"].includes(type);
+}
+
+// Is this item the model coordinating with its children (spawn/wait/send_input/close_agent)?
+function codexIsCollabItem(item) {
+  const type = codexItemKey(item?.type);
+  return type === "collabtoolcall" || type === "collabagenttoolcall";
 }
 
 function codexMcpToolName(item = {}) {
@@ -928,6 +934,42 @@ export async function runCodex({
     let lastNote = "";
     let lastNoteAt = 0;
     const startedAt = Date.now();
+    // Child rows already opened on the card, by the child's own thread id. `codex exec --json`
+    // reports collaboration as ONE anonymous `wait` item, so the identity comes from the children's
+    // rollouts instead (see announceChildAgents) and this set is what keeps a repeated scan from
+    // re-announcing the same child.
+    const announcedChildren = new Set();
+    let childScan = Promise.resolve();
+
+    // Open a row per spawned child. Triggered by a collaboration item — the one signal stdout gives
+    // that children exist — and serialized, because two `wait` items in a row would otherwise scan
+    // the same rollouts twice and announce each child twice. Purely additive: a failed scan leaves
+    // the coordination row exactly as it was.
+    const announceChildAgents = () => {
+      if (!codexStateDir || !resolvedSessionId) return;
+      childScan = childScan.then(async () => {
+        const children = await listCodexChildThreads({
+          stateDir: codexStateDir,
+          rootSessionId: resolvedSessionId,
+          startedAtMs: accountingStartedAt,
+        }).catch(() => []);
+        for (const thread of children) {
+          if (announcedChildren.has(thread.sessionId)) continue;
+          announcedChildren.add(thread.sessionId);
+          try {
+            onEvent?.({
+              kind: "agent_activity",
+              id: thread.sessionId,
+              engine: "codex",
+              ...(thread.name ? { name: thread.name } : {}),
+              status: "running",
+            });
+          } catch {
+            /* a status callback must never end a live run */
+          }
+        }
+      }).catch(() => {});
+    };
 
     const onAbort = () => {
       signalEngineChild(child, "SIGTERM");
@@ -981,6 +1023,10 @@ export async function runCodex({
           turnError = codexTurnError(p);
           break;
         default: {
+          // A collaboration item is stdout's ONLY sign that children exist: multi-agent v2 sends an
+          // anonymous `wait` (no receivers, no `agents_states`), and the spawn call never reaches
+          // this stream at all. Use it as the cue to go and read who those children are.
+          if (codexIsCollabItem(p.item)) announceChildAgents();
           // Best-effort live progress for Slack; final answer content still comes from outFile.
           const progress = progressFromCodexEvent(p, progressState);
           if (progress?.delta) {
@@ -1200,6 +1246,27 @@ export async function runCodex({
         startedAtMs: accountingStartedAt,
         endedAtMs: accountingEndedAt,
       }).catch(() => []);
+      // Let any in-flight live announcement land FIRST. A "running" row that arrived after the
+      // terminal one below would reopen a child that has already finished.
+      await childScan;
+      // Close each child's row with what only the rollouts know: its name, how long it ran and what
+      // it spent. A child announced live gets its own row updated (same thread id); one that only
+      // the accounting pass found opens its row here rather than staying invisible.
+      for (const thread of children) {
+        try {
+          onEvent?.({
+            kind: "agent_activity",
+            id: thread.sessionId,
+            engine: "codex",
+            ...(thread.name ? { name: thread.name } : {}),
+            status: "completed",
+            ...(thread.durationMs ? { elapsedMs: thread.durationMs } : {}),
+            ...(thread.usage?.total_tokens ? { tokens: thread.usage.total_tokens } : {}),
+          });
+        } catch {
+          /* a status callback must never fail a finished turn */
+        }
+      }
 
       resolve({
         content: finalText || deltaText || "",

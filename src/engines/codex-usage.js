@@ -205,6 +205,92 @@ function sourceKind(meta = {}) {
   return typeof meta.source === "string" ? meta.source : "";
 }
 
+// WHO a spawned child is. `codex exec --json` never puts a child's identity on stdout (the spawn
+// call and every SubAgentActivity item stay inside the CLI), but the child's OWN rollout opens with
+// a `session_meta` that names it: `agent_path` ("/root/sandbox_reviewer"), the CLI's `agent_nickname`
+// and the spawn's role. This is the only place that identity exists on the daemon's side of the
+// container, so both the live card and the usage ledger read it from here.
+function codexChildIdentity(meta = {}) {
+  const spawn = meta.source?.subagent?.thread_spawn || meta.source?.subagent?.threadSpawn || {};
+  const agentPath = String(meta.agent_path || meta.agentPath || spawn.agent_path || spawn.agentPath || "").trim();
+  const nickname = String(meta.agent_nickname || meta.agentNickname || spawn.agent_nickname || spawn.agentNickname || "").trim();
+  const role = String(meta.agent_role || meta.agentRole || spawn.agent_role || spawn.agentRole || "").trim();
+  const depth = Number(spawn.depth ?? spawn.Depth);
+  return {
+    // The last path segment is the task name the model chose; nickname/role only stand in when a
+    // build stops writing the path.
+    name: agentPath.split("/").filter(Boolean).pop() || nickname || role || "",
+    nickname,
+    agentPath,
+    role,
+    depth: Number.isFinite(depth) ? depth : 0,
+  };
+}
+
+// A rollout's `session_meta` is always its FIRST line, so identity costs one line — not the whole
+// file. Used while the turn is still running, where reading every child in full would be wasteful.
+async function rolloutHeaderMeta(file) {
+  const input = createReadStream(file, { encoding: "utf8" });
+  const lines = readline.createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      const event = safeJson(line);
+      if (event?.type !== "session_meta") return null;
+      return { ...(event.payload || {}), timestamp: event.timestamp || event.payload?.timestamp || "" };
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+  return null;
+}
+
+// Walk the ancestry map upwards. A child of a child is still this turn's work, and a rollout whose
+// parent is missing (rotated away) simply does not descend from the root.
+function descendsFrom(header, byId, rootSessionId) {
+  const seen = new Set();
+  let current = header;
+  while (current?.parentId && !seen.has(current.id)) {
+    if (current.parentId === rootSessionId) return true;
+    seen.add(current.id);
+    current = byId.get(current.parentId);
+  }
+  return false;
+}
+
+// Every subagent thread this root turn spawned, by identity only — no token math, one line read per
+// candidate rollout. Called WHILE the turn runs so the card can open a row per child the moment the
+// parent starts waiting on them; `collectCodexChildAccounting` below closes those rows with metrics.
+export async function listCodexChildThreads({ stateDir, rootSessionId, startedAtMs = 0, endedAtMs = Date.now() } = {}) {
+  const root = String(rootSessionId || "").trim();
+  if (!stateDir || !root) return [];
+  const files = await walkJsonl(path.join(stateDir, "sessions"));
+  const headers = [];
+  for (const file of files) {
+    if (startedAtMs) {
+      const info = await stat(file).catch(() => null);
+      if (!info || info.mtimeMs < startedAtMs - 60_000) continue;
+    }
+    const meta = await rolloutHeaderMeta(file).catch(() => null);
+    if (!meta?.id) continue;
+    headers.push({ file, meta, id: String(meta.id), parentId: parentId(meta), startedMs: Date.parse(meta.timestamp || "") });
+  }
+  const byId = new Map(headers.map((header) => [header.id, header]));
+  const out = [];
+  for (const header of headers) {
+    if (header.id === root || !descendsFrom(header, byId, root)) continue;
+    if (Number.isFinite(header.startedMs) && (header.startedMs < startedAtMs - 1_000 || header.startedMs > endedAtMs + 2_000)) continue;
+    out.push({
+      sessionId: header.id,
+      parentSessionId: header.parentId,
+      startedAtMs: Number.isFinite(header.startedMs) ? header.startedMs : 0,
+      source: sourceKind(header.meta),
+      ...codexChildIdentity(header.meta),
+    });
+  }
+  return out.sort((a, b) => a.startedAtMs - b.startedAtMs);
+}
+
 export async function snapshotCodexUsage(stateDir, sessionId) {
   const file = await findCodexRollout(stateDir, sessionId);
   if (!file) return { file: "", offset: 0, total: { ...ZERO }, model: "" };
@@ -269,20 +355,10 @@ export async function collectCodexChildAccounting({ stateDir, rootSessionId, sta
   if (!stateDir || !rootSessionId) return [];
   const headers = await rolloutHeaders(stateDir, { sinceMs: startedAtMs });
   const byId = new Map(headers.map((header) => [header.id, header]));
-  const descendsFromRoot = (header) => {
-    const seen = new Set();
-    let current = header;
-    while (current?.parentId && !seen.has(current.id)) {
-      if (current.parentId === rootSessionId) return true;
-      seen.add(current.id);
-      current = byId.get(current.parentId);
-    }
-    return false;
-  };
   const out = [];
   for (const header of headers) {
     if (!Number.isFinite(header.startedMs) || header.startedMs < startedAtMs - 1_000 || header.startedMs > endedAtMs + 2_000) continue;
-    if (!descendsFromRoot(header)) continue;
+    if (!descendsFrom(header, byId, String(rootSessionId))) continue;
     const boundary = firstOwnTaskIndex(header.parsed);
     if (!boundary) continue;
     const before = header.parsed.tokens.filter((token) => token.index < boundary).at(-1)?.total || ZERO;
@@ -300,6 +376,8 @@ export async function collectCodexChildAccounting({ stateDir, rootSessionId, sta
       sessionId: header.id,
       parentSessionId: header.parentId,
       source: sourceKind(header.parsed.meta),
+      // Identity travels with the accounting so the card can close each child's row by NAME.
+      ...codexChildIdentity(header.parsed.meta),
       sourceId: `codex-child:${header.id}`,
       startedAt: new Date(header.startedMs).toISOString(),
       endedAt: completed?.timestamp || header.parsed.lastTimestamp || new Date(endedAtMs).toISOString(),
