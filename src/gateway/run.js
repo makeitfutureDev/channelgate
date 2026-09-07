@@ -19,6 +19,7 @@ import { withTemplateSkills } from "./skills/templates.js";
 import { resolveSession, resetSession, getSession, saveSession, sessionGeneration } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
+import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds } from "../engines/registry.js";
@@ -1078,6 +1079,20 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const composioEndpoint = composio.shared.endpoint;
   const toolboxToken = toolbox.token;
   outputSecrets.push(composioUserToken, composioToken, toolboxToken);
+  // The per-run half of the identity rule (CO-04: "check the calendar" with both identities present
+  // read the SHARED one and posted a colleague's week into the channel, where the other harness
+  // asked first). The managed instructions block carries the rule; this one line carries the fact
+  // it applies to — WHICH identities this turn received — which only a per-run prompt can say,
+  // since `composio-user` is per author. Empty when the run injects neither (clean mode, no tokens),
+  // so a channel without Composio pays nothing for it.
+  const composioIdentityPrefix = composioIdentityPreamble(composioIdentitiesForRun({
+    clean,
+    principalTrusted: !untrustedPrincipal,
+    composioUserEndpoint,
+    composioUserToken,
+    composioEndpoint,
+    composioToken,
+  }));
   const { makeToolboxUrl, makeToolboxKey } = resolveMakeToolboxRuntime({
     makeToolboxUrl: meta.makeToolboxUrl,
     makeToolboxKey: meta.makeToolboxKey,
@@ -1266,7 +1281,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const memoryPrefix = await memorySnapshotPrefix(cwd, meta);
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     assertRuntimeCanStart();
-    const prompt = (fresh ? memoryPrefix : "") + (promptOverride ?? turnText);
+    // Preamble order: the fresh session's memory catalog, then this run's Composio identities, then
+    // the turn text (which already carries the caller's `[Provenance: …]` line). Every part is a
+    // self-closing bracketed note, so each stays parseable on its own.
+    const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix + (promptOverride ?? turnText);
     return adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
       origin, cwd, prompt, session: { id: sid, fresh }, policy: confinement,
@@ -1480,7 +1498,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
       assertRuntimeCanStart();
       return fallbackAdapter.run(validateRunContext({
-        principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd, prompt: (fbFresh ? memoryPrefix : "") + fbPrompt,
+        principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd, prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
         // which machine boundary the channel runs behind.

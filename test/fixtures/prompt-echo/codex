@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+// Codex twin of ./claude: the "answer" is the PROMPT the gateway handed the engine, so a test can
+// assert on the exact text a run built — preamble included — through the Codex runner's own prompt
+// path (argv positional → -o file → the reply's authoritative content).
+import { writeFileSync } from "node:fs";
+
+const argv = process.argv.slice(2);
+
+if (argv[0] === "features" && argv[1] === "list") {
+  process.stdout.write("network_proxy experimental false\n");
+} else if (argv[0] === "app-server") {
+  // Every non-clean Codex turn first asks the CLI for its live MCP inventory (mcp-discovery.js) and
+  // waits for an answer on this protocol, so the stub has to speak it or no run ever starts.
+  let buffered = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffered += chunk;
+    const lines = buffered.split("\n");
+    buffered = lines.pop() || "";
+    for (const line of lines) {
+      if (line.includes('"method":"initialize"')) process.stdout.write('{"id":1,"result":{}}\n');
+      else if (line.includes('"method":"mcpServerStatus/list"')) process.stdout.write('{"id":2,"result":{"data":[]}}\n');
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+} else {
+  // buildCodexArgs pushes the prompt as the first bare positional after the `exec [resume <id>]`
+  // base; every flag before it either starts with "-" or is one of these flags' values.
+  const VALUE_FLAGS = new Set(["-c", "-o", "-C", "-m", "-i", "--sandbox", "--model", "--image"]);
+  let outFile = "";
+  let prompt = "";
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "-o") { outFile = argv[i + 1] || ""; i++; continue; }
+    if (VALUE_FLAGS.has(arg)) { i++; continue; }
+    if (arg.startsWith("-")) continue;
+    if (arg === "exec") continue;
+    if (arg === "resume") { i++; continue; } // the session id it resumes
+    if (!prompt) prompt = arg;
+  }
+  process.stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: "prompt-echo-codex" })}\n`);
+  process.stdout.write(`${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 12, output_tokens: 4 } })}\n`);
+  if (outFile) writeFileSync(outFile, prompt);
+}

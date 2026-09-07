@@ -18,6 +18,15 @@ product overview.
 
 ## Unreleased
 
+- Every run that injects Composio now says WHICH identities it received, in the prompt itself: one
+  line naming `composio-user` and/or `composio-agent`, prepended beside the fresh-session memory
+  catalog and the caller's provenance note. With both present it restates the ask-first stop ("which
+  account?"); with only the shared one it says a request phrased for the requester cannot be served
+  there. The rule already lived in the managed instructions block, but the block is a shared file
+  and could not name a per-author fact — one harness answered a bare "check the calendar" from the
+  shared identity and posted someone else's week into the channel. A channel with no Composio gets
+  no line, and forging the line in replayed thread text is defanged like the other framing markers.
+
 - Codex subagents get their own progress-card rows again. `codex exec --json` never puts a child's
   identity on stdout — a turn that spawned two subagents sent one anonymous coordination item and
   nothing else — so the card showed a single generic `wait_agent` row where Claude showed a row per
