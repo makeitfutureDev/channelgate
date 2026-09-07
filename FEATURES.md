@@ -58,13 +58,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   never has to carry a per-author sentence, and a channel with no Composio gets no line at all.
   → TEST-PLAN: Composio identity and connection discovery.
 
-- **Focused conversation settings:** Access presents Read-only, Worker, and Autonomous as the
-  primary modes, with Full access and Lean as clearly separated special-mode boxes; Custom is no
+- **Focused conversation settings:** Access presents Read-only, Worker, and Admin as the
+  base modes, with Auto and Lean as independent options; Custom is no
   longer offered. MCP Connections, Cloud MCP, Environment tokens, and Skills are separate first-class
   channel pages rather than nested beneath Tools; enabled skills sort first and the channel-level
   Grant Tier switch is gone.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
-  requester-bound **⚙️ Settings** footer button. Its four-tab Block Kit console mirrors the web
+  requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
   setup concepts: Engine & model can be changed by every authorized user in this console; MCP Connections
   rotates/removes the write-only Composio, Toolbox and Make MCP credentials plus inherited-token
   policy, and edits the Composio account label shared with the web setup form. Labels are shown
@@ -78,6 +78,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   so historic controls cannot retain revoked access. Cloud MCP actions additionally re-check admin
   status. Secrets can be edited in every channel mode, including through `/secrets`; file-edit
   permissions and the separate `/model` command policy are unchanged.
+  **Access** is a fifth tab, visible only to current admins/channel managers. They can edit the
+  base mode (including Admin/full access), Auto, Lean, network, use/manage policy and named guest/manager lists. Selecting
+  Full access does not grant anyone an administrator role; bypass still requires an admin author.
+  Saves acknowledge immediately with a progress view, validate named users against live human
+  channel membership, re-check management and roles at the write boundary, and audit policy changes.
+  DMs keep the existing four tabs. Work-dir and gateway-wide settings are not exposed here.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
   admins are selected and locked, while explicit guest grants remain independently editable.
@@ -1363,16 +1369,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   read-only permission profile intentionally withholds command execution. → TEST-PLAN: Engines.
 - The web channel editor, custom DMs, and default templates share the three-mode picker and
   side toggles. The Slack reply's **Settings** button exposes Read-only/Worker/Admin plus Auto/Lean
-  on its Runtime tab; only current gateway admins can select Admin. Every click rechecks user
+  on its manager/admin-only Access tab for channels. DMs retain Runtime mode controls with
+  Admin selection restricted to admins. Every click rechecks user
   authorization and channel membership, and every change is audited. `/mode read|worker|admin` changes the
   base while preserving applicable options (`bash` remains a compatibility alias). Legacy run-API
   presets remain accepted with their existing capability-reduction boundary.
 - **Two-axis access model** (per channel, both editable in the admin UI): **Who can use** (`meta.access`:
   Approved members / Admins only / Locked) and **Who can manage** (`meta.manageAccess`: Org admins only /
-  Channel members / Custom + `meta.managers[]`). A channel manager may change SAFE settings (capability
-  up to Autonomous, skills, connectors, the MCP allowlist) but **never** Full-access / network / work-dir —
-  those stay org-admin-only. Enforced in the gateway control MCP (`requireManage` vs `requireAdmin`) and
-  the in-thread `/mode` command; default `admins` means relaxing it is strictly opt-in. Settings →
+  Channel members / Custom + `meta.managers[]`). The Slack Access page delegates channel mode (including Admin), Auto, Lean, network and use/manage policy to
+  current managers. Work-dir stays org-admin-only. The gateway control MCP (`requireManage` vs
+  `requireAdmin`) and in-thread `/mode` command retain their narrower admin checks; default `admins` means relaxing it is strictly opt-in. Settings →
   **Reset all channels' access to default** (confirm-gated, audit-logged) restores use/manage to defaults
   and clears custom guest + manager lists, leaving capability/skills/tokens untouched.
   → TEST-PLAN: channel access model.

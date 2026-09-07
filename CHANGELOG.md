@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Add a manager/admin-only Access page to Slack channel settings for base mode (including Admin), Auto, Lean,
+  network, use/manage policy, and named guest/manager lists. Recheck live membership and current
+  roles on save; immediately acknowledge submissions while validation runs. Admin-author-only
+  engine bypass and existing ordinary-tab access remain unchanged.
+
 - Channels: use Read-only, Worker, and Admin as the three base modes, with independent Auto and
   Lean side toggles in channel, DM, and template editors. Slack Settings can now select Admin
   for authorized admins. Admin gives other members Worker plus their selected options; Auto

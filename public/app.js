@@ -241,8 +241,8 @@ const ACCESS_HELP = {
   none: "Locked — nobody can use the bot here until you add them by name in the Users tab (Allowed users).",
 };
 const MANAGE_HELP = {
-  admins: "Only gateway admins can change this channel's settings (from Slack or here). (Default.)",
-  members: "Any approved member of this channel can change the safe settings (capability up to Autonomous, skills, connectors) — but never Full access, network or work-dir.",
+  admins: "Only gateway admins can edit the Slack Access page. Other authorized users can edit the ordinary Settings tabs. (Default.)",
+  members: "Any approved channel member can edit Slack Access settings: Read-only/Worker/Admin mode, Auto, Lean, network, access policy and named users/managers. Permission bypass still requires an admin author. Work-dir stays admin-only.",
 };
 function channelProfileOf(m = {}) {
   if (m.adminMode) return "admin";

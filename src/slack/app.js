@@ -9,7 +9,7 @@ const { App, LogLevel } = pkg;
 import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, isAdmin, isApproved, listChannels, getComposioToken, getToolboxToken } from "../config/store.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { effectiveMeta } from "../gateway/run.js";
-import { modeLabel, isAuthorized, modeSettingsPatch } from "../gateway/modes.js";
+import { modeLabel, isAuthorized, canManage, modeSettingsPatch } from "../gateway/modes.js";
 // Re-exported: the authorization contract moved to gateway/modes.js (beside canManage).
 export { isAuthorized };
 import { requestApproval, handleApprovalClick, handleApprovalCommentSubmit, APPROVAL_ACTIONS, setApprovalClient } from "./approvals.js";
@@ -40,7 +40,7 @@ import { logChannelPolicyChange } from "../config/channel-audit.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
-import { handleMemberLeftChannel, listConversationMemberIds } from "./members.js";
+import { handleMemberLeftChannel, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
 import { checkBotScopes, formatScopeWarning, shouldNotify } from "./scope-check.js";
 import { buildFileEditView, buildFilePreviewView, buildFilesLoadingView, buildFilesView, buildNewFileView, buildNewFolderView, canEditChannelFiles, createVisibleDirectory, createVisibleFile, FILES_ACTION_PATTERN, FILES_NEW_FILE_CONTENT_BLOCK_ID, FILES_NEW_FILE_CONTENT_INPUT_ACTION_ID, FILES_NEW_FILE_NAME_BLOCK_ID, FILES_NEW_FILE_NAME_INPUT_ACTION_ID, FILES_NEW_FOLDER_BLOCK_ID, FILES_NEW_FOLDER_INPUT_ACTION_ID, FILES_SHORTCUT_ID, normalizeNewFileName, normalizeNewFolderName, normalizeRelativePath, parseActionValue as parseFileActionValue, parseExplorerMetadata, resolveVisiblePath, writeEditableFile } from "./file-explorer.js";
 import {
@@ -52,7 +52,7 @@ import {
 import {
   buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
   buildConnectionsEditorView, buildRuntimeEditorView, buildTemplateEditorView, maskedCredential,
-  parseActionValue as parseChannelSettingsActionValue, parseEditorMetadata, parseSettingsMetadata,
+  parseActionValue as parseChannelSettingsActionValue, editorMetadata, parseEditorMetadata, parseSettingsMetadata,
   readConnectionsForm, readRuntimeForm, readTemplateForm,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
@@ -70,6 +70,7 @@ import {
   CONNECTION_TOOLBOX_BLOCK_ID, RUNTIME_EFFORT_BLOCK_ID, RUNTIME_ENGINE_BLOCK_ID,
   RUNTIME_MODEL_BLOCK_ID, TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
+import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, ACCESS_MODE_BLOCK_ID, buildAccessEditorView, readAccessForm, accessSettingsPatch, assertAccessManager } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
 
@@ -293,7 +294,7 @@ export async function fileExplorerContext(client, { channelId, userId, expectedS
     const members = await listConversationMemberIds(client, channelId);
     if (!members.includes(userId)) throw new Error("You are no longer a member of this channel.");
   }
-  return { entry, meta, userIsAdmin, root: effectiveWorkDir(entry.slug, meta) };
+  return { entry, meta, userIsAdmin, userIsApproved, root: effectiveWorkDir(entry.slug, meta) };
 }
 
 async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "" } = {}) {
@@ -363,13 +364,16 @@ const SETTINGS_PURPOSE = {
   denied: "You're not authorized to view this channel's settings.",
 };
 
-export async function channelSettingsContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false, cloudMcp = false } = {}) {
+export async function channelSettingsContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false, cloudMcp = false, accessSettings = false } = {}) {
   const ctx = await fileExplorerContext(client, {
     channelId,
     userId,
     expectedSlug,
     verifyMembership,
     purpose: SETTINGS_PURPOSE,
+  });
+  if (accessSettings) assertAccessManager(ctx.meta, {
+    authorId: userId, isAdminUser: ctx.userIsAdmin, isApprovedUser: ctx.userIsApproved,
   });
   if (cloudMcp && !ctx.userIsAdmin) throw new Error("Only administrators can manage Cloud MCP.");
   return ctx;
@@ -384,6 +388,8 @@ function channelSettingsSnapshot(meta = {}) {
   const shared = resolveAccessGrants({ organization, channel: channelTier });
   const template = templateOfMeta(effective);
   return {
+    isDM: Boolean(meta.isDM),
+    access: meta,
     mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
     runtime: {
       configuredEngineId: effective.engine || "",
@@ -424,12 +430,13 @@ function channelSettingsSnapshot(meta = {}) {
   };
 }
 
-export function channelSettingsEditOptions(meta, userIsAdmin) {
+export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", isApprovedUser = false } = {}) {
   return {
     canEnableAdmin: Boolean(userIsAdmin),
     canEditRuntime: true,
     canEditSecrets: true,
     canManageCloudMcp: Boolean(userIsAdmin),
+    canEditAccess: !meta.isDM && canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
   };
 }
 
@@ -599,12 +606,61 @@ async function patchAuditedChannelSettings(entry, actor, patch) {
   return after;
 }
 
-function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "" } = {}) {
+export async function handleAccessSettingsSubmission({ ack, body, view, client }, { save = saveAccessSettings, rootView = settingsRootView } = {}) {
+  let state;
+  let form;
+  const clicker = body?.user?.id;
+  try {
+    state = parseEditorMetadata(view?.private_metadata);
+    if (!clicker || state.ownerId !== clicker || state.view !== "access") throw new Error("This access editor expired. Open your own Settings.");
+    form = readAccessForm(view);
+  } catch (error) {
+    await ack({ response_action: "errors", errors: { [ACCESS_MODE_BLOCK_ID]: String(error.message).slice(0, 150) } });
+    return;
+  }
+  // Consume Slack's three-second submission window before any membership API calls or locks.
+  await ack({ response_action: "update", view: {
+    type: "modal", title: { type: "plain_text", text: "Channel access" },
+    close: { type: "plain_text", text: "Close" },
+    blocks: [{ type: "section", text: { type: "plain_text", text: "Checking channel membership and saving access settings…" } }],
+  } });
+  try {
+    const { entry, saved, userIsAdmin } = await save(client, state, clicker, form);
+    await client.views.update({ view_id: view.id, view: await rootView(entry, saved, { ...state, tab: "access" }, userIsAdmin, {
+      notice: "✅ Channel access settings saved. Changes apply to the next run.",
+    }) });
+  } catch (error) {
+    await client.views.update({ view_id: view.id, view: buildChannelSettingsErrorView(
+      `${error.message || "Couldn't finish updating access settings."} Reopen Settings to check the current values and try again.`,
+    ) }).catch(() => {});
+  }
+}
+
+// Serialize with member-left cleanup, verify selected humans, then re-read authorization and
+// policy at the write boundary. Never accept arbitrary fields from a Slack submission.
+export async function saveAccessSettings(client, state, userId, form) {
+  if (state.ownerId !== userId) throw new Error("This access editor isn't yours.");
+  return withChannelMembershipLock(state.channelId, async () => {
+    const args = { channelId: state.channelId, userId, expectedSlug: state.slug, verifyMembership: true, accessSettings: true };
+    const first = await channelSettingsContext(client, args);
+    accessSettingsPatch(first.meta, form, { authorId: userId, isAdminUser: first.userIsAdmin, isApprovedUser: first.userIsApproved });
+    const requested = [...new Set([...form.allowedUsers, ...form.managers])];
+    const humans = await filterConversationHumanMemberIds(client, state.channelId, requested);
+    if (requested.some((id) => !humans.includes(id))) throw new Error("Named users and managers must be current human members of this channel.");
+    const { entry } = await channelSettingsContext(client, args);
+    const [userIsAdmin, userIsApproved] = await Promise.all([isAdmin(userId), isApproved(userId)]);
+    const actor = { authorId: userId, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved };
+    const saved = await patchAuditedChannelSettings({ ...entry, channelId: state.channelId }, userId, (current) => accessSettingsPatch(current, form, actor));
+    return { entry, saved, userIsAdmin };
+  });
+}
+
+async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "" } = {}) {
   return buildChannelSettingsView(channelSettingsSnapshot(meta), { ...state, tab }, {
     channelName: entry.name,
     tab,
     notice,
-    ...channelSettingsEditOptions(meta, userIsAdmin),
+    ...channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) }),
   });
 }
 
@@ -620,7 +676,7 @@ async function openChannelSettings(client, triggerId, { channelId, userId, threa
     view: buildChannelSettingsView(channelSettingsSnapshot(meta), state, {
       channelName: entry.name,
       tab,
-      ...channelSettingsEditOptions(meta, userIsAdmin),
+      ...channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) }),
     }),
   });
   await logEvent("channel_settings_opened", { channel: channelId, author: userId, slug: entry.slug });
@@ -1035,6 +1091,7 @@ async function connectAndWire(app) {
       let { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
         channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
         cloudMcp: actionId.startsWith("cg_channel_settings_cloud_"),
+        accessSettings: actionId === ACCESS_EDIT_ACTION_ID || (command.o === "tab" && command.p === "access"),
       });
       const updateCurrent = (view) => client.views.update({
         view_id: body.view.id,
@@ -1048,11 +1105,20 @@ async function connectAndWire(app) {
 
       if (command.o === "tab") {
         const tab = String(command.p || "runtime");
-        await updateCurrent(settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
+        return;
+      }
+
+      if (actionId === ACCESS_EDIT_ACTION_ID) {
+        await client.views.push({
+          trigger_id: requireTrigger(),
+          view: buildAccessEditorView(meta, editorMetadata(state, { view: "access" })),
+        });
         return;
       }
 
       if (actionId.startsWith(CHANNEL_SETTINGS_MODE_PREFIX) || actionId.startsWith(CHANNEL_SETTINGS_OPTION_PREFIX)) {
+        if (!meta.isDM) throw new Error("Channel mode controls moved to Settings → Access. Reopen Settings.");
         let change;
         if (actionId.startsWith(CHANNEL_SETTINGS_MODE_PREFIX)) {
           change = { mode: actionId.slice(CHANNEL_SETTINGS_MODE_PREFIX.length) };
@@ -1069,7 +1135,7 @@ async function connectAndWire(app) {
             ? { ...baseline, ...patch, template: "custom" }
             : patch;
         });
-        await updateCurrent(settingsRootView(entry, meta, state, userIsAdmin, { notice: "Mode updated. Applies to the next turn." }));
+        await updateCurrent(await settingsRootView(entry, meta, state, userIsAdmin, { notice: "Mode updated. Applies to the next turn." }));
         return;
       }
 
@@ -1104,7 +1170,7 @@ async function connectAndWire(app) {
         const notice = meta.noDefaultTokens
           ? "✅ Inherited organization/personal connection credentials are disabled for this channel."
           : "✅ Inherited connection credentials are enabled for this channel.";
-        await updateCurrent(settingsRootView(entry, meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice }));
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice }));
         return;
       }
 
@@ -1117,7 +1183,7 @@ async function connectAndWire(app) {
         meta = await patchAuditedChannelSettings(entry, clicker, patch);
         const connection = actionId === CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID ? "Composio token" : actionId === CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID ? "Toolbox token" : "Make MCP connection";
         await logEvent("channel_connection_removed", { channel: state.channelId, slug: entry.slug, connection, author: clicker });
-        await updateCurrent(settingsRootView(entry, meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice: `🗑️ Removed the channel's ${connection}.` }));
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice: `🗑️ Removed the channel's ${connection}.` }));
         return;
       }
 
@@ -1238,6 +1304,8 @@ async function connectAndWire(app) {
   };
   app.action(CHANNEL_SETTINGS_ACTION_PATTERN, handleChannelSettingsAction);
 
+  app.view(ACCESS_CALLBACK_ID, handleAccessSettingsSubmission);
+
   app.view(CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID, async ({ ack, body, view, client }) => {
     const clicker = body?.user?.id;
     let state;
@@ -1267,7 +1335,7 @@ async function connectAndWire(app) {
       await logEvent("channel_runtime_updated", { channel: state.channelId, slug: entry.slug, engine: actualEngine, model: model || "default", effort: effort || "default", author: clicker });
       await ack({
         response_action: "update",
-        view: settingsRootView(entry, saved, { ...state, tab: "runtime" }, userIsAdmin, {
+        view: await settingsRootView(entry, saved, { ...state, tab: "runtime" }, userIsAdmin, {
           tab: "runtime",
           notice: `✅ Runtime updated: *${engineLabel(actualEngine)}* · \`${model || getDefaultModel(actualEngine) || "engine default"}\` · \`${effort || "default effort"}\`.`,
         }),
@@ -1303,7 +1371,7 @@ async function connectAndWire(app) {
       await logEvent("channel_connections_updated", { channel: state.channelId, slug: entry.slug, connections: changed, author: clicker });
       await ack({
         response_action: "update",
-        view: settingsRootView(entry, saved, { ...state, tab: "mcp" }, userIsAdmin, {
+        view: await settingsRootView(entry, saved, { ...state, tab: "mcp" }, userIsAdmin, {
           tab: "mcp",
           notice: changed.length ? `✅ Updated connection settings: ${changed.join(", ")}.` : "No connection settings changed.",
         }),
@@ -1330,7 +1398,7 @@ async function connectAndWire(app) {
       await logEvent("skill_template_assigned", { channel: state.channelId, slug: entry.slug, template: assigned.template?.slug || "none", author: clicker });
       await ack({
         response_action: "update",
-        view: settingsRootView(entry, saved, { ...state, tab: "skills" }, userIsAdmin, {
+        view: await settingsRootView(entry, saved, { ...state, tab: "skills" }, userIsAdmin, {
           tab: "skills",
           notice: assigned.template ? `✅ This channel now follows the *${assigned.template.name}* skill template.` : "✅ The channel no longer follows a skill template.",
         }),

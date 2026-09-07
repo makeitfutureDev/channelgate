@@ -41,10 +41,10 @@ export function authorModeMeta(meta, { isAdminAuthor = false, untrustedPrincipal
 
 // Called inside the atomic settings update; changing a base mode preserves Lean and Auto.
 // Read-only clears Auto; enabling Auto on Read-only promotes it to Worker.
-export function modeSettingsPatch(current = {}, { mode, autoMode, cleanMode } = {}, { isAdminUser = false } = {}) {
+export function modeSettingsPatch(current = {}, { mode, autoMode, cleanMode } = {}, { isAdminUser = false, canEnableAdmin = isAdminUser } = {}) {
   const nextMode = mode || channelMode(current);
   if (!MODES.includes(nextMode)) throw new Error("Mode must be read, worker, or admin.");
-  if (mode === "admin" && !isAdminUser) throw new Error("Only administrators can enable Admin mode.");
+  if (mode === "admin" && !canEnableAdmin) throw new Error("Only administrators can enable Admin mode.");
   const patch = mode ? { ...BASE_MODE_FLAGS[nextMode], profile: nextMode } : {};
   if (mode === "read") patch.autoMode = false;
   if (typeof autoMode === "boolean") {
@@ -147,14 +147,15 @@ export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isAppr
 }
 
 // ── Who can manage a channel ──────────────────────────────────────────────────
-// "Manage" = change this channel's SAFE settings (capability profile up to Autonomous, skills,
-// connectors) from inside Slack. Governed by meta.manageAccess (default "admins"), so existing
+// "Manage" authorizes the Slack Access page (mode, Full access, Lean, network, use/manage
+// policy and named users). Engine permission bypass still requires an admin author. Governed by
+// meta.manageAccess (default "admins"), so existing
 // channels are unchanged and relaxing it is strictly opt-in per channel:
 //   - "admins"  → gateway admins only (default)
 //   - "members" → any approved member (membership is implied by posting in the channel)
 //   - "custom"  → only the users listed in meta.managers[]
-// The DANGEROUS escalations (Full-access / network / work-dir) are NEVER delegated here — the call
-// sites keep requiring an admin author for those. This function only answers "safe-manage?".
+// Individual MCP tools and /mode keep their narrower admin checks for Full access/network;
+// work-dir remains admin-only. Ordinary Slack Settings tabs use agent authorization separately.
 export function canManage(meta = {}, { authorId = "", isAdminUser = false, isApprovedUser = false } = {}) {
   if (isAdminUser) return true;
   const mode = meta.manageAccess || "admins";

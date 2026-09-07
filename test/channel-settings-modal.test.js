@@ -123,8 +123,8 @@ test("authorized user reply footer adds Settings after the existing workspace co
   assert.equal(ordinary.some((button) => button.action_id === CHANNEL_SETTINGS_ACTION_ID), false);
 });
 
-test("Channel Settings modal renders four working tabs with one active state", () => {
-  const view = buildChannelSettingsView(snapshot, state, { channelName: "project-alpha", tab: "mcp", canManageCloudMcp: true });
+test("Channel Settings modal renders five working tabs for managers with one active state", () => {
+  const view = buildChannelSettingsView(snapshot, state, { channelName: "project-alpha", tab: "mcp", canManageCloudMcp: true, canEditAccess: true });
   const buttons = allButtons(view).filter((button) => button.action_id.startsWith("cg_channel_settings_tab_"));
   assert.equal(buttons.length, CHANNEL_SETTINGS_TABS.length);
   assert.equal(new Set(buttons.map((button) => button.action_id)).size, CHANNEL_SETTINGS_TABS.length);
@@ -354,7 +354,7 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
     await store.saveChannelMeta(entry.slug, { ...base, managers: [], ...flags });
     assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
     assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
-      canEnableAdmin: false, canEditRuntime: true, canEditSecrets: true, canManageCloudMcp: false,
+      canEnableAdmin: false, canEditRuntime: true, canEditSecrets: true, canManageCloudMcp: false, canEditAccess: false,
     });
   }
   await store.setUser(args.userId, { approved: false });
@@ -394,8 +394,8 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
 });
 
 
-test("Settings has three base modes for admins and independent Auto/Lean controls", () => {
-  const data = { ...snapshot, mode: { adminMode: true, autoMode: true, cleanMode: true } };
+test("DM Settings has three base modes for admins and independent Auto/Lean controls", () => {
+  const data = { ...snapshot, isDM: true, mode: { adminMode: true, autoMode: true, cleanMode: true } };
   const admin = buildChannelSettingsView(data, state, { tab: "runtime", canEnableAdmin: true });
   const buttons = allButtons(admin);
   assert.deepEqual(buttons.filter((b) => b.action_id.startsWith("cg_channel_settings_mode_")).map((b) => b.text.text), ["Read-only", "Worker", "Admin"]);

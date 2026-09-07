@@ -15,9 +15,10 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   stays. Enable Auto: Worker is selected. At wide widths options sit beside the base choices;
   narrow screens stack without overflow.
 - Slack Settings acceptance (engine-independent): as an admin fixture actor open a recent reply's
-  Settings button, choose Admin, and toggle Auto/Lean independently. Reopen and verify persistence
-  and the `slack-settings` audit event. A member-manager sees Read-only/Worker and both options;
-  a forged Admin action or revoked authorization/membership grant is rejected before mutation.
+  Settings → Access button, choose Admin, and toggle Auto/Lean independently. Reopen and verify persistence
+  and the `slack-settings` audit event. A member-manager sees all three modes and both options; ordinary members do not see Access.
+  Forged legacy Runtime mode actions and revoked authorization/membership grants are rejected.
+  DMs keep Runtime mode controls with Admin restricted to admin authors.
 - Runtime acceptance (Claude AND Codex): in an isolated fixture set Admin + Auto + Lean. As the
   approved non-admin fixture actor ask "Create mode-check.txt containing MODE_OK, read it back,
   and reply with its contents." Pass only with matching saved bytes, no approval click/card,
@@ -138,7 +139,8 @@ a pass.
 Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 `test/memory-snapshot-run.test.js`, `test/channel-members-ui.test.js`,
 `test/access-grants.test.js`, `test/gateway-mcp-authz.test.js`,
-`test/mcp-control-plane-approval.test.js`, `test/channel-settings-modal.test.js`.
+`test/mcp-control-plane-approval.test.js`, `test/channel-settings-modal.test.js`,
+`test/access-settings.test.js`.
 
 - [x] Large MEMORY.md and topic writes succeed without a character-capacity failure.
 - [x] On an engine without FTS5 (Node 22.13) the database opens, migration 17 is skipped with a warning, and `search_channel_memory` answers from the plain scan with AND semantics, diacritic folding and bracketed excerpts; `ensureMemoryFtsTable` is idempotent and creates the index the moment the engine supports it.
@@ -167,6 +169,35 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       authorization and Slack membership before every mutation. Cloud MCP is hidden from non-admins
       and its controls reject revoked admin status; all authorized users can edit runtime and secrets
       in every channel mode regardless of manager policy.
+- [x] Automated Access: ordinary authorized users cannot see/forge the fifth tab; admins,
+      approved members under Members policy and named managers under Custom policy can edit it.
+      DMs keep four tabs. Independent base-mode/Auto/Lean/network flags round-trip; preset
+      flags and stored profile agree. Unknown fields cannot change workDir, credentials or roles.
+      Real store saves preserve unrelated settings and audit only policy. Departed actors,
+      outsiders/bots in named lists, revoked channel grants and global role revocation during the
+      final membership request are rejected. Submission acknowledgment precedes asynchronous work.
+- [ ] Live Access UI (engine-independent Slack callback case): create disposable Slack channel
+      `access-settings-qa`, join an admin actor, an approved member, a named external guest, and
+      the bot. Start with Worker, network/Full access/Lean off, Approved use, Admins manage, and
+      no explicit grants. From a fresh reply open Settings as each actor. Only admin sees Access.
+      Change manage to Members; approved actor now sees Access, guest does not. Save Admin mode,
+      Auto, Lean, network, named guest, and Custom management with the approved actor
+      named. Reopen Slack and web settings: all values agree; unrelated model/tokens are unchanged;
+      audit identifies actor/channel and contains no secrets. Clear special flags/lists and save:
+      all clear. Try a bot and a user outside the channel: save fails without changing metadata.
+      Revoke management or remove the actor with the editor open: old submit fails. Delay Slack
+      membership responses beyond three seconds: immediate progress view, then one final result;
+      no Slack timeout or double save. Restore/delete fixture. Pending live execution.
+- [ ] Live Access Claude and Codex (one run each in disposable channel `access-settings-qa`):
+      select engine explicitly, Admin mode, Auto/Lean/network off, Members management.
+      As approved non-admin, prompt “Create access-proof.txt containing access proof and report
+      whether permission bypass is active.” As admin, repeat with a different filename. Pass when
+      per-run launch evidence has bypass only for the admin author and both runs stay in their
+      declared container mounts. As the non-admin actor, enable Lean and start a fresh thread: “List the connectors and
+      skills available in this run.” Pass when runtime evidence shows the lean tool/skill policy.
+      Toggle network and ask “Is network use allowed here?”; compare the answer and launch policy
+      to the stored setting (advisory network is not an egress isolation claim). Restore fixture
+      settings/files; retain launch/audit evidence. Pending live execution for both engines.
 - [ ] Live Claude: in `cg-testing-claude-auto`, keep Who can manage set to Admins and Apps approved
       but not a manager. Let Apps request a fresh reply and open **⚙️ Settings**. Pass when Apps
       can change to another valid engine/model/effort and restore it; cannot see or operate Cloud MCP;

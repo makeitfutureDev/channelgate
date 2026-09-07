@@ -181,7 +181,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     platform: isPlatformId(platform) ? platform : DEFAULT_PLATFORM,
     access: "approved", // who can USE the channel: "approved" | "admins" | "none" (set from the gateway
     // default at join). Governs who's auto-granted in a channel; allowedUsers is the manual override.
-    manageAccess: "admins", // who can MANAGE (change safe settings) from Slack: "admins" | "members" | "custom".
+    manageAccess: "admins", // who can MANAGE the Access page from Slack: "admins" | "members" | "custom".
     managers: [], // when manageAccess="custom": Slack user ids allowed to manage this channel.
     profile: isDM ? undefined : "read", // capability preset: read|worker|auto|full|lean|custom (see modes.js);
     // expands to the flags below on save. undefined/legacy channels derive it from the flags.
