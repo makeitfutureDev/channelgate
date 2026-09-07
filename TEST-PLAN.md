@@ -3,6 +3,33 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Base modes and independent options (2026-09-08)
+
+- Automated: `modes`, `channel-settings-modal`, `mode-command-audit`, `folders-settings`,
+  `folders-generator-paths`, `run-grant-isolation`, `runtime-integration-surfaces`, and `run-api`
+  cover legacy flag interpretation, three base selections, toggle persistence, admin-only selection,
+  untrusted-author boundaries, per-run settings, and engine-independent settings rendering.
+- UI acceptance (engine-independent): in the web channel editor and DM/template editor, select
+  Worker, check Auto and Lean, then select Admin. Exactly three base choices appear, with both
+  options still checked. Save/reopen and verify all flags. Select Read-only: Auto clears, Lean
+  stays. Enable Auto: Worker is selected. At wide widths options sit beside the base choices;
+  narrow screens stack without overflow.
+- Slack Settings acceptance (engine-independent): as an admin fixture actor open a recent reply's
+  Settings → Access button, choose Admin, and toggle Auto/Lean independently. Reopen and verify persistence
+  and the `slack-settings` audit event. A member-manager sees all three modes and both options; ordinary members do not see Access.
+  Forged legacy Runtime mode actions and revoked authorization/membership grants are rejected.
+  DMs keep Runtime mode controls with Admin restricted to admin authors.
+- Runtime acceptance (Claude AND Codex): in an isolated fixture set Admin + Auto + Lean. As the
+  approved non-admin fixture actor ask "Create mode-check.txt containing MODE_OK, read it back,
+  and reply with its contents." Pass only with matching saved bytes, no approval click/card,
+  `autoMode=true`, `clean=true`, and `dangerouslySkip=false`. Repeat as an admin fixture actor:
+  matching file, no approval click/card, `clean=false`, `dangerouslySkip=true`. Check run-private
+  MCP/skill artifacts to distinguish Lean from a model merely claiming it ran bare. Restore the
+  fixture configuration. A direct harness run establishes runtime behavior, not Slack delivery.
+- Legacy acceptance: start with `profile=full`, `adminMode=true`, `allowBash=false`, Auto off.
+  An ordinary member can edit and run shell commands as Worker; their bypass remains disabled.
+  Existing `profile=auto` and `profile=lean` records retain their respective modifiers on reopen.
+
 ## Release readiness remediation (2026-09-07)
 
 The source changes address audit findings 1–4, 6, 7 and 9–17. Findings 5 and 8 (retiring the
@@ -144,7 +171,7 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       in every channel mode regardless of manager policy.
 - [x] Automated Access: ordinary authorized users cannot see/forge the fifth tab; admins,
       approved members under Members policy and named managers under Custom policy can edit it.
-      DMs keep four tabs. Independent base-mode/Full-access/Lean/network flags round-trip; preset
+      DMs keep four tabs. Independent base-mode/Auto/Lean/network flags round-trip; preset
       flags and stored profile agree. Unknown fields cannot change workDir, credentials or roles.
       Real store saves preserve unrelated settings and audit only policy. Departed actors,
       outsiders/bots in named lists, revoked channel grants and global role revocation during the
@@ -153,8 +180,8 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       `access-settings-qa`, join an admin actor, an approved member, a named external guest, and
       the bot. Start with Worker, network/Full access/Lean off, Approved use, Admins manage, and
       no explicit grants. From a fresh reply open Settings as each actor. Only admin sees Access.
-      Change manage to Members; approved actor now sees Access, guest does not. Save Autonomous,
-      Full access, Lean, network, named guest, and Custom management with the approved actor
+      Change manage to Members; approved actor now sees Access, guest does not. Save Admin mode,
+      Auto, Lean, network, named guest, and Custom management with the approved actor
       named. Reopen Slack and web settings: all values agree; unrelated model/tokens are unchanged;
       audit identifies actor/channel and contains no secrets. Clear special flags/lists and save:
       all clear. Try a bot and a user outside the channel: save fails without changing metadata.
@@ -162,11 +189,11 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       membership responses beyond three seconds: immediate progress view, then one final result;
       no Slack timeout or double save. Restore/delete fixture. Pending live execution.
 - [ ] Live Access Claude and Codex (one run each in disposable channel `access-settings-qa`):
-      select engine explicitly, Worker base, Full access on, Lean/network off, Members management.
+      select engine explicitly, Admin mode, Auto/Lean/network off, Members management.
       As approved non-admin, prompt “Create access-proof.txt containing access proof and report
       whether permission bypass is active.” As admin, repeat with a different filename. Pass when
       per-run launch evidence has bypass only for the admin author and both runs stay in their
-      declared container mounts. Enable Lean and start a fresh thread: “List the connectors and
+      declared container mounts. As the non-admin actor, enable Lean and start a fresh thread: “List the connectors and
       skills available in this run.” Pass when runtime evidence shows the lean tool/skill policy.
       Toggle network and ask “Is network use allowed here?”; compare the answer and launch policy
       to the stored setting (advisory network is not an egress isolation claim). Restore fixture
@@ -3556,7 +3583,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `curl https://api.github.com/` returns HTTP 200 while an unlisted domain stays blocked
       (QA case DRV-04; before the codex-userns block both reset with curl exit 56).
 
-## Review remediation (2026-07, IMPROVEMENTS.md)
+## Review remediation (2026-07)
 Unit layer first: `npm test` (node:test over `test/`) must pass — it pins the pure helpers
 (escaping, chunking, queue, TTL set, child-env, containment, backoff, slugify, cron catch-up).
 Manual checks for the daemon-level behavior:

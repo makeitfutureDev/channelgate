@@ -90,10 +90,6 @@ test("a channel without the shell grants sends every Bash command to the approva
     { label: "read", meta: {} },
     { label: "read, memory off", meta: { memory: false } },
     { label: "clean", meta: { cleanMode: true } },
-    // An admin channel's SHARED file is what a non-admin author runs under (the bypass variant is
-    // handed only to an admin author, and grants the shell outright — see the admin-run test
-    // below), so it must ask too.
-    { label: "admin", meta: { adminMode: true } },
   ];
   for (const { label, meta } of askless) {
     const settings = await buildSettings({ _slug: "claude-ask-bash", ...meta, allowedMcps: [] });
@@ -121,6 +117,7 @@ test("granting the shell leaves Bash out of the ask list", async () => {
   for (const { label, meta } of [
     { label: "bash", meta: { allowBash: true } },
     { label: "auto", meta: { autoMode: true } },
+    { label: "admin fallback", meta: { adminMode: true } },
     { label: "admin + bash", meta: { adminMode: true, allowBash: true } },
     { label: "clean + bash", meta: { cleanMode: true, allowBash: true } },
   ]) {
@@ -130,15 +127,15 @@ test("granting the shell leaves Bash out of the ask list", async () => {
   }
 });
 
-test("the on-disk lockdown files carry the ask rule for a channel without the shell", async () => {
+test("Admin lockdown files grant Worker tools to members while keeping admin bypass separate", async () => {
   const slug = "ask-bash-files";
   await ensureChannelFolder(slug, { adminMode: true, allowedMcps: [] });
 
   const shared = JSON.parse(readFileSync(channelSettingsFile(slug), "utf8"));
   const admin = JSON.parse(readFileSync(channelAdminSettingsFile(slug), "utf8"));
-  // The SHARED file is every non-admin author's turn in this channel: it asks.
-  assert.ok(shared.permissions.ask.includes("Bash"), "shared: Bash asks on disk");
-  assert.equal(shared.permissions.allow.includes("Bash"), false, "shared: Bash not pre-approved on disk");
+  // The shared file grants Worker tools but still disables the admin bypass.
+  assert.equal(shared.permissions.ask, undefined, "shared: Worker fallback does not ask for Bash");
+  assert.equal(shared.permissions.allow.includes("Bash"), true, "shared: Worker fallback grants Bash");
   // The admin variant is the bypassed admin turn's file, so it grants the shell instead of asking
   // for it — an ask rule there is not merely redundant, it took the shell away (2026-09-07).
   assert.ok(admin.permissions.allow.includes("Bash"), "admin: Bash granted on disk");
@@ -314,11 +311,10 @@ test("the admin-run variant grants the shell outright and carries no ask rule", 
   assert.ok(admin.permissions.deny.includes("mcp__claude-in-chrome"));
   assert.ok(admin.hooks && Object.keys(admin.hooks).length > 0);
 
-  // The SHARED file is unchanged — it is what every NON-admin author in the same channel runs
-  // under, and it must keep sending each command to the approval card.
+  // The shared file grants the non-admin Worker fallback, with bypass still disabled.
   const shared = await buildSettings({ _slug: "admin-shell", adminMode: true, allowedMcps: [] });
-  assert.deepEqual(shared.permissions.ask, ["Bash"]);
-  assert.equal(shared.permissions.allow.includes("Bash"), false);
+  assert.equal(shared.permissions.ask, undefined);
+  assert.equal(shared.permissions.allow.includes("Bash"), true);
   assert.equal(shared.permissions.disableBypassPermissionsMode, "disable");
 
   // A channel that is not in admin mode is untouched on both variants (nothing ever hands it the

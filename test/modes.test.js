@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage } =
+const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage, modeSettingsPatch, normalizeModeMeta, authorModeMeta } =
   await import("../src/gateway/modes.js");
 const { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } = await import("../src/engines/network-policy.js");
 
@@ -11,14 +11,14 @@ const { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } = await import("../src/
 // authz check. Both feed directly into what a spawned engine is allowed to do, so the exact
 // derivations are pinned here.
 
-test("channelMode picks the highest capability, admin > auto > bash > read", () => {
+test("channelMode picks the highest capability, admin > worker > read", () => {
   assert.equal(channelMode({}), "read");
-  assert.equal(channelMode({ allowBash: true }), "bash");
-  assert.equal(channelMode({ autoMode: true }), "auto");
+  assert.equal(channelMode({ allowBash: true }), "worker");
+  assert.equal(channelMode({ autoMode: true }), "worker");
   assert.equal(channelMode({ adminMode: true }), "admin");
   // admin wins even when every flag is set
   assert.equal(channelMode({ adminMode: true, autoMode: true, allowBash: true }), "admin");
-  assert.equal(channelMode({ autoMode: true, allowBash: true }), "auto");
+  assert.equal(channelMode({ autoMode: true, allowBash: true }), "worker");
 });
 
 test("every mode round-trips through its own flags", () => {
@@ -32,12 +32,12 @@ test("modeLabel states the network in BOTH directions, never by omission", () =>
   // one ever configured it" rendered identically — in the label, in /mode, and in the app-home
   // channel list. Every state now has a word.
   assert.equal(modeLabel({}), "Read-only · network off");
-  assert.equal(modeLabel({ allowBash: true, engine: "claude" }), "Bash · network off");
+  assert.equal(modeLabel({ allowBash: true, engine: "claude" }), "Worker · network off");
   // The network is a switch on the channel's container; both container engines support "on".
-  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "claude" }), "Bash · network on");
-  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "codex" }), "Bash · network on");
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "claude" }), "Worker · network on");
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "codex" }), "Worker · network on");
   // An engine that only declares "off" is told so rather than promised a network it will not get.
-  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }), "Bash · network unsupported");
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }), "Worker · network unsupported");
   // Admin mode lifts the engine's own sandbox, not the network switch.
   assert.equal(modeLabel({ adminMode: true, engine: "codex" }), "Admin · network off");
   assert.equal(modeLabel({ adminMode: true, allowNetwork: true, engine: "codex" }), "Admin · network on");
@@ -50,7 +50,7 @@ test("the detailed label admits the switch is advisory, and only where it matter
   assert.match(NETWORK_ADVISORY_NOTE, /not enforced/i);
   // ON is simply true — the container is on the bridge network — so it gains nothing.
   assert.equal(modeLabel({ allowNetwork: true, engine: "claude" }, { detail: true }), "Read-only · network on");
-  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }, { detail: true }), "Bash · network unsupported");
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }, { detail: true }), "Worker · network unsupported");
   // The compact form is the default: it rides the app-home channel list.
   assert.equal(modeLabel({}), "Read-only · network off");
 });
@@ -64,24 +64,45 @@ test("networkState/networkLabel are the one derivation every surface shares", ()
   assert.equal(networkLabel({}, { detail: true }), `network off (${NETWORK_ADVISORY_NOTE})`);
 });
 
-test("channelProfile: explicit stored profile wins; invalid ones fall back to flag derivation", () => {
-  assert.equal(channelProfile({ profile: "custom", allowBash: true }), "custom");
-  assert.equal(channelProfile({ profile: "lean" }), "lean");
-  // a bogus stored profile must not be trusted
-  assert.equal(channelProfile({ profile: "root", allowBash: true }), "worker");
-  // legacy channels (no stored profile) derive from flags
-  assert.equal(channelProfile({}), "read");
-  assert.equal(channelProfile({ cleanMode: true }), "lean");
-  assert.equal(channelProfile({ adminMode: true }), "full");
-  assert.equal(channelProfile({ allowBash: true, autoMode: true }), "auto");
-  assert.equal(channelProfile({ allowBash: true }), "worker");
+test("legacy presets resolve to three base modes without losing modifiers", () => {
+  assert.deepEqual(PROFILES, ["read", "worker", "admin"]);
+  assert.equal(channelProfile({ profile: "custom", allowBash: true }), "worker");
+  assert.equal(channelProfile({ profile: "lean", cleanMode: true }), "read");
+  assert.equal(channelProfile({ profile: "full", adminMode: true }), "admin");
+  assert.equal(channelProfile(PROFILE_FLAGS.auto), "worker");
+  assert.equal(channelProfile(PROFILE_FLAGS.read), "read");
+  assert.equal(modeLabel({ adminMode: true, autoMode: true, cleanMode: true }), "Admin · Auto · Lean · network off");
 });
 
-test("every preset profile round-trips through its own flags", () => {
-  for (const profile of Object.keys(PROFILE_FLAGS)) {
-    assert.equal(channelProfile(PROFILE_FLAGS[profile]), profile, `PROFILE_FLAGS.${profile} must derive back to ${profile}`);
+test("base changes retain independent modifiers and Read-only/Auto stay coherent", () => {
+  const current = { autoMode: true, cleanMode: true };
+  const admin = { ...current, ...modeSettingsPatch(current, { mode: "admin" }, { isAdminUser: true }) };
+  assert.deepEqual(admin, { adminMode: true, allowBash: true, autoMode: true, cleanMode: true, profile: "admin" });
+  const worker = { ...admin, ...modeSettingsPatch(admin, { mode: "worker" }) };
+  assert.equal(worker.autoMode, true);
+  assert.equal(worker.cleanMode, true);
+  const read = { ...worker, ...modeSettingsPatch(worker, { mode: "read" }) };
+  assert.equal(read.autoMode, false);
+  assert.equal(read.cleanMode, true);
+  assert.equal(read.allowBash, false);
+  assert.equal(modeSettingsPatch(read, { autoMode: true }).profile, "worker");
+  assert.throws(() => modeSettingsPatch({}, { mode: "admin" }), /Only administrators/);
+  assert.throws(() => modeSettingsPatch({}, { mode: "invalid" }), /Mode must/);
+  assert.deepEqual(modeSettingsPatch(admin, { autoMode: false }), { autoMode: false });
+});
+
+test("Admin gives non-admins Worker plus modifiers and trusted admins full context", () => {
+  const legacy = { adminMode: true, allowBash: false, autoMode: true, cleanMode: true };
+  assert.equal(normalizeModeMeta(legacy).allowBash, true);
+  assert.equal(legacy.allowBash, false, "normalization does not mutate stored settings");
+  for (const isAdminAuthor of [false, true]) {
+    const resolved = authorModeMeta(legacy, { isAdminAuthor });
+    assert.equal(resolved.allowBash, true);
+    assert.equal(resolved.autoMode, true);
+    assert.equal(resolved.cleanMode, !isAdminAuthor);
   }
-  assert.ok(PROFILES.includes("custom"), "custom must stay a selectable profile");
+  assert.equal(authorModeMeta(legacy, { isAdminAuthor: true, untrustedPrincipal: true }).cleanMode, true);
+  assert.equal(authorModeMeta({ cleanMode: true }, { isAdminAuthor: true }).cleanMode, true);
 });
 
 test("canManage: admins always; default policy is admins-only", () => {

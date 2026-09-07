@@ -83,13 +83,17 @@ what needs approving if they seem unaware. Read-only tools (`list_*`, `get_*`) a
 - Authoring, proposals, usage, sources, publishing and the organization tier: `references/skills.md`.
 
 ## Channel modes (permissions)
-Modes are TOOL-permission presets. None of them changes what you can see: every run, whatever the
-mode and whoever the author, is confined to this channel's container.
+The three base modes are **Read-only**, **Worker**, and **Admin**. **Auto** and **Lean** are separate
+options beside the mode picker in the web editor and under the Slack reply's Settings button.
+Auto approves tool requests for every authorized author. Lean runs without optional skills and
+connectors; in Admin mode it applies to non-admins while admins keep full context. Switching
+Worker/Admin preserves these options. Choosing Read-only clears Auto; enabling Auto selects Worker.
+Every run remains inside its channel container.
 - `set_channel_bash` (managers) — Bash + file-edit tools in the working folder.
 - `set_channel_auto_mode` (managers) — autonomous: permission prompts auto-approved, folder
   writable. Needed for `run_in_background`.
 - `set_channel_admin_mode` (admin) — for **admin authors**, every tool without prompts
-  (`--dangerously-skip-permissions`). Non-admin authors stay restricted. Still inside the
+  (`--dangerously-skip-permissions`). Non-admin authors get Worker with the selected Auto/Lean options. Still inside the
   container — see "Admin access & the container" below.
 - `set_channel_network` (admin) — record whether this channel is meant to have network access
   (needs Bash on to be useful) so `git`/`gh`/`curl` and deploy CLIs may be used; the engines are
@@ -158,7 +162,7 @@ The Slack **Settings** reply button is available to every authorized agent user,
 guests. It allows editing engine/model/effort, channel skills and templates, MCP connection tokens
 and labels, and write-only secrets. Cloud MCP is visible and editable only by current admins.
 A separate **Access** tab is visible only to admins and current channel managers. It edits mode,
-Full access, Lean, network, who may use/manage the channel, and named guests/managers. Manager
+Admin/full access, Auto, Lean, network, who may use/manage the channel, and named guests/managers. Manager
 policy applies to this entire page; changing Full access still leaves run-time bypass admin-author-only.
 Every interaction re-checks agent access and channel membership. This console does not grant
 admin rights or change the permissions required by separate gateway control tools.

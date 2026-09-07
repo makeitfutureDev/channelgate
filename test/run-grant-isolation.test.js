@@ -96,11 +96,11 @@ test("escalated run artifact settings omit the bypass key; ordinary artifacts pi
   // An escalated artifact grants the shell and carries no ask rule: the run it belongs to spawns
   // with --dangerously-skip-permissions, and a file that still routed Bash through the approval
   // card silently demoted those turns to read-only (QA, 2026-09-07). The non-escalated artifact of
-  // the same shell-less channel keeps asking.
+  // the same Admin channel gets Worker tools, while bypass remains disabled.
   assert.ok(adminSettings.permissions.allow.includes("Bash"));
   assert.equal("ask" in adminSettings.permissions, false);
-  assert.ok(sharedSettings.permissions.ask.includes("Bash"));
-  assert.equal(sharedSettings.permissions.allow.includes("Bash"), false);
+  assert.equal(sharedSettings.permissions.ask, undefined);
+  assert.equal(sharedSettings.permissions.allow.includes("Bash"), true);
 
   // The bypass key and the shell grant that goes with it are the ONLY differences, and the two are
   // different files: the escalated artifact equals the same channel built WITH the shell.

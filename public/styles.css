@@ -1026,3 +1026,11 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 @media (max-width: 600px) {
   .user-picker-option { align-items: flex-start; flex-direction: column; gap: 3px; }
 }
+
+/* Base mode selection and independent options share a row on wide editors. */
+.mode-layout { display:grid; grid-template-columns:minmax(0,3fr) minmax(240px,2fr); gap:20px; }
+.mode-layout .cap-cards { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.mode-layout .cap-card { color:inherit; font:inherit; text-align:left; }
+.mode-options .togglerow { margin-bottom:10px; }
+@media (max-width:900px) { .mode-layout { grid-template-columns:1fr; } }
+@media (max-width:520px) { .mode-layout .cap-cards { grid-template-columns:1fr; } }

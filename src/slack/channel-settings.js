@@ -2,8 +2,11 @@
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
 import { ACCESS_EDIT_ACTION_ID, accessSummary } from "./access-settings.js";
+import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
 
+export const CHANNEL_SETTINGS_MODE_PREFIX = "cg_channel_settings_mode_";
+export const CHANNEL_SETTINGS_OPTION_PREFIX = "cg_channel_settings_option_";
 export const CHANNEL_SETTINGS_ACTION_ID = "cg_channel_settings";
 export const CHANNEL_SETTINGS_TAB_PREFIX = "cg_channel_settings_tab_";
 export const CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID = "cg_channel_settings_runtime_edit";
@@ -174,7 +177,7 @@ function destructiveConfirm(title, text, confirm = "Remove") {
   };
 }
 
-function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true } = {}) {
+function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false } = {}) {
   const runtime = snapshot.runtime || {};
   const configuredEngine = runtime.configuredEngine
     ? inlineCode(runtime.configuredEngine)
@@ -183,7 +186,21 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true } = {}
     ? inlineCode(runtime.configuredModel)
     : `_inherits ${runtime.gatewayModel ? `gateway default (${inlineCode(runtime.gatewayModel)})` : "the CLI default"}_`;
   const effort = runtime.configuredEffort ? inlineCode(runtime.configuredEffort) : "_engine default_";
+  const mode = snapshot.mode || {};
+  const selected = channelMode(mode);
   const blocks = [
+    ...(snapshot.isDM ? [fieldBlock("Mode", modeLabel(mode)),
+    { type: "actions", elements: [
+      ...["read", "worker", ...(canEnableAdmin ? ["admin"] : [])].map((value) =>
+        button(`${CHANNEL_SETTINGS_MODE_PREFIX}${value}`, { read: "Read-only", worker: "Worker", admin: "Admin" }[value], state, "mode", { mode: value }, { style: selected === value ? "primary" : undefined })),
+    ] },
+    { type: "actions", elements: [
+      button(`${CHANNEL_SETTINGS_OPTION_PREFIX}auto`, `${mode.autoMode ? "☑" : "☐"} Auto`, state, "option", { key: "autoMode", enabled: !mode.autoMode }),
+      button(`${CHANNEL_SETTINGS_OPTION_PREFIX}lean`, `${mode.cleanMode ? "☑" : "☐"} Lean`, state, "option", { key: "cleanMode", enabled: !mode.cleanMode }),
+    ] },
+    { type: "context", elements: [mrkdwn("Auto approves tool requests for all members. Lean removes skills and connectors. In Admin mode, admins get full access; other members get Worker with the selected options.")] },
+    { type: "divider" },
+    ] : []),
     fieldBlock("Engine", configuredEngine),
     fieldBlock("Model", configuredModel),
     fieldBlock("Reasoning effort", effort),
@@ -349,6 +366,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   channelName = "",
   tab = state.tab,
   canEditRuntime = true,
+  canEnableAdmin = false,
   canEditSecrets = false,
   canManageCloudMcp = false,
   canEditAccess = false,
@@ -367,7 +385,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
       ? skillsBlocks(snapshot, state)
       : active === "secrets"
         ? secretsBlocks(snapshot, state, { canEditSecrets })
-        : runtimeBlocks(snapshot, state, { canEditRuntime });
+        : runtimeBlocks(snapshot, state, { canEditRuntime, canEnableAdmin });
   return {
     type: "modal",
     callback_id: "cg_channel_settings_modal",

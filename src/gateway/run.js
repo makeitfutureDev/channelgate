@@ -29,7 +29,7 @@ import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-to
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort } from "./thread-engine.js";
-import { PROFILE_FLAGS, canManage } from "./modes.js";
+import { PROFILE_FLAGS, canManage, normalizeModeMeta, authorModeMeta } from "./modes.js";
 import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
@@ -63,7 +63,7 @@ export function effectiveMeta(meta) {
   if (meta?.isDM && (meta.template === "user" || meta.template === "admin")) {
     const t = getDmTemplate(meta.template);
     const engine = (ENGINES.includes(meta.engine) ? meta.engine : "") || (ENGINES.includes(t.engine) ? t.engine : "") || getEngine() || "claude";
-    return {
+    return normalizeModeMeta({
       ...meta,
       skills: t.skills,
       skillTemplate: typeof t.skillTemplate === "string" ? t.skillTemplate : "",
@@ -77,9 +77,9 @@ export function effectiveMeta(meta) {
       autoMode: t.autoMode,
       cleanMode: t.cleanMode,
       engine: meta.engine || t.engine,
-    };
+    });
   }
-  return meta;
+  return normalizeModeMeta(meta);
 }
 
 // True when an engine error means "the session you tried to resume no longer exists" (vs. a real
@@ -744,6 +744,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // admin credential (web/auth.js), and `authorId` on that path is caller-supplied, so allowing
   // `mode:"full"` to set adminMode would let any key holder name an admin and get an unsandboxed
   // --dangerously-skip-permissions run. The channel's own stored adminMode still stands.
+  meta = authorModeMeta(meta, { isAdminAuthor: !untrustedPrincipal && await isAdmin(authorId), untrustedPrincipal });
   meta = applyRunOverrides(meta, overrides);
 
   // Per-thread clean override (the "/clean" directive): this thread runs with channel-cleanMode

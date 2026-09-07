@@ -11,22 +11,48 @@ import { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../engines/netwo
 //   admin — full tools, permission prompts bypassed (admin authors only); the container is still
 //           the boundary, and the work folder is what it sees of the host
 
-export const MODE_FLAGS = {
-  read: { adminMode: false, allowBash: false, autoMode: false },
-  bash: { adminMode: false, allowBash: true, autoMode: false },
-  auto: { adminMode: false, allowBash: false, autoMode: true },
-  admin: { adminMode: true, allowBash: false, autoMode: false },
+// Base modes and independent modifiers. Legacy presets remain accepted at API boundaries.
+export const BASE_MODE_FLAGS = {
+  read: { adminMode: false, allowBash: false },
+  worker: { adminMode: false, allowBash: true },
+  admin: { adminMode: true, allowBash: true },
 };
-export const MODES = Object.keys(MODE_FLAGS);
+export const MODES = Object.keys(BASE_MODE_FLAGS);
+export const MODE_FLAGS = BASE_MODE_FLAGS;
+const LABELS = { read: "Read-only", worker: "Worker", admin: "Admin" };
 
-const LABELS = { read: "Read-only", bash: "Bash", auto: "Auto", admin: "Admin" };
-
-// The effective mode for a meta (highest capability wins).
 export function channelMode(meta = {}) {
   if (meta.adminMode) return "admin";
-  if (meta.autoMode) return "auto";
-  if (meta.allowBash) return "bash";
+  if (meta.allowBash || meta.autoMode) return "worker";
   return "read";
+}
+
+// Admin's documented non-admin fallback is Worker, including legacy Full access records.
+export function normalizeModeMeta(meta = {}) {
+  return meta?.adminMode ? { ...meta, allowBash: true } : meta;
+}
+
+export function authorModeMeta(meta, { isAdminAuthor = false, untrustedPrincipal = false } = {}) {
+  const normalized = normalizeModeMeta(meta);
+  return normalized.adminMode && isAdminAuthor && !untrustedPrincipal
+    ? { ...normalized, cleanMode: false }
+    : normalized;
+}
+
+// Called inside the atomic settings update; changing a base mode preserves Lean and Auto.
+// Read-only clears Auto; enabling Auto on Read-only promotes it to Worker.
+export function modeSettingsPatch(current = {}, { mode, autoMode, cleanMode } = {}, { isAdminUser = false, canEnableAdmin = isAdminUser } = {}) {
+  const nextMode = mode || channelMode(current);
+  if (!MODES.includes(nextMode)) throw new Error("Mode must be read, worker, or admin.");
+  if (mode === "admin" && !canEnableAdmin) throw new Error("Only administrators can enable Admin mode.");
+  const patch = mode ? { ...BASE_MODE_FLAGS[nextMode], profile: nextMode } : {};
+  if (mode === "read") patch.autoMode = false;
+  if (typeof autoMode === "boolean") {
+    patch.autoMode = autoMode;
+    if (autoMode && nextMode === "read") Object.assign(patch, BASE_MODE_FLAGS.worker, { profile: "worker" });
+  }
+  if (typeof cleanMode === "boolean") patch.cleanMode = cleanMode;
+  return patch;
 }
 
 // The channel's Allow-network switch as one of three honest words. "off" is a real state and must
@@ -50,7 +76,7 @@ export function networkLabel(meta = {}, { detail = false } = {}) {
 }
 
 export function modeLabel(meta = {}, opts = {}) {
-  return `${LABELS[channelMode(meta)]} · ${networkLabel(meta, opts)}`;
+  return [LABELS[channelMode(meta)], meta.autoMode ? "Auto" : "", meta.cleanMode ? "Lean" : "", networkLabel(meta, opts)].filter(Boolean).join(" · ");
 }
 
 // ── Capability profiles ───────────────────────────────────────────────────────
@@ -62,22 +88,24 @@ export function modeLabel(meta = {}, opts = {}) {
 //   read   — read-only tools; anything riskier asks for approval (safest, default)
 //   worker — Bash + file writes in the channel's container; still asks before unusual actions
 //   auto   — autonomous: like worker but auto-approves and keeps going
-//   full   — every tool, no permission prompts (only honored for an admin author; else falls back)
+//   full   — legacy Admin preset: bypass for admins, Worker fallback for members
 //   lean   — bare model: no MCP servers, no skills, no favorites block (cheapest/fastest)
 export const PROFILE_FLAGS = {
   read: { adminMode: false, allowBash: false, autoMode: false, cleanMode: false },
   worker: { adminMode: false, allowBash: true, autoMode: false, cleanMode: false },
   auto: { adminMode: false, allowBash: true, autoMode: true, cleanMode: false },
-  full: { adminMode: true, allowBash: false, autoMode: false, cleanMode: false },
+  full: { adminMode: true, allowBash: true, autoMode: false, cleanMode: false },
+  admin: { adminMode: true, allowBash: true },
   lean: { adminMode: false, allowBash: false, autoMode: false, cleanMode: true },
 };
-export const PROFILES = [...Object.keys(PROFILE_FLAGS), "custom"];
+export const PROFILES = [...MODES];
 
 export const PROFILE_LABELS = {
   read: "Read-only",
   worker: "Worker",
   auto: "Autonomous",
-  full: "Full access",
+  full: "Admin",
+  admin: "Admin",
   lean: "Lean",
   custom: "Custom…",
 };
@@ -87,21 +115,15 @@ export const PROFILE_HELP = {
   read: "Answers and reads files in this channel's folder. Can't edit or run commands; anything riskier asks you to approve. Safest.",
   worker: "Runs commands and edits files inside this channel's container. Still asks before unusual actions. For channels that build things.",
   auto: "Like Worker but doesn't stop to ask — auto-approves and keeps going. For trusted, multi-step tasks.",
+  admin: "Admins get every tool without permission prompts. Other members get Worker with the selected Auto and Lean options.",
   full: "Every tool, no permission prompts. Only works when an org admin sends the message; otherwise falls back to Worker behaviour. The channel container is still the boundary — unless the gateway's \"Full-access channels see the gateway home\" switch is on, in which case this channel also reaches the gateway user's whole home. Use only for trusted ops channels.",
   lean: "Bare model — no skills or connectors. Cheapest and fastest, but can't use HubSpot/Gmail/etc.",
   custom: "Set every capability yourself (mode, network, clean).",
 };
 
-// The profile a meta represents: an explicit stored `profile` (when valid) wins so a deliberate
-// "Custom" survives even if its flags happen to equal a preset; otherwise derive it from the flags
-// so legacy channels (saved before profiles existed) map to the right preset with no migration.
+// Legacy stored profile labels never hide the effective base mode or its independent options.
 export function channelProfile(meta = {}) {
-  if (meta.profile && PROFILES.includes(meta.profile)) return meta.profile;
-  if (meta.cleanMode) return "lean";
-  if (meta.adminMode) return "full";
-  if (meta.autoMode) return "auto";
-  if (meta.allowBash) return "worker";
-  return "read";
+  return channelMode(meta);
 }
 
 // ── Who may talk ──────────────────────────────────────────────────────────────

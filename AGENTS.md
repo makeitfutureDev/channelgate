@@ -1,7 +1,7 @@
 # ChannelGate — AGENTS.md
 
-Canonical instruction file. `CLAUDE.md`, `GEMINI.md`, `HERMES.md` are symlinks to this file —
-edit here only.
+Canonical instruction file for Codex and contributors. `CLAUDE.md` symlinks to this file
+for Claude Code — edit here only.
 
 ## What this is
 
@@ -81,10 +81,11 @@ post/edit Slack message in the thread
   (gateway control MCP + dual Composio identities; Skills/Toolbox use channel→user→org). Slack
   beyond the gateway's own bot tools is the **Composio** Slack toolkit — there is no separate hosted
   Slack MCP.
-- `src/gateway/modes.js` — the read/bash/auto/admin mode → tool-permission mapping (read = read-only
-  tools, bash = shell + file writes, auto = permission prompts auto-approved, admin =
-  `--dangerously-skip-permissions` for an admin author). A mode is a TOOL preset; none of them
-  changes what the channel's container mounts.
+- `src/gateway/modes.js` — three base modes: Read-only, Worker (shell + file writes), and Admin
+  (Worker for members; `--dangerously-skip-permissions` only for trusted admin authors). Auto and
+  Lean are independent options. Auto approves tool requests for both roles; Lean removes optional
+  skills/connectors, but admins in Admin mode retain full context. A mode is a TOOL preset; runtime
+  mount policy remains separately defined by the container backend.
 - `src/runtimes/` — WHERE an engine process runs: the `RuntimeBackend` contract (`contract.js`),
   `resolve.js` (the one place that builds the RuntimeTarget a turn, a background job and the memory
   reviewer all receive — each resolves at its OWN spawn), and `container/` — the rootless Podman

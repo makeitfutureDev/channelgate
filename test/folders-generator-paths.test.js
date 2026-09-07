@@ -161,7 +161,7 @@ test("the managed block states this conversation's mode and network switch, in b
   const { NETWORK_ADVISORY_NOTE } = await import("../src/engines/network-policy.js");
 
   const off = channelSwitchesNote({ allowBash: true });
-  assert.match(off, /Mode: \*\*bash\*\*/);
+  assert.match(off, /Mode: \*\*worker\*\*/);
   assert.match(off, /Network: \*\*off\*\*/, "an off switch is SAID, not implied by silence");
   assert.match(off, /NOT meant to use the internet/);
   // Honest, not a lie the first successful request would expose: the container is not cut off.
@@ -169,7 +169,8 @@ test("the managed block states this conversation's mode and network switch, in b
   assert.match(off, /that is not permission/i);
 
   const on = channelSwitchesNote({ autoMode: true, allowNetwork: true, engine: "claude" });
-  assert.match(on, /Mode: \*\*auto\*\*/);
+  assert.match(on, /Mode: \*\*worker\*\*/);
+  assert.match(on, /Auto: \*\*on\*\*/);
   assert.match(on, /Network: \*\*on\*\*/);
   assert.doesNotMatch(on, /NOT meant to use the internet/);
 

@@ -1069,29 +1069,20 @@
 
         <!-- ── ACCESS ─────────────────────────────────────────────────────── -->
         <div class="subpane active" data-pane="access">
-          <p class="fldlab">Capability — what the bot may do here</p>
-          <!-- Radio cards drive a hidden <select class="ch-profile"> (the save reads that). -->
-          <div class="cap-cards ch-capcards">
-            <div class="cap-card" data-cap="read"><h5><i style="background:var(--cap-read)"></i>Read-only</h5><p>Answers &amp; reads files. Can't edit or run commands.</p></div>
-            <div class="cap-card" data-cap="worker"><h5><i style="background:var(--cap-worker)"></i>Worker</h5><p>Runs commands &amp; edits files, sandboxed to this folder.</p></div>
-            <div class="cap-card" data-cap="auto"><h5><i style="background:var(--cap-auto)"></i>Autonomous</h5><p>Worker that doesn't stop to ask. Still sandboxed.</p></div>
-          </div>
-          <p class="fldlab">Special modes</p>
-          <div class="cap-cards cap-options">
-            <div class="cap-card danger" data-cap="full"><h5><i style="background:var(--cap-full)"></i>Full access <span class="box-mark">□</span></h5><p>Admin authors bypass permission prompts. The channel container remains the boundary.</p><span class="tag">admin</span></div>
-            <div class="cap-card" data-cap="lean"><h5><i style="background:var(--cap-lean)"></i>Lean <span class="box-mark">□</span></h5><p>Testing mode: bare model with no MCP servers or skills, minimizing loaded context.</p></div>
-          </div>
-          <select class="ch-profile" hidden aria-hidden="true">
-            <option value="read">Read-only</option>
-            <option value="worker">Worker</option>
-            <option value="auto">Autonomous</option>
-            <option value="full">Full access</option>
-            <option value="lean">Lean</option>
-          </select>
-          <em class="state ch-profile-help" style="display:block;margin:0 0 16px"></em>
-
-          <input type="checkbox" class="ch-admin" hidden /><input type="checkbox" class="ch-bash" hidden />
-          <input type="checkbox" class="ch-auto" hidden /><input type="checkbox" class="ch-clean" hidden />
+<div class="mode-layout">
+    <div><p class="fldlab">Mode</p><div class="cap-cards ch-capcards">
+      <button type="button" class="cap-card" data-cap="read"><h5>Read-only</h5><p>Reads files. Changes need approval.</p></button>
+      <button type="button" class="cap-card" data-cap="worker"><h5>Worker</h5><p>Runs commands and edits files in the channel container.</p></button>
+      <button type="button" class="cap-card danger" data-cap="admin"><h5>Admin</h5><p>Admins get full access. Other members get Worker plus the selected options.</p></button>
+    </div></div>
+    <div class="mode-options"><p class="fldlab">Special modes</p>
+      <label class="togglerow"><input type="checkbox" class="ch-auto" /><span class="switch"></span><span class="t"><b>Auto</b><small>Automatically approve tool requests for all members. Enables Worker when Read-only is selected.</small></span></label>
+      <label class="togglerow"><input type="checkbox" class="ch-clean" /><span class="switch"></span><span class="t"><b>Lean</b><small>Bare model without skills or connectors. In Admin mode, applies to non-admins.</small></span></label>
+    </div>
+  </div>
+  <select class="ch-profile" hidden aria-hidden="true"><option value="read">Read-only</option><option value="worker">Worker</option><option value="admin">Admin</option></select>
+  <em class="state ch-profile-help" style="display:block;margin:0 0 16px"></em>
+  <input type="checkbox" class="ch-admin" hidden /><input type="checkbox" class="ch-bash" hidden />
 
           <div class="grid grid-2">
             <label class="field">

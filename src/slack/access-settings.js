@@ -1,5 +1,5 @@
 // Channel access editor. Personal admin status and gateway-wide settings are never writable here.
-import { canManage, isAuthorized, PROFILE_FLAGS, channelProfile } from "../gateway/modes.js";
+import { canManage, isAuthorized, modeSettingsPatch, channelMode, channelProfile } from "../gateway/modes.js";
 
 export const ACCESS_EDIT_ACTION_ID = "cg_channel_settings_access_edit";
 export const ACCESS_CALLBACK_ID = "cg_channel_settings_access_form";
@@ -7,17 +7,17 @@ export const ACCESS_MODE_BLOCK_ID = "settings_access_mode";
 const text = (value) => ({ type: "plain_text", text: value });
 const option = (label, value) => ({ text: text(label), value });
 const selects = {
-  mode: [["Read-only", "read"], ["Worker", "worker"], ["Autonomous", "auto"]],
+  mode: [["Read-only", "read"], ["Worker", "worker"], ["Admin (full access)", "admin"]],
   access: [["Approved members", "approved"], ["Admins only", "admins"], ["Locked — named users only", "none"]],
   manageAccess: [["Org admins only", "admins"], ["Approved channel members", "members"], ["Named managers", "custom"]],
 };
 const labels = { mode: "Mode", access: "Who can use it here", manageAccess: "Who can manage this channel" };
-const flags = [["Full access — permission bypass for admin authors", "adminMode"], ["Lean — bare model without skills or connectors", "cleanMode"], ["Network — tell the engine network use is allowed", "allowNetwork"]];
+const flags = [["Auto — automatically approve tool requests", "autoMode"], ["Lean — bare model without skills or connectors", "cleanMode"], ["Network — tell the engine network use is allowed", "allowNetwork"]];
 
 export function accessSettingsSnapshot(meta = {}) {
   return {
-    mode: meta.autoMode ? "auto" : meta.allowBash ? "worker" : "read",
-    adminMode: Boolean(meta.adminMode), cleanMode: Boolean(meta.cleanMode), allowNetwork: Boolean(meta.allowNetwork),
+    mode: channelMode(meta),
+    autoMode: Boolean(meta.autoMode), cleanMode: Boolean(meta.cleanMode), allowNetwork: Boolean(meta.allowNetwork),
     access: meta.access || "approved", manageAccess: meta.manageAccess || "admins",
     allowedUsers: meta.allowedUsers || [], managers: meta.managers || [],
   };
@@ -37,7 +37,7 @@ export function buildAccessEditorView(meta, privateMetadata) {
     type: "modal", callback_id: ACCESS_CALLBACK_ID, private_metadata: privateMetadata,
     title: text("Channel access"), submit: text("Save"), close: text("Cancel"),
     blocks: [
-      { type: "section", text: { type: "mrkdwn", text: "Changes apply to this channel's next runs. Full access bypasses permissions only for admin authors. If the operator enabled whole-home access, Full access also exposes the gateway home to this channel. Network is advisory; the container stays on its bridge network." } },
+      { type: "section", text: { type: "mrkdwn", text: "Changes apply to this channel's next runs. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access also exposes the gateway home to this channel. Network is advisory; the container stays on its bridge network." } },
       ...Object.entries(selects).map(([key, choices]) => {
         const options = choices.map(([label, value]) => option(label, value));
         return { type: "input", block_id: `settings_access_${key}`, label: text(labels[key]), element: {
@@ -90,15 +90,14 @@ export function accessSettingsPatch(meta, form, actor) {
     }
   }
   const patch = {
-    ...PROFILE_FLAGS[form.mode], adminMode: form.adminMode, cleanMode: form.cleanMode,
+    ...modeSettingsPatch(meta, { mode: form.mode, autoMode: form.autoMode, cleanMode: form.cleanMode }, { canEnableAdmin: true }),
     allowNetwork: form.allowNetwork, access: form.access, manageAccess: form.manageAccess,
     allowedUsers: [...new Set(form.allowedUsers)], managers: [...new Set(form.managers)],
   };
-  patch.profile = Object.entries(PROFILE_FLAGS).find(([, preset]) => Object.keys(preset).every((key) => patch[key] === preset[key]))?.[0] || "custom";
   return patch;
 }
 
 export function accessSummary(meta) {
   const current = accessSettingsSnapshot(meta);
-  return `*Mode:* ${channelProfile(meta)}\n*Full access:* ${current.adminMode ? "on" : "off"} · *Lean:* ${current.cleanMode ? "on" : "off"} · *Network:* ${current.allowNetwork ? "on" : "off"}\n*Who can use:* ${current.access} · *Who can manage:* ${current.manageAccess}\n*Named users:* ${current.allowedUsers.length} · *Named managers:* ${current.managers.length}`;
+  return `*Mode:* ${channelProfile(meta)}\n*Auto:* ${current.autoMode ? "on" : "off"} · *Lean:* ${current.cleanMode ? "on" : "off"} · *Network:* ${current.allowNetwork ? "on" : "off"}\n*Who can use:* ${current.access} · *Who can manage:* ${current.manageAccess}\n*Named users:* ${current.allowedUsers.length} · *Named managers:* ${current.managers.length}`;
 }

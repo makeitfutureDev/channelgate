@@ -10,7 +10,7 @@ const { PROFILE_FLAGS } = await import("../src/gateway/modes.js");
 const { getDb } = await import("../src/db/index.js");
 const actor = { authorId: "UMANAGER", isApprovedUser: true, isAdminUser: false };
 const base = { access: "approved", manageAccess: "members", ...PROFILE_FLAGS.worker };
-const form = { ...accessSettingsSnapshot(base), mode: "auto", adminMode: true, cleanMode: true, allowNetwork: true };
+const form = { ...accessSettingsSnapshot(base), mode: "admin", autoMode: true, cleanMode: true, allowNetwork: true };
 const state = { channelId: "CACCESS", slug: "access-test", ownerId: "UMANAGER" };
 
 test("only admins and current managers see Access; existing tabs remain available", () => {
@@ -33,8 +33,8 @@ test("only admins and current managers see Access; existing tabs remain availabl
   }
 });
 
-test("access form preserves independent mode/Full access/Lean/network flags and clears lists", () => {
-  const view = buildAccessEditorView({ ...base, ...form }, editorMetadata(state, { view: "access" }));
+test("access form preserves independent mode/Auto/Lean/network flags and clears lists", () => {
+  const view = buildAccessEditorView({ ...base, ...form, adminMode: true }, editorMetadata(state, { view: "access" }));
   const values = {};
   for (const block of view.blocks.filter((b) => b.type === "input")) {
     const el = block.element;
@@ -43,12 +43,12 @@ test("access form preserves independent mode/Full access/Lean/network flags and 
       : el.type === "checkboxes" ? { selected_options: el.initial_options || [] }
         : { selected_users: el.initial_users || [] } };
   }
-  // autoMode comes from the real underlying flags, not an independently supplied display mode.
-  values.settings_access_mode.mode.selected_option = { value: "auto" };
+  // Admin is a base mode; Auto and Lean remain independent options.
+  values.settings_access_mode.mode.selected_option = { value: "admin" };
   const parsed = readAccessForm({ state: { values } });
   assert.deepEqual(parsed, form);
   const patch = accessSettingsPatch(base, { ...parsed, workDir: "/forged", isAdmin: true, env: { SECRET: "forged" } }, actor);
-  assert.equal(patch.profile, "custom");
+  assert.equal(patch.profile, "admin");
   assert.equal(patch.autoMode, true);
   assert.equal(patch.allowBash, true);
   assert.equal(patch.adminMode, true);
@@ -56,18 +56,18 @@ test("access form preserves independent mode/Full access/Lean/network flags and 
   assert.equal(patch.allowNetwork, true);
   for (const key of ["workDir", "isAdmin", "env"]) assert.equal(Object.hasOwn(patch, key), false);
   values.settings_access_flags.flags.selected_options = [];
-  assert.equal(readAccessForm({ state: { values } }).adminMode, false);
+  assert.equal(readAccessForm({ state: { values } }).autoMode, false);
   assert.throws(() => readAccessForm({}), /incomplete/);
 });
 
 test("access validation fails closed and canonical presets agree with flags", () => {
   assert.throws(() => accessSettingsPatch({ ...base, manageAccess: "admins" }, form, actor), /current channel managers/);
   assert.throws(() => accessSettingsPatch({ ...base, access: "admins" }, form, actor), /current channel managers/);
-  for (const bad of [{ mode: "admin" }, { access: "all" }, { manageAccess: "all" }, { adminMode: "true" }, { allowedUsers: ["bad"] }, { managers: null }]) {
+  for (const bad of [{ mode: "auto" }, { access: "all" }, { manageAccess: "all" }, { autoMode: "true" }, { allowedUsers: ["bad"] }, { managers: null }]) {
     assert.throws(() => accessSettingsPatch(base, { ...form, ...bad }, actor));
   }
-  for (const mode of ["read", "worker", "auto"]) {
-    const patch = accessSettingsPatch(base, { ...form, mode, adminMode: false, cleanMode: false }, actor);
+  for (const mode of ["read", "worker", "admin"]) {
+    const patch = accessSettingsPatch(base, { ...form, mode, autoMode: false, cleanMode: false }, actor);
     assert.equal(patch.profile, mode);
     for (const [key, value] of Object.entries(PROFILE_FLAGS[mode])) assert.equal(patch[key], value);
   }
@@ -157,4 +157,15 @@ test("submission acknowledges before asynchronous validation and rejects forged 
   });
   assert.equal(events.length, 1);
   assert.equal(events[0][1].response_action, "errors");
+});
+
+
+test("channel Runtime tab has no duplicate mode controls and Auto promotes Read-only", () => {
+  const view = buildChannelSettingsView({ mode: base }, state, { tab: "runtime", canEnableAdmin: true, canEditAccess: true });
+  const buttons = view.blocks.flatMap((block) => block.elements || []);
+  assert.equal(buttons.some((b) => /cg_channel_settings_(mode|option)_/.test(b.action_id)), false);
+  const promoted = accessSettingsPatch(base, { ...form, mode: "read", autoMode: true }, actor);
+  assert.equal(promoted.profile, "worker");
+  assert.equal(promoted.allowBash, true);
+  assert.equal(promoted.adminMode, false);
 });
