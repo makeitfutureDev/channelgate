@@ -386,7 +386,13 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 /* Overview → Pending approvals. Reuses the active-session row; the decision cluster gets fixed
    widths so Approve/Deny line up down the list instead of tracking each row's text width. */
 #dash-approvals:not(:empty) { margin-bottom: 20px; }
-#dash-approvals .active-main { flex: 1; }
+#dash-approvals .active-main { flex: 1; min-width: 0; }
+/* The summary is the exact command being approved: it must stay readable in full, so it wraps
+   (up to a few lines) instead of inheriting the session row's single-line nowrap, which let a long
+   command run underneath the buttons and off the card. */
+#dash-approvals .active-runtime { white-space: normal; overflow-wrap: anywhere; word-break: break-word; font-family: var(--mono, ui-monospace, monospace); line-height: 1.35; max-height: 4.1em; overflow: hidden; }
+#dash-approvals .active-item { align-items: flex-start; }
+#dash-approvals .since, #dash-approvals select, #dash-approvals button { margin-top: 2px; }
 #dash-approvals .since { width: 62px; text-align: right; }
 #dash-approvals select { flex: none; width: 124px; margin-left: 6px; }
 #dash-approvals button { flex: none; margin-left: 6px; }
@@ -731,7 +737,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 
 /* ── Automations (slice 4): restyled schedule rows ─────────────────────────── */
 .schedule-search-wrap { margin: 2px 0 16px; }
-.schedule-search-wrap .search { width: min(520px, 100%); }
+.schedule-search-wrap .setsearch { width: min(520px, 100%); }
 .sched-row { border-radius: 8px; padding: 8px 6px; transition: background .15s; }
 .sched-row:hover { background: rgba(145, 201, 206, .035); }
 .sched-open {

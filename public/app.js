@@ -3835,6 +3835,25 @@ document.getElementById("schedule-modal-prompt").addEventListener("input", () =>
   document.getElementById("schedule-modal-error").hidden = true;
 });
 document.getElementById("schedule-search").addEventListener("input", renderSchedules);
+// Same clear affordance as the users search: the × shows once there is a query, Escape clears.
+{
+  const search = document.getElementById("schedule-search");
+  const clear = document.getElementById("schedule-search-clear");
+  search.addEventListener("input", () => { clear.hidden = !search.value.trim(); });
+  search.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    search.value = "";
+    clear.hidden = true;
+    renderSchedules();
+  });
+  clear.addEventListener("click", () => {
+    search.value = "";
+    clear.hidden = true;
+    renderSchedules();
+    search.focus();
+  });
+}
 document.getElementById("schedule-frequency").addEventListener("change", syncScheduleTimingFields);
 document.getElementById("schedule-modal-notify").addEventListener("change", (event) => {
   document.getElementById("schedule-modal-notify-user-wrap").hidden = event.target.value !== "user";

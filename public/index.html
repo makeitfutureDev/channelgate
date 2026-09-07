@@ -140,7 +140,11 @@
             <p class="hint">Cron jobs, grouped by channel. Users create these by asking the bot (e.g. "every weekday at 9am, summarize yesterday"); it runs the saved prompt and posts to the channel. Server local time.</p>
           </div>
           <div class="schedule-search-wrap">
-            <input id="schedule-search" class="search" type="search" placeholder="Search by channel, person, or automation…" aria-label="Search automations" autocomplete="off" />
+            <div class="setsearch">
+              <svg class="setsearch-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+              <input id="schedule-search" type="search" placeholder="Search by channel, person, or automation…" aria-label="Search automations" autocomplete="off" />
+              <button id="schedule-search-clear" class="setsearch-clear" type="button" aria-label="Clear automation search" title="Clear search" hidden>×</button>
+            </div>
           </div>
           <div id="schedules" class="cards">Loading…</div>
         </section>
