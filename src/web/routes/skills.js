@@ -87,6 +87,22 @@ function skillToApi(skill, usage = null) {
   };
 }
 
+function queryBoolean(value) {
+  return value === "1" ? true : value === "0" ? false : null;
+}
+
+// "Assigned" is a direct durable grant: organization-wide, explicit on a conversation, supplied
+// by its live template, or supplied by that conversation's repository section. Dependencies are
+// active transitively but are not themselves assignments.
+async function assignedSkillSlugs() {
+  const assigned = new Set((getOrgAccessGrants().skills || []).map((slug) => String(slug).toLowerCase()));
+  for (const channel of await listChannels()) {
+    const meta = withTemplateSkills(channel.meta);
+    for (const slug of meta?.skills || []) assigned.add(String(slug).toLowerCase());
+  }
+  return assigned;
+}
+
 function channelGrants(slug) {
   return getChannelMeta(slug).then((meta) => (meta ? resolveAccessGrants({ organization: getOrgAccessGrants(), channel: withTemplateSkills(meta) }) : null));
 }
@@ -120,14 +136,24 @@ export function createSkillsRouter() {
 
   // ── Catalog ───────────────────────────────────────────────────────────────────────────────
   router.get("/skills/catalog", guard(async (req, res) => {
+    const enabled = queryBoolean(req.query.enabled);
+    const discoverable = queryBoolean(req.query.discoverable);
+    const mandatory = queryBoolean(req.query.mandatory);
+    const assigned = queryBoolean(req.query.assigned);
+    const assignments = await assignedSkillSlugs();
     const usage = usageCountsBySlug({ since: new Date(Date.now() - 30 * 86400000).toISOString() });
-    const skills = listSkills({
-      includeDeleted: req.query.deleted === "1",
+    let skills = listSkills({
+      includeDeleted: req.query.deleted === "1" || req.query.enabled === "all" || enabled === false,
       ownerKind: typeof req.query.owner === "string" ? req.query.owner : "",
       sourceId: req.query.source ? Number(req.query.source) : null,
       category: typeof req.query.category === "string" ? req.query.category : "",
       query: typeof req.query.q === "string" ? req.query.q : "",
-    }).map((s) => skillToApi(s, usage)).sort((a, b) => b.usage30d.total - a.usage30d.total || a.slug.localeCompare(b.slug));
+    }).map((skill) => ({ ...skillToApi(skill, usage), assigned: assignments.has(skill.slug.toLowerCase()) }));
+    if (enabled != null) skills = skills.filter((skill) => skill.enabled === enabled);
+    if (discoverable != null) skills = skills.filter((skill) => skill.discoverable === discoverable);
+    if (mandatory != null) skills = skills.filter((skill) => skill.mandatory === mandatory);
+    if (assigned != null) skills = skills.filter((skill) => skill.assigned === assigned);
+    skills.sort((a, b) => b.usage30d.total - a.usage30d.total || a.slug.localeCompare(b.slug));
     res.json({ skills, categories: listCategories(), sources: listCatalogSources() });
   }));
 

@@ -2240,7 +2240,9 @@ are retired, bullet by bullet; everything else stands.
   the numbers readable (exact vs inferred, capture is not retroactive).
   → TEST-PLAN: Skills platform (Core).
 - **Admin UI → Skills** (`public/admin-skills.js`, `src/web/routes/skills.js`): catalog (search,
-  owner filter, detail with files/frontmatter/revisions, pin/rollback, grant to a conversation,
+  owner plus Enabled / Discoverable / Mandatory / Assigned state filters (Assigned means a direct
+  organization, conversation, template, or channel-section grant), detail with
+  files/frontmatter/revisions, pin/rollback, grant to a conversation,
   remove/restore, create a local skill), **Review** (staged source revisions and proposals with
   approve/reject), focused **Sources** (scannable list + Add source modal offering only GitHub or
   another ChannelGate, with kind-specific inputs), separate **Sync settings** (catalog timing,
@@ -2253,7 +2255,7 @@ are retired, bullet by bullet; everything else stands.
   disabling its source, approved for member/agent discovery, or made mandatory in every
   conversation. Mandatory implies enabled + discoverable; effective profiles remain mandatory ∪
   template ∪ channel ∪ personal ∪ dependencies. Catalog search includes source labels, category
-  and source filters; usage-led screens sort descending and Overview charts the top ten skills.
+  and source API filters; usage-led screens sort descending and Overview charts the top ten skills.
   Templates select explicit skills only. → TEST-PLAN: Skills platform (governance and usage).
 - **Personal skills and self-service grants.** A skill created with `personal: true` (or switched in
   the admin UI) is visible and grantable only to its author (admins see everything) and is never

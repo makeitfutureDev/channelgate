@@ -16,9 +16,10 @@ const state = {
   fileView: null,
   query: "",
   owner: "",
-  category: "",
-  source: "",
-  showRemoved: false,
+  enabled: "1",
+  discoverable: "all",
+  mandatory: "all",
+  assigned: "all",
   newSkill: false,
   sourceModal: false,
   editTemplate: null,
@@ -61,9 +62,17 @@ async function withStatus(fn, okMessage = "") {
 // ── data ────────────────────────────────────────────────────────────────────────────────────
 
 async function refreshAll() {
+  const filters = [
+    `q=${encodeURIComponent(state.query)}`,
+    state.owner ? `owner=${encodeURIComponent(state.owner)}` : "",
+    state.enabled ? `enabled=${state.enabled}` : "",
+    state.discoverable ? `discoverable=${state.discoverable}` : "",
+    state.mandatory ? `mandatory=${state.mandatory}` : "",
+    state.assigned ? `assigned=${state.assigned}` : "",
+  ].filter(Boolean).join("&");
   const [overview, catalog, catalogAll, profiles] = await Promise.all([
     api("/api/skills/overview"),
-    api(`/api/skills/catalog?q=${encodeURIComponent(state.query)}${state.owner ? `&owner=${encodeURIComponent(state.owner)}` : ""}${state.category ? `&category=${encodeURIComponent(state.category)}` : ""}${state.source ? `&source=${encodeURIComponent(state.source)}` : ""}${state.showRemoved ? "&deleted=1" : ""}`),
+    api(`/api/skills/catalog?${filters}`),
     api("/api/skills/catalog"),
     api("/api/skills/profiles"),
   ]);
@@ -131,9 +140,12 @@ function channelLabel(channelId) {
 
 function renderCatalog() {
   const skills = state.catalog?.skills || [];
-  const cats = state.catalog?.categories || [];
   const owners = ["", "bundled", "local", "folder", "git"];
-  const sources = state.catalog?.sources || [];
+  const binaryOptions = (current, every, yes, no) => [
+    ["all", every],
+    ["1", yes],
+    ["0", no],
+  ].map(([value, label]) => `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`).join("");
   const rows = skills.map((s) => `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
       <td><code>${esc(s.slug)}</code>${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
@@ -150,13 +162,13 @@ function renderCatalog() {
     <div class="skills-toolbar">
       <input type="search" id="skills-q" placeholder="Search slug, name, description, tags…" value="${esc(state.query)}" />
       <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(o) : "every owner"}</option>`).join("")}</select>
-      <select id="skills-category"><option value="">every category</option>${cats.map((c) => `<option value="${esc(c.category)}"${c.category === state.category ? " selected" : ""}>${esc(c.category)} (${c.count})</option>`).join("")}</select>
-      <select id="skills-source"><option value="">every source</option>${sources.map((s) => `<option value="${s.id}"${String(s.id) === state.source ? " selected" : ""}>${esc(s.label || s.url)}</option>`).join("")}</select>
-      <label class="skills-inline"><input type="checkbox" id="skills-removed"${state.showRemoved ? " checked" : ""}/> show removed</label>
+      <select id="skills-enabled" aria-label="Enabled status">${binaryOptions(state.enabled, "enabled or disabled", "Enabled", "Disabled")}</select>
+      <select id="skills-discoverable" aria-label="Discoverability">${binaryOptions(state.discoverable, "discoverable or not", "Discoverable", "Not discoverable")}</select>
+      <select id="skills-mandatory" aria-label="Mandatory status">${binaryOptions(state.mandatory, "mandatory or not", "Mandatory", "Not mandatory")}</select>
+      <select id="skills-assigned" aria-label="Assignment status" title="Assigned directly to at least one conversation or organization-wide">${binaryOptions(state.assigned, "assigned or not", "Assigned", "Not assigned")}</select>
       <span class="spacer"></span>
       <button type="button" class="ghost" data-action="new-skill">+ New skill</button>
     </div>
-    ${cats.length ? `<p class="skills-note">Categories: ${cats.map((c) => `${esc(c.category)} (${c.count})`).join(", ")}</p>` : ""}
     ${state.newSkill ? renderNewSkillForm() : ""}
     <table class="skills-table">
       <thead><tr><th>Skill</th><th>Description</th><th>Category</th><th>Owner</th><th>Version</th><th>Enabled</th><th>Discoverable</th><th>Mandatory</th><th>Usage 30d</th></tr></thead>
@@ -744,12 +756,13 @@ function wire() {
       for (const field of root.querySelectorAll("[data-source-kind]")) field.hidden = field.dataset.sourceKind !== el.value;
       return;
     }
-    if (el.id === "skills-q" || el.id === "skills-owner" || el.id === "skills-category" || el.id === "skills-source" || el.id === "skills-removed") {
+    if (["skills-q", "skills-owner", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned"].includes(el.id)) {
       state.query = val("skills-q");
       state.owner = val("skills-owner");
-      state.category = val("skills-category");
-      state.source = val("skills-source");
-      state.showRemoved = document.getElementById("skills-removed")?.checked || false;
+      state.enabled = val("skills-enabled");
+      state.discoverable = val("skills-discoverable");
+      state.mandatory = val("skills-mandatory");
+      state.assigned = val("skills-assigned");
       refreshAll().then(render).catch((err) => { setMessage(err.message, true); render(); });
       return;
     }
