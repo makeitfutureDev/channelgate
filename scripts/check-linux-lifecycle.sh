@@ -40,7 +40,7 @@ cleanup() {
 trap cleanup EXIT
 pass() { printf 'PASS %s\n' "$1"; }
 as_service() {
-  sudo runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" CHANNELGATE_DIR="$SERVICE_HOME" \
+  sudo runuser -u "$SERVICE_USER" -- env -i HOME="$SERVICE_HOME" CHANNELGATE_DIR="$SERVICE_HOME" \
     CHANNELGATE_DB="" CLAUDE_GATEWAY_DIR="" CLAUDE_GATEWAY_DB="" \
     XDG_RUNTIME_DIR="/run/user/$(id -u "$SERVICE_USER")" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u "$SERVICE_USER")/bus" \

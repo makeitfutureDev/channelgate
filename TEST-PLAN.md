@@ -11,6 +11,8 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   `scripts/check-linux-lifecycle.sh` refuses non-hosted runners, occupied fixture paths, service
   units and accounts before mutation. It operates only on `/opt/channelgate-lifecycle` and the
   newly installed `/var/lib/channelgate-lifecycle` service identity; never an operator deployment.
+  The installer image build must succeed even when the invoking runner has its own container
+  storage configuration; the service account must use its own HOME/store and explicit environment.
 - Pass evidence: `linux-lifecycle-<sha>` artifact records source revision, VM image, versions and
   every PASS line. Require successful fresh install/image build, non-root container with zero
   effective capabilities/no-new-privileges, enabled active service, distinct healthy instance ID

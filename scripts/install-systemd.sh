@@ -118,7 +118,9 @@ fi
 # Probe and build in the final daemon identity's own rootless store. The installer's store and
 # image UID cannot be reused by a different service account.
 run_as_service() {
-  runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" CHANNELGATE_DIR="$SERVICE_HOME" \
+  # Match the unit's explicit environment. Inherited operator XDG/container-storage settings
+  # can point Podman at another user's private store even after HOME changes.
+  runuser -u "$SERVICE_USER" -- env -i HOME="$SERVICE_HOME" CHANNELGATE_DIR="$SERVICE_HOME" \
     XDG_RUNTIME_DIR="$SERVICE_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="unix:path=$SERVICE_RUNTIME_DIR/bus" \
     PATH="$SERVICE_PATH" "$@"
 }

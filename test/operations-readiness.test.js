@@ -138,6 +138,8 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   assert.match(systemd, /Delegate=yes/);
   assert.match(systemd, /--add-subids-for-system/);
   assert.match(systemd, /run_as_service "\$NODE_BIN"/);
+  assert.match(systemd, /runuser -u "\$SERVICE_USER" -- env -i HOME=/,
+    "image provisioning must not inherit an operator's XDG/container storage configuration");
   assert.match(systemd, /Requires=user@\$SERVICE_UID\.service/);
   assert.match(systemd, /After=network-online.target user@\$SERVICE_UID\.service/);
   assert.ok(systemd.indexOf('scripts/service-path-preflight.mjs') < systemd.indexOf('useradd --system'));

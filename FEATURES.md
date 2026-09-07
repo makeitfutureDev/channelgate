@@ -7,6 +7,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   HTTP liveness after restart, encrypted fixture backup/restore and non-destructive uninstall.
   Its script refuses non-hosted or occupied hosts. Actual reboot and authenticated engine update
   rollback remain separate live gates. → TEST-PLAN: Disposable Linux lifecycle workflow.
+- **Service-account image provisioning** uses the same explicit environment as the systemd
+  daemon so operator XDG/container storage settings cannot redirect a fresh build into another
+  user's private Podman store.
 
 - Development acceptance policy: behavior changes include reproducible Claude and Codex
   acceptance definitions and clearly separate automated evidence from live operator validation.
