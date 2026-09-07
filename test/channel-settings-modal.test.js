@@ -354,7 +354,7 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
     await store.saveChannelMeta(entry.slug, { ...base, managers: [], ...flags });
     assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
     assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
-      canEditRuntime: true, canEditSecrets: true, canManageCloudMcp: false,
+      canEnableAdmin: false, canEditRuntime: true, canEditSecrets: true, canManageCloudMcp: false,
     });
   }
   await store.setUser(args.userId, { approved: false });
@@ -391,6 +391,18 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
     }),
     /no longer a member/i,
   );
+});
+
+
+test("Settings has three base modes for admins and independent Auto/Lean controls", () => {
+  const data = { ...snapshot, mode: { adminMode: true, autoMode: true, cleanMode: true } };
+  const admin = buildChannelSettingsView(data, state, { tab: "runtime", canEnableAdmin: true });
+  const buttons = allButtons(admin);
+  assert.deepEqual(buttons.filter((b) => b.action_id.startsWith("cg_channel_settings_mode_")).map((b) => b.text.text), ["Read-only", "Worker", "Admin"]);
+  assert.equal(buttons.find((b) => b.text.text === "Admin").style, "primary");
+  for (const label of ["☑ Auto", "☑ Lean"]) assert.ok(buttons.some((b) => b.text.text === label));
+  const member = buildChannelSettingsView(data, state, { tab: "runtime", canEnableAdmin: false });
+  assert.equal(allButtons(member).some((b) => b.action_id === "cg_channel_settings_mode_admin"), false);
 });
 
 test("non-admin Settings hides Cloud MCP while keeping connection editing", () => {

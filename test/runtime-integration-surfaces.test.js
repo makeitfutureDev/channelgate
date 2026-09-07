@@ -48,16 +48,16 @@ test("/status names the channel's own switches, network included, in both direct
   // channel was allowed to DO, and the mode label said nothing at all when the network was off —
   // so "can I reach the internet from here?" had no answer anywhere in chat.
   assert.equal(formatCapabilityLine({}), `*🎚️ Mode*: Read-only · network off (${NETWORK_ADVISORY_NOTE})`);
-  assert.equal(formatCapabilityLine({ allowBash: true, allowNetwork: true, engine: "claude" }), "*🎚️ Mode*: Bash · network on");
+  assert.equal(formatCapabilityLine({ allowBash: true, allowNetwork: true, engine: "claude" }), "*🎚️ Mode*: Worker · network on");
 
   const entry = await upsertChannelEntry("C_RT_NETSTATE", { name: "rt-netstate", type: "channel" });
   await saveChannelMeta(entry.slug, { channelId: "C_RT_NETSTATE", platform: "slack", name: "rt-netstate", allowBash: true });
   const off = await buildStatusReport(entry.slug, "C_RT_NETSTATE");
-  assert.match(off, /Mode\*: Bash · network off/, "an off switch is stated, not left to inference");
+  assert.match(off, /Mode\*: Worker · network off/, "an off switch is stated, not left to inference");
   assert.match(off, new RegExp(NETWORK_ADVISORY_NOTE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "and it is honest about not being enforced");
 
   await saveChannelMeta(entry.slug, { channelId: "C_RT_NETSTATE", platform: "slack", name: "rt-netstate", allowBash: true, allowNetwork: true });
-  assert.match(await buildStatusReport(entry.slug, "C_RT_NETSTATE"), /Mode\*: Bash · network on/);
+  assert.match(await buildStatusReport(entry.slug, "C_RT_NETSTATE"), /Mode\*: Worker · network on/);
 });
 
 test("a quiet channel's /status still says where its turns run", async () => {

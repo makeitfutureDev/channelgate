@@ -34,7 +34,7 @@ import {
   getDefaultNudges,
 } from "../../config/settings.js";
 import { testChannelSync } from "../../gateway/drivesync.js";
-import { PROFILE_FLAGS } from "../../gateway/modes.js";
+import { PROFILE_FLAGS, BASE_MODE_FLAGS, modeSettingsPatch } from "../../gateway/modes.js";
 // Two forms on purpose. normalizeStoredDomains is TOLERANT and belongs on the read/spawn path (a
 // hand-edited config must degrade to "no extras", never break run startup). An admin SAVE is the
 // opposite: silently dropping the whole list because one entry has a typo destroyed every
@@ -344,7 +344,9 @@ export function createChannelsRouter({
           // preset is authoritative even if a stale checkbox was also sent. "custom" keeps whatever
           // flags were set above (the individual toggles). An unknown/absent profile leaves things as-is.
           if (typeof body.profile === "string") {
-            if (PROFILE_FLAGS[body.profile]) {
+            if (BASE_MODE_FLAGS[body.profile]) {
+              Object.assign(out, modeSettingsPatch(current, { mode: body.profile, autoMode: body.autoMode, cleanMode: body.cleanMode }, { isAdminUser: true }));
+            } else if (PROFILE_FLAGS[body.profile]) {
               out.profile = body.profile;
               Object.assign(out, PROFILE_FLAGS[body.profile]);
             } else if (body.profile === "custom") {
