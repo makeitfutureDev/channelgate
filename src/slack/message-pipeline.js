@@ -4,7 +4,7 @@
 // processMessageEvent takes an explicit { botUserId, teamId } context instead of closing over
 // connectAndWire scope, so the whole turn path is reachable by tests. app.js owns the Bolt app
 // and event registrations and delegates here; this module must never import ./app.js.
-import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
+import { upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
 import { engineSupports, engineLabel, ENGINE_IDS } from "../engines/registry.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult } from "../gateway/run.js";
@@ -14,7 +14,7 @@ import { postModelWizard } from "./model-wizard.js";
 import { getSessionMap, clearSession, hasThreadSession, getSessionEngine, saveSession } from "../gateway/sessions.js";
 import { planSessionAdoption } from "../gateway/session-adopt.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
-import { setThreadEngine, getThreadEngine, setThreadClean, getThreadClean, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
+import { setThreadEngine, getThreadEngine, resolveThreadEngine, setThreadClean, getThreadClean, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
 import { abortPooled, pooledBusy, interruptPooled } from "../engines/session-pool.js";
 import { logEvent } from "../util/logger.js";
 // A typed `/mode` is a channel POLICY change like any admin-UI save — audited the same way.
@@ -34,7 +34,7 @@ import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser } from "../gateway/followups.js";
 
-import { resolveSlackConfig, getProgressView, getContextWindow, getEngine, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode } from "../config/settings.js";
+import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode } from "../config/settings.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
 import { hydrateSlackMessage } from "./attachments.js";
@@ -138,13 +138,17 @@ export async function stopRunsInChannel(client, channelId, slug, byUser, threadK
     }).catch(() => {});
   }
 
-  // The folder the agent ran in (for a copyable resume command) + the active engine.
+  // The folder the agent ran in (for a copyable resume command) + the engine that ran there. The
+  // engine is resolved PER STOPPED THREAD (override → session-born → channel → gateway default),
+  // never from the gateway default alone: a session id is engine-specific, so a Claude thread in a
+  // Codex-default gateway would otherwise be handed a `codex exec resume` line for a Claude
+  // session — a command that cannot work.
   const meta = stoppedRuns.length ? await getChannelMeta(slug).catch(() => null) : null;
   const cwd = effectiveWorkDir(slug, meta || {});
-  const engine = getEngine();
   for (const runThread of stoppedRuns) {
     await setAssistantStatus(client, channelId, runThread, "");
     const sessionId = (await getSessionMap(slug).catch(() => ({})))[runThread];
+    const engine = await resolveThreadEngine(slug, runThread, meta || {});
     const btn = resumeButton(cwd, sessionId, engine);
     await client.chat.postMessage({
       channel: channelId,
@@ -600,16 +604,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // In-thread control commands (/clear, /model, /effort, /context, /pending, /help, /compact).
     const sc = files.length === 0 ? parseSlashCommand(prompt) : null;
     // /compact is a real command only on engines that declare supports.compact — judged against
-    // the THREAD's effective engine (override → session-born → global), never the global default:
-    // a Codex-pinned thread under a Claude-global gateway must not receive "/compact" as a raw
-    // prompt, and a Claude-pinned thread under a Codex global must not have it swallowed.
+    // the THREAD's effective engine (override → session-born → channel → gateway default), never
+    // the gateway default alone: a Codex thread under a Claude-default gateway must not receive
+    // "/compact" as a raw prompt, and a Claude thread under a Codex default must not have it
+    // swallowed.
     let compactPassthrough = false;
     if (sc && sc.cmd === "compact") {
-      const compactSlug = (await getChannelEntry(event.channel).catch(() => null))?.slug || "";
-      const threadEngine = compactSlug
-        ? (await getThreadEngine(compactSlug, threadKey).catch(() => "")) || (await getSessionEngine(compactSlug, threadKey).catch(() => ""))
-        : "";
-      compactPassthrough = engineSupports(threadEngine || getEngine(), "compact");
+      compactPassthrough = engineSupports(await resolveThreadEngine(entry.slug, threadKey, meta), "compact");
     }
     if (sc && !compactPassthrough) {
       const reply = (t) => client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: t });
@@ -712,12 +713,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // Bare `/resume` prints the copyable terminal command for THIS thread's session (kept out
         // of reply footers). `/resume <command-or-id>` runs the same trip in reverse: it adopts an
         // existing local session — one started in a terminal, or left behind by a cleared thread —
-        // into this thread. The engine is the thread's own (override → session-born → global), so
-        // the printed command resumes with the harness that actually minted the id.
+        // into this thread. The engine is the thread's own (override → session-born → channel →
+        // gateway default), so the printed command resumes with the harness that minted the id.
         const workDir = effectiveWorkDir(entry.slug, meta);
         const sessionId = (await getSessionMap(entry.slug).catch(() => ({})))[threadKey] || "";
-        const threadEngine =
-          (await getThreadEngine(entry.slug, threadKey).catch(() => "")) || (await getSessionEngine(entry.slug, threadKey).catch(() => "")) || getEngine();
+        const threadEngine = await resolveThreadEngine(entry.slug, threadKey, meta);
         // WHERE the channel runs decides both halves of `/resume`: which line to print, and where
         // to look for a pasted id. A session minted inside the channel's container cannot be
         // reopened by a bare CLI on the host, and its transcript is not in the daemon's engine dirs

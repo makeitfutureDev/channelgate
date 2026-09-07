@@ -456,7 +456,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   stream with the complete compiled answer and full toolbox, then removes the retired bot message.
   Rollover repeats for arbitrarily long turns, final delivery closes the newest stream, an
   unseedable successor falls back to complete classic delivery, and sanitized failure codes are
-  logged once per site without exposing payloads. → TEST-PLAN: Observability.
+  logged once per site without exposing payloads. When Slack ends a card's stream FIRST — an
+  append delayed past its window by rate limiting, or an age cap the local clock did not beat, both
+  reported as `message_not_in_streaming_state` — the card is republished rather than abandoned:
+  Slack renders an abandoned stream as a bare "Something went wrong", which would leave a red error
+  banner above the correct answer of a turn that merely hit (and handled) a failing tool. The
+  replacement receives the complete row snapshot, the stranded copy is deleted only after it is
+  durable, and a terminal seal that finds the stream already gone republishes the finished toolbox
+  the same way. Only a replacement that cannot be made durable degrades to no card at all.
+  → TEST-PLAN: Observability.
 - Dedicated progress report inside the unified toolbox: for long/substantive domain work,
   the always-injected `gateway-usage` guide teaches skills to publish authoritative semantic-stage
   snapshots through one shared, strict `report_progress` MCP contract used by Claude and Codex.
@@ -572,7 +580,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   un-mentioned channel message before the stop word is ever read); a **stop emoji reaction** (🛑 `octagonal_sign`, ❌ `x`,
   ✋ `raised_hand`, `no_entry`, …) on any message in the thread; or the **`/stop` slash command** —
   which Slack does **not** allow inside threads, so words/reactions are the in-thread path. All post
-  "🛑 Stopped." with a resume command. → TEST-PLAN: In-thread commands.
+  "🛑 Stopped." with a resume command, and that command names the harness **the stopped thread was
+  running on** — resolved per stopped thread (per-thread override → the engine that minted the
+  thread's live session → the channel's engine → the gateway default), because a session id is
+  engine-specific and a card built from the gateway default alone hands a Claude session a Codex
+  resume line. → TEST-PLAN: In-thread commands.
 - **A stopped run stops answering**, on either engine: "🛑 Stopped." is the last thing the thread
   receives. Answer text still queued behind Slack's rate limiter is dropped rather than flushed by
   the stop path (which used to create the answer message itself, lazily, and post the whole buffered

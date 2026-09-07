@@ -708,6 +708,13 @@ shape is asserted, not reviewed by eye.
       the successor before deleting the retired bot message. Cleanup failure keeps both safe copies,
       successor-seed failure delivers the complete classic fallback, and final delivery closes only
       the newest healthy stream (`test/slack-progress.test.js`).
+- [x] Unit: a progress card whose stream Slack ended first (`message_not_in_streaming_state` on an
+      append, on the scheduled rollover, or on the terminal seal) is republished into a fresh stream
+      carrying the complete toolbox — warning rows and rows that never reached the dead message
+      included — and the stranded copy, which Slack renders as a bare "Something went wrong", is
+      deleted only after the replacement is durable; the replacement is sealed with the finished
+      toolbox, and a handled tool failure still produces no `error` row anywhere
+      (`test/slack-progress.test.js`).
 - [x] Unit: the shared strict `report_progress` schema accepts object/JSON snapshots and bounded
       rich fields, rejects duplicate IDs, invalid sources, oversized collections, and multiple
       active steps; Claude and Codex emit the same normalized event while suppressing the
@@ -725,7 +732,8 @@ shape is asserted, not reviewed by eye.
       fields, chunk failures disable only the toolbox, interruption drains queued writes and seals
       only the active step as a terminal ⚠️-titled row (never `error`, which Slack would render as a
       card-wide "Something went wrong" header), final answer-delivery failure interrupts it exactly
-      once, and terminal intake ignores late snapshots
+      once, and terminal intake ignores late snapshots. A stage the agent itself declares `error`
+      keeps that status, so the card can still report a genuinely failed run
       (`test/slack-progress.test.js`).
 - [x] Unit: the injected `gateway-usage` guide instructs agents to use Plans only for substantive
       work with 3+ meaningful stages, materializes the reference into channel folders,
@@ -1646,6 +1654,12 @@ release, no egress cut-off — so the network entry has no container equivalent 
       containing the word) is NOT intercepted — it runs as a normal prompt.
 - [ ] Stop: a plain "stop" message and a 🛑 reaction each halt an in-flight run and post "🛑 Stopped.";
       `/stop` is rejected by Slack inside a thread (words/reactions are the in-thread path).
+- [x] Unit (`test/stop-card-engine.test.js`): the "🛑 Stopped." card's 💻 resume button names the
+      harness the STOPPED THREAD ran on, not the gateway default — a Claude session in a
+      Codex-default gateway resumes as Claude and the inverse resumes as Codex, a per-thread
+      harness override outranks the session it was pinned onto, and with neither a session nor an
+      override the channel's own engine beats the gateway default. A session id is engine-specific,
+      so the old global-default read printed a `codex exec resume` line for a Claude session.
 - [ ] Stop is the end of the answer, on both engines: stop a run that is mid-answer and nothing more
       than "🛑 Stopped." arrives — no full reply beneath the card, no chunked fallback. Whatever
       text had already streamed stays put, ending in `🛑 _Stopped — partial answer._`.

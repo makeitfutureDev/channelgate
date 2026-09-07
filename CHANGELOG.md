@@ -23,6 +23,11 @@ product overview.
   nothing else — so the card showed a single generic `wait_agent` row where Claude showed a row per
   child. The Codex runner now reads each child's own session record for its name, opens a row while
   the children work, and closes each row with the child's elapsed time and token spend.
+- The "🛑 Stopped." card's resume command now names the harness the stopped thread was actually
+  running on, resolved per thread (per-thread override, then the engine that started the thread's
+  session, then the channel's engine, then the gateway default). A session belongs to one harness,
+  so a thread running the non-default one used to be handed a resume line the other CLI rejects.
+  `/resume` and the `/compact` passthrough check use the same shared resolver.
 
 - Addressed the release audit: isolated runtime credentials and daemon metadata, tightened SDK/API
   authorization and admin reauthentication, serialized memory saves, and separated interrupted
@@ -44,6 +49,14 @@ product overview.
   names, and describe common schedules in plain language. The enlarged editor now updates timing,
   title, notifications, delivery, state, and prompt atomically, including a new direct-to-channel
   task delivery alongside per-run and per-day threads.
+- A progress card whose Slack stream Slack itself ends — an append delayed past its window by
+  rate limiting, or an age cap the local rollover clock did not beat — is republished into a fresh
+  stream instead of being abandoned. Slack renders an abandoned stream as a bare "Something went
+  wrong", so a turn that recovered from a failed tool call and answered correctly was left with a
+  red error banner sitting above its answer for the life of the thread. The replacement carries the
+  whole toolbox (warning rows included), is made durable before the stranded copy is deleted, and
+  the terminal seal recovers the same way. A failed tool row is still only a row label; `error`
+  remains reserved for a stage the agent itself declares failed.
 
 ## [0.5.0] — first public release (2026-09-06)
 
