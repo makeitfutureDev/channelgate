@@ -4015,3 +4015,51 @@ portable fixtures before landing.
 - [ ] **Secondary errors, Claude and Codex:** isolated runner fixture emits nested provider JSON on
   automatic continuation or the second harness of an ask-mode fallback. Require readable provider
   sentence, no raw JSON in the message/card, and retained structured audit outcome facts.
+### Runtime-owned Codex child visibility and accounting (2026-09-07)
+
+- [x] Automated: `node --test test/codex-runtime-usage.test.js
+  test/codex-message-to-reply-e2e.test.js test/codex-usage-accounting.test.js
+  test/runtime-integration-folders.test.js test/container-state.test.js`.
+  The real inline Node reducer executes against synthetic runtime state while the daemon-facing
+  HOME volume is `/proc/1/unreadable-home-volume`. The runner must emit two named live rows and
+  close those same ids with elapsed/tokens, return child usage, and never consult that host path.
+  Resume fixture grows cumulative input/output 250/12 to 400/20: charged delta must be 150/8.
+  A transcript sentinel must never leave the reducer; invalid JSON/exec failures must not leak
+  diagnostics. Failed baseline must spawn no engine and release the session lock. Failed final
+  inspection must preserve the answer and announce incomplete accounting exactly once.
+- [ ] Live Codex/rootless: create a disposable approved QA channel with ordinary rootless HOME,
+  full-home widening OFF, Codex pinned to the requested available model, and a work folder with
+  `one.txt` containing `alpha` and `two.txt` containing `beta`. Verify as the daemon user that
+  opening the HOME volume directly fails while `podman exec <fixture-container>` can read its
+  Codex sessions. In a fresh thread ask: "Launch two native agents named file_one and file_two.
+  Have each read its corresponding text file, wait 10 seconds, and report its word. Join both."
+  Pass: live card shows both names while running; both finish on their original rows with elapsed
+  time/tokens; final answer contains alpha/beta. Compare root and child usage components with the
+  runtime rollouts: each child appears once and excludes copied parent-prefix usage. Resume the
+  same thread with "Read one.txt and report its word without delegation." Pass: footer/ledger
+  charge that message's delta, never the previous root turn or children again. Keep screenshots,
+  provider session ids and a redacted usage comparison as evidence.
+- [ ] Live Claude regression: in a separate disposable QA thread pinned to Claude with the same
+  two-file fixture, send the same two-agent prompt and then the same no-delegation resume prompt.
+  Pass: both native children remain visible and finish; result words and resume accounting match
+  native engine evidence. No Codex reducer should run in the Claude-only path.
+- [ ] Live failure fixture: on an isolated test daemon, make only `inspectUsage` reject (do not
+  change HOME permissions/production config). Fresh Codex work still replies and shows one
+  incomplete-accounting notice; a resumed turn fails before engine spawn. Remove the injected
+  failure and retry: it proceeds, proving no held session lock. This is Codex-specific because
+  Claude never invokes this reader.
+
+Automated helper/runner checks do not certify actual Podman namespace permissions, authenticated
+provider events, or Slack rendering. Those live cases and private QA registration remain release
+acceptance gates; no production restart or external message was performed by the implementation.
+
+- [x] Native schema check (2026-09-07): authenticated Codex CLI 0.153.4 / `gpt-6-astra`
+  in the existing channel container spawned synthetic `alpha_checker` and `beta_checker`, joined
+  both and returned `alpha`/`beta`. The reducer recovered both names, exact request accounting,
+  15,219 tokens per child and elapsed times of 4,196 / 4,424 ms. This exercises real provider
+  rollouts, but does **not** mark the separate host-rootless/Slack acceptance above passed.
+- [x] Full suite with isolated HOME/TMPDIR and `--test-concurrency=4`: 2,122 passed, 0 failed,
+  2 live cases skipped; coverage lines 92.66%, branches 82.43%, functions 87.44%. Static, secret
+  scan and DCO checks passed. Default `/tmp` in the development container is private (0700),
+  causing the unrelated service-path preflight fixture to fail on unchanged main too; the
+  isolated run uses public ancestors without modifying container/production permissions.

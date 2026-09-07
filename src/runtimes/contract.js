@@ -73,6 +73,11 @@ export const OPTIONAL_METHODS = Object.freeze([
   // behind a user namespace, so `<volume>/_data` is unreachable from the daemon even though the
   // files inside belong to it. See src/gateway/session-adopt.js.
   "inspectState",
+  // inspectUsage(target, { source, args }) → JSON — run a daemon-owned, read-only engine
+  // reducer INSIDE the runtime. Source comes from the shipped engine module, never an agent or
+  // MCP argument; args contain state paths/session counters only. Return minimized usage/identity,
+  // never raw transcripts. Called while the run lease holds; no lifecycle reconfiguration.
+  "inspectUsage",
 ]);
 
 // Whether a backend can move engine state in and out of itself. Both halves or neither: a backend

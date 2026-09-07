@@ -37,6 +37,10 @@ product overview.
 - Recognize natural-language loop Stop, cancel loops before Slack delivery waits, record per-turn
   Stop outcomes, and release stream cleanup after a bounded grace while preserving partial text.
 - Render numeric progress counts in replaceable titles and normalize secondary provider failures.
+- Codex reads child identities and token accounting inside the channel runtime, including resumed
+  turn baselines. Rootless HOME volumes no longer need to be readable by the daemon. Named child
+  rows and elapsed/token totals use the same reducer without new mounts or an image rebuild;
+  inspection failures are visible instead of silently reporting an empty child list.
 
 - Admin UI: the Pending approvals rows wrap the command being approved (monospace, a few lines)
   instead of running it underneath the Approve/Deny buttons; the Automations search box uses the

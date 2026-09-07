@@ -37,7 +37,7 @@ import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from ".
 import { redactLogValue } from "../util/redact.js";
 import { conciseProcessDiagnostic, embeddedJsonObject, plainFailureText, processFailureMessage } from "../util/process-outcome.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
-import { collectCodexChildAccounting, listCodexChildThreads, readCodexRootAccounting, snapshotCodexUsage, subtractCodexTokenUsage } from "./codex-usage.js";
+import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.js";
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 const MAX_RETAINED = 64_000; // stdout/stderr/delta kept for error context — tail only, never unbounded
@@ -881,10 +881,11 @@ export async function runCodex({
   // branches. Fresh locally minted ids are already stable within their gateway thread.
   const releaseSession = await acquireKeyedLock("codex-session", sessionId || `fresh:${cwd}`, { signal });
   const accountingStartedAt = Date.now();
+  const usageReader = createCodexUsageReader(runtime);
+  try {
   const usageSnapshot = isNewSession
     ? { file: "", offset: 0, total: {}, model: "" }
-    : await snapshotCodexUsage(codexStateDir, sessionId).catch(() => ({ file: "", offset: 0, total: {}, model: "" }));
-  try {
+    : await usageReader.snapshot(sessionId);
   // Per-run scratch dir (mkdtemp → mode 0700) and the secret bundle are ENGINE-FACING: the CLI
   // writes the answer to the -o file and the secret bridges read the bundle, so both live in the
   // run's artifact dir — bind-mounted at the identical absolute path — never under the gateway
@@ -949,19 +950,24 @@ export async function runCodex({
     // re-announcing the same child.
     const announcedChildren = new Set();
     let childScan = Promise.resolve();
+    let inspectionWarning = false;
+    const warnInspection = () => {
+      if (inspectionWarning) return;
+      inspectionWarning = true;
+      try { onEvent?.({ kind: "engine_note", source: "codex", text: "Codex usage inspection is unavailable; subagent details and accounting may be incomplete." }); } catch { /* status only */ }
+    };
 
     // Open a row per spawned child. Triggered by a collaboration item — the one signal stdout gives
     // that children exist — and serialized, because two `wait` items in a row would otherwise scan
     // the same rollouts twice and announce each child twice. Purely additive: a failed scan leaves
     // the coordination row exactly as it was.
     const announceChildAgents = () => {
-      if (!codexStateDir || !resolvedSessionId) return;
+      if (!resolvedSessionId) return;
       childScan = childScan.then(async () => {
-        const children = await listCodexChildThreads({
-          stateDir: codexStateDir,
+        const children = await usageReader.children({
           rootSessionId: resolvedSessionId,
           startedAtMs: accountingStartedAt,
-        }).catch(() => []);
+        }).catch(() => { warnInspection(); return []; });
         for (const thread of children) {
           if (announcedChildren.has(thread.sessionId)) continue;
           announcedChildren.add(thread.sessionId);
@@ -1229,8 +1235,7 @@ export async function runCodex({
 
       let accounting;
       try {
-        accounting = await readCodexRootAccounting({
-          stateDir: codexStateDir,
+        accounting = await usageReader.root({
           sessionId: resolvedSessionId,
           snapshot: usageSnapshot,
           terminalUsage: usage || {},
@@ -1238,6 +1243,7 @@ export async function runCodex({
           startedAtMs: accountingStartedAt,
         });
       } catch {
+        warnInspection();
         accounting = {
           usage: subtractCodexTokenUsage(usage || {}, usageSnapshot.total || {}),
           requests: [],
@@ -1249,12 +1255,11 @@ export async function runCodex({
         };
       }
       const accountingEndedAt = Date.now();
-      const children = await collectCodexChildAccounting({
-        stateDir: codexStateDir,
+      const children = await usageReader.accounting({
         rootSessionId: resolvedSessionId,
         startedAtMs: accountingStartedAt,
         endedAtMs: accountingEndedAt,
-      }).catch(() => []);
+      }).catch(() => { warnInspection(); return []; });
       // Let any in-flight live announcement land FIRST. A "running" row that arrived after the
       // terminal one below would reopen a child that has already finished.
       await childScan;
