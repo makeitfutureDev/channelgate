@@ -157,6 +157,9 @@ and friends read `SUPABASE_ACCESS_TOKEN` / `VERCEL_TOKEN` without being told to.
 The Slack **Settings** reply button is available to every authorized agent user, including channel
 guests. It allows editing engine/model/effort, channel skills and templates, MCP connection tokens
 and labels, and write-only secrets. Cloud MCP is visible and editable only by current admins.
+A separate **Access** tab is visible only to admins and current channel managers. It edits mode,
+Full access, Lean, network, who may use/manage the channel, and named guests/managers. Manager
+policy applies to this entire page; changing Full access still leaves run-time bypass admin-author-only.
 Every interaction re-checks agent access and channel membership. This console does not grant
 admin rights or change the permissions required by separate gateway control tools.
 

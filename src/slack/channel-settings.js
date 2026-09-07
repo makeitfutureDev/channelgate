@@ -1,6 +1,7 @@
 // Channel Settings modal for Slack. It mirrors the web conversation editor's safe channel-level
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
+import { ACCESS_EDIT_ACTION_ID, accessSummary } from "./access-settings.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
 
 export const CHANNEL_SETTINGS_ACTION_ID = "cg_channel_settings";
@@ -26,7 +27,7 @@ export const CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID = "cg_channel_settings_tem
 export const CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID = "cg_channel_settings_template_form";
 export const CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID = "cg_channel_settings_secrets_manage";
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "mcp", "skills", "secrets"]);
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "mcp", "skills", "secrets", "access"]);
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
@@ -323,17 +324,18 @@ function secretsBlocks(snapshot = {}, state = {}, { canEditSecrets = false } = {
 }
 
 const TAB_LABELS = Object.freeze({
+  access: "Access",
   runtime: "Engine & model",
   mcp: "MCP",
   skills: "Skills",
   secrets: "Secrets",
 });
 
-function tabButtons(state, active) {
+function tabButtons(state, active, canEditAccess) {
   return {
     type: "actions",
     block_id: "cg_channel_settings_tabs",
-    elements: CHANNEL_SETTINGS_TABS.map((tab) => ({
+    elements: CHANNEL_SETTINGS_TABS.filter((tab) => tab !== "access" || canEditAccess).map((tab) => ({
       type: "button",
       action_id: `${CHANNEL_SETTINGS_TAB_PREFIX}${tab}`,
       text: plain(TAB_LABELS[tab]),
@@ -349,10 +351,17 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   canEditRuntime = true,
   canEditSecrets = false,
   canManageCloudMcp = false,
+  canEditAccess = false,
   notice = "",
 } = {}) {
-  const active = normalizeTab(tab);
-  const content = active === "mcp"
+  const requested = normalizeTab(tab);
+  const active = requested === "access" && !canEditAccess ? "runtime" : requested;
+  const content = active === "access"
+    ? [
+      { type: "section", text: mrkdwn(accessSummary(snapshot.access || {})) },
+      { type: "actions", elements: [button(ACCESS_EDIT_ACTION_ID, "Change access settings", state, "access_edit", {}, { style: "primary" })] },
+    ]
+    : active === "mcp"
     ? mcpBlocks(snapshot, state, { canManageCloudMcp })
     : active === "skills"
       ? skillsBlocks(snapshot, state)
@@ -366,9 +375,9 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     title: plain("Channel settings"),
     close: plain("Done"),
     blocks: [
-      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Cloud MCP is admin-only.`)] },
+      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings require a channel manager or admin. Cloud MCP is admin-only.`)] },
       ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
-      tabButtons(state, active),
+      tabButtons(state, active, canEditAccess),
       { type: "divider" },
       ...content,
     ],

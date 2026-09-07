@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Add a manager/admin-only Access page to Slack channel settings for mode, Full access, Lean,
+  network, use/manage policy, and named guest/manager lists. Recheck live membership and current
+  roles on save; immediately acknowledge submissions while validation runs. Admin-author-only
+  engine bypass and existing ordinary-tab access remain unchanged.
+
 - Settings: replace the Testing with AI checkbox list with a compact searchable user selector,
   removable selection chips, keyboard navigation and a bounded results list that fits narrow screens.
 
