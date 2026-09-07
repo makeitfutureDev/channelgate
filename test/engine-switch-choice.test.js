@@ -198,3 +198,10 @@ test("Slack registers both harness-switch actions", () => {
   registerEngineSwitchChoiceActions({ action: (id, handler) => registered.push({ id, handler }) }, async () => {});
   assert.deepEqual(registered.map(({ id }) => id), [ENGINE_SWITCH_ACTION, ENGINE_RETRY_ACTION]);
 });
+
+test("both-engine failure card unwraps provider JSON into a sentence", () => {
+  const text = engineSwitchChoiceText({ failedEngine: "claude", otherEngine: "codex", bothFailed: true,
+    fallbackError: 'API rejected: {"error":{"message":"Please try again later","code":"overloaded"}}' });
+  assert.match(text, /Please try again later/);
+  assert.doesNotMatch(text, /\{|"error"|overloaded/);
+});

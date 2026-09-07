@@ -10,7 +10,8 @@ function normalizedControlText(text, punctuation = /[!.…]+$/) {
 }
 
 export function isStopCommand(text) {
-  return STOP_WORDS.has(normalizedControlText(text));
+  const value = normalizedControlText(text);
+  return STOP_WORDS.has(value) || /^(?:please )?(?:stop|cancel|abort|halt) (?:the |this |my )?(?:[a-z0-9_-]+ )?loop(?: now| please)?$/.test(value);
 }
 
 export function isPendingCommand(text) {

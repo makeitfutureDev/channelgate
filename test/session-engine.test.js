@@ -124,3 +124,10 @@ test("a self-minted session id is stamped with ITS OWN engine, and the thread th
     { engine: "opencode", switch: false },
   );
 });
+
+test("unsupported list_turns heals only an explicit failed thread resume", () => {
+  assert.equal(isSessionNotFound({ message: "thread/resume failed: list_turns is not supported yet" }), true);
+  assert.equal(isSessionNotFound({ details: { stderr: "thread/resume failed: list_turns is not supported yet" } }), true);
+  assert.equal(isSessionNotFound({ message: "list_turns is not supported yet" }), false);
+  assert.equal(isSessionNotFound({ details: { stdout: "thread/resume failed: list_turns is not supported yet" } }), false);
+});

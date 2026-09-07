@@ -323,6 +323,11 @@ function createTaskTimeline(push) {
   let latestHeartbeatId = null;
   let reportTitle = "";
   let latestReport = null;
+  // Numeric counters are mutable snapshots. Rich fields append in Slack; titles replace.
+  const counterPattern = /\b\d+\s*(?:\/|of)\s*\d+\b|\b\d+\s*(?:%|items?|files?|rows?|records?|batches?|tests?|checks?|passed|failed|done|remaining|complete|disagreements?|sources?|agents?)\b/gi;
+  const counterMatches = (value) => [...String(value || "").matchAll(counterPattern)].map((match) => match[0]);
+  const hasCounter = (value) => counterMatches(value).length > 0;
+  const counterLabel = (value) => String(value).length <= 80 ? String(value) : counterMatches(value).join(", ");
   const clamp = (s) => {
     const t = String(s || "").trim() || "working";
     return t.length > 240 ? `${t.slice(0, 239)}…` : t;
@@ -518,11 +523,12 @@ function createTaskTimeline(push) {
       }
       for (const step of latestReport.steps) {
         const id = `report-${step.id}`;
+        const counters = [step.details, step.output].filter(hasCounter);
         const next = {
-          title: clamp(step.title),
+          title: clamp(counters.length ? [String(step.title || "").slice(0, 80), ...counters.map(counterLabel)].join(" · ") : step.title),
           status: step.status,
-          ...(step.details ? { details: step.details } : {}),
-          ...(step.output ? { output: step.output } : {}),
+          ...(step.details && !hasCounter(step.details) ? { details: step.details } : {}),
+          ...(step.output && !hasCounter(step.output) ? { output: step.output } : {}),
           ...(step.sources?.length
             ? { sources: step.sources.map((source) => ({ type: "url", url: source.url, text: source.text })) }
             : {}),
@@ -616,7 +622,7 @@ function createTaskTimeline(push) {
 // All append/stop calls are serialized through a promise chain (the streamer's buffer is not
 // concurrency-safe). Any API failure flips `failed`, and finalize() falls back to a plain
 // postMessage so an answer is never lost if streaming is unavailable (missing scope / not enabled).
-function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, mayManage = false }) {
+function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, mayManage = false, stopGraceMs = 1_000 }) {
   // Resolve "@Name" → "<@id>" as the answer streams in; the holdback buffer keeps a mention whole
   // even when it straddles two delta slices (flushed in finalize).
   const mentionStream = createMentionStream(dir);
@@ -1259,8 +1265,14 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     // Abort/error path: close the stream so the partial message finalizes cleanly (or clear the
     // shimmer if it never started). The caller posts its own error/stop notice.
     stop: async () => {
+      const bounded = async (work) => {
+        let timer;
+        try {
+          await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, stopGraceMs); })]);
+        } finally { clearTimeout(timer); }
+      };
       if (terminal) {
-        await chain;
+        await bounded(chain);
         return;
       }
       terminal = "stop";
@@ -1268,21 +1280,24 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       stopHeartbeat("⏹️ Stopped");
       timeline.interruptReport();
       timeline.finishAgents("stopped");
-      timeline.flushActive(); // close off the running tool row before we stop the stream
-      await clearShimmer();
-      await chain;
-      await stopTimeline("task-card abort stop");
-      if (!failed && streamStartedAt !== null) {
-        try {
-          // Text already reached Slack, so the message stays — but a stream cut mid-answer must
-          // never read as a finished one. Close any open fence, then mark what landed as partial.
-          const fence = activeMarkdownFence(streamMarkdown);
-          await answerStreamer.stop({ markdown_text: `${fence ? `\n${fence.marker}` : ""}\n\n🛑 _Stopped — partial answer._` });
-          await cleanupRetiredStreams();
-        } catch (error) {
-          reportStreamFailure("abort stop", error);
+      timeline.flushActive();
+      // Keep the same ordered cleanup alive after the grace. It must eventually mark any
+      // delivered text partial, but Slack's retry-after cannot retain the engine's run slot.
+      const cleanup = (async () => {
+        await clearShimmer();
+        await chain;
+        await stopTimeline("task-card abort stop");
+        if (!failed && streamStartedAt !== null) {
+          try {
+            const fence = activeMarkdownFence(streamMarkdown);
+            await answerStreamer.stop({ markdown_text: `${fence ? `\n${fence.marker}` : ""}\n\n🛑 _Stopped — partial answer._` });
+            await cleanupRetiredStreams();
+          } catch (error) {
+            reportStreamFailure("abort stop", error);
+          }
         }
-      }
+      })().catch((error) => reportStreamFailure("abort cleanup", error));
+      await bounded(cleanup);
     },
   };
 }

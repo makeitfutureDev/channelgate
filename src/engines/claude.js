@@ -316,7 +316,7 @@ export async function runClaude({
       if (trailing) handleLine(trailing);
 
       if (aborted) {
-        reject(commandError("Claude run was stopped before it finished.", { stdout: truncate(stdout), stderr: truncate(stderr), exitCode: code, signal: exitSignal || null }));
+        reject(commandError("Claude run was stopped before it finished.", { stdout: truncate(stdout), stderr: truncate(stderr), exitCode: code, signal: exitSignal || null, engine: "claude", runtime: runtime.backend, explicitStop: true }));
         return;
       }
       if (timedOut) {
@@ -330,6 +330,7 @@ export async function runClaude({
           exitCode: code,
           signal: exitSignal || null,
           engine: "claude",
+          runtime: runtime.backend,
           processEnded: true,
           providerError: Boolean(providerError),
           providerCode: providerError?.code || "",

@@ -109,3 +109,35 @@ test("with no session and no override the channel's engine beats the gateway def
   await saveChannelMeta(slug, { ...(await getChannelMeta(slug)), engine: "" });
   assert.equal(await resolveThreadEngine(slug, "9100.400", await getChannelMeta(slug)), "codex");
 });
+
+test("Stop cancels loops and accounts every active/queued turn before throttled Slack clears", async () => {
+  const { armLoop, threadLoops } = await import("../src/gateway/loops.js");
+  const { readEvents } = await import("../src/util/logger.js");
+  const threads = ["9100.501", "9100.502"];
+  const handles = threads.map((thread) => ({ runId: `stop-account-${thread}`, controller: new AbortController() }));
+  for (let i = 0; i < threads.length; i++) await runQueue.acquire(`${slug}::${threads[i]}`, handles[i]);
+  const queued = { runId: "stop-account-queued" };
+  const queuedReady = runQueue.acquire(`${slug}::${threads[0]}`, queued);
+  armLoop({ channelId: CHANNEL, slug, threadTs: threads[0], authorId: USER,
+    wakeup: { kind: "loop_wakeup", mode: "interval", cron: "*/5 * * * *", prompt: "Check fixture" } });
+  assert.equal(threadLoops(CHANNEL, threads[0]).length, 1);
+  const client = fakeSlack();
+  let releaseStatus;
+  client.apiCall = () => new Promise((r) => { releaseStatus = r; });
+  try {
+    const stopped = stopRunsInChannel(client, CHANNEL, slug, USER);
+    assert.equal(threadLoops(CHANNEL, threads[0]).length, 0, "loop deleted synchronously before Slack");
+    assert.ok(handles.every((h) => h.controller.signal.aborted));
+    await stopped;
+    await queuedReady;
+    assert.equal(client.posted.filter((m) => m.text === "🛑 Stopped.").length, 2, "both notices bypass a stuck status clear");
+    const events = readEvents({ limit: 100 }).filter((e) => e.event === "run_stopped" && e.runId?.startsWith("stop-account-"));
+    assert.equal(events.length, 3);
+    assert.equal(events.filter((e) => e.state === "queued").length, 1);
+    await stopRunsInChannel(client, CHANNEL, slug, USER);
+    assert.equal(readEvents({ limit: 100 }).filter((e) => e.event === "run_stopped" && e.runId?.startsWith("stop-account-")).length, 3, "duplicate Stop never double-counts a handle");
+  } finally {
+    releaseStatus?.({ ok: true });
+    for (let i = 0; i < threads.length; i++) runQueue.release(`${slug}::${threads[i]}`, handles[i]);
+  }
+});

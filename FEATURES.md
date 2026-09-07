@@ -1609,14 +1609,16 @@ are retired, bullet by bullet; everything else stands.
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch
-  there is never deferred: the turn waits, bounded and announced in the thread, for the runs still
-  inside to finish and then rebuilds, or fails with a message naming the pending rebuild. Running
+  there is never deferred: the turn waits with an initial notice and a reminder every minute for
+  the runs still inside to finish, then rebuilds and continues automatically. Stop cancels the wait
+  and preparation lock before spawning; preparatory waiters do not count as occupants. Running
   against mounts that point at a directory the channel has moved or deleted is not an option. A
   mismatch that is only about behaviour (a rebuilt image, a limit, the network mode) keeps the old
   deferral: the container is used for this turn and replaced at the next idle moment. "Busy" means
   someone ELSE is inside — a caller that leased the container before asking for it (every turn does,
   so the idle reaper cannot stop the environment mid-spawn) passes its own lease handle and is not
-  counted against itself. → TEST-PLAN: Container runtime (v0.8 P1).
+  counted against itself. Rebuilding preserves the waiting turns’ leases until their owners release
+  them. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Nothing a channel accumulates is ever lost — including its temp files.** A container is stopped
   as a matter of routine (the ten-minute idle sweep, the max-running cap) and recreated whenever its
   create-time fingerprint changes (an image rebuild, a limit change, a network-mode flip), so the
@@ -2604,3 +2606,20 @@ are retired, bullet by bullet; everything else stands.
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.
   → TEST-PLAN: Real project skill synchronization and workspace reset.
+
+- **Recovery and Stop reliability (September 2026):** an explicit Codex `thread/resume failed:
+  list_turns is not supported yet` response follows the existing fresh-session/transcript recovery.
+  Unexpected Claude SIGKILL/137 never triggers blind automatic continuation; the error event keeps
+  engine, runtime, exit code, signal and process/provider/Stop flags without raw process streams.
+  Explicit Stop and AbortError also defeat legacy text-based continuation. Automatic-recovery and
+  both-engine failure notices unwrap provider JSON into readable sentences.
+- **Responsive Stop controls:** “stop the loop” and “Stop the check loop now” cancel through the
+  early control path. Loop rows disappear synchronously before Slack calls; status clearing and
+  unrelated acknowledgements cannot block another stopped thread’s notice. Stream cleanup gets a
+  one-second foreground grace, continues draining afterward, and marks delivered text partial.
+  Slack can still throttle the acknowledgement API itself. `run_stopped` records each affected
+  active/queued turn once with its run ID/state; `run_stop_requested` records command-level totals.
+- **Live numeric progress counts:** fraction/count details and outputs render in the replaceable
+  task title, within Slack’s existing 240-character title budget. Changes such as `0/4` → `4/4`
+  therefore show the latest count instead of accumulating old counts in append-only rich fields.
+  Other rich prose retains the existing append/deduplication behavior.

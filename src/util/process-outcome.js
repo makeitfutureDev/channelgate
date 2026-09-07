@@ -198,3 +198,17 @@ export function processFailureMessage(label, options = {}) {
   const diagnostic = conciseProcessDiagnostic(options.diagnostic, options.maxDiagnosticChars);
   return `${subject} ${outcome.summary}${diagnostic ? `: ${diagnostic}` : "."}`;
 }
+
+// Preserve bounded, named outcome facts without copying stdout, stderr or arbitrary provider data.
+export function runFailureDiagnostics(error) {
+  const d = error?.details || {};
+  return {
+    engine: typeof d.engine === "string" ? d.engine.slice(0, 40) : null,
+    exitCode: normalizedCode(d.exitCode),
+    signal: typeof d.signal === "string" ? d.signal.slice(0, 40) : null,
+    processEnded: d.processEnded === true,
+    explicitStop: d.explicitStop === true,
+    providerError: d.providerError === true,
+    runtime: typeof d.runtime === "string" ? d.runtime.slice(0, 80) : null,
+  };
+}

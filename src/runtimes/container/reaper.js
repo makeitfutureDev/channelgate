@@ -136,11 +136,12 @@ export function createContainerReaper({
   }
 
   // Make room for `name` before a create/start. Returns { waitedMs, stopped: [...] }.
-  async function reserveSlot(name, { maxRunning = 8, announce = null, reason = "max running containers" } = {}) {
+  async function reserveSlot(name, { maxRunning = 8, announce = null, reason = "max running containers", signal = null } = {}) {
     const started = now();
     let announced = false;
     const stopped = [];
     for (;;) {
+      signal?.throwIfAborted();
       const running = runningEntries().filter((entry) => entry.name !== name);
       if (running.length < Math.max(1, maxRunning)) return { waitedMs: now() - started, stopped };
       const victim = running
@@ -168,7 +169,16 @@ export function createContainerReaper({
           /* announcing must never fail a run */
         }
       }
-      await sleep(slotPollMs);
+      let onAbort;
+      try {
+        await Promise.race([sleep(slotPollMs), ...(signal ? [new Promise((_, reject) => {
+          onAbort = () => reject(signal.reason || Object.assign(new Error("Run aborted while waiting for a container slot"), { name: "AbortError" }));
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) onAbort();
+        })] : [])]);
+      } finally {
+        if (onAbort) signal.removeEventListener("abort", onAbort);
+      }
     }
   }
 

@@ -181,3 +181,20 @@ test("a lease on a target with no container name is a harmless no-op", () => {
   lease.release();
   assert.equal(reaper.size, 0);
 });
+
+test("a waiting container slot is cancellable without stopping another active container", async () => {
+  const controller = new AbortController();
+  let reachedPoll;
+  const polling = new Promise((r) => { reachedPoll = r; });
+  const { reaper, stopped } = makeReaper({ sleep: () => { reachedPoll(); return new Promise(() => {}); } });
+  const t = fakeTarget("slot-occupied");
+  reaper.markRunning(t.container.name, t);
+  const lease = reaper.acquireLease(t, { id: "running" });
+  const waiting = reaper.reserveSlot("slot-new", { maxRunning: 1, signal: controller.signal });
+  await polling;
+  controller.abort();
+  await assert.rejects(waiting, { name: "AbortError" });
+  assert.deepEqual(stopped, []);
+  assert.equal(reaper.leaseCount(t.container.name), 1);
+  lease.release();
+});

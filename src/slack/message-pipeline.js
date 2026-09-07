@@ -6,7 +6,7 @@
 // and event registrations and delegates here; this module must never import ./app.js.
 import { upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
 import { engineSupports, engineLabel, ENGINE_IDS } from "../engines/registry.js";
-import { plainFailureText } from "../util/process-outcome.js";
+import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult } from "../gateway/run.js";
 import { modeLabel, MODE_FLAGS, MODES, canManage, isAuthorized } from "../gateway/modes.js";
@@ -81,6 +81,7 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
   // durably, so an old button cannot resurrect that message after the active turn was cancelled.
   const pendingChoices = clearPendingRunChoices({ channelId, threadKey });
   const stoppedRuns = [];
+  const stoppedTurns = [];
 
   // Stop every matching engine and terminalize its durable work before the first awaited Slack
   // or config call. A rate-limited acknowledgement must never let the agent keep making changes.
@@ -107,8 +108,15 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
     res.active?.controller?.abort(); // kills a cold (keep-alive off) child mid-run — Claude or Codex
     abortPooled(key); // terminates a warm (Claude) session
     stoppedRuns.push(key.slice(prefix.length));
+    for (const [state, handles] of [["active", [res.active]], ["queued", res.queued || []]]) {
+      for (const handle of handles) {
+        if (!handle || handle.stopAccounted) continue;
+        handle.stopAccounted = true;
+        stoppedTurns.push({ threadKey: key.slice(prefix.length), runId: handle.runId || null, state });
+      }
+    }
   }
-  return { pendingChoices, stoppedRuns };
+  return { pendingChoices, stoppedRuns, stoppedTurns };
 }
 
 // Abort in-flight runs in a channel/DM. When `threadKey` is given, only the run in that one thread
@@ -116,7 +124,16 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
 // whole channel is swept (the `/stop` slash command). Posts "🛑 Stopped." (with the resume link) in
 // each stopped run's thread. Returns how many were stopped.
 export async function stopRunsInChannel(client, channelId, slug, byUser, threadKey = null) {
-  const { pendingChoices, stoppedRuns } = abortRunsInChannel(channelId, slug, byUser, threadKey);
+  const { pendingChoices, stoppedRuns, stoppedTurns } = abortRunsInChannel(channelId, slug, byUser, threadKey);
+  // Persist loop cancellation and outcome counts BEFORE any rate-limited Slack API can wait.
+  const droppedLoops = stopLoops(channelId, threadKey);
+  for (const turn of stoppedTurns) void logEvent("run_stopped", { channel: channelId, author: byUser, slug, ...turn });
+  if (stoppedTurns.length || pendingChoices.length || droppedLoops.length) {
+    void logEvent("run_stop_requested", { channel: channelId, author: byUser, slug, threadKey,
+      runs: stoppedTurns.length, queued: stoppedTurns.filter((turn) => turn.state === "queued").length,
+      choices: pendingChoices.length, loops: droppedLoops.length });
+  }
+  const deliveries = [];
   const stopped = pendingChoices.length + stoppedRuns.length;
 
   // All work is now terminal. User-facing cleanup may safely wait on Slack, grouped per thread so
@@ -132,11 +149,11 @@ export async function stopRunsInChannel(client, channelId, slug, byUser, threadK
     const noun = kind === BUSY_THREAD_CHOICE_KIND
       ? `busy-thread ${count === 1 ? "message choice" : "message choices"}`
       : `harness-switch ${count === 1 ? "prompt" : "prompts"}`;
-    await client.chat.postMessage({
+    deliveries.push(client.chat.postMessage({
       channel: channelId,
       thread_ts: pendingThread,
       text: `🛑 Discarded ${count} pending ${noun}.`,
-    }).catch(() => {});
+    }).catch(() => {}));
   }
 
   // The folder the agent ran in (for a copyable resume command) + the engine that ran there. The
@@ -147,33 +164,32 @@ export async function stopRunsInChannel(client, channelId, slug, byUser, threadK
   const meta = stoppedRuns.length ? await getChannelMeta(slug).catch(() => null) : null;
   const cwd = effectiveWorkDir(slug, meta || {});
   for (const runThread of stoppedRuns) {
-    await setAssistantStatus(client, channelId, runThread, "");
+    void setAssistantStatus(client, channelId, runThread, "");
     const sessionId = (await getSessionMap(slug).catch(() => ({})))[runThread];
     const engine = await resolveThreadEngine(slug, runThread, meta || {});
     const btn = resumeButton(cwd, sessionId, engine);
-    await client.chat.postMessage({
+    deliveries.push(client.chat.postMessage({
       channel: channelId,
       thread_ts: runThread,
       text: "🛑 Stopped.",
       ...(btn ? { blocks: [{ type: "section", text: { type: "mrkdwn", text: "🛑 Stopped." }, accessory: btn }] } : {}),
-    });
+    }).catch(() => {}));
   }
   // A native loop lives in the SCHEDULE store, not the run registry: between ticks there is
   // nothing in-flight for abortRunsInChannel to find, so stopping only running turns would leave
   // the thread waking up again — the stop read as ignored. Every stop entry point (a `stop`
   // message, the 🛑 reaction, the `/stop` sweep) funnels through here, so the loop ends whichever
   // one the user reached for; a null threadKey means the channel-wide sweep, which ends them all.
-  const droppedLoops = stopLoops(channelId, threadKey);
   for (const loopThread of new Set(droppedLoops.map((row) => row.threadTs))) {
-    await client.chat.postMessage({
+    deliveries.push(client.chat.postMessage({
       channel: channelId,
       thread_ts: loopThread,
       text: "🔁 Loop stopped — no further ticks are scheduled.",
-    }).catch(() => {});
+    }).catch(() => {}));
   }
 
   const total = stopped + droppedLoops.length;
-  if (total) await logEvent("run_stopped", { channel: channelId, author: byUser, slug, loops: droppedLoops.length });
+  await Promise.all(deliveries);
   return total;
 }
 
@@ -184,6 +200,10 @@ export async function stopRunsInChannel(client, channelId, slug, byUser, threadK
 // (config errors, usage limits, aborts) is not auto-recoverable.
 export function runDeathRecovery(err) {
   const m = String(err?.message || "");
+  if (err?.details?.explicitStop || err?.name === "AbortError") return null;
+  // A hard kill can happen after an external write but before its tool result is saved.
+  // Do not infer OOM or replay that ambiguous work automatically.
+  if (String(err?.details?.signal || "").toUpperCase() === "SIGKILL" || Number(err?.details?.exitCode) === 137) return null;
   if (/session is dead/i.test(m)) return "retry";
   if (err?.details?.engine === "claude" && err.details.processEnded === true && err.details.providerError !== true) return "continue";
   if (/stalled — no output|claude session ended|claude exited/i.test(m)) return "continue";
@@ -1384,11 +1404,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         const recovery = handle.aborted ? null : runDeathRecovery(err);
         if (!recovery) throw err;
         console.warn(`[slack] run died in ${entry.slug} (${err.message}) — auto-${recovery === "continue" ? "resuming" : "retrying"}`);
-        await logEvent("run_auto_resume", { channel: event.channel, author: event.user, slug: entry.slug, error: err.message, mode: recovery });
+        await logEvent("run_auto_resume", { channel: event.channel, author: event.user, slug: entry.slug, error: err.message, ...runFailureDiagnostics(err), mode: recovery });
         await client.chat.postMessage({
           channel: event.channel,
           thread_ts: threadKey,
-          text: `⚠️ _${err.message} — ${recovery === "continue" ? "resuming automatically where it left off…" : "retrying automatically…"}_`,
+          text: `⚠️ _${plainFailureText(err.message)} — ${recovery === "continue" ? "resuming automatically where it left off…" : "retrying automatically…"}_`,
         });
         // "continue" resumes work the model already has (attachments included); "retry" resends
         // the original message that never arrived.
@@ -1548,7 +1568,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           text: runFailureText(err, { resumable }),
         });
         markTerminal();
-        await logEvent("run_error", { channel: event.channel, author: event.user, slug: entry.slug, error: err.message });
+        await logEvent("run_error", { channel: event.channel, author: event.user, slug: entry.slug, error: err.message, ...runFailureDiagnostics(err) });
         // Self-diagnosis (Settings → errorDiagnosisChannel): open a thread in the dev channel
         // asking Claude to root-cause this failure. Fire-and-forget — it must never delay or
         // fail the error path; the module itself rate-limits and refuses recursion.
