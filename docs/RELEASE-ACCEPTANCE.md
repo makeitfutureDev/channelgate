@@ -35,6 +35,13 @@ already exist. Keep actual private IDs in the private acceptance record, not the
 | RR-18 | both | Enterprise SDK, then downgraded/no-key state | Switch SDK on; rotate entitlement and repeat; inspect Settings and platform selectors | SDK is Enterprise-only/Beta in UI and server; no silent identity substitution; Teams and Google Chat show Beta |
 | RR-19 | independent | Disposable backup containing only synthetic data | Back up, restore into a separate runtime root, run integrity and startup checks | Decryption/SQLite integrity pass; config, jobs, memories and required paths recover without touching production |
 
+RR-05 and RR-08 remain deferred credential-model proposals: retiring the shared writable Codex
+sign-in mount and replacing the operator Claude access-token relay with a provider-approved API
+credential arrangement. Existing deployments retain their current sign-in behavior. Review and
+integration history is in [PR #11](https://github.com/makeitfutureDev/channelgate/pull/11);
+merging that review did not ship these two proposals. Resolve the product decision and define
+live acceptance before changing either credential path.
+
 The memory publication contract is validation-first with cross-process serialization and atomic
 replacement per file. A process crash can interrupt a multi-file batch; it is not advertised as a
 filesystem transaction. Individual memory files and mutation batches are bounded, while total

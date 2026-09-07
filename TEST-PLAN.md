@@ -3526,7 +3526,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `curl https://api.github.com/` returns HTTP 200 while an unlisted domain stays blocked
       (QA case DRV-04; before the codex-userns block both reset with curl exit 56).
 
-## Review remediation (2026-07, IMPROVEMENTS.md)
+## Review remediation (2026-07)
 Unit layer first: `npm test` (node:test over `test/`) must pass — it pins the pure helpers
 (escaping, chunking, queue, TTL set, child-env, containment, backoff, slugify, cron catch-up).
 Manual checks for the daemon-level behavior:

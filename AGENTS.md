@@ -1,7 +1,7 @@
 # ChannelGate — AGENTS.md
 
-Canonical instruction file. `CLAUDE.md`, `GEMINI.md`, `HERMES.md` are symlinks to this file —
-edit here only.
+Canonical instruction file for Codex and contributors. `CLAUDE.md` symlinks to this file
+for Claude Code — edit here only.
 
 ## What this is
 
