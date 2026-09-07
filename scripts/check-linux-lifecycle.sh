@@ -44,7 +44,7 @@ as_service() {
     CHANNELGATE_DB="" CLAUDE_GATEWAY_DIR="" CLAUDE_GATEWAY_DB="" \
     XDG_RUNTIME_DIR="/run/user/$(id -u "$SERVICE_USER")" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u "$SERVICE_USER")/bus" \
-    PATH="$PATH" "$@"
+    PATH="$PATH" /bin/sh -c 'cd "$HOME" && exec "$@"' sh "$@"
 }
 health() {
   node --input-type=module - "$1" <<'NODE'

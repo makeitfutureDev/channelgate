@@ -117,13 +117,16 @@ fi
 
 # Probe and build in the final daemon identity's own rootless store. The installer's store and
 # image UID cannot be reused by a different service account.
-run_as_service() {
+run_as_service() (
   # Match the unit's explicit environment. Inherited operator XDG/container-storage settings
   # can point Podman at another user's private store even after HOME changes.
+  # Podman also re-enters cwd after its user-namespace transition; the invoking shell may be
+  # in an operator-private directory even when the installer itself lives under /opt.
+  cd "$APP_DIR"
   runuser -u "$SERVICE_USER" -- env -i HOME="$SERVICE_HOME" CHANNELGATE_DIR="$SERVICE_HOME" \
     XDG_RUNTIME_DIR="$SERVICE_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="unix:path=$SERVICE_RUNTIME_DIR/bus" \
     PATH="$SERVICE_PATH" "$@"
-}
+)
 run_as_service podman info --format '{{.Host.Security.Rootless}}' | grep -qx true || {
   echo "Rootless Podman is not usable as $SERVICE_USER"; exit 1;
 }

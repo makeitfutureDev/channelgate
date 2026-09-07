@@ -13,6 +13,8 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   newly installed `/var/lib/channelgate-lifecycle` service identity; never an operator deployment.
   The installer image build must succeed even when the invoking runner has its own container
   storage configuration; the service account must use its own HOME/store and explicit environment.
+  Invoke the installer by absolute path while cwd is an operator-private directory; the image
+  probe/build must run from the service-owned checkout rather than inherit that inaccessible cwd.
 - Pass evidence: `linux-lifecycle-<sha>` artifact records source revision, VM image, versions and
   every PASS line. Require successful fresh install/image build, non-root container with zero
   effective capabilities/no-new-privileges, enabled active service, distinct healthy instance ID
@@ -33,7 +35,8 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   Baseline revision A must answer the fixed update smoke response for both engines. Create
   fast-forward candidate B with an intentional failing test; invoke `npm run update`.
   Require a visible candidate failure, durable `rolled_back` state, restored A checkout and
-  database/config, new healthy A instance, passing smoke for both baseline engines and a new
+  an operator recovery snapshot of database/config (runtime data is not automatically rolled
+  back), a new healthy A instance, passing smoke for both baseline engines and a new
   ordinary turn in each existing channel. Repeat with a candidate that passes tests but fails
   readiness after restart. Never perform induced-failure checks on a production deployment.
 
