@@ -113,10 +113,10 @@ export const PROFILE_LABELS = {
 // Example/help text shown under the dropdown, one line per profile (UI + /mode help).
 export const PROFILE_HELP = {
   read: "Answers and reads files in this channel's folder. Can't edit or run commands; anything riskier asks you to approve. Safest.",
-  worker: "Runs commands and edits files inside this channel's container. Still asks before unusual actions. For channels that build things.",
+  worker: "Runs commands and edits files in this channel’s folder only. Enable Auto to approve tool requests automatically.",
   auto: "Like Worker but doesn't stop to ask — auto-approves and keeps going. For trusted, multi-step tasks.",
-  admin: "Admins get every tool without permission prompts. Other members get Worker with the selected Auto and Lean options.",
-  full: "Every tool, no permission prompts. Only works when an org admin sends the message; otherwise falls back to Worker behaviour. The channel container is still the boundary — unless the gateway's \"Full-access channels see the gateway home\" switch is on, in which case this channel also reaches the gateway user's whole home. Use only for trusted ops channels.",
+  admin: "Admins get all tools without approval prompts. Other members get Worker with the selected Auto and Lean options. Access stays in the channel folder unless Settings → Container runtime → Admin channels can access the host home is enabled. That shares the gateway user’s home with all admitted members; it does not grant host root access.",
+  full: "Every tool, no permission prompts. Only works when an org admin sends the message; otherwise falls back to Worker behaviour. The channel container is still the boundary — unless the gateway's \"Admin channels can access the host home\" switch is on, in which case this channel also reaches the gateway user's whole home. Use only for trusted ops channels.",
   lean: "Bare model — no skills or connectors. Cheapest and fastest, but can't use HubSpot/Gmail/etc.",
   custom: "Set every capability yourself (mode, network, clean).",
 };
