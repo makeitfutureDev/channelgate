@@ -4135,6 +4135,9 @@ acceptance gates; no production restart or external message was performed by the
   plugin loading, reference reading and per-run cleanup must still work. A missing selected
   personal skill fails by name on both engines.
 
-Native personal-catalog provider proof was attempted but the execution session ended without a
-completion artifact; these live cases remain unverified. This is separate from the successful
-native Astra child-accounting schema check above.
+- [x] Native provider probe (2026-09-07, Codex 0.153.4, gpt-6-astra/high): a synthetic personal
+  catalog pointed outside the disposable cwd to SKILL.md and references/proof.txt. With the
+  gateway's read-only sandbox and `features.use_legacy_landlock=true`, the real engine read
+  both files successfully and returned the exact marker CG_PERSONAL_REFERENCE_OK_7319. The
+  fixture was removed. This verifies catalog/reference readability in an existing container;
+  the deployed author-grant, resume/revocation and Slack cases above remain unexecuted.

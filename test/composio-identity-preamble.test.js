@@ -131,6 +131,10 @@ test("Codex receives the same line through its own prompt path", async () => {
   await channel("C_IDENT_CODEX", "identity-codex", { engine: "codex" });
 
   const r = await runMessage({ channelId: "C_IDENT_CODEX", authorId: "U_IDENT_CODEX", text: "check the calendar", threadKey: "9100.004", origin: "slack_foreground", preferCold: true });
-  assert.match(r.content, /^\[Composio identities in THIS run: `composio-user`.*`composio-agent`/);
+  // Codex also prepends the current personal catalog (empty here, clearing older grants).
+  // Identity facts must still occupy their own line before the unchanged user request.
+  assert.match(r.content, /^\[Current personal skill grants/);
+  assert.match(r.content, /^\[Composio identities in THIS run: `composio-user`.*`composio-agent`/m);
+  assert.equal((r.content.match(/\[Composio identities in THIS run:/g) || []).length, 1);
   assert.match(r.content, /\]\n\ncheck the calendar$/);
 });
