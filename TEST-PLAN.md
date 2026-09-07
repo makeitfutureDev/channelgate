@@ -4,6 +4,39 @@ Cumulative functional + security regression. Extended per slice. Run top-to-bott
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
 ## Base modes and independent options (2026-09-08)
+## Disposable Linux lifecycle workflow
+
+- Automated setup: dispatch `.github/workflows/linux-lifecycle.yml` for the candidate ref (a PR
+  changing this workflow/script also runs it). GitHub-hosted Ubuntu 24.04, Node 24, real PID-1
+  systemd and rootless Podman; no job container, provider credentials or chat connection.
+  `scripts/check-linux-lifecycle.sh` refuses non-hosted runners, occupied fixture paths, service
+  units and accounts before mutation. It operates only on `/opt/channelgate-lifecycle` and the
+  newly installed `/var/lib/channelgate-lifecycle` service identity; never an operator deployment.
+- Pass evidence: `linux-lifecycle-<sha>` artifact records source revision, VM image, versions and
+  every PASS line. Require successful fresh install/image build, non-root container with zero
+  effective capabilities/no-new-privileges, enabled active service, distinct healthy instance ID
+  after real systemd restart, encrypted snapshot while the fixture daemon runs, restored
+  `before-backup` SQL/config markers, SQLite integrity `ok`, removal of stale WAL/SHM and stray
+  config, healthy restart and uninstall preserving the account/database/encrypted backup.
+  These checks are engine-independent because they issue no engine turn. Update transaction
+  unit evidence is uploaded separately as `update-fixture-tests.tap`; injected failures do not
+  count as real authenticated engine update/rollback acceptance.
+- [ ] Actual reboot gate (both configured engines): on a separate disposable Linux VM, install
+  the candidate and create a channel that writes `LIFECYCLE-BEFORE-REBOOT` in its own work folder.
+  Record instance ID and engine/session identity, reboot the machine, then ask each engine in
+  its existing thread to read the marker. Require automatic service start without manual repair,
+  a new daemon instance ID, preserved marker/session and container-only engine execution.
+  A hosted job restart is not a reboot and cannot clear this gate.
+- [ ] Authenticated update rollback gate (Claude and Codex): on that disposable deployment,
+  configure both engine credentials in its own service identity and a local fixture upstream.
+  Baseline revision A must answer the fixed update smoke response for both engines. Create
+  fast-forward candidate B with an intentional failing test; invoke `npm run update`.
+  Require a visible candidate failure, durable `rolled_back` state, restored A checkout and
+  database/config, new healthy A instance, passing smoke for both baseline engines and a new
+  ordinary turn in each existing channel. Repeat with a candidate that passes tests but fails
+  readiness after restart. Never perform induced-failure checks on a production deployment.
+
+## Base modes and independent options (2026-09-08)
 
 - Automated: `modes`, `channel-settings-modal`, `mode-command-audit`, `folders-settings`,
   `folders-generator-paths`, `run-grant-isolation`, `runtime-integration-surfaces`, and `run-api`

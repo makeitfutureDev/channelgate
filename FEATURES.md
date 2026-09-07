@@ -2,6 +2,12 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Disposable Linux lifecycle evidence:** the manually dispatchable Linux lifecycle workflow
+  exercises a fresh dedicated-account systemd install with the full rootless Podman image,
+  HTTP liveness after restart, encrypted fixture backup/restore and non-destructive uninstall.
+  Its script refuses non-hosted or occupied hosts. Actual reboot and authenticated engine update
+  rollback remain separate live gates. → TEST-PLAN: Disposable Linux lifecycle workflow.
+
 - Development acceptance policy: behavior changes include reproducible Claude and Codex
   acceptance definitions and clearly separate automated evidence from live operator validation.
   Public contributors do not need access to a private QA service. → TEST-PLAN: Development acceptance policy.
