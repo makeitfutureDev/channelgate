@@ -3957,3 +3957,14 @@ substitute for live passes.
 Automated helper/runner checks do not certify actual Podman namespace permissions, authenticated
 provider events, or Slack rendering. Those live cases and private QA registration remain release
 acceptance gates; no production restart or external message was performed by the implementation.
+
+- [x] Native schema check (2026-09-07): authenticated Codex CLI 0.153.4 / `gpt-6-astra`
+  in the existing channel container spawned synthetic `alpha_checker` and `beta_checker`, joined
+  both and returned `alpha`/`beta`. The reducer recovered both names, exact request accounting,
+  15,219 tokens per child and elapsed times of 4,196 / 4,424 ms. This exercises real provider
+  rollouts, but does **not** mark the separate host-rootless/Slack acceptance above passed.
+- [x] Full suite with isolated HOME/TMPDIR and `--test-concurrency=4`: 2,122 passed, 0 failed,
+  2 live cases skipped; coverage lines 92.66%, branches 82.43%, functions 87.44%. Static, secret
+  scan and DCO checks passed. Default `/tmp` in the development container is private (0700),
+  causing the unrelated service-path preflight fixture to fail on unchanged main too; the
+  isolated run uses public ancestors without modifying container/production permissions.
