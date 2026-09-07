@@ -46,20 +46,22 @@ test("a fresh session gets only the memory catalog; the resumed turn does not re
 
   const second = await runMessage({ channelId: "C_SNAPSHOT_RUN", authorId: "U_SNAPSHOT", text: "and the second one?", threadKey: "8000.001", origin: "slack_foreground", preferCold: true });
   assert.doesNotMatch(second.content, /Channel memory/, "a resumed session already carries the snapshot in its history");
-  assert.equal(second.content, "and the second one?");
+  assert.match(second.content, /\]\n\nand the second one\?$/, "only per-turn runtime facts precede the request");
 });
 
-test("an empty index and a clean thread inject nothing", async () => {
+test("an empty index and a clean thread inject no memory", async () => {
   saveSettings({ engine: "claude", agentMemory: true, memoryReviewEvery: 0, composioMode: "personal" });
   const { entry } = await channel("C_SNAPSHOT_EMPTY", "snapshot-empty");
   const r = await runMessage({ channelId: "C_SNAPSHOT_EMPTY", authorId: "U_SNAPSHOT", text: "hello there friend", threadKey: "8000.002", origin: "slack_foreground", preferCold: true });
-  assert.equal(r.content, "hello there friend");
+  assert.doesNotMatch(r.content, /Channel memory/);
+  assert.match(r.content, /\]\n\nhello there friend$/);
 
   const { meta: m2, cwd: cwd2 } = await channel("C_SNAPSHOT_CLEAN", "snapshot-clean");
   await applyMemoryOperations(cwd2, m2, [{ action: "add", text: "Reports go out on Fridays." }]);
   const cleanEntry = await upsertChannelEntry("C_SNAPSHOT_CLEAN", { name: "snapshot-clean", type: "channel" });
   await setThreadClean(cleanEntry.slug, "8000.003", true);
   const clean = await runMessage({ channelId: "C_SNAPSHOT_CLEAN", authorId: "U_SNAPSHOT", text: "clean question here", threadKey: "8000.003", origin: "slack_foreground", preferCold: true });
-  assert.equal(clean.content, "clean question here", "clean mode = memory off = no snapshot");
+  assert.doesNotMatch(clean.content, /Channel memory|Reports go out on Fridays/, "clean mode = memory off = no snapshot");
+  assert.match(clean.content, /\]\n\nclean question here$/, "safe runtime facts remain in clean mode");
   void entry;
 });

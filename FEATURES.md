@@ -7,6 +7,12 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Per-attempt runtime identity:** every orchestrated turn receives its selected engine,
+  configured model/effort and fresh/resumed session state, including clean mode, model retries,
+  session recovery and cross-engine fallback. The assistant is told to distinguish configured
+  aliases from provider-reported identity and leave unexposed harness defaults unknown.
+  → TEST-PLAN: Per-attempt runtime identity.
+
 - **Disposable Linux lifecycle evidence:** the manually dispatchable Linux lifecycle workflow
   exercises a fresh dedicated-account systemd install with the full rootless Podman image,
   HTTP liveness after restart, encrypted fixture backup/restore and non-destructive uninstall.

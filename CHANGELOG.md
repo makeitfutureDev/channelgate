@@ -18,7 +18,10 @@ product overview.
 
 ## Unreleased
 
-No changes recorded after the current candidate.
+- Supply the running assistant with its current engine, configured model/effort and session
+  state on every attempt, so model-identity answers can use the same configured selection as
+  the footer. Recompute after retries, recovery and fallback; never infer a provider model
+  from an alias or an unexposed harness default.
 
 ## 0.6.0-rc.2 — 2026-09-08 (release candidate)
 

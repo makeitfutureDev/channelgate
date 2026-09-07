@@ -34,6 +34,7 @@ import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { resolveCurrentModel } from "./model-info.js";
+import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
@@ -1326,10 +1327,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const memoryPrefix = await memorySnapshotPrefix(cwd, meta);
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     assertRuntimeCanStart();
-    // Preamble order: the fresh session's memory catalog, then this run's Composio identities, then
-    // the turn text (which already carries the caller's `[Provenance: …]` line). Every part is a
-    // self-closing bracketed note, so each stays parseable on its own.
-    const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix + (promptOverride ?? turnText);
+    // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
+    // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
+    const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix
+      + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
+      + (promptOverride ?? turnText);
     return adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
       origin, cwd, prompt, session: { id: sid, fresh }, policy: confinement,
@@ -1544,7 +1546,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
       assertRuntimeCanStart();
       return fallbackAdapter.run(validateRunContext({
-        principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd, prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + fbPrompt,
+        principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
+        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix
+          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh }) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
         // which machine boundary the channel runs behind.
