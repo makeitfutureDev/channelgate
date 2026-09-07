@@ -35,6 +35,7 @@ import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
+import { runtimeAccessPreamble } from "./runtime-access.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
@@ -1331,6 +1332,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
     const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
+      + runtimeAccessPreamble(target)
       + (promptOverride ?? turnText);
     return adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
@@ -1548,7 +1550,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix
-          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh }) + fbPrompt,
+          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh })
+          + runtimeAccessPreamble(target) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
         // which machine boundary the channel runs behind.

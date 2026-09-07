@@ -147,6 +147,10 @@ is a `/secrets` variable (below) — it arrives as environment, never as a file.
   (admin) — two-way-sync a Google Drive folder into the channel folder's `Drive/` subfolder.
 
 ## This channel's own environment secrets (its own CLI logins)
+“Write-only” describes the UI/API listing and reveal contract. A secret injected into a run is
+available to that process and its CLI for authorized use; do not claim it is unreadable at runtime.
+Listings remain masked and outputs are redacted. Never print a value to demonstrate availability.
+
 This channel can hold its OWN credentials — its own Supabase project, its own Vercel account —
 instead of sharing whatever login the gateway host has. They are stored per channel and passed to
 every run here as environment variables, so a CLI picks them up by itself: `supabase`, `vercel`

@@ -1556,6 +1556,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a missing runtime target from a known absent grant. The same facts reach Claude and Codex skill
   discovery, including clean workspaces. Admin guide overrides keep their documented precedence.
   → TEST-PLAN: Container runtime (operator-home guide acceptance).
+- **Current access facts on resumed turns:** every engine attempt also receives the resolved
+  home-access setting/mount in its prompt, with explicit precedence over stale thread claims.
+  Guide generation and attempt prompts share one access-note generator. Fresh/resumed, clean,
+  model-retry, healed and fallback attempts retain these facts; an enabled gateway switch is
+  distinguished from the current channel's actual grant and a proposed switch to Admin mode.
+  Environment credentials are described as usable when injected, with masked listing/reveal
+  surfaces and redacted outputs. → TEST-PLAN: Container runtime (resumed access facts).
 **Since 2026-09-03 this is the ONLY runtime (Linux + containers only):** the `host` backend, the
 gateway-wide kill switch, the per-channel runtime pin and the host↔container session carry below
 are retired, bullet by bullet; everything else stands.
