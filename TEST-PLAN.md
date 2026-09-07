@@ -3,7 +3,6 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
-## Base modes and independent options (2026-09-08)
 ## Disposable Linux lifecycle workflow
 
 - Automated setup: dispatch `.github/workflows/linux-lifecycle.yml` for the candidate ref (a PR
