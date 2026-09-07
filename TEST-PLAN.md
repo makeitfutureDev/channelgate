@@ -864,6 +864,26 @@ structural invariants are automated; rendered navigation and feature claims also
       capability nonce while retaining author/origin/trust/renewal scope, and Claude→Codex fallback
       remints an engine-bound capability (`test/access-grants.test.js`,
       `test/run-grant-isolation.test.js`, `test/run-engine-mcp.test.js`).
+- [x] Unit **catalog plugin warm reuse** (`test/run-grant-isolation.test.js`): materialize a real
+      catalog grant twice at different clock times; the immutable plugin path and settings path
+      remain identical. Only generated plugin `materializedAt` is omitted; all revision metadata
+      remains, and the workspace's observed timestamp is untouched. Changing actual skill bytes,
+      revoking the grant, or changing Bash permissions changes the corresponding warm fingerprint
+      input. Regression failed before the fix on the repeated plugin path assertion.
+- [ ] Live **catalog plugin warm reuse** (Claude and Codex): use one otherwise idle Worker channel
+      per engine with at least one shared catalog skill, default warm keepalive, no personal skill
+      overlay, and the same approved author. Wait for owned active runs and leases to reach zero;
+      stop only that fixture container, preserving its HOME volume. Send `Reply with exactly
+      CONTAINER-OK.`; after completion capture container identity, Claude PID, plugin path, session
+      identity, `run_config` and usage. Within two minutes send `Reply OK.` in the same thread.
+      Pass: both exact replies arrive; `isNewSession=false`, same engine session and container;
+      Claude retains its PID and shared plugin path. Record cold/warm durations side by side;
+      do not compare against a retired host runtime or infer process reuse from timing alone.
+      Codex requires session resume, not a persistent Claude process. Pre-fix live evidence on
+      2026-09-08: Claude replaced its process despite unchanged config; 380 plugin files compared,
+      exactly 33 generated metadata files differed only in `materializedAt`. Codex resume passed.
+      A maintainer must execute the corrected live gate after deployment; unit success is not a
+      live pass.
 - [x] Admin UI/API: org/channel/user tier navigation round-trips authoritative grants, preserves
       saved-but-currently-unlisted skills, and cannot erase connector selections when discovery is
       still loading (`test/access-grants.test.js`).

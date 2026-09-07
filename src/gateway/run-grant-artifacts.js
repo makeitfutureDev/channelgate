@@ -126,7 +126,11 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
   const skillsDir = path.join(pluginDir, "skills");
   await mkdir(path.join(pluginDir, ".claude-plugin"), { recursive: true });
   await mkdir(skillsDir, { recursive: true });
-  const copied = await enableSkills(skillsDir, skillNames);
+  // Engine plugins are immutable revision snapshots. A fresh materialization timestamp would
+  // change their content hash on every turn and retire an otherwise reusable warm process.
+  // Omit only that generated observation field here; ordinary workspace materialization keeps
+  // its real timestamp, and all revision facts, skill bytes and grants remain fingerprinted.
+  const copied = await enableSkills(skillsDir, skillNames, { recordMaterializationTime: false });
   // Gateway-generated rather than source-library entries. Import fixed names only, never an
   // arbitrary project skill. `cp` retains references/, scripts/, and assets.
   // Same no-follow rule as copyWorkspaceAgents: both the container and the named skill folder must
