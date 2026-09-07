@@ -63,20 +63,21 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   longer offered. MCP Connections, Cloud MCP, Environment tokens, and Skills are separate first-class
   channel pages rather than nested beneath Tools; enabled skills sort first and the channel-level
   Grant Tier switch is gone.
-- **Manager-only Slack settings console:** replies requested by a current channel manager add a
+- **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its four-tab Block Kit console mirrors the web
-  setup concepts: Engine & model can be changed under the gateway runtime policy; MCP Connections
+  setup concepts: Engine & model can be changed by every authorized user in this console; MCP Connections
   rotates/removes the write-only Composio, Toolbox and Make MCP credentials plus inherited-token
   policy, and edits the Composio account label shared with the web setup form. Labels are shown
   in the summary and prefilled for editing; changing or clearing a label preserves the token.
-  Cloud MCP capabilities can be activated/deactivated independently for Claude and Codex;
+  Only admins can see or manage Cloud MCP capabilities, independently for Claude and Codex;
   Skills supports direct grants and live template assignment; and Secrets opens the established
   add/update/remove manager. Inherited and template grants are labelled and cannot be removed from
   the wrong tier. Credential forms never prefill stored values, and all views expose only
   configured/masked state. Opening it, navigating, submitting, and every individual mutation
-  re-check current channel membership plus `canManage`, so a historic control cannot retain revoked
-  access. Secret editing additionally keeps its command-execution gate; admin-only runtime policy
-  remains admin-only.
+  re-check current channel membership plus agent authorization, including explicit channel guests,
+  so historic controls cannot retain revoked access. Cloud MCP actions additionally re-check admin
+  status. Secrets can be edited in every channel mode, including through `/secrets`; file-edit
+  permissions and the separate `/model` command policy are unchanged.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
   admins are selected and locked, while explicit guest grants remain independently editable.

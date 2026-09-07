@@ -71,11 +71,11 @@ export function secretsButton(channelId, threadTs, authorId, label = "🔑") {
   };
 }
 
-// Channel managers get one compact route from the reply footer to the current channel setup.
-// `mayManage` is resolved by the authenticated message pipeline before the run starts; the action
+// Authorized agent users get a route from the reply footer to the current channel setup.
+// `mayUseSettings` is resolved by the authenticated message pipeline before the run starts; the action
 // handler repeats the live authorization check so a stale button never preserves old privileges.
-export function settingsButton(channelId, threadTs, authorId, mayManage = false, label = "⚙️ Settings") {
-  if (!channelId || !authorId || !mayManage) return null;
+export function settingsButton(channelId, threadTs, authorId, mayUseSettings = false, label = "⚙️ Settings") {
+  if (!channelId || !authorId || !mayUseSettings) return null;
   return {
     type: "button",
     action_id: CHANNEL_SETTINGS_ACTION_ID,
@@ -162,12 +162,12 @@ export function reviewFileButtons(result, { channel = "", threadTs = "", authorI
   }));
 }
 
-export function footerButtons(result, { channel = "", threadTs = "", authorId = "", mayManage = false } = {}) {
+export function footerButtons(result, { channel = "", threadTs = "", authorId = "", mayUseSettings = false } = {}) {
   return [
     resumeButton(result.cwd, result.sessionId, result.engine),
     filesButton(channel, threadTs, authorId),
     secretsButton(channel, threadTs, authorId),
-    settingsButton(channel, threadTs, authorId, mayManage),
+    settingsButton(channel, threadTs, authorId, mayUseSettings),
     ...reviewFileButtons(result, { channel, threadTs, authorId }),
   ].filter(Boolean);
 }

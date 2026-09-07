@@ -9,7 +9,7 @@ const { App, LogLevel } = pkg;
 import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, isAdmin, isApproved, listChannels, getComposioToken, getToolboxToken } from "../config/store.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { effectiveMeta } from "../gateway/run.js";
-import { modeLabel, canManage, isAuthorized } from "../gateway/modes.js";
+import { modeLabel, isAuthorized } from "../gateway/modes.js";
 // Re-exported: the authorization contract moved to gateway/modes.js (beside canManage).
 export { isAuthorized };
 import { requestApproval, handleApprovalClick, handleApprovalCommentSubmit, APPROVAL_ACTIONS, setApprovalClient } from "./approvals.js";
@@ -337,12 +337,10 @@ const SECRETS_PURPOSE = {
   denied: "You're not authorized to see this channel's secrets.",
 };
 
-async function secretsContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false } = {}) {
+export async function secretsContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false } = {}) {
   const ctx = await fileExplorerContext(client, { channelId, userId, expectedSlug, verifyMembership, purpose: SECRETS_PURPOSE });
-  // Writing a runtime credential is exactly as privileged as running commands with it, so it is
-  // gated on the same predicate as editing this channel's files: the channel must be able to
-  // execute something, and in an admin-mode channel only an admin may do it.
-  return { ...ctx, mayEdit: canEditChannelFiles(effectiveMeta(ctx.meta), { isAdminUser: ctx.userIsAdmin }) };
+  // Authorized users can manage write-only credentials in every channel mode.
+  return { ...ctx, mayEdit: true };
 }
 
 async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "" } = {}) {
@@ -357,16 +355,14 @@ async function openSecretsManager(client, triggerId, { channelId, userId, thread
   await logEvent("channel_secrets_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
-// ── Manager-only channel settings ──────────────────────────────────────────
-// The footer control is visible only when the authenticated request author may manage this
-// channel. Re-check on every modal open/tab click because old Slack messages remain interactive
-// after a person's role or the channel's manageAccess policy changes.
+// ── Settings for authorized channel users ──────────────────────────────────
+// Re-check access and membership on every interaction; Cloud MCP additionally requires admin.
 const SETTINGS_PURPOSE = {
   expired: "This channel settings view expired. Open it again from a recent reply.",
   denied: "You're not authorized to view this channel's settings.",
 };
 
-export async function channelSettingsContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false } = {}) {
+export async function channelSettingsContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false, cloudMcp = false } = {}) {
   const ctx = await fileExplorerContext(client, {
     channelId,
     userId,
@@ -374,10 +370,7 @@ export async function channelSettingsContext(client, { channelId, userId, expect
     verifyMembership,
     purpose: SETTINGS_PURPOSE,
   });
-  const approved = await isApproved(userId);
-  if (!canManage(ctx.meta, { authorId: userId, isAdminUser: ctx.userIsAdmin, isApprovedUser: approved })) {
-    throw new Error(SETTINGS_PURPOSE.denied);
-  }
+  if (cloudMcp && !ctx.userIsAdmin) throw new Error("Only administrators can manage Cloud MCP.");
   return ctx;
 }
 
@@ -429,10 +422,11 @@ function channelSettingsSnapshot(meta = {}) {
   };
 }
 
-function channelSettingsEditOptions(meta, userIsAdmin) {
+export function channelSettingsEditOptions(meta, userIsAdmin) {
   return {
-    canEditRuntime: Boolean(meta?.isDM) || canChangeChannelRuntime(userIsAdmin),
-    canEditSecrets: canEditChannelFiles(effectiveMeta(meta), { isAdminUser: userIsAdmin }),
+    canEditRuntime: true,
+    canEditSecrets: true,
+    canManageCloudMcp: Boolean(userIsAdmin),
   };
 }
 
@@ -1037,6 +1031,7 @@ async function connectAndWire(app) {
       if (!clicker || state.ownerId !== clicker) throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
       let { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
         channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
+        cloudMcp: actionId.startsWith("cg_channel_settings_cloud_"),
       });
       const updateCurrent = (view) => client.views.update({
         view_id: body.view.id,
@@ -1055,7 +1050,6 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID) {
-        if (!meta.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Only administrators can change the channel runtime under the current gateway policy.");
         const data = runtimeEditorData(meta);
         await client.views.push({
           trigger_id: requireTrigger(),
@@ -1065,7 +1059,6 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID || actionId === CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID) {
-        if (!meta.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Your runtime-change permission was revoked.");
         const selected = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
         const engineChoice = actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID ? selected : state.engine;
         const modelChoice = actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID ? SETTINGS_DEFAULT_VALUE : selected;
@@ -1237,7 +1230,6 @@ async function connectAndWire(app) {
       const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
         channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
       });
-      if (!meta.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Only administrators can change the channel runtime under the current gateway policy.");
       let resolved;
       try {
         resolved = runtimeSettingsPatch(form);
