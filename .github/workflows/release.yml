@@ -11,6 +11,10 @@ permissions:
 jobs:
   evidence:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Fail if docker save fails, even when the gzip process itself exits successfully.
+        shell: bash
     permissions:
       contents: read
       id-token: write
@@ -19,6 +23,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22.13"
@@ -38,6 +43,7 @@ jobs:
           docker image inspect channelgate/release-candidate > dist/release/runtime-image.json
           docker run --rm -i --network none --read-only --entrypoint node channelgate/release-candidate - < scripts/runtime-model-inventory.mjs > dist/release/runtime-models.json
           docker save channelgate/release-candidate | gzip > dist/release/runtime-image.tar.gz
+          gzip --test dist/release/runtime-image.tar.gz
       - name: Inventory installed OS, Python and npm packages in the image
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0 (pinned)
         with:

@@ -1,7 +1,7 @@
 # Release acceptance packet
 
 Status: **prepared; full live QA deferred to the planned campaign** (owner instruction,
-2026-09-08). Candidate: **0.6.0-rc.1**. These are reproducible definitions, not claimed
+2026-09-08). Candidate: **0.6.0-rc.2**. These are reproducible definitions, not claimed
 passes. Use disposable private fixtures only. Record the actual channel IDs, host/image revision,
 engine/model versions, timestamps and evidence links when executing. No live chat/provider fixture
 was created or used during the source remediation. A separate disposable container lifecycle test
