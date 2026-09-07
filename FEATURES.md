@@ -51,6 +51,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   A missing personal identity is never substituted: a request for the requester's own account is
   served by `composio-user` or answered with the fact that it is absent, never from the shared
   identity's data — that identity holds other people's accounts.
+  The rule now travels with the FACT it applies to: every run that injects Composio prepends one
+  engine-neutral line to its prompt naming the identities that turn received — both (with the
+  ask-first stop), only the requester's, or only the shared one (where a request for "my inbox" is
+  answered by saying so and stopping). It is per run and per author, so a shared instruction file
+  never has to carry a per-author sentence, and a channel with no Composio gets no line at all.
   → TEST-PLAN: Composio identity and connection discovery.
 
 - **Focused conversation settings:** Access presents Read-only, Worker, and Autonomous as the
@@ -1206,7 +1211,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   substitutes. A **DM** is personal-only: neither the channel token nor the organization default
   backs `composio-agent` there, and SDK mode mints no channel session for it, so a one-to-one
   conversation can only ever act as the requester's own account (mpim/group DMs and channels are
-  unchanged).
+  unchanged). Which identities a run built is also stated IN the prompt: one line, prepended next to
+  the fresh-session memory catalog and the caller's provenance note, from the same predicate that
+  decides which servers the MCP config carries — so the note can never describe a server the run
+  does not have.
   → TEST-PLAN: Security (Composio isolation) + MCP injection & tokens.
 - Per-run MCP config: the **gateway control MCP** is always injected (scheduling + channel-admin
   tools, scoped to the channel/author, run outside the sandbox); personal/shared **Composio** and
