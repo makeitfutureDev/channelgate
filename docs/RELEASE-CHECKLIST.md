@@ -16,11 +16,15 @@
 - [x] Every commit in the candidate carries a `Signed-off-by` trailer per `CLA.md`, and any
       contribution predating the CLA has a recorded acceptance (all authorship is the Licensor's).
 - [x] The published version's public-availability date is recorded in `CHANGELOG.md` (0.5.0 — 2026-09-06).
-- [ ] Candidate version/tag/changelog and `docs/COMPATIBILITY.md` match `v0.6.0-rc.2`;
-      record the exact tag and verified evidence before checking this item.
+- [x] Version/tag/changelog and `docs/COMPATIBILITY.md` match `v0.6.0-rc.2` at
+      `7842559b0350434a3651f66ce32e4bb74468c439`; clean-source metadata and the exact tag were
+      verified by the [candidate workflow](https://github.com/makeitfutureDev/channelgate/actions/runs/34165366930).
 - [x] CI, security coverage, dependency/secret scans, and real CLI nightly canaries are green (2026-09-06).
-- [ ] Release workflow emitted the image SBOM, model hashes, exact image archive, checksums and
-      verifiable GitHub artifact attestations for this candidate.
+- [x] The candidate workflow emitted the actual image SPDX inventory, model hashes, exact image
+      archive, checksums and GitHub attestations. Independent downloaded-file verification passed
+      all nine subjects with the exact source digest/tag, release workflow and hosted-runner policy;
+      all 15 image layers and all 17 model entries matched. Image archive SHA-256:
+      `cfc216695b2a08c7a60350cdf090d5ee597da0d0f41c515325967b2b616a72d8`.
 - [x] Encrypted backup and `npm run restore:drill` passed using isolated synthetic data,
       including replacement restore with database/config verification (2026-09-08,
       [Linux lifecycle evidence](https://github.com/makeitfutureDev/channelgate/actions/runs/34164530300)).
@@ -37,4 +41,6 @@
 - [ ] Candidate deployment retention, restore and incident procedures verified against
       `docs/OPERATIONS.md`; project contact details do not prove a deployment's deletion behavior.
 - [ ] Independent review has no unresolved critical/high finding (or documented authorized acceptance).
+      Review of this candidate's installer, lifecycle, scanner and release evidence found no
+      critical/high issue; this does not close the separate legal, provider-account or live gates.
 - [ ] Previous release and runtime snapshot retained for the rollback window.
