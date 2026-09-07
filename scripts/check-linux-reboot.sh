@@ -88,7 +88,7 @@ qemu-system-x86_64 -enable-kvm -cpu host -smp 2 -m 4096 -display none -monitor n
   -serial "file:$FIXTURE/serial.log" \
   -drive "file=$FIXTURE/guest.qcow2,format=qcow2,if=virtio" \
   -drive "file=$FIXTURE/seed.img,format=raw,if=virtio" \
-  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22 -device virtio-net-pci,netdev=net0 \
+  -netdev user,id=net0,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 -device virtio-net-pci,netdev=net0 \
   > "$FIXTURE/qemu.log" 2>&1 &
 QEMU_PID=$!
 SSH=(ssh -i "$FIXTURE/ssh-key" -p 2222 -o BatchMode=yes -o ConnectTimeout=5
@@ -150,6 +150,10 @@ sha256sum --check node.sha256
 tar -xJf "$NODE_ARCHIVE" -C /usr/local --strip-components=1
 printf 'node_version=%s\nnode_sha256=%s\n' "$(node --version)" "$(awk '{print $1}' node.sha256)"
 phase=public-source
+echo 'CHECK public browser CDN connectivity from the IPv4 guest network'
+curl -4 --head --location --silent --show-error --connect-timeout 15 --max-time 45 \
+  --output /dev/null --write-out 'browser_cdn_http=%{http_code} connect_seconds=%{time_connect}\n' \
+  https://cdn.playwright.dev/ || true
 git clone --quiet --no-checkout "https://github.com/$1.git" "$APP_DIR"
 git -C "$APP_DIR" fetch --quiet origin "$2"
 git -C "$APP_DIR" checkout --quiet --detach "$2"

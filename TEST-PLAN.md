@@ -25,11 +25,13 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   unit evidence is uploaded separately as `update-fixture-tests.tap`; injected failures do not
   count as real authenticated engine update/rollback acceptance.
 - Hosted updater operations: `scripts/check-update-rollback-hosted.mjs` is restricted to that
-  exact disposable checkout/runtime, replaces only the LOCAL fixture's engine smoke response,
+  exact disposable checkout/runtime, controls the LOCAL fixture's engine smoke and test commands,
   and creates a local bare Git upstream. It invokes the unmodified CLI updater first against a
   candidate whose test exits 42, then one whose live health reports an incorrect revision.
   Require two durable `rolled_back` results, checkout/running revision A, new healthy service
   instance, released update lock, private operator recovery snapshot and unchanged SQL marker.
+  The readiness failure must name the deliberately wrong live revision, not just any timeout;
+  both recovery-snapshot SQL/config markers must match and snapshot integrity must be `ok`.
   Finally restore the original tested source revision and verify its fresh healthy instance.
   Public evidence must name the smoke stub; no Claude/Codex authentication is proven here.
 - Guest OS reboot: dispatch `.github/workflows/linux-reboot.yml` for the candidate ref. The

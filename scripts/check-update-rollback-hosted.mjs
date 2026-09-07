@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Real CLI updater + Git + systemd rollback in the lifecycle VM. Only the engine smoke response
-// is stubbed in a LOCAL fixture commit; this is not authenticated Claude/Codex acceptance.
+// Real CLI updater + Git + systemd rollback in the lifecycle VM. Engine smoke and npm test
+// commands are controlled in LOCAL fixture commits; this is not authenticated engine acceptance.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -103,9 +103,16 @@ for (const failure of ["test", "readiness"]) {
   assert.equal(state.targetRevision, candidate);
   assert.equal(state.runningRevision, baseline);
   assert.equal(git("rev-parse", "HEAD"), baseline);
-  assert.match(state.candidateError, failure === "test" ? /npm test.*42/ : /replacement readiness timed out/);
+  if (failure === "test") assert.match(state.candidateError, /npm test.*42/);
+  else assert.ok(state.candidateError.includes(
+    `gateway is running revision lifecycle-intentionally-unready instead of ${candidate}`),
+  "readiness failure must prove the candidate actually answered with the intended wrong revision");
   assert.equal(existsSync(`${root}/update-backups/${state.id}/gateway.db`), true);
-  assert.equal(existsSync(`${root}/update-backups/${state.id}/config/lifecycle-proof.json`), true);
+  assert.equal(JSON.parse(readFileSync(`${root}/update-backups/${state.id}/config/lifecycle-proof.json`)).value, "before-backup");
+  const snapshot = new DatabaseSync(`${root}/update-backups/${state.id}/gateway.db`, { readOnly: true });
+  assert.equal(snapshot.prepare("SELECT value FROM lifecycle_proof").get().value, "before-backup");
+  assert.equal(snapshot.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+  snapshot.close();
   assert.equal(existsSync(`${root}/update.lock`), false);
   const db = new DatabaseSync(`${root}/gateway.db`, { readOnly: true });
   assert.equal(db.prepare("SELECT value FROM lifecycle_proof").get().value, "before-backup");

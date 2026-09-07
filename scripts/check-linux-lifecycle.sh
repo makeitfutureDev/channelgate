@@ -149,7 +149,7 @@ pass 'live encrypted fixture snapshot, disposable drill, replacement restore and
 # across authenticated engine versions or an induced failure in a production deployment.
 as_service env -u CHANNELGATE_DIR -u CHANNELGATE_DB -u CLAUDE_GATEWAY_DIR -u CLAUDE_GATEWAY_DB \
   -u CG_WORKSPACE_DIR -u CG_TEST_SCRATCH \
-  bash -c 'cd "$1" && node --test test/update-runner.test.js test/update-state.test.js test/update-smoke.test.js' bash "$APP_DIR" \
+  bash -c 'cd "$1" && node --test --test-reporter=tap test/update-runner.test.js test/update-state.test.js test/update-smoke.test.js' bash "$APP_DIR" \
   > "$EVIDENCE/update-fixture-tests.tap" 2>&1
 pass 'injected update failure/rollback and container smoke regression tests'
 as_service env CG_DISPOSABLE_LIFECYCLE=1 node "$APP_DIR/scripts/check-update-rollback-hosted.mjs"
