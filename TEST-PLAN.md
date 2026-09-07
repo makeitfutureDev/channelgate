@@ -3,6 +3,21 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Complete background-agent report delivery
+
+- [x] `test/durable-delivery.test.js`: both engine result shapes retain a report longer than
+  12,000 characters through an unavailable transport, persisted state, and recovery. Exact
+  content and the final sentinel survive, known secret values remain redacted, and the completed
+  agent is not run again. The durable row retires only after delivery succeeds.
+- [ ] Live Claude and Codex: in separate private Auto fixtures, launch a background agent to
+  produce a complete read-only workspace report and deliver it to the launching thread. Record
+  the started notice, foreground completion, background completion and final message(s). The
+  full stored final report must appear exactly once without a second model turn. For the long
+  variant, prepare a non-secret report over 12,000 characters ending `QA-REPORT-END`, ask the
+  background agent to return it completely, and compare the delivered chunks with the actual
+  engine final report. The end marker must survive; model failure to produce the fixture is
+  separate from delivery truncation. Preserve original failures and record exact retests.
+
 ## QA fixture readiness and contract reconciliation (2026-09-08)
 
 - [x] `container-image.test.js` publishes the escaped child's PID only after entering its new

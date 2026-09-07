@@ -32,7 +32,6 @@ import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 
 const MAX_TAIL = 6_000; // chars of combined stdout/stderr fed back to the agent
-const MAX_AGENT_REPORT = 12_000; // chars of a background agent's final report fed back to the thread
 // Runtime caps are a runaway backstop, NOT a budget — the same philosophy as the turn watchdog
 // (a run is never killed for being quiet or merely long). Agent jobs are confined engine runs, so
 // they get a week; shell jobs run unsandboxed on the daemon, so they keep a short default unless
@@ -682,9 +681,10 @@ export class BackgroundJobs {
     rec.pendingDelivery = {
       outcome: resolvedOutcome,
       durMs,
-      // The agent's final report lives only in memory otherwise; persist it so a redelivery after
-      // a restart still carries the report instead of degrading to the log tail.
-      report: rec.kind === "agent" && rec.result?.content ? redactSecretValues(rec.result.content, outputSecrets).slice(0, MAX_AGENT_REPORT) : "",
+      // Preserve the entire redacted final report for direct delivery and restart recovery.
+      // The old continuation-prompt preview limit silently cut successful reports mid-sentence;
+      // successful agent output is now delivered directly through the normal chunking pipeline.
+      report: rec.kind === "agent" && rec.result?.content ? redactSecretValues(rec.result.content, outputSecrets) : "",
     };
     this._persist();
     await logEvent("bg_finish", {

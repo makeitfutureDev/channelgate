@@ -7,6 +7,11 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Complete background-agent reports:** successful Claude and Codex agent reports retain their
+  full redacted content in durable delivery state. Long reports use the regular outbound chunking
+  pipeline, including after transport recovery, without a second model turn or silent preview cutoff.
+  → TEST-PLAN: Complete background-agent report delivery.
+
 - **Per-attempt runtime identity:** every orchestrated turn receives its selected engine,
   configured model/effort and fresh/resumed session state, including clean mode, model retries,
   session recovery and cross-engine fallback. The assistant is told to distinguish configured

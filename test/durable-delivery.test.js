@@ -286,6 +286,37 @@ test("a completed background agent delivers its report without a second model tu
   assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM bg_jobs").get().n, 0);
 });
 
+for (const engine of ["claude", "codex"]) {
+  test(`a large ${engine} background report survives recovery complete and redacted`, async () => {
+    getDb().exec("DELETE FROM bg_jobs");
+    const secret = "qa-private-report-fixture";
+    const content = `Report header ${secret}\n${"A checked item with its evidence.\n".repeat(700)}END-OF-COMPLETE-REPORT`;
+    const expected = content.replace(secret, "[REDACTED]");
+    const jobs = new BackgroundJobs({}); // delivery must wait for a reachable transport
+    const rec = {
+      ...jobRecord(`bg-large-${engine}`), kind: "agent", command: "",
+      task: "Return the complete report.", secretValues: [secret],
+      result: { content, engine },
+    };
+    jobs.jobs.set(rec.id, rec);
+    await jobs._finish(rec, { outcome: { ok: true, kind: "success", summary: "completed successfully" } });
+    const saved = fromJson(getDb().prepare("SELECT data FROM bg_jobs WHERE id = ?").get(rec.id).data, null);
+    assert.equal(saved.pendingDelivery.report, expected, "durable payload keeps the final item, not just a preview");
+    assert.doesNotMatch(JSON.stringify(saved), new RegExp(secret));
+    const delivered = [];
+    const { slack } = fakeSlack();
+    const revived = new BackgroundJobs({
+      slack,
+      runner: async () => { throw new Error("a completed report must not require another model turn"); },
+      deliver: async (_client, payload) => delivered.push(payload),
+    });
+    await revived.recover();
+    assert.equal(delivered.length, 1);
+    assert.equal(delivered[0].result.content, expected);
+    assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM bg_jobs").get().n, 0);
+  });
+}
+
 // ── H4: pid identity ─────────────────────────────────────────────────────────────
 
 test("a recycled pid is not our child, and an unverifiable probe never invents a death", () => {
