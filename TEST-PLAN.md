@@ -3328,6 +3328,12 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       states, then grants it to one conversation; each positive and negative query proves the row
       is included or excluded, and Disabled includes normally hidden catalog rows
       (`test/skills-admin-ui.test.js`, `test/skills-admin-api.test.js`).
+- [x] Browser filtering regression: given the unfiltered API-shaped rows from the reported live
+      failure, selecting Mandatory leaves only the mandatory row; Enabled and Discoverable enforce
+      both sides; Assigned includes organization, explicit, template and channel-section grants but
+      not a transitive dependency. The client fetches deleted rows explicitly, then enforces the
+      selected state even while an older daemon process is still serving the API
+      (`test/skills-catalog-filters.test.js`).
 - [x] Admin UI (SKL-13 regression): every class the admin JS hides by setting `.hidden` carries a
       `[hidden] { display: none }` companion rule — an author `display` declaration beats the UA
       sheet's `[hidden]` whatever the specificity, so without it the template skill search filtered

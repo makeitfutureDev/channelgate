@@ -53,6 +53,9 @@ test("catalog filters keep owner and expose governance plus assignment states", 
   assert.match(js, /binaryOptions\(state\.discoverable, "discoverable or not", "Discoverable", "Not discoverable"\)/);
   assert.match(js, /binaryOptions\(state\.mandatory, "mandatory or not", "Mandatory", "Not mandatory"\)/);
   assert.match(js, /binaryOptions\(state\.assigned, "assigned or not", "Assigned", "Not assigned"\)/);
+  assert.match(js, /import \{ filterSkillCatalog \} from "\.\/skills-catalog-filters\.js"/);
+  assert.match(js, /api\(`\/api\/skills\/catalog\?\$\{filters\}&deleted=1`\)/);
+  assert.match(js, /skills: filterSkillCatalog\(catalog\.skills/);
   assert.doesNotMatch(js, /id="skills-category"|id="skills-source"|id="skills-removed"/);
 });
 

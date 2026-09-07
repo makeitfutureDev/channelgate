@@ -4,6 +4,7 @@
 // src/web/routes/skills.js. No framework — one delegated click handler per panel.
 import { api } from "./admin-api.js";
 import { confirmDialog, escapeHtml as esc } from "./admin-view.js";
+import { filterSkillCatalog } from "./skills-catalog-filters.js";
 
 const state = {
   tab: "usage",
@@ -72,12 +73,20 @@ async function refreshAll() {
   ].filter(Boolean).join("&");
   const [overview, catalog, catalogAll, profiles] = await Promise.all([
     api("/api/skills/overview"),
-    api(`/api/skills/catalog?${filters}`),
+    api(`/api/skills/catalog?${filters}&deleted=1`),
     api("/api/skills/catalog"),
     api("/api/skills/profiles"),
   ]);
   state.overview = overview;
-  state.catalog = catalog;
+  state.catalog = {
+    ...catalog,
+    skills: filterSkillCatalog(catalog.skills, {
+      enabled: state.enabled,
+      discoverable: state.discoverable,
+      mandatory: state.mandatory,
+      assigned: state.assigned,
+    }, { overview, profiles: profiles.profiles }),
+  };
   state.catalogAll = catalogAll;
   state.profiles = profiles.profiles;
   if (!state.usage) state.usage = (await api("/api/skills/usage?days=30")).report;

@@ -2250,6 +2250,8 @@ are retired, bullet by bullet; everything else stands.
   selection-first **Templates** with searchable skill/category controls and assignment preview,
   and searchable/alphabetic **Usage** with By skill / By channel rollups, compact comparison bars,
   detection provenance and explained context warnings instead of every profile's full skill dump.
+  Catalog state filters are enforced in both the API and browser, so newly served static assets do
+  not expose cosmetic controls while the long-running daemon is waiting to restart.
   → TEST-PLAN: Skills platform (Core).
 - **Governed skill discovery and mandatory loading**: every catalog row can be disabled without
   disabling its source, approved for member/agent discovery, or made mandatory in every
