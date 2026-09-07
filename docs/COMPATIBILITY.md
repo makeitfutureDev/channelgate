@@ -1,6 +1,6 @@
 # Compatibility matrix
 
-Candidate: **0.6.0-rc.1**, prepared 2026-09-08. Stable promotion awaits full live QA.
+Candidate: **0.6.0-rc.2**, prepared 2026-09-08. Stable promotion awaits full live QA.
 The component matrix below describes this candidate.
 
 ## What the GitHub checks prove
