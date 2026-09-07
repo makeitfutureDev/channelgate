@@ -107,7 +107,7 @@ export function register(server, ctx) {
       const floor = getScheduleMinIntervalMinutes();
       const gap = minIntervalMinutes(cron);
       if (gap !== null && gap < floor) {
-        return text(`That cron fires every ~${gap} min, which is more often than the ${floor}-min minimum. Use a less frequent schedule (e.g. hourly "0 * * * *") or a one-time task.`);
+        return text(`That cron fires every ~${gap} min, which is more often than the ${floor}-min minimum for gateway schedules. For a short-interval check that stays in THIS thread ("every few minutes until X"), use your harness's own loop pacing (the /loop skill: ScheduleWakeup or CronCreate — the gateway re-arms the thread; see the gateway-usage reference loops.md). Otherwise use a less frequent schedule (e.g. hourly "0 * * * *") or a one-time task.`);
       }
       const s = addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify: mode, notifyUserId, delivery, ...reminderFields });
       const what = reminderFields.kind === "reminder" ? "Reminder" : "Scheduled";

@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Loop guidance: the schedule tool's minimum-interval refusal now points at the thread's native
+  loop pacing for short repeats, the loops reference says a sub-floor repeat is never a background
+  agent or an in-turn sleep, and a loop's stop reply must state the iterations run and the pending
+  tick dropped.
 - Full-access channels have their shell back. The admin-run settings file is the one an admin
   author's escalated turn actually loads, and it was derived by copying the shared file and
   removing a single key — so it inherited read mode's "every Bash command asks for approval" rule

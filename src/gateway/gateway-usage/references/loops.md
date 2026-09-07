@@ -2,7 +2,9 @@
 
 A **loop** repeats one task in the thread you are already in, keeping the thread's context between
 iterations. Use it for "keep checking X until Y", "watch the deploy", "poll this every 5 minutes",
-or any task whose next step depends on what the previous iteration found.
+or any task whose next step depends on what the previous iteration found. It is the ONLY correct
+answer for a repeat shorter than the gateway schedule floor (default 60 min): never a background
+agent, never an in-turn sleep loop, and never "the scheduler's minimum is 60 minutes, so I can't".
 
 You do not need a gateway-specific tool for this. The harness's own `/loop` skill works here: the
 daemon watches your pacing calls (`ScheduleWakeup` for a self-paced loop, `CronCreate` for a fixed
@@ -54,9 +56,13 @@ will deliver is not.
 ## Stopping
 
 - **You** stop it by calling the stop form of the wake-up (`stop: true`) on the iteration where the
-  work is done. Say plainly in that reply that the loop is finished.
+  work is done. Say plainly in that reply that the loop is finished, how many iterations ran, and
+  that the pending tick (name the count you are dropping: normally one) was removed.
 - **The user** stops it by saying `stop` in the thread — @mentioning you in a channel, bare in a
-  DM. That cancels the run AND the pending tick.
+  DM. That cancels the run AND the pending tick; the gateway's "Stopped" notice carries the number
+  of loop ticks it dropped. A sentence like "please stop the loop" is NOT the stop word while a tick
+  is running — it lands as an ordinary message behind the busy-thread card — so tell the user the
+  exact form (`@you stop`) when you announce a loop.
 - A tick that is superseded is replaced, never stacked: scheduling twice in one turn leaves one
   pending tick, not two.
 
