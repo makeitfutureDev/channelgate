@@ -2780,9 +2780,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       nothing about behaviour — a rebuilt image does not move it, a moved work folder and the
       operator-home grant do (automated: `test/container-lifecycle.test.js`).
 - [x] Unit: a MOUNT-affecting mismatch is never deferred — idle → rebuilt before the turn is
-      exec'd; busy → the turn waits on the reaper (announced once, in-thread) and rebuilds the
-      moment the other run finishes; still busy at the bound → the turn FAILS with a message naming
-      the pending rebuild, with no `rm`, no `run` and no `start`, and `recreatePending` left true.
+      exec'd; busy → the turn waits on the reaper (initial notice plus minute reminders) and rebuilds
+      when other occupants finish, including beyond the old deadline. Stop cancels polling or a
+      queued preparation lock without `rm`, `run` or `start`. Multiple preparatory leases cannot
+      deadlock the wait, and the rebuilt container retains their protection from idle eviction.
       An IMAGE-only mismatch while busy is still deferred with "recreating when it next goes idle"
       (automated: `test/container-lifecycle.test.js`).
 - [x] Unit: `leaseCount(name, { exclude })` — a turn's own lease is not "someone else is inside"
@@ -3958,3 +3959,59 @@ channel/thread, author, harness/model and the exact prompt/action with filesyste
 Airtable case/run registration and live engine verdicts remain pending until the requesting
 user’s designated personal QA Airtable connection is available; automated results are not a
 substitute for live passes.
+
+
+## Runtime reliability acceptance — September 2026
+
+Automated: `node --test test/container-lifecycle.test.js test/container-reaper.test.js
+ test/session-engine.test.js test/message-normalize.test.js test/message-to-reply-e2e.test.js
+ test/process-outcome.test.js test/engine-switch-choice.test.js test/stop-card-engine.test.js
+ test/slack-progress.test.js test/runtime-integration-run.test.js`. Fixtures use fake Podman, fake Slack and stub engines with a disposable
+SQLite store. No provider or production access is required. Live cases below remain unexecuted.
+Local result: **159/159 focused tests passed**, static checks, secret scan and security coverage
+passed. Full coverage met thresholds (92.72% lines, 82.53% branches, 87.39% functions), with one
+unrelated service-path fixture failure caused by this environment’s private `/tmp` ancestor.
+A rerun under another TMPDIR moved the sole failure to a separate fixture’s `/tmp` containment
+assumption; it is not a clean full-suite result. Consolidated verification must use the corrected
+portable fixtures before landing.
+
+- [ ] **Mount readiness, Claude and Codex separately:** use a disposable Slack channel with an active
+  daemon background shell job `sleep 90` holding its runtime lease. Change its work directory to a
+  second disposable directory containing only `new-workspace.txt`. Send “Read new-workspace.txt and
+  reply with its text.” Require an initial wait notice, a reminder after one minute, no engine spawn
+  or container removal while the job holds its lease, and automatic recreation/read after it ends
+  without resending. Repeat with two waiting threads; both finish. Repeat and send “stop” to only
+  one waiting thread: that turn never spawns, the other still completes, and a later fresh turn works.
+- [ ] **Unsupported resume, Codex:** in an isolated CLI fault-injection fixture with an existing thread,
+  make its first resume emit exactly `thread/resume failed: list_turns is not supported yet`, then
+  permit normal execution. Ask “Repeat the marker I gave you earlier.” Require exactly one fresh
+  session recovery, transcript-provided marker, no harness switch. Unrelated list_turns errors and
+  the same words in stdout must not reset a session. Claude uses existing missing-session cases.
+- [ ] **Ambiguous kill, Claude cold and warm:** disposable channel, harmless fixture whose tool appends
+  one line to `side-effect.txt`, then waits before returning its tool result. Kill only the fixture
+  engine process with SIGKILL after the line appears. Require one error and no automatic continue
+  or retry; the file remains one line. Audit `run_error` retains engine=claude, runtime=container,
+  signal=SIGKILL or exitCode=137, processEnded=true; no invented OOM cause. Send an explicit review
+  request to inspect completed work before continuing. Codex: repeat kill and require no automatic
+  Claude-style continuation (its own structured diagnostics remain covered by runner tests).
+- [ ] **Loop Stop, Claude and Codex:** seed a gateway-owned interval loop in a disposable channel
+  (Codex does not need native Cron tools). During an active harmless tick, send “Stop the check loop
+  now”; repeat between ticks with “stop the loop”. Require immediate persisted loop deletion,
+  cancellation of the active tick, an acknowledgement and no future tick. “How do I stop the loop”
+  must remain a normal question.
+- [ ] **Throttled Stop, Claude and Codex:** use a disposable Slack API proxy holding an append and
+  assistant status clear until released. Start two harmless long turns plus a queued turn and seed
+  one loop; invoke channel Stop. Require all controllers aborted and the loop removed before proxy
+  release; independent acknowledgement post attempts proceed; run cleanup releases within its
+  one-second grace. After proxy release, delivered text is marked partial, queued text is not
+  flushed as a new answer. Audit has three `run_stopped` rows with distinct run IDs (two active,
+  one queued), one `run_stop_requested` summary and no duplicate rows after a repeated Stop.
+  The proxy may block acknowledgement delivery itself; the gateway cannot bypass Slack throttling.
+- [ ] **Mutable counts, Claude and Codex:** with `report_progress` available, request one stable stage
+  updated from details “0/4 batches checked” to “2/4 batches checked” to “4/4 batches checked” and
+  output “4 checks passed”. Require the same row to show only the latest numeric title, no stale
+  numeric rich-detail paragraphs, and one final answer. Read-only mock rendering is automated;
+  real Slack’s replacement behavior is the live gate.
+- [ ] **Secondary errors, Claude and Codex:** isolated runner fixture emits nested provider JSON on
+  automatic continuation or the second harness of an ask-mode fallback. Require readable provider
+  sentence, no raw JSON in the message/card, and retained structured audit outcome facts.

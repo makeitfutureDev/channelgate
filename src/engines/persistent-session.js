@@ -75,6 +75,7 @@ export class PersistentClaudeSession {
         signal: null,
         stderr: this.stderr.slice(0, 500),
         engine: "claude",
+        runtime: this.target.backend,
         processEnded: false,
       };
       this._die(error);
@@ -96,6 +97,7 @@ export class PersistentClaudeSession {
         signal: signal || null,
         stderr: this.stderr.slice(0, 500),
         engine: "claude",
+        runtime: this.target.backend,
         processEnded: true,
       };
       this._die(error);

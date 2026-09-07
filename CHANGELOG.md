@@ -30,6 +30,13 @@ product overview.
   engine effects. Queued tasks resume, saved results redeliver, short transport outages defer
   unclaimed recurring work, and scheduled failure notifications show a sentence instead of JSON.
   Reminder claims remain at-most-once across an ambiguous remote-post crash boundary.
+- Keep mount rebuild waits visible and cancellable until active occupants finish, then continue
+  automatically; retain preparatory leases through rebuilds and avoid concurrent waiter deadlocks.
+- Recover the narrow unsupported Codex list-turns resume response, prevent automatic continuation
+  after ambiguous Claude hard kills, and retain structured exit/signal/runtime diagnostics.
+- Recognize natural-language loop Stop, cancel loops before Slack delivery waits, record per-turn
+  Stop outcomes, and release stream cleanup after a bounded grace while preserving partial text.
+- Render numeric progress counts in replaceable titles and normalize secondary provider failures.
 
 - Admin UI: the Pending approvals rows wrap the command being approved (monospace, a few lines)
   instead of running it underneath the Approve/Deny buttons; the Automations search box uses the

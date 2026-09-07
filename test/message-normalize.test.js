@@ -31,3 +31,8 @@ test("inbound subtype and trusted-bot gating fails closed", () => {
   assert.equal(isIgnorable({ user: "U1", bot_id: "APP1", subtype: "bot_message" }, "B123", []), true);
   assert.equal(isIgnorable({ user: "U1", bot_id: "APP1", subtype: "bot_message" }, "B123", ["APP1"]), false);
 });
+
+test("loop Stop phrases enter cancellation without swallowing requests about code", () => {
+  for (const text of ["stop the loop", "Stop the check loop now!", "please cancel this loop", "halt my watch loop please"]) assert.equal(isStopCommand(text), true, text);
+  for (const text of ["how do I stop the loop", "stop the loop when done", "stop reviewing", "please stop the loop and deploy"]) assert.equal(isStopCommand(text), false, text);
+});

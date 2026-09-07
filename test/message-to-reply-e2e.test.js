@@ -190,3 +190,14 @@ test("a Claude thread inside a Codex-default channel still receives the relayed 
   assert.match(resumed.text, /resume=yes/, "the thread resumes its Claude session");
   assert.match(resumed.text, /oauth=yes/, "the resumed Claude turn must carry the relayed login even though the channel is on Codex");
 });
+
+test("ambiguous hard kills and explicit Stop never auto-continue", () => {
+  for (const details of [
+    { exitCode: 137 }, { signal: "SIGKILL" }, { explicitStop: true },
+  ]) {
+    assert.equal(runDeathRecovery({ message: "Claude session ended", details: { engine: "claude", processEnded: true, ...details } }), null);
+    assert.equal(runDeathRecovery({ message: "session is dead", details }), null);
+  }
+  assert.equal(runDeathRecovery({ name: "AbortError", message: "Claude session ended" }), null);
+  assert.equal(runDeathRecovery({ message: "session is dead" }), "retry");
+});

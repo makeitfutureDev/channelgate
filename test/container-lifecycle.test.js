@@ -342,30 +342,74 @@ test("mount mismatch + busy: waits for the runs inside, announces it, then rebui
   assert.equal(announced.length, 1, "announced once, not once per poll");
 });
 
-test("mount mismatch + busy past the bound: the turn fails fast and names the pending rebuild", async () => {
+test("mount rebuild waits past its notice interval then resumes automatically", async () => {
   let clock = 0;
-  const h = harness({
-    state: { exists: true, status: "running" },
-    lifecycleOpts: { now: () => clock, sleep: async (ms) => { clock += ms; }, recreateWaitMs: 5_000, recreatePollMs: 1_000 },
-  });
-  const t = await warmed(h, target("sm-mount-stuck"));
-  h.state.fingerprint = "c1-old-workdir";
-  h.state.mountFingerprint = "m1-old-workdir";
-
-  const job = h.reaper.acquireLease(t, { kind: "job", id: "j" });
-  const own = h.reaper.acquireLease(t, { kind: "run", id: "r1" });
-  await assert.rejects(
-    h.lifecycle.ensureUp(t, { lease: own }),
-    /must be rebuilt before it can run again.*workspace mounts changed.*1 run\(s\) are still active/s,
-  );
-  job.release();
+  let job;
+  const announced = [];
+  const h = harness({ state: { exists: true, status: "running" }, lifecycleOpts: {
+    now: () => clock, sleep: async (ms) => { clock += ms; if (clock >= 12_000) job.release(); },
+    recreateWaitMs: 5_000, recreatePollMs: 1_000,
+  } });
+  const t = await warmed(h, target("sm-mount-long"));
+  h.state.fingerprint = "old"; h.state.mountFingerprint = "old";
+  job = h.reaper.acquireLease(t, { kind: "job", id: "j" });
+  const own = h.reaper.acquireLease(t, { id: "r1" });
+  const result = await h.lifecycle.ensureUp(t, { lease: own, announce: (m) => announced.push(m) });
+  assert.equal(result.created, true);
+  assert.equal(clock, 12_000);
+  assert.equal(announced.filter((m) => /Still waiting/.test(m)).length, 2);
+  assert.equal(h.reaper.leaseCount(t.container.name), 1, "rebuild retains the waiting turn's protection from idle eviction");
   own.release();
-  // Never silently against the wrong mounts: the old container is still there, and nothing was
-  // created or started for this turn.
+  assert.equal(h.reaper.leaseCount(t.container.name), 0);
+});
+
+test("Stop aborts a rebuild waiter without touching the occupied container", async () => {
+  const controller = new AbortController();
+  const h = harness({ state: { exists: true, status: "running" }, lifecycleOpts: {
+    sleep: async () => { controller.abort(); },
+  } });
+  const t = await warmed(h, target("sm-mount-cancel"));
+  h.state.fingerprint = "old"; h.state.mountFingerprint = "old";
+  const job = h.reaper.acquireLease(t, { kind: "job", id: "j" });
+  const own = h.reaper.acquireLease(t, { id: "r1" });
+  await assert.rejects(h.lifecycle.ensureUp(t, { lease: own, signal: controller.signal }), { name: "AbortError" });
   assert.equal(h.fake.last("rm"), null);
   assert.equal(h.fake.last("run"), null);
-  assert.equal(h.fake.last("start"), null);
-  assert.equal(t.container.recreatePending, true, "the pending rebuild is visible in /status");
+  assert.equal(h.reaper.leaseCount(t.container.name), 2);
+  own.release(); job.release();
+  await h.lifecycle.ensureUp(t, {});
+  assert.ok(h.fake.last("run"), "cancellation releases the preparation lock");
+});
+
+test("concurrent preparatory leases do not deadlock a rebuild and queued preparation is cancellable", async () => {
+  let releasePoll;
+  let polled;
+  const reachedPoll = new Promise((r) => { polled = r; });
+  const h = harness({ state: { exists: true, status: "running" }, lifecycleOpts: {
+    sleep: () => { polled(); return new Promise((r) => { releasePoll = r; }); },
+  } });
+  const t = await warmed(h, target("sm-mount-concurrent"));
+  h.state.fingerprint = "old"; h.state.mountFingerprint = "old";
+  const job = h.reaper.acquireLease(t, { kind: "job", id: "j" });
+  const own = h.reaper.acquireLease(t, { id: "r1" });
+  const first = h.lifecycle.ensureUp(t, { lease: own });
+  await reachedPoll;
+  const controller = new AbortController();
+  const cancelledLease = h.reaper.acquireLease(t, { id: "cancelled" });
+  const cancelled = h.lifecycle.ensureUp(t, { lease: cancelledLease, signal: controller.signal });
+  controller.abort();
+  await assert.rejects(cancelled, { name: "AbortError" });
+  cancelledLease.release();
+  const secondLease = h.reaper.acquireLease(t, { id: "r2" });
+  const second = h.lifecycle.ensureUp(t, { lease: secondLease });
+  job.release(); releasePoll();
+  await first;
+  // Simulate the inspection of the newly-created container for the next waiter.
+  h.state.fingerprint = t.container.fingerprint; h.state.mountFingerprint = t.container.mountFingerprint;
+  own.release();
+  await second;
+  assert.equal(h.reaper.leaseCount(t.container.name), 1);
+  secondLease.release();
 });
 
 test("image mismatch + busy: still deferred — the container can see everything it could before", async () => {

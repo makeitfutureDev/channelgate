@@ -162,6 +162,7 @@ export const HELPER_COMMANDS = Object.freeze([
  *                                  BEFORE spawn; `opts.announce(text)` lets a slow start tell the user, and
  *                                  `opts.lease` is the caller's OWN lease handle (when it took one first) so
  *                                  the backend can tell "someone else is inside" from "I am".
+ *                                  `opts.signal` cancels preparation locks and readiness waits before spawn.
  * spawn(target, spec)            → RuntimeChild (sync, like child_process.spawn). Never throws for a missing
  *                                  binary — the child emits "error" exactly like spawn does.
  * probe(child)                   → Promise<boolean> — is the run's process (group) still alive? Host:
