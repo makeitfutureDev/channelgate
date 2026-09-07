@@ -13,7 +13,7 @@ Completed candidate evidence (2026-09-08): RR-15 passed for immutable tag `v0.6.
 `7842559b0350434a3651f66ce32e4bb74468c439`, in the
 [release workflow](https://github.com/makeitfutureDev/channelgate/actions/runs/34165366930).
 The downloaded nine subjects passed checksum and exact-source/tag/workflow attestation checks;
-all 15 image layers and all 17 model entries matched their recorded hashes. Tagged CI reported
+all 15 layer digests and all 17 model file/link records verified against the archive. Tagged CI reported
 2,186 passes, zero failures and four explicit browser/live skips.
 
 The [Linux lifecycle run](https://github.com/makeitfutureDev/channelgate/actions/runs/34165355246)
