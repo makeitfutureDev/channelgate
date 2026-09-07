@@ -38,7 +38,7 @@ import {
   SkillCatalogError,
 } from "../../gateway/skills/catalog.js";
 import { fileToApi, SkillFileError } from "../../gateway/skills/files.js";
-import { resolveSkillProfile } from "../../gateway/skills/resolve.js";
+import { resolveSkillProfile, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, templateSummary, templateAssignments, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
 import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, revokeSkillsFromOrg, moveSkillScope } from "../../gateway/skills/authoring.js";
@@ -387,6 +387,9 @@ export function createSkillsRouter() {
   router.post("/skills/profile/:channel/grant", guard(async (req, res) => {
     const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
     if (!slugs.length) return res.status(400).json({ error: "slugs is required" });
+    const before = await channelGrants(req.params.channel);
+    if (!before) return res.status(404).json({ error: "conversation not found" });
+    const beforeProfile = resolveSkillProfile(before.skills, { warnTokens: getSkillsContextWarnTokens() });
     const r = await grantSkillsToChannel(req.params.channel, slugs);
     if (!r) return res.status(404).json({ error: "conversation not found" });
     logEvent("skill_granted", { slug: req.params.channel, skills: r.added, author: ADMIN_UI });
@@ -395,7 +398,8 @@ export function createSkillsRouter() {
     // nowhere, so whoever pushed a channel over the cap never heard about it.
     const after = await channelGrants(req.params.channel);
     const profile = after ? resolveSkillProfile(after.skills, { warnTokens: getSkillsContextWarnTokens() }) : null;
-    res.json(await synced({ ok: true, ...r, contextTokens: profile?.contextTokens ?? null, warnings: profile?.warnings ?? [] }));
+    res.json(await synced({ ok: true, ...r, contextTokens: profile?.contextTokens ?? null,
+      ...(profile ? skillGrantContextChange(beforeProfile, profile) : { warnings: [] }) }));
   }));
 
   router.post("/skills/profile/:channel/revoke", guard(async (req, res) => {

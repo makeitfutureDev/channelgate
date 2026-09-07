@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Show current and projected context costs alongside the soft-cap warning when granting
+  channel skills through chat or the admin UI/API, while keeping activation advisory.
+
 - Deliver resolved home-access facts directly on every engine attempt, including resumed threads
   that retain stale isolation claims. The guide and prompt share one note; injected environment
   credentials are described as usable with masked listings and redacted output.

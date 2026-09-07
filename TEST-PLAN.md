@@ -3,6 +3,22 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Skill-grant context comparison
+
+- [x] `skills-admin-api.test.js` and `skills-platform.test.js`: over-cap grants succeed and
+  their warnings name current cost before granting, projected next-message cost and cap;
+  repeated grants keep the same estimate, and under-cap grants add no warning.
+- [ ] Admin UI, disposable fixture: create one small skill and one skill with a description
+  above a 300-token soft cap. Capture initial grants. Grant the large skill from its Catalog
+  detail; the success message must show the before/projected estimates and cap. The profile API
+  must agree with the projected estimate. Revoke it, grant the small skill and verify no cap
+  warning. Restore the initial grants and cap. This control-plane case is engine-independent.
+- [ ] Claude and Codex, separate private manager/admin fixtures: use `add_channel_skills` to
+  grant the prepared large skill, then `show_channel_skills`. Verify successful activation,
+  before/projected/cap feedback and matching active-profile estimate. A repeated grant must
+  report equal before/projected costs; a smaller under-cap set must not warn. Restore fixtures
+  and retain the original failed attempt alongside each exact retest.
+
 ## Complete background-agent report delivery
 
 - [x] `test/durable-delivery.test.js`: both engine result shapes retain a report longer than

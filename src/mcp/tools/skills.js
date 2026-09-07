@@ -9,7 +9,7 @@ import { getUser, isAdmin, isApproved, getChannelMeta } from "../../config/store
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine } from "../../config/settings.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
-import { resolveSkillProfile, checkCompatibility } from "../../gateway/skills/resolve.js";
+import { resolveSkillProfile, checkCompatibility, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
 import { fileToApi } from "../../gateway/skills/files.js";
@@ -240,6 +240,7 @@ export function register(server, ctx) {
         else unknown.push(s);
       }
       if (!known.length) return text(`None of those are grantable catalog skills: ${unknown.join(", ")}. See list_skills (personal skills are granted with add_my_skills).`);
+      const { sharedProfile: beforeProfile } = await channelProfile();
       const r = await grantSkillsToChannel(slug, known);
       if (!r) return text("Channel isn't set up yet — send a normal message first.");
       // Same audit row the admin UI's grant route writes — the chat path used to change what every
@@ -250,7 +251,8 @@ export function register(server, ctx) {
       // loads. The soft-cap warning was computed and thrown away, so the person who pushed the
       // channel over the cap was the one person who never heard about it.
       const { sharedProfile: profile } = await channelProfile();
-      return text(`✅ Granted here: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.${profile.warnings.length ? `\n⚠️ ${profile.warnings.join("\n⚠️ ")}` : ""}`);
+      const { warnings } = skillGrantContextChange(beforeProfile, profile);
+      return text(`✅ Granted here: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.${warnings.length ? `\n⚠️ ${warnings.join("\n⚠️ ")}` : ""}`);
     },
   );
 

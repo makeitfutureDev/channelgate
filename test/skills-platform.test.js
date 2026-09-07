@@ -624,6 +624,11 @@ test("chat verb: add_channel_skills reports the over-cap warning to the person w
     const reply = (await tools.get("add_channel_skills")({ slugs: ["warn-heavy"] })).content.map((c) => c.text).join("\n");
     assert.match(reply, /Granted here: `warn-heavy`/);
     assert.match(reply, /always-on skill descriptions cost about \d+ tokens per turn \(soft cap 1\)/, "the warning reaches the reply instead of being computed and dropped");
+    const projected = Number(reply.match(/Always-on context now ~(\d+) tokens/)[1]);
+    assert.match(reply, /Current before grant: ~0 tokens/);
+    assert.ok(reply.includes(`projected next message: ~${projected} tokens (soft cap 1)`));
+    const repeated = (await tools.get("add_channel_skills")({ slugs: ["warn-heavy"] })).content.map((c) => c.text).join("\n");
+    assert.ok(repeated.includes(`Current before grant: ~${projected} tokens; projected next message: ~${projected} tokens`));
   } finally {
     saveSettings({ skillsContextWarnTokens: before });
   }

@@ -7,6 +7,12 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Skill-grant cost comparison:** an over-cap channel grant reports the current cost before
+  granting, the projected cost on the next message, and the soft cap in both admin UI/API and
+  chat tool feedback. Estimates cover organization and template grants plus dependencies;
+  activation remains advisory, and repeating a grant does not inflate the estimate.
+  → TEST-PLAN: Skill-grant context comparison.
+
 - **Complete background-agent reports:** successful Claude and Codex agent reports retain their
   full redacted content in durable delivery state. Long reports use the regular outbound chunking
   pipeline, including after transport recovery, without a second model turn or silent preview cutoff.
