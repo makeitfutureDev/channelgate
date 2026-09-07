@@ -2616,3 +2616,18 @@ child retains its name/thread identity and final elapsed/token metrics; copied f
 remain excluded. A failed baseline stops a resumed turn before it can incur ambiguously attributed
 usage. A failed live/final inspection preserves the answer and emits one visible incomplete
 accounting notice. Claude's existing native child progress/accounting path is unchanged.
+
+
+### Personal skill grants in Codex
+
+Codex receives the current author's personal skill catalog on every normal turn, alongside its
+native organization/channel repository skills. Catalog entries name the ephemeral `SKILL.md`
+files and their descriptions; Codex reads those instructions and resolves supporting references
+relative to each skill directory. This is prompt delivery, not native slash-command registration.
+Fresh, resumed and fallback turns receive the current catalog; an empty catalog supersedes prior
+personal grants. Clean mode omits it. Personal skill files stay in the existing per-run artifact
+plugin and are removed after the run, never copied into shared project skills. HOME, CODEX_HOME,
+CLI logins and provider sessions stay unchanged. A selected personal skill that cannot be
+materialized fails with its name before engine launch. This provides per-run discovery isolation
+within the channel's existing shared container boundary, not separate filesystem identities for
+people admitted to the same channel.

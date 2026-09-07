@@ -592,8 +592,17 @@ export function progressFromCodexEvent(p, state = null) {
   return null;
 }
 
+// A per-turn catalog supplements native repo/system skill discovery without changing HOME or
+// CODEX_HOME. Empty catalogs explicitly supersede a previous author's grants on resumed threads.
+export function codexPersonalSkillPrefix(skills) {
+  if (!Array.isArray(skills)) return "";
+  return "[Current personal skill grants — this run only]\n"
+    + "These instruction files supplement your native repository and system skills. When the user names a listed skill, or its description matches the task, read its SKILL.md before applying it. Resolve references and scripts relative to that file's directory. They are prompt-delivered skills, not native slash commands. Only the following personal catalog applies now; earlier personal catalogs and paths have expired. Do not copy these grants into shared project skill folders.\n"
+    + JSON.stringify(skills) + "\n[End current personal skill grants]\n\n";
+}
+
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", attachments = [], target = null, outFile, headerHelpers = [] }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
   // The CONTAINER is the confinement boundary, so Codex's own sandbox is switched off: no
   // permission profiles, no network_proxy — egress is the container's network mode.
@@ -762,7 +771,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
 
   // Prompt must come before image flags: Codex's `-i/--image <FILE>...` option is variadic, so any
   // positional after the last `-i` is consumed as another image and the CLI exits with no prompt.
-  args.push(argvSafePrompt(prompt));
+  args.push(argvSafePrompt((clean ? "" : codexPersonalSkillPrefix(personalSkills)) + prompt));
 
   // Attached images via native -i (Codex's vision path); non-image files are referenced in the
   // prompt text instead (the gateway already lists their paths there).
@@ -834,6 +843,7 @@ export async function runCodex({
   model = "",
   effort = "",
   codexStateDir = "",
+  personalSkills = null,
   attachments = [],
   // Where this turn runs (src/runtimes/): the channel's container.
   target = null,
@@ -906,7 +916,7 @@ export async function runCodex({
   // pure argv builder. They carry no credential of their own — each one reads its entry out of the
   // 0600 bundle above — but they are still per-run files, created and removed with it.
   const headerHelpers = [];
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, attachments, target: runtime, outFile, headerHelpers });
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, attachments, target: runtime, outFile, headerHelpers });
   for (const spec of headerHelpers) {
     await writeFile(spec.path, headerHelperSource({ ...spec, bundlePath: secretBundlePath }), { mode: 0o700 });
   }
