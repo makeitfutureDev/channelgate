@@ -5,6 +5,28 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 
 ## Disposable Linux lifecycle workflow
 
+- [x] Real fresh-install/restart/encrypted fixture backup/restore/uninstall acceptance passed on
+  [hosted run 34163913150](https://github.com/makeitfutureDev/channelgate/actions/runs/34163913150),
+  tested merge SHA `5d9d424f41217945c841603622cc3035a4d61def`. This used synthetic SQL/config data
+  and a public fixture passphrase in a new dedicated identity, never production data or keys.
+  The fixture backup was taken while its daemon ran; the replacement restore removed stale
+  sidecars/stray config and preserved the exact markers with SQLite integrity `ok`.
+- [x] Full lifecycle plus real CLI updater rollback passed on
+  [hosted run 34164530300](https://github.com/makeitfutureDev/channelgate/actions/runs/34164530300),
+  tested merge SHA `547ae2454d96fc038e97ae111174cebfb3bcd998`. Both the controlled test failure
+  and deliberately wrong live revision produced durable `rolled_back` state, restored checkout
+  and healthy service, preserved recovery-snapshot SQL/config markers, and released the lock.
+  The original candidate was restored before uninstall. Engine smoke and test/pretest commands
+  were controlled LOCAL fixture inputs; the CLI updater, Git, npm install/audit/static checks,
+  systemd restart, snapshot and rollback operations were real. Separate unit regressions: 37/37.
+- [x] Actual guest OS reboot/autostart/durable fixture/uninstall acceptance passed on
+  [KVM run 34164530261](https://github.com/makeitfutureDev/channelgate/actions/runs/34164530261),
+  tested merge SHA `547ae2454d96fc038e97ae111174cebfb3bcd998`. Both OS boot ID and daemon instance
+  changed, the service started without manual repair, and SQL/rootless-volume markers survived.
+  These are engine-independent operations results; authenticated conversation gates below remain
+  unexecuted. The first guest attempt timed out downloading the browser; the passing attempt used
+  an IPv4 guest network. No production download timeout or image contents were changed.
+
 - Automated setup: dispatch `.github/workflows/linux-lifecycle.yml` for the candidate ref (a PR
   changing this workflow/script also runs it). GitHub-hosted Ubuntu 24.04, Node 24, real PID-1
   systemd and rootless Podman; no job container, provider credentials or chat connection.
