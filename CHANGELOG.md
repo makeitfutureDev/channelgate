@@ -24,6 +24,9 @@ product overview.
   approves tools for both roles, while Lean applies only to non-admins in an Admin channel.
   Existing Full access records now get the promised Worker fallback.
 
+- Repository cleanup: remove unused Gemini/Hermes instruction aliases and the superseded working
+  audit. Keep canonical agent instructions, project records and active release acceptance gates.
+
 - Settings: replace the Testing with AI checkbox list with a compact searchable user selector,
   removable selection chips, keyboard navigation and a bounded results list that fits narrow screens.
 

@@ -1229,7 +1229,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   work folder, clean workspace and artifact dir mounted), while memory-off and the MCP allowlist are
   unchanged. Per-conversation gated folder: filesystem sandbox confined to the folder, persistent memory
   off, MCP allowlist. → TEST-PLAN: Security (confinement, allowlist, memory).
-- **2026-07 full-codebase review remediation** (from `IMPROVEMENTS.md`): engine children run with a
+- **2026-07 full-codebase review remediation**: engine children run with a
   minimal allowlisted env (`src/engines/child-env.js` — Slack tokens / approval secret never reach
   sandboxed processes; daemon-IPC creds ride a 0600 `internal-auth.json`); MCP tokens off argv
   (0600 temp file written only at spawn); admin UI binds loopback by default with a no-password

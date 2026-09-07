@@ -178,7 +178,7 @@ white-label — are described at
 | [SECURITY.md](./SECURITY.md) | Reporting a vulnerability, and the dependency-advisory policy |
 
 > Agent/contributor instructions live in **[AGENTS.md](./AGENTS.md)** (the canonical context
-> file; `CLAUDE.md` / `GEMINI.md` / `HERMES.md` symlink to it). Shipped features are in
+> file for Codex and contributors; `CLAUDE.md` symlinks to it for Claude Code). Shipped features are in
 > **[FEATURES.md](./FEATURES.md)**, the build roadmap is maintained privately, and the
 > regression in **[TEST-PLAN.md](./TEST-PLAN.md)**.
 
