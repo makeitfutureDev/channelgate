@@ -7,6 +7,10 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Scoped Slack reads:** the operating guide keeps retries within an explicitly requested
+  message scope. Empty searches do not permit history sweeps; channel metadata can resolve a
+  name without retrieving unrelated messages. → TEST-PLAN: Exact-message read scope.
+
 - **Skill-grant cost comparison:** an over-cap channel grant reports the current cost before
   granting, the projected cost on the next message, and the soft cap in both admin UI/API and
   chat tool feedback. Estimates cover organization and template grants plus dependencies;

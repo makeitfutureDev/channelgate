@@ -35,6 +35,18 @@ account controls visibility. Find its action via tool discovery — e.g. search
 messages/users/channels, read another channel/thread/file, or read a user profile. See
 `references/messages.md` for availability and the no-silent-substitution rule.
 
+### Narrow reads stay narrow
+When the user asks for one exact message and excludes unrelated messages, constrain retrieval,
+not just the final answer. Start with the unique quoted text and the known channel name. If only
+a channel ID is supplied, resolve its name with channel metadata or use an exact message link;
+do not assume a search modifier interprets a channel ID like a channel name.
+
+An empty result can reflect query syntax or indexing delay. Retry the same narrow query after
+checking its syntax, or report that the exact message could not be located. Do not replace it
+with channel history, a broad time window, or a workspace-wide catch-up to find the missing item.
+A general skill's history fallback does not override the user's explicit exclusion. Ask for a
+message link or a wider scope only when the permitted lookup cannot proceed.
+
 ## Attachments the user sent you
 Files/images the user attaches to their message are downloaded into this folder's `uploads/`
 subfolder and their paths are given to you. Open them with the **Read** tool (images render

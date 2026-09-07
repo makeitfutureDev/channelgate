@@ -171,6 +171,11 @@ third party's, to everyone in the conversation, and no correction afterwards tak
 Guessing right is not the standard; asking is. The same holds for writes: never send, schedule or
 post from a guessed account.
 
+**Keep the requested read scope through retries.** Permission to search for one named message
+is not permission to fetch surrounding history. If the user excludes unrelated records, keep
+every retry constrained to their requested records; an empty search does not authorize a broader
+read. See `references/reading.md` before changing search strategy.
+
 **Discover connections before you promise an action or report that an app is unavailable.
 `COMPOSIO_SEARCH_TOOLS` is the ONLY side-effect-free way to ask what is connected:**
 
