@@ -1,5 +1,10 @@
 # ChannelGate — Features
 
+- Release artifact scanning recognizes only exact SHA-256 fingerprints of reviewed public
+  toolchain fixtures. PEM exceptions bind the complete key, never a header or first body line;
+  repository/history scans and unknown or altered artifact credentials remain strict. Public
+  provenance is recorded with every exception.
+
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
 - Development acceptance policy: behavior changes include reproducible Claude and Codex

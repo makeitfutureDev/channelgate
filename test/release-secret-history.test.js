@@ -9,6 +9,7 @@ test("release scanning covers commit and candidate tag messages without echoing 
   const root = tempDir("cg-scan-history-");
   mkdirSync(path.join(root, "scripts"));
   copyFileSync(new URL("../scripts/secret-scan.mjs", import.meta.url), path.join(root, "scripts/secret-scan.mjs"));
+  copyFileSync(new URL("../scripts/reviewed-artifact-fixtures.json", import.meta.url), path.join(root, "scripts/reviewed-artifact-fixtures.json"));
   const git = (...args) => execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...args], { cwd: root, stdio: "pipe" });
   git("init"); writeFileSync(path.join(root, "file.txt"), "safe fixture\n"); git("add", "file.txt");
   const fake = "gh" + "p_" + "A".repeat(36);

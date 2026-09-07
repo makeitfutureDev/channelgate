@@ -1,0 +1,147 @@
+[
+  {
+    "pattern": "Private key block",
+    "sha256": "fb278edfcf8e17967dd3a1ac5bfb5467e24c366a94e7efcee521dc750effa9ef",
+    "description": "Public Supabase local Kong development TLS key",
+    "sources": [
+      "https://github.com/supabase/cli/blob/v2.116.0/apps/cli-go/pkg/config/templates/certs/kong.local.key",
+      "https://github.com/supabase/cli/blob/v2.116.0/apps/cli/src/legacy/commands/start/templates/kong-local-tls.ts"
+    ]
+  },
+  {
+    "pattern": "Private key block",
+    "sha256": "fed7079dd4491609e4c996e232f366ac434fa4cc9df19df363391d079d470964",
+    "description": "Public GnuTLS cryptographic self-test key",
+    "sources": [
+      "https://github.com/gnutls/gnutls/blob/12919dc7db736467987a3254a452b1d10e20b79e/lib/crypto-selftests-pk.c"
+    ]
+  },
+  {
+    "pattern": "Private key block",
+    "sha256": "5a09eb5df3674472eda0077d83cbccef72692c3d052ab393368ac57295439c58",
+    "description": "Public GnuTLS cryptographic self-test key",
+    "sources": [
+      "https://github.com/gnutls/gnutls/blob/12919dc7db736467987a3254a452b1d10e20b79e/lib/crypto-selftests-pk.c"
+    ]
+  },
+  {
+    "pattern": "Private key block",
+    "sha256": "a4d138d7ef9748464117b44fb9c0a4b5b85a1599a127d02690abaa96d03c16e6",
+    "description": "Public GnuTLS cryptographic self-test key",
+    "sources": [
+      "https://github.com/gnutls/gnutls/blob/12919dc7db736467987a3254a452b1d10e20b79e/lib/crypto-selftests-pk.c"
+    ]
+  },
+  {
+    "pattern": "Private key block",
+    "sha256": "fa0b06a72461ec0a963dcfccb8d5b61bd88a6074fc7271573bff68ab86b8c1af",
+    "description": "Public GnuTLS cryptographic self-test key",
+    "sources": [
+      "https://github.com/gnutls/gnutls/blob/12919dc7db736467987a3254a452b1d10e20b79e/lib/crypto-selftests-pk.c"
+    ]
+  },
+  {
+    "pattern": "Private key block",
+    "sha256": "ef237ea8db4f2ae9ee100e8ced96d29b5dceb0e6a948443e6b8a00b1791f9ec9",
+    "description": "Public GnuTLS cryptographic self-test key",
+    "sources": [
+      "https://github.com/gnutls/gnutls/blob/12919dc7db736467987a3254a452b1d10e20b79e/lib/crypto-selftests-pk.c"
+    ]
+  },
+  {
+    "pattern": "Private key block",
+    "sha256": "91ea1699ff6b1a34b4a1d500a9c75a808441e47b9ea68da6fb0195e01ce1dc61",
+    "description": "Public GnuTLS cryptographic self-test key",
+    "sources": [
+      "https://github.com/gnutls/gnutls/blob/12919dc7db736467987a3254a452b1d10e20b79e/lib/crypto-selftests-pk.c"
+    ]
+  },
+  {
+    "pattern": "Private key block",
+    "sha256": "7c4c63ee462e0e700cd9e29c8e0f730b3f1b484c4abdd83f1e69fcd477c061fa",
+    "description": "Public GnuTLS cryptographic self-test key",
+    "sources": [
+      "https://github.com/gnutls/gnutls/blob/12919dc7db736467987a3254a452b1d10e20b79e/lib/crypto-selftests-pk.c"
+    ]
+  },
+  {
+    "pattern": "Private key block",
+    "sha256": "d039c8119a029ab9f9c83c04d67002d887b6bc6026c4264402ab27cdf24cf138",
+    "description": "Public GnuTLS cryptographic self-test key",
+    "sources": [
+      "https://github.com/gnutls/gnutls/blob/12919dc7db736467987a3254a452b1d10e20b79e/lib/crypto-selftests-pk.c"
+    ]
+  },
+  {
+    "pattern": "GitHub token",
+    "sha256": "1f06658ad88821bce08bd420b28bd928ca24fa71f6906c00905fbba0b24877c3",
+    "description": "Compiler-adjacent string data following a four-byte token-prefix constant; not a complete credential constant",
+    "sources": [
+      "https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/network-proxy/src/credential_broker/providers/github.rs#L14",
+      "https://registry.npmjs.org/@openai/codex/-/codex-0.153.4-linux-x64.tgz"
+    ],
+    "upstreamArchiveSha256": "54818cb9fce3360cc6e44cfc5a96952cd5c1243efb43cbe488e11dda84663e08",
+    "upstreamMember": "vendor/x86_64-unknown-linux-musl/bin/codex",
+    "upstreamMemberSha256": "56ef98ab4032d317ab26e9b5e5a175650717351edb16ed9cde0cb6d1734d62da"
+  },
+  {
+    "pattern": "GitHub token",
+    "sha256": "902a57265300171f27289680dac688d3c2354f0893c50f89ec0522e0e123c3fe",
+    "description": "Compiler-adjacent string data following a four-byte token-prefix constant; not a complete credential constant",
+    "sources": [
+      "https://github.com/cli/cli/blob/v2.100.0/pkg/cmd/auth/status/status.go#L339",
+      "https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_linux_amd64.tar.gz"
+    ],
+    "upstreamArchiveSha256": "e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be",
+    "upstreamMember": "bin/gh",
+    "upstreamMemberSha256": "553949e2efa12842771efe6012aa4de21f1d591530ec17fc435f610f10e017ee"
+  },
+  {
+    "pattern": "Google API key",
+    "sha256": "1b3835891a6cecc54d6d28a1b3e1513cc001ad7bddbb1c1521c36f7763e1ffc5",
+    "description": "Vendor-distributed Chrome for Testing 153.0.8010.12 browser API configuration; not a deployment credential or a dummy key",
+    "sources": [
+      "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chrome-linux64.zip",
+      "https://chromium.googlesource.com/chromium/src/+/main/docs/api_keys.md"
+    ],
+    "upstreamArchiveSha256": "8aac35011c18f6e2d10696154af89a5728ac2ddd6dc6fad24ffdf243c3fcfd5a",
+    "upstreamMember": "chrome-linux64/chrome",
+    "upstreamMemberSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e"
+  },
+  {
+    "pattern": "Google API key",
+    "sha256": "34d464f64a851dff50696150faadf8b8f09acc1699317da6a4985119be6d11dc",
+    "description": "Vendor-distributed Chrome for Testing 153.0.8010.12 browser API configuration; not a deployment credential or a dummy key",
+    "sources": [
+      "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chrome-linux64.zip",
+      "https://chromium.googlesource.com/chromium/src/+/main/docs/api_keys.md"
+    ],
+    "upstreamArchiveSha256": "8aac35011c18f6e2d10696154af89a5728ac2ddd6dc6fad24ffdf243c3fcfd5a",
+    "upstreamMember": "chrome-linux64/chrome",
+    "upstreamMemberSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e"
+  },
+  {
+    "pattern": "Google API key",
+    "sha256": "98c0108cb5187b9e0d2fe2b058fff45e3af45ddfe72b3e6df59ab1fafa8bd722",
+    "description": "Vendor-distributed Chrome for Testing 153.0.8010.12 browser API configuration; not a deployment credential or a dummy key",
+    "sources": [
+      "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chrome-linux64.zip",
+      "https://chromium.googlesource.com/chromium/src/+/main/docs/api_keys.md"
+    ],
+    "upstreamArchiveSha256": "8aac35011c18f6e2d10696154af89a5728ac2ddd6dc6fad24ffdf243c3fcfd5a",
+    "upstreamMember": "chrome-linux64/chrome",
+    "upstreamMemberSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e"
+  },
+  {
+    "pattern": "Google API key",
+    "sha256": "76d0a2783815b7cc504688d7507d922871d8bd77ed7fdaa9af78340b8549ecf1",
+    "description": "Vendor-distributed Chrome for Testing 153.0.8010.12 browser API configuration; not a deployment credential or a dummy key",
+    "sources": [
+      "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chrome-linux64.zip",
+      "https://chromium.googlesource.com/chromium/src/+/main/docs/api_keys.md"
+    ],
+    "upstreamArchiveSha256": "8aac35011c18f6e2d10696154af89a5728ac2ddd6dc6fad24ffdf243c3fcfd5a",
+    "upstreamMember": "chrome-linux64/chrome",
+    "upstreamMemberSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e"
+  }
+]
