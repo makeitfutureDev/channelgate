@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- The "🛑 Stopped." card's resume command now names the harness the stopped thread was actually
+  running on, resolved per thread (per-thread override, then the engine that started the thread's
+  session, then the channel's engine, then the gateway default). A session belongs to one harness,
+  so a thread running the non-default one used to be handed a resume line the other CLI rejects.
+  `/resume` and the `/compact` passthrough check use the same shared resolver.
+
 - Addressed the release audit: isolated runtime credentials and daemon metadata, tightened SDK/API
   authorization and admin reauthentication, serialized memory saves, and separated interrupted
   execution from result-delivery recovery. Google Chat intake is durable and bounded; non-Slack

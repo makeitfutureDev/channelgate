@@ -12,6 +12,8 @@
 // once at DB open and left on disk as inert backups (db/import-legacy.js importThreadOverrides).
 import { getDb } from "../db/index.js";
 import { ENGINE_IDS } from "../engines/registry.js";
+import { getSessionEngine } from "./sessions.js";
+import { getEngine } from "../config/settings.js";
 
 const VALID = new Set(ENGINE_IDS);
 
@@ -41,6 +43,31 @@ export async function getThreadEngine(slug, threadKey) {
 
 export async function setThreadEngine(slug, threadKey, engine) {
   setOverride(slug, threadKey, "engine", VALID.has(engine) ? engine : "");
+}
+
+// Which harness is a thread ACTUALLY on right now — the read-only twin of the engine resolution
+// run.js performs at the top of a turn (thread override → channel engine → gateway default, then
+// decideThreadEngine letting the session's own engine outrank a mere default). Surfaces that must
+// NAME the engine without starting a turn use this: the "🛑 Stopped." card's resume button and
+// `/resume`'s printed command. A session id is engine-specific, so reading the gateway default
+// here is a real bug, not a cosmetic one — it prints a `codex exec resume` line for a Claude
+// session (and vice versa), which the CLI rejects. Order:
+//   1. the per-thread override (a "claude"/"codex" directive or the /model wizard's thread scope)
+//      — the only EXPLICIT ask, and the one thing that makes run.js switch a live thread;
+//   2. the engine that MINTED this thread's live session — a channel/global default never
+//      displaces it (decideThreadEngine), so it is what a resume must name;
+//   3. the channel's own engine (meta.engine), then
+//   4. the gateway default.
+// Never throws: a card that cannot resolve an engine still has to be posted.
+export async function resolveThreadEngine(slug, threadKey, meta = {}) {
+  if (slug && threadKey) {
+    const override = await getThreadEngine(slug, threadKey).catch(() => "");
+    if (override) return override;
+    const minted = await getSessionEngine(slug, threadKey).catch(() => "");
+    if (VALID.has(minted)) return minted;
+  }
+  const channelEngine = VALID.has(meta?.engine) ? meta.engine : "";
+  return channelEngine || getEngine();
 }
 
 // ── Per-thread MODEL / EFFORT overrides (the /model wizard's "just this thread" scope) ────────

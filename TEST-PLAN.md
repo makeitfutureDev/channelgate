@@ -1638,6 +1638,12 @@ release, no egress cut-off — so the network entry has no container equivalent 
       containing the word) is NOT intercepted — it runs as a normal prompt.
 - [ ] Stop: a plain "stop" message and a 🛑 reaction each halt an in-flight run and post "🛑 Stopped.";
       `/stop` is rejected by Slack inside a thread (words/reactions are the in-thread path).
+- [x] Unit (`test/stop-card-engine.test.js`): the "🛑 Stopped." card's 💻 resume button names the
+      harness the STOPPED THREAD ran on, not the gateway default — a Claude session in a
+      Codex-default gateway resumes as Claude and the inverse resumes as Codex, a per-thread
+      harness override outranks the session it was pinned onto, and with neither a session nor an
+      override the channel's own engine beats the gateway default. A session id is engine-specific,
+      so the old global-default read printed a `codex exec resume` line for a Claude session.
 - [ ] Stop is the end of the answer, on both engines: stop a run that is mid-answer and nothing more
       than "🛑 Stopped." arrives — no full reply beneath the card, no chunked fallback. Whatever
       text had already streamed stays put, ending in `🛑 _Stopped — partial answer._`.
