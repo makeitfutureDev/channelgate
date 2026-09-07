@@ -1914,6 +1914,12 @@ are retired, bullet by bullet; everything else stands.
   materialization of identical skills keeps the same plugin path and warm process. Workspace skill
   manifests retain their real materialization times; content, revision, grant and permission changes
   still invalidate reuse. → TEST-PLAN: catalog plugin warm reuse.
+- Claude runtime model attribution follows the primary assistant/provider stream, with the
+  CLI's initialization model as a fallback. Both cold and warm runners preserve that identity
+  ahead of terminal accounting that also includes auxiliary models: a short Opus reply cannot
+  be relabeled Haiku because a title or child agent generated more tokens. Provider usage and
+  total cost remain intact, and the footer continues to name the governing configured variant.
+  → TEST-PLAN: primary model attribution.
 - Clean mode (per channel / DM): run bare for the lowest token cost — no MCP servers injected
   (gateway control, Composio, Toolbox), no skills copied, no skills-favorites block, and no
   per-author tokens. The per-run `--mcp-config` is empty + `--strict-mcp-config` (so global servers

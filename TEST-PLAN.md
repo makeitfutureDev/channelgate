@@ -1645,6 +1645,25 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       `buildHealedPrompt` puts the thread transcript first, the session-was-lost note second, the
       original turn text last, and returns null with no transcript (bare-prompt retry for
       non-Slack callers).
+- [x] Unit **primary model attribution** (`test/claude-primary-model.test.js`): exercise the cold
+      Claude runner and two persistent turns with an 11-token primary Opus answer plus a terminal
+      `modelUsage` map containing 30 auxiliary Haiku output tokens. The primary assistant model
+      beats both initialization metadata and auxiliary child events; init remains a fallback,
+      synthetic errors cannot replace it, and a changed primary provider model remains visible.
+      Assert ledger model/runtimeModel, original provider cost and usage map, configured footer
+      variant and context window. The regression failed on both runners before the fix. Existing
+      `test/model-info.test.js` covers CLIs without primary metadata and Codex model/cost behavior.
+- [ ] Live **primary model attribution** (Claude): in an idle Worker fixture with the usual
+      configured model, send `Reply with exactly CONTAINER-OK.` in a fresh root, then `Reply OK.`
+      in that thread after completion. For both turns capture the exact session's primary
+      assistant model and correlate interactive ledger rows by author, duration, cost and tokens;
+      do not confuse nearby memory-review usage with the foreground turn. Pass: runtime/ledger
+      model matches the primary provider model; the footer retains the governing configured
+      variant and fresh/resumed state matches the root/followup. If live auxiliary usage does not
+      occur, state that explicitly; the deterministic mixed-model regression remains required.
+      Pre-fix live evidence on 2026-09-08: transcript Opus returned the 11-token answer, while the
+      matching interactive ledger incorrectly named Haiku. Original container-readiness result
+      remains a pass; model attribution is a separate regression. Post-deployment retest pending.
 - [ ] Live **session heal keeps thread context:** in a threaded conversation, break the stored
       session (delete/corrupt it), then send a context-dependent follow-up ("check again") — the
       healed fresh session answers with the thread's context (transcript replay), not amnesiac.

@@ -171,6 +171,8 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
   const agentIds = new Set(); // stable ids known to represent native subagents
   const seenToolUses = new Set();
   let text = "";
+  let initialModel = "";
+  let primaryModel = "";
   let toolUseCount = 0; // any attempted tool means replaying the turn could repeat side effects
   const markToolUse = (id) => {
     const key = String(id || `anonymous-${toolUseCount + 1}`);
@@ -271,6 +273,14 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
   };
 
   function consume(p) {
+    // Terminal modelUsage mixes the main turn with helper/subagent calls. Keep the model of
+    // the actual top-level provider message separately: a tiny answer can use fewer tokens
+    // than a Haiku title, and neither that title nor a child agent identifies the answering model.
+    const primary = p && !p.parent_tool_use_id && !p.parentToolUseId;
+    if (primary && p.type === "system" && p.subtype === "init" && typeof p.model === "string") initialModel = p.model.trim();
+    const message = p?.type === "assistant" ? p.message : p?.type === "stream_event" && p.event?.type === "message_start" ? p.event.message : null;
+    const model = typeof message?.model === "string" ? message.model.trim() : "";
+    if (primary && !p.error && !message?.error && model && model !== "<synthetic>") primaryModel = model;
     if (emitClaudeTask(p)) return;
     if (p?.type === "assistant") {
       const content = Array.isArray(p?.message?.content) ? p.message.content : (Array.isArray(p?.content) ? p.content : []);
@@ -424,6 +434,9 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
 
   return {
     consume,
+    get model() {
+      return primaryModel || initialModel;
+    },
     get text() {
       return text;
     },
