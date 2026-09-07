@@ -3960,9 +3960,11 @@ the suite runs as an enterprise deployment because it holds a license it actuall
   the PR and report unexecuted live cases; no private service access is required.
 - [ ] Maintainers record the actual private fixture identifiers and complete required live gates
   before release. Engine-independent cases must not depend on a harness.
-- [ ] For deployments using a private QA registry, use only the operator's selected personal
-  connection. This remediation session's requested Airtable write remains pending connection
-  selection/access; locally prepared cases are not a claim of an Airtable write.
+- [x] For this remediation, the operator-selected personal QA connection was used to register
+  and read back 16 active acceptance definitions: SCH-RESTART-01 through 04, SCH-ERROR-01,
+  REL-RUNTIME-01 through 07, SLK-203, REL-CODEX-02, REL-DEPS-01 and REL-SKILLS-01.
+  These cover 29 applicable engine executions. Registration is not execution: deployed live
+  verdicts remain outstanding and automated evidence must not be recorded as a live pass.
 
 ## Container update verification and recovery
 
