@@ -2,6 +2,8 @@
 
 > 0.5.0 was published on 2026-09-06 by decision of the Licensor. Items still unticked below stay
 > tracked for the next release.
+> Current candidate: **0.6.0-rc.1** (2026-09-08), draft pending the planned full live QA campaign.
+> The deferred QA gate is not waived.
 
 - [x] Authorized owner selected and documented the Makeitfuture Sustainable Use License; the
       bundled Poppins OFL notice is present and third-party components retain upstream terms.
@@ -14,7 +16,8 @@
 - [x] Every commit in the candidate carries a `Signed-off-by` trailer per `CLA.md`, and any
       contribution predating the CLA has a recorded acceptance (all authorship is the Licensor's).
 - [x] The published version's public-availability date is recorded in `CHANGELOG.md` (0.5.0 — 2026-09-06).
-- [x] Version/tag/changelog and `docs/COMPATIBILITY.md` match the candidate (`v0.5.0`).
+- [ ] Candidate version/tag/changelog and `docs/COMPATIBILITY.md` match `v0.6.0-rc.1`;
+      record the exact tag and verified evidence before checking this item.
 - [x] CI, security coverage, dependency/secret scans, and real CLI nightly canaries are green (2026-09-06).
 - [ ] Release workflow emitted the image SBOM, model hashes, exact image archive, checksums and
       verifiable GitHub artifact attestations for this candidate.
