@@ -28,10 +28,15 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
-import { channelSkillGrants, templateOfMeta } from "../gateway/skills/templates.js";
-import { engineLabel } from "../engines/registry.js";
+import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
+import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../gateway/skills/authoring.js";
+import { listSkills } from "../gateway/skills/catalog.js";
+import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
+import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
+import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
+import { logChannelPolicyChange } from "../config/channel-audit.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
@@ -45,9 +50,24 @@ import {
   SECRETS_VALUE_BLOCK_ID,
 } from "./secret-explorer.js";
 import {
-  buildChannelSettingsErrorView, buildChannelSettingsView, maskedCredential,
-  parseActionValue as parseChannelSettingsActionValue, parseSettingsMetadata,
-  CHANNEL_SETTINGS_ACTION_PATTERN,
+  buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
+  buildConnectionsEditorView, buildRuntimeEditorView, buildTemplateEditorView, maskedCredential,
+  parseActionValue as parseChannelSettingsActionValue, parseEditorMetadata, parseSettingsMetadata,
+  readConnectionsForm, readRuntimeForm, readTemplateForm,
+  CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
+  CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
+  CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
+  CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
+  CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID,
+  CHANNEL_SETTINGS_FALLBACK_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID,
+  CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID,
+  CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID, CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID,
+  CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, CHANNEL_SETTINGS_SKILL_PAGE_PREFIX,
+  CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX, CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID,
+  CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, SETTINGS_DEFAULT_VALUE, SETTINGS_NONE_VALUE,
+  CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_URL_BLOCK_ID,
+  CONNECTION_TOOLBOX_BLOCK_ID, RUNTIME_EFFORT_BLOCK_ID, RUNTIME_ENGINE_BLOCK_ID,
+  RUNTIME_MODEL_BLOCK_ID, TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
@@ -337,7 +357,7 @@ async function openSecretsManager(client, triggerId, { channelId, userId, thread
   await logEvent("channel_secrets_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
-// ── Read-only channel settings ──────────────────────────────────────────────
+// ── Manager-only channel settings ──────────────────────────────────────────
 // The footer control is visible only when the authenticated request author may manage this
 // channel. Re-check on every modal open/tab click because old Slack messages remain interactive
 // after a person's role or the channel's manageAccess policy changes.
@@ -364,14 +384,19 @@ export async function channelSettingsContext(client, { channelId, userId, expect
 function channelSettingsSnapshot(meta = {}) {
   const effective = effectiveMeta(meta);
   const effectiveEngine = effective.engine || getEngine();
+  const gatewayEngine = getEngine();
   const organization = getOrgAccessGrants();
   const channelTier = { ...effective, skills: channelSkillGrants(effective) };
   const shared = resolveAccessGrants({ organization, channel: channelTier });
   const template = templateOfMeta(effective);
   return {
     runtime: {
+      configuredEngineId: effective.engine || "",
       configuredEngine: effective.engine ? engineLabel(effective.engine) : "",
+      effectiveEngineId: effectiveEngine,
       effectiveEngine: engineLabel(effectiveEngine),
+      gatewayEngineId: gatewayEngine,
+      gatewayEngineLabel: engineLabel(gatewayEngine),
       configuredModel: effective.model || "",
       gatewayModel: getDefaultModel(effectiveEngine),
       configuredEffort: effective.effort || "",
@@ -403,8 +428,188 @@ function channelSettingsSnapshot(meta = {}) {
   };
 }
 
+function channelSettingsEditOptions(meta, userIsAdmin) {
+  return {
+    canEditRuntime: Boolean(meta?.isDM) || canChangeChannelRuntime(userIsAdmin),
+    canEditSecrets: canEditChannelFiles(effectiveMeta(meta), { isAdminUser: userIsAdmin }),
+  };
+}
+
+function runtimeEditorData(meta, { engineChoice = "", modelChoice = "" } = {}) {
+  const snapshot = channelSettingsSnapshot(meta);
+  const runtime = snapshot.runtime;
+  const chosen = engineChoice || runtime.configuredEngineId || SETTINGS_DEFAULT_VALUE;
+  const actualEngine = chosen === SETTINGS_DEFAULT_VALUE ? runtime.gatewayEngineId : chosen;
+  const wantedModel = modelChoice || runtime.configuredModel || SETTINGS_DEFAULT_VALUE;
+  const selectedModel = wantedModel === SETTINGS_DEFAULT_VALUE || modelBelongsToEngine(wantedModel, actualEngine)
+    ? wantedModel
+    : SETTINGS_DEFAULT_VALUE;
+  const actualModel = selectedModel === SETTINGS_DEFAULT_VALUE ? getDefaultModel(actualEngine) : selectedModel;
+  runtime.gatewayModel = getDefaultModel(actualEngine);
+  return {
+    snapshot,
+    engineChoice: chosen,
+    modelChoice: selectedModel,
+    engines: getEnabledEngines().map((id) => ({ label: engineLabel(id), value: id })),
+    models: modelsForEngine(actualEngine),
+    efforts: effortsForModel(actualEngine, actualModel).map((value) => ({ label: value === "xhigh" ? "XHigh" : value[0].toUpperCase() + value.slice(1), value })),
+  };
+}
+
+export function runtimeSettingsPatch(form = {}, {
+  gatewayEngine = getEngine(),
+  enabledEngines = getEnabledEngines(),
+} = {}) {
+  const engine = form.engine === SETTINGS_DEFAULT_VALUE ? "" : String(form.engine || "");
+  const actualEngine = engine || gatewayEngine;
+  if (!enabledEngines.includes(actualEngine)) {
+    const error = new Error("That engine is no longer enabled.");
+    error.field = RUNTIME_ENGINE_BLOCK_ID;
+    throw error;
+  }
+  const model = form.model === SETTINGS_DEFAULT_VALUE ? "" : String(form.model || "");
+  if (model && !modelBelongsToEngine(model, actualEngine)) {
+    const error = new Error("That model does not belong to the selected engine.");
+    error.field = RUNTIME_MODEL_BLOCK_ID;
+    throw error;
+  }
+  const effort = form.effort === SETTINGS_DEFAULT_VALUE ? "" : String(form.effort || "");
+  if (effort && !effortBelongsToModel(effort, actualEngine, model || getDefaultModel(actualEngine))) {
+    const error = new Error("That effort is not supported by the selected model.");
+    error.field = RUNTIME_EFFORT_BLOCK_ID;
+    throw error;
+  }
+  return { patch: { engine, model, effort }, actualEngine };
+}
+
+export function connectionSettingsPatch(current = {}, form = {}) {
+  const errors = {};
+  if (form.composioToken && form.composioToken.length < 6) errors[CONNECTION_COMPOSIO_BLOCK_ID] = "That doesn't look like a valid Composio token.";
+  if (form.toolboxToken && form.toolboxToken.length < 6) errors[CONNECTION_TOOLBOX_BLOCK_ID] = "That doesn't look like a valid Toolbox token.";
+  if (form.makeToolboxKey && form.makeToolboxKey.length < 6) errors[CONNECTION_MAKE_KEY_BLOCK_ID] = "That doesn't look like a valid Make MCP token.";
+  if (Object.keys(errors).length) return { errors, patch: null, changed: [] };
+  let make;
+  try {
+    make = resolveMakeToolboxUpdate(current, {
+      makeToolboxUrl: form.makeToolboxUrl,
+      makeToolboxKey: form.makeToolboxKey,
+    });
+  } catch (error) {
+    return { errors: { [CONNECTION_MAKE_URL_BLOCK_ID]: String(error.message).slice(0, 150) }, patch: null, changed: [] };
+  }
+  const patch = { ...make };
+  if (form.composioToken) patch.composioToken = form.composioToken;
+  if (form.toolboxToken) patch.toolboxToken = form.toolboxToken;
+  const changed = [
+    form.composioToken ? "Composio" : "",
+    form.toolboxToken ? "Toolbox" : "",
+    form.makeToolboxKey || form.makeToolboxUrl !== String(current.makeToolboxUrl || "") ? "Make MCP" : "",
+  ].filter(Boolean);
+  return { errors: {}, patch, changed };
+}
+
+export function cloudSelectionsAfterToggle(current = [], engine, key, { activate = false, selection = null } = {}) {
+  const list = Array.isArray(current) ? current : [];
+  const kept = list.filter((item) => cloudSelectionKey(engine, item) !== key);
+  return activate && selection ? [...kept, selection] : kept;
+}
+
+function cloudSelectionKey(engine, entry = {}) {
+  return engine === "codex"
+    ? `${String(entry.kind || "")}:${String(entry.id || "")}`
+    : String(entry.name || "").trim().toLowerCase();
+}
+
+async function cloudManagerItems(meta, engine) {
+  const field = selectionFieldForEngine(engine);
+  const direct = Array.isArray(meta?.[field]) ? meta[field] : [];
+  const inherited = Array.isArray(getOrgAccessGrants()?.[field]) ? getOrgAccessGrants()[field] : [];
+  const directKeys = new Set(direct.map((entry) => cloudSelectionKey(engine, entry)));
+  const inheritedKeys = new Set(inherited.map((entry) => cloudSelectionKey(engine, entry)));
+  const available = await requireAdapter(engine).discoverMcps();
+  const rows = new Map();
+  for (const entry of [...available, ...direct, ...inherited]) {
+    const key = cloudSelectionKey(engine, entry);
+    if (!key || rows.has(key)) continue;
+    rows.set(key, {
+      key,
+      name: String(entry.name || entry.id || key),
+      description: String(entry.description || entry.target || entry.kind || ""),
+      connected: entry.connected !== false,
+      direct: directKeys.has(key),
+      inherited: inheritedKeys.has(key),
+      active: directKeys.has(key) || inheritedKeys.has(key),
+      source: entry,
+    });
+  }
+  return [...rows.values()].sort((a, b) => Number(b.direct) - Number(a.direct) || Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
+}
+
+function skillManagerItems(meta, { userId = "", userIsAdmin = false } = {}) {
+  const direct = new Set((meta?.skills || []).map((value) => String(value).toLowerCase()));
+  const organization = new Set((getOrgAccessGrants().skills || []).map((value) => String(value).toLowerCase()));
+  const scoped = new Set(channelScopedSkills(meta?.channelId).map((value) => value.toLowerCase()));
+  const template = templateOfMeta(meta);
+  const templateSummary = template ? listTemplateSummaries().find((entry) => entry.slug === template.slug) : null;
+  const fromTemplate = new Set((templateSummary?.resolved || []).map((value) => String(value).toLowerCase()));
+  const active = new Set([...direct, ...organization, ...scoped, ...fromTemplate]);
+  const rows = new Map();
+  for (const skill of listSkills({ viewer: userIsAdmin ? "*" : userId || "" })) {
+    const key = skill.slug.toLowerCase();
+    if (!canSeeSkill(skill, { userId, isAdmin: userIsAdmin, active: active.has(key) })) continue;
+    if (skill.visibility === "personal") continue;
+    rows.set(key, {
+      key: skill.slug,
+      name: skill.name || skill.slug,
+      description: skill.description || "",
+      direct: direct.has(key),
+      inherited: organization.has(key),
+      template: fromTemplate.has(key),
+      scoped: scoped.has(key),
+      active: active.has(key),
+    });
+  }
+  // A hand-written or legacy direct grant may not be in the governed catalog. Keep it visible so
+  // a manager can deactivate it instead of trapping an unrenderable grant in the channel record.
+  for (const slug of meta?.skills || []) {
+    const key = String(slug).toLowerCase();
+    if (!key || rows.has(key)) continue;
+    rows.set(key, { key: String(slug), name: String(slug), description: "Not currently in the catalog", direct: true, active: true });
+  }
+  return [...rows.values()].sort((a, b) => Number(b.direct) - Number(a.direct) || Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
+}
+
+async function patchAuditedChannelSettings(entry, actor, patch) {
+  let before = null;
+  const after = await patchChannelMeta(entry.slug, (current) => {
+    if (!current) return null;
+    before = current;
+    return typeof patch === "function" ? patch(current) : patch;
+  });
+  if (!after) throw new Error("This channel settings view expired. Open it again from a recent reply.");
+  await logChannelPolicyChange({
+    channelId: entry.channelId,
+    slug: entry.slug,
+    actor,
+    before,
+    after,
+    source: "slack-settings",
+  });
+  await ensureChannelFolder(entry.slug, effectiveMeta(after));
+  return after;
+}
+
+function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "" } = {}) {
+  return buildChannelSettingsView(channelSettingsSnapshot(meta), { ...state, tab }, {
+    channelName: entry.name,
+    tab,
+    notice,
+    ...channelSettingsEditOptions(meta, userIsAdmin),
+  });
+}
+
 async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "runtime" } = {}) {
-  const { entry, meta } = await channelSettingsContext(client, {
+  const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
     channelId,
     userId,
     verifyMembership: true,
@@ -412,7 +617,11 @@ async function openChannelSettings(client, triggerId, { channelId, userId, threa
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId, tab };
   await client.views.open({
     trigger_id: triggerId,
-    view: buildChannelSettingsView(channelSettingsSnapshot(meta), state, { channelName: entry.name, tab }),
+    view: buildChannelSettingsView(channelSettingsSnapshot(meta), state, {
+      channelName: entry.name,
+      tab,
+      ...channelSettingsEditOptions(meta, userIsAdmin),
+    }),
   });
   await logEvent("channel_settings_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
@@ -800,6 +1009,7 @@ async function connectAndWire(app) {
     await ack();
     const clicker = body?.user?.id;
     const command = parseChannelSettingsActionValue(action?.value);
+    const actionId = String(action?.action_id || "");
     try {
       if (command.o === "open") {
         if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This settings button isn't for you.");
@@ -811,25 +1021,188 @@ async function connectAndWire(app) {
         return;
       }
 
-      const state = parseSettingsMetadata(body?.view?.private_metadata);
-      if (command.o !== "tab" || !clicker || state.ownerId !== clicker) {
-        throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
-      }
-      const { entry, meta } = await channelSettingsContext(client, {
-        channelId: state.channelId,
-        userId: clicker,
-        expectedSlug: state.slug,
-        verifyMembership: true,
+      const isEditorAction = actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID
+        || actionId === CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID
+        || actionId.startsWith(CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX)
+        || actionId.startsWith(CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX)
+        || actionId.startsWith(CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX)
+        || actionId.startsWith(CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX)
+        || actionId.startsWith(CHANNEL_SETTINGS_SKILL_PAGE_PREFIX);
+      const state = isEditorAction
+        ? parseEditorMetadata(body?.view?.private_metadata)
+        : parseSettingsMetadata(body?.view?.private_metadata);
+      if (!clicker || state.ownerId !== clicker) throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
+      let { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
+        channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
       });
-      const tab = String(command.p || "runtime");
-      await client.views.update({
+      const updateCurrent = (view) => client.views.update({
         view_id: body.view.id,
         ...(body.view.hash ? { hash: body.view.hash } : {}),
-        view: buildChannelSettingsView(channelSettingsSnapshot(meta), { ...state, tab }, {
-          channelName: entry.name,
-          tab,
-        }),
+        view,
       });
+      const requireTrigger = () => {
+        if (!body?.trigger_id) throw new Error("Slack didn't provide a trigger for this editor. Reopen Settings and try again.");
+        return body.trigger_id;
+      };
+
+      if (command.o === "tab") {
+        const tab = String(command.p || "runtime");
+        await updateCurrent(settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID) {
+        if (!meta.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Only administrators can change the channel runtime under the current gateway policy.");
+        const data = runtimeEditorData(meta);
+        await client.views.push({
+          trigger_id: requireTrigger(),
+          view: buildRuntimeEditorView(data.snapshot.runtime, state, { channelName: entry.name, ...data }),
+        });
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID || actionId === CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID) {
+        if (!meta.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Your runtime-change permission was revoked.");
+        const selected = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
+        const engineChoice = actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID ? selected : state.engine;
+        const modelChoice = actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID ? SETTINGS_DEFAULT_VALUE : selected;
+        const data = runtimeEditorData(meta, { engineChoice, modelChoice });
+        await updateCurrent(buildRuntimeEditorView(data.snapshot.runtime, state, { channelName: entry.name, ...data }));
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID) {
+        await client.views.push({
+          trigger_id: requireTrigger(),
+          view: buildConnectionsEditorView(channelSettingsSnapshot(meta).connections, state, { channelName: entry.name }),
+        });
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_FALLBACK_ACTION_ID) {
+        meta = await patchAuditedChannelSettings(entry, clicker, { noDefaultTokens: !Boolean(command.enabled) });
+        const notice = meta.noDefaultTokens
+          ? "✅ Inherited organization/personal connection credentials are disabled for this channel."
+          : "✅ Inherited connection credentials are enabled for this channel.";
+        await updateCurrent(settingsRootView(entry, meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice }));
+        return;
+      }
+
+      if ([CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID, CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID].includes(actionId)) {
+        const patch = actionId === CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID
+          ? { composioToken: "" }
+          : actionId === CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID
+            ? { toolboxToken: "" }
+            : { makeToolboxUrl: "", makeToolboxKey: "" };
+        meta = await patchAuditedChannelSettings(entry, clicker, patch);
+        const connection = actionId === CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID ? "Composio token" : actionId === CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID ? "Toolbox token" : "Make MCP connection";
+        await logEvent("channel_connection_removed", { channel: state.channelId, slug: entry.slug, connection, author: clicker });
+        await updateCurrent(settingsRootView(entry, meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice: `🗑️ Removed the channel's ${connection}.` }));
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID) {
+        const engine = meta.engine === "codex" ? "codex" : "claude";
+        const loading = await client.views.push({
+          trigger_id: requireTrigger(),
+          view: buildCatalogManagerView([], state, { kind: "cloud", channelName: entry.name, engine, notice: "Loading the live MCP catalog…" }),
+        });
+        const loadingViewId = loading?.view?.id;
+        if (!loadingViewId) throw new Error("Slack couldn't open the Cloud MCP manager. Reopen Settings and try again.");
+        const items = await cloudManagerItems(meta, engine);
+        await client.views.update({
+          view_id: loadingViewId,
+          view: buildCatalogManagerView(items, state, { kind: "cloud", channelName: entry.name, engine }),
+        });
+        return;
+      }
+
+      if (actionId.startsWith(CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX) || actionId.startsWith(CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX)) {
+        const engine = command.e === "codex" ? "codex" : "claude";
+        const page = actionId.startsWith(CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX) ? Number(command.p) || 0 : 0;
+        const items = await cloudManagerItems(meta, engine);
+        await updateCurrent(buildCatalogManagerView(items, state, { kind: "cloud", channelName: entry.name, engine, page }));
+        return;
+      }
+
+      if (actionId.startsWith(CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX)) {
+        const engine = command.e === "codex" ? "codex" : "claude";
+        const field = selectionFieldForEngine(engine);
+        const key = String(command.k || "");
+        const activate = Boolean(command.a);
+        let selection = null;
+        if (activate) {
+          const available = await requireAdapter(engine).discoverMcps();
+          selection = available.find((item) => cloudSelectionKey(engine, item) === key);
+          selection = persistedSelectionForEngine(engine, selection);
+          if (!selection) throw new Error("That MCP capability is no longer available. Refresh the catalog and try again.");
+        }
+        meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
+          return { [field]: cloudSelectionsAfterToggle(current[field], engine, key, { activate, selection }) };
+        });
+        const items = await cloudManagerItems(meta, engine);
+        const name = items.find((item) => item.key === key)?.name || key;
+        await updateCurrent(buildCatalogManagerView(items, state, {
+          kind: "cloud", channelName: entry.name, engine, page: state.page,
+          notice: `${activate ? "✅ Activated" : "🗑️ Deactivated"} *${name}* for ${engineLabel(engine)}.`,
+        }));
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID || actionId.startsWith(CHANNEL_SETTINGS_SKILL_PAGE_PREFIX)) {
+        const page = actionId.startsWith(CHANNEL_SETTINGS_SKILL_PAGE_PREFIX) ? Number(command.p) || 0 : 0;
+        const items = skillManagerItems(meta, { userId: clicker, userIsAdmin });
+        const view = buildCatalogManagerView(items, state, { kind: "skills", channelName: entry.name, page });
+        if (actionId === CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID) await client.views.push({ trigger_id: requireTrigger(), view });
+        else await updateCurrent(view);
+        return;
+      }
+
+      if (actionId.startsWith(CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX)) {
+        const key = String(command.k || "");
+        const activate = Boolean(command.a);
+        if (activate) {
+          const skill = listSkills({ viewer: userIsAdmin ? "*" : clicker }).find((item) => item.slug.toLowerCase() === key.toLowerCase());
+          const active = new Set(channelSkillGrants(meta).map((item) => item.toLowerCase()));
+          if (!skill || skill.visibility === "personal" || !canSeeSkill(skill, { userId: clicker, isAdmin: userIsAdmin, active: active.has(skill.slug.toLowerCase()) })) {
+            throw new Error("That skill is no longer available to this channel.");
+          }
+          await grantSkillsToChannel(entry.slug, [skill.slug]);
+        } else {
+          await revokeSkillsFromChannel(entry.slug, [key]);
+        }
+        meta = await getChannelMeta(entry.slug);
+        await ensureChannelFolder(entry.slug, effectiveMeta(meta));
+        await logEvent(activate ? "skill_granted" : "skill_revoked", { channel: state.channelId, slug: entry.slug, skills: [key], author: clicker });
+        const items = skillManagerItems(meta, { userId: clicker, userIsAdmin });
+        await updateCurrent(buildCatalogManagerView(items, state, {
+          kind: "skills", channelName: entry.name, page: state.page,
+          notice: `${activate ? "✅ Activated" : "🗑️ Deactivated"} *${key}*.`,
+        }));
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID) {
+        await client.views.push({
+          trigger_id: requireTrigger(),
+          view: buildTemplateEditorView(listTemplateSummaries(), meta.skillTemplate || "", state, { channelName: entry.name }),
+        });
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID) {
+        const secretAccess = await secretsContext(client, {
+          channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
+        });
+        if (!secretAccess.mayEdit) throw new Error("You can't change this channel's secrets in its current mode.");
+        await client.views.push({
+          trigger_id: requireTrigger(),
+          view: buildSecretsView(listChannelEnv(meta), state, { channelName: entry.name, mayEdit: true }),
+        });
+        return;
+      }
+
+      throw new Error("This channel settings control expired. Open Settings again from a recent reply.");
     } catch (e) {
       console.warn(`[slack] channel settings error: ${e.message}`);
       if (body?.view?.id) {
@@ -844,6 +1217,109 @@ async function connectAndWire(app) {
     }
   };
   app.action(CHANNEL_SETTINGS_ACTION_PATTERN, handleChannelSettingsAction);
+
+  app.view(CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID, async ({ ack, body, view, client }) => {
+    const clicker = body?.user?.id;
+    let state;
+    let form;
+    try {
+      state = parseEditorMetadata(view?.private_metadata);
+      if (!clicker || state.ownerId !== clicker || state.view !== "runtime") throw new Error("This runtime editor expired. Open Settings again.");
+      form = readRuntimeForm(view);
+    } catch (error) {
+      await ack({ response_action: "errors", errors: { [RUNTIME_ENGINE_BLOCK_ID]: String(error.message).slice(0, 150) } });
+      return;
+    }
+    try {
+      const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
+        channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
+      });
+      if (!meta.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Only administrators can change the channel runtime under the current gateway policy.");
+      let resolved;
+      try {
+        resolved = runtimeSettingsPatch(form);
+      } catch (error) {
+        await ack({ response_action: "errors", errors: { [error.field || RUNTIME_ENGINE_BLOCK_ID]: String(error.message).slice(0, 150) } });
+        return;
+      }
+      const { patch, actualEngine } = resolved;
+      const { engine, model, effort } = patch;
+      const saved = await patchAuditedChannelSettings(entry, clicker, patch);
+      await logEvent("channel_runtime_updated", { channel: state.channelId, slug: entry.slug, engine: actualEngine, model: model || "default", effort: effort || "default", author: clicker });
+      await ack({
+        response_action: "update",
+        view: settingsRootView(entry, saved, { ...state, tab: "runtime" }, userIsAdmin, {
+          tab: "runtime",
+          notice: `✅ Runtime updated: *${engineLabel(actualEngine)}* · \`${model || getDefaultModel(actualEngine) || "engine default"}\` · \`${effort || "default effort"}\`.`,
+        }),
+      });
+    } catch (error) {
+      await ack({ response_action: "errors", errors: { [RUNTIME_ENGINE_BLOCK_ID]: String(error.message || "Couldn't update the runtime.").slice(0, 150) } });
+    }
+  });
+
+  app.view(CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, async ({ ack, body, view, client }) => {
+    const clicker = body?.user?.id;
+    let state;
+    let form;
+    try {
+      state = parseEditorMetadata(view?.private_metadata);
+      if (!clicker || state.ownerId !== clicker || state.view !== "connections") throw new Error("This connection editor expired. Open Settings again.");
+      form = readConnectionsForm(view);
+    } catch (error) {
+      await ack({ response_action: "errors", errors: { [CONNECTION_COMPOSIO_BLOCK_ID]: String(error.message).slice(0, 150) } });
+      return;
+    }
+    try {
+      const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
+        channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
+      });
+      const resolved = connectionSettingsPatch(meta, form);
+      if (Object.keys(resolved.errors).length) {
+        await ack({ response_action: "errors", errors: resolved.errors });
+        return;
+      }
+      const { patch, changed } = resolved;
+      const saved = await patchAuditedChannelSettings(entry, clicker, patch);
+      await logEvent("channel_connections_updated", { channel: state.channelId, slug: entry.slug, connections: changed, author: clicker });
+      await ack({
+        response_action: "update",
+        view: settingsRootView(entry, saved, { ...state, tab: "mcp" }, userIsAdmin, {
+          tab: "mcp",
+          notice: changed.length ? `✅ Updated ${changed.join(", ")} connection credentials.` : "No credential values changed.",
+        }),
+      });
+    } catch (error) {
+      await ack({ response_action: "errors", errors: { [CONNECTION_COMPOSIO_BLOCK_ID]: String(error.message || "Couldn't update connection credentials.").slice(0, 150) } });
+    }
+  });
+
+  app.view(CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID, async ({ ack, body, view, client }) => {
+    const clicker = body?.user?.id;
+    let state;
+    try {
+      state = parseEditorMetadata(view?.private_metadata);
+      if (!clicker || state.ownerId !== clicker || state.view !== "template") throw new Error("This template editor expired. Open Settings again.");
+      const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
+        channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
+      });
+      const picked = readTemplateForm(view);
+      const assigned = await assignTemplateToChannel(entry.slug, picked === SETTINGS_NONE_VALUE ? "" : picked);
+      if (!assigned) throw new Error("That skill template is no longer available.");
+      const saved = await getChannelMeta(entry.slug);
+      await ensureChannelFolder(entry.slug, effectiveMeta(saved));
+      await logEvent("skill_template_assigned", { channel: state.channelId, slug: entry.slug, template: assigned.template?.slug || "none", author: clicker });
+      await ack({
+        response_action: "update",
+        view: settingsRootView(entry, saved, { ...state, tab: "skills" }, userIsAdmin, {
+          tab: "skills",
+          notice: assigned.template ? `✅ This channel now follows the *${assigned.template.name}* skill template.` : "✅ The channel no longer follows a skill template.",
+        }),
+      });
+    } catch (error) {
+      await ack({ response_action: "errors", errors: { [TEMPLATE_BLOCK_ID]: String(error.message || "Couldn't update the template.").slice(0, 150) } });
+    }
+  });
 
   // Submitting the add/update form is the only moment a value exists in this process outside the
   // store. It is validated, written, and dropped — never put back into a view.

@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const read = (rel) => readFileSync(path.join(repoRoot, rel), "utf8");
 
-const { IMAGE_HELPERS, CONTAINER_BIN_DIR, CONTAINER_BUNDLE_ROOT, CONTAINER_PATH, CONTAINER_HOME, CONTAINER_SOCKET_DIR } =
+const { IMAGE_HELPERS, CONTAINER_BIN_DIR, CONTAINER_BUNDLE_ROOT, CONTAINER_PATH, CONTAINER_HOME, CONTAINER_SOCKET_DIR,
+  CONTAINER_BROWSERS_DIR, CONTAINER_CHROMIUM } =
   await import("../src/runtimes/container/image-paths.js");
 
 const buildScript = read("scripts/build-image.mjs");
@@ -92,7 +93,7 @@ test("pins: the image installs the same mcp-remote the daemon depends on, and ev
   }
   assert.equal(versions.whisperModel, "small");
   assert.match(String(versions.imageSpecVersion), /^\d+\.\d+\.\d+$/);
-  for (const arg of ["UID", "GID", "CLAUDE_VERSION", "CODEX_VERSION", "MCP_REMOTE_VERSION", "VERCEL_VERSION", "SUPABASE_VERSION", "OPENCV_VERSION", "FASTER_WHISPER_VERSION", "WHISPER_MODEL", "IMAGE_SPEC_VERSION"]) {
+  for (const arg of ["UID", "GID", "CLAUDE_VERSION", "CODEX_VERSION", "MCP_REMOTE_VERSION", "VERCEL_VERSION", "SUPABASE_VERSION", "OPENCV_VERSION", "FASTER_WHISPER_VERSION", "WHISPER_MODEL", "PLAYWRIGHT_VERSION", "AGENT_BROWSER_VERSION", "IMAGE_SPEC_VERSION"]) {
     assert.ok(new RegExp(`ARG ${arg}\\b`).test(containerfile), `containers/Containerfile is missing ARG ${arg}`);
     assert.ok(buildScript.includes(`${arg}=`), `scripts/build-image.mjs never passes --build-arg ${arg}`);
   }
@@ -116,6 +117,44 @@ test("the image ships the complete local video-understanding toolchain", () => {
   assert.match(containerfile, /WhisperModel\('\$\{WHISPER_MODEL\}'/);
   assert.match(containerfile, /HF_HOME=\/opt\/channelgate\/models\/huggingface/);
   assert.match(containerfile, /chmod -R a\+rX \/opt\/channelgate\/models/);
+});
+
+// A channel could not open a web page before this: no browser in the image, and — the part that
+// cost the time — none of Chrome's shared libraries either, so a browser downloaded into the
+// channel's own HOME volume died on `libnspr4.so` with no root available to install it. These
+// assertions are the contract that keeps both halves in the image.
+test("the image ships a browser and the libraries it needs to actually start", () => {
+  assert.match(containerfile, /playwright@\$\{PLAYWRIGHT_VERSION\}/, "the pinned Playwright must be installed in the image");
+  assert.match(containerfile, /agent-browser@\$\{AGENT_BROWSER_VERSION\}/, "the pinned browser driver must be installed in the image");
+  // --with-deps is the ONLY maintained source of truth for the distro dependency set. A hand-copied
+  // library list is what rots silently: it passes the build and fails at the first navigation.
+  assert.match(containerfile, /playwright install --with-deps chromium/, "the image must install Chrome's distro dependencies via --with-deps, never a hand-copied library list");
+  // Proven at BUILD time: `--version` dynamically links the binary, so a missing library fails the
+  // build instead of surfacing months later as a channel that cannot browse.
+  assert.match(containerfile, new RegExp(`${CONTAINER_CHROMIUM.replace(/\//g, "\\/")} --version`), "the build must launch the browser once so a missing shared library fails the build");
+});
+
+test("browsers are shared, root-owned, and never addressed by revision", () => {
+  assert.ok(containerfile.includes(`PLAYWRIGHT_BROWSERS_PATH=${CONTAINER_BROWSERS_DIR}`), "PLAYWRIGHT_BROWSERS_PATH drifted from src/runtimes/container/image-paths.js");
+  // Under /opt, not the per-channel HOME volume: one ~400 MB copy for every channel instead of one
+  // each, and a channel can drive the browser but cannot replace it.
+  assert.ok(CONTAINER_BROWSERS_DIR.startsWith(`${CONTAINER_BUNDLE_ROOT}/`), "the browsers must live in the root-owned bundle root");
+  assert.ok(!CONTAINER_BROWSERS_DIR.startsWith(`${CONTAINER_HOME}/`), "browsers in the HOME volume would be per-channel and channel-writable");
+  assert.match(containerfile, /chmod -R a\+rX \/opt\/channelgate\/browsers/, "the agent user must be able to read the root-owned browsers");
+  // The chromium revision is a function of the Playwright version, so the build resolves the real
+  // executable and pins a stable symlink. A revision literal anywhere else is a time bomb: it
+  // survives the version bump that invalidates it.
+  assert.match(containerfile, new RegExp(`ln -sf[\\s\\S]{0,200}${CONTAINER_CHROMIUM.replace(/\//g, "\\/")}`), "the build must resolve the executable and link it at the stable path");
+  assert.doesNotMatch(containerfile, /chromium[-_][0-9]{3,}/, "the Containerfile must not name a chromium revision");
+  assert.doesNotMatch(read("src/runtimes/container/image-paths.js"), /chromium[-_][0-9]{3,}/, "the image contract must not name a chromium revision");
+});
+
+test("agent-browser is pointed at the image's browser, not left to discover one", () => {
+  // Without this the driver falls back to whatever it can find in the channel's HOME volume — i.e.
+  // the exact unmanaged download whose missing libraries started all of this.
+  assert.ok(containerfile.includes(`AGENT_BROWSER_EXECUTABLE_PATH=${CONTAINER_CHROMIUM}`), "AGENT_BROWSER_EXECUTABLE_PATH must point at the image's stable chromium path");
+  const finalEnv = containerfile.slice(containerfile.indexOf("ENV CG_RUNTIME=container"));
+  assert.match(finalEnv, /AGENT_BROWSER_EXECUTABLE_PATH=/, "the variable must be set in the image's final ENV so every exec inherits it");
 });
 
 test("the Containerfile bakes in exactly the paths the backend declares", () => {

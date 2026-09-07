@@ -129,16 +129,27 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 - [x] Approved channel members render selected, admins render selected and locked, and inherited
       access is not persisted as an explicit guest grant.
 - [x] A manager-authored reply adds one requester-bound **⚙️ Settings** footer button; ordinary
-      authorized members do not receive it. Its read-only modal has Engine & model, combined MCP
-      Connections/Cloud MCP, Skills, and masked Secrets tabs with unique action IDs, and credential
-      snapshots retain no recoverable short-secret tail.
+      authorized members do not receive it. Its modal has Engine & model, combined MCP
+      Connections/Cloud MCP, Skills, and masked Secrets tabs with unique action IDs. Runtime
+      selection validates engine/model/effort compatibility; direct MCP and skill grants toggle
+      without altering inherited/template tiers; skill templates can be assigned/cleared; the
+      Secrets tab reaches the existing write-only manager; and blank credential inputs preserve
+      saved tokens while replacements are never prefilled or echoed. Credential snapshots retain
+      no recoverable short-secret tail. Historic controls re-check both current manager rights and
+      current Slack membership before every mutation.
 - [ ] Live Claude: in `cg-testing-claude-auto`, have Contact temporarily make Apps a custom
-      channel manager, then let Apps request a fresh reply and open **⚙️ Settings**. Pass when all
-      four tabs show the channel's configured/inherited engine, model, MCP, skill, and masked
-      environment-secret state; after Contact revokes Apps, the historic button is refused and the
-      next Apps-authored reply has no Settings button. Restore the fixture's manage policy.
-- [ ] Live Codex: repeat the same manager-visible, four-tab, masked-secret, historic-button
-      revocation, and non-manager-hidden checks in `cg-testing-codex-auto`, then restore the fixture.
+      channel manager, then let Apps request a fresh reply and open **⚙️ Settings**. Pass when Apps
+      can change to another valid engine/model/effort and restore it; activate/deactivate one direct
+      Cloud MCP grant for each engine without changing inherited grants; activate/deactivate one
+      direct skill and assign/restore a template; rotate then remove disposable Composio, Toolbox,
+      and Make MCP credentials without any value being prefilled/echoed; disable/restore inherited
+      credentials; and add/update/remove one disposable environment secret through the nested
+      manager. After Contact revokes Apps, every historic mutation is refused and the next
+      Apps-authored reply has no Settings button. Restore all fixture state and never use production
+      credentials in this case.
+- [ ] Live Codex: repeat the same editable four-tab, tier-isolation, write-only credential,
+      reversible mutation, historic-control revocation, and non-manager-hidden checks in
+      `cg-testing-codex-auto`, then restore every fixture setting.
 - [ ] Live Claude: start a fresh test thread, ask a question whose answer exists only in a topic
       file, and verify search → one-source read → correct answer without bulk memory injection.
 - [ ] Live Codex: repeat the same retrieval proof in the Codex Auto fixture.
@@ -1128,6 +1139,17 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       and a container answered Claude Code's own "Not logged in · Please run /login" (live,
       2026-09-03, a Codex-default channel on a production gateway). The test fails on the old ordering
       (`test/message-to-reply-e2e.test.js`).
+- [x] Integration: a NEW thread whose first turn fails closed before the engine starts (the Claude
+      relay gate, or the backend's credential gate) leaves NO session row — the row minted for it is
+      deleted, not tombstoned; the same thread's next message runs on the channel's current harness
+      (channel moved to Codex → the turn runs on Codex, session engine `codex`, one spawn); an
+      EXISTING thread's session id and engine survive an identical pre-spawn failure. Both new cases
+      fail on the old code (`test/runtime-integration-run.test.js`).
+- [ ] Live (both engines, testing gateway or a Claude-less fixture): with the Claude login absent,
+      a first message in a fresh thread of a Claude-default channel fails with the login remedy;
+      switch the channel to Codex, reply in the SAME thread → Codex answers (no "this thread
+      started on claude" line in the log). Mirror: Codex signed out, Codex-default channel, then
+      switch to Claude.
 - [ ] Live: start a thread in a Codex channel, flip the channel to Claude → the thread's next
       message still runs Codex and keeps its conversation; a brand-new thread runs Claude;
       `@bot claude …` in the old thread switches it (fresh session + thread-context replay).
@@ -2691,6 +2713,28 @@ scripted stand-in for `podman`/`docker` that records every argv, and `test/runti
 `test/fixtures/fake-runtime-backend.js` are contract-validated fake backends that delegate the
 actual spawn to the daemon-internal local runtime, so orchestration tests really run a turn. The LIVE checks below
 are the v0.8 production deployment gate and are executed in the QA loop that follows this slice.
+
+### Browser toolchain in the image (spec 1.3.0, 2026-09-07)
+
+- [x] Unit: the Containerfile installs the pinned `playwright` and `agent-browser`, takes its
+      distro dependency set from `playwright install --with-deps chromium` (never a hand-copied
+      library list), and launches the browser once at BUILD time so a missing shared library fails
+      the build (automated: `test/container-image.test.js`).
+- [x] Unit: `PLAYWRIGHT_BROWSERS_PATH` and the stable chromium path agree with
+      `src/runtimes/container/image-paths.js`; the browsers live under the root-owned bundle root
+      and NOT in the per-channel HOME volume; `chmod -R a+rX` keeps them readable by the agent
+      user; neither the Containerfile nor the image contract names a chromium revision (automated).
+- [x] Unit: `AGENT_BROWSER_EXECUTABLE_PATH` is set in the image's FINAL `ENV` and points at that
+      stable path, so every exec inherits it instead of the driver discovering an unmanaged
+      download in the channel's volume (automated).
+- [x] Unit: `PLAYWRIGHT_VERSION` and `AGENT_BROWSER_VERSION` are declared as ARGs and passed by
+      `scripts/build-image.mjs`; both pins are exact (automated).
+- [ ] Manual (host, after `npm run build:image`): in a fresh channel with no setup of its own,
+      `agent-browser open https://example.com` succeeds and `agent-browser snapshot -i` returns the
+      accessibility tree — the pre-fix failure was `error while loading shared libraries:
+      libnspr4.so`. Repeat in a SECOND channel to prove it is the image and not one volume.
+- [ ] Manual (host): `podman image inspect` reports `cg.image.version=1.3.0`, and a channel whose
+      container predates the rebuild is recreated on its next run by the image-id fingerprint.
 
 - [x] Unit: the backend contract fails closed — a missing declared capability, a missing method, an
       unknown capability key, and an unknown backend id each throw; `runtimeSupports()` reads a

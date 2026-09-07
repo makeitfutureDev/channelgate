@@ -63,12 +63,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   longer offered. MCP Connections, Cloud MCP, Environment tokens, and Skills are separate first-class
   channel pages rather than nested beneath Tools; enabled skills sort first and the channel-level
   Grant Tier switch is gone.
-- **Manager-only Slack settings snapshot:** replies requested by a current channel manager add a
-  requester-bound **⚙️ Settings** footer button. It opens a read-only Block Kit modal with four
-  tabs: Engine & model; MCP Connections plus Cloud MCP; Skills; and Secrets. The view follows the
-  web setup concepts, distinguishes channel configuration from organization inheritance, and
-  exposes credentials only as configured/masked state. Opening it and every tab change re-check
-  current channel membership plus `canManage`, so a historic button cannot retain revoked access.
+- **Manager-only Slack settings console:** replies requested by a current channel manager add a
+  requester-bound **⚙️ Settings** footer button. Its four-tab Block Kit console mirrors the web
+  setup concepts: Engine & model can be changed under the gateway runtime policy; MCP Connections
+  rotates/removes the write-only Composio, Toolbox and Make MCP credentials plus inherited-token
+  policy; Cloud MCP capabilities can be activated/deactivated independently for Claude and Codex;
+  Skills supports direct grants and live template assignment; and Secrets opens the established
+  add/update/remove manager. Inherited and template grants are labelled and cannot be removed from
+  the wrong tier. Credential forms never prefill stored values, and all views expose only
+  configured/masked state. Opening it, navigating, submitting, and every individual mutation
+  re-check current channel membership plus `canManage`, so a historic control cannot retain revoked
+  access. Secret editing additionally keeps its command-execution gate; admin-only runtime policy
+  remains admin-only.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
   admins are selected and locked, while explicit guest grants remain independently editable.
@@ -820,7 +826,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   sticks to the engine that minted its session: changing the channel/global harness only affects
   new threads; live conversations keep resuming on their own engine (only the automatic usage-limit
   failover runs a different engine, under a suffixed session key). The exception is a harness turned
-  OFF in Settings: those threads move to an enabled engine. → TEST-PLAN: Engines.
+  OFF in Settings: those threads move to an enabled engine. A row minted for a brand-new thread
+  whose turn then dies BEFORE its engine starts (a pre-spawn credential gate, a runtime that cannot
+  come up) is dropped with that turn, so the next message is a first turn again on the channel's
+  current harness instead of "continuing on" one that never produced a session. → TEST-PLAN: Engines.
 - Per-thread engine directive: a message starting with `claude` or `codex` (e.g. "@bot codex build
   the feature") switches that thread's engine; it sticks until changed (persisted per channel).
   The `/model` wizard's "just this thread" scope sets the same override (plus per-thread model +
@@ -1832,6 +1841,16 @@ are retired, bullet by bullet; everything else stands.
   `npm run build:image` as the remedy; a failed build never aborts the install), so a new gateway
   never reaches its first message without the toolchain. The former standalone catalog skill is
   excluded and removed from all durable grant tiers at boot. → TEST-PLAN: Container runtime (v0.8 P1).
+- **Built-in browser automation (image spec 1.3.0).** Every conversation image ships a pinned
+  Playwright chromium plus the `agent-browser` driver, so a channel can open, drive and screenshot a
+  web page with no per-channel setup. Both halves are baked in: the browser itself AND the distro
+  libraries it needs to start — a browser downloaded into a channel's own HOME volume used to die on
+  `libnspr4.so`, and a container has no root with which to install it. The dependency set comes from
+  `playwright install --with-deps` rather than a hand-copied library list, the browsers live under
+  `/opt` so every channel shares one root-owned copy instead of paying ~400 MB per volume, and the
+  build launches the binary once so a missing library fails the BUILD rather than the first
+  navigation. `AGENT_BROWSER_EXECUTABLE_PATH` points every run at that stable path — never at a
+  chromium revision, which changes with the Playwright pin. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Retired 2026-09-03 (Linux + containers only):** the daemon refuses every platform but Linux
   (`src/platform-gate.js`) and refuses to boot without a usable container CLI — Linux with rootless
   Podman is the only deployment target, so there is no "everywhere" left. **The daemon still runs

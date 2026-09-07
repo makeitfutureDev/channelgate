@@ -16,7 +16,7 @@ import { ensureChannelFolder } from "./folders.js";
 import { memorySnapshotPrefix } from "./channel-memory.js";
 import { createSkillUsageRecorder } from "./skills/usage.js";
 import { withTemplateSkills } from "./skills/templates.js";
-import { resolveSession, resetSession, getSession, saveSession, sessionGeneration } from "./sessions.js";
+import { resolveSession, resetSession, getSession, saveSession, sessionGeneration, dropMintedSession } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
@@ -931,8 +931,31 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     }
   }
 
+  // A row THIS turn minted carries its harness stamp before anything has run. If the turn dies
+  // before its engine process ever starts, the stamp must not outlive it — see dropMintedSession.
+  // `engineStarted` flips at the spawn; the two pre-spawn gates (the Claude relay just below, and
+  // the backend credential/warm-up inside the main try) are what this exists for.
+  const mintedThisTurn = isNew && !presetSessionId;
+  let engineStarted = false;
+  const dropUnusedSession = async () => {
+    if (!mintedThisTurn || engineStarted) return;
+    try {
+      if (await dropMintedSession(entry.slug, threadKey, sessionId)) {
+        console.log(`[gateway] ${entry.slug}/${threadKey}: dropped the ${engine} session minted for a turn that never started`);
+      }
+    } catch (e) {
+      console.warn(`[gateway] ${entry.slug}/${threadKey}: could not drop the unused session: ${e?.message || e}`);
+    }
+  };
+
   // The Claude credential for the harness that will actually run — settled only now (see above).
-  const claudeRelay = await claudeCredentialFor(engine);
+  let claudeRelay;
+  try {
+    claudeRelay = await claudeCredentialFor(engine);
+  } catch (error) {
+    await dropUnusedSession();
+    throw error;
+  }
   const claudeOauthToken = claudeRelay?.token || "";
   // What the warm pool keys on: the login's SOURCE and the expiry of the token this turn was
   // handed, never the token text. A refresh moves the expiry, which retires a warm process still
@@ -1696,7 +1719,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
 
     // An engine will actually spawn now — mint the signed gateway capability (its TTL starts here,
     // not at the head of a queue this turn may have sat in for hours) and materialize the
-    // token-bearing config file built around it (see above).
+    // token-bearing config file built around it (see above). From here on the session row is the
+    // engine's: a later failure keeps it (resume-heal, failover and /clear own that story).
+    engineStarted = true;
     await mintGatewayMcpRuntime();
     if (mcpConfigFile) {
       await mkdir(path.dirname(mcpConfigFile), { recursive: true, mode: 0o700 });
@@ -1946,6 +1971,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       model: model || resolveCurrentModel(finalResult),
     };
   } catch (error) {
+    // Died before the engine started (credential gate, lease, warm-up): the row minted for this
+    // turn is dropped so the next message is a true first turn again.
+    await dropUnusedSession();
     // A provider/CLI can echo a credential in its failure, which callers may post to the thread.
     // Preserve error identity and classification while making its public text safe.
     if (error && typeof error === "object") {

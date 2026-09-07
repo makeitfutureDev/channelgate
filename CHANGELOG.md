@@ -42,6 +42,17 @@ product overview.
   rows and elapsed/token totals use the same reducer without new mounts or an image rebuild;
   inspection failures are visible instead of silently reporting an empty child list.
 
+- A thread whose first message died before its engine ever started no longer stays stuck on
+  that engine. The session row is minted, with its harness stamp, the moment a new thread is
+  resolved; a turn that then failed closed on a pre-spawn gate (a missing Claude login, a runtime
+  that could not come up) left the stamp behind, so every later message in that thread "continued
+  on" a harness that never produced a session — and failed the same way even after the channel had
+  moved to Codex (live, 2026-09-05, a fresh gateway with only a Codex sign-in). A row minted by the
+  failed turn itself is now dropped (deleted, not tombstoned — the next message is a true first turn
+  again, resolved from the channel default); an existing thread's session is never touched, and a
+  per-thread harness pin is a separate store and still wins.
+- Admin UI: Automations rows use fixed timing and last-run columns so the titles line up down a
+  card.
 - Admin UI: the Pending approvals rows wrap the command being approved (monospace, a few lines)
   instead of running it underneath the Approve/Deny buttons; the Automations search box uses the
   same styled search component as the Users page, with a clear button and Escape to clear.
