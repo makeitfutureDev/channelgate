@@ -1799,6 +1799,13 @@ release, no egress cut-off — so the network entry has no container equivalent 
       are enforced. `.env*`, JSON/YAML/TOML, scripts, configs, extensionless files, and text with an
       unfamiliar extension are editable; binary/invalid UTF-8 and remaining protected paths are
       refused. Read-only/Worker/Auto/Full permission combinations are covered.
+- [x] Unit (`test/file-download.test.js`, `test/file-explorer.test.js`): with a Public URL, every
+      file preview exposes a distinct *Download* action, including files above Slack's sharing cap.
+      Its opaque requester/channel/file grant is 10-minute and single-use; the public route repeats
+      membership authorization, re-confines the opened descriptor against symlink races, streams
+      the complete file with attachment/no-store/no-referrer/nosniff headers, creates no Slack file,
+      and audits `channel_file_downloaded`. Malformed, traversal, escaping-symlink, expired, reused,
+      and newly unauthorized requests are refused.
 - [x] Unit (`test/file-editor.test.js`, `test/file-explorer.test.js`): eligible files up to 3,000
       characters expose both the native Slack Edit popup and the browser editor with distinct action
       IDs; larger eligible files remain browser-only. The browser button supports files beyond the
@@ -1859,6 +1866,11 @@ release, no egress cut-off — so the network entry has no container equivalent 
       path outside the confined root, follow an escaping symlink, or access a sibling channel.
 - [ ] Preview a small UTF-8 text file → bounded inline preview; binary → metadata-only preview;
       >25 MB file → browse/preview remains available but no Share button.
+- [ ] With a public URL configured, open both a small file and a >25 MB file and choose *Download*.
+      Each browser transfer must contain the complete original bytes, create no Slack file, and
+      audit `channel_file_downloaded`; the oversized preview still has no Share/Send button. Reuse
+      an opened URL, leave the channel before opening another, and replace the target with an
+      escaping symlink: each request is refused. Remove Public URL and confirm Download is hidden.
 - [ ] Confirm Share → one Slack file copy lands only in the originating channel/thread and
       `channel_file_shared` is audited. Cancel → no upload. Missing scope, a deleted/raced file, or
       Slack upload failure shows a modal error without crashing the daemon.
