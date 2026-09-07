@@ -619,10 +619,25 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .utable td .conn-dot { display: inline-block; margin-right: 6px; }
 
 .userlayout { display: flex; gap: 18px; align-items: flex-start; }
-.userlayout > .utable { flex: 1; min-width: 0; }
+.userlayout > .utable { flex: 1; min-width: 0; overflow-x: auto; }
 .user-search { width: min(300px, 38vw); }
-.drawer { width: 340px; flex: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; position: sticky; top: 26px; }
+.drawer { width: min(640px, 55%); flex: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; position: sticky; top: 26px; }
 .drawer[hidden] { display: none; }
+.drawer .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.drawer .tools-col { min-width: 0; }
+.drawer .checks { max-height: 380px; }
+.drawer .checks label { overflow-wrap: anywhere; }
+.drawer .checks-head { flex-wrap: wrap; }
+.utable .user-skills-count { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1200px) {
+  .userlayout { flex-direction: column; }
+  .userlayout > .utable { width: 100%; }
+  .userlayout .drawer { width: 100%; position: static; order: -1; }
+}
+@media (max-width: 600px) {
+  .drawer .grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
 .drawer-head { display: flex; align-items: flex-start; gap: 10px; }
 .drawer-head h3 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; min-width: 0; }
 .drawer .ud-id { display: block; margin: 2px 0 14px; font-size: 11px; color: var(--faint); }

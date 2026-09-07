@@ -21,6 +21,8 @@ product overview.
 - Settings: add **Testing with AI**, an opt-in Slack user list for supplemental approval and
   busy-thread browser links. Empty by default; both auto and always link modes respect the list,
   including for admins. Native buttons and non-native approval surfaces keep their behavior.
+- Users: show enabled personal skill counts in the table and widen the editor to 640px,
+  with taller skill lists and a stacked layout on smaller screens.
 
 - Skills: restore Source and Category catalog filters alongside governance filters. Sources now
   use clickable cards opening a searchable skill list with persistent Enabled, organization-wide

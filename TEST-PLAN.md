@@ -2259,9 +2259,20 @@ release, no egress cut-off — so the network entry has no container equivalent 
       conversation and back, and verify every returned selection remains checked without a browser
       reload. Disable Settings → Slack replies → footer cost, save, and verify the checkbox remains
       off immediately and after a hard reload; the next Slack reply omits only the dollar segment.
-- [ ] Users: table rows show role chips, C/S/T token state and Slack identity; clicking a row opens
+- [ ] Users: table rows show role chips, personal Skills counts and C/T token state; clicking a row opens
       the edit drawer; Save from the drawer persists name/approved/admin/tokens (unchanged PUT) and
       the drawer stays on that user; "+ Add user" reveals the add form; adding opens the new user.
+- [x] Browser (engine-independent, disposable Chromium fixture): `test/user-skills-browser.test.js` uses the real admin UI/API
+      and disposable users U_EMPTY (no skills) and U_SKILLS (alpha + offline-skill), with alpha/beta
+      and 30 long names in the available catalog. Run with `CG_BROWSER_MODULE=/path/to/playwright/index.mjs
+      node --test test/user-skills-browser.test.js`. Expect counts 0/2; filter for beta, check it,
+      Save and reload: count 3, all three grants persisted, drawer stays editable. At 1600px the
+      editor is at least 600px wide; at 1100/390px it stacks above the table without horizontal
+      editor overflow, with reachable Save/Close. No browser exceptions. No engine is spawned;
+      Claude/Codex cannot affect this browser-only behavior.
+- [ ] Live operator: repeat the preceding counts/edit/reload/resize actions on disposable users in
+      the deployed Admin UI. Fixture browser evidence does not count as a deployed live pass.
+- [x] Airtable: `UI-USERS-SKILLS-01` defines the corresponding engine-independent acceptance case.
 - [x] Unit: `test/user-search.test.js` proves `GET /api/users?q=…` folds case and accents, ANDs
       terms across name / Slack ID / visible role / configured token provider, returns an empty
       object for no matches, searches only the masked representation (never stored secret values),
