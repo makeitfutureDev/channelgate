@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/linux-lifecycle.yml
       - scripts/check-linux-lifecycle.sh
+      - scripts/check-update-rollback-hosted.mjs
 
 permissions:
   contents: read

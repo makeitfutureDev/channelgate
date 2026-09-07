@@ -152,6 +152,7 @@ as_service env -u CHANNELGATE_DIR -u CHANNELGATE_DB -u CLAUDE_GATEWAY_DIR -u CLA
   bash -c 'cd "$1" && node --test test/update-runner.test.js test/update-state.test.js test/update-smoke.test.js' bash "$APP_DIR" \
   > "$EVIDENCE/update-fixture-tests.tap" 2>&1
 pass 'injected update failure/rollback and container smoke regression tests'
+as_service env CG_DISPOSABLE_LIFECYCLE=1 node "$APP_DIR/scripts/check-update-rollback-hosted.mjs"
 sudo bash "$APP_DIR/scripts/uninstall-systemd.sh" --system
 [ ! -e /etc/systemd/system/channelgate.service ]
 if systemctl is-active --quiet channelgate.service; then echo 'Service remained active after uninstall'; exit 1; fi
@@ -161,5 +162,5 @@ as_service test -s "$SERVICE_HOME/backups/config.tar.gz.enc"
 pass 'uninstall removes and stops system unit while preserving account, database and backup'
 printf '%s\n' \
   'NOT RUN: actual host reboot and post-reboot recovery (hosted job does not survive reboot).' \
-  'NOT RUN: authenticated Claude/Codex update, induced live candidate failure and automatic rollback.' \
+  'NOT RUN: authenticated Claude/Codex update smoke (real Git/service rollback uses a controlled smoke fixture).' \
   'NOT RUN: Slack/Airtable/Composio or other external acceptance campaigns.'

@@ -24,6 +24,14 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   These checks are engine-independent because they issue no engine turn. Update transaction
   unit evidence is uploaded separately as `update-fixture-tests.tap`; injected failures do not
   count as real authenticated engine update/rollback acceptance.
+- Hosted updater operations: `scripts/check-update-rollback-hosted.mjs` is restricted to that
+  exact disposable checkout/runtime, replaces only the LOCAL fixture's engine smoke response,
+  and creates a local bare Git upstream. It invokes the unmodified CLI updater first against a
+  candidate whose test exits 42, then one whose live health reports an incorrect revision.
+  Require two durable `rolled_back` results, checkout/running revision A, new healthy service
+  instance, released update lock, private operator recovery snapshot and unchanged SQL marker.
+  Finally restore the original tested source revision and verify its fresh healthy instance.
+  Public evidence must name the smoke stub; no Claude/Codex authentication is proven here.
 - [ ] Actual reboot gate (both configured engines): on a separate disposable Linux VM, install
   the candidate and create a channel that writes `LIFECYCLE-BEFORE-REBOOT` in its own work folder.
   Record instance ID and engine/session identity, reboot the machine, then ask each engine in
