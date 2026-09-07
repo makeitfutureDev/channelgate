@@ -32,12 +32,22 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   instance, released update lock, private operator recovery snapshot and unchanged SQL marker.
   Finally restore the original tested source revision and verify its fresh healthy instance.
   Public evidence must name the smoke stub; no Claude/Codex authentication is proven here.
-- [ ] Actual reboot gate (both configured engines): on a separate disposable Linux VM, install
+- Guest OS reboot: dispatch `.github/workflows/linux-reboot.yml` for the candidate ref. The
+  hosted runner must expose KVM; unavailable acceleration fails explicitly. The wrapper verifies
+  the official Ubuntu Noble image checksum, boots a separate cloud-init guest, installs Node 24
+  and the real service/full image, writes `persisted-through-os-reboot` into SQLite and a rootless
+  named volume, and reboots the GUEST while the runner stays alive. Pass only with different OS
+  boot ID and daemon instance ID, enabled active service without manual post-boot start, usable
+  rootless runtime, intact SQL/volume markers, SQLite integrity `ok` and uninstall preserving data.
+  Artifact `linux-guest-reboot-<sha>` contains sanitized logs only. No keys, disk images, runtime
+  config or databases are uploaded. This operations case is engine-independent; it does not prove
+  a resumed Claude/Codex conversation.
+- [ ] Post-reboot conversation gate (both configured engines): on a separate disposable Linux VM, install
   the candidate and create a channel that writes `LIFECYCLE-BEFORE-REBOOT` in its own work folder.
   Record instance ID and engine/session identity, reboot the machine, then ask each engine in
   its existing thread to read the marker. Require automatic service start without manual repair,
   a new daemon instance ID, preserved marker/session and container-only engine execution.
-  A hosted job restart is not a reboot and cannot clear this gate.
+  Engine-free guest reboot evidence cannot clear this conversation/session gate.
 - [ ] Authenticated update rollback gate (Claude and Codex): on that disposable deployment,
   configure both engine credentials in its own service identity and a local fixture upstream.
   Baseline revision A must answer the fixed update smoke response for both engines. Create

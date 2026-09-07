@@ -7,8 +7,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   HTTP liveness after restart, encrypted fixture backup/restore and non-destructive uninstall.
   A local fixture upstream also proves the real CLI updater restores Git and restarts systemd
   after a candidate test failure or readiness failure; engine smoke is explicitly stubbed.
-  Its script refuses non-hosted or occupied hosts. Actual reboot and authenticated engine update
-  rollback remain separate live gates. → TEST-PLAN: Disposable Linux lifecycle workflow.
+  Its script refuses non-hosted or occupied hosts. A separate KVM guest workflow exercises an
+  actual OS reboot, service autostart and persistent database/container-volume fixtures.
+  Authenticated engine update smoke and conversation/session acceptance remain separate live
+  gates. → TEST-PLAN: Disposable Linux lifecycle workflow.
 - **Service-account image provisioning** uses the same explicit environment as the systemd
   daemon so operator XDG/container storage settings cannot redirect a fresh build into another
   user's private Podman store, and runs from the service-owned checkout so an operator-private

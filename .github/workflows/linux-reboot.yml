@@ -1,0 +1,34 @@
+name: Linux guest reboot
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/linux-reboot.yml
+      - scripts/check-linux-reboot.sh
+      - scripts/install-systemd.sh
+      - scripts/uninstall-systemd.sh
+
+permissions:
+  contents: read
+
+jobs:
+  reboot:
+    # The hosted runner survives while a separate, disposable Ubuntu guest actually reboots.
+    # KVM availability is experimental on hosted runners: missing support fails explicitly.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install, reboot and uninstall in a disposable KVM guest
+        run: bash scripts/check-linux-reboot.sh
+      - name: Upload sanitized reboot acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-guest-reboot-${{ github.sha }}
+          path: ${{ runner.temp }}/reboot-evidence/reboot.log
+          if-no-files-found: error
