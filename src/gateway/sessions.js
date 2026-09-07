@@ -165,6 +165,23 @@ export async function clearSession(slug, threadKey) {
   return info.changes > 0;
 }
 
+// Drop a row this turn MINTED but never used: the thread's first message died before its engine
+// process ever started (a missing login, a runtime that could not come up). resolveSession stamps
+// the harness on the row the moment it mints it — so without this, the next message would
+// "continue on" a harness that never produced a session (live, 2026-09-05: a channel moved to
+// Codex kept failing its first thread on Claude's missing login). A plain DELETE, not the /clear
+// tombstone: the next message must be a true first turn again — the harness re-resolved from the
+// channel/gateway default, the thread's earlier messages replayed as for any first turn. Guarded on
+// the session id so a concurrent reply that already re-minted the row is never touched, and a
+// pinned per-thread harness (thread-engine.js) is a different store, untouched here on purpose.
+export async function dropMintedSession(slug, threadKey, sessionId) {
+  if (!sessionId) return false;
+  const info = getDb()
+    .prepare("DELETE FROM sessions WHERE slug = ? AND thread_key = ? AND session_id = ?")
+    .run(slug, threadKey, sessionId);
+  return info.changes > 0;
+}
+
 // Whether the bot has EVER had a session in this thread (live or /clear-tombstoned). Used to
 // replay a thread's earlier messages only the very first time the bot is pulled in — never after
 // a /clear, and without loading the whole per-channel map.

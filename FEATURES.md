@@ -817,7 +817,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   sticks to the engine that minted its session: changing the channel/global harness only affects
   new threads; live conversations keep resuming on their own engine (only the automatic usage-limit
   failover runs a different engine, under a suffixed session key). The exception is a harness turned
-  OFF in Settings: those threads move to an enabled engine. → TEST-PLAN: Engines.
+  OFF in Settings: those threads move to an enabled engine. A row minted for a brand-new thread
+  whose turn then dies BEFORE its engine starts (a pre-spawn credential gate, a runtime that cannot
+  come up) is dropped with that turn, so the next message is a first turn again on the channel's
+  current harness instead of "continuing on" one that never produced a session. → TEST-PLAN: Engines.
 - Per-thread engine directive: a message starting with `claude` or `codex` (e.g. "@bot codex build
   the feature") switches that thread's engine; it sticks until changed (persisted per channel).
   The `/model` wizard's "just this thread" scope sets the same override (plus per-thread model +

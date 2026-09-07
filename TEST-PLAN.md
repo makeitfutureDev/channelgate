@@ -1139,6 +1139,17 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       and a container answered Claude Code's own "Not logged in · Please run /login" (live,
       2026-09-03, a Codex-default channel on a production gateway). The test fails on the old ordering
       (`test/message-to-reply-e2e.test.js`).
+- [x] Integration: a NEW thread whose first turn fails closed before the engine starts (the Claude
+      relay gate, or the backend's credential gate) leaves NO session row — the row minted for it is
+      deleted, not tombstoned; the same thread's next message runs on the channel's current harness
+      (channel moved to Codex → the turn runs on Codex, session engine `codex`, one spawn); an
+      EXISTING thread's session id and engine survive an identical pre-spawn failure. Both new cases
+      fail on the old code (`test/runtime-integration-run.test.js`).
+- [ ] Live (both engines, testing gateway or a Claude-less fixture): with the Claude login absent,
+      a first message in a fresh thread of a Claude-default channel fails with the login remedy;
+      switch the channel to Codex, reply in the SAME thread → Codex answers (no "this thread
+      started on claude" line in the log). Mirror: Codex signed out, Codex-default channel, then
+      switch to Claude.
 - [ ] Live: start a thread in a Codex channel, flip the channel to Claude → the thread's next
       message still runs Codex and keeps its conversation; a brand-new thread runs Claude;
       `@bot claude …` in the old thread switches it (fresh session + thread-context replay).
