@@ -67,7 +67,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   requester-bound **⚙️ Settings** footer button. Its four-tab Block Kit console mirrors the web
   setup concepts: Engine & model can be changed under the gateway runtime policy; MCP Connections
   rotates/removes the write-only Composio, Toolbox and Make MCP credentials plus inherited-token
-  policy; Cloud MCP capabilities can be activated/deactivated independently for Claude and Codex;
+  policy, and edits the Composio account label shared with the web setup form. Labels are shown
+  in the summary and prefilled for editing; changing or clearing a label preserves the token.
+  Cloud MCP capabilities can be activated/deactivated independently for Claude and Codex;
   Skills supports direct grants and live template assignment; and Secrets opens the established
   add/update/remove manager. Inherited and template grants are labelled and cannot be removed from
   the wrong tier. Credential forms never prefill stored values, and all views expose only

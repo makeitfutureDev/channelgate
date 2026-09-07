@@ -29,6 +29,8 @@ import {
   CHANNEL_SETTINGS_TABS,
   CONNECTION_COMPOSIO_ACTION_ID,
   CONNECTION_COMPOSIO_BLOCK_ID,
+  CONNECTION_COMPOSIO_LABEL_ACTION_ID,
+  CONNECTION_COMPOSIO_LABEL_BLOCK_ID,
   CONNECTION_MAKE_KEY_ACTION_ID,
   CONNECTION_MAKE_KEY_BLOCK_ID,
   CONNECTION_MAKE_URL_ACTION_ID,
@@ -198,6 +200,30 @@ test("connection editor never prefills saved credentials and parses only newly s
     makeToolboxUrl: "https://eu1.make.celonis.com/mcp/server/abc",
     makeToolboxKey: "new-make-key",
   });
+});
+
+test("Composio labels round-trip independently of write-only tokens, including old forms", () => {
+  const current = { composioToken: "saved-private-credential", composioTokenLabel: "Shared account" };
+  const connections = { ...snapshot.connections, composioTokenLabel: current.composioTokenLabel };
+  const view = buildConnectionsEditorView(connections, state);
+  const labelInput = view.blocks.find((block) => block.block_id === CONNECTION_COMPOSIO_LABEL_BLOCK_ID).element;
+  assert.equal(labelInput.initial_value, "Shared account");
+  assert.equal(view.blocks.find((block) => block.block_id === CONNECTION_COMPOSIO_BLOCK_ID).element.initial_value, undefined);
+  assert.doesNotMatch(rendered(view), /saved-private-credential|c123/);
+  assert.match(rendered(buildChannelSettingsView({ connections }, state, { tab: "mcp" })), /Shared account/);
+  for (const value of ["  Renamed account  ", "", null]) {
+    const form = readConnectionsForm({ state: { values: {
+      [CONNECTION_COMPOSIO_LABEL_BLOCK_ID]: { [CONNECTION_COMPOSIO_LABEL_ACTION_ID]: { value } },
+    } } });
+    const result = connectionSettingsPatch(current, form);
+    assert.deepEqual(result.errors, {});
+    assert.equal(result.patch.composioTokenLabel, String(value || "").trim());
+    assert.equal(Object.hasOwn(result.patch, "composioToken"), false);
+    assert.equal({ ...current, ...result.patch }.composioToken, current.composioToken);
+    assert.ok(result.changed.includes("Composio label"));
+  }
+  const legacy = connectionSettingsPatch(current, readConnectionsForm({ state: { values: {} } }));
+  assert.equal(Object.hasOwn(legacy.patch, "composioTokenLabel"), false);
 });
 
 test("catalog managers paginate and only allow direct grants to be deactivated", () => {

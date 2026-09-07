@@ -36,6 +36,8 @@ export const RUNTIME_EFFORT_BLOCK_ID = "settings_runtime_effort";
 export const RUNTIME_EFFORT_ACTION_ID = "cg_channel_settings_runtime_effort";
 export const CONNECTION_COMPOSIO_BLOCK_ID = "settings_composio_token";
 export const CONNECTION_COMPOSIO_ACTION_ID = "cg_channel_settings_composio_token";
+export const CONNECTION_COMPOSIO_LABEL_BLOCK_ID = "settings_composio_label";
+export const CONNECTION_COMPOSIO_LABEL_ACTION_ID = "cg_channel_settings_composio_label";
 export const CONNECTION_TOOLBOX_BLOCK_ID = "settings_toolbox_token";
 export const CONNECTION_TOOLBOX_ACTION_ID = "cg_channel_settings_toolbox_token";
 export const CONNECTION_MAKE_URL_BLOCK_ID = "settings_make_url";
@@ -240,6 +242,7 @@ function mcpBlocks(snapshot = {}, state = {}) {
   return [
     { type: "header", text: plain("MCP connections") },
     fieldBlock(`Composio shared · ${c.composioMode === "sdk" ? "SDK mode" : "Personal mode"}`, composio),
+    ...(c.composioTokenLabel ? [fieldBlock("Composio channel label", inlineCode(c.composioTokenLabel))] : []),
     fieldBlock("Toolbox", toolbox),
     fieldBlock("Make MCP toolbox", make),
     {
@@ -508,6 +511,7 @@ export function buildConnectionsEditorView(connections = {}, state = {}, { chann
     blocks: [
       { type: "context", elements: [mrkdwn(`Update write-only credentials for *#${escapeMrkdwn(channelName || "this channel")}*. Saved values are never prefilled or shown again.`)] },
       optionalTextInput({ blockId: CONNECTION_COMPOSIO_BLOCK_ID, actionId: CONNECTION_COMPOSIO_ACTION_ID, label: "Composio channel token", placeholder: "Leave blank to keep the saved token", hint: modeHint }),
+      optionalTextInput({ blockId: CONNECTION_COMPOSIO_LABEL_BLOCK_ID, actionId: CONNECTION_COMPOSIO_LABEL_ACTION_ID, label: "Composio label", placeholder: "Whose account? e.g. Team account", initialValue: connections.composioTokenLabel || "", hint: "An optional name to identify this account. Clear this field to remove the label; the token stays unchanged." }),
       optionalTextInput({ blockId: CONNECTION_TOOLBOX_BLOCK_ID, actionId: CONNECTION_TOOLBOX_ACTION_ID, label: "Toolbox token", placeholder: "Leave blank to keep the saved token", hint: "Used by the shared makeitfuture-toolbox connection." }),
       optionalTextInput({ blockId: CONNECTION_MAKE_URL_BLOCK_ID, actionId: CONNECTION_MAKE_URL_ACTION_ID, label: "Make MCP server URL", placeholder: "https://eu1.make.celonis.com/mcp/server/…", initialValue: connections.makeToolboxUrl || "", maxLength: 500, hint: "Leave unchanged to keep it; use Disconnect Make MCP in the main tab to remove it." }),
       optionalTextInput({ blockId: CONNECTION_MAKE_KEY_BLOCK_ID, actionId: CONNECTION_MAKE_KEY_ACTION_ID, label: "Make MCP token", placeholder: "Leave blank to keep the saved token", hint: "A URL and token are both required before Make MCP is active." }),
@@ -520,6 +524,9 @@ export function readConnectionsForm(view = {}) {
   const textValue = (blockId, actionId) => String(values[blockId]?.[actionId]?.value || "").trim();
   return {
     composioToken: textValue(CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_COMPOSIO_ACTION_ID),
+    ...(Object.hasOwn(values, CONNECTION_COMPOSIO_LABEL_BLOCK_ID)
+      ? { composioTokenLabel: textValue(CONNECTION_COMPOSIO_LABEL_BLOCK_ID, CONNECTION_COMPOSIO_LABEL_ACTION_ID) }
+      : {}),
     toolboxToken: textValue(CONNECTION_TOOLBOX_BLOCK_ID, CONNECTION_TOOLBOX_ACTION_ID),
     makeToolboxUrl: textValue(CONNECTION_MAKE_URL_BLOCK_ID, CONNECTION_MAKE_URL_ACTION_ID),
     makeToolboxKey: textValue(CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_KEY_ACTION_ID),
