@@ -160,7 +160,9 @@ test("stream progress keeps a persistent toolbox while assistant status stays te
   });
 
   progress.onRuntimeResolved({ engine: "claude", model: "claude-opus-4-8[1m]" });
+  await cardReady(); // one status write is in flight at a time; drain it before the next phase
   progress.onEvent({ kind: "tool_use", name: "Bash", target: "npm test" });
+  await cardReady();
   progress.onDelta("Final answer.");
   await progress.finalize({
     content: "Final answer.",
@@ -628,6 +630,7 @@ test("an assistant-thread status line carries thinking summaries and the loading
 
   progress.onRuntimeResolved({ engine: "claude", model: "claude-opus-4-8" });
   progress.onEvent({ kind: "thinking", summary: "weighing the two schema options" });
+  await cardReady();
   await progress.stop();
 
   const statusCalls = calls.filter((c) => c[0] === "assistant.threads.setStatus");
@@ -710,7 +713,9 @@ test("stream progress updates its model label when the runtime falls back to Cod
   const progress = startProgress("stream", client, "C1", "111.222", { authorId: "U1", teamId: "T1" });
 
   progress.onRuntimeResolved({ engine: "claude", model: "claude-sonnet-4-6" });
+  await cardReady();
   progress.onRuntimeResolved({ engine: "codex", model: "gpt-5.4" });
+  await cardReady();
   await progress.stop();
 
   const statuses = calls.filter((c) => c[0] === "assistant.threads.setStatus").map((c) => c[1].status);
@@ -1090,6 +1095,7 @@ test("in an assistant thread the shimmer makes parallel agent work visible", asy
   const progress = startProgress("stream", client, "C_ASSIST_AGENTS", "111.222", { authorId: "U1", teamId: "T1" });
   progress.onEvent({ kind: "agent_activity", id: "agent-a", name: "researcher", status: "running" });
   progress.onEvent({ kind: "agent_activity", id: "agent-b", name: "reviewer", status: "running" });
+  await cardReady();
   await progress.stop();
   assert.ok(
     calls.some((call) => call[0] === "assistant.threads.setStatus" && /coordinating 2 agents/.test(call[1].status)),
@@ -2666,4 +2672,182 @@ test("a rate-limited stopStream leaves exactly one answer message, with its foot
   assert.ok(calls.some((call) => call[0] === "stopStream" && call[2] === 1 && call[1]?.chunks?.length),
     "the toolbox card is still sealed");
   assert.equal(calls.some((call) => call[0] === "update"), false, "no partial message is left to patch up");
+});
+
+// SLK-207. Under sustained Slack rate limiting every assistant.threads.setStatus call sleeps its
+// own retry-after, and the terminal clear used to be appended to the tail of an UNBOUNDED serial
+// chain that finalize() awaited BEFORE writing the answer. Turns whose engine had long finished
+// were delivered tens of minutes later, or not at all. Delivery is never gated on the temporary
+// status surface again — and the clear still happens.
+test("a jammed assistant status never holds back the answer, and still clears afterwards", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  let releaseStatus;
+  const rateLimited = new Promise((resolve) => { releaseStatus = resolve; });
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => calls.push(["append", payload]),
+    stop: async (payload) => calls.push(["stopStream", payload]),
+  };
+  const client = {
+    apiCall: async (method, payload) => {
+      calls.push(["apiCall", method, payload]);
+      await rateLimited; // Slack is rate-limiting the status surface: this request does not return
+    },
+    chatStream: () => streamer,
+    chat: {
+      postMessage: async (payload) => calls.push(["postMessage", payload]),
+      update: async (payload) => calls.push(["update", payload]),
+      delete: async (payload) => calls.push(["delete", payload]),
+    },
+  };
+  const progress = startProgress("stream", client, "C_STATUS_JAM", "111.222", { authorId: "U1", teamId: "T1" });
+  progress.onDelta("The answer that must not wait.");
+
+  const finalized = progress.finalize({
+    content: "The answer that must not wait.",
+    durationMs: 5,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
+  t.mock.timers.tick(5_000); // the bounded grace the terminal clear is raced against
+  await finalized;
+
+  const stop = calls.find((call) => call[0] === "stopStream");
+  assert.ok(stop, "the answer is finalized while the status write is still stuck at Slack");
+  assert.ok(stop[1]?.blocks?.length, "the delivered answer carries its run-stats footer");
+  assert.equal(calls.some((call) => call[0] === "postMessage"), false, "the native answer needed no fallback");
+  assert.equal(calls.filter((call) => call[0] === "apiCall").length, 1,
+    "the jammed write is the only status request outstanding — nothing piles up behind it");
+
+  releaseStatus();
+  await new Promise((resolve) => setImmediate(resolve));
+  const statuses = calls.filter((call) => call[0] === "apiCall").map((call) => call[2].status);
+  assert.equal(statuses.at(-1), "", "the terminal clear is still attempted once Slack answers");
+});
+
+// The other half of the same guard: the status queue holds ONE in-flight write and ONE pending
+// slot, and the pending slot always carries the latest phase. A turn that changes phase fifty
+// times while Slack is slow must cost one status request afterwards, not fifty.
+test("rapid activity phases coalesce into one pending assistant status", async () => {
+  const statuses = [];
+  let release;
+  const firstWrite = new Promise((resolve) => { release = resolve; });
+  const client = {
+    apiCall: async (_method, payload) => {
+      statuses.push(payload.status);
+      if (statuses.length === 1) await firstWrite; // stuck behind Slack's retry-after
+    },
+    chatStream: () => ({ ts: "1720000000.000100", append: async () => {}, stop: async () => {} }),
+    chat: { postMessage: async () => {}, update: async () => {} },
+  };
+  const progress = startProgress("stream", client, "C_STATUS_COALESCE", "111.222", { authorId: "U1", teamId: "T1" });
+  assert.equal(statuses.length, 1, "the opening phrase is the write in flight");
+
+  // Thinking summaries: a pure status phase, so this measures the status queue itself and not the
+  // card's own (correctly bounded) re-assert after each durable append.
+  for (let index = 0; index < 25; index += 1) {
+    progress.onEvent({ kind: "thinking", summary: `option ${index}` });
+  }
+  assert.equal(statuses.length, 1, "no phase may open a second concurrent status request");
+
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(statuses.length, 2, "the superseded phases collapse into a single write");
+  assert.match(statuses[1], /option 24/, "and that write carries the LATEST phase, never a stale one");
+
+  await progress.stop();
+  assert.deepEqual(statuses.slice(2), [""], "the terminal clear is the last write on the thread");
+});
+
+// SLK-208. Slack can complete a message's stream server-side (a window blown by rate limiting, or
+// the undocumented age cap). Every later append then fails `message_not_in_streaming_state`: the
+// old code set `failed`, dropped every remaining delta, and left a message ending mid-word with no
+// footer under a red "Something went wrong". The card already reseeded in that case; the answer
+// now does too.
+test("an answer stream Slack ends mid-reply is reseeded into one complete, footered message", async () => {
+  const calls = [];
+  let streamSeq = 0;
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => {
+      const id = ++streamSeq;
+      return {
+        ts: `1720000000.00010${id}`,
+        append: async (payload) => {
+          calls.push(["append", payload, id]);
+          if (id === 1 && /completed/.test(payload?.markdown_text || "")) {
+            throw Object.assign(new Error("message_not_in_streaming_state"), {
+              data: { error: "message_not_in_streaming_state" },
+            });
+          }
+        },
+        stop: async (payload) => calls.push(["stopStream", payload, id]),
+      };
+    },
+    chat: {
+      postMessage: async (payload) => { calls.push(["postMessage", payload]); return { ts: "1720000000.000900" }; },
+      update: async (payload) => calls.push(["update", payload]),
+      delete: async (payload) => calls.push(["delete", payload]),
+    },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+
+  const answer = "The answer starts here and is completed after Slack ended the stream.";
+  progress.onDelta("The answer starts here ");
+  progress.onDelta("and is completed after Slack ended the stream.");
+  await progress.finalize({ content: answer, durationMs: 5, usage: { input_tokens: 1, output_tokens: 1 } });
+
+  const survivor = calls.filter((call) => call[0] === "append" && call[2] === 2)
+    .map((call) => call[1].markdown_text || "").join("");
+  assert.equal(survivor, `${answer}\n\n<@U1>`, "the replacement message carries the WHOLE answer, deltas included");
+  const sealed = calls.find((call) => call[0] === "stopStream" && call[2] === 2);
+  assert.ok(sealed?.[1]?.blocks?.length, "the footer lands on the surviving message");
+  assert.deepEqual(calls.filter((call) => call[0] === "delete").map((call) => call[1].ts), ["1720000000.000101"],
+    "the stranded partial is removed — exactly one answer message survives");
+  assert.equal(calls.some((call) => call[0] === "postMessage"), false, "no duplicate answer is posted beneath it");
+});
+
+// The same accident on the terminal write: the stream is gone by the time the footer is sent, so
+// the reply would keep its text but never get a footer (and the fallback would post a second copy).
+test("a stop that finds the answer stream already ended still lands one footered answer", async () => {
+  const calls = [];
+  let streamSeq = 0;
+  const client = {
+    apiCall: refuseStatus(),
+    chatStream: () => {
+      const id = ++streamSeq;
+      return {
+        ts: `1720000000.00010${id}`,
+        append: async (payload) => calls.push(["append", payload, id]),
+        stop: async (payload) => {
+          calls.push(["stopStream", payload, id]);
+          if (id === 1) {
+            throw Object.assign(new Error("message_not_in_streaming_state"), {
+              data: { error: "message_not_in_streaming_state" },
+            });
+          }
+        },
+      };
+    },
+    chat: {
+      postMessage: async (payload) => { calls.push(["postMessage", payload]); return { ts: "1720000000.000900" }; },
+      update: async (payload) => calls.push(["update", payload]),
+      delete: async (payload) => calls.push(["delete", payload]),
+    },
+  };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+
+  progress.onDelta("A complete answer.");
+  await progress.finalize({ content: "A complete answer.", durationMs: 5, usage: { input_tokens: 1, output_tokens: 1 } });
+
+  const survivor = calls.filter((call) => call[0] === "append" && call[2] === 2)
+    .map((call) => call[1].markdown_text || "").join("");
+  assert.equal(survivor, "A complete answer.\n\n<@U1>", "the replacement carries the compiled answer");
+  const sealed = calls.find((call) => call[0] === "stopStream" && call[2] === 2);
+  assert.ok(sealed?.[1]?.blocks?.length, "and receives the footer the dead message could not take");
+  assert.deepEqual(calls.filter((call) => call[0] === "delete").map((call) => call[1].ts), ["1720000000.000101"],
+    "the dead message is removed instead of being left above the answer");
+  assert.equal(calls.some((call) => call[0] === "postMessage"), false, "the classic fallback is not needed");
 });

@@ -23,6 +23,14 @@ const assistantStatusOff = createTtlSet(60 * 60 * 1000);
 const SLACK_LOADING_MESSAGE_MAX_CHARS = 50;
 const SLACK_LOADING_MESSAGE_MAX_COUNT = 10;
 const STATUS_REASSERT_AFTER_MESSAGE_MS = 1_500;
+// A finished turn clears the assistant status, but DELIVERY must never wait on that clear.
+// assistant.threads.setStatus is rate-limited per workspace, and a busy daemon can sit inside a
+// single retry-after sleep for minutes — long enough that answers arrived tens of minutes after
+// the run that produced them had already finished. The terminal clear is therefore raced against
+// this short grace: long enough that a healthy workspace still ends with a cleared status before
+// the answer lands, short enough that a jammed status surface costs the reader seconds rather
+// than the answer. The clear itself is never abandoned — only the waiting is bounded.
+const STATUS_CLEAR_GRACE_MS = 5_000;
 
 function normalizeLoadingMessage(message) {
   const text = String(message);
@@ -136,7 +144,9 @@ function startStatusAnimation(client, channel, threadTs) {
   let rendered = "";
   let closed = false;
   let disabled = false;
-  let writeChain = Promise.resolve();
+  let inFlight = null; // the one status write currently at Slack
+  let pending = null; // the ONE write queued behind it — always the latest status asked for
+  let terminalClear = null;
   let reassertTimer = null;
   let lastStatusQueuedAt = 0;
   const activeAgents = new Set();
@@ -153,20 +163,41 @@ function startStatusAnimation(client, channel, threadTs) {
     return mins < 60 ? `${mins}m${String(secs % 60).padStart(2, "0")}s` : `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, "0")}m`;
   };
   // Slack status writes used to race: a delayed activity request could complete after stop()'s
-  // clear and resurrect the temporary box. Preserve the live activity sequence on one chain and
-  // make the terminal clear its final write.
-  const queueWrite = (status, loadingMessages, { terminal = false } = {}) => {
-    if (closed && !terminal) return writeChain;
+  // clear and resurrect the temporary box. They also used to queue WITHOUT BOUND on one serial
+  // promise chain, and because a rate-limited write sleeps its own retry-after, an event-driven
+  // turn could pile up thousands of already-superseded status calls — with the terminal clear,
+  // and therefore the answer, waiting at the end of that backlog. There is now at most ONE write
+  // in flight and ONE pending write, and the pending slot always holds the LATEST status: a
+  // phrase superseded before it ever reached Slack is dropped instead of being sent late.
+  const write = async (status, loadingMessages) => {
+    if (disabled && status) return;
+    const accepted = await setAssistantStatus(client, channel, threadTs, status, loadingMessages);
+    if (!accepted && status) disabled = true;
+  };
+  const pump = () => {
+    if (inFlight || !pending) return;
+    const next = pending;
+    pending = null;
+    inFlight = write(next.status, next.loadingMessages)
+      .catch(() => {})
+      .then(() => {
+        inFlight = null;
+        next.done();
+        pump();
+      });
+  };
+  const queueWrite = (status, loadingMessages) => {
+    if (closed) return Promise.resolve();
     lastStatusQueuedAt = Date.now();
-    writeChain = writeChain.then(async () => {
-      if (disabled && status) return;
-      const accepted = await setAssistantStatus(client, channel, threadTs, status, loadingMessages);
-      if (!accepted && status) disabled = true;
-    });
-    return writeChain;
+    if (pending) pending.done(); // superseded before it was ever sent
+    let done;
+    const written = new Promise((resolve) => { done = resolve; });
+    pending = { status, loadingMessages, done };
+    pump();
+    return written;
   };
   const render = ({ force = false } = {}) => {
-    if (closed || disabled) return writeChain;
+    if (closed || disabled) return Promise.resolve();
     const base = runtime ? `${activity} · ${runtime}` : activity;
     // Only once the run is genuinely long: a quick answer shouldn't carry a stopwatch, and the
     // clock is only informative when the question is "is this thing still alive?".
@@ -250,14 +281,24 @@ function startStatusAnimation(client, channel, threadTs) {
       render();
     },
     afterMessageActivity,
+    // The clear supersedes whatever activity write was still waiting (it can only be stale now)
+    // and is the LAST write this thread's status ever receives — `closed` refuses every later
+    // queueWrite, so nothing can land after it and resurrect the box. It waits behind at most ONE
+    // in-flight request rather than a backlog, and the caller bounds how long IT waits on the
+    // returned promise: posting the answer clears the box on Slack's side anyway.
     stop: () => {
-      if (closed) return writeChain;
+      if (closed) return terminalClear || Promise.resolve();
       closed = true;
       clearInterval(heartbeat);
       if (reassertTimer) clearTimeout(reassertTimer);
       reassertTimer = null;
       rendered = "";
-      return queueWrite("", [], { terminal: true });
+      if (pending) pending.done();
+      let done;
+      terminalClear = new Promise((resolve) => { done = resolve; });
+      pending = { status: "", loadingMessages: [], done };
+      pump();
+      return terminalClear;
     },
   };
 }
@@ -653,11 +694,16 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // reader is left with exactly one answer. Best-effort, like every other cleanup here — a failed
   // delete only means both copies stay readable, and only a sanitized API code is logged.
   const discardPartialAnswer = async () => {
-    const ts = streamStartedAt === null ? "" : answerStreamer?.ts;
+    // The live message's `ts` is the fact that matters — a message exists in the thread and is
+    // about to be duplicated. `streamStartedAt` is only the ROLLOVER clock and is reset to null
+    // by every rollover/reseed until the successor reports a ts, so keying on it left a stranded
+    // partial next to the complete fallback answer exactly in the recovery cases this exists for.
+    const ts = answerStreamer?.ts;
     if (!ts || typeof client.chat?.delete !== "function") return;
     try {
       await client.chat.delete({ channel, ts });
       streamStartedAt = null;
+      answerStreamer = null;
     } catch (error) {
       reportStreamFailure("partial answer cleanup", error);
     }
@@ -665,7 +711,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // All append sites use this wrapper so the rollover clock follows the actual Slack message,
   // not the earlier construction of the SDK ChatStreamer. Capture the current helper at execution
   // time: the shared promise chain decides whether an append belongs before or after a rollover.
-  const appendCurrent = async (payload) => {
+  const appendCurrent = async (payload, { reseed = true } = {}) => {
     // A STOPPED run adds nothing more to Slack. The lazy creation below means a delta still
     // queued on the chain — held back by Slack rate-limit back-pressure — would otherwise be
     // flushed by stop()'s own `await chain`, creating the answer message and posting the whole
@@ -674,7 +720,20 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     if (terminal === "stop") return null;
     if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
     const target = answerStreamer;
-    const response = await target.append(payload);
+    let response;
+    try {
+      response = await target.append(payload);
+    } catch (error) {
+      // Slack ended THIS MESSAGE's stream under us. The message is dead; the answer is not.
+      // Without a recovery the first refusal set `failed` and every later delta was dropped, so
+      // the reader was left with a message that ends mid-word, carries no footer, and renders as
+      // a red "Something went wrong". Reseed the compiled answer into a fresh stream and replay
+      // this append against it: a lost streaming window costs a message, never a delta.
+      if (!reseed || !isDeadStreamError(error) || target !== answerStreamer) throw error;
+      reportStreamFailure("append", error);
+      if (!(await reseedAnswer())) throw error;
+      return appendCurrent(payload, { reseed: false });
+    }
     if (target === answerStreamer) {
       if (typeof payload?.markdown_text === "string") streamMarkdown += payload.markdown_text;
       if (target.ts && streamStartedAt === null) streamStartedAt = Date.now();
@@ -717,6 +776,42 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   const isDeadStreamError = (error) => {
     const code = String(error?.data?.error || error?.code || "");
     return code === "message_not_in_streaming_state" || code === "message_not_found";
+  };
+  // The answer's half of the same accident, with a higher price: a dead answer stream refuses
+  // every later append AND the terminal stop, so the footer can never land and the reply stays
+  // truncated under an error banner. Recover exactly like a scheduled rollover — a fresh stream
+  // carrying the complete compiled answer — then retire the stranded copy (replacement first,
+  // never a gap). Returns false when the replacement itself could not be made durable, which
+  // sends the caller to the classic fallback with the whole answer.
+  const reseedAnswer = async () => {
+    const stranded = answerStreamer?.ts;
+    const compiled = streamMarkdown;
+    answerStreamer = null;
+    streamStartedAt = null;
+    streamMarkdown = "";
+    try {
+      const next = client.chatStream(streamArgs);
+      if (compiled) {
+        await next.append({ markdown_text: compiled });
+        streamMarkdown = compiled;
+        if (next.ts) streamStartedAt = Date.now();
+      }
+      answerStreamer = next;
+      shimmer?.afterMessageActivity?.({ immediate: true });
+    } catch (error) {
+      reportStreamFailure("answer reseed", error);
+      streamMarkdown = compiled;
+      answerStreamer = null;
+      // The stranded copy is still in the thread: leave it queued so the fallback's cleanup
+      // removes it instead of posting the complete answer next to a partial one.
+      if (stranded) retiredStreamTs.add(stranded);
+      return false;
+    }
+    if (stranded) {
+      retiredStreamTs.add(stranded);
+      await cleanupRetiredStreams();
+    }
+    return true;
   };
   // Slack ended the card's stream under us. The MESSAGE is dead; the card's state is not. Treat it
   // exactly like a scheduled rollover: reseed the complete snapshot into a fresh stream, then
@@ -790,6 +885,19 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // Pre-text feedback: keep Slack's separate temporary assistant status running for
   // thinking/tool steps where the thread supports it. It is explicitly cleared at termination.
   shimmer = startStatusAnimation(client, channel, threadTs);
+  // Terminal status clear, bounded. It is FIRED here and waited on only for the grace period:
+  // under workspace rate limiting a status write can sleep for minutes, and an answer that is
+  // ready must not sit behind it. The clear stays in flight and still lands afterwards.
+  const clearShimmer = async () => {
+    const cleared = Promise.resolve(shimmer?.stop?.()).catch(() => {});
+    let timer = null;
+    const grace = new Promise((resolve) => {
+      timer = setTimeout(resolve, STATUS_CLEAR_GRACE_MS);
+      timer.unref?.();
+    });
+    await Promise.race([cleared, grace]);
+    if (timer) clearTimeout(timer);
+  };
   // Liveness row, ticking independently of engine events. It remains part of the durable toolbox;
   // the temporary assistant status mirrors it in assistant threads and no-ops elsewhere. The row
   // carries the last thing we actually saw, so a stuck run says WHAT it is stuck on.
@@ -1002,7 +1110,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       terminal = "finalize";
       stopped = true;
       stopHeartbeat();
-      await shimmer.stop?.();
+      await clearShimmer();
       const fullRaw = result?.content || "";
       const full = fullRaw.trim();
       // Release any "@name" the holdback buffer was still waiting on (already counted in rawLen).
@@ -1047,34 +1155,45 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           ...(rawLen === 0 ? { markdown_text: resolveMentions(oneShot, dir) + (hasOverflow ? "" : tag) } : {}),
           ...(rawLen > 0 && fence ? { markdown_text: `\n${fence.marker}` } : {}),
         };
+        // The streamed message IS the reply: seal the toolbox, remove any retired copy and put
+        // the overflow beneath it. Shared by the first attempt and every recovery below, so an
+        // answer that had to move to a new message never loses its follow-ups.
+        const sealDelivered = async () => {
+          if (!answerStreamer?.ts) return false;
+          await stopTimeline();
+          await cleanupRetiredStreams();
+          if (hasOverflow) await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag);
+          return true;
+        };
+        const stopWithFooter = () => answerStreamer.stop({
+          ...terminalPayload,
+          blocks: footerBlocks(result, { channel, threadTs, authorId }),
+        });
         try {
           if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
-          await answerStreamer.stop({
-            ...terminalPayload,
-            blocks: footerBlocks(result, { channel, threadTs, authorId }),
-          });
-          if (answerStreamer.ts) {
-            await stopTimeline();
-            await cleanupRetiredStreams();
-            // The streamed message IS the reply; deliver any overflow beneath it (with the tag).
-            if (hasOverflow) await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag);
-            return;
-          }
+          await stopWithFooter();
+          if (await sealDelivered()) return;
         } catch (error) {
           reportStreamFailure("stop", error);
-          if (isSlackInvalidBlocksError(error)) {
+          // Slack had already ended the stream, so the terminal write — the footer, and for a
+          // tool-only run the answer itself — never landed. Reseed and finish on a live message,
+          // the same recovery the progress card has, instead of dropping to a fallback that must
+          // delete and repost the whole answer.
+          if (isDeadStreamError(error) && (await reseedAnswer())) {
+            try {
+              await stopWithFooter();
+              if (await sealDelivered()) return;
+            } catch (retryError) {
+              reportStreamFailure("stop reseed", retryError);
+            }
+          } else if (isSlackInvalidBlocksError(error)) {
             try {
               // The SDK keeps buffered markdown after a rejected stopStream call. Retry the same
               // terminal write without cosmetic footer blocks. Re-send the toolbox snapshot, which
               // the helper does not retain, but do not append terminal markdown a second time: that
               // text is still in ChatStreamer's buffer from the rejected request.
               await answerStreamer.stop();
-              if (answerStreamer.ts) {
-                await stopTimeline();
-                await cleanupRetiredStreams();
-                if (hasOverflow) await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag);
-                return;
-              }
+              if (await sealDelivered()) return;
             } catch {
               // The text-only stop failed too; fall through to the normal full-answer fallback.
             }
@@ -1086,6 +1205,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       // footer rides the answer message itself so the recovery never adds a stats-only message.
       try {
         await discardPartialAnswer();
+        // Any predecessor a rollover or a failed reseed could not remove: the fallback is about to
+        // post the complete answer, and a stranded partial next to it is exactly what this path
+        // exists to prevent.
+        await cleanupRetiredStreams();
         await postChunkedReply(
           client,
           channel,
@@ -1119,7 +1242,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       timeline.interruptReport();
       timeline.finishAgents("stopped");
       timeline.flushActive(); // close off the running tool row before we stop the stream
-      await shimmer.stop?.();
+      await clearShimmer();
       await chain;
       await stopTimeline("task-card abort stop");
       if (!failed && streamStartedAt !== null) {
