@@ -1468,14 +1468,30 @@ the bridge network and *Allow network* is only a switch the engines are told abo
 - [ ] Only the author / an admin / an approved user can click an approval; others get an ephemeral no.
 - [x] Unit (`test/folders-settings.test.js`, `test/run-grant-isolation.test.js`): a channel that does
       NOT grant the shell (read, clean, and an admin channel's shared file) names `Bash` in the
-      lockdown's `permissions.ask` — in the generated object, in both on-disk files, and in the
+      lockdown's `permissions.ask` — in the generated object, in the shared on-disk file, and in the
       per-run content-addressed copy — while a bash/auto channel keeps `Bash` in `allow` and out of
       `ask`; flipping the grant moves the per-run copy to a different digest, and `Write`/`Edit`
       (including the narrow `MEMORY.md` grant) never appear in `deny`. Regression: expressing "no
       shell" by OMISSION alone was not enough — Claude Code answers a simple command whose argv head
       is on its built-in read-only list (`id`, `cat`, `head`, `strings`, …) before it consults
       `--permission-prompt-tool`, so a read-mode turn executed `id -un` with no card.
+- [x] Unit (`test/folders-settings.test.js`, `test/run-grant-isolation.test.js`): the ADMIN-RUN
+      variant of a channel whose stored flags carry no shell grant (`adminMode` alone — what the
+      `full` profile sets) grants `Bash`/`Write`/`Edit`/`MultiEdit` and carries NO `permissions.ask`
+      key at all, in the generated object, in `settings-admin.json`, and in the escalated per-run
+      copy; it still omits `disableBypassPermissionsMode`, keeps memory off, the deny list and the
+      Stop hook, and equals the same channel built WITH the shell apart from the bypass key. The
+      SHARED file of that channel is unchanged (`ask: ["Bash"]`, no `Bash` in `allow`,
+      `disableBypassPermissionsMode: "disable"`), and a non-admin channel is untouched. Regression
+      (2026-09-07): the variant was a clone of the shared file with one key deleted, so it inherited
+      `ask: ["Bash"]`; the escalated turn has no `--permission-prompt-tool`, so Claude Code denied a
+      bare `pwd`, refused `kill -9 $PPID` ("Contains simple_expansion"), reported the shell "not
+      actually granted" and fell back to read-only.
 - [ ] LIVE: in a Claude read channel, `@bot run id -un` raises an approval card and does not execute.
+- [ ] LIVE (both engines): in an admin-mode (Full access) channel whose "allow shell" toggle is OFF,
+      an ADMIN author asks the bot to run `pwd` — the command executes and the output is posted, with
+      no approval card and no "shell not granted" fallback. A NON-admin author in the SAME channel
+      asking for the same command still gets an approval card.
 - [x] Probe against the PINNED CLI (`containers/versions.json`, Claude Code 2.1.258) — repeat on
       every Claude bump, the way the Codex Landlock flag is re-checked: a headless turn in a folder
       whose settings merely OMIT `Bash` executed `id -un` with ZERO `--permission-prompt-tool`

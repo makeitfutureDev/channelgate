@@ -48,12 +48,16 @@ test("bypass key is 'disable' in shared settings and absent in the bypass varian
 
   const bypass = await buildSettings({ _slug: "bypass-probe", allowedMcps: [] }, { allowBypass: true });
   assert.equal("disableBypassPermissionsMode" in bypass.permissions, false);
-  // The bypass key is the ONLY delta. Confinement is the channel container, so neither variant
-  // carries an engine sandbox block: an admin turn is "full tools" inside the same boundary, not a
-  // boundary switched off.
+  // Confinement is the channel container, so neither variant carries an engine sandbox block: an
+  // admin turn is "full tools" inside the same boundary, not a boundary switched off.
   assert.equal("sandbox" in bypass, false);
   assert.equal("sandbox" in shared, false);
-  assert.deepEqual({ ...bypass, permissions: { ...bypass.permissions, disableBypassPermissionsMode: "disable" } }, shared);
+  // The bypass allowance and the shell grant it implies are the ONLY deltas: the admin variant is
+  // exactly the same channel built WITH the shell, plus the omitted bypass key. Stating it against
+  // the bashy build (rather than the read-mode shared file) is what keeps the two halves of the
+  // escalation — the flag and the permissions the file admits — from drifting apart again.
+  const bashy = await buildSettings({ _slug: "bypass-probe", allowBash: true, allowedMcps: [] });
+  assert.deepEqual({ ...bypass, permissions: { ...bypass.permissions, disableBypassPermissionsMode: "disable" } }, bashy);
 });
 
 test("admin-mode channels get an admin settings file the CLI will honour", async () => {
@@ -87,21 +91,20 @@ test("a channel without the shell grants sends every Bash command to the approva
     { label: "read, memory off", meta: { memory: false } },
     { label: "clean", meta: { cleanMode: true } },
     // An admin channel's SHARED file is what a non-admin author runs under (the bypass variant is
-    // handed only to an admin author), so it must ask too.
+    // handed only to an admin author, and grants the shell outright — see the admin-run test
+    // below), so it must ask too.
     { label: "admin", meta: { adminMode: true } },
   ];
   for (const { label, meta } of askless) {
-    for (const allowBypass of [false, true]) {
-      const settings = await buildSettings({ _slug: "claude-ask-bash", ...meta, allowedMcps: [] }, { allowBypass });
-      assert.ok(settings.permissions.ask.includes("Bash"), `${label}: Bash must ask`);
-      assert.equal(settings.permissions.allow.includes("Bash"), false, `${label}: Bash must not be pre-approved`);
-      // `deny` outranks `allow`, so the shell must never be denied outright here: that would also
-      // be the wrong contract (approval is possible), and the same mistake applied to Write/Edit
-      // would void the narrow MEMORY.md grant below.
-      assert.equal(settings.permissions.deny.includes("Bash"), false, `${label}: ask, never deny`);
-      for (const tool of ["Write", "Edit", "MultiEdit", "Write(MEMORY.md)", "Edit(MEMORY.md)"]) {
-        assert.equal(settings.permissions.deny.includes(tool), false, `${label}: ${tool} must stay out of deny`);
-      }
+    const settings = await buildSettings({ _slug: "claude-ask-bash", ...meta, allowedMcps: [] });
+    assert.ok(settings.permissions.ask.includes("Bash"), `${label}: Bash must ask`);
+    assert.equal(settings.permissions.allow.includes("Bash"), false, `${label}: Bash must not be pre-approved`);
+    // `deny` outranks `allow`, so the shell must never be denied outright here: that would also
+    // be the wrong contract (approval is possible), and the same mistake applied to Write/Edit
+    // would void the narrow MEMORY.md grant below.
+    assert.equal(settings.permissions.deny.includes("Bash"), false, `${label}: ask, never deny`);
+    for (const tool of ["Write", "Edit", "MultiEdit", "Write(MEMORY.md)", "Edit(MEMORY.md)"]) {
+      assert.equal(settings.permissions.deny.includes(tool), false, `${label}: ${tool} must stay out of deny`);
     }
   }
 
@@ -133,12 +136,13 @@ test("the on-disk lockdown files carry the ask rule for a channel without the sh
 
   const shared = JSON.parse(readFileSync(channelSettingsFile(slug), "utf8"));
   const admin = JSON.parse(readFileSync(channelAdminSettingsFile(slug), "utf8"));
-  // The admin variant is a clone with ONE delta (the bypass key), so the ask rule rides along:
-  // an escalated turn ignores it via --dangerously-skip-permissions, and nothing else can.
-  for (const [label, settings] of [["shared", shared], ["admin", admin]]) {
-    assert.ok(settings.permissions.ask.includes("Bash"), `${label}: Bash asks on disk`);
-    assert.equal(settings.permissions.allow.includes("Bash"), false, `${label}: Bash not pre-approved on disk`);
-  }
+  // The SHARED file is every non-admin author's turn in this channel: it asks.
+  assert.ok(shared.permissions.ask.includes("Bash"), "shared: Bash asks on disk");
+  assert.equal(shared.permissions.allow.includes("Bash"), false, "shared: Bash not pre-approved on disk");
+  // The admin variant is the bypassed admin turn's file, so it grants the shell instead of asking
+  // for it — an ask rule there is not merely redundant, it took the shell away (2026-09-07).
+  assert.ok(admin.permissions.allow.includes("Bash"), "admin: Bash granted on disk");
+  assert.equal("ask" in admin.permissions, false, "admin: no ask rule on disk");
 
   const bashSlug = "ask-bash-files-shell";
   await ensureChannelFolder(bashSlug, { allowBash: true, allowedMcps: [] });
@@ -282,4 +286,44 @@ test("SDK-mode Composio adds its tool-router host pattern; a malformed Make tool
   const personal = injectedRemoteAllowMatches({}).map((m) => m.serverUrl);
   assert.equal(personal.includes("https://*.composio.dev/*"), false);
   assert.equal(injectedRemoteAllowMatches({ makeToolboxUrl: "not a url" }).some((m) => m.serverUrl === "not a url"), false);
+});
+
+// The "full" capability profile sets adminMode ONLY (never allowBash/autoMode), so an admin
+// channel's meta normally has no shell grant of its own — and the admin-run variant inherited the
+// read-mode `ask: ["Bash"]` rule from the shared file. Claude Code still evaluated that rule for a
+// --dangerously-skip-permissions turn: a bare `pwd` came back denied, `kill -9 $PPID` was refused
+// as "Contains simple_expansion", and the admin turn reported the shell "not actually granted" and
+// fell back to Read-only (QA, 2026-09-07). The variant is handed ONLY to an admin author in an
+// adminMode channel — the same turn that receives the bypass flag — so granting the shell there
+// widens nothing that the flag did not already permit, and the file must stop contradicting it.
+test("the admin-run variant grants the shell outright and carries no ask rule", async () => {
+  const admin = await buildSettings({ _slug: "admin-shell", adminMode: true, allowedMcps: [] }, { allowBypass: true });
+  for (const tool of ["Bash", "Write", "Edit", "MultiEdit"]) {
+    assert.ok(admin.permissions.allow.includes(tool), `${tool} granted in the admin variant`);
+  }
+  assert.equal("ask" in admin.permissions, false, "no ask rule may contradict the bypass");
+  assert.equal("disableBypassPermissionsMode" in admin.permissions, false);
+  // Same shape as the bashy branch: the broad Write/Edit grant makes the narrow MEMORY.md pair
+  // redundant, so it is not emitted twice.
+  for (const scoped of ["Write(MEMORY.md)", "Edit(MEMORY.md)"]) {
+    assert.equal(admin.permissions.allow.includes(scoped), false, `${scoped} is redundant beside the broad grant`);
+  }
+  // Everything else the lockdown carries survives the widening.
+  assert.equal(admin.autoMemoryEnabled, false);
+  assert.equal("sandbox" in admin, false);
+  assert.ok(admin.permissions.deny.includes("mcp__claude-in-chrome"));
+  assert.ok(admin.hooks && Object.keys(admin.hooks).length > 0);
+
+  // The SHARED file is unchanged — it is what every NON-admin author in the same channel runs
+  // under, and it must keep sending each command to the approval card.
+  const shared = await buildSettings({ _slug: "admin-shell", adminMode: true, allowedMcps: [] });
+  assert.deepEqual(shared.permissions.ask, ["Bash"]);
+  assert.equal(shared.permissions.allow.includes("Bash"), false);
+  assert.equal(shared.permissions.disableBypassPermissionsMode, "disable");
+
+  // A channel that is not in admin mode is untouched on both variants (nothing ever hands it the
+  // bypass file, but the generator must not widen a read-mode channel either way).
+  const readShared = await buildSettings({ _slug: "read-shell", allowedMcps: [] });
+  assert.deepEqual(readShared.permissions.ask, ["Bash"]);
+  assert.equal(readShared.permissions.allow.includes("Bash"), false);
 });
