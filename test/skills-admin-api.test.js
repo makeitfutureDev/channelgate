@@ -268,10 +268,19 @@ test("grants: going over the skills context soft cap warns in the grant response
   const before = settingsForApi().skillsContextWarnTokens;
   saveSettings({ skillsContextWarnTokens: 1 });
   try {
+    const initial = await request(`/skills/profile/${entry.slug}`);
     const over = await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["cap-buster"] } });
     assert.equal(over.status, 200);
     assert.ok(over.json.contextTokens > 1);
     assert.match(over.json.warnings.join(" "), /always-on skill descriptions cost about \d+ tokens per turn \(soft cap 1\)/, "the warning travels with the grant that caused it");
+    assert.deepEqual(over.json.contextChange, { currentTokens: initial.json.profile.contextTokens, projectedTokens: over.json.contextTokens, softCap: 1 });
+    assert.ok(over.json.warnings.some((w) => w.includes(`Current before grant: ~${initial.json.profile.contextTokens} tokens`) && w.includes(`projected next message: ~${over.json.contextTokens} tokens`) && w.includes("soft cap 1")));
+    const repeated = await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["cap-buster"] } });
+    assert.equal(repeated.json.contextChange.currentTokens, over.json.contextTokens);
+    assert.equal(repeated.json.contextChange.projectedTokens, over.json.contextTokens, "idempotent grant does not invent additional context");
+    saveSettings({ skillsContextWarnTokens: over.json.contextTokens + 1000 });
+    const under = await request(`/skills/profile/${entry.slug}/grant`, { method: "POST", body: { slugs: ["cap-buster"] } });
+    assert.deepEqual(under.json.warnings, [], "comparison does not create a warning below the cap");
   } finally {
     saveSettings({ skillsContextWarnTokens: before });
     await request(`/skills/profile/${entry.slug}/revoke`, { method: "POST", body: { slugs: ["cap-buster"] } });

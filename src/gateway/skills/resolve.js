@@ -208,3 +208,15 @@ export function withDependencies(grantNames = [], opts = {}) {
   const out = [...new Set([...(grantNames || []).map(String), ...profile.active.filter((e) => e.via === "dependency").map((e) => e.slug)])];
   return { names: out, profile };
 }
+
+// A grant changes the next message's durable skill tier. Both management surfaces compare the
+// same whole profiles (including organization/template grants and dependencies), never just the
+// newly added descriptions. This is advisory feedback, not a permission or activation gate.
+export function skillGrantContextChange(before, after) {
+  const contextChange = { currentTokens: before.contextTokens, projectedTokens: after.contextTokens, softCap: after.warnTokens };
+  const warnings = [...after.warnings];
+  if (after.contextTokens > after.warnTokens) {
+    warnings.push(`Current before grant: ~${before.contextTokens} tokens; projected next message: ~${after.contextTokens} tokens (soft cap ${after.warnTokens}).`);
+  }
+  return { contextChange, warnings };
+}
