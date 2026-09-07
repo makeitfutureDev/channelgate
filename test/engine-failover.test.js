@@ -47,6 +47,21 @@ test("a model rejection still wins over the limit/auth patterns", () => {
   );
 });
 
+// The shape a ChatGPT-account Codex actually reports a refused model with: the whole HTTP response
+// body arrives as the message of a turn.failed event, so the status and the error type are inside
+// the document rather than on the event. Read from the outside only, it classifies as nothing at
+// all — which is how a channel with a mistyped model dead-ended on raw JSON in the thread.
+test("a rejection carried as the provider's raw JSON body classifies as a model rejection", () => {
+  const body = '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-nope\' model is not supported when using Codex with a ChatGPT account."}}';
+  const { message, details } = codexTurnError({ type: "turn.failed", error: { message: body } });
+  assert.equal(message, "The 'gpt-nope' model is not supported when using Codex with a ChatGPT account.");
+  assert.ok(!/[{}]/.test(message), "the thrown message is a sentence, never the document");
+  assert.equal(details.providerError, true);
+  assert.equal(details.providerStatus, 400);
+  assert.equal(details.providerCode, "invalid_request_error");
+  assert.equal(details.providerKind, "model_rejected");
+});
+
 test("codexTurnError attaches the classification to the thrown details", () => {
   const { message, details } = codexTurnError({
     type: "error",

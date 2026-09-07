@@ -6,6 +6,7 @@
 // and event registrations and delegates here; this module must never import ./app.js.
 import { upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
 import { engineSupports, engineLabel, ENGINE_IDS } from "../engines/registry.js";
+import { plainFailureText } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult } from "../gateway/run.js";
 import { modeLabel, MODE_FLAGS, MODES, canManage, isAuthorized } from "../gateway/modes.js";
@@ -217,6 +218,29 @@ export function engineSwitchHint(err, { engines = ENGINE_IDS } = {}) {
     return `\n_This thread is pinned to ${pin}, so it was not switched automatically — say ${names} to move it, or /model to repin it._`;
   }
   return `\n_${engineLabel(details.engine)} is unavailable right now — say ${names} in this thread to run it on the other harness._`;
+}
+
+// A model the provider refuses is a SETTING that is wrong, not a run that was unlucky: retrying
+// sends the same id again. Name the id and where it is changed — this is the one failure whose
+// remedy is a configuration change the reader can make from the thread. Returns "" for anything
+// else, so ordinary errors stay unadorned.
+export function modelRemedyHint(err) {
+  const details = err?.details || {};
+  if (details.providerError !== true || details.providerKind !== "model_rejected") return "";
+  const model = String(details.requestedModel || "").trim();
+  const engine = details.engine ? engineLabel(details.engine) : "this harness";
+  return `\n_${model ? `\`${model}\` is not a model ${engine} can run` : `${engine} refused the configured model`} — set a valid one for this channel with \`/model\`, or in the admin UI._`;
+}
+
+// What a failed turn says in the thread. Two rules it exists to keep: a provider's raw JSON
+// response body is never what a person reads (plainFailureText unwraps the sentence inside it),
+// and a failure whose remedy is known says the remedy.
+export function runFailureText(err, { resumable = false } = {}) {
+  const sentence = plainFailureText(err?.message, 400) || "the run failed";
+  const advice = resumable
+    ? "\n_The session survived — send `continue` to pick up where it left off._"
+    : `${engineSwitchHint(err)}${modelRemedyHint(err)}`;
+  return `⚠️ Something went wrong running that. (${sentence})${advice}`;
 }
 
 const CONTINUE_PROMPT =
@@ -1510,7 +1534,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({
           channel: event.channel,
           thread_ts: threadKey,
-          text: `⚠️ Something went wrong running that. (${err.message})${resumable ? "\n_The session survived — send `continue` to pick up where it left off._" : engineSwitchHint(err)}`,
+          text: runFailureText(err, { resumable }),
         });
         markTerminal();
         await logEvent("run_error", { channel: event.channel, author: event.user, slug: entry.slug, error: err.message });

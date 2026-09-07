@@ -1126,6 +1126,29 @@ the bridge network and *Allow network* is only a switch the engines are told abo
 - [x] Unit: an explicit pre-output/pre-tool model rejection (Codex `invalid_request_error`, Claude `model_not_found` — under a NEW session id, which the stub enforces) retries once with a distinct
       gateway default, updates runtime/model reporting, and labels the reply. Generic failures and
       post-tool model errors never replay; if the default also fails, the original error is kept.
+- [x] E2E: the substituted model is visible in the thread the READER sees. Through the real Slack
+      pipeline with a streaming stub (`CLAUDE_STUB_STREAM_TEXT` / `CODEX_STUB_STREAM_TEXT`), a
+      rejected channel model on either engine delivers the ⚠️ substitution note at the head of the
+      streamed answer — exactly once, with the answer intact and no `run_error`. Fails on the old
+      code, which prepended the note to `result.content` that a natively streamed turn never posts
+      (`test/invalid-model-handling.test.js`, live QA EN-03).
+- [x] Unit: the orchestrator announces the substitution to the delivery layer (`answer_note`) on
+      BOTH retry paths — the channel's own harness and a cross-engine fallback whose own model is
+      refused — and still carries it on `content` for surfaces that render the finished reply
+      (`test/model-default-fallback.test.js`).
+- [x] Unit: the note streams as the head of the answer without claiming the turn started writing
+      (a later liveness pulse still opens the task card); a tool-only turn whose text never streamed
+      still delivers its whole answer under the note, with no duplicate; a note that arrives after
+      the answer began becomes a durable card row (`test/slack-progress.test.js`).
+- [x] Unit: a Codex refusal carried as the provider's RAW JSON body (`turn.failed` whose message is
+      the whole `{"type":"error","status":400,…}` document) is unwrapped and classified as
+      `model_rejected`, so it takes the same gateway-default fallback instead of dead-ending
+      (`test/engine-failover.test.js`, `test/invalid-model-handling.test.js`).
+- [x] Unit: `plainFailureText` turns a provider JSON body — bare, quoted inside prose, or wrapped in
+      another body — into the sentence it carries, and never lets braces reach a thread
+      (`test/process-outcome.test.js`); the Slack error card renders that sentence and, for a model
+      rejection, names the model and the remedy (`/model` or the admin UI)
+      (`test/invalid-model-handling.test.js`).
 - [ ] Live: with no channel model set and a gateway default of `sonnet`, a run's `--model` is
       `sonnet` even after the admin's terminal `/model` picks a different model; a channel/thread
       `/model` override still wins; Codex-fallback turns use the Codex default, not the Claude one.

@@ -7,7 +7,7 @@ resume=no; mcp=no; cancel=no; fail=no; auth_fail=no; limit_fail=no; limit_answer
 # itself is never echoed — only that it was there — so the E2E can prove the spawn was
 # authenticated the way a real turn would be.
 oauth=no; [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && oauth=yes
-transient_times=0; transient_after_text=no; session_id=""; model=""; reject_model=no; reject_all_models=no
+transient_times=0; transient_after_text=no; session_id=""; model=""; reject_model=no; reject_all_models=no; stream_text=no
 for arg in "$@"; do
   case "$arg" in
     -r) resume=yes ;;
@@ -30,6 +30,10 @@ for arg in "$@"; do
   if [ "$prev" = "--model" ]; then model="$arg"; fi
   prev="$arg"
 done
+# Checked outside the loop's case: a `case` runs only its FIRST matching branch per argument, so a
+# prompt that carries this sentinel ALONGSIDE another one (a rejection to stream the retry of)
+# would otherwise silence the other.
+case "$*" in *CLAUDE_STUB_STREAM_TEXT*) stream_text=yes ;; esac
 if [ "$cancel" = "yes" ]; then
   exec sleep 30
 fi
@@ -113,5 +117,11 @@ fi
 if [ "$fail" = "yes" ]; then
   printf '%s\n' 'stub failure detail' >&2
   exit 1
+fi
+# A turn whose answer arrives as TEXT DELTAS, the way a real Claude turn does — the reply the
+# gateway returns is then the concatenation of what already streamed into the Slack message, which
+# is what makes "the delivered answer" and "result.content" two different things.
+if [ "$stream_text" = "yes" ]; then
+  printf '%s\n' "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Stub engine reply (resume=$resume; mcp=$mcp; oauth=$oauth; model=$model)\"}}}"
 fi
 printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Stub engine reply (resume=$resume; mcp=$mcp; oauth=$oauth; model=$model)\",\"session_id\":\"stub-session\",\"usage\":{\"input_tokens\":12,\"output_tokens\":4},\"total_cost_usd\":0.001}"

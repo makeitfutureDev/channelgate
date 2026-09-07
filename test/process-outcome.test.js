@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   conciseProcessDiagnostic,
   describeProcessOutcome,
+  embeddedJsonObject,
+  plainFailureText,
   processFailureMessage,
 } from "../src/util/process-outcome.js";
 
@@ -59,4 +61,25 @@ test("formatted failures keep concise diagnostics but never use the numeric stat
     "Authorization: Bearer [REDACTED]",
     "actionable diagnostics must pass through the shared secret redactor before reaching a user",
   );
+});
+
+test("a provider's JSON response body becomes the sentence inside it, never the document", () => {
+  const body = '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-nope\' model is not supported when using Codex with a ChatGPT account."}}';
+  assert.equal(embeddedJsonObject(body).status, 400);
+  assert.equal(
+    plainFailureText(body),
+    "The 'gpt-nope' model is not supported when using Codex with a ChatGPT account.",
+  );
+  // The same body quoted inside the CLI's own prose keeps the prose and loses the document.
+  assert.equal(
+    plainFailureText(`Codex provider error: ${body}`),
+    "Codex provider error: The 'gpt-nope' model is not supported when using Codex with a ChatGPT account.",
+  );
+  // A body wrapping another body (a CLI handing back what it received) unwraps to the sentence.
+  assert.equal(plainFailureText(JSON.stringify({ error: { message: body } })), "The 'gpt-nope' model is not supported when using Codex with a ChatGPT account.");
+  // Prose is returned unchanged; a body with no readable message never leaks braces.
+  assert.equal(plainFailureText("Codex exited before it completed"), "Codex exited before it completed");
+  assert.equal(plainFailureText('{"status":500}'), "the provider rejected the request");
+  assert.equal(embeddedJsonObject("nothing structured here"), null);
+  assert.equal(plainFailureText(`x${"y".repeat(500)}`).length, 400);
 });

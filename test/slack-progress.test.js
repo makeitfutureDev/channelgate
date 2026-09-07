@@ -2851,3 +2851,82 @@ test("a stop that finds the answer stream already ended still lands one footered
     "the dead message is removed instead of being left above the answer");
   assert.equal(calls.some((call) => call[0] === "postMessage"), false, "the classic fallback is not needed");
 });
+
+// ── Gateway notes about the turn itself (run.js announceAnswerNote) ───────────────────────────
+// A note the ORCHESTRATOR writes (a model it had to substitute) is part of the answer, but a
+// streamed answer is written from the live deltas — so a note only prepended to the finished
+// `content` reaches nobody. It streams as the head of the message instead, and finalize()
+// subtracts it from the authoritative content so it is delivered exactly once.
+function streamedMarkdown(calls) {
+  return calls
+    .filter((call) => call[0] === "append" || call[0] === "stopStream")
+    .map((call) => call[1]?.markdown_text || "")
+    .join("");
+}
+function noteClient(calls) {
+  const ok = async () => ({ ok: true });
+  let seq = 0;
+  return {
+    apiCall: refuseStatus(calls),
+    chatStream: () => {
+      const id = `stream.${++seq}`;
+      calls.push(["chatStream", { id }]);
+      return {
+        ts: id,
+        append: async (payload) => { calls.push(["append", payload]); return { ok: true }; },
+        stop: async (payload) => { calls.push(["stopStream", payload || {}]); return { ok: true }; },
+      };
+    },
+    chat: {
+      postMessage: async (payload) => { calls.push(["postMessage", payload]); return { ok: true, ts: `bot.${++seq}` }; },
+      update: ok,
+      delete: ok,
+    },
+  };
+}
+const NOTE = "⚠️ _gpt-nope was rejected before the turn started — using gateway default gpt-5.6._\n\n";
+
+test("a gateway answer note is streamed at the head of the answer and never delivered twice", async () => {
+  const calls = [];
+  const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000000.000000", { authorId: "U_NOTE", dir: null });
+
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: NOTE });
+  await cardReady();
+  progress.onDelta("The answer itself.");
+  await progress.finalize({ content: `${NOTE}The answer itself.`, durationMs: 10, usage: { input_tokens: 4, output_tokens: 2 } });
+
+  const text = streamedMarkdown(calls);
+  assert.equal(text.match(/was rejected before the turn started/g).length, 1, `delivered once: ${JSON.stringify(text)}`);
+  assert.ok(text.startsWith(NOTE), "the note leads the answer");
+  assert.equal(text.match(/The answer itself\./g).length, 1, "and the answer is delivered once");
+});
+
+test("a tool-only turn still delivers its whole answer under the note", async () => {
+  const calls = [];
+  const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000001.000000", { authorId: "U_NOTE", dir: null });
+
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: NOTE });
+  await cardReady();
+  // Nothing streams: the engine answered through tools and the reply arrives only on the result.
+  await progress.finalize({ content: `${NOTE}Posted the chart.`, durationMs: 10, usage: { input_tokens: 4, output_tokens: 2 } });
+
+  const text = streamedMarkdown(calls);
+  assert.equal(text.match(/was rejected before the turn started/g).length, 1, `delivered once: ${JSON.stringify(text)}`);
+  assert.equal(text.match(/Posted the chart\./g).length, 1, "the answer is not swallowed by the preface");
+});
+
+test("a gateway note that arrives after the answer began becomes a durable card row", async () => {
+  const calls = [];
+  const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000002.000000", { authorId: "U_NOTE", dir: null });
+
+  progress.onDelta("Already writing.");
+  await cardReady();
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: "the configured model was substituted" });
+  await progress.finalize({ content: "Already writing.", durationMs: 10, usage: { input_tokens: 4, output_tokens: 2 } });
+
+  assert.ok(
+    taskUpdates(calls).some((row) => /the configured model was substituted/.test(row.title || "")),
+    "a note that can no longer lead the answer is kept as a card row rather than dropped",
+  );
+  assert.equal(streamedMarkdown(calls).match(/Already writing\./g).length, 1);
+});
