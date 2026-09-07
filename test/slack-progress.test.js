@@ -2930,3 +2930,42 @@ test("a gateway note that arrives after the answer began becomes a durable card 
   );
   assert.equal(streamedMarkdown(calls).match(/Already writing\./g).length, 1);
 });
+
+test("mutable numeric progress counts replace the title instead of accumulating rich details", async () => {
+  const calls = [];
+  const streamer = { ts: "1720000000.000100", append: async (p) => calls.push(["append", p]), stop: async (p) => calls.push(["stopStream", p]) };
+  const client = { apiCall: refuseStatus(), chatStream: () => streamer, chat: { postMessage: async () => {}, update: async () => {} } };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady();
+  for (const count of [0, 2, 4]) {
+    progress.onEvent({ kind: "report_progress", title: "Validate fixtures", steps: [{ id: "verify", title: "Verify", status: count === 4 ? "complete" : "in_progress", details: `${count}/4 batches checked`, output: `${count} checks passed`, sources: [] }] });
+  }
+  progress.onEvent({ kind: "report_progress", title: "Validate fixtures", steps: [{ id: "long", title: "Long stage title ".repeat(20), status: "complete", details: `${"Long context ".repeat(30)}4/4`, output: "", sources: [] }] });
+  await progress.finalize({ content: "Four fixtures verified.", durationMs: 5, usage: {} });
+  assert.match(renderedRows(calls).get("report-long").title, /4\/4/, "long prose cannot hide the current counter behind title truncation");
+  const row = renderedRows(calls).get("report-verify");
+  assert.equal(row.title, "Verify · 4/4 batches checked · 4 checks passed");
+  assert.equal(row.details, "");
+  assert.equal(row.output, "");
+});
+
+test("Stop releases its caller while a stream append is throttled and later seals partial text", async () => {
+  const calls = [];
+  let releaseAppend;
+  let enteredAppend;
+  const appended = new Promise((r) => { enteredAppend = r; });
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (p) => { calls.push(["append", p]); enteredAppend(); await new Promise((r) => { releaseAppend = r; }); },
+    stop: async (p) => calls.push(["stopStream", p]),
+  };
+  const client = { apiCall: refuseStatus(), chatStream: () => streamer, chat: { postMessage: async () => {}, update: async () => {} } };
+  const progress = startProgress("stream", client, cardChannel(), "111.222", { authorId: "U1", teamId: "T1", stopGraceMs: 10 });
+  progress.onDelta("Partial fixture answer");
+  await appended;
+  await progress.stop();
+  assert.equal(calls.some(([kind]) => kind === "stopStream"), false, "cleanup is still waiting for the in-flight append");
+  releaseAppend();
+  for (let i = 0; i < 20 && !calls.some(([kind]) => kind === "stopStream"); i++) await new Promise((r) => setImmediate(r));
+  assert.ok(calls.some(([kind, p]) => kind === "stopStream" && /Stopped — partial answer/.test(p.markdown_text)), "background cleanup retains partial-result semantics");
+});

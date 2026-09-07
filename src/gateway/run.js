@@ -344,7 +344,7 @@ export function isSessionNotFound(err) {
   // conversation found…", but a MALFORMED one (e.g. a Codex thread_id fed to `claude -r` after a
   // harness switch) prints "--resume requires a valid session ID …/… is not a UUID". Treat both as
   // "unresumable" so the caller starts a fresh session instead of surfacing the error.
-  return /no conversation found|conversation not found|session not found|no such (session|thread|conversation)|(session|thread)[^\n]*\bnot found|could not (find|resume)[^\n]*(session|thread|conversation)|unknown (session|thread)|no rollout found|rollout not found|failed to resolve rollout path[^\n]*file does not exist|--resume requires a valid session|is not a uuid/.test(hay);
+  return /no conversation found|conversation not found|session not found|no such (session|thread|conversation)|(session|thread)[^\n]*\bnot found|could not (find|resume)[^\n]*(session|thread|conversation)|unknown (session|thread)|no rollout found|rollout not found|failed to resolve rollout path[^\n]*file does not exist|--resume requires a valid session|is not a uuid|thread\/resume failed:\s*list_turns is not supported yet/.test(hay);
 }
 
 export function parseDurationMs(value, fallback = 10 * 60 * 1000) {
@@ -1352,6 +1352,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         claudeHome: grantArtifacts.claudeHome,
         claudeConfigDir: grantArtifacts.claudeConfigDir,
         codexStateDir: grantArtifacts.codexStateDir,
+        personalSkillCatalog: grantArtifacts.personalSkillCatalog,
         grantFingerprint,
         attachments,
       },
@@ -1561,6 +1562,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           claudeHome: grantArtifacts.claudeHome,
           claudeConfigDir: grantArtifacts.claudeConfigDir,
           codexStateDir: grantArtifacts.codexStateDir,
+          personalSkillCatalog: grantArtifacts.personalSkillCatalog,
           grantFingerprint },
       }));
     };
@@ -1656,6 +1658,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         // as "a run is active inside" is what let a container keep serving turns after its
         // workspace mounts had gone stale, because every turn looked busy to itself.
         lease: runtimeLease,
+        signal,
         // The backend's own words, subject to the same "only if it is actually slow" rule: before
         // the threshold they replace the default line rather than adding one, so a sub-second start
         // stays silent; after it, they are a live update on a wait the user can already see.

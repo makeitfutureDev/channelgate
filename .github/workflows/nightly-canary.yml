@@ -25,12 +25,14 @@ jobs:
           node-version: "24"
           cache: npm
       - run: npm ci
+      - name: Read the image's supported Claude version
+        run: node -e 'console.log("CLAUDE_TARGET=" + require("./containers/versions.json").npm["@anthropic-ai/claude-code"])' >> "$GITHUB_ENV"
       # The npm package's postinstall is what fetches the native binary, so with --ignore-scripts the
       # shim had nothing to run (a spawn error, since the binary was never fetched).
       # Install the way the product documents instead: the official installer, pinned.
       - name: Install pinned compatibility target
         run: |
-          curl -fsSL https://claude.ai/install.sh | bash -s 2.1.258
+          curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_TARGET"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Probe real Claude Code CLI surface (provider-free)
         run: node scripts/claude-cli-canary.mjs
@@ -50,8 +52,10 @@ jobs:
           node-version: "24"
           cache: npm
       - run: npm ci
+      - name: Read the image's supported Codex version
+        run: node -e 'console.log("CODEX_TARGET=" + require("./containers/versions.json").npm["@openai/codex"])' >> "$GITHUB_ENV"
       - name: Install pinned compatibility target
-        run: npm install --global --ignore-scripts @openai/codex@0.152.0
+        run: npm install --global --ignore-scripts "@openai/codex@$CODEX_TARGET"
       - name: Probe real Codex CLI surface (provider-free)
         run: node scripts/codex-cli-canary.mjs
       - name: Run Codex adapter + stub transport regression

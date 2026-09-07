@@ -24,7 +24,11 @@ with the production audit command above and record any accepted exception in thi
 
 | Advisory | Severity | Applicability | Owner | Next review |
 |---|---|---|---|---|
-| `GHSA-frvp-7c67-39w9` via `@hono/node-server <2.0.5` and `@modelcontextprotocol/sdk` | Moderate | The vulnerable path is the Windows `serve-static` adapter. ChannelGate runs on Linux only, uses the MCP SDK over stdio, and does not import or expose Hono static serving. The MCP SDK currently constrains this transitive dependency to major v1; forcing major v2 is outside a compatible lockfile update. | Gateway maintainers | 2026-08-07, or immediately when the MCP SDK accepts node-server v2 |
+| None | — | The committed production lockfile has no reported vulnerabilities in the 2026-09-07 npm audit. Re-run the audit for each candidate; this is not a future guarantee. | Gateway maintainers | Next dependency update |
+
+`@composio/core` remains at `0.14.0`: the proposed `0.18.0` requires Node >=22.22.3,
+above this project's supported Node 22.13 floor. Review that update independently with a runtime
+compatibility decision; a green test on Node 24 alone is insufficient.
 
 ## Reporting
 

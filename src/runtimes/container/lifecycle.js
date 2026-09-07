@@ -314,10 +314,9 @@ export function buildCreateArgs(target, caps, { fingerprint = "", mountFingerpri
 
 // ── The lifecycle object ──────────────────────────────────────────────────────────────────────
 // How long a turn will wait for the runs already inside a container to finish when the container
-// has to be REBUILT before it can be used (its mounts changed). Bounded on purpose: past the bound
-// the turn fails with the reason instead of waiting silently or, worse, running against the wrong
-// directories.
-export const DEFAULT_RECREATE_WAIT_MS = 60_000;
+// has to be REBUILT before it can be used (its mounts changed). Repeat the notice while waiting;
+// readiness is cancellable and has no deadline that discards an accepted turn.
+export const DEFAULT_RECREATE_WAIT_MS = 60_000; // repeat notice interval; never a run deadline
 export const DEFAULT_RECREATE_POLL_MS = 1_000;
 
 export function createContainerLifecycle({
@@ -326,6 +325,25 @@ export function createContainerLifecycle({
   recreateWaitMs = DEFAULT_RECREATE_WAIT_MS,
   recreatePollMs = DEFAULT_RECREATE_POLL_MS,
 } = {}) {
+  const preparing = new Map(); // container → leases waiting for readiness, not running inside
+
+  const checkAbort = (signal) => {
+    if (signal?.aborted) throw Object.assign(new Error("Run aborted while waiting for its channel container"), { name: "AbortError", details: { explicitStop: true } });
+  };
+  async function waitPoll(signal) {
+    checkAbort(signal);
+    let onAbort;
+    try {
+      await Promise.race([sleep(recreatePollMs), ...(signal ? [new Promise((_, reject) => {
+        onAbort = () => { try { checkAbort(signal); } catch (error) { reject(error); } };
+        signal.addEventListener("abort", onAbort, { once: true });
+      })] : [])]);
+      checkAbort(signal);
+    } finally {
+      if (onAbort) signal.removeEventListener("abort", onAbort);
+    }
+  }
+
   async function inspectByRef(caps, ref) {
     const result = await cli.runWith(caps, ["inspect", "--type", "container", "--format", INSPECT_FORMAT, ref], { timeoutMs: 30_000 });
     if (result.code !== 0) {
@@ -435,12 +453,12 @@ export function createContainerLifecycle({
     if (reason) log(`[container] ${name} stopped (${reason})`);
   }
 
-  async function removeContainer(caps, name, { volumes = "", strictVolumes = false } = {}) {
+  async function removeContainer(caps, name, { volumes = "", strictVolumes = false, preserveLeases = false } = {}) {
     const result = await cli.runWith(caps, ["rm", "-f", name], { timeoutMs: 120_000 });
     if (result.code !== 0 && !isContainerGoneError(result.stderr)) {
       throw new Error(`could not remove container ${name}: ${String(result.stderr || "").trim()}`);
     }
-    reaper.forget(name);
+    if (!preserveLeases) reaper.forget(name);
     if (volumes) {
       const removed = await cli.runWith(caps, ["volume", "rm", volumes], { timeoutMs: 60_000 });
       if (removed.code !== 0 && !/no such volume|not found/i.test(String(removed.stderr || ""))) {
@@ -454,15 +472,23 @@ export function createContainerLifecycle({
   // the memory reviewer both do — the idle reaper must not stop an environment a turn is about to
   // spawn into). It is excluded from "is anyone else inside?", because a turn is not a reason to
   // refuse to rebuild the container that turn is waiting for.
-  async function ensureUp(target, { announce = null, lease = null, forceImage = false } = {}) {
+  async function ensureUp(target, { announce = null, lease = null, forceImage = false, signal = null } = {}) {
     const name = target?.container?.name;
     if (!name) throw new Error("container target is missing its name");
     const ownLeaseId = typeof lease === "string" ? lease : (lease?.id || "");
-    const othersInside = () => reaper.leaseCount(name, { exclude: ownLeaseId });
+    checkAbort(signal);
+    const waiters = preparing.get(name) || new Set();
+    if (waiters.size) announceOnce(announce, "Waiting for this channel's container preparation — Stop cancels this wait.");
+    preparing.set(name, waiters);
+    const waiter = { leaseId: ownLeaseId };
+    waiters.add(waiter);
+    const othersInside = () => reaper.leaseCount(name, { exclude: [...waiters].map((item) => item.leaseId) });
     const startedAt = now();
-    const release = await acquireKeyedLock("cg-container", name);
+    let release = null;
     let slowTimer = null;
     try {
+      release = await acquireKeyedLock("cg-container", name, { signal });
+      checkAbort(signal);
       const caps = await cli.probe(target.settings, { image: target.settings?.image });
       if (!caps.ok) throw new Error(caps.reason);
       const img = await image.inspect(caps, target.settings, { force: forceImage });
@@ -496,23 +522,20 @@ export function createContainerLifecycle({
           log(`[container] ${name} configuration changed — recreating (background state in it is lost)`);
           recreate = true;
         } else if (mountsChanged) {
-          // Busy AND mount-affecting: wait, bounded, for the runs inside to finish — then rebuild.
-          // Never "use it now": that is the path that ran three turns against a workspace bind
-          // pointing at a directory the channel had already deleted.
+          // Preparatory leases keep the idle reaper away but are not processes inside.
+          // Wait until actual occupants finish; a user Stop cancels without rebuilding.
           target.container.recreatePending = true;
-          log(`[container] ${name} workspace mounts changed and ${othersInside()} run(s) are active — waiting up to ${Math.round(recreateWaitMs / 1000)}s to rebuild it`);
-          announceOnce(announce, "This channel's workspace changed, so its container has to be rebuilt — waiting for the runs still inside it to finish.");
-          const deadline = now() + recreateWaitMs;
-          while (othersInside() > 0 && now() < deadline) await sleep(recreatePollMs);
-          if (othersInside() > 0) {
-            throw new Error(
-              `this channel's container must be rebuilt before it can run again — its workspace mounts changed `
-              + `(the work folder, clean workspace or artifact directory moved), so the container is bound to the OLD paths. `
-              + `${othersInside()} run(s) are still active inside it, so the rebuild could not happen within `
-              + `${Math.round(recreateWaitMs / 1000)}s. It rebuilds by itself as soon as they finish — send the message again then, `
-              + `or stop the running job.`,
-            );
+          log(`[container] ${name} workspace mounts changed — waiting for active runs before rebuilding`);
+          announceOnce(announce, "This channel's workspace changed, so its container has to be rebuilt — waiting for the runs still inside it to finish. Stop cancels this wait.");
+          let nextNotice = now() + recreateWaitMs;
+          while (othersInside() > 0) {
+            await waitPoll(signal);
+            if (othersInside() > 0 && now() >= nextNotice) {
+              announceOnce(announce, `Still waiting to rebuild this channel's container — ${othersInside()} active run(s) remain. It will continue automatically when they finish; Stop cancels this wait.`);
+              nextNotice = now() + recreateWaitMs;
+            }
           }
+          checkAbort(signal);
           log(`[container] ${name} is idle now — rebuilding it for the changed workspace mounts`);
           recreate = true;
         } else {
@@ -522,8 +545,9 @@ export function createContainerLifecycle({
           log(`[container] ${name} configuration changed but runs are active — recreating when it next goes idle`);
         }
       }
+      checkAbort(signal);
       if (recreate) {
-        await removeContainer(caps, name);
+        await removeContainer(caps, name, { preserveLeases: true });
         info = { exists: false, status: "missing" };
         target.container.recreatePending = false;
       }
@@ -531,14 +555,16 @@ export function createContainerLifecycle({
       let created = false;
       let started = false;
       if (!info.exists || info.status === "missing") {
-        await reaper.reserveSlot(name, { maxRunning: target.settings?.maxRunning ?? 8, announce });
+        await reaper.reserveSlot(name, { maxRunning: target.settings?.maxRunning ?? 8, announce, signal });
+        checkAbort(signal);
         prepareHostSide(target);
         slowTimer = announceAfter(announce, "Warming up this channel's container — the first run takes a few seconds.");
         await createContainer(caps, target, fingerprint, mountFingerprint);
         created = true;
         started = true;
       } else if (info.status !== "running") {
-        await reaper.reserveSlot(name, { maxRunning: target.settings?.maxRunning ?? 8, announce });
+        await reaper.reserveSlot(name, { maxRunning: target.settings?.maxRunning ?? 8, announce, signal });
+        checkAbort(signal);
         prepareHostSide(target);
         const hadLeases = othersInside() > 0;
         slowTimer = announceAfter(announce, "Restarting this channel's container…");
@@ -550,10 +576,13 @@ export function createContainerLifecycle({
       }
 
       reaper.markRunning(name, target);
+      checkAbort(signal);
       return { created, started, warmupMs: now() - startedAt };
     } finally {
       if (slowTimer) clearTimeout(slowTimer);
-      release();
+      waiters.delete(waiter);
+      if (!waiters.size) preparing.delete(name);
+      release?.();
     }
   }
 

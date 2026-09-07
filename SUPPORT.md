@@ -48,8 +48,22 @@ Attach the smallest excerpt that shows the problem, not the whole log.
 
 ## Commercial and priority support
 
-Paid support with response commitments, guided installs, deployment and operations help, and
-enterprise licensing: **contact@makeitfuture.com**.
+Contracted support is available to customers with an active support agreement with Makeitfuture
+or an approved support partner. Response times, guided installs, deployment and operations help
+are provided only as specified in that agreement; downloading ChannelGate or opening a GitHub
+issue does not create a support entitlement. Support and enterprise inquiries go to
+**contact@makeitfuture.com**.
+
+## Contact and request handling
+
+Use GitHub issues and Discussions to track public project defects, questions and proposals.
+All direct requests — including support, commercial, legal and privacy requests — go to
+**contact@makeitfuture.com**. Suspected vulnerabilities and requests containing personal or
+confidential information stay private; do not put them in a public GitHub issue.
+
+Makeitfuture handles requests about the published project. Each deployment operator handles
+access, deletion and incidents involving data in their own deployment, as described in
+[`docs/PRIVACY-AND-DATA-FLOW.md`](docs/PRIVACY-AND-DATA-FLOW.md).
 
 ## Partner inquiries
 

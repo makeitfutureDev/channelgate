@@ -18,6 +18,35 @@ product overview.
 
 ## Unreleased
 
+- Dependency compatibility: update mcp-remote to 0.8.3 in both daemon and image, Slack Bolt to
+  5.1.0 and Zod to 4.5.4. Keep Composio 0.14.0 for the supported Node 22.13 floor. Nightly
+  pinned engine probes now read the actual image manifest, preventing version drift.
+- Public project policy: license v1.4 uses Cluj-Napoca venue; trademark registration is deferred;
+  direct requests use contact@makeitfuture.com and contracted support requires an active
+  Makeitfuture or approved-partner agreement. Existing published releases retain their terms.
+- Scheduler restart recovery checks due work immediately and persists its cursor and cron-minute
+  claims. A restart spanning the due minute now catches up within a five-minute window without
+  replaying claimed work, backfilling before creation/re-enable/cron edits, or rerunning uncertain
+  engine effects. Queued tasks resume, saved results redeliver, short transport outages defer
+  unclaimed recurring work, and scheduled failure notifications show a sentence instead of JSON.
+  Reminder claims remain at-most-once across an ambiguous remote-post crash boundary.
+- Keep mount rebuild waits visible and cancellable until active occupants finish, then continue
+  automatically; retain preparatory leases through rebuilds and avoid concurrent waiter deadlocks.
+- Recover the narrow unsupported Codex list-turns resume response, prevent automatic continuation
+  after ambiguous Claude hard kills, and retain structured exit/signal/runtime diagnostics.
+- Recognize natural-language loop Stop, cancel loops before Slack delivery waits, record per-turn
+  Stop outcomes, and release stream cleanup after a bounded grace while preserving partial text.
+- Render numeric progress counts in replaceable titles and normalize secondary provider failures.
+- Codex now receives usable personal skill instructions through a per-turn catalog alongside
+  native shared skills. Ephemeral files include references, remain outside shared project skills,
+  and are cleaned up after the run. Auth/session homes stay unchanged; missing selected personal
+  grants fail visibly. Personal catalog delivery does not register native slash commands.
+
+- Codex reads child identities and token accounting inside the channel runtime, including resumed
+  turn baselines. Rootless HOME volumes no longer need to be readable by the daemon. Named child
+  rows and elapsed/token totals use the same reducer without new mounts or an image rebuild;
+  inspection failures are visible instead of silently reporting an empty child list.
+
 - A thread whose first message died before its engine ever started no longer stays stuck on
   that engine. The session row is minted, with its harness stamp, the moment a new thread is
   resolved; a turn that then failed closed on a pre-spawn gate (a missing Claude login, a runtime

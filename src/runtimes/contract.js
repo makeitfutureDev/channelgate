@@ -73,6 +73,11 @@ export const OPTIONAL_METHODS = Object.freeze([
   // behind a user namespace, so `<volume>/_data` is unreachable from the daemon even though the
   // files inside belong to it. See src/gateway/session-adopt.js.
   "inspectState",
+  // inspectUsage(target, { source, args }) → JSON — run a daemon-owned, read-only engine
+  // reducer INSIDE the runtime. Source comes from the shipped engine module, never an agent or
+  // MCP argument; args contain state paths/session counters only. Return minimized usage/identity,
+  // never raw transcripts. Called while the run lease holds; no lifecycle reconfiguration.
+  "inspectUsage",
 ]);
 
 // Whether a backend can move engine state in and out of itself. Both halves or neither: a backend
@@ -162,6 +167,7 @@ export const HELPER_COMMANDS = Object.freeze([
  *                                  BEFORE spawn; `opts.announce(text)` lets a slow start tell the user, and
  *                                  `opts.lease` is the caller's OWN lease handle (when it took one first) so
  *                                  the backend can tell "someone else is inside" from "I am".
+ *                                  `opts.signal` cancels preparation locks and readiness waits before spawn.
  * spawn(target, spec)            → RuntimeChild (sync, like child_process.spawn). Never throws for a missing
  *                                  binary — the child emits "error" exactly like spawn does.
  * probe(child)                   → Promise<boolean> — is the run's process (group) still alive? Host:

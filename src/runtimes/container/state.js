@@ -101,5 +101,19 @@ export function createContainerState({ exec, lifecycle, log = () => {} } = {}) {
     return found;
   }
 
-  return { inspectState };
+  async function inspectUsage(target, { source, args } = {}) {
+    if (!target?.container?.name) throw new Error("this target has no container to inspect");
+    if (typeof source !== "string" || !source) throw new TypeError("usage reducer source is required");
+    // Direct argv, no shell or host HOME read. Inline source follows the running checkout even
+    // before the next image rebuild. A turn already holds its runtime lease: never ensureUp here
+    // (a settings change during a turn must not make accounting wait on its own lease).
+    const result = await exec.runExec(target, [target.container.name, "node", "--input-type=module", "-e", source, JSON.stringify(args)], {
+      retry: false, timeoutMs: INSPECT_TIMEOUT_MS,
+    });
+    if (result.code !== 0) throw new Error("runtime usage inspection failed");
+    try { return JSON.parse(result.stdout); }
+    catch { throw new Error("runtime usage inspection returned invalid JSON"); }
+  }
+
+  return { inspectState, inspectUsage };
 }

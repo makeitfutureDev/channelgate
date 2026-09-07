@@ -53,7 +53,7 @@ function fakeConnector(posts = []) {
 test("a Chat schedule retries its saved result with Slack disconnected, without reexecuting tools", async () => {
   const posts = [];
   registerTransport("googlechat", { getConnector: () => fakeConnector(posts) });
-  const timer = scheduler.startScheduler({ slack: { snapshot: () => ({ connected: false }) } });
+  const timer = scheduler.startScheduler({ immediate: false, slack: { snapshot: () => ({ connected: false }) } });
   let executions = 0;
   const sched = schedules.addSchedule({ channelId: "gchat:spaces/A", slug: "chat", createdBy: "someone", prompt: "fixture", once: true, runAt: new Date().toISOString() });
   const deps = { runner: async () => { executions++; return { engine: "claude", content: "saved answer" }; }, deliver: async () => { throw new Error("delivery outage"); } };

@@ -37,7 +37,7 @@ import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from ".
 import { redactLogValue } from "../util/redact.js";
 import { conciseProcessDiagnostic, embeddedJsonObject, plainFailureText, processFailureMessage } from "../util/process-outcome.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
-import { collectCodexChildAccounting, listCodexChildThreads, readCodexRootAccounting, snapshotCodexUsage, subtractCodexTokenUsage } from "./codex-usage.js";
+import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.js";
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 const MAX_RETAINED = 64_000; // stdout/stderr/delta kept for error context — tail only, never unbounded
@@ -592,8 +592,17 @@ export function progressFromCodexEvent(p, state = null) {
   return null;
 }
 
+// A per-turn catalog supplements native repo/system skill discovery without changing HOME or
+// CODEX_HOME. Empty catalogs explicitly supersede a previous author's grants on resumed threads.
+export function codexPersonalSkillPrefix(skills) {
+  if (!Array.isArray(skills)) return "";
+  return "[Current personal skill grants — this run only]\n"
+    + "These instruction files supplement your native repository and system skills. When the user names a listed skill, or its description matches the task, read its SKILL.md before applying it. Resolve references and scripts relative to that file's directory. They are prompt-delivered skills, not native slash commands. Only the following personal catalog applies now; earlier personal catalogs and paths have expired. Do not copy these grants into shared project skill folders.\n"
+    + JSON.stringify(skills) + "\n[End current personal skill grants]\n\n";
+}
+
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", attachments = [], target = null, outFile, headerHelpers = [] }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
   // The CONTAINER is the confinement boundary, so Codex's own sandbox is switched off: no
   // permission profiles, no network_proxy — egress is the container's network mode.
@@ -762,7 +771,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
 
   // Prompt must come before image flags: Codex's `-i/--image <FILE>...` option is variadic, so any
   // positional after the last `-i` is consumed as another image and the CLI exits with no prompt.
-  args.push(argvSafePrompt(prompt));
+  args.push(argvSafePrompt((clean ? "" : codexPersonalSkillPrefix(personalSkills)) + prompt));
 
   // Attached images via native -i (Codex's vision path); non-image files are referenced in the
   // prompt text instead (the gateway already lists their paths there).
@@ -834,6 +843,7 @@ export async function runCodex({
   model = "",
   effort = "",
   codexStateDir = "",
+  personalSkills = null,
   attachments = [],
   // Where this turn runs (src/runtimes/): the channel's container.
   target = null,
@@ -881,10 +891,11 @@ export async function runCodex({
   // branches. Fresh locally minted ids are already stable within their gateway thread.
   const releaseSession = await acquireKeyedLock("codex-session", sessionId || `fresh:${cwd}`, { signal });
   const accountingStartedAt = Date.now();
+  const usageReader = createCodexUsageReader(runtime);
+  try {
   const usageSnapshot = isNewSession
     ? { file: "", offset: 0, total: {}, model: "" }
-    : await snapshotCodexUsage(codexStateDir, sessionId).catch(() => ({ file: "", offset: 0, total: {}, model: "" }));
-  try {
+    : await usageReader.snapshot(sessionId);
   // Per-run scratch dir (mkdtemp → mode 0700) and the secret bundle are ENGINE-FACING: the CLI
   // writes the answer to the -o file and the secret bridges read the bundle, so both live in the
   // run's artifact dir — bind-mounted at the identical absolute path — never under the gateway
@@ -905,7 +916,7 @@ export async function runCodex({
   // pure argv builder. They carry no credential of their own — each one reads its entry out of the
   // 0600 bundle above — but they are still per-run files, created and removed with it.
   const headerHelpers = [];
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, attachments, target: runtime, outFile, headerHelpers });
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, attachments, target: runtime, outFile, headerHelpers });
   for (const spec of headerHelpers) {
     await writeFile(spec.path, headerHelperSource({ ...spec, bundlePath: secretBundlePath }), { mode: 0o700 });
   }
@@ -949,19 +960,24 @@ export async function runCodex({
     // re-announcing the same child.
     const announcedChildren = new Set();
     let childScan = Promise.resolve();
+    let inspectionWarning = false;
+    const warnInspection = () => {
+      if (inspectionWarning) return;
+      inspectionWarning = true;
+      try { onEvent?.({ kind: "engine_note", source: "codex", text: "Codex usage inspection is unavailable; subagent details and accounting may be incomplete." }); } catch { /* status only */ }
+    };
 
     // Open a row per spawned child. Triggered by a collaboration item — the one signal stdout gives
     // that children exist — and serialized, because two `wait` items in a row would otherwise scan
     // the same rollouts twice and announce each child twice. Purely additive: a failed scan leaves
     // the coordination row exactly as it was.
     const announceChildAgents = () => {
-      if (!codexStateDir || !resolvedSessionId) return;
+      if (!resolvedSessionId) return;
       childScan = childScan.then(async () => {
-        const children = await listCodexChildThreads({
-          stateDir: codexStateDir,
+        const children = await usageReader.children({
           rootSessionId: resolvedSessionId,
           startedAtMs: accountingStartedAt,
-        }).catch(() => []);
+        }).catch(() => { warnInspection(); return []; });
         for (const thread of children) {
           if (announcedChildren.has(thread.sessionId)) continue;
           announcedChildren.add(thread.sessionId);
@@ -1229,8 +1245,7 @@ export async function runCodex({
 
       let accounting;
       try {
-        accounting = await readCodexRootAccounting({
-          stateDir: codexStateDir,
+        accounting = await usageReader.root({
           sessionId: resolvedSessionId,
           snapshot: usageSnapshot,
           terminalUsage: usage || {},
@@ -1238,6 +1253,7 @@ export async function runCodex({
           startedAtMs: accountingStartedAt,
         });
       } catch {
+        warnInspection();
         accounting = {
           usage: subtractCodexTokenUsage(usage || {}, usageSnapshot.total || {}),
           requests: [],
@@ -1249,12 +1265,11 @@ export async function runCodex({
         };
       }
       const accountingEndedAt = Date.now();
-      const children = await collectCodexChildAccounting({
-        stateDir: codexStateDir,
+      const children = await usageReader.accounting({
         rootSessionId: resolvedSessionId,
         startedAtMs: accountingStartedAt,
         endedAtMs: accountingEndedAt,
-      }).catch(() => []);
+      }).catch(() => { warnInspection(); return []; });
       // Let any in-flight live announcement land FIRST. A "running" row that arrived after the
       // terminal one below would reopen a child that has already finished.
       await childScan;

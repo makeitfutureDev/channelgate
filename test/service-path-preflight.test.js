@@ -8,6 +8,9 @@ import { privateServiceAncestor } from "../scripts/service-path-preflight.mjs";
 test("a new service identity refuses private home ancestors before checkout ownership changes", () => {
   const root = tempDir("cg-service-path-");
   chmodSync(root, 0o711);
+  // A container may deliberately mount /tmp privately. Only this fixture is ours to chmod;
+  // once its home is traversable, the real checker must still report any outer restriction.
+  const outerRestriction = privateServiceAncestor(root);
   const home = path.join(root, "operator-home");
   const code = path.join(home, "Code");
   mkdirSync(code, { recursive: true, mode: 0o755 });
@@ -16,7 +19,7 @@ test("a new service identity refuses private home ancestors before checkout owne
     assert.equal(privateServiceAncestor(code), home);
   }
   chmodSync(home, 0o711);
-  assert.equal(privateServiceAncestor(code), "");
+  assert.equal(privateServiceAncestor(code), outerRestriction);
   chmodSync(home, 0o700);
   const alias = path.join(root, "alias");
   symlinkSync(code, alias);

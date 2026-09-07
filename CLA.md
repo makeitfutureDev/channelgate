@@ -2,7 +2,7 @@
 
 Version 1.1 — effective 2026-08-25 (version 1.0: 2026-08-20)
 
-Thank you for contributing to ChannelGate (formerly ChannelGate). This agreement lets MAKEITFUTURE S.R.L. (the
+Thank you for contributing to ChannelGate. This agreement lets MAKEITFUTURE S.R.L. (the
 **Licensor**) accept your contribution, ship it under the
 [Makeitfuture Sustainable Use License](LICENSE.md), include it in the separately licensed
 enterprise edition, and offer commercial licenses to customers who need terms the public license does not

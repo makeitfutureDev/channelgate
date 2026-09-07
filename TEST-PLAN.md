@@ -392,7 +392,7 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       consistently identify the Makeitfuture Sustainable Use License as source-available/fair-code
       rather than OSI open source; `THIRD_PARTY_NOTICES.md` and `public/fonts/OFL.txt` preserve
       Poppins' OFL terms.
-- [x] `test/license.test.js` (v1.3 case, reconciled 2026-09-07): the license is stamped
+- [x] `test/license.test.js` (v1.4 case, reconciled 2026-09-07): the license is stamped
       `Version 1.3` and names ChannelGate (formerly Claude Gateway for Slack) with the author line;
       §3.1 keeps the dedicated-deployment conditions, adds the customer's-key condition, and permits
       any number of separate deployments without an agreement; §3.2 defines license keys (no key →
@@ -2824,9 +2824,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       nothing about behaviour — a rebuilt image does not move it, a moved work folder and the
       operator-home grant do (automated: `test/container-lifecycle.test.js`).
 - [x] Unit: a MOUNT-affecting mismatch is never deferred — idle → rebuilt before the turn is
-      exec'd; busy → the turn waits on the reaper (announced once, in-thread) and rebuilds the
-      moment the other run finishes; still busy at the bound → the turn FAILS with a message naming
-      the pending rebuild, with no `rm`, no `run` and no `start`, and `recreatePending` left true.
+      exec'd; busy → the turn waits on the reaper (initial notice plus minute reminders) and rebuilds
+      when other occupants finish, including beyond the old deadline. Stop cancels polling or a
+      queued preparation lock without `rm`, `run` or `start`. Multiple preparatory leases cannot
+      deadlock the wait, and the rebuilt container retains their protection from idle eviction.
       An IMAGE-only mismatch while busy is still deferred with "recreating when it next goes idle"
       (automated: `test/container-lifecycle.test.js`).
 - [x] Unit: `leaseCount(name, { exclude })` — a turn's own lease is not "someone else is inside"
@@ -3487,6 +3488,46 @@ Manual checks for the daemon-level behavior:
       the next message in the thread works.
 - [ ] **Scheduler catch-up:** a tick delayed past a minute boundary still fires that minute's
       cron exactly once; one-time schedules never double-fire.
+### Scheduling restart durability
+
+- [x] Automated: `node --test test/scheduler-restart.test.js test/cron-catchup.test.js
+      test/durable-delivery.test.js test/schedule-daily-thread.test.js
+      test/automation-release-regressions.test.js` covers a restart spanning the due minute,
+      replay refusal in a fresh process using the same scratch SQLite database, the five-minute
+      limit, creation/re-enable/cron-edit boundaries, legacy last-run markers, epoch-minute claims,
+      queued-versus-running crash checkpoints, saved-output delivery, brief transport outage,
+      busy-run admission, immediate startup and nested provider error sentences. No live providers.
+- [ ] **SCH-RESTART-01 — Claude and Codex, separately.** Fixture: an isolated acceptance daemon
+      with a connected Slack test channel, approved creator, and channel engine explicitly set to
+      the engine under test. Create a daily task at the next daemon-local minute after T+2:
+      prompt `Append one line SCH-RESTART-01 to uploads/schedule-restart.txt and report the line count.`
+      Record schedule ID, cron and daemon zone. Stop the acceptance daemon ten seconds before the
+      due minute and start it one minute after, keeping total outage under five minutes. Pass:
+      one scheduled engine execution, one added line, one delivered result, durable
+      `lastCronFireMs` equals the missed minute. Restart again within that minute; no second
+      execution, line or result. Never use the production daemon for this crash fixture.
+- [ ] **SCH-RESTART-02 — Claude and Codex, separately.** Same isolated daemon/channel and prompt
+      with marker SCH-RESTART-02. Arrange two daily tasks: one due two minutes before boot and one
+      due ten minutes before boot, both created earlier. Pass: only the recent task executes.
+      Also create/re-enable/edit a cron after its matching minute; restart within five minutes.
+      Pass: no task runs for a minute before its current eligibility boundary.
+- [ ] **SCH-RESTART-03 — Claude and Codex, separately.** Same isolated fixture. Use prompt
+      `Append SCH-RESTART-03 to uploads/schedule-effects.txt, then wait for further instructions.`
+      Kill only the acceptance daemon once its persisted schedule says `executionState:running`,
+      then restart. Pass: schedule becomes disabled/interrupted, the channel explains unknown
+      external effects, and no second engine execution or append occurs. Separately interrupt
+      after a saved `pendingDelivery` checkpoint using a transport failure fixture. On restart,
+      pass only if the saved result delivers without a new engine execution or tool side effect.
+- [ ] **SCH-RESTART-04 — engine-independent reminder delivery.** Same isolated daemon/channel;
+      create a reminder due next minute. Confirm its `lastCronFireMs` persists before the mock
+      transport accepts the post. Simulate a crash at that boundary and restart. Pass: no replay
+      post. Record the intentional at-most-once limit: an ambiguous external post can be lost;
+      this case must never be described as guaranteed exactly-once delivery.
+- [ ] **SCH-ERROR-01 — Claude and Codex, separately.** Isolated acceptance daemon with a synthetic
+      engine/provider fixture failing with `{"error":{"message":"The selected model is unavailable."}}`.
+      Fire an ordinary scheduled task. Pass: failure notice contains the sentence only, without
+      raw JSON, and the execution checkpoint is interrupted rather than automatically replayed.
+
 - [ ] **Daily schedule threads:** create an hourly task with `delivery:"daily-thread"`; its first
       run today creates one top-level “Running” anchor and threads the result, later runs today add
       results to that same thread without another top-level banner, a daemon restart preserves the
@@ -3919,9 +3960,11 @@ the suite runs as an enterprise deployment because it holds a license it actuall
   the PR and report unexecuted live cases; no private service access is required.
 - [ ] Maintainers record the actual private fixture identifiers and complete required live gates
   before release. Engine-independent cases must not depend on a harness.
-- [ ] For deployments using a private QA registry, use only the operator's selected personal
-  connection. This remediation session's requested Airtable write remains pending connection
-  selection/access; locally prepared cases are not a claim of an Airtable write.
+- [x] For this remediation, the operator-selected personal QA connection was used to register
+  and read back 16 active acceptance definitions: SCH-RESTART-01 through 04, SCH-ERROR-01,
+  REL-RUNTIME-01 through 07, SLK-203, REL-CODEX-02, REL-DEPS-01 and REL-SKILLS-01.
+  These cover 29 applicable engine executions. Registration is not execution: deployed live
+  verdicts remain outstanding and automated evidence must not be recorded as a live pass.
 
 ## Container update verification and recovery
 
@@ -3962,3 +4005,139 @@ channel/thread, author, harness/model and the exact prompt/action with filesyste
 Airtable case/run registration and live engine verdicts remain pending until the requesting
 user’s designated personal QA Airtable connection is available; automated results are not a
 substitute for live passes.
+
+
+## Runtime reliability acceptance — September 2026
+
+Automated: `node --test test/container-lifecycle.test.js test/container-reaper.test.js
+ test/session-engine.test.js test/message-normalize.test.js test/message-to-reply-e2e.test.js
+ test/process-outcome.test.js test/engine-switch-choice.test.js test/stop-card-engine.test.js
+ test/slack-progress.test.js test/runtime-integration-run.test.js`. Fixtures use fake Podman, fake Slack and stub engines with a disposable
+SQLite store. No provider or production access is required. Live cases below remain unexecuted.
+Local result: **159/159 focused tests passed**, static checks, secret scan and security coverage
+passed. Full coverage met thresholds (92.72% lines, 82.53% branches, 87.39% functions), with one
+unrelated service-path fixture failure caused by this environment’s private `/tmp` ancestor.
+A rerun under another TMPDIR moved the sole failure to a separate fixture’s `/tmp` containment
+assumption; it is not a clean full-suite result. Consolidated verification must use the corrected
+portable fixtures before landing.
+
+- [ ] **Mount readiness, Claude and Codex separately:** use a disposable Slack channel with an active
+  daemon background shell job `sleep 90` holding its runtime lease. Change its work directory to a
+  second disposable directory containing only `new-workspace.txt`. Send “Read new-workspace.txt and
+  reply with its text.” Require an initial wait notice, a reminder after one minute, no engine spawn
+  or container removal while the job holds its lease, and automatic recreation/read after it ends
+  without resending. Repeat with two waiting threads; both finish. Repeat and send “stop” to only
+  one waiting thread: that turn never spawns, the other still completes, and a later fresh turn works.
+- [ ] **Unsupported resume, Codex:** in an isolated CLI fault-injection fixture with an existing thread,
+  make its first resume emit exactly `thread/resume failed: list_turns is not supported yet`, then
+  permit normal execution. Ask “Repeat the marker I gave you earlier.” Require exactly one fresh
+  session recovery, transcript-provided marker, no harness switch. Unrelated list_turns errors and
+  the same words in stdout must not reset a session. Claude uses existing missing-session cases.
+- [ ] **Ambiguous kill, Claude cold and warm:** disposable channel, harmless fixture whose tool appends
+  one line to `side-effect.txt`, then waits before returning its tool result. Kill only the fixture
+  engine process with SIGKILL after the line appears. Require one error and no automatic continue
+  or retry; the file remains one line. Audit `run_error` retains engine=claude, runtime=container,
+  signal=SIGKILL or exitCode=137, processEnded=true; no invented OOM cause. Send an explicit review
+  request to inspect completed work before continuing. Codex: repeat kill and require no automatic
+  Claude-style continuation (its own structured diagnostics remain covered by runner tests).
+- [ ] **Loop Stop, Claude and Codex:** seed a gateway-owned interval loop in a disposable channel
+  (Codex does not need native Cron tools). During an active harmless tick, send “Stop the check loop
+  now”; repeat between ticks with “stop the loop”. Require immediate persisted loop deletion,
+  cancellation of the active tick, an acknowledgement and no future tick. “How do I stop the loop”
+  must remain a normal question.
+- [ ] **Throttled Stop, Claude and Codex:** use a disposable Slack API proxy holding an append and
+  assistant status clear until released. Start two harmless long turns plus a queued turn and seed
+  one loop; invoke channel Stop. Require all controllers aborted and the loop removed before proxy
+  release; independent acknowledgement post attempts proceed; run cleanup releases within its
+  one-second grace. After proxy release, delivered text is marked partial, queued text is not
+  flushed as a new answer. Audit has three `run_stopped` rows with distinct run IDs (two active,
+  one queued), one `run_stop_requested` summary and no duplicate rows after a repeated Stop.
+  The proxy may block acknowledgement delivery itself; the gateway cannot bypass Slack throttling.
+- [ ] **Mutable counts, Claude and Codex:** with `report_progress` available, request one stable stage
+  updated from details “0/4 batches checked” to “2/4 batches checked” to “4/4 batches checked” and
+  output “4 checks passed”. Require the same row to show only the latest numeric title, no stale
+  numeric rich-detail paragraphs, and one final answer. Read-only mock rendering is automated;
+  real Slack’s replacement behavior is the live gate.
+- [ ] **Secondary errors, Claude and Codex:** isolated runner fixture emits nested provider JSON on
+  automatic continuation or the second harness of an ask-mode fallback. Require readable provider
+  sentence, no raw JSON in the message/card, and retained structured audit outcome facts.
+### Runtime-owned Codex child visibility and accounting (2026-09-07)
+
+- [x] Automated: `node --test test/codex-runtime-usage.test.js
+  test/codex-message-to-reply-e2e.test.js test/codex-usage-accounting.test.js
+  test/runtime-integration-folders.test.js test/container-state.test.js`.
+  The real inline Node reducer executes against synthetic runtime state while the daemon-facing
+  HOME volume is `/proc/1/unreadable-home-volume`. The runner must emit two named live rows and
+  close those same ids with elapsed/tokens, return child usage, and never consult that host path.
+  Resume fixture grows cumulative input/output 250/12 to 400/20: charged delta must be 150/8.
+  A transcript sentinel must never leave the reducer; invalid JSON/exec failures must not leak
+  diagnostics. Failed baseline must spawn no engine and release the session lock. Failed final
+  inspection must preserve the answer and announce incomplete accounting exactly once.
+- [ ] Live Codex/rootless: create a disposable approved QA channel with ordinary rootless HOME,
+  full-home widening OFF, Codex pinned to the requested available model, and a work folder with
+  `one.txt` containing `alpha` and `two.txt` containing `beta`. Verify as the daemon user that
+  opening the HOME volume directly fails while `podman exec <fixture-container>` can read its
+  Codex sessions. In a fresh thread ask: "Launch two native agents named file_one and file_two.
+  Have each read its corresponding text file, wait 10 seconds, and report its word. Join both."
+  Pass: live card shows both names while running; both finish on their original rows with elapsed
+  time/tokens; final answer contains alpha/beta. Compare root and child usage components with the
+  runtime rollouts: each child appears once and excludes copied parent-prefix usage. Resume the
+  same thread with "Read one.txt and report its word without delegation." Pass: footer/ledger
+  charge that message's delta, never the previous root turn or children again. Keep screenshots,
+  provider session ids and a redacted usage comparison as evidence.
+- [ ] Live Claude regression: in a separate disposable QA thread pinned to Claude with the same
+  two-file fixture, send the same two-agent prompt and then the same no-delegation resume prompt.
+  Pass: both native children remain visible and finish; result words and resume accounting match
+  native engine evidence. No Codex reducer should run in the Claude-only path.
+- [ ] Live failure fixture: on an isolated test daemon, make only `inspectUsage` reject (do not
+  change HOME permissions/production config). Fresh Codex work still replies and shows one
+  incomplete-accounting notice; a resumed turn fails before engine spawn. Remove the injected
+  failure and retry: it proceeds, proving no held session lock. This is Codex-specific because
+  Claude never invokes this reader.
+
+Automated helper/runner checks do not certify actual Podman namespace permissions, authenticated
+provider events, or Slack rendering. Those live cases and private QA registration remain release
+acceptance gates; no production restart or external message was performed by the implementation.
+
+- [x] Native schema check (2026-09-07): authenticated Codex CLI 0.153.4 / `gpt-6-astra`
+  in the existing channel container spawned synthetic `alpha_checker` and `beta_checker`, joined
+  both and returned `alpha`/`beta`. The reducer recovered both names, exact request accounting,
+  15,219 tokens per child and elapsed times of 4,196 / 4,424 ms. This exercises real provider
+  rollouts, but does **not** mark the separate host-rootless/Slack acceptance above passed.
+- [x] Full suite with isolated HOME/TMPDIR and `--test-concurrency=4`: 2,122 passed, 0 failed,
+  2 live cases skipped; coverage lines 92.66%, branches 82.43%, functions 87.44%. Static, secret
+  scan and DCO checks passed. Default `/tmp` in the development container is private (0700),
+  causing the unrelated service-path preflight fixture to fail on unchanged main too; the
+  isolated run uses public ancestors without modifying container/production permissions.
+
+
+### Personal Codex skill catalog delivery — REL-SKILLS-01 (2026-09-07)
+
+- [x] Automated: `node --test test/run-grant-isolation.test.js test/codex-args.test.js
+  test/codex-message-to-reply-e2e.test.js`. Two concurrent authors get only their own catalog
+  paths, copied support files and cleanup; shared project skills are unchanged. Fresh/resumed
+  prompts include the current catalog, empty catalogs supersede previous grants, clean prompts
+  omit it, and the persistent HOME/CODEX_HOME remain unchanged. An absent selected personal
+  skill throws a named error before engine launch instead of silently delivering an empty list.
+- [ ] Live Codex, ordinary read mode: in a disposable QA channel grant `shared-proof` to the
+  channel and `personal-proof` only to author A. Shared SKILL.md says return SHARED-COPPER-18;
+  personal SKILL.md requires reading its `references/word.txt`, containing PERSONAL-COBALT-73.
+  Ask A: "Use shared-proof and personal-proof and report both fixture words." Pass: both words
+  are correct, the personal SKILL.md/reference are actually read, HOME/CODEX_HOME stay the
+  persistent channel paths, and no personal file appears in project .agents/skills. Native
+  read-only shell remains available for reading the artifact; the workspace-scoped gateway
+  reader is not widened. Repeat as author B with no personal grant: no personal catalog entry.
+- [ ] Live Codex resume: rotate A's personal reference to PERSONAL-AMBER-29 and repeat in the same
+  provider thread after prior artifacts have been removed. Pass: the new skill/reference path is
+  read and the new word returned; auth/session roots remain unchanged. Remove the grant and
+  repeat: the current catalog is empty. Clean mode must not inject the catalog.
+- [ ] Live Claude regression: use the same author/channel fixture on Claude; native personal
+  plugin loading, reference reading and per-run cleanup must still work. A missing selected
+  personal skill fails by name on both engines.
+
+- [x] Native provider probe (2026-09-07, Codex 0.153.4, gpt-6-astra/high): a synthetic personal
+  catalog pointed outside the disposable cwd to SKILL.md and references/proof.txt. With the
+  gateway's read-only sandbox and `features.use_legacy_landlock=true`, the real engine read
+  both files successfully and returned the exact marker CG_PERSONAL_REFERENCE_OK_7319. The
+  fixture was removed. This verifies catalog/reference readability in an existing container;
+  the deployed author-grant, resume/revocation and Slack cases above remain unexecuted.

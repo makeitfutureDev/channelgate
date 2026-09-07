@@ -59,9 +59,9 @@ test("clean run artifacts expose no optional MCP or user skill tier", async (t) 
   assert.equal(artifacts.claudePluginDirs.length, 1);
   assert.ok(!(await absent(path.join(artifacts.claudePluginDirs[0], "skills", "gateway-usage", "SKILL.md"))));
   assert.ok(await absent(path.join(artifacts.claudePluginDirs[0], "skills", "private")));
-  // Codex reads personal skills from its HOME volume inside the container; there is no host-side
-  // overlay directory a per-user grant could be delivered through, so none is ever built.
+  // Codex uses a prompt catalog rather than a native HOME discovery overlay. Clean has none.
   assert.equal(artifacts.codexSkillSupportDir, "");
+  assert.deepEqual(artifacts.personalSkillCatalog, []);
   const settings = JSON.parse(await readFile(artifacts.settingsFile, "utf8"));
   assert.ok(!settings.permissions.allow.includes("mcp__private"));
   assert.ok(!settings.allowedMcpServers.some((entry) => entry?.serverName === "private"));
@@ -199,6 +199,11 @@ test("concurrent users get private settings/plugins without mutating the shared 
 
   for (const [artifact, own, other] of [[a, "user-a", "user-b"], [b, "user-b", "user-a"]]) {
     const plugin = artifact.claudePluginDirs[0];
+    assert.deepEqual(artifact.personalSkillCatalog.map((entry) => entry.name), [own]);
+    assert.equal(artifact.personalSkillCatalog[0].path, path.join(plugin, "skills", own, "SKILL.md"));
+    assert.ok(!JSON.stringify(artifact.personalSkillCatalog).includes(other), "other author's grant never enters this catalog");
+    assert.equal(artifact.codexHome, target.container.codexHome, "persistent auth/session root is unchanged");
+    assert.equal(artifact.codexUserHome, target.container.home, "channel CLI HOME is unchanged");
     assert.ok(path.resolve(plugin).startsWith(path.resolve(target.artifactDir) + path.sep), plugin);
     const manifest = JSON.parse(await readFile(path.join(plugin, ".claude-plugin", "plugin.json"), "utf8"));
     assert.equal(manifest.name, "gateway-user-grants");
@@ -220,6 +225,8 @@ test("concurrent users get private settings/plugins without mutating the shared 
   await Promise.all([a.cleanup(), b.cleanup()]);
   assert.ok(!(await absent(a.settingsFile)), "content-addressed settings remain for safe warm reuse");
   assert.ok(!(await absent(b.settingsFile)), "content-addressed settings remain for safe warm reuse");
+  assert.ok(await absent(a.personalSkillCatalog[0].path));
+  assert.ok(await absent(b.personalSkillCatalog[0].path));
   assert.ok(await absent(a.claudePluginDirs.find((dir) => dir.includes("user-grants-plugin"))));
   assert.ok(await absent(b.claudePluginDirs.find((dir) => dir.includes("user-grants-plugin"))));
   assert.equal(path.resolve(gatewayRoot), path.resolve(process.env.CHANNELGATE_DIR));
@@ -504,4 +511,9 @@ test("an unreadable .claude/agents directory delivers the plugin without agents 
   const manifest = JSON.parse(await readFile(path.join(plugin, ".claude-plugin", "plugin.json"), "utf8"));
   assert.equal("agents" in manifest, false);
   assert.ok(!(await absent(path.join(plugin, "skills", "gateway-usage", "SKILL.md"))), "the rest of the plugin is delivered");
+});
+
+
+test("an unavailable selected personal grant fails visibly instead of an empty catalog", async () => {
+  await assert.rejects(grants({ slug: "missing-personal-fixture", userSkills: ["missing-personal-fixture-unique-0907"] }), /Personal skill grants could not be loaded: missing-personal-fixture-unique-0907/);
 });

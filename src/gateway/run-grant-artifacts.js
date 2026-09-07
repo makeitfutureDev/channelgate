@@ -6,6 +6,7 @@ import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename,
 import path from "node:path";
 import { buildSettings, enableSkills } from "./folders.js";
 import { ensureRealDir } from "./safe-fs.js";
+import { parseFrontmatter, skillMetadata } from "./skills/frontmatter.js";
 
 // ── Isolated-runtime engine homes ─────────────────────────────────────────────────────────────
 // Inside a container the engine's HOME is the channel's own persistent volume (plan §5/§8), so
@@ -29,23 +30,16 @@ export function engineHomesFor(target = null) {
     claudeStateDir: "",
     codexUserHome: home,
     codexHome,
-    // Codex's state dir is read from BOTH sides: the CLI writes it inside the container (as
-    // CODEX_HOME), and the daemon reads the rollout files back for usage accounting. Only the
-    // second one is a path in this filesystem, so this is the HOST view of the channel's home
-    // volume — "" while the backend cannot name one, which the accounting must tolerate rather
-    // than resolve against the operator's own ~/.codex.
-    codexStateDir: target?.container?.homeVolumeHostPath ? path.join(target.container.homeVolumeHostPath, ".codex") : "",
+    // Runtime-owned usage inspection reads CODEX_HOME inside the container. A volume's host
+    // path is not a daemon-readable state directory under rootless Podman.
+    codexStateDir: "",
   };
 }
 
-// prepareTarget() is deliberately pure, so a cold daemon may not know Podman's host-side volume
-// root until ensureUp() probes the runtime. Refresh only the daemon-readable accounting path at
-// that boundary; engine-facing HOME paths were already materialized inside the container and do
-// not change. Without this refresh a resumed Codex turn sees a zero baseline and its cumulative
-// provider-session usage is mislabeled as the current message's usage/cost.
+// Compatibility for callers refreshing artifacts after ensureUp: never publish a rootless
+// volume path as readable state. Usage inspection now follows the resolved RuntimeTarget.
 export function refreshRuntimeReadPaths(artifacts = {}, target = null) {
-  const current = engineHomesFor(target);
-  if (current?.codexStateDir) artifacts.codexStateDir = current.codexStateDir;
+  if (target) artifacts.codexStateDir = "";
   return artifacts;
 }
 
@@ -188,10 +182,11 @@ export async function createRunGrantArtifacts({
     // The engines' homes are the channel's own HOME volume inside the container; the daemon only
     // names them in the child's environment and never creates or reads them (engineHomesFor).
     const { claudeHome, claudeConfigDir, claudeStateDir, codexUserHome, codexHome, codexStateDir } = containerHomes;
-    // Codex discovers personal skills from CODEX_HOME/skills and HOME/.agents/skills, both inside
-    // the container's HOME volume — there is no host-side directory to overlay a per-run grant
-    // into, so a per-user Codex skill grant has no delivery path here ("" = no overlay dir).
+    // Codex keeps its persistent HOME/auth/session roots. Personal grants use an explicit
+    // per-turn catalog pointing at the same ephemeral skill files Claude receives as a plugin;
+    // they are usable instructions, not native slash-command registrations.
     const codexSkillsDir = "";
+    const personalSkillCatalog = [];
     const claudePluginDirs = [];
     let missingSkills = [];
     // The two content-addressed roots a warm process keeps reading between turns live under the
@@ -240,10 +235,19 @@ export async function createRunGrantArtifacts({
         description: "Private skill grants for one gateway run",
         skillNames: userSkills,
       });
-      missingSkills = [...new Set([...missingSkills, ...personal.missing])];
+      if (personal.missing.length) {
+        throw new Error(`Personal skill grants could not be loaded: ${personal.missing.join(", ")}`);
+      }
       if (personal.populated) {
         claudePluginDirs.push(pluginDir);
         claudePluginEphemeral = true;
+        const personalDir = path.join(pluginDir, "skills");
+        for (const entry of (await readdir(personalDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+          if (!entry.isDirectory()) continue;
+          const file = path.join(personalDir, entry.name, "SKILL.md");
+          const metadata = skillMetadata(parseFrontmatter(await readFile(file, "utf8")).data);
+          personalSkillCatalog.push({ name: metadata.name || entry.name, description: metadata.description || `Personal skill ${entry.name}`, path: file });
+        }
       }
     }
 
@@ -281,6 +285,7 @@ export async function createRunGrantArtifacts({
       codexHome,
       codexStateDir,
       codexSkillSupportDir: codexSkillsDir,
+      personalSkillCatalog,
       missingSkills,
       // Every engine-facing path this run produced sits under one root (the mkdtemp above for the
       // per-run pieces; the content-addressed stable roots survive on purpose, as they always did).

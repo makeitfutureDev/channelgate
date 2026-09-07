@@ -138,12 +138,11 @@ test("engineHomesFor answers null for no target, and prefers what the backend de
     claudeStateDir: "",
     codexUserHome: "/home/agent",
     codexHome: "/home/agent/.codex",
-    // Read from the HOST side (usage accounting), so it is empty until the backend can name where
-    // the channel's home volume lives on this filesystem — never the operator's own ~/.codex.
+    // No daemon read path: usage is inspected inside the runtime.
     codexStateDir: "",
   });
   const withVolume = { ...target, container: { ...target.container, homeVolumeHostPath: "/var/lib/cg/vol" } };
-  assert.equal(engineHomesFor(withVolume).codexStateDir, path.join("/var/lib/cg/vol", ".codex"));
+  assert.equal(engineHomesFor(withVolume).codexStateDir, "");
 
   // The image layout is the backend's fact, so a backend that publishes a different HOME wins over
   // the documented default rather than being silently overridden by it. A backend that names the
@@ -156,7 +155,7 @@ test("engineHomesFor answers null for no target, and prefers what the backend de
   assert.deepEqual(engineHomesFor(declared).codexHome, "/opt/state/.codex");
 });
 
-test("runtime read paths refresh after a cold container probe settles its volume root", () => {
+test("runtime read paths never expose a rootless HOME volume after a cold probe", () => {
   const cold = fakeTarget(backend, "footer-cost-delta", { platform: "slack" });
   cold.container.homeVolumeHostPath = "";
   const artifacts = { ...engineHomesFor(cold) };
@@ -164,5 +163,5 @@ test("runtime read paths refresh after a cold container probe settles its volume
 
   cold.container.homeVolumeHostPath = "/var/lib/cg/settled-volume";
   assert.equal(refreshRuntimeReadPaths(artifacts, cold), artifacts);
-  assert.equal(artifacts.codexStateDir, "/var/lib/cg/settled-volume/.codex");
+  assert.equal(artifacts.codexStateDir, "");
 });

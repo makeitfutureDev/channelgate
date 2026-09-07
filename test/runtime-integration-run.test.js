@@ -344,3 +344,24 @@ test("a slow carry announces itself before the turn's own warm-up notice is arme
   assert.equal(notices.length, 1, "a wait the user can feel gets exactly one row");
   assert.equal(notices[0].scope, "gateway");
 });
+
+test("Stop signal reaches runtime preparation and prevents engine spawn", async () => {
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
+  const backend = createFakeRuntimeBackend();
+  const controller = new AbortController();
+  let preparing;
+  const entered = new Promise((r) => { preparing = r; });
+  backend.ensureUp = async (_target, { signal, lease }) => {
+    assert.equal(signal, controller.signal);
+    assert.ok(lease);
+    preparing();
+    await new Promise((_, reject) => signal.addEventListener("abort", () => reject(Object.assign(new Error("Stopped during preparation"), { name: "AbortError" })), { once: true }));
+  };
+  useBackend(backend);
+  await channel("C_RT_STOP_PREP", "rt-stop-prep");
+  const run = runMessage({ channelId: "C_RT_STOP_PREP", authorId: "U_RT", text: "Read fixture", threadKey: "9100.099", origin: "slack_foreground", preferCold: true, signal: controller.signal });
+  await entered;
+  controller.abort();
+  await assert.rejects(run, { name: "AbortError" });
+  assert.equal(backend.calls.spawn.length, 0);
+});

@@ -1,3 +1,4 @@
+import { plainFailureText } from "../util/process-outcome.js";
 import { engineLabel } from "../engines/registry.js";
 import { createBusyThreadChoiceStore } from "./busy-thread-choice.js";
 
@@ -32,7 +33,7 @@ export function engineSwitchChoiceText(ask = {}) {
         ? `${failed} hit a temporary provider error — retried ${retries}× before giving up`
         : `${failed} hit a temporary provider error`;
   if (ask.bothFailed) {
-    const why = String(ask.fallbackError || "").trim();
+    const why = plainFailureText(ask.fallbackError, 300);
     return `⚠️ ${what}, and ${other} could not answer either${why ? ` (${why.slice(0, 300)})` : ""}. Nothing ran for your message. Try again on either harness?`;
   }
   return `⚠️ ${what}. Nothing ran for your message. Switch this thread to ${other}, or try ${failed} again?`;

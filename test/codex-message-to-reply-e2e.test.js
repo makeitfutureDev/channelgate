@@ -155,6 +155,16 @@ test("Codex subagents each get a named card row, read from their own rollouts", 
   writeText(path.join(day, "rollout-2026-09-07T02-42-23-child-connector.jsonl"), childRollout("child-connector", "/root/connector_reviewer", "Dewey", 6_000));
 
   const target = directTarget();
+  const { createContainerState } = await import("../src/runtimes/container/state.js");
+  const { execFileSync } = await import("node:child_process");
+  const calls = [];
+  const state = createContainerState({ exec: { async runExec(t, args, opts) {
+    calls.push({ args, opts });
+    return { code: 0, stdout: execFileSync(process.execPath, args.slice(2), { encoding: "utf8" }) };
+  } } });
+  target.runtime = { ...target.runtime, inspectUsage: state.inspectUsage };
+  target.container.codexHome = stateDir;
+  target.container.homeVolumeHostPath = "/proc/1/unreadable-home-volume";
   const events = [];
   const result = await runCodex({
     cwd: projectRoot,
@@ -165,10 +175,12 @@ test("Codex subagents each get a named card row, read from their own rollouts", 
     timeoutMs: 10_000,
     target,
     artifactDir: target.artifactDir,
-    codexStateDir: stateDir,
+    codexStateDir: "/proc/1/unreadable-home-volume/.codex",
     onEvent: (event) => events.push(event),
   });
   assert.equal(result.content, "Both reviews are in.");
+  assert.ok(calls.length >= 3, "live discovery and both final reducers execute through the runtime");
+  assert.ok(calls.every(({ args }) => !args.join(" ").includes("/proc/1/unreadable-home-volume")), "the host HOME volume is never consulted");
 
   const agents = events.filter((event) => event.kind === "agent_activity");
   // Live first: the coordination item is the cue to go and find out who is working.
@@ -186,4 +198,27 @@ test("Codex subagents each get a named card row, read from their own rollouts", 
   assert.ok(events.some((event) => event.kind === "tool_use" && event.name === "wait_agent"));
   // The subagents are still billed: identity rides along with the accounting, it does not replace it.
   assert.deepEqual(result.usageAccounting.children.map((child) => child.name).sort(), ["connector_reviewer", "sandbox_reviewer"]);
+});
+
+test("Codex refuses an unreadable resume baseline before spawn and releases its session lock", async () => {
+  const target = directTarget();
+  let snapshots = 0;
+  target.runtime = { ...target.runtime, async inspectUsage() { snapshots++; throw new Error("runtime usage inspection failed"); } };
+  const spawns = fakeBackend.calls.spawn.length;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await assert.rejects(runCodex({ cwd: projectRoot, prompt: "resume", sessionId: "unreadable-baseline", isNewSession: false, clean: true, target, artifactDir: target.artifactDir }), /usage inspection failed/);
+  }
+  assert.equal(snapshots, 2, "a failed baseline releases the lock so retry can proceed");
+  assert.equal(fakeBackend.calls.spawn.length, spawns, "never charge a cumulative counter as a new turn");
+});
+
+test("Codex keeps the answer but visibly marks failed final child accounting", async () => {
+  const target = directTarget();
+  target.runtime = { ...target.runtime, async inspectUsage() { throw new Error("private runtime diagnostic"); } };
+  const events = [];
+  const result = await runCodex({ cwd: projectRoot, prompt: "CODEX_STUB_SUBAGENTS", sessionId: "", isNewSession: true, clean: true, target, artifactDir: target.artifactDir, onEvent: (e) => events.push(e) });
+  assert.equal(result.content, "Both reviews are in.");
+  const notes = events.filter((e) => e.kind === "engine_note" && /accounting may be incomplete/.test(e.text));
+  assert.equal(notes.length, 1, "live/root/child failures announce once");
+  assert.ok(!JSON.stringify(events).includes("private runtime diagnostic"));
 });

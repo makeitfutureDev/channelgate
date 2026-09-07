@@ -27,7 +27,7 @@ process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimite
 process.env.SESSION_KEEPALIVE = "0";
 
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
-const { addSchedule, getSchedules } = await import("../src/config/schedules.js");
+const { addSchedule, getSchedules, updateSchedule } = await import("../src/config/schedules.js");
 const { getSessionMap } = await import("../src/gateway/sessions.js");
 const scheduler = await import("../src/gateway/scheduler.js");
 
@@ -72,10 +72,11 @@ test("two fires of a daily-thread schedule on one day get separate sessions unde
 
   const { client, slack } = fakeSlack();
   scheduler.resetSchedulerState();
-  scheduler.startScheduler({ slack });
+  scheduler.startScheduler({ immediate: false, slack });
 
   // Two fires an hour apart — the same server-local day, so the anchor is reused by design.
   const nine = new Date(2026, 8, 1, 9, 0, 5).getTime();
+  updateSchedule(sched.id, { createdAt: new Date(nine - 60_000).toISOString() });
   await scheduler.tick(nine);
   await scheduler.tick(nine + 60 * 60_000);
 

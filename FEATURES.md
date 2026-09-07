@@ -693,6 +693,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - One-time ("run at") schedules: `create_schedule` accepts `in_minutes`/`run_at` to fire once and
   auto-delete (e.g. "remind this channel in 2h") alongside recurring cron; recurring crons are held
   to a minimum interval (default 60 min) with per-channel + concurrency caps.
+- Scheduler startup immediately checks the durable cursor, including cron minutes missed during
+  restart recovery. Catch-up is bounded to the five most recent minutes and never predates a
+  schedule's creation, re-enable, or cron edit. Durable epoch-minute claims prevent replay after
+  restart, including repeated local clock labels at a daylight-saving fold. A queued task can
+  start safely after restart; an interrupted engine execution is paused for reconciliation, and a
+  saved result retries delivery without rerunning tools. Reminder claims precede posting: a crash
+  at that external delivery boundary can lose a reminder but cannot automatically duplicate it.
+  Short transport outages defer unclaimed recurring work within the same five-minute window.
+  → TEST-PLAN: Scheduling restart durability.
 - Schedule times are the GATEWAY's local zone, and they say so. Crons are matched against the
   daemon's own clock, so every container receives the daemon's IANA zone as `TZ` (at create and on
   every exec) instead of the image's `Etc/UTC` — `date` and both engines read the same wall time as
@@ -1618,14 +1627,16 @@ are retired, bullet by bullet; everything else stands.
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch
-  there is never deferred: the turn waits, bounded and announced in the thread, for the runs still
-  inside to finish and then rebuilds, or fails with a message naming the pending rebuild. Running
+  there is never deferred: the turn waits with an initial notice and a reminder every minute for
+  the runs still inside to finish, then rebuilds and continues automatically. Stop cancels the wait
+  and preparation lock before spawning; preparatory waiters do not count as occupants. Running
   against mounts that point at a directory the channel has moved or deleted is not an option. A
   mismatch that is only about behaviour (a rebuilt image, a limit, the network mode) keeps the old
   deferral: the container is used for this turn and replaced at the next idle moment. "Busy" means
   someone ELSE is inside — a caller that leased the container before asking for it (every turn does,
   so the idle reaper cannot stop the environment mid-spawn) passes its own lease handle and is not
-  counted against itself. → TEST-PLAN: Container runtime (v0.8 P1).
+  counted against itself. Rebuilding preserves the waiting turns’ leases until their owners release
+  them. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Nothing a channel accumulates is ever lost — including its temp files.** A container is stopped
   as a matter of routine (the ten-minute idle sweep, the max-running cap) and recreated whenever its
   create-time fingerprint changes (an image rebuild, a limit change, a network-mode flip), so the
@@ -2623,3 +2634,46 @@ are retired, bullet by bullet; everything else stands.
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.
   → TEST-PLAN: Real project skill synchronization and workspace reset.
+
+- **Recovery and Stop reliability (September 2026):** an explicit Codex `thread/resume failed:
+  list_turns is not supported yet` response follows the existing fresh-session/transcript recovery.
+  Unexpected Claude SIGKILL/137 never triggers blind automatic continuation; the error event keeps
+  engine, runtime, exit code, signal and process/provider/Stop flags without raw process streams.
+  Explicit Stop and AbortError also defeat legacy text-based continuation. Automatic-recovery and
+  both-engine failure notices unwrap provider JSON into readable sentences.
+- **Responsive Stop controls:** “stop the loop” and “Stop the check loop now” cancel through the
+  early control path. Loop rows disappear synchronously before Slack calls; status clearing and
+  unrelated acknowledgements cannot block another stopped thread’s notice. Stream cleanup gets a
+  one-second foreground grace, continues draining afterward, and marks delivered text partial.
+  Slack can still throttle the acknowledgement API itself. `run_stopped` records each affected
+  active/queued turn once with its run ID/state; `run_stop_requested` records command-level totals.
+- **Live numeric progress counts:** fraction/count details and outputs render in the replaceable
+  task title, within Slack’s existing 240-character title budget. Changes such as `0/4` → `4/4`
+  therefore show the latest count instead of accumulating old counts in append-only rich fields.
+  Other rich prose retains the existing append/deduplication behavior.
+
+### Codex usage inside the runtime
+
+Codex resume baselines, live child identities, per-request root usage and final child usage are
+read inside the channel container through the runtime's read-only `inspectUsage` seam. Rootless
+HOME permissions do not require daemon access to the volume, new mounts or transcript copies.
+The reducer is supplied by the running checkout, so this fix requires no image rebuild. Each
+child retains its name/thread identity and final elapsed/token metrics; copied fork prefixes
+remain excluded. A failed baseline stops a resumed turn before it can incur ambiguously attributed
+usage. A failed live/final inspection preserves the answer and emits one visible incomplete
+accounting notice. Claude's existing native child progress/accounting path is unchanged.
+
+
+### Personal skill grants in Codex
+
+Codex receives the current author's personal skill catalog on every normal turn, alongside its
+native organization/channel repository skills. Catalog entries name the ephemeral `SKILL.md`
+files and their descriptions; Codex reads those instructions and resolves supporting references
+relative to each skill directory. This is prompt delivery, not native slash-command registration.
+Fresh, resumed and fallback turns receive the current catalog; an empty catalog supersedes prior
+personal grants. Clean mode omits it. Personal skill files stay in the existing per-run artifact
+plugin and are removed after the run, never copied into shared project skills. HOME, CODEX_HOME,
+CLI logins and provider sessions stay unchanged. A selected personal skill that cannot be
+materialized fails with its name before engine launch. This provides per-run discovery isolation
+within the channel's existing shared container boundary, not separate filesystem identities for
+people admitted to the same channel.

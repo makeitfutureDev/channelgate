@@ -103,6 +103,16 @@ protected transient runtime bundles; those bundles must be included in the reten
 Runtime secret redaction reduces accidental output leakage, but an agent given a usable credential
 can access that value and use its granted privileges. UI write-only fields do not change this fact.
 
+An operator's ability to sign in is not a grant to share that provider account with every gateway
+user. Provider account terms and any organization agreement determine who may use it. ChannelGate
+does not sell provider access or promise that one personal subscription covers a team. An operator
+must choose an account arrangement authorized for the users admitted to the deployment. This is
+separate from ChannelGate's software license and from personal Composio connections.
+
+Project privacy, security and legal requests go to `contact@makeitfuture.com`; requests about a
+deployment's own records go to its operator. See [SUPPORT.md](../SUPPORT.md) for project and
+contracted-support routing.
+
 Keep model/connector grants, channel membership and shared work folders within the intended trust
 boundary. Deleting a conversation must include an explicit decision about its home volume,
 artifacts, SQLite records, backups and provider-side retention; removing a chat message is not a

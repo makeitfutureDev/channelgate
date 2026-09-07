@@ -6,6 +6,7 @@ import {
   embeddedJsonObject,
   plainFailureText,
   processFailureMessage,
+  runFailureDiagnostics,
 } from "../src/util/process-outcome.js";
 
 test("process outcomes explain success and portable shell failures without raw numeric codes", () => {
@@ -82,4 +83,10 @@ test("a provider's JSON response body becomes the sentence inside it, never the 
   assert.equal(plainFailureText('{"status":500}'), "the provider rejected the request");
   assert.equal(embeddedJsonObject("nothing structured here"), null);
   assert.equal(plainFailureText(`x${"y".repeat(500)}`).length, 400);
+});
+
+test("run failure diagnostics retain outcome facts and exclude raw process data", () => {
+  const fields = runFailureDiagnostics({ details: { engine: "claude", exitCode: 137, signal: "SIGKILL", runtime: "container", processEnded: true,
+    stdout: "private stdout", stderr: "private stderr", arbitrary: "private" } });
+  assert.deepEqual(fields, { engine: "claude", exitCode: 137, signal: "SIGKILL", runtime: "container", processEnded: true, explicitStop: false, providerError: false });
 });
