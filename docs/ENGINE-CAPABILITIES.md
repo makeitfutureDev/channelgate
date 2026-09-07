@@ -5,13 +5,14 @@ the Admin API/UI consume that registry.
 
 | Capability | Claude | Codex |
 | --- | --- | --- |
-| Filesystem confinement | Gateway settings + Claude permissions | Gateway read-only/workspace permission profiles |
-| Network modes | off, approved-domain, unrestricted admin bypass | off, unrestricted admin bypass; approved-domain fails closed |
+| Filesystem confinement | Per-conversation container mounts; Claude permissions control tools | Same container boundary; Read-only mode adds a CLI read-only sandbox |
+| Network policy | Advisory off/on; container bridge networking, no domain filtering or egress firewall | Same container network boundary; CLI Read-only mode also restricts its own network access |
 | Warm process / steer | yes | no; one-shot resume |
 | Session identity | gateway-minted UUID | CLI-minted thread ID, persisted after the turn |
-| Permission prompts | Slack approval tool | headless deny or auto-review in autonomous mode |
-| MCP transport | protected per-run config file | complete safe `-c` definitions; user config ignored |
-| Optional MCPs | selected host definitions | runtime apps plus credential-free stdio/HTTP definitions |
+| Permission prompts | Interactive Slack tool approvals; automatic approval with Auto | Headless deny or eligible automatic review with Auto |
+| MCP transport | Protected per-run configuration; HTTP/stdio servers and the gateway socket bridge | Per-run `-c` definitions; native HTTP with a credential helper for managed remote connections, stdio bridges for gateway/SDK |
+| Optional MCPs | Explicitly selected server definitions | Selected runtime apps and complete credential-free stdio/HTTP definitions; managed credentialed integrations use separate protected paths |
+| Skills | Organization/channel repository skills plus per-author grants | Native organization/channel repository skills plus a per-run personal skill catalog; personal delivery does not register slash commands |
 | Usage/cost | provider-reported cost | token usage with configured rate estimate |
 | Health | adapter-owned `--version` boot probe | adapter-owned `--version` boot probe |
 

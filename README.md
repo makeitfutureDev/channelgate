@@ -1,118 +1,306 @@
-# ChannelGate
+# ChannelGate — Self-hosted AI agents for Slack, Teams and Google Chat
 
-**The governed AI agent gateway for your Slack, Microsoft Teams and Google Chat channels — Claude Code and Codex, a container per conversation, self-hosted.**
+**Run Claude Code and OpenAI Codex in team chat, with a container per conversation and control over tools, credentials and memory.**
 
-[![License: Sustainable Use License 1.3](https://img.shields.io/badge/license-Sustainable%20Use%20License%201.3-2f6f4e)](./LICENSE.md)
+[![License: Sustainable Use License 1.4](https://img.shields.io/badge/license-Sustainable%20Use%20License%201.4-2f6f4e)](./LICENSE.md)
 [![CI](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml/badge.svg)](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml)
-[![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-3c873a)](./docs/COMPATIBILITY.md)
-[![Platforms](https://img.shields.io/badge/platforms-Slack%20%C2%B7%20Teams%20%C2%B7%20Google%20Chat-4a154b)](./docs/COMPATIBILITY.md)
-[![Engines](https://img.shields.io/badge/engines-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20OpenCode-8a3ffc)](./docs/ENGINE-CAPABILITIES.md)
+[![Node.js minimum version](https://img.shields.io/badge/node-%E2%89%A5%2022.13-3c873a)](./docs/COMPATIBILITY.md)
+[![Chat platforms and support status](https://img.shields.io/badge/platforms-Slack%20%C2%B7%20Teams%20%C2%B7%20Google%20Chat-4a154b)](#supported-platforms-and-ai-engines)
+[![AI engines and support status](https://img.shields.io/badge/engines-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20OpenCode-8a3ffc)](#supported-platforms-and-ai-engines)
 
-ChannelGate (formerly Claude Gateway for Slack) is a self-hosted daemon that runs a real
-coding-grade agent — Claude Code or OpenAI Codex — inside the channels your team already talks in.
-Every conversation gets a container with its own home and working folder. Tool permissions and
-MCP configuration are scoped per run. The default filesystem boundary excludes other channels
-and the operator's home; an explicit Full-access home-sharing option widens that boundary.
-Prompt/context goes to the selected model provider, and connected tools use their external services.
-See [privacy and data flow](docs/PRIVACY-AND-DATA-FLOW.md) for storage, credentials and network limits.
+ChannelGate is a **self-hosted AI agent gateway** that brings coding, research and workflow
+automation into your team's conversations. Use it as a Slack AI bot, or connect Microsoft Teams
+and Google Chat. Agents can work with files, run code, use connected business apps through the
+**Model Context Protocol (MCP)** and Composio, and deliver results back to the thread, within the
+access you configure.
+
+Your team works in chat. You choose the AI engine, who can use it, which tools and accounts it can
+access, and where its files and persistent memory live. ChannelGate runs on your Linux host using
+rootless Podman containers. Model providers still receive prompt/context, and connected apps use
+their external services; see [privacy and data flow](./docs/PRIVACY-AND-DATA-FLOW.md).
 
 **Support status:** Slack is the primary supported surface. **Microsoft Teams and Google Chat are
-Beta. Composio SDK mode is Enterprise-only and Beta**; standard Composio MCP mode remains available
-in every tier. OpenCode remains experimental and restricted to its documented read profile.
+Beta. Composio SDK mode is Enterprise-only and Beta**; standard Composio MCP mode is available in
+every tier. OpenCode is experimental and restricted to its documented read profile.
 
-## Getting started
+[Get started](#getting-started) · [Team benefits](#what-you-get) · [Full feature list](#full-feature-list) ·
+[Use cases](#use-cases) · [License and tiers](#licensing--partners) · [Documentation](#documentation)
 
-1. **Check the prerequisites.** Linux, Node.js ≥ 22.13, rootless Podman and a `claude` login on
-   the host (or `ANTHROPIC_API_KEY`). The runtime image contains the engine CLIs; Codex is
-   optional — details in [INSTALL.md](./INSTALL.md).
-2. **Get the code and run the installer.**
-   ```bash
-   git clone https://github.com/makeitfutureDev/channelgate.git
-   cd channelgate
-   npm run setup            # add -- --without-whisper for a lightweight server install
-   ```
-   It checks prerequisites, installs dependencies, and scaffolds `.env`; then install the systemd
-   service with `sudo bash scripts/install-systemd.sh`.
-3. **Create the Slack app from the bundled manifest.** <https://api.slack.com/apps> → *Create New
-   App* → *From a manifest* → paste [`slack-app-manifest.json`](./slack-app-manifest.json). Then
-   generate an app-level token with `connections:write`, install the app, and copy the bot token and
-   signing secret.
-4. **Start it and open the admin UI** at <http://localhost:4747> (`npm start` if you skipped the
-   service). It boots without Slack tokens.
-5. **Paste the three tokens** in **Settings → Save & connect**. The gateway connects live — no
-   restart, and no need to touch `.env`.
-6. **Approve people and channels.** **Users** → approve who may talk to the bot; **Channels** →
-   grant allowed users, MCP servers, skills, and the channel mode. New channels are fail-closed.
-7. **Use it.** DM the bot, or `/invite` it to a channel and `@mention` it. The full walkthrough,
-   including Linux service setup, backups and troubleshooting, is in [INSTALL.md](./INSTALL.md).
+Formerly Claude Gateway for Slack.
 
 ## What you get
 
-| Capability | What it means |
+| Your team needs to… | ChannelGate provides |
 | --- | --- |
-| **Per-conversation container** | Each channel and DM runs in its own container with its own gated folder — its own home, only that folder mounted, the MCP allowlist enforced with `--strict-mcp-config`, persistent harness memory off. |
-| **Dual Composio identities** | The message author's personal account is injected as `composio-user` and the channel/organization account separately as `composio`, resolved per run. User A's token never serves User B. |
-| **Warm sessions** | A thread's agent process stays alive (default 10 min, `SESSION_KEEPALIVE`) so follow-ups answer without a cold start, and relaunches transparently when a different author replies. |
-| **Threads are sessions** | A new thread starts a fresh session; replies resume it. The thread is the unit of context, and each thread can pin its own engine and model. |
-| **Channel memory** | A budgeted `MEMORY.md` index plus `memory/<topic>.md` files inside the channel's own folder, injected at session start and reviewed after each reply. Folder-scoped, so nothing bleeds between channels. |
-| **Schedules and background jobs** | Recurring cron and one-time "run at" schedules, acknowledgement reminders, and long jobs that run daemon-side and report back into the original thread — surviving a daemon restart. |
-| **Native charts, Lists and canvases** | Charts, Slack Lists, file snippets and canvases are posted with the gateway's own bot token, hard-scoped to the current channel; broader Slack actions go through the Composio Slack toolkit. |
-| **Three chat platforms** | Slack (GA), Microsoft Teams (Beta) and Google Chat (Beta) behind one declared capability contract. Replies are degraded per surface on the way out, so the model writes one dialect. |
-| **Three harnesses** | Claude Code by default and OpenAI Codex behind the same gates, with an announced Claude → Codex fallback on usage limits. OpenCode is a proof third engine, restricted to a read-only, network-off profile. |
-| **Admin UI and ledger** | A built-in web UI for channels, users, MCP grants, skills, modes, schedules and tokens, plus a per-run usage ledger (who, where, engine, model, tokens, cost). Changes apply on the next message. |
+| Put AI to work where decisions happen | Claude Code and Codex in chat threads, with file access, code execution and connected tools according to the channel's permissions. |
+| Keep project work organized | A container, working folder, conversation history and persistent memory for each channel or DM, with separate sessions per thread. |
+| Control access to tools and accounts | Approved users and channel guests, selectable permissions, MCP grants, and separate personal and shared connector identities. |
+| Turn repeated requests into automation | Reusable skills, scheduled agent runs, reminders, follow-ups and background work that reports to the originating conversation. |
+| Operate and inspect the deployment | A built-in admin UI, usage and cost reporting, audit history, backups and verified updates on infrastructure you control. |
+
+## Getting started
+
+**Requirements:** Linux, Node.js ≥ 22.13, rootless Podman, and credentials for the engine you will
+use. The default Claude setup uses the daemon user's host login, a configured setup token or
+`ANTHROPIC_API_KEY`; Codex requires its own authentication. See the
+[installation guide](./INSTALL.md) for prerequisites and service-account setup.
+
+```bash
+git clone https://github.com/makeitfutureDev/channelgate.git
+cd channelgate
+npm run setup -- --without-whisper  # omit the flag to choose local voice transcription
+npm start
+```
+
+The installer checks prerequisites, installs dependencies, scaffolds `.env` and builds the
+container image with the engine CLIs and media tools. If the image build fails, fix the reported
+prerequisite and run `npm run build:image` before sending the first prompt.
+
+1. Open the admin UI at <http://localhost:4747>. On a new install, use the admin password printed
+   once at first boot, or your configured password. The UI starts without Slack credentials.
+2. Create a Slack app at <https://api.slack.com/apps> using the bundled
+   [Slack app manifest](./slack-app-manifest.json). Generate an app-level token with
+   `connections:write`, install the app, and copy its bot token and signing secret.
+3. Paste those three values into **Settings → Save & connect**. The connection applies live.
+4. In **Users**, approve the people who may talk to the bot. In **Channels**, configure the working
+   folder, permissions, MCP connections and skills. Choose whether a channel admits approved members, admins only or nobody by default;
+   explicit channel guest grants admit additional users. DMs require approval or admin status.
+5. DM the bot, or invite it to a channel and mention it: `@channelgate summarize the files in this folder`.
+
+For a service that starts at boot, follow the [systemd installation steps](./INSTALL.md#the-systemd-service-starts-at-boot-restarts-on-failure).
+The service uses its own account and needs credentials configured for that account. For other
+chat surfaces, follow the [Microsoft Teams and Google Chat setup guide](./docs/PLATFORMS.md).
+
+## Full feature list
+
+These are the shipped product capabilities, grouped by the work they enable. Availability depends
+on the selected engine, chat platform and permissions; the [support matrix](#supported-platforms-and-ai-engines)
+below makes those differences explicit. [FEATURES.md](./FEATURES.md) is the detailed engineering
+catalog, including edge cases and links to regression coverage.
+
+### Conversations and AI engines
+
+- **Threaded sessions:** start a fresh session in a new thread and resume context in replies.
+  Choose an engine and model for a thread, channel or gateway default.
+- **Claude Code and OpenAI Codex:** use either engine with the same channel authorization,
+  container boundary and personal/shared connector separation.
+- **Model and reasoning controls:** select models and effort using Codex's live model catalog and
+  Claude's rolling aliases.
+  Explicit thread/run pins are respected; a pinned engine failure reports its own error.
+- **Automatic fallback:** eligible failures on a default engine can fall back to the other engine with
+  an announcement when replay is safe. A user's explicit engine/model pin prevents that switch.
+- **Warm Claude sessions:** reuse a live process for faster follow-ups; changes to the author,
+  credentials or configuration retire stale processes. Codex resumes through a new process.
+- **Visible progress:** streamed answers, tool activity, subagent progress, elapsed-time
+  heartbeats and queue positions keep long turns visible. Quiet stretches report their status.
+- **Run controls:** stop an active turn with `/stop`, supported stop reactions or a stop message;
+  steer supported active Claude sessions, queue follow-ups with `/next`, and resume afterward.
+- **Session handoff:** `/resume` connects an eligible local engine session to a Slack thread
+  in the same channel workspace; Claude also supports explicit context compaction.
+- **Slack Assistant support:** native assistant status, a persistent progress toolbox and
+  a separate answer stream keep results readable during long tasks.
+
+### Permissions, isolation and credentials
+
+- **A container per conversation:** every engine run, including scheduled and background agents,
+  executes inside that conversation's rootless Podman container with its own persistent home.
+- **Read-only, Worker and Admin modes:** choose the base permission level. Auto review and Lean
+  context are separate options; permission bypass requires both an admin author and Admin mode.
+- **Approval controls:** interactive approvals and automatic review apply according to mode;
+  tool permissions remain separate from the container's filesystem boundary.
+- **User and guest access:** select approved-member access, admins only or locked access,
+  with separate use/manage controls and channel guest grants. DMs require admin or approved status.
+- **Scoped MCP access:** grant external tool servers per channel and select optional engine
+  integrations. A channel can opt out of inherited organization tokens.
+- **Channel environment secrets:** configure credentials for tools such as provider CLIs through
+  write-only settings. Names are validated, rotations retire warm sessions, and known values are
+  redacted from replies and job output. Runtime access and limits are documented below.
+- **Protected administration:** password sign-in, masked secret listings, password-confirmed
+  reveal for eligible settings, audit records and separately scoped API access.
+
+### MCP integrations and Composio accounts
+
+- **Connect business apps:** use Composio's connected tools for workflows involving email,
+  calendars, CRM, project management and other services available to your selected account.
+- **Separate personal and shared accounts:** `composio-user` is the requester's account and
+  `composio-agent` is the channel/organization account. They resolve independently on each run. DMs use only the requester's personal Composio account.
+- **Explicit account selection:** “my” selects the requester's account; “your” selects the shared
+  agent account. When both have the requested app and the account is ambiguous, the agent asks.
+- **Custom MCP servers:** maintain an admin catalog of granted servers and non-interactive
+  credentials; supported transports and optional integrations depend on the engine.
+- **Enterprise SDK provisioning (Beta):** an organization Composio SDK key provisions separate
+  Slack user/channel identities and reusable thread sessions. Standard MCP mode remains available
+  without Enterprise entitlement.
+
+### Persistent memory and reusable skills
+
+- **Channel memory:** portable `MEMORY.md` and topic files retain preferences, decisions and
+  project knowledge. New sessions receive a bounded catalog and retrieve relevant memory on demand.
+- **Memory search and review:** full-text search with a plain-scan fallback, explicit memory
+  read/write tools and a post-reply background reviewer support recall without loading every note.
+- **Standing instructions:** maintain persistent channel rules alongside memory and task-specific
+  skills, so recurring preferences do not depend on a single thread's context.
+- **Shared skill catalog:** create, edit, import and organize reusable instructions, with
+  organization, channel and personal grants plus live templates.
+- **Skills in both engines:** granted skills are available to Claude and Codex. Organization and
+  channel skills synchronize into the project; personal skills stay scoped to the requesting user.
+- **Skill maintenance:** version history, rollback, source-revision review, change proposals,
+  usage reporting, Git publishing and optional
+  GitHub synchronization support repeatable team workflows. Import from GitHub, folders or peer
+  gateways, and expose the catalog through its MCP endpoint. See the [skills guide](./docs/SKILLS.md).
+- **Lean context:** start with reduced optional context and integrations when a task needs a
+  simpler workspace; the gateway's operating guide remains available.
+
+### Files, documents, voice and video
+
+- **Attachments:** download supported images and documents into the channel's uploads folder;
+  retrieve earlier Slack attachments on demand. Large downloads stream to disk, with a 500 MB ceiling.
+- **File explorer in Slack:** `/files` opens the channel workspace with bounded previews,
+  folder navigation and permission-checked editing, creation and sharing.
+- **Browser editor and uploads:** with a configured public URL, open larger text files in a
+  browser editor with Markdown preview and conflict checks, or upload nested folders directly
+  to the workspace through short-lived, scoped links.
+- **Voice prompts:** optional local Whisper transcription with Slack transcript fallback turns
+  supported voice clips into text instructions. Raw audio is not passed to the coding engines.
+- **Video and screen recordings:** bundled media tools and a video-analysis workflow extract
+  frames and speech for the agent to inspect inside the channel workspace.
+- **Browser automation:** bundled Playwright, Chromium and Chrome DevTools tooling support
+  web interaction and screenshots when the channel grants the required tools.
+- **Google Drive synchronization:** optionally schedule two-way synchronization between a
+  channel workspace and its configured Drive folder using the connected account.
+- **Deliverables:** create reports, scripts and other files in permitted modes, then browse or
+  explicitly share them into the conversation. Outbound file support varies by platform.
+
+### Scheduled automation and background work
+
+- **Scheduled agent runs:** recurring cron and one-time schedules run tasks in the configured
+  conversation and deliver results through its chat connector.
+- **Reminders and follow-ups:** plain reminders can post without an AI call; acknowledgement
+  reminders, pending-response digests and
+  no-response nudges help teams track work that needs a reply.
+- **Claude conversation loops:** `/loop` repeats a task in the same thread with configurable pacing
+  and controls to inspect or cancel it.
+- **Background agents and shell jobs:** delegate work beyond the foreground turn, inspect
+  status and logs, and receive the result in the originating thread.
+- **Recovery with explicit status:** schedules and job records persist. Detached shell jobs can
+  be recovered; background agents interrupted by a daemon restart are marked interrupted.
+  Completed results can retry delivery without replaying unknown tool work.
+- **HTTP run API and Make.com:** trigger agent work through `POST /api/runs` or an approved,
+  trusted bot posting a mention in Slack. The admin API page includes the Make.com module example,
+  credential requirements and thread mapping. API runs support idempotency, status polling,
+  cancellation, attachments and completion webhooks, including headless execution.
+
+### Slack reports and collaboration
+
+- **Native charts and data tables:** post charts and sortable/filterable tables directly in the
+  current Slack conversation using the gateway bot.
+- **Slack Lists and snippets:** create structured trackers and share CSV/TSV or text snippets
+  through bot tools restricted to the current channel.
+- **Canvases and broader Slack actions:** use the Composio Slack toolkit with the selected
+  personal or shared account; these are separate from the gateway's native bot tools.
+- **Channel history and thread retrieval:** read the current channel through scoped bot tools;
+  broader search uses an explicitly selected connector account.
+- **In-chat settings:** authorized users can manage supported conversation settings from Slack;
+  each action rechecks access, and administrative capabilities retain their own checks.
+
+### Administration, monitoring and operations
+
+- **Built-in web admin UI:** manage users, conversations, permissions, models, MCP connections,
+  secrets, skills, schedules, runtime settings and licenses. Supported connection settings apply live.
+- **Usage and costs:** inspect runs by user, channel, engine and model, with tokens, Claude's
+  reported cost and Codex estimates from configured rates. Estimates are not provider invoices.
+- **Audit and health:** inspect event history, activity, queue state, engine availability and
+  health checks, with operational detail protected by authentication.
+- **Local SQLite storage:** operational records live in one WAL database; bootstrap settings
+  and the MCP catalog stay in JSON, and work files and memory stay in channel folders.
+- **Container lifecycle management:** persistent channel homes, image version pinning,
+  idle-container reaping and configuration-aware recreation support ongoing operation.
+- **Backups and maintenance:** backup/restore commands, restore drills, retention controls and
+  runtime maintenance tools cover local state. See the [operations runbook](./docs/OPERATIONS.md).
+- **Verified updates:** the admin UI, Slack `/update` and `npm run update` use the same locked
+  update transaction with preflight checks, tests, restart verification and rollback on failure.
+
+## Use cases
+
+Start with the relevant files, skills and connectors enabled in a channel. These are example
+requests; available accounts and permissions determine what the agent can do.
+
+| Team workflow | Example request |
+| --- | --- |
+| Engineering | “Review the changes in this repository, run the relevant tests, and explain any regressions.” |
+| Operations and reporting | “Read this CSV, summarize overdue items, and post a chart in this thread.” |
+| Customer and project work | “Use my connected CRM account to summarize this deal and draft a follow-up for review.” |
+| Recurring team updates | “Every Monday at 09:00, summarize the project files and post an update here.” |
+| Process documentation | “Review this screen recording and write a step-by-step guide in the workspace.” |
+
+## Supported platforms and AI engines
+
+| Chat platform | Status | Connection and scope |
+| --- | --- | --- |
+| **Slack** | Primary supported surface | Socket Mode; channels, private channels, DMs and group DMs, native streaming, Assistant UI, file browser and bot artifacts. |
+| **Microsoft Teams** | Beta | Bot Framework over public HTTPS; core conversations with a smaller in-chat feature set and attachment limits. |
+| **Google Chat** | Beta | Outbound Pub/Sub pull; spaces and DMs, with platform-specific threading and attachment limits. |
+
+Teams and Google Chat transports have automated coverage; live-tenant validation remains a
+release gate. They do not provide every Slack interaction or artifact. See
+[what works where and setup requirements](./docs/PLATFORMS.md#what-works-where).
+
+| AI engine | Status | Session and feature differences |
+| --- | --- | --- |
+| **Claude Code** | Default engine | Warm processes, thread resume, steering, skills, MCP tools and provider-reported cost. |
+| **OpenAI Codex** | Supported engine | Fresh process per turn with thread resume, skills, MCP tools, token usage and configured cost estimates. |
+| **OpenCode** | Experimental | Restricted workspace read profile; shell, edits, external tools/MCP and bypass modes are unavailable. |
+
+Claude and Codex versions are pinned in the runtime image. Check the [compatibility matrix](./docs/COMPATIBILITY.md),
+[engine capabilities](./docs/ENGINE-CAPABILITIES.md) and [OpenCode restrictions](./docs/OPENCODE-ADAPTER.md)
+before choosing a deployment profile.
 
 ## How it works
 
-```
-Slack (Socket Mode)
-  → gate: DM = no mention needed · channel/group/private = require @bot mention
-  → authorize author against the channel's allowedUsers (fail-closed)
-  → ensure ~/.channelgate/channels/<platform>/<slug>/ (MCP allowlist + memory off) and the channel's own container
-  → resolve the thread's Claude session (warm process if alive, else resume)
-  → spawn claude with --mcp-config (channel servers + personal/shared Composio identities),
-    --strict-mcp-config, and --dangerously-skip-permissions only for admins
-  → stream the reply back into the Slack thread
+```text
+Chat message or API/scheduled task
+  → authenticate, authorize and resolve the conversation
+  → select the engine, model, permissions and tool identities
+  → start or reuse the conversation's rootless Podman container
+  → resume the thread's agent session with scoped files, skills and memory tools
+  → stream progress and deliver a chat reply or API result
+  → record usage and outcome locally
 ```
 
-- **Per-conversation isolation** (the `channelgate` skill): each folder gets a
-  `.claude/settings.json` that sets tool policy, disables automatic global memory, and
-  permits granted MCP tools. The container mounts establish filesystem confinement.
-- **Warm sessions**: a thread's `claude` process stays alive (default 10 min idle,
-  `SESSION_KEEPALIVE`) so follow-ups reply fast without a cold restart. A different author
-  posting in the same thread transparently relaunches with their own personal token while retaining
-  the channel/org shared connection — User A's token never serves User B.
-- **Thread = conversation**: a new Slack thread starts a fresh Claude session; replies resume it.
+The **conversation owns the workspace and container**; the **thread owns the agent session**.
+Channels on different chat platforms have distinct identifiers and folder paths. Every foreground,
+background and scheduled engine run uses the same runtime boundary.
+
+## Security and data privacy
+
+1. **Containers establish the default boundary.** Each conversation gets its own home and declared
+   work/runtime mounts. Other channel workspaces and the operator's home are excluded by default.
+   An explicit, off-by-default Full-access home-sharing option exposes the operator's whole home
+   to admitted authors in those channels; choose shared work folders and this option deliberately.
+2. **Network access is not an egress firewall.** Containers use bridge networking. The
+   *Allow network* switch communicates policy to the engines; there is no domain filtering or
+   container-level egress cut-off in this release.
+3. **Usable credentials have runtime exposure.** Claude's host credentials file is never copied
+   or mounted; runs receive a relay of its access token or a configured credential. Codex's host
+   sign-in file is shared with its containers while sessions stay per channel. Protected transient
+   MCP artifacts can contain credentials. Channel environment secrets have no reveal endpoint,
+   but an agent using them can access their runtime values; masking and redaction are not a vault.
+4. **Authorization is checked before a run.** Channel use/manage policies and guest grants are
+   enforced; unknown users without a guest grant are denied, and DMs require approval or admin status. Admin bypass needs an admin author and Admin mode. API callers cannot
+   claim personal connector identities or widen a channel's durable tool permissions.
+5. **Self-hosted storage still uses external AI services.** Configuration, sessions, work files,
+   usage and audit records are local. Prompt/context goes to the selected model provider; enabled
+   chat and connector services receive their requests/content. License verification sends the key.
+
+Read the [privacy and data-flow guide](./docs/PRIVACY-AND-DATA-FLOW.md) for the full boundary and
+operator responsibilities, and [SECURITY.md](./SECURITY.md) for vulnerability reporting.
 
 ## Deployment tradeoffs
 
-ChannelGate gives operators control over local configuration, work folders, retained history and
-backups, and requires them to run and patch the Linux host. Model and connector traffic still
-leaves that host. Provider subscriptions, API charges and external-service terms are separate.
-See [the deployment comparison](docs/WHY.md) for context.
-
-## Security in five bullets
-
-1. **A container per conversation.** Rootless containers confine filesystem and process access
-   to declared mounts. Full-access home sharing, off by default, exposes the operator's whole
-   home to every admitted author in those channels. Choose work folders accordingly.
-2. **Tool policy and network policy differ.** The engine's allowlist and MCP configuration restrict
-   its configured tools. The container has bridge networking; *Allow network* is advisory, with
-   no egress firewall or domain filtering in this release.
-3. **Credential scopes are explicit.** The host's Claude credentials file is never copied or
-   mounted into a container: each run receives a relay of the login's short-lived access token
-   (or the daemon's API key). Codex sessions are per channel while its host sign-in file is
-   shared with the containers. MCP secrets can occur in protected transient run artifacts. Listing APIs
-   return presence/masked metadata, and named secret reveal rechecks the current admin password.
-   Per-channel environment secrets have no reveal endpoint. Agents using credentials can access
-   their runtime values; UI masking is not a vault boundary against that agent.
-4. **Authorization fails closed.** Unknown or unapproved people are denied, including in DMs,
-   except explicit channel guest grants. The admin permission bypass requires an admin author
-   and an admin-mode channel. API callers cannot claim personal connector identities or widen
-   a channel's durable tool permissions.
-5. **Storage and transmission are documented.** Configuration, sessions, usage and audit records
-   are stored locally. Model providers receive prompt/context; connectors and chat providers
-   receive the requests/content needed for their enabled features. Licensing verification sends
-   the license key. See [privacy and data flow](docs/PRIVACY-AND-DATA-FLOW.md).
+ChannelGate fits teams that want control over their agent workspaces, tool access and operational
+records and can run a Linux host. You maintain the host, rootless Podman, backups and credentials.
+Model subscriptions/API charges and connected-service terms are separate from ChannelGate's
+license. See [why teams choose a self-hosted agent gateway](./docs/WHY.md) for more context.
 
 ## Licensing & partners
 
@@ -165,325 +353,38 @@ white-label — are described at
 
 ## Documentation
 
-| Document | What it covers |
+| Guide | What it covers |
 | --- | --- |
-| [INSTALL.md](./INSTALL.md) | Installing on a fresh Linux host, the Slack app, backups, troubleshooting |
-| [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) | The runbook: backup/restore, updates, health, incident handling |
-| [`docs/COMPATIBILITY.md`](./docs/COMPATIBILITY.md) | Supported OS, Node, CLI and SQLite versions, and the release gates |
-| [`docs/WHY.md`](./docs/WHY.md) | The product story: what it is, who it is for, how it compares, feature rationale |
-| [`docs/PRIVACY-AND-DATA-FLOW.md`](./docs/PRIVACY-AND-DATA-FLOW.md) | What data moves where, and what the operator is responsible for |
-| [`docs/LICENSING-SUMMARY.md`](./docs/LICENSING-SUMMARY.md) | Licensing in one page, in plain language |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | How to propose and land a change, and the sign-off requirement |
-| [SUPPORT.md](./SUPPORT.md) | Where to ask, in order |
-| [SECURITY.md](./SECURITY.md) | Reporting a vulnerability, and the dependency-advisory policy |
+| [Installation](./INSTALL.md) | Prerequisites, Slack app setup, engine credentials and systemd service installation |
+| [Full engineering feature catalog](./FEATURES.md) | Shipped capabilities, detailed behavior and regression references |
+| [Operations runbook](./docs/OPERATIONS.md) | Containers, updates, backups, restore, retention and troubleshooting |
+| [Chat platforms](./docs/PLATFORMS.md) | Slack, Teams and Google Chat setup, support status and feature differences |
+| [Engine capabilities](./docs/ENGINE-CAPABILITIES.md) | Claude and Codex execution, permissions, integrations and usage reporting |
+| [Compatibility](./docs/COMPATIBILITY.md) | Linux, Node.js, CLI versions and release gates |
+| [Skills](./docs/SKILLS.md) | Catalog, grants, templates, importing and publishing reusable workflows |
+| [Privacy and data flow](./docs/PRIVACY-AND-DATA-FLOW.md) | Storage, external requests, credentials and trust boundaries |
+| [Licensing summary](./docs/LICENSING-SUMMARY.md) | License terms and commercial deployment options |
+| [Changelog](./CHANGELOG.md) | Release history |
+| [Contributing](./CONTRIBUTING.md) | Isolated worktrees, checks, pull requests and commit sign-offs |
+| [Test plan](./TEST-PLAN.md) | Automated regression coverage and reproducible live acceptance cases |
+| [Support](./SUPPORT.md) | Where to ask questions and report issues |
 
-> Agent/contributor instructions live in **[AGENTS.md](./AGENTS.md)** (the canonical context
-> file for Codex and contributors; `CLAUDE.md` symlinks to it for Claude Code). Shipped features are in
-> **[FEATURES.md](./FEATURES.md)**, the build roadmap is maintained privately, and the
-> regression in **[TEST-PLAN.md](./TEST-PLAN.md)**.
+Contributor and coding-agent instructions live in [AGENTS.md](./AGENTS.md).
 
-## Prerequisites
+## Configuration and local storage
 
-- **Node.js ≥ 22.13** (uses the built-in `node:sqlite`, stable from 22.13, plus
-  `process.loadEnvFile`).
-- **`claude` CLI installed and signed in** on this host as the daemon user (`claude --version`
-  must work); engine CLIs are also installed in the runtime image. Runs authenticate with a relay
-  of that login's access token, a configured `claude setup-token`, or `ANTHROPIC_API_KEY`.
-- **Rootless Podman** (Linux) — every channel's engines run in a container of that channel's own,
-  and the daemon refuses to boot without a container CLI: `sudo apt install podman uidmap`; the
-  installer builds the channel image (`npm run build:image` by hand — see
-  [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime)).
-- A **Slack app** in Socket Mode (below).
+Operational data lives in `~/.channelgate/gateway.db`: users, channels, sessions, schedules,
+background jobs, usage and events. Settings in `~/.channelgate/config/settings.json` override
+`.env`; `mcp-catalog.json` holds the admin's MCP catalog. Legacy user/channel JSON files are
+import-only backups, not live stores.
 
-## Slack app setup (Socket Mode)
+Work files live in `~/ChannelGate/<platform>/<slug>/` or the channel's custom working folder.
+Generated channel configuration lives under `~/.channelgate/channels/<platform>/<slug>/`, and container homes
+persist in per-channel Podman volumes. `CHANNELGATE_DIR` and `CG_WORKSPACE_DIR` override the
+runtime and workspace roots. Keep runtime credentials and bootstrap configuration private.
 
-**Fastest path — create from the bundled manifest:**
-
-1. Go to <https://api.slack.com/apps> → **Create New App** → **From a manifest** → pick your
-   workspace → paste the contents of [`slack-app-manifest.json`](./slack-app-manifest.json)
-   (it already has Socket Mode, all scopes, and all events) → Create.
-2. **Basic Information** → **App-Level Tokens** → generate a token with `connections:write`
-   → `SLACK_APP_TOKEN` (`xapp-…`).
-3. **Install App** → install to the workspace → copy the **Bot User OAuth Token**
-   → `SLACK_BOT_TOKEN` (`xoxb-…`).
-4. **Basic Information** → copy the **Signing Secret** → `SLACK_SIGNING_SECRET`.
-5. Invite the bot to channels (`/invite @channelgate`) or DM it directly.
-
-When upgrading an existing Slack app, apply the latest `slack-app-manifest.json` and reinstall it
-to activate newly registered commands/shortcuts such as `/files`. The in-message `@bot /files`
-fallback works without registering the slash command.
-
-> **You don't have to touch `.env` for the tokens.** Start the daemon, open the admin UI →
-> **Settings** tab, paste the three tokens, and click **Save & connect** — they're stored in
-> `~/.channelgate/config/settings.json` and the gateway connects to Slack live (no restart).
-> `.env` still works and is handy for headless/server deploys.
-
-<details>
-<summary>Manual setup (equivalent to the manifest)</summary>
-
-1. Create an app at <https://api.slack.com/apps> (from scratch).
-2. **Socket Mode** → enable. Generate an **App-Level Token** with `connections:write`
-   → `SLACK_APP_TOKEN` (`xapp-…`).
-3. **OAuth & Permissions** → Bot Token Scopes:
-   `app_mentions:read`, `chat:write`, `channels:history`, `groups:history`, `im:history`,
-   `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `users:read`.
-4. **Event Subscriptions** → subscribe to bot events:
-   `message.channels`, `message.groups`, `message.im`, `message.mpim`, `app_mention`.
-5. Install to the workspace → copy the **Bot User OAuth Token** → `SLACK_BOT_TOKEN` (`xoxb-…`).
-6. Copy the **Signing Secret** (Basic Information) → `SLACK_SIGNING_SECRET`.
-7. Invite the bot to channels you want it in. DM it directly for 1:1 use.
-
-</details>
-
-## Install & run
-
-> **Setting it up on a new machine?** See **[INSTALL.md](./INSTALL.md)** — or just clone and run
-> `npm run setup` (checks prerequisites, installs dependencies, asks whether to provision local
-> Whisper + its multilingual model, builds the channel container image — engine CLIs, `ffmpeg`,
-> OpenCV, `faster-whisper` + its speech model — and scaffolds `.env`; the systemd service is one
-> `sudo` step after).
-> Choosing local Whisper downloads about 1.5 GiB for `large-v3-turbo`; server installs can skip it.
-
-```bash
-npm run setup            # one-command install (recommended)
-npm run setup -- --without-whisper  # unattended/lightweight server install
-# — or manually —
-npm install
-cp .env.example .env     # optional — or set tokens later in the admin Settings tab
-npm start                # or: npm run dev  (watch mode)
-```
-
-- Admin UI + health: <http://localhost:4747> (set `PORT` to change).
-- Without Slack tokens the daemon still boots and serves the admin UI — open **Settings** to
-  paste tokens and connect. Settings saved in the UI live in
-  `~/.channelgate/config/settings.json` and **override** `.env`.
-
-## Updating safely
-
-Admins can update from Slack `/update`, the `update_gateway` gateway tool, the dashboard, or:
-
-```bash
-npm run update
-```
-
-All paths use one locked transaction. Before changing the checkout, it verifies Git/upstream,
-runtime/configuration, active systemd service, calculated free space, current health, and
-a real Claude turn in a temporary gated folder. The candidate must pass exact dependency install,
-the production security-advisory gate, all tests, restart on the expected revision, Slack reconnect
-when applicable, and another isolated Claude turn.
-
-If a post-change gate fails, the runner restores the prior Git revision and lockfile dependencies,
-restarts, and checks the restored build. Status and recovery material:
-
-- `~/.channelgate/update-state.json` — sanitized durable phase/result (`updated`,
-  `rolled_back`, `refused`, or `failed`);
-- `~/.channelgate/logs/update.log` — updater log;
-- `~/.channelgate/update-backups/<transaction>/` — local config/SQLite/operator snapshot.
-
-Snapshots are not automatically written back during rollback, because that could erase live
-runtime writes. Dependency severity policy and reviewed exceptions are in [SECURITY.md](./SECURITY.md).
-
-## Admin UI
-
-Open the admin page and:
-
-- **Channels** — every conversation the bot has seen. Per channel, grant **allowed users**,
-  **allowed MCPs** (from the catalog), **skills**, and toggle **admin mode** (lets admin
-  authors use dangerous permissions there). New channels are **fail-closed** — nobody outside a
-  DM gets a reply until you add them. A channel Composio token backs the agent's own account
-  (`composio-agent`) without replacing the active user's `composio-user`.
-- **Users** — set each Slack user's **Composio token** (write-only; injected only into their own
-  messages) and **admin** flag. Users are auto-recorded the first time they message the bot.
-
-Changes are written to disk and take effect on the **next message** — no restart.
-
-### Make.com automations
-
-The Admin UI's **API** page documents both supported Make.com paths: call `POST /api/runs`
-directly, or use `slack:CreateMessage` to post a visible Slack message that triggers the gateway bot. The
-Slack path includes the verified module blueprint (member IDs are placeholders — use your own
-workspace's). Its key requirements are a saved `<@BOT_MEMBER_ID>` mention of your bot, an approved Make bot user, a trusted Make app/bot identity,
-both apps in the destination channel, and the root-thread fallback
-`{{ifempty(62.thread_ts; 62.ts)}}` (with the source module number adjusted for the scenario).
-
-## Engine: Claude or Codex
-
-The gateway can drive either **Claude Code** (default) or the **OpenAI Codex CLI**, set globally
-in the admin **Settings** tab (`engine: claude | codex`).
-
-- **Claude** — full feature set: warm sessions (10-min keepalive), per-channel skills, exact $
-  cost, `.claude` lockdown, `--mcp-config`.
-- **Codex** — uses `codex exec --json` + `codex exec resume`. Works: thread resume, per-channel
-  folder (`-C`), admin vs non-admin permissions (`--dangerously-bypass-approvals-and-sandbox` vs
-  `-s read-only`), both Composio identities (bridged to stdio via `npx mcp-remote`), images (`-i`), token counts,
-  stop, the progress animation/log. **Caveats for Codex:** no warm sessions (each message
-  cold-resumes), no skills (Codex uses `AGENTS.md`, not `SKILL.md`), token counts but **no $
-  cost**, and `codex` must be authenticated on the machine (`codex login` / `OPENAI_API_KEY`).
-
-Per-channel settings (allowed users, workDir, shared Composio token, adminMode) and all Slack behaviour
-apply to whichever engine is selected. The full per-engine capability matrix is in
-[`docs/ENGINE-CAPABILITIES.md`](./docs/ENGINE-CAPABILITIES.md).
-
-## Configuration (on disk, the single source of truth)
-
-Everything lives under `~/.channelgate/` (override with `CHANNELGATE_DIR`):
-
-```
-~/.channelgate/
-├── config/
-│   ├── users.json            # { "<slackUserId>": { name, composioToken, isAdmin } }
-│   ├── channels.json         # index: { "<channelId>": { slug, name, type, isDM } }
-│   └── mcp-catalog.json       # shared MCP servers admins can grant per channel (see below)
-├── channels/<platform>/<slug>/   # <platform> = slack | teams | google-chat
-│   ├── .claude/settings.json # the gateway lockdown (generated)
-│   ├── .claude/skills/       # granted skills, copied in
-│   ├── meta.json             # { allowedUsers[], allowedMcps[], skills[], adminMode }
-│   └── sessions.json         # thread_ts → claude session id
-└── logs/runs-YYYY-MM-DD.log  # one JSON line per run (no secrets)
-```
-
-Each channel's **working folder** — where the agent actually runs — is the visible
-`~/ChannelGate/<platform>/<slug>/` (override the root with `CG_WORKSPACE_DIR`), or a custom
-per-channel folder when one is set. The platform component comes from the channel's own record,
-so a Slack `#ops` and a Teams "Ops" never share a folder.
-
-> Upgrading from *Claude Gateway for Slack*? The first boot migrates `~/.claude-gateway/` →
-> `~/.channelgate/` and `~/Slack Agent/<slug>/` → `~/ChannelGate/<platform>/<slug>/`, rewrites the
-> stored paths, and regenerates every channel's lockdown file. Preview it with
-> `node scripts/migrate-channelgate.mjs --dry-run`. `CLAUDE_GATEWAY_DIR` / `CLAUDE_GATEWAY_DB` are
-> still honoured (with a deprecation warning) for one major.
-
-### Composio identities
-
-Composio is built in with two stable MCP names, so no catalog entry is needed. Settings →
-Integrations selects one organization-wide provisioning mode:
-
-- **Personal:** `composio-user` uses only the active message author's personal token; `composio`
-  uses the channel token, otherwise the organization default when allowed.
-- **SDK:** one write-only organization SDK key provisions a stable Composio identity for each
-  Slack user and channel. Each Slack thread gets a reusable Composio session for both identities.
-  Users can manage their own personal connections; shared connection management follows the
-  channel's existing managing-rights policy.
-
-Both identities are resolved independently and the names are self-describing in every tool call:
-`composio-agent` is the agent's OWN account (backed by the channel token, else the organization
-default — the model is never told which), `composio-user` is the requester's personal account.
-“Verify my email” → `composio-user`; “verify your email” → `composio-agent`. With no pronoun the
-agent uses the only account that has the app connected (and says so), asks when both do, and never
-silently substitutes the other account when an explicitly requested connection is unavailable. A
-DM injects only `composio-user` — there is no agent account in a one-to-one conversation.
-Switching modes never clears the saved personal, channel, organization, or SDK credentials.
-
-To offer **additional shared**
-MCP servers for channels to grant, add entries to `config/mcp-catalog.json`:
-
-```json
-{
-  "my-http-server": {
-    "label": "My API",
-    "allowMatch": { "serverUrl": "https://api.example.com/mcp*" },
-    "server": { "type": "http", "url": "https://api.example.com/mcp", "headers": { "Authorization": "Bearer …" } }
-  }
-}
-```
-
-Headless runs can't do interactive OAuth, so shared servers should use **non-interactive auth**
-(a header token) — same as Composio's `x-consumer-api-key`.
-
-## Security model
-
-- **A container per conversation** (rootless Podman, required): every channel's engines run inside
-  a long-lived container of that channel's own — its own HOME volume (CLI logins, installed tools,
-  sessions), its own process namespace, and only the channel's work folder mounted from the host.
-  The operator's home (`~/.ssh`, credentials), the gateway root (other channels, the token config)
-  and other channels' folders do not exist on that side of the boundary. Admin channels run in
-  containers too; an admin channel whose work folder is a host directory sees that directory and
-  nothing beside it. The daemon refuses to boot without a container CLI; see
-  [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#container-runtime).
-- **Network**: every container is on the bridge network. The per-channel *Allow network* switch
-  tells the engines whether the channel is meant to have network (Codex read mode refuses it on
-  its own); there is no per-domain filtering and, in this release, no egress cut-off — the boundary
-  is the filesystem and the process namespace, not egress.
-- **MCP**: only the channel's allowlist is reachable; the per-run config is passed with
-  `--strict-mcp-config`. Verify with `claude mcp list` inside a channel folder.
-- **Memory**: `autoMemoryEnabled` / `autoDreamEnabled` are off for every channel folder. The
-  gateway's own channel memory (a budgeted `MEMORY.md` index + `memory/<topic>.md`, saved through
-  the `update_channel_memory` tool, injected into every fresh session, backed by a post-reply
-  background review) stays inside the folder — see FEATURES.md.
-- **Composio credentials**: Personal-mode user/channel/org tokens are resolved per run and injected
-  only into their named MCP connection. In SDK mode, the organization key stays in gateway settings;
-  Claude and Codex receive only local bridge definitions for session-scoped MCP endpoints. Neither
-  credentials nor session URLs are written into a channel folder or logged.
-- **Dangerous permissions**: `--dangerously-skip-permissions` is passed only when the author is
-  an admin **and** the channel has admin mode on. Non-admins run a read-only-ish allowlist
-  (no Bash/Write auto-approval, and headless can't answer prompts).
-- **Who can talk**: a user is allowed if they're an **admin** or **approved** (on the
-  MakeItFuture list). Approved users can talk in any channel they're a member of and in their
-  DM. Unknown/un-approved people are denied **everywhere, including DMs** — approve them in the
-  admin UI → **Users** tab, or add them as a per-channel guest via that channel's allowed users.
-  (Seeded MIF roster users are pre-approved.)
-- **Images & files**: attach an image (or PDF/file) in Slack and the bot downloads it into the
-  channel's gated folder and reads it (images render visually via Claude's Read tool).
-- **Voice prompts**: attach a voice clip and trigger the bot normally—`@mention` it in a channel,
-  react 🤖 to the message, or send it in a DM. With **Use local Whisper** enabled, the gateway tries
-  pinned `whisper.cpp` + multilingual `large-v3-turbo` first. When disabled or unavailable, it reads
-  Slack's completed transcript (including the full VTT for longer clips). If Slack has not generated
-  one, click **Generate transcript**, then mention the bot again or react 🤖. Typed text remains the
-  instructions; raw audio is never passed to Claude or Codex.
-- **Browse channel files**: `/files` opens a native Slack modal for the channel's working folder;
-  use the *Browse channel files* message shortcut (or `@bot /files`) to retain a specific thread.
-  Protected gateway/credential/key paths are visible but read-only. A bounded preview never changes the real
-  file. Sharing to the channel/thread or privately to your bot DM requires explicit confirmation and
-  is capped at 25 MB. In Worker/Auto modes, *New file* exclusively creates a confined UTF-8 text
-  file without replacing an existing item, and *New folder* creates a confined directory. With a
-  configured public URL, the single *Upload files / folder* action opens a secured browser picker
-  for up to 200 files / 250 MB total while preserving nested paths; files go directly into the
-  gateway folder without using Slack file storage, and existing items are never overwritten.
-  Eligible UTF-8 text files—including `.env*`, JSON/YAML/TOML, scripts, configs, and extensionless
-  files up to 3,000 characters retain the quick native Slack *Edit* popup and can also open through
-  the configured public gateway
-  URL in a full browser editor (up to 250,000 characters / 1 MB, with a live Markdown preview and
-  conflict check); binary/invalid UTF-8 and remaining protected paths stay read-only, while Full mode
-  file changes remain admin-only. Browser links are short-lived, one-use,
-  and scoped to the selected file or folder. Slack controls the native modal size, so the app cannot
-  enlarge that popup; use the browser editor for a larger workspace. With no public URL, the 3,000-character Slack editor remains.
-- **Stopping a run**: three ways, all interrupt the in-flight answer (kill that thread's Claude
-  process, clear the status; the next message resumes):
-  - **`/stop`** slash command — works in channels and regular DMs.
-  - **React** with 🛑 / ✋ / ❌ on any message in the thread — the reliable way in the **Assistant
-    pane**, where the composer is locked while the bot is responding.
-  - Type **`stop`** / `cancel` / `abort` — works wherever the composer isn't locked. In a channel
-    the message must @mention the bot (`@bot stop`), because an un-mentioned channel message is
-    never delivered to the gateway; in a DM a bare `stop` is enough.
-- **Assistant animation**: in the Slack **Assistant / AI-app** thread, the bot shows the native
-  shimmering status ("is thinking…", "is using <tool>…", "is putting it all together…") via
-  `assistant.threads.setStatus`. This needs the app's **Assistant** feature + `assistant:write`
-  scope (in `slack-app-manifest.json`) — update the app manifest and reinstall to enable it.
-  Elsewhere (plain channel mentions) the streamed placeholder message is the feedback.
-
-Keep `.env` and `~/.channelgate/` private. For a tamper-proof lock see the `channelgate`
-skill's notes on machine-wide managed settings.
-
-## Environment variables
-
-See `.env.example`. Key ones: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`,
-`PORT` (default 4747), `SESSION_KEEPALIVE` (warm idle, default `10m`, `0` disables),
-`COMMAND_TIMEOUT` (cold path, default `10m`), `CHANNELGATE_DIR`, `COMPOSIO_MCP_URL`,
-`ADMIN_PASSWORD`. Local Whisper is controlled in **Settings → Runtime** and defaults on for existing
-installs. Its transcription limit defaults to five minutes per clip; advanced overrides are
-`WHISPER_TIMEOUT_MS`, `WHISPER_CLI_PATH`, `WHISPER_MODEL_PATH`, and `WHISPER_FFMPEG_PATH`. Run
-`npm run whisper:install` to repair or provision the pinned runtime after enabling it.
-
-## Admin password (required)
-
-The admin UI + API hand over the stored Slack/Composio tokens, the filesystem browser and the
-admin/workDir switches, so they always require sign-in. A new install generates a password on
-first boot and prints it once; set your own with `ADMIN_PASSWORD` in `.env` (or `adminPassword`
-in `~/.channelgate/config/settings.json`) and restart the daemon (Settings → Restart, or
-`sudo systemctl restart channelgate`). The UI then shows a login
-page and a "Logout" button in the header; sessions are in-memory (a restart signs everyone out).
-
-Until a password exists, every privileged `/api` route refuses with instructions — **on every
-bind, loopback included**. A loopback address is also what a reverse proxy, a tunnel and every
-other process on the host present, so it is not evidence of who is calling. `/api/health` stays
-open for monitoring (it volunteers nothing beyond liveness to an unauthenticated caller).
+See [.env.example](./.env.example) for environment settings and the
+[operations runbook](./docs/OPERATIONS.md) for migration, maintenance and recovery. `SESSION_KEEPALIVE`
+controls idle warm-session reuse; `COMMAND_TIMEOUT` controls quiet-run reporting cadence, not a
+maximum runtime. Upgrades from the former gateway layout migrate at first boot; preview with
+`node scripts/migrate-channelgate.mjs --dry-run`.

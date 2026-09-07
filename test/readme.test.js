@@ -1,9 +1,6 @@
-// Guards for the README hero — the repository's landing page and, per the public-release plan,
-// its primary SEO surface. Everything asserted here is a promise made outside the repo (the
-// product name, the tagline the site repeats verbatim, the licensing facts, the lead-generation
-// links) or a thing that silently rots (a relative link to a file someone renamed, a badge URL
-// with a raw space in it). test/license.test.js owns the licensing WORDING; this file owns the
-// hero's SHAPE.
+// Guards for the public README: product identity, licensing, navigation, support status,
+// lead-generation links and badge/file links. Keep editorial expectations aligned with the
+// homepage; test/license.test.js owns the underlying licensing terms.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -18,8 +15,8 @@ const readReadme = () => readFile(path.join(repoRoot, "README.md"), "utf8");
 // public file has to be byte-identical for that to be true.
 const REPO_URL = "https://github.com/makeitfutureDev/channelgate";
 const TAGLINE =
-  "The governed AI agent gateway for your Slack, Microsoft Teams and Google Chat channels — " +
-  "Claude Code and Codex, a container per conversation, self-hosted.";
+  "Run Claude Code and OpenAI Codex in team chat, with a container per conversation and control " +
+  "over tools, credentials and memory.";
 const UTM = "utm_source=github&utm_medium=readme&utm_campaign=channelgate";
 // The pre-rename display name, allowed exactly once in the README (test/channelgate-rename.test.js
 // caps how many files may still carry it at all — this one is on that allowlist).
@@ -30,15 +27,14 @@ const prose = (md) => md.replace(/```[\s\S]*?```/g, "").replace(/<!--[\s\S]*?-->
 
 const countOf = (text, pattern) => (text.match(pattern) || []).length;
 
-test("the hero opens with one H1, the product name, and the shared tagline", async () => {
+test("the hero opens with one descriptive H1, the product name, and its value proposition", async () => {
   const readme = await readReadme();
   const headings = prose(readme)
     .split("\n")
     .filter((line) => /^#\s+\S/.test(line));
-  assert.deepEqual(headings, ["# ChannelGate"], "the README must have exactly one H1: ChannelGate");
+  assert.deepEqual(headings, ["# ChannelGate — Self-hosted AI agents for Slack, Teams and Google Chat"],
+    "the README must have one descriptive H1 naming the product and its chat platforms");
 
-  // The tagline is duplicated in the site's <meta name="description">; if one is reworded the two
-  // stop agreeing about what the product is.
   assert.ok(readme.includes(TAGLINE), "the hero tagline is missing or was reworded");
   const taglineLine = readme.split("\n").find((line) => line.includes(TAGLINE));
   assert.match(taglineLine, /^\*\*.*\.\*\*$/, "the tagline must be its own bolded line");
@@ -121,8 +117,8 @@ test("badge URLs are well-formed and the CI badge names a workflow that exists",
 
   const shields = images.map(([, , url]) => url).filter((url) => url.includes("img.shields.io"));
   assert.ok(
-    shields.some((url) => url.includes("/badge/license-Sustainable%20Use%20License%201.3-")),
-    "the license badge must name Sustainable Use License 1.3, URL-encoded",
+    shields.some((url) => url.includes("/badge/license-Sustainable%20Use%20License%201.4-")),
+    "the license badge must name Sustainable Use License 1.4, URL-encoded",
   );
   assert.ok(shields.some((url) => url.includes("/badge/node-%E2%89%A5%2022.13-")), "Node floor badge");
   assert.ok(shields.some((url) => /\/badge\/platforms-Slack.*Teams.*Google%20Chat-/.test(url)), "platforms badge");
@@ -163,19 +159,22 @@ test("the licensing section keeps the tier limit and the no-automatic-relicensin
   }
 });
 
-test("the hero sections stay in the order the release plan specifies", async () => {
+test("the homepage presents benefits, setup, features, support and licensing in a readable order", async () => {
   const readme = await readReadme();
   const order = [
-    "# ChannelGate",
-    "## Getting started",
+    "# ChannelGate — Self-hosted AI agents for Slack, Teams and Google Chat",
     "## What you get",
+    "## Getting started",
+    "## Full feature list",
+    "## Use cases",
+    "## Supported platforms and AI engines",
     "## How it works",
+    "## Security and data privacy",
     "## Deployment tradeoffs",
-    "## Security in five bullets",
     "## Licensing & partners",
     "## Want it installed and operated for you?",
     "## Documentation",
-    "## Prerequisites", // the first operational section — everything below the fold follows it
+    "## Configuration and local storage",
   ];
   const positions = order.map((heading) => {
     const at = readme.indexOf(`${heading}\n`);
