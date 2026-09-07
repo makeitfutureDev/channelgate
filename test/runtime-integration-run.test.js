@@ -36,7 +36,7 @@ process.env.CG_WORKSPACE_DIR = path.join(scratch, "runtime-run-workspaces");
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { runMessage, setRuntimeResolver, runArtifactRoot } = await import("../src/gateway/run.js");
-const { getSessionRuntime, saveSession } = await import("../src/gateway/sessions.js");
+const { getSessionRuntime, getSession, getSessionEngine, saveSession } = await import("../src/gateway/sessions.js");
 const { readEvents } = await import("../src/util/logger.js");
 const { runTmpDir, claudeEngineHome } = await import("../src/config/paths.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
@@ -161,6 +161,53 @@ test("a missing engine credential fails the turn closed before anything starts, 
   // Nothing was started, warmed, or spawned: the check runs before the runtime is even asked to.
   assert.equal(backend.calls.ensureUp.length, 0);
   assert.equal(backend.calls.spawn.length, 0);
+  // The row resolveSession minted for this brand-new thread carried a "claude" stamp before
+  // anything ran. It must not survive a turn that never started: otherwise the next message would
+  // "continue on claude" — and fail the same way — even after the channel moved to Codex (live,
+  // 2026-09-05). Deleted, not tombstoned: the thread is a first turn again.
+  assert.equal(await getSession("rt-nocred", "9100.003"), null, "the minted row is dropped with the failed turn");
+});
+
+test("a thread whose first turn never started follows the channel's harness on its next message", async () => {
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal", engineFallback: false, codexEnabled: true });
+  const message = "This channel runs in a container, but no Claude token is configured.";
+  const backend = createFakeRuntimeBackend({ credentialError: (target, engine) => (engine === "claude" ? message : "") });
+  useBackend(backend);
+  const { entry, meta } = await channel("C_RT_NOCRED2", "rt-nocred2");
+  await assert.rejects(
+    runMessage({ channelId: "C_RT_NOCRED2", authorId: "U_RT", text: "hello", threadKey: "9100.004", origin: "slack_foreground", preferCold: true }),
+    /no Claude token is configured/,
+  );
+  assert.equal(await getSession(entry.slug, "9100.004"), null);
+
+  // The operator moves the channel to Codex. The SAME thread now runs on Codex — no "this thread
+  // started on claude" continuation, because no claude session ever existed.
+  await saveChannelMeta(entry.slug, { ...meta, engine: "codex" });
+  const result = await runMessage({ channelId: "C_RT_NOCRED2", authorId: "U_RT", text: "hello again", threadKey: "9100.004", origin: "slack_foreground", preferCold: true });
+  assert.equal(result.engine, "codex");
+  assert.equal(await getSession(entry.slug, "9100.004"), result.sessionId);
+  assert.equal(await getSessionEngine(entry.slug, "9100.004"), "codex", "the thread's session belongs to the harness that actually ran");
+  assert.equal(backend.calls.spawn.length, 1);
+});
+
+test("an EXISTING thread keeps its session when a later turn fails before the engine starts", async () => {
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal", engineFallback: false, codexEnabled: true });
+  const backend = createFakeRuntimeBackend({ credentialError: (target, engine) => (engine === "claude" && backend.deny ? "This channel runs in a container, but no Claude token is configured." : "") });
+  useBackend(backend);
+  const { entry } = await channel("C_RT_NOCRED3", "rt-nocred3");
+  // A real first turn on Claude...
+  const first = await runMessage({ channelId: "C_RT_NOCRED3", authorId: "U_RT", text: "one", threadKey: "9100.005", origin: "slack_foreground", preferCold: true });
+  assert.equal(await getSession(entry.slug, "9100.005"), first.sessionId);
+  assert.equal(await getSessionEngine(entry.slug, "9100.005"), "claude");
+  // ...then the login disappears. The turn fails closed, and the thread's session — the engine's
+  // history — is exactly as it was: only a row minted by the failed turn itself is ever dropped.
+  backend.deny = true;
+  await assert.rejects(
+    runMessage({ channelId: "C_RT_NOCRED3", authorId: "U_RT", text: "two", threadKey: "9100.005", origin: "slack_foreground", preferCold: true }),
+    /no Claude token is configured/,
+  );
+  assert.equal(await getSession(entry.slug, "9100.005"), first.sessionId, "an existing session survives a pre-spawn failure");
+  assert.equal(await getSessionEngine(entry.slug, "9100.005"), "claude");
 });
 
 test("the per-run MCP config lands under the artifact dir; only the daemon's own turns keep run-tmp", () => {
