@@ -129,16 +129,27 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 - [x] Approved channel members render selected, admins render selected and locked, and inherited
       access is not persisted as an explicit guest grant.
 - [x] A manager-authored reply adds one requester-bound **⚙️ Settings** footer button; ordinary
-      authorized members do not receive it. Its read-only modal has Engine & model, combined MCP
-      Connections/Cloud MCP, Skills, and masked Secrets tabs with unique action IDs, and credential
-      snapshots retain no recoverable short-secret tail.
+      authorized members do not receive it. Its modal has Engine & model, combined MCP
+      Connections/Cloud MCP, Skills, and masked Secrets tabs with unique action IDs. Runtime
+      selection validates engine/model/effort compatibility; direct MCP and skill grants toggle
+      without altering inherited/template tiers; skill templates can be assigned/cleared; the
+      Secrets tab reaches the existing write-only manager; and blank credential inputs preserve
+      saved tokens while replacements are never prefilled or echoed. Credential snapshots retain
+      no recoverable short-secret tail. Historic controls re-check both current manager rights and
+      current Slack membership before every mutation.
 - [ ] Live Claude: in `cg-testing-claude-auto`, have Contact temporarily make Apps a custom
-      channel manager, then let Apps request a fresh reply and open **⚙️ Settings**. Pass when all
-      four tabs show the channel's configured/inherited engine, model, MCP, skill, and masked
-      environment-secret state; after Contact revokes Apps, the historic button is refused and the
-      next Apps-authored reply has no Settings button. Restore the fixture's manage policy.
-- [ ] Live Codex: repeat the same manager-visible, four-tab, masked-secret, historic-button
-      revocation, and non-manager-hidden checks in `cg-testing-codex-auto`, then restore the fixture.
+      channel manager, then let Apps request a fresh reply and open **⚙️ Settings**. Pass when Apps
+      can change to another valid engine/model/effort and restore it; activate/deactivate one direct
+      Cloud MCP grant for each engine without changing inherited grants; activate/deactivate one
+      direct skill and assign/restore a template; rotate then remove disposable Composio, Toolbox,
+      and Make MCP credentials without any value being prefilled/echoed; disable/restore inherited
+      credentials; and add/update/remove one disposable environment secret through the nested
+      manager. After Contact revokes Apps, every historic mutation is refused and the next
+      Apps-authored reply has no Settings button. Restore all fixture state and never use production
+      credentials in this case.
+- [ ] Live Codex: repeat the same editable four-tab, tier-isolation, write-only credential,
+      reversible mutation, historic-control revocation, and non-manager-hidden checks in
+      `cg-testing-codex-auto`, then restore every fixture setting.
 - [ ] Live Claude: start a fresh test thread, ask a question whose answer exists only in a topic
       file, and verify search → one-source read → correct answer without bulk memory injection.
 - [ ] Live Codex: repeat the same retrieval proof in the Codex Auto fixture.

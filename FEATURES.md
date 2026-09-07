@@ -63,12 +63,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   longer offered. MCP Connections, Cloud MCP, Environment tokens, and Skills are separate first-class
   channel pages rather than nested beneath Tools; enabled skills sort first and the channel-level
   Grant Tier switch is gone.
-- **Manager-only Slack settings snapshot:** replies requested by a current channel manager add a
-  requester-bound **⚙️ Settings** footer button. It opens a read-only Block Kit modal with four
-  tabs: Engine & model; MCP Connections plus Cloud MCP; Skills; and Secrets. The view follows the
-  web setup concepts, distinguishes channel configuration from organization inheritance, and
-  exposes credentials only as configured/masked state. Opening it and every tab change re-check
-  current channel membership plus `canManage`, so a historic button cannot retain revoked access.
+- **Manager-only Slack settings console:** replies requested by a current channel manager add a
+  requester-bound **⚙️ Settings** footer button. Its four-tab Block Kit console mirrors the web
+  setup concepts: Engine & model can be changed under the gateway runtime policy; MCP Connections
+  rotates/removes the write-only Composio, Toolbox and Make MCP credentials plus inherited-token
+  policy; Cloud MCP capabilities can be activated/deactivated independently for Claude and Codex;
+  Skills supports direct grants and live template assignment; and Secrets opens the established
+  add/update/remove manager. Inherited and template grants are labelled and cannot be removed from
+  the wrong tier. Credential forms never prefill stored values, and all views expose only
+  configured/masked state. Opening it, navigating, submitting, and every individual mutation
+  re-check current channel membership plus `canManage`, so a historic control cannot retain revoked
+  access. Secret editing additionally keeps its command-execution gate; admin-only runtime policy
+  remains admin-only.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
   admins are selected and locked, while explicit guest grants remain independently editable.
