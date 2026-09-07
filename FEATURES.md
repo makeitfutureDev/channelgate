@@ -1980,13 +1980,15 @@ are retired, bullet by bullet; everything else stands.
   time, conversation (+slug), author (+id), engine · model, task kind, tokens in/out/total,
   provider-reported cost / estimated Standard API-equivalent value, and duration. Client-only.
   → TEST-PLAN: Admin UI (redesign).
-- **Users** is a table (Name / Slack ID / role chips / C·S·T token state) with a
-  right-side edit drawer (display name, Approved/Admin, the three reveal-token fields, per-user
-  Save — unchanged PUT semantics); "+ Add user" reveals the add form. A debounced search calls
+- **Users** is a table (Name / Slack ID / role chips / enabled personal Skills count / C·T token state) with a
+  wider right-side edit drawer (up to 640px; stacked above the table on narrower screens). It edits
+  display name, Approved/Admin, personal grants and the two token fields with per-user Save
+  (unchanged PUT semantics); "+ Add user" reveals the add form. A debounced search calls
   `GET /api/users?q=…` and matches case/accent-insensitively across name, Slack ID, visible role,
   and configured Composio/Toolbox token status. The browser keeps its full user directory separate
   from the server-filtered table so conversation access editors never inherit a search subset;
   out-of-order responses are ignored and filtering out the selected row closes its drawer.
+  Skills counts match saved personal grants, including unavailable saved skills, and refresh after Save.
   → TEST-PLAN: Admin UI (redesign).
 - Channel **Instructions** sub-tab: edit the channel's `CLAUDE.md` from the admin UI. Stored as a
   per-channel instruction override (`meta.instructions`) that the folder provisioner regenerates

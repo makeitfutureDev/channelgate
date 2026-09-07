@@ -2524,11 +2524,12 @@ function renderUsersTable() {
       <td>${escapeHtml(u.name || id)}</td>
       <td class="mono">${escapeHtml(id)}</td>
       <td>${role}</td>
+      <td class="user-skills-count" title="Skills enabled for this user (personal grants)">${accessGrantSkillOptions([], u.skills || []).length}</td>
       <td>${tok}</td>
     </tr>`;
   }).join("");
   wrap.innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Slack ID</th><th>Role</th><th>Tokens</th></tr></thead>
+    <thead><tr><th>Name</th><th>Slack ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Tokens</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   for (const tr of wrap.querySelectorAll("tbody tr[data-id]")) tr.addEventListener("click", () => openUserDrawer(tr.dataset.id));
 }
