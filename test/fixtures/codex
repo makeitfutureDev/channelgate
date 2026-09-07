@@ -19,6 +19,7 @@ mcp="no"
 cancel="no"
 fail="no"
 two_segments="no"
+subagents="no"
 transient_times=0
 transient_after_tool="no"
 reject_model="no"
@@ -44,6 +45,7 @@ for arg in "$@"; do
     *CODEX_STUB_WAIT_FOR_CANCEL*) cancel="yes" ;;
     *CODEX_STUB_FAIL_GENERIC*) fail="yes" ;;
     *CODEX_STUB_TWO_SEGMENTS*) two_segments="yes" ;;
+    *CODEX_STUB_SUBAGENTS*) subagents="yes" ;;
     *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
     *CODEX_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
     *CODEX_STUB_TRANSIENT_AFTER_TOOL*) transient_after_tool="yes" ;;
@@ -83,6 +85,20 @@ if [ "$stall_401" = "yes" ]; then
     printf '%s\n' 'stream error: unexpected status 401 Unauthorized; retrying 1/5 in 200ms' >&2
     sleep 0.1
   done
+fi
+# A turn that spawned two subagents, exactly as `codex exec --json` reports it (CLI 0.153.4,
+# multi-agent v2): the spawn calls never reach stdout and the coordination arrives as ONE anonymous
+# `wait` item — no receivers, no `agents_states`, no child identity anywhere. Who those children are
+# lives only in their own rollout files, which the test writes into the run's CODEX state dir.
+if [ "$subagents" = "yes" ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-subagents"}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I will ask both reviewers."}}'
+  printf '%s\n' '{"type":"item.started","item":{"id":"item_1","type":"collab_tool_call","tool":"wait","sender_thread_id":"codex-stub-subagents","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"in_progress"}}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"collab_tool_call","tool":"wait","sender_thread_id":"codex-stub-subagents","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"completed"}}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Both reviews are in."}}'
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":90,"output_tokens":12}}'
+  printf '%s\n' 'Both reviews are in.' > "$out"
+  exit 0
 fi
 # Two consecutive assistant message items: a stage narration, then the answer. Codex sends each as
 # its own completed item, and streaming their texts back to back is what used to glue the last word

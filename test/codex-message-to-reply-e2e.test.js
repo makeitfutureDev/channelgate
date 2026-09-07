@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimiter}${process.env.PATH || ""}`;
@@ -123,4 +123,67 @@ test("consecutive Codex message segments reach Slack as separate paragraphs", as
   assert.match(streamed, /isolates conversations\.\n\nChannelGate isolates each Slack channel/);
   // The authoritative final message (the -o file) is untouched by the boundary.
   assert.equal(result.content, "ChannelGate isolates each Slack channel in its own folder.");
+});
+
+// SLK-203. Two subagents left ONE anonymous `wait_agent` row on the card while Claude's equivalent
+// turn showed a named row per child. The cause is upstream and not a parsing slip: `codex exec
+// --json` (CLI 0.153.4, multi-agent v2) never puts child identity on stdout — no spawn call, no
+// SubAgentActivity item, empty `receiver_thread_ids`/`agents_states` on the only `wait` item it
+// sends. The children's own rollout files are where their identity lives, so the runner reads them.
+test("Codex subagents each get a named card row, read from their own rollouts", async () => {
+  const { mkdirSync: mkdirs, writeFileSync: writeText } = await import("node:fs");
+  const stateDir = path.join(tempDir("cg-codex-subagents-"), ".codex");
+  const day = path.join(stateDir, "sessions", "2026", "09", "07");
+  mkdirs(day, { recursive: true });
+  const iso = (offsetMs) => new Date(Date.now() + offsetMs).toISOString();
+  const seconds = (offsetMs) => Math.floor((Date.now() + offsetMs) / 1000);
+  // A child rollout, verbatim in shape: `session_meta` names the child (`agent_path`,
+  // `agent_nickname`) and its parent, then its own task boundary and token counts.
+  const childRollout = (id, agentPath, nickname, tokens) => [
+    JSON.stringify({ timestamp: iso(5), type: "session_meta", payload: {
+      session_id: "codex-stub-subagents", id, parent_thread_id: "codex-stub-subagents", forked_from_id: "codex-stub-subagents",
+      timestamp: iso(5), originator: "codex_exec", thread_source: "subagent", agent_path: agentPath, agent_nickname: nickname,
+      source: { subagent: { thread_spawn: { parent_thread_id: "codex-stub-subagents", depth: 1, agent_path: agentPath, agent_nickname: nickname, agent_role: null } } },
+    } }),
+    JSON.stringify({ timestamp: iso(6), type: "turn_context", payload: { model: "gpt-5.6-codex" } }),
+    JSON.stringify({ timestamp: iso(6), type: "event_msg", payload: { type: "task_started", started_at: seconds(6) } }),
+    JSON.stringify({ timestamp: iso(20), type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: tokens, output_tokens: 10 }, last_token_usage: { input_tokens: tokens, output_tokens: 10 } } } }),
+    JSON.stringify({ timestamp: iso(30), type: "event_msg", payload: { type: "task_complete" } }),
+  ].join("\n") + "\n";
+  writeText(path.join(day, "rollout-2026-09-07T02-41-56-codex-stub-subagents.jsonl"), `${JSON.stringify({ timestamp: iso(0), type: "session_meta", payload: { id: "codex-stub-subagents", timestamp: iso(0) } })}\n`);
+  writeText(path.join(day, "rollout-2026-09-07T02-42-18-child-sandbox.jsonl"), childRollout("child-sandbox", "/root/sandbox_reviewer", "Ohm", 4_000));
+  writeText(path.join(day, "rollout-2026-09-07T02-42-23-child-connector.jsonl"), childRollout("child-connector", "/root/connector_reviewer", "Dewey", 6_000));
+
+  const target = directTarget();
+  const events = [];
+  const result = await runCodex({
+    cwd: projectRoot,
+    prompt: "CODEX_STUB_SUBAGENTS",
+    sessionId: "",
+    isNewSession: true,
+    clean: true,
+    timeoutMs: 10_000,
+    target,
+    artifactDir: target.artifactDir,
+    codexStateDir: stateDir,
+    onEvent: (event) => events.push(event),
+  });
+  assert.equal(result.content, "Both reviews are in.");
+
+  const agents = events.filter((event) => event.kind === "agent_activity");
+  // Live first: the coordination item is the cue to go and find out who is working.
+  const running = agents.filter((event) => event.status === "running");
+  assert.deepEqual(running.map((event) => event.name).sort(), ["connector_reviewer", "sandbox_reviewer"]);
+  // Then the terminal rows, with the metrics only the rollouts carry.
+  const done = agents.filter((event) => event.status === "completed");
+  assert.deepEqual(done.map((event) => event.name).sort(), ["connector_reviewer", "sandbox_reviewer"]);
+  assert.ok(done.every((event) => event.elapsedMs > 0 && event.tokens > 0), "each child reports how long it ran and what it spent");
+  // A child's row is keyed on its own thread id, so the live row and the terminal one are one row.
+  assert.deepEqual([...new Set(agents.map((event) => event.id))].sort(), ["child-connector", "child-sandbox"]);
+  // Every "running" announcement lands before the "completed" one that closes the same row.
+  assert.ok(agents.findIndex((event) => event.status === "completed") > agents.findLastIndex((event) => event.status === "running"));
+  // The coordination step stays visible as its own tool row — it is what the model actually called.
+  assert.ok(events.some((event) => event.kind === "tool_use" && event.name === "wait_agent"));
+  // The subagents are still billed: identity rides along with the accounting, it does not replace it.
+  assert.deepEqual(result.usageAccounting.children.map((child) => child.name).sort(), ["connector_reviewer", "sandbox_reviewer"]);
 });
