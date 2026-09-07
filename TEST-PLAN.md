@@ -18,6 +18,40 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   execution/delivery and container contracts. RR-15 artifact evidence is separate from remaining
   release notice/legal reviews; live conversation gates remain explicitly unexecuted until proven.
 
+## Per-attempt runtime identity
+
+- [x] `test/runtime-identity-preamble.test.js` inspects actual stub process argv through the
+  container-shaped fake runtime: fresh/resumed Claude and Codex turns with a changed thread
+  model, clean runs with unexposed defaults, rejected-model replacement, cross-engine fallback
+  plus its own replacement model, and fresh-session recovery. Metadata matches the selection
+  passed to that attempt; fallback does not inherit the primary engine's effort. These checks
+  prove prompt delivery, not model compliance in live answers.
+- [x] Memory and Composio prompt regressions still prove clean mode reveals no optional catalog,
+  personal/shared integration facts or channel memory. The runtime note contains only engine,
+  configured model/effort and the gateway's fresh/resume choice; no credentials or session IDs.
+- [ ] Live dual-engine acceptance: provision two private Read fixtures, one per enabled engine,
+  with explicit supported model IDs and effort `high`; record exact configuration and deployed
+  revision. As an approved fixture author, send a fresh root: “Tell me your engine, model, and
+  whether this is a fresh or resumed conversation. Don’t guess any value you cannot inspect.”
+  Then ask in the same thread: “And now?” Compare both answer bodies with root-scoped audit
+  events, CLI/runtime evidence and footer: exact configured model, correct engine, first fresh
+  then resumed; configured aliases must not be claimed as verified provider model identities.
+- [ ] Codex exact regression: in its same private Read fixture send a new root: “Which engine
+  are you running on right now? Please answer with only the engine name and model shown by the
+  runtime.” Require Codex and the configured model in the answer, agreement with the footer,
+  and no Claude process. Preserve the previous failed attempt and append the retest evidence.
+- [ ] Recovery/default controls, both engines: in a disposable fixture repeat the identity prompt
+  after an expired session is replaced, with no configured model/effort, and in clean mode.
+  Require fresh for the replacement session; unknown for any value not exposed by the harness;
+  no memory or optional integration disclosure in clean mode. In an isolated provider-failure
+  fixture, force a replay-safe model rejection and cross-engine fallback; require the answering
+  attempt's new engine/model and its own session state, not the rejected attempt's values.
+  Restore all fixture selections afterwards. Do not induce provider failures in production.
+
+Private QA registry: update the existing engine-identity cases with these setups/prompts/pass
+rules and append exact retests for each applicable engine. Automated passes do not close the
+unchecked live gates above.
+
 ## Disposable Linux lifecycle workflow
 
 - [x] Real fresh-install/restart/encrypted fixture backup/restore/uninstall acceptance passed on

@@ -122,7 +122,8 @@ test("a run with only the shared identity says so; a run with none adds nothing"
   saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "" });
   await channel("C_IDENT_NONE", "identity-none");
   const none = await runMessage({ channelId: "C_IDENT_NONE", authorId: "U_IDENT_NOPERSONAL", text: "just a question", threadKey: "9100.003", origin: "slack_foreground", preferCold: true });
-  assert.equal(none.content, "just a question", "a channel with no Composio pays nothing for the rule");
+  assert.doesNotMatch(none.content, /Composio identities/, "a channel with no Composio pays nothing for the identity rule");
+  assert.match(none.content, /\]\n\njust a question$/, "safe runtime facts precede the unchanged request");
 });
 
 test("Codex receives the same line through its own prompt path", async () => {
