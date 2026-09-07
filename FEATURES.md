@@ -7,6 +7,21 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Disposable Linux lifecycle evidence:** the manually dispatchable Linux lifecycle workflow
+  exercises a fresh dedicated-account systemd install with the full rootless Podman image,
+  HTTP liveness after restart, encrypted fixture backup/restore and non-destructive uninstall.
+  A local fixture upstream also proves the real CLI updater restores Git and restarts systemd
+  after a candidate test failure or readiness failure; engine smoke and test/pretest commands
+  are controlled fixture inputs.
+  Its script refuses non-hosted or occupied hosts. A separate KVM guest workflow exercises an
+  actual OS reboot, service autostart and persistent database/container-volume fixtures.
+  Authenticated engine update smoke and conversation/session acceptance remain separate live
+  gates. → TEST-PLAN: Disposable Linux lifecycle workflow.
+- **Service-account image provisioning** uses the same explicit environment as the systemd
+  daemon so operator XDG/container storage settings cannot redirect a fresh build into another
+  user's private Podman store, and runs from the service-owned checkout so an operator-private
+  invocation directory cannot prevent Podman namespace setup.
+
 - Development acceptance policy: behavior changes include reproducible Claude and Codex
   acceptance definitions and clearly separate automated evidence from live operator validation.
   Public contributors do not need access to a private QA service. → TEST-PLAN: Development acceptance policy.

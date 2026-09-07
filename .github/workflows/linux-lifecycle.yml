@@ -1,0 +1,39 @@
+name: Linux lifecycle
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/linux-lifecycle.yml
+      - scripts/check-linux-lifecycle.sh
+      - scripts/check-update-rollback-hosted.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    # A hosted VM with real PID-1 systemd: a job container cannot prove service installation.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Install rootless runtime prerequisites in the disposable VM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap slirp4netns fuse-overlayfs
+      - name: Exercise installation, restart, fixture recovery and uninstall
+        run: bash scripts/check-linux-lifecycle.sh "$RUNNER_TEMP/lifecycle-evidence"
+      - name: Upload non-secret lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-lifecycle-${{ github.sha }}
+          path: ${{ runner.temp }}/lifecycle-evidence/
+          if-no-files-found: error

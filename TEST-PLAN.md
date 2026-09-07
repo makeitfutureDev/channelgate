@@ -3,6 +3,85 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Disposable Linux lifecycle workflow
+
+- [x] Real fresh-install/restart/encrypted fixture backup/restore/uninstall acceptance passed on
+  [hosted run 34163913150](https://github.com/makeitfutureDev/channelgate/actions/runs/34163913150),
+  tested merge SHA `5d9d424f41217945c841603622cc3035a4d61def`. This used synthetic SQL/config data
+  and a public fixture passphrase in a new dedicated identity, never production data or keys.
+  The fixture backup was taken while its daemon ran; the replacement restore removed stale
+  sidecars/stray config and preserved the exact markers with SQLite integrity `ok`.
+- [x] Full lifecycle plus real CLI updater rollback passed on
+  [hosted run 34164530300](https://github.com/makeitfutureDev/channelgate/actions/runs/34164530300),
+  tested merge SHA `547ae2454d96fc038e97ae111174cebfb3bcd998`. Both the controlled test failure
+  and deliberately wrong live revision produced durable `rolled_back` state, restored checkout
+  and healthy service, preserved recovery-snapshot SQL/config markers, and released the lock.
+  The original candidate was restored before uninstall. Engine smoke and test/pretest commands
+  were controlled LOCAL fixture inputs; the CLI updater, Git, npm install/audit/static checks,
+  systemd restart, snapshot and rollback operations were real. Separate unit regressions: 37/37.
+- [x] Actual guest OS reboot/autostart/durable fixture/uninstall acceptance passed on
+  [KVM run 34164530261](https://github.com/makeitfutureDev/channelgate/actions/runs/34164530261),
+  tested merge SHA `547ae2454d96fc038e97ae111174cebfb3bcd998`. Both OS boot ID and daemon instance
+  changed, the service started without manual repair, and SQL/rootless-volume markers survived.
+  These are engine-independent operations results; authenticated conversation gates below remain
+  unexecuted. The first guest attempt timed out downloading the browser; the passing attempt used
+  an IPv4 guest network. No production download timeout or image contents were changed.
+
+- Automated setup: dispatch `.github/workflows/linux-lifecycle.yml` for the candidate ref (a PR
+  changing this workflow/script also runs it). GitHub-hosted Ubuntu 24.04, Node 24, real PID-1
+  systemd and rootless Podman; no job container, provider credentials or chat connection.
+  `scripts/check-linux-lifecycle.sh` refuses non-hosted runners, occupied fixture paths, service
+  units and accounts before mutation. It operates only on `/opt/channelgate-lifecycle` and the
+  newly installed `/var/lib/channelgate-lifecycle` service identity; never an operator deployment.
+  The installer image build must succeed even when the invoking runner has its own container
+  storage configuration; the service account must use its own HOME/store and explicit environment.
+  Invoke the installer by absolute path while cwd is an operator-private directory; the image
+  probe/build must run from the service-owned checkout rather than inherit that inaccessible cwd.
+- Pass evidence: `linux-lifecycle-<sha>` artifact records source revision, VM image, versions and
+  every PASS line. Require successful fresh install/image build, non-root container with zero
+  effective capabilities/no-new-privileges, enabled active service, distinct healthy instance ID
+  after real systemd restart, encrypted snapshot while the fixture daemon runs, restored
+  `before-backup` SQL/config markers, SQLite integrity `ok`, removal of stale WAL/SHM and stray
+  config, healthy restart and uninstall preserving the account/database/encrypted backup.
+  These checks are engine-independent because they issue no engine turn. Update transaction
+  unit evidence is uploaded separately as `update-fixture-tests.tap`; injected failures do not
+  count as real authenticated engine update/rollback acceptance.
+- Hosted updater operations: `scripts/check-update-rollback-hosted.mjs` is restricted to that
+  exact disposable checkout/runtime, controls the LOCAL fixture's engine smoke and test commands,
+  and creates a local bare Git upstream. It invokes the unmodified CLI updater first against a
+  candidate whose test exits 42, then one whose live health reports an incorrect revision.
+  Require two durable `rolled_back` results, checkout/running revision A, new healthy service
+  instance, released update lock, private operator recovery snapshot and unchanged SQL marker.
+  The readiness failure must name the deliberately wrong live revision, not just any timeout;
+  both recovery-snapshot SQL/config markers must match and snapshot integrity must be `ok`.
+  Finally restore the original tested source revision and verify its fresh healthy instance.
+  Public evidence must name the smoke stub; no Claude/Codex authentication is proven here.
+- Guest OS reboot: dispatch `.github/workflows/linux-reboot.yml` for the candidate ref. The
+  hosted runner must expose KVM; unavailable acceleration fails explicitly. The wrapper verifies
+  the official Ubuntu Noble image checksum, boots a separate cloud-init guest, installs Node 24
+  and the real service/full image, writes `persisted-through-os-reboot` into SQLite and a rootless
+  named volume, and reboots the GUEST while the runner stays alive. Pass only with different OS
+  boot ID and daemon instance ID, enabled active service without manual post-boot start, usable
+  rootless runtime, intact SQL/volume markers, SQLite integrity `ok` and uninstall preserving data.
+  Artifact `linux-guest-reboot-<sha>` contains sanitized logs only. No keys, disk images, runtime
+  config or databases are uploaded. This operations case is engine-independent; it does not prove
+  a resumed Claude/Codex conversation.
+- [ ] Post-reboot conversation gate (both configured engines): on a separate disposable Linux VM, install
+  the candidate and create a channel that writes `LIFECYCLE-BEFORE-REBOOT` in its own work folder.
+  Record instance ID and engine/session identity, reboot the machine, then ask each engine in
+  its existing thread to read the marker. Require automatic service start without manual repair,
+  a new daemon instance ID, preserved marker/session and container-only engine execution.
+  Engine-free guest reboot evidence cannot clear this conversation/session gate.
+- [ ] Authenticated update rollback gate (Claude and Codex): on that disposable deployment,
+  configure both engine credentials in its own service identity and a local fixture upstream.
+  Baseline revision A must answer the fixed update smoke response for both engines. Create
+  fast-forward candidate B with an intentional failing test; invoke `npm run update`.
+  Require a visible candidate failure, durable `rolled_back` state, restored A checkout and
+  an operator recovery snapshot of database/config (runtime data is not automatically rolled
+  back), a new healthy A instance, passing smoke for both baseline engines and a new
+  ordinary turn in each existing channel. Repeat with a candidate that passes tests but fails
+  readiness after restart. Never perform induced-failure checks on a production deployment.
+
 ## Base modes and independent options (2026-09-08)
 
 - Automated: `modes`, `channel-settings-modal`, `mode-command-audit`, `folders-settings`,
