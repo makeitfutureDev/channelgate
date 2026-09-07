@@ -18,7 +18,8 @@ test("user skill counts survive edits and the editor fits desktop and narrow scr
   const app = express();
   app.use(express.json());
   app.get("/api/skills", (_req, res) => res.json({ skills: ["alpha", "beta", ...Array.from({ length: 30 }, (_, i) => `long-skill-name-for-layout-check-${i}`)] }));
-  app.get("/api/mcps", (_req, res) => res.json({ servers: [] }));
+  app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
+  app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
   app.use("/api", createAdminRouter({ slack: { snapshot: () => ({ status: "disconnected", connected: false }) } }));
   const publicDir = fileURLToPath(new URL("../public", import.meta.url));
   app.use(express.static(publicDir, { dotfiles: "allow" }));
