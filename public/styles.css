@@ -889,6 +889,44 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .skills-toolbar input[type="search"], .skills-toolbar select { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 7px 10px; border-radius: 8px; font: inherit; }
 .skills-toolbar input[type="search"] { min-width: 220px; }
 .skills-toolbar .spacer { flex: 1; }
+.skills-source-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr)); }
+.skills-source-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 22px; text-align: left; background: var(--panel-dark); border: 1px solid var(--line); color: var(--ink); border-radius: 12px; cursor: pointer; font: inherit; }
+.skills-source-card:hover { background: var(--panel-2); border-color: var(--muted); }
+.skills-source-card:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.skills-source-card-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.skills-source-card-title strong { overflow-wrap: anywhere; }
+.skills-source-status { margin-left: auto; font-size: 12px; color: var(--muted); }
+.skills-source-status.has-error { color: var(--danger, #ff947e); }
+.skills-source-url { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; margin: 0; }
+.skills-source-card-footer { display: flex; align-items: center; gap: 12px; justify-content: space-between; color: var(--faint); font-size: 12px; flex-wrap: wrap; }
+.skills-source-open { color: var(--ink); white-space: nowrap; }
+.skills-source-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin: 22px 0; }
+.skills-source-heading > div { min-width: 0; }
+.skills-source-heading h3 { margin: 8px 0; overflow-wrap: anywhere; }
+.skills-source-heading > button { flex-shrink: 0; }
+.skills-source-stats { display: flex; flex-wrap: wrap; gap: 24px; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); }
+.skills-source-stats b { color: var(--ink); }
+.skills-source-settings { margin: 18px 0 24px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; }
+.skills-source-settings summary { cursor: pointer; color: var(--muted); }
+.skills-source-settings .skills-form { margin-top: 18px; }
+.skills-source-table-wrap { overflow-x: auto; }
+.skills-source-table { min-width: 640px; table-layout: fixed; }
+.skills-source-table th:first-child { width: 52%; }
+.skills-source-table th:nth-child(2) { width: 13%; }
+.skills-source-table th:nth-child(3) { width: 21%; }
+.skills-source-table th:nth-child(4) { width: 14%; }
+.skills-source-table td { padding: 18px 14px; }
+.skills-source-table td > code { display: block; margin-top: 5px; font-size: 11px; overflow-wrap: anywhere; }
+.skills-skill-link { padding: 0; background: none; border: 0; color: var(--ink); font: inherit; font-weight: 600; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.skills-skill-link:hover { text-decoration: underline; background: none; }
+.skills-source-description { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.skills-governance-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; color: var(--muted); }
+.skills-governance-toggle input { appearance: none; width: 34px; height: 20px; flex: 0 0 34px; margin: 0; border-radius: 12px; background: var(--line); border: 1px solid var(--faint); position: relative; cursor: pointer; }
+.skills-governance-toggle input::after { content: ''; position: absolute; width: 14px; height: 14px; top: 2px; left: 2px; border-radius: 50%; background: var(--ink); transition: transform .15s; }
+.skills-governance-toggle input:checked { background: #fa4600; border-color: #fa4600; }
+.skills-governance-toggle input:checked::after { transform: translateX(14px); }
+.skills-governance-toggle input:disabled { opacity: .55; cursor: not-allowed; }
+.skills-governance-toggle input:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .skills-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel-dark); border: 1px solid var(--line-soft); border-radius: 10px; overflow: hidden; }
 .skills-table th, .skills-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 .skills-table th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); font-weight: 600; }

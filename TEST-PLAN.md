@@ -3322,8 +3322,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       searchable and usage-descending with By skill / By channel rollups, compact bars,
       and context-warning explanations. The profile API supplies warning text rather
       than only a count (`test/skills-admin-ui.test.js`, `test/skills-admin-api.test.js`).
-- [x] Admin UI + API: Catalog keeps its Owner filter and replaces Category / Source / show-removed
-      controls with independent Enabled, Discoverable, Mandatory and Assigned tri-state filters.
+- [x] Admin UI + API: Catalog keeps Owner, Category and Source filters alongside independent
+      Enabled, Discoverable, Mandatory and Assigned tri-state filters (Enabled replaces show-removed).
       The API fixture toggles `governed-skill` through discoverability, mandatory and disabled
       states, then grants it to one conversation; each positive and negative query proves the row
       is included or excluded, and Disabled includes normally hidden catalog rows
@@ -3334,6 +3334,19 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       not a transitive dependency. The client fetches deleted rows explicitly, then enforces the
       selected state even while an older daemon process is still serving the API
       (`test/skills-catalog-filters.test.js`).
+- [x] Source management browser acceptance (engine-independent: browser → admin REST API, no
+      engine invocation): `test/skills-source-browser.test.js` starts an ephemeral Express/admin
+      router with disposable folder sources Alpha (`alpha-active`, `alpha-disabled`) and Beta
+      (`beta-only`). Disable `alpha-disabled` during setup. In Chromium, open Sources → Alpha;
+      require both Alpha rows and no Beta row. Enable the disabled skill, turn discovery off on
+      `alpha-active`, then make it Mandatory; require discovery to turn on and become locked.
+      Reload, reopen Alpha, and require saved states. Search for `disabled` → one matching row.
+      Select Beta in Catalog's Source dropdown → only `beta-only`. At 390 px, source cards must
+      fit without page overflow. Require zero browser exceptions and successful API writes.
+      Run with `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test
+      test/skills-source-browser.test.js` using an existing Playwright Chromium installation.
+      Executed successfully with real Chromium against the disposable API; desktop screenshots
+      inspected. The test skips by default when the optional browser driver is absent.
 - [x] Admin UI (SKL-13 regression): every class the admin JS hides by setting `.hidden` carries a
       `[hidden] { display: none }` companion rule — an author `display` declaration beats the UA
       sheet's `[hidden]` whatever the specificity, so without it the template skill search filtered
@@ -3556,7 +3569,7 @@ Manual checks for the daemon-level behavior:
       Discoverable, Mandatory and Assigned independently; transitions enforce Mandatory ⇒ Enabled
       + Discoverable, while disabling removes the mandatory grant.
 - [x] UI: Usage is the first tab and auto-loads the top 20 for 30 days, Templates is second and has
-      no category or conversation-assignment controls, Catalog keeps Owner and exposes Enabled,
+      no category or conversation-assignment controls, Catalog keeps Owner, Category, Source and exposes Enabled,
       Discoverable, Mandatory and Assigned filters plus the three governance checkboxes, all usage
       lists sort descending, and user-facing tables have one Usage column.
 - [x] MCP: ordinary users search discoverable skills plus skills already active here by query,
