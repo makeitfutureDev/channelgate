@@ -93,9 +93,22 @@ test("escalated run artifact settings omit the bypass key; ordinary artifacts pi
   const sharedSettings = JSON.parse(await readFile(ordinary.settingsFile, "utf8"));
   assert.equal(sharedSettings.permissions.disableBypassPermissionsMode, "disable");
 
-  // The bypass key is the ONLY difference between the two, and the two are different files.
+  // An escalated artifact grants the shell and carries no ask rule: the run it belongs to spawns
+  // with --dangerously-skip-permissions, and a file that still routed Bash through the approval
+  // card silently demoted those turns to read-only (QA, 2026-09-07). The non-escalated artifact of
+  // the same shell-less channel keeps asking.
+  assert.ok(adminSettings.permissions.allow.includes("Bash"));
+  assert.equal("ask" in adminSettings.permissions, false);
+  assert.ok(sharedSettings.permissions.ask.includes("Bash"));
+  assert.equal(sharedSettings.permissions.allow.includes("Bash"), false);
+
+  // The bypass key and the shell grant that goes with it are the ONLY differences, and the two are
+  // different files: the escalated artifact equals the same channel built WITH the shell.
   assert.notEqual(escalated.settingsFile, ordinary.settingsFile);
-  assert.deepEqual({ ...adminSettings, permissions: { ...adminSettings.permissions, disableBypassPermissionsMode: "disable" } }, sharedSettings);
+  const shellGranted = await grants({ ...base, meta: { adminMode: true, allowBash: true }, allowBypass: false });
+  t.after(() => shellGranted.cleanup());
+  const shellSettings = JSON.parse(await readFile(shellGranted.settingsFile, "utf8"));
+  assert.deepEqual({ ...adminSettings, permissions: { ...adminSettings.permissions, disableBypassPermissionsMode: "disable" } }, shellSettings);
   // Confinement is the container, so an escalated turn is "full tools" inside the same boundary —
   // there is no sandbox to lift, and no host path (the operator's home, the gateway root) for a
   // sandbox block to name. Both files are policy only.

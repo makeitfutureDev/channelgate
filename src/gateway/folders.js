@@ -500,7 +500,11 @@ export function operatorHomeDirectories(target) {
 
 // Build the settings object for a channel from its meta. `allowBypass` is set ONLY for the
 // admin-run settings variant (see ensureChannelFolder): the shared channel settings file always
-// hard-disables the --dangerously-skip-permissions bypass.
+// hard-disables the --dangerously-skip-permissions bypass. It is one switch with three linked
+// effects — omit the bypass key, grant the shell (see `bashy`), and add the operator home when the
+// container mounts it — because the run that receives this file is exactly the run that spawns
+// with the bypass flag; a permission this file withholds from it is a contradiction the CLI
+// resolves as a denial, not as the escalation the mode advertises.
 //
 // What this file carries is POLICY, not confinement: the tool permissions a mode grants, the MCP
 // allowlist, memory-off and the Stop hook. Confinement is the channel container — its per-channel
@@ -525,7 +529,15 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
 
   // Auto mode (autonomous: permission prompts auto-approved — see requestApproval) gets the same
   // file-writing tools as Allow Bash, so the agent can actually do file work without prompts.
-  const bashy = Boolean(meta.allowBash || meta.autoMode);
+  //
+  // So does the admin-run variant (allowBypass), whatever the channel's own flags say. It is
+  // handed ONLY to an admin author in an adminMode channel — the same turn that spawns with
+  // --dangerously-skip-permissions — so the shell is already permitted there and granting it here
+  // widens nothing. Saying otherwise in the file actively TOOK the shell away: the "full" profile
+  // sets adminMode alone (never allowBash/autoMode), the variant inherited read mode's
+  // `ask: ["Bash"]`, and Claude Code kept evaluating that rule for the bypassed run — a bare `pwd`
+  // came back denied and the admin turn fell back to read-only (QA, 2026-09-07).
+  const bashy = Boolean(meta.allowBash || meta.autoMode || allowBypass);
 
   // Folder-scoped memory: when on (and the channel isn't already bash-enabled, which grants Write/
   // Edit broadly), grant a NARROW Write/Edit limited to MEMORY.md so the agent can persist memory
@@ -560,8 +572,9 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
       additionalDirectories: allowBypass ? operatorHomeDirectories(target) : [],
       allow: [...SAFE_BUILTIN_TOOLS, ...(bashy ? SHELL_TOOLS : []), ...memTools, ...namespaces, ...gatewayTools],
       // Everything the mode did not grant asks (see ASK_WITHOUT_SHELL). Only when the shell is NOT
-      // granted: `ask` outranks `allow`, so listing Bash here for a bash/auto channel would put an
-      // approval card in front of every command it is meant to run unattended.
+      // granted: `ask` outranks `allow`, so listing Bash here for a bash/auto channel — or for the
+      // admin-run variant, which is bashy by definition — would put an approval card in front of
+      // every command it is meant to run unattended, and headless there is nobody to answer it.
       ...(bashy ? {} : { ask: [...ASK_WITHOUT_SHELL] }),
       // Never Write/Edit: `deny` outranks `allow`, and it would void the narrow
       // Write(MEMORY.md)/Edit(MEMORY.md) grant above that folder-scoped memory depends on.
@@ -648,18 +661,17 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   const settings = await buildSettings({ ...meta, _slug: slug });
   await writeIfChanged(channelSettingsFile(slug, platform), JSON.stringify(settings, null, 2) + "\n");
 
-  // Admin-run settings variant: the same file with exactly ONE delta — the bypass allowance —
-  // derived by cloning instead of a second buildSettings pass.
+  // Admin-run settings variant: the same generator with allowBypass on, which is what decides the
+  // whole delta (the omitted bypass key AND the shell grant that goes with it) in ONE place —
+  // buildSettings. It used to be a structuredClone with the bypass key deleted, and that quietly
+  // left read mode's `ask: ["Bash"]` in a file whose entire point is that the shell is permitted.
   // It exists ONLY while the channel is in admin mode (removed the moment adminMode goes off, so
   // no stale allowance lingers) and is passed via --settings solely for admin-author runs —
   // run.js requires an admin author AND adminMode before selecting it, so a non-admin run never
   // sees a file that would honor --dangerously-skip-permissions.
   const adminSettingsFile = channelAdminSettingsFile(slug, platform);
   if (meta.adminMode) {
-    const adminSettings = structuredClone(settings);
-    // Omit (never set) the bypass key: absence is what permits --dangerously-skip-permissions.
-    // Writing any non-"disable" value would void the whole file — see buildSettings.
-    delete adminSettings.permissions.disableBypassPermissionsMode;
+    const adminSettings = await buildSettings({ ...meta, _slug: slug }, { allowBypass: true });
     await writeIfChanged(adminSettingsFile, JSON.stringify(adminSettings, null, 2) + "\n");
   } else {
     await rm(adminSettingsFile, { force: true });
