@@ -231,8 +231,8 @@ const PROFILE_FLAGS = {
 };
 const PROFILE_HELP = {
   read: "Reads files. Edits and commands need approval. Selecting Read-only turns Auto off.",
-  worker: "Runs commands and edits files inside the channel container. Enable Auto to approve tool requests automatically.",
-  admin: "Admins get full tools without permission prompts. Other members get Worker with the selected Auto and Lean options.",
+  worker: "Runs commands and edits files in this channel’s folder only. Auto approves tool requests automatically; Lean removes optional skills and connectors.",
+  admin: "Admins get all tools without approval prompts. Other members get Worker with the selected Auto and Lean options. Confined to the channel folder unless “Admin channels can access the host home” is enabled in Settings → Container runtime. That setting shares the gateway user’s home with all admitted members; it does not grant host root access.",
 };
 // Per-option descriptions for the two access dropdowns (shown live under each, like the profile help).
 const ACCESS_HELP = {
@@ -1961,8 +1961,8 @@ function buildConfigEditor(cfg = {}) {
 <div class="mode-layout">
     <div><p class="fldlab">Mode</p><div class="cap-cards cfg-capcards">
       <button type="button" class="cap-card" data-cap="read"><h5>Read-only</h5><p>Reads files. Changes need approval.</p></button>
-      <button type="button" class="cap-card" data-cap="worker"><h5>Worker</h5><p>Runs commands and edits files in the channel container.</p></button>
-      <button type="button" class="cap-card danger" data-cap="admin"><h5>Admin</h5><p>Admins get full access. Other members get Worker plus the selected options.</p></button>
+      <button type="button" class="cap-card" data-cap="worker"><h5>Worker</h5><p>Runs commands and edits files in this channel’s folder only.</p></button>
+      <button type="button" class="cap-card danger" data-cap="admin"><h5>Admin</h5><p>Full tools for admins. Host-home access can be enabled in Settings.</p></button>
     </div></div>
     <div class="mode-options"><p class="fldlab">Special modes</p>
       <label class="togglerow"><input type="checkbox" class="cfg-auto" /><span class="switch"></span><span class="t"><b>Auto</b><small>Automatically approve tool requests for all members. Enables Worker when Read-only is selected.</small></span></label>
