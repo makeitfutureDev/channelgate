@@ -20,6 +20,9 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Improve conversation and template skill selection with a shared Active skills / Add skills
+  editor, name and source filters, locked inherited groups, and preserved explicit selections.
+
 - Clarify the Slack Skills categories and where each is configured. Org Skills explicitly
   states that only admins can add or remove organization skills; combined lists are labelled
   as automatic summaries.

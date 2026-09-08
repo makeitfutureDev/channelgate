@@ -56,7 +56,7 @@ function fixture({ workDir = "/home/operator/project", saveError } = {}) {
   const calls = [];
   const context = {
     card, ch, meta: ch.meta, Event, detailDirty: false, SELF_SAVING_CONTROLS: ".channel-env-card",
-    engineSelect: { value: "codex" }, usersBox: { dataset: { ready: "" } }, mcpsBox: {},
+    engineSelect: { value: "codex" }, usersBox: { dataset: { ready: "" } }, mcpsBox: {}, skillsPicker: null,
     makeToolboxKeyInput: control(".ch-make-toolbox-key"),
     makeToolboxUrlInput: control(".ch-make-toolbox-url"), makeToolboxState: new Control(),
     clearMakeToolbox: false,

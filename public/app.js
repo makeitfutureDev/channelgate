@@ -17,6 +17,7 @@ import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, passwordDialog, revealSecret, tokenValue } from "./admin-view.js";
 import { loadSkills } from "./admin-skills.js";
+import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 
@@ -1427,7 +1428,7 @@ function renderChannelDetail(ch) {
   const onEdit = (e) => {
     // Exempt: the two file editors, the savebar buttons, the tools filter boxes (filtering the
     // checklists is a view action, not a config change), and the self-saving controls above.
-    if (e.target.closest(`[data-pane="instructions"], [data-pane="memory"], .detail-savebar, .checks-filter, ${SELF_SAVING_CONTROLS}`)) return;
+    if (e.target.closest(`[data-pane="instructions"], [data-pane="memory"], .detail-savebar, .checks-filter, .skill-assignment-filters, ${SELF_SAVING_CONTROLS}`)) return;
     markDirty();
   };
   card.addEventListener("input", onEdit);
@@ -1458,16 +1459,45 @@ function renderChannelDetail(ch) {
   const mcpsBox = card.querySelector(".ch-mcps");
   const mcpsCount = card.querySelector(".ch-mcps-count");
   const skillsBox = card.querySelector(".ch-skills");
-  skillsBox.dataset.kind = "s";
+  let skillsPicker = null;
+  const templateSelect = card.querySelector(".ch-skill-template");
+  templateSelect.disabled = true;
+  skillsBox.textContent = "Loading skill assignments…";
   initializeMcpBox(mcpsBox, {
     claude: meta.allowedMcps || [],
     codex: meta.allowedCodexMcps || [],
   });
-  checkboxList(skillsBox, accessGrantSkillOptions(SKILLS, meta.skills || []), meta.skills || []);
   wireChecksTools(mcpsBox, card.querySelector(".ch-mcps-filter"), mcpsCount);
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
-  wireChecksTools(skillsBox, card.querySelector(".ch-skills-filter"), card.querySelector(".ch-skills-count"));
-  fillSkillTemplateSelect(card.querySelector(".ch-skill-template"), meta.skillTemplate || "", card.querySelector(".ch-skill-template-state"));
+  // Read current assignments when opening the conversation, including edits made in Skills
+  // during this SPA session. Failed metadata reads must never clear saved grants on Save.
+  Promise.all([api("/api/skills/catalog?deleted=1"), api("/api/skills/overview")]).then(([catalog, overview]) => {
+    if (!skillsBox.isConnected) return;
+    SKILL_TEMPLATES = overview.templates || [];
+    fillSkillTemplateSelect(templateSelect, meta.skillTemplate || "", card.querySelector(".ch-skill-template-state"));
+    if (meta.skillTemplate && !SKILL_TEMPLATES.some((t) => t.slug === meta.skillTemplate)) {
+      const missing = document.createElement("option");
+      missing.textContent = `${meta.skillTemplate} (unavailable)`;
+      missing.value = meta.skillTemplate;
+      templateSelect.add(missing);
+      templateSelect.value = meta.skillTemplate;
+    }
+    const inherited = () => {
+      const template = SKILL_TEMPLATES.find((t) => t.slug === templateSelect.value);
+      const section = catalog.skills.filter((s) => s.channelScope === ch.channelId && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
+      return [
+        { id: "organization", label: "Organization skills", slugs: overview.orgSkills || [], note: "Managed organization-wide." },
+        { id: "template", label: "Template skills", slugs: template?.resolved || [], note: template ? `Included by ${template.name}. Edit the template in Skills → Templates.` : "Choose a template above to include its skills." },
+        ...(section.length ? [{ id: "section", label: "Conversation skills", slugs: section, note: "Included from this conversation’s repository section." }] : []),
+      ];
+    };
+    skillsPicker = mountSkillAssignmentPicker(skillsBox, { skills: catalog.skills, sources: catalog.sources, selected: meta.skills || [], inherited: inherited(), onChange: markDirty });
+    templateSelect.disabled = false;
+    templateSelect.addEventListener("change", () => skillsPicker.update({ inherited: inherited() }));
+  }).catch((error) => {
+    if (!skillsBox.isConnected) return;
+    skillsBox.textContent = `Skill assignments unavailable. Saved skills and template will be preserved. Reopen this conversation to retry. ${error.message}`;
+  });
 
   // The base picker owns admin/shell flags; Auto and Lean are independent controls.
   const flagEls = {
@@ -1772,8 +1802,13 @@ function renderChannelDetail(ch) {
             .map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
           allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
             .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
-          skills: checkedValues(card.querySelector(".ch-skills")),
-          skillTemplate: card.querySelector(".ch-skill-template").value,
+          ...(skillsPicker ? {
+            skills: skillsPicker.getSelected(),
+            // A deleted template may still be referenced by the saved conversation. Preserve
+            // that reference on unrelated saves; the API rejects reassigning a missing template.
+            ...(!templateSelect.value || SKILL_TEMPLATES.some((t) => t.slug === templateSelect.value)
+              ? { skillTemplate: templateSelect.value } : {}),
+          } : {}),
           profile: card.querySelector(".ch-profile").value,
           access: card.querySelector(".ch-access").value,
           manageAccess: card.querySelector(".ch-manage").value,
@@ -1803,6 +1838,7 @@ function renderChannelDetail(ch) {
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      skillsPicker?.update({ selected: ch.meta.skills || [] });
       const acceptedGuests = channelGuestAcceptedIds(
         usersBox.dataset.ready === "1",
         ch.meta.allowedUsers,
