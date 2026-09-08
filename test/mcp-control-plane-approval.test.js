@@ -392,3 +392,67 @@ test("every registered gateway tool is consciously classified as gated or open (
     }
   });
 });
+
+const creationVariants = [
+  { key: "default", args: {}, visibility: "org", channelGrant: true, details: /shared library.*grant it in this channel/i },
+  { key: "shared-grant", args: { personal: false, scope: "library", grant_here: true }, visibility: "org", channelGrant: true, details: /shared library.*grant it in this channel/i },
+  { key: "shared-ungranted", args: { personal: false, scope: "library", grant_here: false }, visibility: "org", channelGrant: false, details: /shared library.*without.*grant/i },
+  { key: "personal-grant", args: { personal: true, scope: "library", grant_here: true }, visibility: "personal", channelGrant: false, details: /personal skill.*your own runs/i },
+  { key: "personal-ungranted-flag", args: { personal: true, scope: "library", grant_here: false }, visibility: "personal", channelGrant: false, details: /personal skill.*your own runs/i },
+  { key: "channel-grant", args: { personal: false, scope: "channel", grant_here: true }, visibility: "org", channelGrant: false, channelScope: true, details: /this channel.s section.*automatically/i },
+  { key: "channel-ungranted-flag", args: { personal: false, scope: "channel", grant_here: false }, visibility: "org", channelGrant: false, channelScope: true, details: /this channel.s section.*automatically/i },
+];
+const creationFiles = slug => [{ path: "SKILL.md", content: `---\nname: ${slug}\ndescription: Harmless approval preview fixture.\n---\n\nReturn the fixture name.\n` }];
+
+test("both engine approval previews describe actual creation visibility and grants before denial", async () => {
+  const { getSkill } = await import("../src/gateway/skills/catalog.js");
+  for (const engine of ["claude", "codex"]) {
+    await withGateway({ engine }, async client => {
+      for (const variant of creationVariants) {
+        approvalRequests.length = 0;
+        approvalResponse = { allow: false, reason: "preview only" };
+        const slug = `preview-${engine}-${variant.key}`;
+        const args = { slug, files: creationFiles(slug), ...variant.args };
+        const result = await client.callTool({ name: "create_skill", arguments: args });
+        assert.match(resultText(result), /not approved/);
+        assert.equal(approvalRequests.length, 1);
+        const preview = approvalRequests[0].body.toolInput.details;
+        assert.match(preview, variant.details, variant.key);
+        assert.match(preview, new RegExp(slug));
+        assert.match(preview, /1 file/);
+        if (variant.visibility === "personal") assert.doesNotMatch(preview, /shared catalog|grant it here|grant it in this channel/);
+        assert.equal(getSkill(slug), null, "a preview denial creates no skill");
+      }
+    });
+  }
+});
+
+test("approved creation matches preview semantics and invalid personal channel scope stays rejected", async () => {
+  const { getSkill } = await import("../src/gateway/skills/catalog.js");
+  const { getUser } = await import("../src/config/store.js");
+  for (const engine of ["claude", "codex"]) {
+    await withGateway({ engine }, async client => {
+      for (const variant of creationVariants) {
+        approvalRequests.length = 0;
+        approvalResponse = { allow: true };
+        const slug = `created-${engine}-${variant.key}`;
+        const result = await client.callTool({ name: "create_skill", arguments: { slug, files: creationFiles(slug), ...variant.args } });
+        assert.match(resultText(result), /Created/);
+        assert.match(approvalRequests[0].body.toolInput.details, variant.details);
+        const actual = getSkill(slug);
+        assert.equal(actual.visibility, variant.visibility);
+        assert.equal(actual.channelScope || "", variant.channelScope ? CHANNEL : "");
+        assert.equal((await getUser("U_CTRL_ADMIN")).skills?.includes(slug) || false, variant.visibility === "personal");
+        assert.equal((await getChannelMeta(SLUG)).skills?.includes(slug) || false, variant.channelGrant);
+        if (variant.visibility === "personal") assert.match(resultText(result), /granted to your own runs/);
+        if (variant.channelScope) assert.match(resultText(result), /granted here automatically/);
+      }
+      const invalid = `invalid-personal-channel-${engine}`;
+      approvalRequests.length = 0;
+      const result = await client.callTool({ name: "create_skill", arguments: { slug: invalid, files: creationFiles(invalid), personal: true, scope: "channel", grant_here: false } });
+      assert.match(approvalRequests[0].body.toolInput.details, /personal.*cannot.*channel/i);
+      assert.match(resultText(result), /personal skill cannot be scoped to a channel/);
+      assert.equal(getSkill(invalid), null);
+    });
+  }
+});

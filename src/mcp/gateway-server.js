@@ -212,7 +212,14 @@ export function buildControlPlane({ loadMeta }) {
     ["add_channel_skills", { authz: "manage", details: ({ slugs }) => `Grant skill(s) in this channel: ${summarize((slugs || []).join(", "))}` }],
     ["remove_channel_skills", { authz: "manage", details: ({ slugs }) => `Remove skill grant(s) from this channel: ${summarize((slugs || []).join(", "))}` }],
     ["set_channel_skill_template", { authz: "manage", details: ({ template }) => (String(template || "").toLowerCase() === "none" ? "Stop this channel from following a skill template." : `Make this channel follow the "${summarize(template)}" skill template (live).`) }],
-    ["create_skill", { authz: "any", details: ({ slug, files }) => `Add a new skill to the shared catalog${slug ? ` (\`${summarize(slug)}\`)` : ""} with ${(files || []).length} file(s) and grant it here.` }],
+    ["create_skill", { authz: "any", details: ({ slug, files, personal = false, scope = "library", grant_here = true }) => {
+      const name = slug ? ` (\`${summarize(slug)}\`)` : "";
+      const bundle = `${name} with ${(files || []).length} file(s)`;
+      if (personal && scope === "channel") return `A personal skill${bundle} cannot be created in a channel section. This combination will be rejected.`;
+      if (personal) return `Create a personal skill${bundle} and automatically grant it to your own runs. It will not be published to shared skill sources.`;
+      if (scope === "channel") return `Create a shared skill in this channel's section${bundle}; it will be active here automatically.`;
+      return `Create a skill in the shared library${bundle}${grant_here ? " and grant it in this channel" : " without adding a channel grant"}.`;
+    } }],
     ["update_skill", { authz: "any", details: ({ skill, files }) => `Publish a new revision of skill \`${summarize(skill)}\` (${(files || []).length} changed file(s)).` }],
     ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => `${decision === "approve" ? "APPROVE" : "Reject"} skill proposal #${Number(id) || "?"}.` }],
     ["sync_skill_sources", { authz: "admin", details: ({ id }) => `Sync ${id ? `skill source #${Number(id)}` : "every skill source"} into the catalog now.` }],

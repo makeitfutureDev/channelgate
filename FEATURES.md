@@ -1,5 +1,11 @@
 # ChannelGate — Features
 
+- **Skill approval cards describe the requested ownership and grants:** personal creation
+  previews its automatic personal grant; shared-library creation distinguishes a channel grant
+  from no grant; channel-scoped creation states its automatic activation here. Invalid personal
+  channel scope is identified without promising a creation. The existing approval, ownership,
+  publication and grant rules remain unchanged. → TEST-PLAN: Skill creation approval details.
+
 - **Text commands remain controls after file sharing:** canonical current-message attachments
   are recovered even when Slack omits them from a trigger. Historical thread files cannot turn
   text-only `/files`, stop/cancel, pending or other gateway controls into an agent request.
