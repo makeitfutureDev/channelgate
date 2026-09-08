@@ -22,6 +22,9 @@ product overview.
   Claude's default initialize timeout to the same ceiling. Preserve explicit operator overrides,
   tool-call deadlines, grant boundaries and quiet-run liveness behavior.
 
+- Persist Codex's native thread ID as soon as the CLI announces it, so stopping a first turn
+  offers a valid resume control. Late announcements cannot restore a cleared session.
+
 - Correct channel-control MCP descriptions and confirmations to reflect container confinement,
   advisory networking and the separate optional operator-home mount. Preserve all permissions,
   setting mutations and approval checks.

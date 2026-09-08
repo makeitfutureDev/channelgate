@@ -1325,6 +1325,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // first message; a resumed session already carries it in its history. Empty when memory is off
   // for this run (clean mode included) or the channel has saved nothing yet.
   const memoryPrefix = await memorySnapshotPrefix(cwd, meta);
+  // Engine-neutral early identity notification: self-minting runners may know their native
+  // session before completing a turn. saveSession writes synchronously before its promise
+  // returns and retains the same /clear-generation guard as the successful-result path.
+  const sessionResolved = (key, owner) => (id) => {
+    void saveSession(entry.slug, key, id, owner, sessionGen, runtimeStamp).catch((error) => {
+      console.warn(`[gateway] could not persist announced session: ${error.message}`);
+    });
+  };
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     assertRuntimeCanStart();
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
@@ -1345,6 +1353,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         preferCold, keepAliveMs: keepAliveMs(), poolKey: `${entry.slug}::${threadKey}`,
         mcpConfigFile, mcpConfigJson, mcpConfigFingerprint, strictMcp, dangerouslySkip, settingsFile: runSettingsFile,
         model: modelOverride, effort, permissionPromptTool, timeoutMs, maxSilenceMs, signal, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
+        onSessionResolved: sessionResolved(threadKey, engine),
         channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
         writable: codexWritable, autoApprove: codexAutoApprove, clean,
         composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken,
@@ -1561,6 +1570,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey,
           gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort: "",
           attachments, signal, timeoutMs, maxSilenceMs, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
+          onSessionResolved: sessionResolved(fbKey, fallbackEngine),
           channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
           allowedMcps: clean ? [] : (meta[fallbackAdapter.mcpMetaKey] || []),
           claudePluginDirs: grantArtifacts.claudePluginDirs,

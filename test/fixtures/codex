@@ -78,6 +78,14 @@ case "$*" in
     ;;
 esac
 if [ "$cancel" = "yes" ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-cancel"}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"waiting","type":"agent_message","text":"CODEX_WAITING_FOR_STOP"}}'
+  case "$*" in *CODEX_STUB_LATE_SESSION*)
+    sleep 0.15
+    printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-late"}'
+    printf '%s\n' '{"type":"item.completed","item":{"id":"late","type":"agent_message","text":"CODEX_LATE_SESSION_ANNOUNCED"}}'
+    ;;
+  esac
   exec sleep 30
 fi
 # Credential lost mid-flight: Codex says so on stderr and then keeps waiting instead of exiting.
