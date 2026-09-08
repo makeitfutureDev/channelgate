@@ -305,7 +305,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Teams onboarding uses Microsoft's CLI end to end**: the Admin UI and operator guide give the
   install/login commands, generate a copy-ready `teams app create` command from ChannelGate's exact
   public `/api/teams/messages` event endpoint, map the emitted credentials to Settings, and show
-  how to obtain the generated app's Teams install link.
+  how to obtain the generated app's Teams install link. The procedure covers device-code login,
+  verifying the target tenant, private credential storage, and a real inbound/reply check; CLI
+  commands are checked against stable 3.0.3.
   → TEST-PLAN: Google Chat and Teams transports. Setup: `docs/PLATFORMS.md`.
 
 ## Engine adapter kernel

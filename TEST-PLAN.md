@@ -785,7 +785,17 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       connector still THROWS on write.
 - [x] Teams setup in the Admin UI and operator guide names the official Teams CLI install/login
       flow, the exact `/api/teams/messages` event endpoint, the app-creation command, emitted
-      credential mapping, and the generated Teams install link.
+      credential mapping, and the generated Teams install link. Documentation checked against CLI
+      3.0.3: `login --device-code`, `status` (no `--verbose`), and positional app ID for `app update`.
+- [ ] MANUAL (Teams CLI onboarding; Claude AND Codex): use a tenant with custom-app upload enabled,
+      a target gateway with public HTTPS, one approved Teams test user, a personal chat and a test
+      team/channel. Follow `docs/PLATFORMS.md`: device login completes in the same live process,
+      status identifies the intended tenant, register/install the app, and save credentials only
+      in the target gateway's Settings. Select Claude for the test conversations and send
+      `Reply with TEAMS_OK` in the personal chat and `@<bot-name> Reply with TEAMS_OK` in the channel;
+      repeat with Codex selected in admin Settings. Pass only if both engines return `TEAMS_OK`,
+      channel answers thread correctly, and no client secret appears in chat. Record CLI version,
+      target endpoint, engine and observed replies privately. This live case remains unexecuted.
 - [x] The shared name directory drops a name two people answer to, and a single-word key that is
       several people's first name, while keeping the full names — on every platform.
 - [ ] MANUAL (Google Workspace): a Chat app with a Pub/Sub connection delivers a mentioned space
