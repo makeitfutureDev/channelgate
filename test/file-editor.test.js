@@ -107,7 +107,7 @@ test("browser editor exchanges a one-time grant, serves securely, saves, and rej
   const cookie = exchange.headers.get("set-cookie").split(";")[0];
   assert.match(editorPath, /^\/file-editor\/[A-Za-z0-9_-]+$/);
   assert.match(exchange.headers.get("set-cookie"), /HttpOnly/);
-  assert.match(exchange.headers.get("set-cookie"), /SameSite=Strict/);
+  assert.match(exchange.headers.get("set-cookie"), /SameSite=Lax/);
   assert.match(exchange.headers.get("set-cookie"), /Secure/);
   assert.equal(exchange.headers.get("cache-control"), "no-store");
 

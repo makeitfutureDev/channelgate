@@ -56,7 +56,7 @@ test("browser uploader exchanges a grant, preserves folder paths, and never over
   const cookie = exchange.headers.get("set-cookie").split(";")[0];
   assert.match(uploadPath, /^\/file-upload\/[A-Za-z0-9_-]+$/);
   assert.match(exchange.headers.get("set-cookie"), /HttpOnly/);
-  assert.match(exchange.headers.get("set-cookie"), /SameSite=Strict/);
+  assert.match(exchange.headers.get("set-cookie"), /SameSite=Lax/);
   assert.match(exchange.headers.get("set-cookie"), /Secure/);
 
   assert.equal((await fetch(grantUrl, { redirect: "manual" })).status, 410);

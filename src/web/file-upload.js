@@ -95,7 +95,9 @@ function cookieName(uploadId) {
 
 function cookieFor(req, uploadId, secret, maxAgeSeconds) {
   const secure = secureRequest(req) ? "; Secure" : "";
-  return `${cookieName(uploadId)}=${secret}; HttpOnly; SameSite=Strict; Path=/file-upload/${uploadId}; Max-Age=${maxAgeSeconds}${secure}`;
+  // Admit the first cross-site top-level GET/303 from Slack without enabling cross-site POSTs.
+  // Uploads still require the session's CSRF header and current channel/folder authorization.
+  return `${cookieName(uploadId)}=${secret}; HttpOnly; SameSite=Lax; Path=/file-upload/${uploadId}; Max-Age=${maxAgeSeconds}${secure}`;
 }
 
 function getSession(req, uploadId, now = Date.now()) {

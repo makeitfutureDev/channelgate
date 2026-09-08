@@ -101,7 +101,10 @@ function cookieName(editorId) {
 
 function cookieFor(req, editorId, secret, maxAgeSeconds) {
   const secure = secureRequest(req) ? "; Secure" : "";
-  return `${cookieName(editorId)}=${secret}; HttpOnly; SameSite=Strict; Path=/file-editor/${editorId}; Max-Age=${maxAgeSeconds}${secure}`;
+  // Slack opens this through a cross-site top-level GET and 303. Strict withholds the new
+  // cookie on that redirect; explicit Lax admits this navigation, but not cross-site POSTs.
+  // Saves still require the session's CSRF header and current channel/file authorization.
+  return `${cookieName(editorId)}=${secret}; HttpOnly; SameSite=Lax; Path=/file-editor/${editorId}; Max-Age=${maxAgeSeconds}${secure}`;
 }
 
 function getSession(req, editorId, now = Date.now()) {

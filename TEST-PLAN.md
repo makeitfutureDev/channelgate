@@ -2593,6 +2593,21 @@ release, no egress cut-off — so the network entry has no container equivalent 
       an absolute HTTPS URL (including hostname-plus-path input), while explicit HTTP development
       URLs and empty values are preserved; browser upload links therefore cannot disappear solely
       because an operator entered the public hostname without `https://`.
+- [x] Real Chromium regression: with `CG_BROWSER_MODULE` pointing to an installed Playwright
+      module, run `node --test test/file-session-browser.test.js` (optionally set
+      `CG_BROWSER_EXECUTABLE` to the Chromium executable). Both real editor and upload routers
+      exchange a one-use grant after a click from a different site and serve the first redirected
+      page successfully, without reload or injected cookies. Browser-native save/upload writes
+      exactly once. Verify HttpOnly/Secure/per-session cookie paths, wrong-CSRF rejection,
+      cross-site form POST withholding even a newly created cookie, reauthorization after revocation,
+      and rejection of grant reuse. Existing file editor/upload/explorer/download API checks remain.
+- [ ] Live, engine-independent (FX-206): in an approved writable QA conversation with HTTPS
+      Public URL, open a fresh *Edit in browser* link and a fresh *Upload files / folder* link from
+      the authenticated native Slack client. Each must show its actual UI on the first click,
+      without manually copying URLs, reloading, or adding cookies. Save a disposable text edit and
+      upload a disposable file; verify exact confined bytes, the original requester in audit, and
+      no engine invocation. Record first exchange/redirect status without bearer URLs or cookie
+      values. Complete all other stored case gates separately and remove only the owned fixtures.
 - [x] Unit (`test/file-explorer.test.js`): writable views expose *New folder* for the directory on
       screen while read-only views hide it; creation is confined, trims a valid name, rejects empty,
       protected, traversal/separator, control-character, over-limit, and colliding names, and never
