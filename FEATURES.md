@@ -1458,6 +1458,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `requireAdmin`) and in-thread `/mode` command retain their narrower admin checks; default `admins` means relaxing it is strictly opt-in. Settings →
   **Reset all channels' access to default** (confirm-gated, audit-logged) restores use/manage to defaults
   and clears custom guest + manager lists, leaving capability/skills/tokens untouched.
+  Slack authorization denials name the channel restriction (admins only or named users) and its
+  Access remedy; only deployment approval denials direct the user to Users settings. Denied messages
+  still stop before attachment hydration or an engine run.
   → TEST-PLAN: channel access model.
 - **Live three-tier skill and connector grants**: organization defaults, channel grants, and the
   authenticated active user's grants are unioned for each run, with the more specific tier

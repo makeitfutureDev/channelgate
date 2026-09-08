@@ -201,3 +201,25 @@ test("ambiguous hard kills and explicit Stop never auto-continue", () => {
   assert.equal(runDeathRecovery({ name: "AbortError", message: "Claude session ended" }), null);
   assert.equal(runDeathRecovery({ message: "session is dead" }), "retry");
 });
+
+
+test("channel access denials name the channel policy without mislabeling approved users", async () => {
+  const { upsertChannelEntry, saveChannelMeta, defaultChannelMeta } = await import("../src/config/store.js");
+  for (const [access, expected] of [["admins", /restricted to admins/i], ["none", /restricted to named users/i]]) {
+    const user = "U_E2E_POLICY_" + access;
+    await setUser(user, { name: "Approved policy test user", approved: true, isAdmin: false });
+    const channel = "C_E2E_POLICY_" + access;
+    const entry = await upsertChannelEntry(channel, { name: "policy-" + access, type: "mpim", isDM: false });
+    await saveChannelMeta(entry.slug, { ...defaultChannelMeta(channel), access });
+    const client = fakeSlack();
+    client.conversations.history = async () => { throw new Error("denied trigger must not read files"); };
+    await processMessageEvent({ type: "message", channel, channel_type: "mpim", user,
+      text: "<@U0QABOT> Inspect the prepared file", ts: "deny-" + access,
+      files: [{ id: "F_DENIED", file_access: "check_file_info" }],
+    }, client, { botUserId: "U0QABOT", teamId: "T_E2E" });
+    assert.equal(client.posted.length, 1);
+    assert.match(client.posted[0].text, expected);
+    assert.doesNotMatch(client.posted[0].text, /not approved|Users settings|Stub engine reply/i);
+    assert.equal(client.posted[0].thread_ts, "deny-" + access);
+  }
+});
