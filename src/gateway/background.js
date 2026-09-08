@@ -30,6 +30,8 @@ import { postNotice, automationTarget } from "../platforms/notify.js";
 import { resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
+import { containerJobScript } from "./background-shell-log.js";
+export { containerJobScript } from "./background-shell-log.js";
 
 const MAX_TAIL = 6_000; // chars of combined stdout/stderr fed back to the agent
 // Runtime caps are a runaway backstop, NOT a budget — the same philosophy as the turn watchdog
@@ -156,14 +158,6 @@ export function recoveredWatchAction({ alive, overCap }) {
 //   exit   — the wrapper appends a status marker as its last act, so a job that ends normally
 //            still reports a real exit code instead of "unknown".
 const JOB_EXIT_RE = /\[cg-exit:(\d{1,3})\]\s*$/;
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, "'\\''")}'`;
-}
-
-export function containerJobScript(command, logFile) {
-  return `exec >${shellQuote(logFile)} 2>&1\n${command}\n__cg_exit=$?\nprintf '\\n[cg-exit:%s]\\n' "$__cg_exit"\n`;
-}
 
 // The exit code a finished container job left behind, or null when the wrapper never got to write
 // it (the job called `exit`, was killed, or the log is gone) — null means "unknown", never 0.
@@ -494,9 +488,9 @@ export class BackgroundJobs {
         const shellEnv = { ...jobEnv, ...browserSpawnEnv(browserNamespaceFor({ platform: meta.platform, slug: entry.slug })) };
         child = target.runtime.spawn(target, {
           cmd: "bash",
-          // Isolated: the job redirects itself into the log the daemon tails, because a detached
-          // exec hands back no stdio (see containerJobScript). Host: today's exact argv.
-          args: ["-lc", isolatedJob ? containerJobScript(cmd, logFile) : cmd],
+          // Isolated: a runtime-side wrapper redacts BOTH streams before writing the durable
+          // log, and starts the command in one login shell. The outer shell only execs the wrapper.
+          args: isolatedJob ? ["-c", containerJobScript(cmd, logFile, Object.keys(jobEnv))] : ["-lc", cmd],
           cwd,
           env: buildShellEnv(shellEnv),
           stdio: ["ignore", "pipe", "pipe"],
@@ -870,10 +864,8 @@ export class BackgroundJobs {
 
   // Read a finished/recovered job's output tail from its log file (the in-memory tail is gone
   // after a restart). Best-effort.
-  // `rec` is optional: a job whose output was written from INSIDE an isolated runtime never passed
-  // through the streaming redactor, so its secrets are blanked here instead — write-only in the UI
-  // has to mean write-only in the thread too — and the exit marker the wrapper appended is
-  // bookkeeping, not output.
+  // `rec` is optional. New isolated jobs redact before persistence; keep this second layer for
+  // legacy logs and delivery defense in depth. The wrapper's exit marker is bookkeeping, not output.
   async _tailFromLog(logFile, rec = null) {
     if (!logFile) return "";
     try {

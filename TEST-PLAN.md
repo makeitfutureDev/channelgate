@@ -3,6 +3,32 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Detached shell log redaction (2026-09-08 regression)
+
+- [x] Deterministic subprocess regression: `node --test test/container-job-log-redaction.test.js`
+  executes the actual container wrapper with a random disposable environment canary. Split writes
+  on stdout and stderr, including interleaving streams and a split UTF-8 character, leave only
+  `[REDACTED]` in the persisted log. No canary is placed in the generated argv. The log is already
+  safe while the command is running; an exited launcher does not terminate detached work, and
+  explicit exits 17/23 remain recoverable through the terminal marker. Short final tails survive.
+- [x] Runtime integration: `test/runtime-integration-jobs.test.js` confirms the isolated spawn
+  receives only secret names in wrapper arguments and values through its existing environment,
+  keeps its container run ID/lease, and uses the same durable recovery path.
+- [x] Candidate wrapper executed directly as a detached exec in an owned live container with a
+  disposable random canary: raw artifact bytes contained exactly two `[REDACTED]` markers and a
+  recoverable exit 23. This wrapper-level check does not substitute for the engine-origin gate.
+- [ ] Live, Claude and Codex separately: in owned Admin fixtures, use an approved admin author
+  and a unique disposable `QA_*` environment secret through the supported channel-env API (never
+  overwrite an existing name or use operator credentials). Request a gateway background shell
+  job that sleeps 20 seconds, prints an engine-specific done marker, then prints only that named
+  canary. Inspect raw artifact log, live/delivered payload and completion checkpoint with a private
+  exact-value checker that emits booleans only. PASS requires the done marker, `[REDACTED]`, no raw
+  canary on any inspected output surface, truthful exit status and exactly one final delivery.
+  Repeat split stdout/stderr plus a safe nonzero exit using the same disposable fixture. Restore
+  metadata and remove only the newly created secret after terminal state. Preserve original FAIL
+  evidence privately; pre-fix historical raw logs are not retroactively sanitized. The broader
+  two-provider SEC-06 authenticated-read/cross-channel-error matrix remains a separate live gate.
+
 ## Exact-message read scope
 
 - In two prepared QA channels, place a disposable message with a unique nonce in channel B.

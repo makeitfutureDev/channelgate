@@ -63,7 +63,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   pending product decision, not shipped).
 - **Secret handling:** masked dialogs collect password proof. Known credential values are redacted
   from primary/fallback replies, stream events, errors and background delivery checkpoints. Shell
-  jobs do not inherit engine service credentials. Exact-value redaction is not a vault and does
+  jobs also redact injected channel secrets inside their detached container process before stdout
+  or stderr reaches the durable artifact log. Independent stream buffers protect split values,
+  and the wrapper survives the daemon while preserving the command's terminal status. The wrapper
+  receives secret names only; jobs do not inherit engine service credentials. Existing historical
+  raw logs are not rewritten by this change. Exact-value redaction is not a vault and does
   not prevent an engine from transforming a usable credential.
 - **Durable work:** memory mutations serialize across gateway processes. Bounded nonblocking reads
   reject special files and pin parent directory descriptors before publication. API/schedule/background
