@@ -2972,3 +2972,33 @@ test("Stop releases its caller while a stream append is throttled and later seal
   for (let i = 0; i < 20 && !calls.some(([kind]) => kind === "stopStream"); i++) await new Promise((r) => setImmediate(r));
   assert.ok(calls.some(([kind, p]) => kind === "stopStream" && /Stopped — partial answer/.test(p.markdown_text)), "background cleanup retains partial-result semantics");
 });
+
+
+for (const mode of ["commentary", "no stream", "truncated commentary"]) {
+  test(`answerless notice reaches Slack exactly once after ${mode}`, async () => {
+    const calls = [];
+    const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000003.000000", { authorId: "U_NOTICE", dir: null });
+    if (mode !== "no stream") {
+      progress.onDelta("I will verify the update next.");
+      if (mode === "truncated commentary") progress.onDelta("x".repeat(50000));
+    }
+    const notice = "The engine ended without a final message. Reply here to continue in the same session.";
+    const result = { content: notice, answerless: true, engine: "codex", durationMs: 10, usage: { input_tokens: 4, output_tokens: 2 } };
+    await progress.finalize(result);
+    await progress.finalize(result);
+    const native = streamedMarkdown(calls);
+    const followups = calls.filter(([method]) => method === "postMessage").map(([, payload]) => payload.text || "").join("\n");
+    const delivered = native + followups;
+    assert.equal(delivered.split("The engine ended without a final message.").length - 1, 1, "authoritative notice is delivered once");
+    assert.equal(delivered.split("<@U_NOTICE>").length - 1, 1, "requester notification belongs to the last message only");
+    assert.ok(calls.some(([method, payload]) => method === "stopStream" && payload.blocks?.length), "usage footer still seals the native stream");
+    if (mode === "no stream") {
+      assert.match(native, /ended without a final message/);
+      assert.equal(followups, "", "a short notice needs no extra message when nothing streamed");
+    } else {
+      assert.match(native, /I will verify the update next/);
+      assert.match(followups, /ended without a final message/);
+      assert.doesNotMatch(followups, /full answer:|I will verify/, "notice is not mislabeled as a truncated answer or duplicated narration");
+    }
+  });
+}

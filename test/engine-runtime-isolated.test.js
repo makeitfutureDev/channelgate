@@ -302,6 +302,7 @@ test("a containerized Codex turn writes its answer file and secret bundle into t
   assert.equal(spec.env.HOME, CONTAINER_HOME);
 
   writeFileSync(outFile, "container answer\n");
+  rt.children[0].stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }) + "\n");
   rt.children[0].emit("close", 0, null);
   const result = await pending;
   assert.equal(result.content, "container answer");

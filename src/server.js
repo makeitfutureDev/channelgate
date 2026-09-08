@@ -29,7 +29,7 @@ import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instru
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
-import { takeStaleRuns, recoverRuns } from "./gateway/active-runs.js";
+import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
 import { recoverApiRuns } from "./gateway/api-runs.js";
 import { startNudgeSweep } from "./gateway/nudges.js";
 import { startClaudeLoginWatch } from "./gateway/login-watch.js";
@@ -292,6 +292,7 @@ async function main() {
   // binds the port), so it was interrupted. Taking it up front means turns started by messages
   // arriving after reconnect get fresh rows and aren't mistaken for stale ones.
   const staleRuns = takeStaleRuns();
+  const runRecovery = createRunRecovery(staleRuns, { slack });
 
   // License verification (src/ee/license.js). Deliberately started here and NOT awaited: the
   // ChannelGate platform is a remote HTTP service and the daemon must come up whether or not it
@@ -316,7 +317,7 @@ async function main() {
   // Auto re-run interactive Slack turns that were interrupted mid-flight by the restart — resumes
   // the same thread/session and posts the answer. Runs after Slack is connected so it can post.
   if (staleRuns.length) console.log(`[gateway] recovering ${staleRuns.length} interrupted turn(s)…`);
-  await recoverRuns(staleRuns, { slack }).catch((e) => console.error("[gateway] run recover failed:", e?.message || e));
+  await runRecovery.start().catch((e) => console.error("[gateway] run recover failed:", e?.message || e));
 
   // Auto re-run API jobs that were queued/running when the daemon restarted. Slack-backed API jobs
   // resume in their original thread; headless jobs resume silently and finish through status/webhook.

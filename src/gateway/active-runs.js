@@ -272,10 +272,55 @@ export function takeStaleRuns() {
 // MAX_RECOVER_ATTEMPTS boots instead of looping forever.
 const MAX_RECOVER_ATTEMPTS = 2;
 
-// Auto re-run the interrupted turns captured by takeStaleRuns(). Runs sequentially so a restart
-// with several interrupted threads doesn't spawn a burst of `claude` processes at once. Each turn
-// re-runs as its original author (so their mode/tokens/permissions apply unchanged) and posts the
-// answer back into the same thread. Best-effort throughout — one failed turn never blocks the rest.
+// Reserve every survivor before reconnecting Slack. New messages then use the ordinary busy-thread
+// steer/queue contract instead of overtaking an older recovery that has not entered the queue yet.
+export function reserveRecoveryRuns(stale = []) {
+  const reservations = [];
+  for (const rec of stale) {
+    if (rec?.awaitingChoice || !rec?.channelId || !rec?.threadKey) continue;
+    const id = rec.id || `${rec.slug}::${rec.threadKey}`;
+    const runKey = `${rec.slug || rec.channelId}::${rec.threadKey}`;
+    if (runQueue.hasRun(runKey, id)) continue;
+    const handle = { aborted: false, controller: new AbortController(), authorId: rec.authorId, recovery: true, runId: id };
+    recordActiveRun(id, { ...rec, id, recoveryPending: true });
+    // Attach rejection handling immediately: a full queue must not produce an unhandled rejection
+    // while Slack is still connecting. The replay reports it through its normal failure path.
+    const acquired = runQueue.acquire(runKey, handle).then(() => null, (error) => error);
+    reservations.push({ rec, id, runKey, handle, acquired });
+  }
+  return reservations;
+}
+
+function pendingRecoveryRuns() {
+  return getDb().prepare("SELECT data FROM active_runs ORDER BY rowid").all()
+    .map((row) => fromJson(row.data, null)).filter((rec) => rec?.recoveryPending && !rec.awaitingChoice);
+}
+
+// Arm before Slack connects; reconnect callbacks are idempotent and never block connection setup.
+export function createRunRecovery(stale, options) {
+  let reservations = reserveRecoveryRuns(stale);
+  let running = null;
+  let requested = true;
+  const start = () => {
+    if (running) return running;
+    if (!requested || !options.slack?.snapshot?.().connected || !options.slack.getClient?.()) return Promise.resolve();
+    requested = false;
+    const batch = reservations;
+    reservations = [];
+    batch.push(...reserveRecoveryRuns(pendingRecoveryRuns()));
+    running = recoverRuns([], { ...options, reservations: batch }).finally(() => {
+      running = null;
+      if (requested) queueMicrotask(() => start().catch((error) => console.error("[gateway] reconnect recovery failed:", error.message)));
+    });
+    return running;
+  };
+  const unsubscribe = options.slack?.onConnected?.(() => { requested = true; return start(); });
+  return { start, unsubscribe };
+}
+
+// Every thread receives progress immediately. Independent threads use the existing global engine
+// admission limit; turns in one thread keep their reserved queue order. No slow recovery can hide
+// the other interrupted threads for an entire model turn.
 export async function recoverRuns(stale, {
   slack,
   runner = runMessage,
@@ -284,33 +329,29 @@ export async function recoverRuns(stale, {
   progressFactory = startProgress,
   directoryResolver = getDirectory,
   forceStopping = isForceStopping,
+  reservations,
 } = {}) {
-  if (!stale?.length) return;
+  if (!stale?.length && !reservations?.length) return;
   const client = slack?.snapshot?.().connected ? slack.getClient?.() ?? null : null;
   if (!client) {
     // No Slack client → we can't deliver the answer, so re-running would just burn a turn silently.
-    // The durable rows stay untouched (takeStaleRuns no longer deletes), so the next boot retries.
-    await logEvent("run_recover_skip", { count: stale.length, reason: "slack not connected" });
+    // The boot coordinator retains queue ownership and retries when Slack reconnects.
+    await logEvent("run_recover_skip", { count: reservations?.length || stale?.length || 0, reason: "slack not connected" });
     return;
   }
-  await logEvent("run_recover_begin", { count: stale.length });
-  for (const rec of stale) {
-    if (rec?.awaitingChoice) continue;
-    if (!rec?.channelId || !rec?.threadKey) continue;
-    const id = rec.id || `${rec.slug}::${rec.threadKey}`;
-    const runKey = `${rec.slug || rec.channelId}::${rec.threadKey}`;
-    // Slack reconnects BEFORE this runs (it needs a client to deliver), so a redelivered copy of
-    // this same message can beat recovery into the queue. Run ids encode the triggering message,
-    // so a live turn under this id IS this turn — replaying it would answer twice. The live run
-    // owns the row and clears it when it finishes.
-    if (runQueue.hasRun(runKey, id)) {
-      await logEvent("run_recover_skip", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, reason: "already live" });
-      continue;
+  const batch = reservations || reserveRecoveryRuns(stale);
+  await logEvent("run_recover_begin", { count: batch.length });
+  await Promise.all(batch.map(async ({ rec, id, runKey, handle, acquired }) => {
+    if (handle.aborted || handle.controller.signal.aborted) {
+      clearActiveRun(id);
+      runQueue.release(runKey, handle);
+      return;
     }
     const attempts = (rec.attempts || 0) + 1;
     if (attempts > MAX_RECOVER_ATTEMPTS) {
       // The attempt cap is this turn's explicit terminal failure — only now is its row deleted.
       clearActiveRun(id);
+      runQueue.release(runKey, handle);
       await logEvent("run_recover_giveup", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
       try {
         await postNotice(client, {
@@ -321,9 +362,9 @@ export async function recoverRuns(stale, {
       } catch {
         /* ignore */
       }
-      continue;
+      return;
     }
-    await logEvent("run_recover", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
+    await logEvent("run_recover_queued", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey });
     // Heads-up so the dangling "Working…" placeholder above it is explained and the thread shows
     // the turn is being picked up again before the (possibly slow) re-run finishes.
     try {
@@ -338,8 +379,7 @@ export async function recoverRuns(stale, {
     // Re-track the replay with the bumped attempt counter, so a restart landing mid-replay
     // retries on the next boot (up to the cap) instead of silently dropping the turn.
     // …and drop the boot stamp: from here on this row IS a live run again.
-    recordActiveRun(id, { ...rec, id, attempts, recoveryPending: undefined });
-    const handle = { aborted: false, controller: new AbortController(), authorId: rec.authorId, recovery: true, runId: id };
+    recordActiveRun(id, { ...rec, id, recoveryPending: undefined });
     // Start native progress without delaying recovery on directory hydration. The mutable object is
     // shared with the formatter, so later name resolution applies to subsequent streamed deltas.
     const liveDirectory = { map: new Map(), maxWords: 5 };
@@ -362,15 +402,8 @@ export async function recoverRuns(stale, {
     // Idempotent, pre-delivery accounting for this replay (see createUsageBank).
     const bankUsage = createUsageBank(usageRecorder);
     try {
-      // Recovery used to bypass the Slack pipeline's per-thread queue. Once Socket Mode reconnected,
-      // a live message could therefore race this replay into the same session and replace its warm
-      // process. Use the exact same queue key/ownership contract as foreground Slack turns.
-      await runQueue.acquire(runKey, handle);
-      if (handle.aborted) {
-        markTerminal();
-        continue;
-      }
-      if (forceStopping()) continue;
+      if (handle.aborted) { markTerminal(); return; }
+      if (forceStopping()) return;
       // A recovered turn is still an interactive Slack turn. Reconnect it to the same two native
       // surfaces as a foreground run whenever the Slack SDK supports native streaming. Older SDKs
       // and test clients retain the safe final-only delivery path instead of losing the recovery.
@@ -395,6 +428,14 @@ export async function recoverRuns(stale, {
           status = null;
         }
       }
+      status?.onEvent?.({ kind: "engine_note", text: "waiting to resume after gateway restart" });
+      const queueError = await acquired;
+      if (queueError) throw queueError;
+      if (handle.aborted) { markTerminal(); return; }
+      if (handle.controller.signal.aborted) { markTerminal(); return; }
+      if (forceStopping()) return;
+      recordActiveRun(id, { ...rec, id, attempts, recoveryPending: undefined });
+      await logEvent("run_recover", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
       const result = await runner({
         channelId: rec.channelId,
         authorId: rec.authorId,
@@ -418,23 +459,31 @@ export async function recoverRuns(stale, {
       // every branch below (steered handoff, empty-result failure, delivery) is downstream of that
       // spend — so bank the accounting here, once, before any of them.
       await bankUsage({ channelId: rec.channelId, slug: rec.slug, authorId: rec.authorId, engine: result.engine, taskKind: "interactive", result });
+      if (handle.aborted || (handle.controller.signal.aborted && !handle.steered)) {
+        markTerminal();
+        await stopStatus();
+        return;
+      }
       if (handle.steered && (result.interrupted || isEmptyResult(result))) {
         // Warm Claude recovery was intentionally interrupted by an explicit steer choice. Keep
         // partial/empty output hidden; its usage is already banked above.
         markTerminal();
         await stopStatus();
-        continue;
+        return;
       }
       // Zero work (empty text, 0 tokens) = failure in disguise (usually a broken session state
       // after the kill) — route it through the failure path below, not a "(no output)" success.
       if (isEmptyResult(result)) throw new Error("resumed run returned an empty result (0 tokens — the session may be in a bad state)");
       // Native recovery progress owns the streamed answer and persistent toolbox. A client without
       // that capability keeps the old safe, chunked final-only delivery path.
+      if (forceStopping()) return;
       if (status?.ownsFinal) {
         await status.finalize(result);
         statusClosed = true;
       } else {
         await stopStatus();
+        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
+        if (forceStopping()) return;
         // Compatibility fallback for an injected/legacy non-owning progress surface.
         await deliver(client, { channel: rec.channelId, threadKey: rec.threadKey, result });
       }
@@ -447,13 +496,13 @@ export async function recoverRuns(stale, {
         // A live message explicitly steered this recovered turn. Its successor owns the thread;
         // do not report the intentional process abort as a failed restart recovery.
         markTerminal();
-        continue;
+        return;
       }
       if (handle.aborted) {
         markTerminal(); // an explicit stop already told the thread; never replay it
-        continue;
+        return;
       }
-      if (forceStopping()) continue; // final sweep interrupted us; keep the row for next boot
+      if (forceStopping()) return; // final sweep interrupted us; keep the row for next boot
       await logEvent("run_recover_error", { slug: rec.slug, error: err.message });
       let told = false;
       try {
@@ -475,12 +524,12 @@ export async function recoverRuns(stale, {
       // deleting the row would silently drop the turn. Keep it; the attempt cap above is the
       // terminal bound, and the next boot retries.
       if (told) markTerminal();
-      else keepRow = true;
+      else keepRow = true; // already attempted: reconnect must not replay uncertain side effects
     } finally {
       await stopStatus();
       runQueue.release(runKey, handle);
       if (!keepRow && shouldClearActiveRun({ terminal, forceStopping: forceStopping() })) clearActiveRun(id);
     }
-  }
-  await logEvent("run_recover_done", { count: stale.length });
+  }));
+  await logEvent("run_recover_done", { count: batch.length });
 }

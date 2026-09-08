@@ -1157,6 +1157,12 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         oneShot = parts[0] || "_(empty response)_";
         overflow = parts.slice(1).join("\n");
         if (overflow) oneShot += "\n\n…_(continued below)_";
+      } else if (result?.answerless && full && pending !== streamed) {
+        // These deltas were interim narration, not a final answer. The orchestrator substituted
+        // an authoritative notice, which must survive even when the live stream stayed below
+        // its cap. Use the existing chunked follow-up path so mentions, long notices and terminal
+        // delivery retries retain the same handling as overflow; never repeat ordinary answers.
+        overflow = pending;
       } else if (truncated) {
         // The slice is only valid when the final content really is the concatenation of the
         // streamed deltas (true for Claude; Codex deltas are best-effort and the limit-fallback

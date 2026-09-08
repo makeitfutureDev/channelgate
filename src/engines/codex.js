@@ -943,6 +943,13 @@ export async function runCodex({
     let stderr = "";
     let buffer = "";
     let deltaText = "";
+    let answerText = "";
+    let phasedAnswerText = "";
+    let hasMessagePhase = false;
+    const messagePhases = new Map();
+    let completed = false;
+    const answerState = createCodexProgressState();
+    const phasedAnswerState = createCodexProgressState();
     // Per-run, because the only cross-event state a mapping needs is where the previous assistant
     // message segment ended (see codexMessageDelta).
     const progressState = createCodexProgressState();
@@ -1033,6 +1040,9 @@ export async function runCodex({
     const handleLine = (line) => {
       const p = parseJsonLine(line);
       if (!p) return;
+      const messageId = p.item?.id || p.item_id || p.itemId;
+      const explicitPhase = p.item?.phase ?? p.phase;
+      if (messageId && explicitPhase) messagePhases.set(messageId, explicitPhase);
       if (codexItemMayExecuteTool(p.item)) {
         if (p.type === "item.started") toolUseCount += 1;
         else if (p.type === "item.completed" && toolUseCount === 0) toolUseCount = 1;
@@ -1047,6 +1057,7 @@ export async function runCodex({
           }
           break;
         case "turn.completed":
+          completed = true;
           // Token usage (best-effort across schema variants).
           usage = p.usage || p.turn?.usage || usage;
           raw = p;
@@ -1054,6 +1065,7 @@ export async function runCodex({
         case "turn.failed":
         case "error":
           turnError = codexTurnError(p);
+          usage = p.usage || p.turn?.usage || usage;
           break;
         default: {
           // A collaboration item is stdout's ONLY sign that children exist: multi-agent v2 sends an
@@ -1062,6 +1074,20 @@ export async function runCodex({
           if (codexIsCollabItem(p.item)) announceChildAgents();
           // Best-effort live progress for Slack; final answer content still comes from outFile.
           const progress = progressFromCodexEvent(p, progressState);
+          const phase = explicitPhase || messagePhases.get(messageId);
+          if (progress?.delta || (phase && codexItemKey(p.item?.type) === "agentmessage")) {
+            // Commentary remains live progress, never a final answer. Older CLI releases omit
+            // phase entirely; their text stays compatible once turn.completed proves success.
+            if (phase) hasMessagePhase = true;
+            if (!phase || phase === "final" || phase === "final_answer") {
+              const answer = progressFromCodexEvent(p, answerState);
+              if (answer?.delta) answerText = appendTail(answerText, answer.delta, MAX_RETAINED);
+            }
+            if (phase === "final" || phase === "final_answer") {
+              const answer = progressFromCodexEvent(p, phasedAnswerState);
+              if (answer?.delta) phasedAnswerText = appendTail(phasedAnswerText, answer.delta, MAX_RETAINED);
+            }
+          }
           if (progress?.delta) {
             deltaText = appendTail(deltaText, progress.delta, MAX_RETAINED); // fallback content only — outFile is authoritative
             onDelta?.(progress.delta);
@@ -1146,7 +1172,7 @@ export async function runCodex({
       if (buffer.trim()) handleLine(buffer.trim());
       if (stderrBuffer.trim()) { handleStderrLine(stderrBuffer.trim()); stderrBuffer = ""; }
 
-      // Authoritative final message from the -o file; fall back to accumulated deltas.
+      // The output file is answer content, never proof that the process finished successfully.
       let finalText = "";
       try {
         finalText = (await readFile(outFile, "utf8")).trim();
@@ -1156,117 +1182,25 @@ export async function runCodex({
       await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
       for (const file of removeRunSecrets()) await rm(file, { force: true }).catch(() => {});
 
-      // A turn that attempted ANY tool, or already streamed text, may have mutated something — it
-      // is never replayed, whatever the provider said. `didWork` is the single proof every failure
-      // path below shares.
-      const didWork = toolUseCount > 0 || Boolean(deltaText.trim());
-      if (timedOut) {
-        // A wedged turn is still worth classifying: the reason it went quiet is usually sitting in
-        // the stderr we buffered. Naming it turns an opaque "no output" into an actionable
-        // failure the orchestrator can fail over on (when nothing ran), instead of a dead end.
-        // `source: "stderr"` — a log, not a verdict: only the explicit limit/auth phrasings count,
-        // never the transient wording, so a wedge that already spent the whole silence budget is
-        // not replayed for another one on the strength of a recovered retry line.
-        const wedgedKind = classifyCodexFailure({ message: stderr, source: "stderr" });
-        const waited = describeSilence(silenceMs || timeoutMs);
-        if (wedgedKind && wedgedKind !== "model_rejected") {
-          return reject(commandError(`${codexProcessFailureMessage(wedgedKind, stderr)} (no output for ${waited})`, {
-            engine: "codex",
-            providerError: true,
-            providerCode: "",
-            providerStatus: null,
-            providerKind: wedgedKind,
-            stderr: stderr.slice(0, 4000),
-            requestedModel: model,
-            replaySafe: !didWork,
-            toolUseCount,
-          }));
-        }
-        const wedgedNote = codexDiagnosticLine(stderr);
-        return reject(commandError(
-          `Codex produced no output for ${waited} — giving up${wedgedNote ? ` (last diagnostic: ${wedgedNote})` : ""}`,
-          { stderr: stderr.slice(0, 4000) },
-        ));
-      }
-      if (signal?.aborted) {
-        return reject(Object.assign(commandError("Codex run was stopped before it finished.", {
-          stderr: stderr.slice(0, 4000),
-          exitCode: code,
-          signal: exitSignal || null,
-        }), { name: "AbortError" }));
-      }
-      // Credential loss caught on stderr mid-run (see handleStderrLine): the process was ended on
-      // purpose, so report the classified failure rather than the exit code that ending produced.
-      if (liveFailure && !finalText) {
-        return reject(commandError(codexProcessFailureMessage(liveFailure.kind, liveFailure.line || stderr), {
-          engine: "codex",
-          providerError: true,
-          providerCode: "",
-          providerStatus: null,
-          providerKind: liveFailure.kind,
-          stderr: stderr.slice(0, 4000),
-          requestedModel: model,
-          replaySafe: !didWork,
-          toolUseCount,
-          exitCode: code,
-          signal: exitSignal || null,
-        }));
-      }
-      if (turnError && !finalText) {
-        const replaySafe = REPLAY_SAFE_KINDS.includes(turnError.details.providerKind) && !didWork;
-        return reject(commandError(turnError.message, {
-          ...turnError.details,
-          stderr: stderr.slice(0, 4000),
-          requestedModel: model,
-          replaySafe,
-          toolUseCount,
-        }));
-      }
-      if ((code !== 0 || exitSignal) && !finalText) {
-        // Some Codex builds print the limit/auth notice on stderr and exit nonzero WITHOUT emitting
-        // a JSON error event. Classify that too, so the same actionable message and failover path
-        // apply instead of an opaque "Codex exited with code 1". Same `source: "stderr"` rule as
-        // the wedge above: an unexplained exit whose log merely mentions a timeout or a reset is
-        // an ordinary process failure, not a provider outage to replay.
-        const kind = classifyCodexFailure({ message: stderr, source: "stderr" });
-        if (kind && kind !== "model_rejected") {
-          return reject(commandError(codexProcessFailureMessage(kind, stderr), {
-            engine: "codex",
-            providerError: true,
-            providerCode: "",
-            providerStatus: null,
-            providerKind: kind,
-            stderr: stderr.slice(0, 4000),
-            requestedModel: model,
-            replaySafe: !didWork,
-            toolUseCount,
-            exitCode: code,
-            signal: exitSignal || null,
-          }));
-        }
-        return reject(commandError(processFailureMessage("Codex", { code, signal: exitSignal, diagnostic: stderr }), {
-          stderr: stderr.slice(0, 4000),
-          exitCode: code,
-          signal: exitSignal || null,
-          engine: "codex",
-          runtime: runtime.backend,
-          processEnded: true,
-        }));
-      }
-
+      // Failed turns often have no terminal usage event. Inspect their rollouts through the same
+      // runtime reader as successful turns before choosing the outcome, including child spend.
       let accounting;
+      let terminalUsage = usage || {};
       try {
+        // The reducer compares request rows with a cumulative counter. A failed CLI may omit
+        // that counter from stdout; its latest rollout snapshot supplies the same evidence.
+        if (!usage) terminalUsage = (await usageReader.snapshot(resolvedSessionId)).total || {};
         accounting = await usageReader.root({
           sessionId: resolvedSessionId,
           snapshot: usageSnapshot,
-          terminalUsage: usage || {},
+          terminalUsage,
           configuredModel: model,
           startedAtMs: accountingStartedAt,
         });
       } catch {
         warnInspection();
         accounting = {
-          usage: subtractCodexTokenUsage(usage || {}, usageSnapshot.total || {}),
+          usage: subtractCodexTokenUsage(terminalUsage, usageSnapshot.total || {}),
           requests: [],
           exactRequests: false,
           model: model || usageSnapshot.model || "",
@@ -1281,6 +1215,144 @@ export async function runCodex({
         startedAtMs: accountingStartedAt,
         endedAtMs: accountingEndedAt,
       }).catch(() => { warnInspection(); return []; });
+      // A turn that attempted ANY tool, or already streamed text, may have mutated something — it
+      // is never replayed, whatever the provider said. `didWork` is the single proof every failure
+      // path below shares.
+      const didWork = toolUseCount > 0 || Boolean(deltaText.trim()) || Boolean(finalText);
+      const failureDetails = {
+        engine: "codex",
+        partialContent: finalText || deltaText,
+        incompleteTurn: true,
+        sessionId: resolvedSessionId,
+        usage: accounting.usage,
+        result: {
+          content: finalText || deltaText,
+          sessionId: resolvedSessionId,
+          usage: accounting.usage,
+          usageRequests: accounting.requests,
+          usageAccounting: { root: accounting, children },
+          runtimeModel: accounting.model || model || "",
+          costUSD: null,
+          durationMs: Date.now() - startedAt,
+          toolUseCount,
+          raw,
+          engine: "codex",
+        },
+        durationMs: Date.now() - startedAt,
+        toolUseCount,
+        replaySafe: false,
+        exitCode: code,
+        signal: exitSignal || null,
+      };
+      if (timedOut) {
+        // A wedged turn is still worth classifying: the reason it went quiet is usually sitting in
+        // the stderr we buffered. Naming it turns an opaque "no output" into an actionable
+        // failure the orchestrator can fail over on (when nothing ran), instead of a dead end.
+        // `source: "stderr"` — a log, not a verdict: only the explicit limit/auth phrasings count,
+        // never the transient wording, so a wedge that already spent the whole silence budget is
+        // not replayed for another one on the strength of a recovered retry line.
+        const wedgedKind = classifyCodexFailure({ message: stderr, source: "stderr" });
+        const waited = describeSilence(silenceMs || timeoutMs);
+        if (wedgedKind && wedgedKind !== "model_rejected") {
+          return reject(commandError(`${codexProcessFailureMessage(wedgedKind, stderr)} (no output for ${waited})`, {
+            ...failureDetails,
+            engine: "codex",
+            providerError: true,
+            providerCode: "",
+            providerStatus: null,
+            providerKind: wedgedKind,
+            stderr: stderr.slice(0, 4000),
+            requestedModel: model,
+            replaySafe: !didWork,
+            toolUseCount,
+          }));
+        }
+        const wedgedNote = codexDiagnosticLine(stderr);
+        return reject(commandError(
+          `Codex produced no output for ${waited} — giving up${wedgedNote ? ` (last diagnostic: ${wedgedNote})` : ""}`,
+          { ...failureDetails, stderr: stderr.slice(0, 4000) },
+        ));
+      }
+      if (signal?.aborted) {
+        return reject(Object.assign(commandError("Codex run was stopped before it finished.", {
+          ...failureDetails,
+          stderr: stderr.slice(0, 4000),
+          exitCode: code,
+          signal: exitSignal || null,
+        }), { name: "AbortError" }));
+      }
+      // Credential loss caught on stderr mid-run (see handleStderrLine): the process was ended on
+      // purpose, so report the classified failure rather than the exit code that ending produced.
+      if (liveFailure) {
+        return reject(commandError(codexProcessFailureMessage(liveFailure.kind, liveFailure.line || stderr), {
+          ...failureDetails,
+          engine: "codex",
+          providerError: true,
+          providerCode: "",
+          providerStatus: null,
+          providerKind: liveFailure.kind,
+          stderr: stderr.slice(0, 4000),
+          requestedModel: model,
+          replaySafe: !didWork,
+          toolUseCount,
+          exitCode: code,
+          signal: exitSignal || null,
+        }));
+      }
+      if (turnError) {
+        const replaySafe = REPLAY_SAFE_KINDS.includes(turnError.details.providerKind) && !didWork;
+        return reject(commandError(turnError.message, {
+          ...failureDetails,
+          ...turnError.details,
+          stderr: stderr.slice(0, 4000),
+          requestedModel: model,
+          replaySafe,
+          toolUseCount,
+        }));
+      }
+      if (code !== 0 || exitSignal) {
+        // Some Codex builds print the limit/auth notice on stderr and exit nonzero WITHOUT emitting
+        // a JSON error event. Classify that too, so the same actionable message and failover path
+        // apply instead of an opaque "Codex exited with code 1". Same `source: "stderr"` rule as
+        // the wedge above: an unexplained exit whose log merely mentions a timeout or a reset is
+        // an ordinary process failure, not a provider outage to replay.
+        const kind = classifyCodexFailure({ message: stderr, source: "stderr" });
+        if (kind && kind !== "model_rejected") {
+          return reject(commandError(codexProcessFailureMessage(kind, stderr), {
+            ...failureDetails,
+            engine: "codex",
+            providerError: true,
+            providerCode: "",
+            providerStatus: null,
+            providerKind: kind,
+            stderr: stderr.slice(0, 4000),
+            requestedModel: model,
+            replaySafe: !didWork,
+            toolUseCount,
+            exitCode: code,
+            signal: exitSignal || null,
+          }));
+        }
+        return reject(commandError(processFailureMessage("Codex", { code, signal: exitSignal, diagnostic: stderr }), {
+          ...failureDetails,
+          stderr: stderr.slice(0, 4000),
+          exitCode: code,
+          signal: exitSignal || null,
+          engine: "codex",
+          runtime: runtime.backend,
+          processEnded: true,
+        }));
+      }
+
+      if (!completed) {
+        return reject(commandError("Codex stopped before reporting that the turn completed.", {
+          ...failureDetails,
+          stderr: stderr.slice(0, 4000),
+          runtime: runtime.backend,
+          processEnded: true,
+        }));
+      }
+
       // Let any in-flight live announcement land FIRST. A "running" row that arrived after the
       // terminal one below would reopen a child that has already finished.
       await childScan;
@@ -1304,7 +1376,7 @@ export async function runCodex({
       }
 
       resolve({
-        content: finalText || deltaText || "",
+        content: hasMessagePhase ? (phasedAnswerText ? finalText || phasedAnswerText : "") : (finalText || answerText || ""),
         sessionId: resolvedSessionId,
         usage: accounting.usage,
         usageRequests: accounting.requests,

@@ -193,7 +193,7 @@ test("a Claude thread inside a Codex-default channel still receives the relayed 
 
 test("ambiguous hard kills and explicit Stop never auto-continue", () => {
   for (const details of [
-    { exitCode: 137 }, { signal: "SIGKILL" }, { explicitStop: true },
+    { exitCode: 137 }, { signal: "SIGKILL" }, { explicitStop: true }, { incompleteTurn: true },
   ]) {
     assert.equal(runDeathRecovery({ message: "Claude session ended", details: { engine: "claude", processEnded: true, ...details } }), null);
     assert.equal(runDeathRecovery({ message: "session is dead", details }), null);

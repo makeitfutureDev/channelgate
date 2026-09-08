@@ -12,6 +12,8 @@
 import { startSlack } from "./app.js";
 
 export function createSlackManager({ start = startSlack } = {}) {
+  const connectedListeners = new Set();
+  let detachSocket = () => {};
   let current = null; // { app, botUserId, user, team, teamId }
   let status = "disconnected"; // disconnected | connecting | connected | error
   let error = null;
@@ -33,6 +35,13 @@ export function createSlackManager({ start = startSlack } = {}) {
     return run;
   }
 
+  function notifyConnected() {
+    for (const listener of connectedListeners) {
+      try { Promise.resolve(listener()).catch((err) => console.error("[slack] reconnect listener failed:", err.message)); }
+      catch (err) { console.error("[slack] reconnect listener failed:", err.message); }
+    }
+  }
+
   async function stopApp(app) {
     if (!app) return;
     try {
@@ -46,6 +55,7 @@ export function createSlackManager({ start = startSlack } = {}) {
   // idempotent and can only ever leave LESS running, never an orphan.
   function disconnect() {
     return transition(async () => {
+      detachSocket();
       const app = current?.app;
       current = null;
       status = "disconnected";
@@ -63,6 +73,7 @@ export function createSlackManager({ start = startSlack } = {}) {
       // start an app it would immediately have to tear down again. That transition also owns the
       // teardown of whatever is currently live, so leave state untouched.
       if (gen !== generation) return snapshot();
+      detachSocket();
       const previous = current?.app;
       current = null;
       status = "connecting";
@@ -79,6 +90,11 @@ export function createSlackManager({ start = startSlack } = {}) {
         }
         current = started;
         status = "connected";
+        const socket = started.app?.receiver?.client;
+        const reconnected = () => { if (current === started) notifyConnected(); };
+        socket?.on?.("connected", reconnected);
+        detachSocket = () => socket?.off?.("connected", reconnected);
+        notifyConnected();
       } catch (err) {
         console.error("[slack] connect failed:", err.message);
         if (gen === generation) {
@@ -107,5 +123,10 @@ export function createSlackManager({ start = startSlack } = {}) {
     return current?.app?.client ?? null;
   }
 
-  return { connect, disconnect, snapshot, getClient };
+  function onConnected(listener) {
+    connectedListeners.add(listener);
+    return () => connectedListeners.delete(listener);
+  }
+
+  return { connect, disconnect, snapshot, getClient, onConnected };
 }

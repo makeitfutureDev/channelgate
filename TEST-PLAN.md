@@ -1,5 +1,58 @@
 # ChannelGate — Test Plan
 
+## Incomplete turns and restart recovery
+
+- [x] Automated: `node --test test/codex-completion.test.js test/claude-completion.test.js
+  test/answerless-turn.test.js test/recovery-queue.test.js test/runtime-lifecycle.test.js
+  test/duplicate-delivery.test.js test/durable-delivery.test.js test/slack-manager.test.js`.
+  Fake runtimes must reject or explicitly mark terminal failure despite partial text, preserve
+  accounting/diagnostics, distinguish commentary from final output, and reject a missing terminal
+  result. Gateway normalization must report failure before empty-session healing can replay work.
+  Recovery fixtures reserve all original turns before connection, hold newer turns behind them,
+  surface each waiting thread, retain FIFO within a thread, suppress explicitly stopped/steered
+  work, and resume once on reconnect without duplicate delivery.
+- [ ] **REC-301 — Failed turn with partial output.** Run separately for cold Claude, warm Claude,
+  and Codex in disposable Worker test conversations using a maintainer-controlled fake runtime
+  selected only by an isolated test daemon (never alter a live provider binary). Prompt:
+  “Write a progress sentence, complete the fixture tool, then finish with REC301-DONE.” Fixture:
+  emit a progress sentence and one tool result, then Claude `result` with
+  `subtype:error_during_execution,is_error:true` or Codex `turn.failed` plus a nonempty `-o`
+  output file and exit 1. Expected: failure notice, no completed task/DONE marker, partial text
+  identified as incomplete, one usage entry for the spent tokens, no automatic second tool write.
+  Capture Slack transcript, fixture spawn count, ledger row, and structured error; all must agree.
+- [ ] **REC-302 — Missing terminal completion.** Run for cold Claude and Codex using the same
+  isolated-daemon fake runtime. Prompt: “Complete the fixture and return REC302-DONE.” Fixture:
+  stream only “I will finish the checks now.” then exit 0 without Claude `result` / Codex
+  `turn.completed`. Codex variant sets agent-message phase `commentary`. Expected: explicit
+  incomplete-turn failure, no completed indicator or successful delivery, no automatic replay.
+  Control fixture emits proper successful terminal output and REC302-DONE; require exactly one
+  successful answer. Retain events, output, and spawn counts for both failure and control.
+- [ ] **REC-303 — Visible multi-thread restart recovery.** Run a separate disposable-daemon trial
+  pinned to each real engine, Claude and Codex. Start four threads with “Wait for the fixture
+  release file, then write your unique REC303 marker once.” Use four distinct marker paths in
+  that daemon's test workspace. Restart only that isolated daemon while turns are active; hold
+  the first fixture's release file absent while releasing the other three. Set the global limit
+  to two. Expected: all four threads show recovery/waiting progress before the first finishes;
+  the configured engine admission limit is respected; other threads progress; each marker and
+  final answer appears once. Inspect queue/status events and usage rather than relying on wording.
+- [ ] **REC-304 — Manual continuation and stop during recovery.** Repeat for Claude and Codex
+  in the REC-303 isolated fixture. Before reconnecting Slack, verify the old turn owns its thread;
+  on reconnect send “continue” and choose Queue through the ordinary busy-thread card. Expected:
+  original recovery executes first, newer request second, never older replay after the newer
+  completed request. Repeat choosing Steer; only the successor may complete the task. Repeat with
+  Stop before replay starts; require no engine spawn for the cancelled request and no later replay
+  after a second restart. Record per-thread order, durable rows, and unique marker counts.
+- [ ] **REC-305 — Slack reconnect without daemon restart.** Repeat for Claude and Codex using an
+  isolated daemon with a persisted interrupted turn. Start with Slack connection deliberately
+  unavailable, then restore its test connection without restarting the daemon. Expected: the
+  original task starts once, stays under its original author/session policy, and delivers once.
+  Send two consecutive connected notifications while it runs and another after completion;
+  require no duplicate spawn or delivery. Repeat Stop while disconnected and require no replay.
+
+Live cases above are pending until their observed evidence is recorded; fake-runtime unit tests
+are not live engine acceptance. Shared recovery logic is exercised for both engines because
+session resumption and steering can change the outcome.
+
 ## Channel credential discovery
 
 - [x] Automated: `node --test test/channel-credentials.test.js test/channel-credential-guide.test.js

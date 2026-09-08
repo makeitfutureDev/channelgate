@@ -1,5 +1,13 @@
 # ChannelGate — Features
 
+- **Truthful completion and visible restart recovery:** explicit Claude/Codex execution failures
+  remain failures even after partial output; missing terminal completion cannot masquerade as a
+  finished answer. Partial diagnostics and spent usage are retained, and ambiguous failed work is
+  not automatically replayed. Restart survivors reserve their thread order before Slack connects,
+  receive progress together, and use the normal global run limit. New messages use the existing
+  queue/steer controls; reconnecting Slack retries pending recovery without another daemon restart.
+  → TEST-PLAN: Incomplete turns and restart recovery.
+
 - **Discoverable channel credentials:** each non-Clean conversation or background-agent attempt receives a current,
   sorted inventory of channel environment variable names actually supplied to that attempt,
   including resumed turns and explicit empty inventories after removal. Values and suffixes

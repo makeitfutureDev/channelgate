@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Reject incomplete engine turns even when partial text exists; preserve failure diagnostics and
+  usage. Reserve restart recovery before Slack reconnects, show each recovering thread promptly,
+  and retry pending recoveries on reconnection without requiring another daemon restart.
+
 - Fix one-time automation edits shifting by the browser/daemon timezone difference and potentially firing future tasks immediately.
 
 ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original

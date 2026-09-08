@@ -14,6 +14,7 @@ import {
 } from "../config/store.js";
 import { ensureChannelFolder } from "./folders.js";
 import { memorySnapshotPrefix } from "./channel-memory.js";
+import { recordUsage } from "./usage.js";
 import { createSkillUsageRecorder } from "./skills/usage.js";
 import { withTemplateSkills } from "./skills/templates.js";
 import { resolveSession, resetSession, getSession, saveSession, sessionGeneration, dropMintedSession } from "./sessions.js";
@@ -276,6 +277,22 @@ export function isEmptyResult(result) {
   const inT = (u.input_tokens ?? u.prompt_tokens ?? 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
   const outT = u.output_tokens ?? u.completion_tokens ?? 0;
   return inT === 0 && outT === 0;
+}
+
+// A harness verdict is authoritative even after text or tools. Keep the partial result for
+// diagnostics/accounting, but never let delivery mark it complete or replay unknown side effects.
+export function assertCompletedTurn(result, engine, sessionId = "") {
+  if (!result || result.interrupted || (!result.engineError && result.completed !== false)) return result;
+  const endReason = String(result.endReason || "incomplete_turn");
+  const error = new Error(`${engineLabel(engine)} did not finish this turn (${endReason}). Reply here to continue in the same session and verify what already ran.`);
+  error.details = {
+    incompleteTurn: true, replaySafe: false, engine, endReason,
+    partialContent: String(result.content || ""), usage: result.usage ?? null,
+    costUSD: result.costUSD ?? null, durationMs: result.durationMs ?? null,
+    sessionId: result.sessionId || sessionId, toolUseCount: result.toolUseCount || 0,
+    result: { ...result, engine, sessionId: result.sessionId || sessionId },
+  };
+  throw error;
 }
 
 // A turn that DID work but ended with no final message: tool calls ran, tokens were spent, and
@@ -1628,11 +1645,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         fallbackModel = defaultModel;
         fallbackModelNote = gatewayDefaultModelNote(rejectedModel, defaultModel);
       } catch (defaultModelError) {
+        if (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe) throw defaultModelError;
         console.warn(`[gateway] gateway-default fallback model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
         err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
         throw err;
       }
     }
+    assertCompletedTurn(cx, fallbackEngine, prior || "");
     if (cx.sessionId) await saveSession(entry.slug, fbKey, cx.sessionId, fallbackEngine, sessionGen, runtimeStamp);
     cx = transientRetryNote(fallbackEngine, cx);
     // `fellBack`/`fallbackFrom` are the engine-agnostic truth; `fellBackToCodex` is the original
@@ -1801,6 +1820,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
             content: `${gatewayDefaultModelNote(rejectedModel, defaultModel)}${result.content || ""}`,
           };
         } catch (defaultModelError) {
+          if (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe) throw defaultModelError;
           console.warn(`[gateway] gateway-default model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
           err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
           throw err;
@@ -1846,6 +1866,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
                   : "it hit a usage limit before any tool call",
             );
           } catch (fallbackError) {
+            if (fallbackError?.details?.incompleteTurn) throw fallbackError;
             // Both harnesses failed. Keep the original error authoritative (its details drive every
             // consumer), but say the whole story in one sentence, and — when a person is watching —
             // hand it back as a choice (try either harness again) instead of a dead end.
@@ -1872,6 +1893,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       }
     }
 
+    assertCompletedTurn(result, engine, sid);
+
     // A RESUME that returns an empty result (0 tokens, no output) is a broken session state — most
     // often a turn SIGKILLed mid-write by a stop/restart, leaving a dangling tool_use in the
     // transcript. Functionally identical to isSessionNotFound: the old conversation is unusable.
@@ -1893,6 +1916,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       const healed = await healedPrompt(); // once — see the session-not-found heal above
       result = await withTransientRetry(engine, () => runOnce(sid, fresh, healed), { beforeRetry: remintFreshSession });
     }
+
+    assertCompletedTurn(result, engine, sid);
 
     // Self-minting engines (Codex, OpenCode) return their own thread_id (result.sessionId) —
     // persist it over the locally-minted UUID so the next turn's resume actually finds the
@@ -1926,6 +1951,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       try {
         return await runFallbackEngine(`⚠️ _${engineLabel(engine)} hit its usage limit — answered with ${engineLabel(fallbackEngine)}._\n\n`);
       } catch (e) {
+        if (e?.details?.incompleteTurn) throw e;
         console.warn(`[gateway] ${fallbackEngine} fallback failed (${e.message}) — returning the limit notice`);
         // fall through to return the limited engine's own notice
       }
@@ -1933,8 +1959,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
 
     // Answerless turn: real work, no reply. Say so in the thread and record it, instead of letting
     // the delivery layer render a bare "(empty response)" that looks like the model chose silence.
-    // Not an error path: the session is intact and the work is resumable, so the turn is delivered
-    // with the notice as its content (a throw here would also discard the run's footer/usage).
+    // Only clean terminal results reach this notice; explicit harness failures were rejected
+    // above and their usage is retained by the shared error path.
     // Interrupt-steer is excluded — that empty result is one WE asked for.
     if (!result.interrupted && isAnswerlessResult(result)) {
       await logEvent("run_answerless", {
@@ -2001,6 +2027,16 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       if (typeof error.message === "string") error.message = redactSecretValues(error.message, outputSecrets);
       if (typeof error.stack === "string") error.stack = redactSecretValues(error.stack, outputSecrets);
       if (error.details) error.details = redactSecretFields(error.details, outputSecrets);
+    }
+    // Failed terminal results never reach callers' success-only usage bankers. Bank once here
+    // for every origin, after redaction; downstream failure handlers can observe usageRecorded.
+    if (error?.details?.incompleteTurn && !error.details.usageRecorded) {
+      const details = error.details;
+      const failedEngine = details.engine || engine;
+      const failedResult = details.result || { usage: details.usage, costUSD: details.costUSD, durationMs: details.durationMs, engine: failedEngine };
+      const taskKind = origin === "schedule" ? "scheduled" : origin === "background_agent" ? "background-agent" : "interactive";
+      await recordUsage({ channelId, slug: entry.slug, authorId, engine: failedEngine, model: failedResult.model || (failedEngine === engine ? model : getDefaultModel(failedEngine)), taskKind, result: failedResult });
+      details.usageRecorded = true;
     }
     throw error;
   } finally {
