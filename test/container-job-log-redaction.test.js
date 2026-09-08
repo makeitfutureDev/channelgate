@@ -62,6 +62,18 @@ test("log is redacted while detached work outlives its launcher and keeps a reco
   assert.equal(launched.status, 0);
   const pid = Number(launched.stdout.trim());
   assert.ok(Number.isInteger(pid) && pid > 1);
+  let exitedNaturally = false;
+  const wrapperRunning = () => {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      // Linux can retain an orphan as a zombie until its reaper runs. Its exit/coverage flush
+      // is already complete then; kill(pid, 0) would incorrectly keep waiting for that zombie.
+      return !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0]);
+    } catch (err) {
+      if (err.code === "ENOENT") return false;
+      throw err;
+    }
+  };
   try {
     for (let i = 0; i < 150 && !existsSync(ready); i++) await delay(10);
     assert.ok(existsSync(ready), "detached command starts after the launcher exits");
@@ -83,7 +95,15 @@ test("log is redacted while detached work outlives its launcher and keeps a reco
     assert.equal(parseContainerJobExit(final), 23);
     assert.equal(final.includes(secret), false);
     assert.match(stripContainerJobExit(final), /complete$/);
+    // The terminal log marker precedes the Node wrapper's own exit. Killing it at that marker
+    // can interrupt V8's coverage-file flush and fail the surrounding suite with an empty file.
+    const exitDeadline = Date.now() + 5000;
+    while (wrapperRunning() && Date.now() < exitDeadline) await delay(10);
+    assert.equal(wrapperRunning(), false, "the detached wrapper must exit naturally after its terminal marker");
+    exitedNaturally = true;
   } finally {
-    try { process.kill(-pid, "SIGKILL"); } catch (err) { if (err.code !== "ESRCH") throw err; }
+    if (!exitedNaturally) {
+      try { process.kill(-pid, "SIGKILL"); } catch (err) { if (err.code !== "ESRCH") throw err; }
+    }
   }
 });

@@ -87,6 +87,7 @@ async function withGateway(options, fn) {
 }
 
 const resultText = (r) => r.content?.map((i) => i.text || "").join("\n") || "";
+const approvalReceipt = /Human approval was received before this tool executed/;
 
 test("both engine contexts save exact instruction updates and return pending without writing", async () => {
   for (const engine of ["claude", "codex"]) {
@@ -99,6 +100,7 @@ test("both engine contexts save exact instruction updates and return pending wit
       const result = await client.callTool({ name: "update_channel_instructions", arguments: { text: `${" ".repeat(3000)}${rule}\n` } });
       assert.match(resultText(result), /no deadline.*survives gateway restarts/);
       assert.match(resultText(result), /Nothing has changed yet/);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
     });
     assert.equal(approvalRequests.length, 1);
     assert.equal(existsSync(file) ? readFileSync(file, "utf8") : null, before);
@@ -146,6 +148,7 @@ test("a denied approval blocks the change and carries the human-readable card", 
   await withGateway({}, async (client) => {
     const result = await client.callTool({ name: "set_channel_bash", arguments: { enabled: true } });
     assert.match(resultText(result), /not approved/i);
+    assert.doesNotMatch(resultText(result), approvalReceipt);
     assert.match(resultText(result), /Denied by <@U_CTRL_ADMIN>/);
   });
   assert.equal((await getChannelMeta(SLUG))?.allowBash, false, "the denied change must not persist");
@@ -166,6 +169,7 @@ test("an approved click lets the control-plane change through", async () => {
   await withGateway({}, async (client) => {
     const result = await client.callTool({ name: "set_channel_bash", arguments: { enabled: true } });
     assert.match(resultText(result), /Bash \+ file edits ON/i);
+    assert.match(resultText(result), approvalReceipt);
   });
   assert.equal((await getChannelMeta(SLUG))?.allowBash, true);
   assert.equal(approvalRequests.length, 1);
@@ -194,6 +198,7 @@ test("token tools are gated and the approval card never carries the token value"
   await withGateway({ author: "U_CTRL_MEMBER" }, async (client) => {
     const result = await client.callTool({ name: "set_my_composio_token", arguments: { token: "sk-super-secret-value" } });
     assert.match(resultText(result), /not approved/i);
+    assert.doesNotMatch(resultText(result), approvalReceipt);
   });
   assert.equal(approvalRequests.length, 1);
   assert.doesNotMatch(JSON.stringify(approvalRequests[0].body), /sk-super-secret-value/);
@@ -204,6 +209,7 @@ test("an unreachable approval endpoint fails closed", async () => {
   await withGateway({ port: 1 }, async (client) => {
     const result = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
     assert.match(resultText(result), /not approved/i);
+    assert.doesNotMatch(resultText(result), approvalReceipt);
   });
   assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
 });
@@ -219,6 +225,7 @@ test("update_gateway skips the extra card in Admin/Auto mode but stays admin-onl
     await withGateway({ engine: "claude" }, async (client) => {
       const result = await client.callTool({ name: "update_gateway", arguments: {} });
       assert.match(resultText(result), /not approved/i);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
     });
     assert.equal(approvalRequests.length, 1, "read mode keeps the explicit approval gate");
 
@@ -227,6 +234,7 @@ test("update_gateway skips the extra card in Admin/Auto mode but stays admin-onl
     await withGateway({ engine: "claude" }, async (client) => {
       const result = await client.callTool({ name: "update_gateway", arguments: {} });
       assert.match(resultText(result), /already active/i);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
     });
     assert.equal(approvalRequests.length, 0, "Admin mode starts without the extra card");
 
@@ -235,6 +243,7 @@ test("update_gateway skips the extra card in Admin/Auto mode but stays admin-onl
     await withGateway({ engine: "codex" }, async (client) => {
       const result = await client.callTool({ name: "update_gateway", arguments: {} });
       assert.match(resultText(result), /already active/i);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
     });
     assert.equal(approvalRequests.length, 0, "Auto mode starts without the extra card");
 
@@ -311,6 +320,7 @@ test("read-only tools and memory writes in default or custom workdirs never hit 
       await client.callTool({ name: "get_channel_workdir", arguments: {} });
       const result = await client.callTool({ name: "update_channel_memory", arguments: { action: "add", text: "- default-workdir fact" } });
       assert.match(resultText(result), /Memory updated/i);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
       assert.match(resultText(result), new RegExp(DEFAULT_WORKDIR.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       assert.doesNotMatch(resultText(result), new RegExp(ISOLATED_HOME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     });
@@ -319,6 +329,7 @@ test("read-only tools and memory writes in default or custom workdirs never hit 
     await withGateway({}, async (client) => {
       const result = await client.callTool({ name: "update_channel_memory", arguments: { action: "add", text: "- custom-workdir fact" } });
       assert.match(resultText(result), /Memory updated/i);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
       assert.match(resultText(result), new RegExp(CUSTOM_WORKDIR.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     });
   } finally {
@@ -454,5 +465,90 @@ test("approved creation matches preview semantics and invalid personal channel s
       assert.match(resultText(result), /personal skill cannot be scoped to a channel/);
       assert.equal(getSkill(invalid), null);
     });
+  }
+});
+
+
+test("both engine contexts receive an approval receipt for actual skill creation, update and deletion", async () => {
+  const { getSkill } = await import("../src/gateway/skills/catalog.js");
+  for (const engine of ["claude", "codex"]) {
+    approvalRequests.length = 0;
+    approvalResponse = { allow: true, reason: "private decision context must not be repeated", decidedBy: "PRIVATE_ACTOR" };
+    await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+      const slug = `approval-receipt-${engine}`;
+      for (const [name, args, expected] of [
+        ["create_skill", { slug, files: creationFiles(slug), personal: true }, /Created/],
+        ["update_skill", { skill: slug, files: [{ path: "references/marker.md", content: "approved update fixture" }] }, /now revision 2/],
+        ["delete_skill", { skill: slug }, /Removed/],
+      ]) {
+        const result = await client.callTool({ name, arguments: args });
+        assert.match(resultText(result), expected);
+        assert.match(resultText(result), approvalReceipt);
+        assert.match(resultText(result), /does not mean approval was bypassed/);
+        assert.doesNotMatch(resultText(result), /private decision context|PRIVATE_ACTOR/);
+        assert.notEqual(result.isError, true);
+      }
+      assert.equal(getSkill(slug).deleted, true);
+      assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.approvalType, r.body.requiredTier]), [
+        ["create_skill", "agent", ""], ["update_skill", "agent", ""], ["delete_skill", "agent", ""],
+      ]);
+      const rejected = await client.callTool({ name: "delete_skill", arguments: { skill: slug } });
+      assert.match(resultText(rejected), /No catalog skill/);
+      assert.match(resultText(rejected), approvalReceipt, "approval is distinct from the handler's refusal");
+      assert.equal(rejected.content[0].text, `No catalog skill named "${slug}".`);
+      approvalRequests.length = 0;
+      const open = await client.callTool({ name: "remove_my_skills", arguments: { slugs: [slug] } });
+      assert.doesNotMatch(resultText(open), approvalReceipt);
+      assert.equal(approvalRequests.length, 0, "own grant cleanup remains ungated");
+    });
+  }
+});
+
+test("a durable instruction approval never reports a live handler as approved even if IPC returns allow", async () => {
+  approvalResponse = { allow: true };
+  const file = path.join(DEFAULT_WORKDIR, "CLAUDE.md");
+  const before = existsSync(file) ? readFileSync(file, "utf8") : null;
+  await withGateway({}, async client => {
+    const result = await client.callTool({ name: "update_channel_instructions", arguments: { text: "- Must stay unapplied." } });
+    assert.match(resultText(result), /Couldn't save the instruction approval/);
+    assert.doesNotMatch(resultText(result), approvalReceipt);
+  });
+  assert.equal(existsSync(file) ? readFileSync(file, "utf8") : null, before);
+});
+
+test("the approved-result wrapper preserves mixed content, structured data, metadata and error status", async () => {
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { createGatewayMcpServer, ctxFromClaims } = await import("../src/mcp/gateway-server.js");
+  const ctx = ctxFromClaims({ channelId: CHANNEL, slug: SLUG, authorId: "U_CTRL_ADMIN", threadKey: "receipt-contract", principalTrusted: true }, {
+    toolset: "memory-review", daemon: { available: () => true, call: async () => ({ allow: true }) },
+  });
+  const server = createGatewayMcpServer(ctx);
+  const original = Object.freeze({
+    isError: true,
+    content: Object.freeze([
+      Object.freeze({ type: "text", text: "The approved operation failed; no change was made.", annotations: { audience: ["user"] } }),
+      Object.freeze({ type: "image", data: "aGVsbG8=", mimeType: "image/png" }),
+    ]),
+    structuredContent: Object.freeze({ changed: false, diagnostic: "fixture failure" }),
+    _meta: Object.freeze({ trace: "receipt-test" }),
+  });
+  server.registerTool("set_channel_bash", {}, async () => original);
+  const client = new Client({ name: "receipt-contract", version: "1" }, { capabilities: {} });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "set_channel_bash", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.deepEqual(result.content.slice(0, 2), original.content);
+    assert.deepEqual(result.structuredContent, original.structuredContent);
+    assert.deepEqual(result._meta, original._meta);
+    assert.equal(result.content.length, 3);
+    assert.match(result.content[2].text, approvalReceipt);
+    assert.match(result.content[2].text, /does not establish whether the requested change succeeded/);
+    assert.equal(original.content.length, 2, "the handler result is not mutated");
+  } finally {
+    await client.close();
+    await server.close();
   }
 });

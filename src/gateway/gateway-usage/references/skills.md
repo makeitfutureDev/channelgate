@@ -43,6 +43,12 @@ and wait; don't retry a refusal.
 
 ## Authoring (anyone approved to use the channel)
 
+`create_skill`, `update_skill` and `delete_skill` wait for human approval even in Auto or Admin
+mode. The gateway shows and resolves that approval outside your model transcript. A completed
+tool returns an approval receipt plus its separate operation outcome; report those facts.
+Not seeing the card in your transcript does not mean it was absent or bypassed. Do not save an
+inferred bypass as channel memory. Approval alone does not mean the requested change succeeded.
+
 - `create_skill` — add a new skill to the shared catalog from files you pass (`SKILL.md`
   required) and grant it to this channel at once; `personal: true` keeps it private to you. Use
   the `skill-authoring` skill for the frontmatter contract and a description that actually
