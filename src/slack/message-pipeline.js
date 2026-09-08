@@ -47,7 +47,7 @@ import { listConversationMemberIds } from "./members.js";
 import { actionValue as fileActionValue, FILES_ACTION_ID } from "./file-explorer.js";
 import { HELP_TEXT } from "./help.js";
 import { formatAppContextProvenance } from "./app-context.js";
-import { isIgnorable, isPendingCommand, isStopCommand, mentionsBot, parseSlashCommand, SLACK_MENTION_RE, stripMentions } from "./message-normalize.js";
+import { isIgnorable, isPendingCommand, isStopCommand, mentionsBot, parseNextCommand, parseSlashCommand, SLACK_MENTION_RE, stripMentions } from "./message-normalize.js";
 export { isIgnorable, isStopCommand, mentionsBot, parseSlashCommand, stripMentions } from "./message-normalize.js";
 import { claimMessageTrigger, runQueue } from "./message-lifecycle.js";
 export { runQueue } from "./message-lifecycle.js";
@@ -607,7 +607,20 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // Only an authorized trigger may spend Slack read/file API calls. Hydrate it from the exact
     // canonical message so omitted/incomplete attachment fields cannot produce a text-only agent
     // prompt, while keeping the original event as a non-fatal fallback.
-    event = await hydrateSlackMessage(event, client);
+    event = await hydrateSlackMessage(event, client, {
+      includeThreadFiles: async (message) => {
+        const text = stripMentions(message.text, botUserId);
+        const command = parseSlashCommand(text);
+        // Engine-native /compact still receives its normal thread context. Other recognized
+        // controls must not become agent prompts merely because an earlier message shared a file.
+        if (command?.cmd === "compact" && engineSupports(await resolveThreadEngine(entry.slug, event.thread_ts ?? event.ts, meta), "compact")) return true;
+        if (command || isStopCommand(text) || isPendingCommand(text)) return false;
+        // A queued task keeps its attachment context; bare /next needs the usage hint, not an
+        // inferred old file masquerading as the missing task. Explicit current files still win.
+        const next = parseNextCommand(text);
+        return !next || Boolean(next.task);
+      },
+    });
 
     let prompt = stripMentions(event.text, botUserId);
     const files = Array.isArray(event.files) ? event.files : [];
@@ -898,10 +911,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // mutation, then pause an ordinary busy-thread message until its author makes a choice.
     let forceQueue = false;
     {
-      const nm = /^\/next\b[\s:,.;–—-]*([\s\S]*)$/i.exec(prompt.trim());
+      const nm = parseNextCommand(prompt);
       if (nm) {
         forceQueue = true;
-        prompt = nm[1].trim();
+        prompt = nm.task;
         if (!prompt && files.length === 0) {
           await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "Add the task after `/next` — e.g. `/next summarize the thread once you're done`." });
           return;

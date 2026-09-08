@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Keep text-only gateway commands on their control path after thread file sharing, while
+  preserving canonical current attachments and ordinary agent attachment recovery.
+
 - Reject incomplete engine turns even when partial text exists; preserve failure diagnostics and
   usage. Reserve restart recovery before Slack reconnects, show each recovering thread promptly,
   and retry pending recoveries on reconnection without requiring another daemon restart.

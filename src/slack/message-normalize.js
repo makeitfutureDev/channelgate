@@ -27,6 +27,11 @@ export function parseSlashCommand(text) {
   return { cmd, arg: parts.slice(1).join(" ").trim() };
 }
 
+export function parseNextCommand(text) {
+  const match = /^\/next\b[\s:,.;–—-]*([\s\S]*)$/i.exec((text || "").trim());
+  return match ? { task: match[1].trim() } : null;
+}
+
 export function mentionsBot(text, botUserId) {
   if (!text) return false;
   for (const match of text.matchAll(SLACK_MENTION_RE)) if (match[1] === botUserId) return true;
