@@ -106,6 +106,15 @@ Every run remains inside its channel container.
 
 ## Admin access & the container (read this before diagnosing "file not found")
 
+**Verify the actual target before claiming host access.** Parent directories can exist solely
+to hold a permitted nested mount: seeing `/home/management` or a gateway-root-shaped directory
+does not mean its other children are mounted. Test the named database or configuration path
+with metadata-only checks when contents are not requested. A wildcard match elsewhere in the
+container image, such as a system service database or a MIME description named `*.sqlite3.xml`,
+is not evidence that the gateway's database is exposed. Compare the exact target with this
+attempt's resolved mount facts; if its location is unknown, report that uncertainty instead of
+identifying an unrelated file as runtime data. Do not save an unverified access claim as memory.
+
 **Every turn runs inside this channel's container — Admin/Full-access mode included.** By default,
 the host directory mounts are this channel's working folder, clean workspace and artifact folder
 (also backing `/tmp` and `/var/tmp`). The container also has its own home volume (`/home/agent`),
