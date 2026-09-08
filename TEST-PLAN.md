@@ -4573,8 +4573,14 @@ portable fixtures before landing.
   engine process with SIGKILL after the line appears. Require one error and no automatic continue
   or retry; the file remains one line. Audit `run_error` retains engine=claude, runtime=container,
   signal=SIGKILL or exitCode=137, processEnded=true; no invented OOM cause. Send an explicit review
-  request to inspect completed work before continuing. Codex: repeat kill and require no automatic
-  Claude-style continuation (its own structured diagnostics remain covered by runner tests).
+  request to inspect completed work before continuing. Codex: repeat the same append-and-kill
+  fixture, require no automatic continuation, and require engine=codex, runtime=container,
+  signal=SIGKILL or exitCode=137 and processEnded=true in the actual error/audit. A generic exit1
+  must retain the same runtime identity without claiming provider failure or replay safety.
+  Automated counterpart: `test/codex-failover-e2e.test.js` exercises real stub subprocess exits1
+  and137 (including a tool-start event), then checks `runFailureDiagnostics`; the isolated Podman
+  acceptance proves the actual container kill/effect boundary. A synthetic protocol fixture must
+  be labelled as such and cannot establish real provider behavior or native Slack rendering.
 - [ ] **Loop Stop, Claude and Codex:** seed a gateway-owned interval loop in a disposable channel
   (Codex does not need native Cron tools). During an active harmless tick, send “Stop the check loop
   now”; repeat between ticks with “stop the loop”. Require immediate persisted loop deletion,

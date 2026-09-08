@@ -70,6 +70,13 @@ done
 # prompt that carries this sentinel ALONGSIDE another one (a rejection to stream the retry of)
 # would otherwise silence the other.
 case "$*" in *CODEX_STUB_STREAM_TEXT*) stream_text="yes" ;; esac
+case "$*" in
+  *CODEX_STUB_FORCED_STOP_AFTER_TOOL*)
+    printf '%s\n' '{"type":"item.started","item":{"id":"forced-stop-tool","type":"command_execution","command":"prepared fixture effect"}}'
+    printf '%s\n' 'Killed' >&2
+    exit 137
+    ;;
+esac
 if [ "$cancel" = "yes" ]; then
   exec sleep 30
 fi

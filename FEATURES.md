@@ -1213,15 +1213,17 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   paths survive cleanup without leaking grants. Resuming a session that no longer exists (including
   a legacy temporary rollout pathname) silently falls back to a fresh session
   rather than erroring.
-- **Inactivity-based turn watchdog** (Claude + Codex): a turn is never killed for running long —
-  every stdout/progress line re-arms the watchdog, and only `COMMAND_TIMEOUT` (default 10 min) of
-  total SILENCE kills a wedged CLI ("stalled — no output for X minutes"). `sessionKeepalive` applies
-  only BETWEEN turns for engines with warm sessions. → TEST-PLAN: Engines.
-- **Failure auto-recovery**: a recoverable process death (stall kill, crashed warm session) gets ONE
-  automatic resume within the same turn ("continue where you left off" mid-work; the original text
-  when the send never started); boot recovery replays restart-interrupted turns attempt-capped at 2,
-  reconnecting each replay to the same streamed answer/toolbox and temporary live-status controller
-  as a foreground turn instead of staying silent until a whole answer is ready, then gives up loudly;
+- **Inactivity-based turn watchdog** (Claude + Codex): a turn is never killed for running long.
+  `COMMAND_TIMEOUT` controls quiet-process liveness checks and user updates; a live process keeps
+  running until the separate absolute `CG_MAX_SILENCE` budget is exhausted. Stdout is progress;
+  stderr does not reset that silence budget. `sessionKeepalive` applies only BETWEEN turns for
+  engines with warm sessions. → TEST-PLAN: Engines.
+- **Failure recovery preserves uncertain work**: classified replay-safe failures before any tool
+  or streamed answer can use the configured recovery path. An ambiguous process death after work
+  does not automatically continue or replay. Boot recovery distinguishes queued work, interrupted
+  execution with unknown effects, and saved output needing delivery. Ordinary Codex process exits
+  retain engine, container runtime, exit status/signal and `processEnded` in structured diagnostics,
+  without treating a forced stop as proof of an out-of-memory event or authorizing a retry;
   an empty result (0 tokens + no output) is treated as a FAILURE, never posted as "(no output)".
   An ANSWERLESS turn — tools ran and tokens were spent, but the engine produced no text, which is
   how the CLI reports a turn it aborted itself (exit 0, `is_error` result line, error subtype) —
