@@ -857,6 +857,7 @@ export async function runCodex({
   signal = null,
   onDelta = null,
   onEvent = null,
+  onSessionResolved = null,
 }) {
   // Sign-in is checked BEFORE anything is spawned. A logged-out Codex is not reliably a fast
   // failure — depending on build and credential shape it can sit there refreshing or waiting,
@@ -1036,7 +1037,12 @@ export async function runCodex({
       }
       switch (p.type) {
         case "thread.started":
-          if (p.thread_id) resolvedSessionId = p.thread_id;
+          if (p.thread_id) {
+            resolvedSessionId = p.thread_id;
+            // A first turn can be stopped before any result exists. Publish the native id now
+            // so the gateway's Stop/resume controls never retain its provisional UUID.
+            onSessionResolved?.(resolvedSessionId);
+          }
           break;
         case "turn.completed":
           // Token usage (best-effort across schema variants).

@@ -702,7 +702,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   un-mentioned channel message before the stop word is ever read); a **stop emoji reaction** (🛑 `octagonal_sign`, ❌ `x`,
   ✋ `raised_hand`, `no_entry`, …) on any message in the thread; or the **`/stop` slash command** —
   which Slack does **not** allow inside threads, so words/reactions are the in-thread path. All post
-  "🛑 Stopped." with a resume command, and that command names the harness **the stopped thread was
+  "🛑 Stopped." with a resume command. Codex's native thread ID is persisted when the CLI
+  announces it, before the first turn completes, so an interrupted first turn never offers the
+  gateway's provisional UUID as a resume ID. The early notification uses the same clear-generation
+  guard as final session persistence, including fallback sessions. The command names the harness **the stopped thread was
   running on** — resolved per stopped thread (per-thread override → the engine that minted the
   thread's live session → the channel's engine → the gateway default), because a session id is
   engine-specific and a card built from the gateway default alone hands a Claude session a Codex

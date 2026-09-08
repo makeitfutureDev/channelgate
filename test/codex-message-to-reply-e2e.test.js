@@ -18,7 +18,8 @@ const directTarget = () => fakeTarget(fakeBackend, "codex-e2e-direct", { platfor
 
 const { saveSettings } = await import("../src/config/settings.js");
 saveSettings({ engine: "codex", composioMode: "personal" });
-const { setUser } = await import("../src/config/store.js");
+const { setUser, getChannelEntry } = await import("../src/config/store.js");
+const { getSession, clearSession } = await import("../src/gateway/sessions.js");
 const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
 const { runCodex } = await import("../src/engines/codex.js");
 
@@ -28,6 +29,7 @@ function fakeSlack() {
   const ok = async () => ({ ok: true });
   const client = {
     posted,
+    streamed: "",
     chat: { postMessage: async (m) => { posted.push(m); return { ok: true, ts: `bot.${++seq}` }; }, update: ok, postEphemeral: ok },
     users: { info: async ({ user }) => ({ user: { id: user, real_name: "Codex E2E" } }), list: async () => ({ members: [], response_metadata: {} }) },
     conversations: { history: async () => ({ messages: [] }), replies: async () => ({ messages: [], response_metadata: {} }) },
@@ -35,7 +37,7 @@ function fakeSlack() {
   };
   client.chatStream = ({ channel, thread_ts }) => {
     let streamed = "";
-    return { ts: `stream.${++seq}`, append: async ({ markdown_text = "" }) => { streamed += markdown_text; }, stop: async ({ markdown_text = "" } = {}) => { posted.push({ channel, thread_ts, text: streamed + markdown_text }); return { ok: true }; } };
+    return { ts: `stream.${++seq}`, append: async ({ markdown_text = "" }) => { streamed += markdown_text; client.streamed += markdown_text; }, stop: async ({ markdown_text = "" } = {}) => { posted.push({ channel, thread_ts, text: streamed + markdown_text }); return { ok: true }; } };
   };
   return client;
 }
@@ -65,6 +67,46 @@ test("Codex stub process is terminated when the run is cancelled", async () => {
     assert.doesNotMatch(error.message, /exit code|code \d+/i);
     return true;
   });
+});
+
+test("stopping a first Codex turn keeps the announced native session in its resume button", async () => {
+  await setUser("U_CODEX_STOP", { name: "Codex Stop", approved: true });
+  const client = fakeSlack();
+  const root = { type: "message", channel: "D_CODEX_STOP", channel_type: "im", user: "U_CODEX_STOP", text: "CODEX_STUB_WAIT_FOR_CANCEL", ts: "2001.001" };
+  const pending = processMessageEvent(root, client, { botUserId: "U_BOT", teamId: "T_E2E" });
+  try {
+    for (let i = 0; i < 200 && !client.streamed.includes("CODEX_WAITING_FOR_STOP"); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.match(client.streamed, /CODEX_WAITING_FOR_STOP/, "the real stub announced its native thread before Stop");
+    const entry = await getChannelEntry(root.channel);
+    assert.equal(await getSession(entry.slug, root.ts), "codex-stub-cancel", "persist before turn completion, not only on success");
+  } finally {
+    await processMessageEvent({ ...root, text: "stop", ts: "2001.002", thread_ts: root.ts }, client, { botUserId: "U_BOT", teamId: "T_E2E" });
+    await pending;
+  }
+  const stopped = client.posted.find((message) => message.text === "🛑 Stopped.");
+  assert.ok(stopped, "Stop exposes the resume control");
+  assert.match(JSON.stringify(stopped.blocks), /codex-stub-cancel/);
+  const entry = await getChannelEntry(root.channel);
+  await clearSession(entry.slug, root.ts);
+});
+
+test("a late Codex session announcement cannot undo a cleared thread", async () => {
+  await setUser("U_CODEX_CLEAR", { name: "Codex Clear", approved: true });
+  const client = fakeSlack();
+  const root = { type: "message", channel: "D_CODEX_CLEAR", channel_type: "im", user: "U_CODEX_CLEAR", text: "CODEX_STUB_WAIT_FOR_CANCEL CODEX_STUB_LATE_SESSION", ts: "2002.001" };
+  const pending = processMessageEvent(root, client, { botUserId: "U_BOT", teamId: "T_E2E" });
+  try {
+    for (let i = 0; i < 200 && !client.streamed.includes("CODEX_WAITING_FOR_STOP"); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.match(client.streamed, /CODEX_WAITING_FOR_STOP/);
+    const entry = await getChannelEntry(root.channel);
+    await clearSession(entry.slug, root.ts);
+    for (let i = 0; i < 200 && !client.streamed.includes("CODEX_LATE_SESSION_ANNOUNCED"); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.match(client.streamed, /CODEX_LATE_SESSION_ANNOUNCED/, "the old process actually delivered a late identity");
+    assert.equal(await getSession(entry.slug, root.ts), "", "the clear generation wins over a late runner notification");
+  } finally {
+    await processMessageEvent({ ...root, text: "stop", ts: "2002.002", thread_ts: root.ts }, client, { botUserId: "U_BOT", teamId: "T_E2E" });
+    await pending;
+  }
 });
 
 test("Codex generic process failures are semantic while the raw code stays structured", async () => {

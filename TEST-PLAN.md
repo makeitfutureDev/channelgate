@@ -2186,6 +2186,19 @@ release, no egress cut-off — so the network entry has no container equivalent 
       turn says on. `/status` and `/mode` must agree with the answer.
 
 ### In-thread commands & stop
+
+- [x] Automated (`test/codex-message-to-reply-e2e.test.js`): a real fixture CLI emits
+  `thread.started` then waits. Stop before completion; the stored ID and native resume button must
+  contain the announced Codex ID, not the provisional gateway UUID. A delayed second announcement
+  after clearing the session must leave the tombstone intact.
+- [ ] Live, both Claude and Codex: in owned Worker/Auto QA fixtures, start a fresh thread asking
+  for a foreground Python command that writes a unique `STARTED` file, sleeps 120 seconds, then
+  writes a unique `LATE` file. After observing `STARTED`, send mentioned `stop`; repeat in another
+  fresh thread with the stop reaction. Capture the primary engine's native session/init ID, saved
+  session row through the host store API, and the raw Stop button. Require equal IDs, stopped
+  engine/process and spinner, one friendly Stop notice, and no `LATE` file or final answer after
+  120 seconds. Copy/use the offered resume control to resume that exact session; preserve the
+  interrupted thread's history. Never inspect operator credentials or alter unrelated channels.
 - [ ] `/context` shows tokens + % of the context window from the last turn.
 - [x] Unit: a configured 1M model keeps its 1,000,000 window even though the CLI echoes the plain id
       back (`opus[1m]` → runtime `claude-opus-5`), including when the runtime reports the family's
