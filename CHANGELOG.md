@@ -4,7 +4,8 @@
   Clean turns, so a changed switch supersedes stale context and cached request results.
 
 - Include received human approval in completed control-plane tool results while preserving the
-  operation outcome; clarify that approval cards can be outside the model transcript.
+  operation outcome; clarify that approval cards can be outside the model transcript and that
+  the receipt records an explicit human decision, not an approval supplied by channel Auto mode.
 
 - Keep subsequent turns working after an author deletes a personal skill, while retaining its
   grant and revision history for restoration and refusing foreign personal skill access.
