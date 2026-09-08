@@ -91,6 +91,7 @@ export async function performShutdown({
   slack = null,
   code = 0,
   reason = "shutdown",
+  force = false,
   drainTimeoutMs = configuredDrainMs(),
   pollMs = DEFAULT_POLL_MS,
   killAfterMs = DEFAULT_KILL_AFTER_MS,
@@ -105,6 +106,8 @@ export async function performShutdown({
   logger = console,
   sleep = delay,
 } = {}) {
+  if (force === true) drainTimeoutMs = 0;
+
   // Stop accepting new Socket Mode envelopes first. The Web API client remains usable by turns
   // already finishing, so their progress/final delivery can complete during the drain window.
   const disconnecting = Promise.resolve(slack?.disconnect?.()).catch((error) => {
@@ -167,10 +170,10 @@ export function restartExitCode({ platform, env } = {}) {
   return detectServiceManager({ platform, env }) === "systemd" ? 1 : 0;
 }
 
-export function requestShutdown({ slack = null, code = 0, reason = "shutdown" } = {}) {
+export function requestShutdown({ slack = null, code = 0, reason = "shutdown", force = false } = {}) {
   if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
-  const drainTimeoutMs = configuredDrainMs();
+  const drainTimeoutMs = force === true ? 0 : configuredDrainMs();
 
   // Absolute fallback covers a stuck drain dependency. It performs synchronous SIGKILL sweeps
   // before exiting, so detached children cannot survive merely because an escalation timer was
@@ -185,7 +188,7 @@ export function requestShutdown({ slack = null, code = 0, reason = "shutdown" } 
   }, hardDeadlineMs);
   hardExit.unref?.();
 
-  shutdownPromise = performShutdown({ slack, code, reason, drainTimeoutMs })
+  shutdownPromise = performShutdown({ slack, code, reason, force, drainTimeoutMs })
     .catch((error) => {
       forceStopping = true;
       forceKillEngineChildren();

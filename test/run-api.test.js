@@ -198,6 +198,22 @@ test("POST /api/update/run refuses non-Enterprise before invoking the updater", 
   } finally { testLicenseEnv(); }
 });
 
+test("admin restart accepts only explicit boolean force behind session and CSRF checks", async () => {
+  const before = restartRequests.length;
+  assert.equal((await post("/api/daemon/restart", { force: true })).status, 401);
+  const login = await post("/api/login", { password: "test-admin-pw" });
+  const cookie = login.headers.get("set-cookie").split(";", 1)[0];
+  assert.equal((await post("/api/daemon/restart", { force: true }, { cookie })).status, 403);
+  for (const force of ["true", 1, null, {}, []]) {
+    assert.equal((await post("/api/daemon/restart", { force }, { cookie, "x-cg-request": "1" })).status, 400);
+  }
+  assert.equal(restartRequests.length, before);
+  const result = await post("/api/daemon/restart", { force: true }, { cookie, "x-cg-request": "1" });
+  assert.equal(result.status, 202);
+  assert.deepEqual(restartRequests.at(-1), { reason: "admin force restart", force: true });
+  restartRequests.length = before;
+});
+
 test("POST /internal/update-smoke requires loopback IPC auth", async () => {
   const missing = await post("/internal/update-smoke", {});
   assert.equal(missing.status, 403);

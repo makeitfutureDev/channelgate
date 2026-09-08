@@ -553,16 +553,19 @@ export function createSettingsRouter({
     }
   });
 
-  // Restart the whole daemon only after the safe-restart coordinator observes an idle window.
-  // The coordinator leaves Slack connected while active work drains, rechecks for up to five
-  // minutes, and cancels instead of interrupting anything still running. The unit's
+  // Default to waiting for idle. An explicit admin force choice skips the activity wait
+  // and interrupts ongoing work through the normal shutdown cleanup. The unit's
   // Restart=on-failure relaunches after the nonzero restart exit (only when installed as the
   // systemd service — see shutdown.js restartExitCode).
-  router.post("/daemon/restart", (_req, res) => {
+  router.post("/daemon/restart", (req, res) => {
     if (!restartCoordinator) {
       return res.status(503).json({ ok: false, error: "Safe restart is unavailable." });
     }
-    const result = restartCoordinator.request({ reason: "admin restart" });
+    if (Object.hasOwn(req.body || {}, "force") && typeof req.body.force !== "boolean") {
+      return res.status(400).json({ ok: false, error: "force must be a boolean." });
+    }
+    const force = req.body?.force === true;
+    const result = restartCoordinator.request({ reason: force ? "admin force restart" : "admin restart", force });
     res.status(result.conflict ? 409 : 202).json(result);
   });
 

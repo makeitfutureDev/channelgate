@@ -105,3 +105,67 @@ test("safe restart cancels after its deadline while work remains active", async 
   assert.match(coordinator.status().message, /API run/i);
   assert.equal(coordinator.status("wrong-id").ok, false);
 });
+
+test("force restart bypasses busy engine, background, API, and updater activity", async () => {
+  const restarts = [];
+  const sleeps = [];
+  const coordinator = new RestartCoordinator({
+    getActivity: () => ({ total: 4, engine: 1, background: 1, api: 1, update: 1 }),
+    restart: async (input) => restarts.push(input),
+    sleep: async (ms) => sleeps.push(ms),
+    settleMs: 2,
+  });
+  const request = coordinator.request({ force: true, reason: "explicit force" });
+  assert.equal(request.force, true);
+  assert.equal(request.waitMs, 0);
+  assert.equal((await coordinator.whenSettled()).restarted, true);
+  assert.deepEqual(sleeps, [2], "only the HTTP response settle remains; no activity polling");
+  assert.deepEqual(restarts, [{ reason: "explicit force", force: true }]);
+  assert.equal(coordinator.status(request.id).force, true);
+});
+
+test("force upgrades a pending safe restart promptly and aborts its poll without duplicate shutdown", async () => {
+  let pollStarted;
+  const polling = new Promise((resolve) => { pollStarted = resolve; });
+  let signal;
+  const restarts = [];
+  const coordinator = new RestartCoordinator({
+    getActivity: () => ({ total: 1, engine: 1 }),
+    restart: async (input) => restarts.push(input),
+    sleep: (_ms, _value, options) => {
+      signal = options.signal;
+      pollStarted();
+      return new Promise(() => {}); // advancing the long poll is deliberately impossible
+    },
+    settleMs: 0,
+    pollMs: 30_000,
+  });
+  const first = coordinator.request({ reason: "pending wait" });
+  await polling;
+  const forced = coordinator.request({ force: true });
+  const duplicate = coordinator.request({ force: true });
+  assert.equal(forced.ok, true);
+  assert.equal(forced.id, first.id);
+  assert.equal(forced.upgraded, true);
+  assert.equal(duplicate.conflict, true);
+  assert.equal((await coordinator.whenSettled()).restarted, true);
+  assert.equal(signal.aborted, true);
+  assert.deepEqual(restarts, [{ reason: "pending wait", force: true }]);
+});
+
+test("force upgrade is not delayed by a pending busy notification", async () => {
+  let notified;
+  const noticeStarted = new Promise((resolve) => { notified = resolve; });
+  let restarts = 0;
+  const coordinator = new RestartCoordinator({
+    getActivity: () => ({ total: 1, api: 1 }),
+    restart: async ({ force }) => { assert.equal(force, true); restarts++; },
+    notify: () => { notified(); return new Promise(() => {}); },
+    settleMs: 0,
+  });
+  coordinator.request();
+  await noticeStarted;
+  coordinator.request({ force: true });
+  await coordinator.whenSettled();
+  assert.equal(restarts, 1);
+});
