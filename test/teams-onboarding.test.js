@@ -8,8 +8,8 @@ const docs = readFileSync(new URL("../docs/PLATFORMS.md", import.meta.url), "utf
 
 test("Teams onboarding uses the official CLI and the ChannelGate event endpoint", () => {
   for (const text of [html, docs]) {
-    assert.match(text, /npm install -g @microsoft\/teams\.cli@preview/);
-    assert.match(text, /teams login/);
+    assert.match(text, /npm install -g @microsoft\/teams\.cli/);
+    assert.match(text, /teams login --device-code/);
     assert.match(text, /teams app create/);
     assert.match(text, /\/api\/teams\/messages/);
     assert.match(text, /teams app get .* --install-link/);

@@ -464,10 +464,10 @@
                   <div id="teams-status" class="status-banner">Not configured</div>
                   <p class="desc">Teams <strong>pushes</strong> events to ChannelGate. Use Microsoft's Teams CLI to create the bot and app against the exact public endpoint below:</p>
                   <ol class="desc">
-                    <li>Install and sign in: <code>npm install -g @microsoft/teams.cli@preview</code>, then <code>teams login</code>.</li>
+                    <li>Install and sign in: <code>npm install -g @microsoft/teams.cli</code>, then <code>teams login --device-code</code>. Complete Microsoft sign-in and verify the account, tenant and custom-app upload status with <code>teams status</code>.</li>
                     <li>Set the Public URL below. For a local daemon, first expose it through a persistent public HTTPS tunnel.</li>
                     <li>Create the bot/app: <code id="teams-create-command">teams app create --name "ChannelGate" --endpoint "set-a-Public-URL-first/api/teams/messages"</code></li>
-                    <li>Save the emitted <code>CLIENT_ID</code>, <code>CLIENT_SECRET</code>, and <code>TENANT_ID</code> here. Keep the emitted Teams app ID for installation.</li>
+                    <li>Create in a private terminal: the command can print a secret. Save the emitted <code>CLIENT_ID</code>, <code>CLIENT_SECRET</code>, and <code>TENANT_ID</code> here. Keep the separate Teams app ID for installation. Do not paste the client secret into chat.</li>
                     <li>Generate and open its Teams install link: <code>teams app get &lt;teamsAppId&gt; --install-link</code>.</li>
                   </ol>
                   <label class="field">
