@@ -1174,10 +1174,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
   };
 
-  // Strict (only the injected gateway/token-backed servers) when the channel picks no global MCP servers — keeps the
-  // common case hermetic. When global servers ARE picked, go non-strict so they're reachable,
-  // gated by the lockdown's allowedMcpServers allowlist. Clean mode is always strict (empty config).
-  const strictMcp = true; // Every granted definition is explicit; never inherit ambient settings/MCPs.
+  // Every granted definition is explicit in the per-run payload. Keep ambient MCPs disabled
+  // even when the channel selects optional servers; Clean supplies an empty payload.
+  const strictMcp = true;
 
   const dangerouslySkip = mayEscalate({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal, origin });
   // Admin outranks auto: a non-escalated run whose STORED author is an admin in an adminMode
