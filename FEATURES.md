@@ -2845,3 +2845,11 @@ safe command/arguments or URL into the per-run allowlist even though the engine 
 Configuration-only servers are never added to the runtime inventory. Environment/header credentials
 and auth dependencies are rejected; an unsupported config read preserves app discovery but leaves
 unlaunchable servers fail-closed. Claude discovery is unchanged.
+
+
+### Beta development and stable releases
+
+Development branches integrate into `beta`, with CI on both `beta` and `main`. Stable promotion
+requires a full test pass, applicable Claude/Codex live acceptance evidence, and explicit user
+confirmation for the exact release candidate. `AGENTS.md` (also read through `CLAUDE.md`) and
+`CONTRIBUTING.md` define the workflow; these are contributor rules, not a technical branch lock.

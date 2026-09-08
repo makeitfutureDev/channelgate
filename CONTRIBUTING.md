@@ -33,7 +33,7 @@ npm test                   # full node:test suite (test/*.test.js)
 npm run test:coverage      # the same suite with the enforced coverage floors — what CI runs
 npm run check:static       # syntax, undeclared identifiers, whitespace invariants
 npm run secret-scan        # dependency-free credential scan over tracked files
-npm run check:dco          # every commit in origin/main..HEAD carries a sign-off trailer
+npm run check:dco -- origin/beta..HEAD  # every development commit carries a sign-off trailer
 ```
 
 `npm run test:security-coverage` enforces the extra coverage floors on the security-critical
@@ -50,9 +50,14 @@ on ubuntu-latest.
 
 ## Branches and review
 
-Use your own fork, branch and isolated worktree. Start from the latest upstream main, make focused
-commits and open a PR with validation results. You do not need access to the publisher's GitHub
+Use your own fork, branch and isolated worktree. Start from the latest upstream `beta`, make focused
+commits and open a PR targeting `beta` with validation results. You do not need access to the publisher's GitHub
 account, private QA database or production host. Maintainers handle final integration and release.
+
+`beta` receives all completed development work. `main` is the stable update branch. A release PR
+from `beta` to `main` requires the full test and live acceptance evidence defined in `AGENTS.md`,
+followed by explicit user confirmation for that exact tested candidate. Beta work is not
+authorization to release; required checks that are blocked or unexecuted prevent promotion.
 
 Keep `FEATURES.md` and `TEST-PLAN.md` consistent with behavior. Include exact fixtures, setup,
 prompts/actions and pass rules for applicable Claude and Codex acceptance. Report live cases you

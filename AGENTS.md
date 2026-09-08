@@ -328,7 +328,35 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
 
 ## Contributor workflow
 
-Use a dedicated branch and worktree from the latest upstream main. Keep shared integration
+### Beta development and stable promotion
+
+- `beta` is the integration branch for all new development, fixes, documentation and tests.
+  Start each task from current `origin/beta` in its own branch/worktree; validate and land on
+  `beta`, then push `origin beta`. Keep a served beta checkout on `beta` between tasks.
+- `main` is the stable release branch for downstream installations. Completing a task or
+  receiving permission to push to `beta` never authorizes a merge or push to `main`.
+- Promote `beta` to `main` only after BOTH a full test pass and the user's explicit confirmation
+  to release that exact candidate. Prepare a release PR and report its candidate commit, scope,
+  test results and live acceptance evidence BEFORE asking for confirmation. A request to adopt
+  this workflow, earlier general approval, silence, or a beta merge is not release approval.
+- A full test pass means `npm run test:coverage` (the full regression suite with coverage floors),
+  `npm run check:static`, `npm run secret-scan`, `npm run test:security-coverage`,
+  `npm audit --omit=dev --audit-level=high`, and `npm run check:dco -- origin/main..HEAD`,
+  plus passing CI and every applicable live release gate in `TEST-PLAN.md` for Claude and Codex.
+  Include exact fixtures, prompts/actions and observed evidence; a skipped, blocked, failed or
+  unexecuted required check is not a pass. Only cases unaffected by engine choice may be marked
+  engine-independent. Maintainers complete private deployment acceptance where applicable.
+- Approval and evidence belong to the exact tested candidate. If its content changes, or
+  integration with newer `main` changes the proposed release, rerun the applicable full checks
+  and obtain fresh user confirmation before promotion. Release only the approved candidate;
+  do not include later beta commits. Keep `beta` up to date with the approved stable history.
+- These branch and release rules apply to both Claude and Codex and override generic skill
+  defaults that say to merge completed tasks into `main`. Use the deployment's serialized landing
+  lock for integration; never switch a shared served checkout to `main` merely to publish a release.
+
+
+Use a dedicated branch and worktree from the latest upstream `beta`. Target development pull
+requests at `beta`; completed development work is merged and pushed to `beta`. Keep shared integration
 checkouts clean, stage only your changes, sign off commits under `CLA.md`, and open a pull request.
 External contributors push to their own fork and never need the publisher's GitHub account or a
 production checkout. See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks and PR requirements.
