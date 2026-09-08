@@ -299,7 +299,7 @@ function skillsBlocks(snapshot = {}, state = {}) {
     fieldBlock("Org Skills", listLabel(skills.organization)),
     { type: "context", elements: [mrkdwn("Inherited from the organization. Only admins can add or remove Org Skills in the admin UI → Skills. They cannot be removed for just this channel.")] },
     fieldBlock("All Shared Skills", listLabel(skills.effective)),
-    { type: "context", elements: [mrkdwn("Org Skills plus Channel Skills Including Template, with duplicates listed once. Configure the groups above to change this summary.")] },
+    { type: "context", elements: [mrkdwn("Org Skills plus Channel Skills Including Template, with duplicates listed once. This summary updates automatically when you configure the groups above.")] },
     {
       type: "actions",
       elements: [

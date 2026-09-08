@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Explain in the All Shared Skills hint that its summary updates automatically when its source
+  groups are configured, matching the other combined skill summary.
+
 - Include the current advisory network policy in every engine attempt, including resumed and
   Clean turns, so a changed switch supersedes stale context and cached request results.
 

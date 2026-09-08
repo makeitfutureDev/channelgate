@@ -145,6 +145,11 @@ test("each Settings tab renders its channel setup snapshot", () => {
   const skills = buildChannelSettingsView(snapshot, state, { tab: "skills" });
   assert.match(rendered(skills), /Development/);
   assert.ok(allButtons(skills).some((button) => button.action_id === CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID));
+  for (const heading of ["Channel Skills Including Template", "All Shared Skills"]) {
+    const index = skills.blocks.findIndex((block) => block.text?.text.startsWith(`*${heading}*\n`));
+    assert.ok(index >= 0, `${heading} is shown`);
+    assert.match(rendered(skills.blocks[index + 1]), /updates automatically/i, `${heading} explains its automatic summary`);
+  }
   const secretsView = buildChannelSettingsView(snapshot, state, { tab: "secrets", canEditSecrets: true });
   const secrets = rendered(secretsView);
   assert.match(secrets, /SUPABASE_ACCESS_TOKEN/);
