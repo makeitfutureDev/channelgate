@@ -469,6 +469,35 @@ test("approved creation matches preview semantics and invalid personal channel s
 });
 
 
+test("Auto mode skill receipts attest an explicit human decision in both engine contexts", async () => {
+  const { getSkill } = await import("../src/gateway/skills/catalog.js");
+  const original = await getChannelMeta(SLUG);
+  await saveChannelMeta(SLUG, { ...original, autoMode: true });
+  try {
+    for (const engine of ["claude", "codex"]) {
+      approvalRequests.length = 0;
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+        const slug = `explicit-human-${engine}`;
+        const request = { name: "create_skill", arguments: { slug, files: creationFiles(slug), personal: true } };
+        approvalResponse = { allow: false, reason: "denied by the human" };
+        const denied = await client.callTool(request);
+        assert.match(resultText(denied), /not approved/);
+        assert.doesNotMatch(resultText(denied), approvalReceipt);
+        assert.equal(getSkill(slug), null, "Auto cannot create the denied skill");
+
+        approvalResponse = { allow: true };
+        const approved = await client.callTool(request);
+        assert.match(resultText(approved), /Created/);
+        assert.match(resultText(approved), /This receipt records an explicit human decision; channel Auto mode did not supply it\./);
+        assert.deepEqual(approvalRequests.map(r => r.body.approvalType), ["agent", "agent"]);
+        assert.equal(getSkill(slug).createdBy, "U_CTRL_MEMBER");
+      });
+    }
+  } finally {
+    await saveChannelMeta(SLUG, original);
+  }
+});
+
 test("both engine contexts receive an approval receipt for actual skill creation, update and deletion", async () => {
   const { getSkill } = await import("../src/gateway/skills/catalog.js");
   for (const engine of ["claude", "codex"]) {

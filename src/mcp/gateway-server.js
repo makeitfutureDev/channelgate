@@ -367,7 +367,7 @@ export function createGatewayMcpServer(ctx) {
         ...result,
         content: [...(result.content || []), {
           type: "text",
-          text: "Human approval was received before this tool executed. The gateway handles the approval UI outside the model transcript; receiving the tool result does not mean approval was bypassed. Approval does not establish whether the requested change succeeded; use the tool outcome above.",
+          text: "Human approval was received before this tool executed. This receipt records an explicit human decision; channel Auto mode did not supply it. The gateway handles the approval UI outside the model transcript; receiving the tool result does not mean approval was bypassed. Approval does not establish whether the requested change succeeded; use the tool outcome above.",
         }],
       };
     });
