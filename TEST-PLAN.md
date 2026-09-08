@@ -795,6 +795,19 @@ unchanged-Slack-behaviour proof for the extracted mention matcher.
 
 ## Google Chat and Teams transports
 
+- [x] Flat Teams personal/group chats and Google Chat DM/group messages reach the real capability
+      signer with a nonempty conversation-scoped session key; successive messages resume, another
+      conversation stays separate, and outgoing posts/edits retain an empty native thread handle.
+      `node --test test/platform-ingest.test.js` also preserves real threaded message identities.
+- [ ] LIVE (Claude and Codex, separately): install the bot in a Teams personal chat and group chat;
+      approve the test author and explicitly grant that author access in the group's Access settings.
+      With each engine selected, send `Remember the word amber. Reply READY` (mention the bot in
+      the group), then `What word did I ask you to remember?`. Pass: READY then amber, flat replies,
+      and no `Cannot mint gateway capability` error. Repeat in a Google Chat DM. Send a mentioned
+      message in a Teams channel and confirm its reply remains in the original thread. Record the
+      private fixture IDs, engine, prompts and observed replies in the deployment QA registry.
+      Live acceptance remains unexecuted until recorded.
+
 Automated: `test/platform-googlechat.test.js` (30), `test/platform-teams.test.js` (25),
 `test/platform-ingest.test.js` (12), `test/teams-onboarding.test.js` (2). Manual checks need a real
 Google Workspace / Azure tenant and are unchecked until that drill runs.

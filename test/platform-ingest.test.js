@@ -184,3 +184,36 @@ test("ensureConversation is idempotent and keeps the platform stamp", async () =
   assert.equal(first.entry.slug, second.entry.slug);
   assert.equal(second.meta.platform, "googlechat");
 });
+
+// Exercise the real capability signer inside the fake engine boundary: the previous fake run
+// accepted an empty thread key and hid the failure every flat Teams chat hit before spawning.
+for (const platform of ["msteams", "googlechat"]) {
+  for (const kind of ["dm", "group"]) {
+    test(`${platform} ${kind} uses a stable signed session identity while replies stay flat`, async () => {
+      const { mintGatewayCapability, verifyGatewayCapability } = await import("../src/gateway/mcp-capability.js");
+      const { resolveSession } = await import("../src/gateway/sessions.js");
+      const authorId = `${platform}-${kind}-tester`;
+      await setUser(authorId, { name: "Flat chat tester", approved: true });
+      const connector = fakeConnector({ platform });
+      const sessions = [];
+      const ingest = createIngest({ connector, log: { info() {}, warn() {} }, run: async (args) => {
+        const entry = await getChannelEntry(args.channelId);
+        const token = mintGatewayCapability({ ...args, slug: entry.slug, secret: "fixture-signing-secret", engine: "claude" });
+        const verified = verifyGatewayCapability(token, { secret: "fixture-signing-secret" });
+        assert.equal(verified.ok, true);
+        assert.equal(verified.claims.threadKey, args.channelId);
+        sessions.push((await resolveSession(entry.slug, args.threadKey, "claude")).sessionId);
+        return { content: "FLAT_OK", engine: "claude" };
+      } });
+      const message = makeInbound({ platform, kind, conversationId: `flat-${platform}-${kind}-a`, userId: authorId, text: "hello", mentionsBot: kind !== "dm" });
+      assert.equal((await ingest(message)).result?.content, "FLAT_OK");
+      assert.equal((await ingest({ ...message, messageId: "next-message" })).result?.content, "FLAT_OK");
+      await ingest(makeInbound({ ...message, conversationId: `flat-${platform}-${kind}-b` }));
+      assert.equal(sessions[0], sessions[1], "successive messages resume the same session");
+      assert.notEqual(sessions[0], sessions[2], "another conversation has its own session");
+      assert.equal(message.threadKey, "", "the native thread handle stays empty");
+      assert.ok(connector.posted.every(p => p.threadKey === ""));
+      assert.ok(connector.edited.every(p => (p.threadKey || "") === ""));
+    });
+  }
+}

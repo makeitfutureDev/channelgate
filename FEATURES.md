@@ -274,6 +274,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
 ## Google Chat and Microsoft Teams transports (Beta)
 
+- Flat conversations use their qualified conversation ID as the engine session key when there is
+  no native thread handle. Teams personal/group chats and Google Chat's main DM flow can mint
+  signed gateway capabilities, resume a conversation, and still send unthreaded replies.
+
 - **Google Chat runs outbound-only**, like Slack: a Cloud Pub/Sub PULL subscription consumes the
   events Google publishes for the Chat app, so there is no inbound endpoint and no tunnel. The pull
   loop long-polls, backs off with full jitter, acks before dispatching (a turn outlives any ack

@@ -115,7 +115,10 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
         channelId: message.conversationId,
         authorId: message.userId,
         text: message.text,
-        threadKey: message.threadKey,
+        // Flat chats have no native thread handle, but sessions and signed MCP capabilities
+        // require a stable, nonempty identity. Keep the wire handle on message unchanged so
+        // replies stay flat; separate conversations must never share a session key.
+        threadKey: message.threadKey || message.conversationId,
         attachments: paths,
         progressReport: false,
         // Not `slack_foreground`: that origin is what permits escalation to dangerous permissions,

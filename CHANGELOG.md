@@ -24,6 +24,9 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Fix Teams personal/group chats and Google Chat flat conversations failing before engine startup
+  with “Cannot mint gateway capability without a complete run identity.”
+
 - Make skill assignment rows compact, reveal descriptions and metadata on click, and give Active
   skills and Add skills matching fixed heights with preserved scroll position when managing skills.
 
