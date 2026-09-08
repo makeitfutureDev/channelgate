@@ -4,7 +4,7 @@
 // (the GitHub token never rides a listing; it is revealable only through the secrets allowlist).
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, writeFile, chmod } from "node:fs/promises";
+import { mkdir, writeFile, chmod, rename } from "node:fs/promises";
 import path from "node:path";
 import express from "express";
 import { ensureTestEnv, tempDir } from "./helpers.js";
@@ -45,6 +45,51 @@ async function request(p, { method = "GET", body } = {}) {
 }
 
 const skillMd = (name, description, extra = "") => `---\nname: ${name}\ndescription: ${description}\n${extra}---\n\n# ${name}\n`;
+
+test("folder source read failures report unhealthy sync and retain the approved revision until recovery", async () => {
+  const parent = tempDir("cg-skills-offline-");
+  const dir = path.join(parent, "source");
+  await mkdir(path.join(dir, "offline-cache"), { recursive: true });
+  const content = skillMd("Offline Cache", "approved bytes survive source failure");
+  await writeFile(path.join(dir, "offline-cache", "SKILL.md"), content);
+  const added = await request("/skills/sources", { method: "POST", body: { kind: "folder", url: dir, mode: "review" } });
+  const id = added.json.source.id;
+  const rev = (await request("/skills/staged")).json.staged.find((r) => r.slug === "offline-cache");
+  await request(`/skills/revisions/${rev.id}/approve`, { method: "POST", body: {} });
+  const before = (await request("/skills/catalog/offline-cache")).json;
+  await rename(dir, `${dir}-offline`);
+  const missing = await request(`/skills/sources/${id}/sync`, { method: "POST", body: {} });
+  assert.equal(missing.status, 200, "sync returns its structured failure result");
+  assert.equal(missing.json.result.ok, false);
+  assert.match(missing.json.result.error, /ENOENT/);
+  assert.match(missing.json.source.lastSyncError, /ENOENT/);
+  assert.equal(missing.json.source.lastSyncStats.ok, false);
+  const after = (await request("/skills/catalog/offline-cache")).json;
+  assert.equal(after.skill.currentRevisionId, before.skill.currentRevisionId);
+  assert.equal(after.skill.deleted, false);
+  assert.deepEqual(after.files, before.files, "the last approved files remain available");
+  await rename(`${dir}-offline`, dir);
+  const recovered = await request(`/skills/sources/${id}/sync`, { method: "POST", body: {} });
+  assert.equal(recovered.json.result.ok, true);
+  assert.equal(recovered.json.source.lastSyncError, "");
+  assert.equal((await request("/skills/catalog/offline-cache")).json.skill.currentRevisionId, before.skill.currentRevisionId);
+});
+
+test("explicit folder sources distinguish unreadable roots from valid empty and optional host roots", async () => {
+  const dir = tempDir("cg-skills-root-shape-");
+  const file = path.join(dir, "not-a-directory");
+  await writeFile(file, "fixture");
+  const invalid = await request("/skills/sources", { method: "POST", body: { kind: "folder", url: file } });
+  assert.equal(invalid.json.sync.ok, false);
+  assert.match(invalid.json.source.lastSyncError, /ENOTDIR/);
+  const empty = await request("/skills/sources", { method: "POST", body: { kind: "folder", url: path.join(dir, "empty"), syncNow: false } });
+  await mkdir(path.join(dir, "empty"));
+  const synced = await request(`/skills/sources/${empty.json.source.id}/sync`, { method: "POST", body: {} });
+  assert.equal(synced.json.result.ok, true);
+  assert.equal(synced.json.result.discovered, 0);
+  const { importSkillTree } = await import("../src/gateway/skills/import-folder.js");
+  assert.deepEqual((await importSkillTree(path.join(dir, "optional-absent"))).errors, [], "optional host discovery still tolerates an absent directory");
+});
 
 test("catalog: create a local skill, read it back with its files, update it, pin and roll back, remove and restore", async () => {
   const created = await request("/skills/catalog", { method: "POST", body: { files: [{ path: "SKILL.md", content: skillMd("Api Skill", "created over the API", "category: Development\n") }, { path: "references/r.md", content: "ref" }], note: "first" } });
