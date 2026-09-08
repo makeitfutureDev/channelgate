@@ -11,7 +11,7 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 
 const { isAuthorized } = await import("../src/slack/app.js");
-const { canManage } = await import("../src/gateway/modes.js");
+const { canManage, authorizationDenialReason } = await import("../src/gateway/modes.js");
 
 const ADMIN = { isAdminUser: true, isApprovedUser: false };
 const APPROVED = { isAdminUser: false, isApprovedUser: true };
@@ -110,4 +110,24 @@ test("talk vs manage: an admin in a dormant (none) channel cannot talk yet still
   const meta = { access: "none" };
   assert.equal(isAuthorized(meta, "U1", false, ADMIN), false);
   assert.equal(canManage(meta, { authorId: "U1", ...ADMIN }), true);
+});
+
+test("denial reasons distinguish channel restrictions from deployment approval", () => {
+  for (const [meta, role, expected] of [
+    [{ access: "admins" }, APPROVED, /restricted to admins/],
+    [{ access: "none" }, ADMIN_AND_APPROVED, /restricted to named users/],
+    [{}, UNKNOWN, /not approved to use ChannelGate/],
+    [{ access: "approved" }, UNKNOWN, /not approved to use ChannelGate/],
+  ]) {
+    assert.equal(isAuthorized(meta, "U_DENIED", false, role), false);
+    const reason = authorizationDenialReason(meta, false);
+    assert.match(reason, expected);
+    if (role.isApprovedUser) assert.doesNotMatch(reason, /not approved/);
+  }
+  for (const access of ["admins", "none", "approved"]) {
+    const meta = { access };
+    assert.equal(isAuthorized(meta, "U_DENIED_DM", true, UNKNOWN), false);
+    assert.match(authorizationDenialReason(meta, true), /not approved to use ChannelGate/);
+    assert.doesNotMatch(authorizationDenialReason(meta, true), /restricted to/);
+  }
 });
