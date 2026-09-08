@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Give selected optional Codex MCPs the existing 120-second remote startup budget and raise
+  Claude's default initialize timeout to the same ceiling. Preserve explicit operator overrides,
+  tool-call deadlines, grant boundaries and quiet-run liveness behavior.
+
 - Correct channel-control MCP descriptions and confirmations to reflect container confinement,
   advisory networking and the separate optional operator-home mount. Preserve all permissions,
   setting mutations and approval checks.

@@ -62,7 +62,6 @@ try {
 // permission tool as deny) above the approval window.
 process.env.CG_APPROVAL_SECRET ||= randomUUID();
 process.env.MCP_TOOL_TIMEOUT ||= "300000";
-process.env.MCP_TIMEOUT ||= "30000";
 
 const slack = createSlackManager();
 // Google Chat + Teams. Created at module scope alongside Slack so the managers exist (and are
