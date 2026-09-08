@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Keep existence/access-only requests within their requested scope: both engines receive
+  per-attempt guidance to use non-mutating metadata, avoid content reads and temporary write
+  probes, and leave unverified write access explicit.
+
 - Explain deliberately omitted connectors, skills and memory from each attempt's resolved Clean
   mode. Distinguish the host gateway runtime store from container-local engine files and mount
   scaffolding using actual mount coverage, without disclosing unmounted host paths.

@@ -1599,6 +1599,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   operator-home grants are recognized; engine-storage masks remain excluded. This guidance
   describes existing mounts and never changes authorization. → TEST-PLAN: Resolved Clean and
   gateway-store facts.
+- **Access checks honor the requested scope:** attempt guidance limits existence, metadata and
+  permission-only checks to resolved mount facts and non-mutating metadata. It forbids reading
+  contents or creating, changing or deleting temporary probe files for such requests; write
+  access that metadata cannot establish is reported as unverified. This applies to both engines,
+  including resumed and fallback attempts, without changing permission enforcement.
 **Since 2026-09-03 this is the ONLY runtime (Linux + containers only):** the `host` backend, the
 gateway-wide kill switch, the per-channel runtime pin and the host↔container session carry below
 are retired, bullet by bullet; everything else stands.
