@@ -388,7 +388,7 @@ export async function applyPendingServiceReload({ root, service, run = runComman
   if (service?.kind === "systemd") {
     // daemon-reload alone: the restart signal that follows is what re-execs onto the new unit.
     const scope = service.scope === "user" ? ["--user"] : [];
-    await run("systemctl", [...scope, "daemon-reload"], { allowFailure: true, quiet: true, timeoutMs: 30_000 });
+    await run("systemctl", [...scope, "daemon-reload"], { quiet: true, timeoutMs: 30_000 });
   }
   rmSync(marker, { force: true });
   return { reloaded: true };
@@ -534,6 +534,10 @@ async function defaultVerify({ root, context, expectedRevision }) {
   throw new Error(`replacement readiness timed out: ${lastReason}`);
 }
 
+export function installUpdateDependencies({ repoRoot = REPO_ROOT, run = runCommand } = {}) {
+  return run("npm", ["ci", "--include=dev"], { cwd: repoRoot });
+}
+
 function defaultOps({ root, repoRoot }) {
   return {
     claim: async ({ owner }) => {
@@ -542,7 +546,9 @@ function defaultOps({ root, repoRoot }) {
     preflight: () => defaultPreflight({ root, repoRoot }),
     snapshot: ({ context, owner }) => defaultSnapshot({ root, repoRoot, context, owner }),
     checkout: ({ context }) => runCommand("git", ["merge", "--ff-only", context.targetRevision], { cwd: repoRoot, quiet: true, timeoutMs: 60_000 }),
-    install: () => runCommand("npm", ["ci"], { cwd: repoRoot }),
+    // Static checks and the shipped regression suite require devDependencies even on hosts
+    // configured with NODE_ENV=production or npm omit=dev. Rollback uses the same exact install.
+    install: () => installUpdateDependencies({ repoRoot }),
     audit: async () => {
       const result = await runCommand("npm", ["audit", "--omit=dev", "--json"], { cwd: repoRoot, allowFailure: true, quiet: true, timeoutMs: 120_000 });
       const evaluated = evaluateAudit(JSON.parse(result.stdout || "{}"));
@@ -719,7 +725,7 @@ function argValue(name) {
   return index >= 0 ? String(process.argv[index + 1] || "") : "";
 }
 
-async function main() {
+export async function main() {
   const root = gatewayRoot();
   const transactionId = argValue("--transaction");
   let owner;

@@ -387,6 +387,7 @@ export function getEffectiveLimits(now = Date.now()) {
 // Everything the admin UI and the MCP tools render.
 export function getLicenseStatus(now = Date.now()) {
   const r = currentResolution(now);
+  const enterprise = r.license?.tier === "enterprise" && !r.fellBack && ["valid", "grace", "expired_grace"].includes(r.state);
   const lastCheck = readLastCheck();
   const lastCheckAt = lastCheck?.at || "";
   const lastCheckMs = lastCheckAt ? Date.parse(lastCheckAt) : NaN;
@@ -400,7 +401,7 @@ export function getLicenseStatus(now = Date.now()) {
     // date it expired on comes from the resolution itself — the card must still say WHEN.
     expiresAt: r.license?.expiresAt || r.expiredAt || null,
     limits: r.limits,
-    features: { composioSdk: r.license?.tier === "enterprise" && !r.fellBack && ["valid", "grace", "expired_grace"].includes(r.state) },
+    features: { composioSdk: enterprise, automaticUpdates: enterprise },
     hasLicenseKey: hasLicenseKey(),
     licenseKeyLast4: licenseKeyLast4(),
     licenseKeySource: getSettings().licenseKey ? "settings" : hasLicenseKey() ? "env" : "",

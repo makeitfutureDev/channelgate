@@ -442,7 +442,7 @@ export function register(server, ctx) {
     "update_gateway",
     {
       description:
-        "ADMIN ONLY. Update the gateway to the latest version: git pull, install deps, migrate working " +
+        "ENTERPRISE ADMIN ONLY. Update the gateway to the latest version: git pull, install deps, migrate working " +
         "folders, and restart the service. The bot goes offline for a few seconds while it restarts. " +
         "Runs detached so it survives the restart; progress is logged to ~/.channelgate/logs/update.log. " +
         "Auto/Admin channels start immediately; Read/Worker channels require a Slack approval click.",

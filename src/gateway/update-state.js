@@ -32,6 +32,7 @@ const PUBLIC_FIELDS = [
   "changed",
   "reason",
   "imageWarning",
+  "interrupted",
   "candidateError",
   "rollbackError",
   "advisories",
@@ -111,6 +112,23 @@ export function isTerminalUpdate(state) {
 export function readUpdateState({ root = gatewayRoot() } = {}) {
   const state = readJson(stateFile(root));
   return state && typeof state === "object" && !Array.isArray(state) ? state : null;
+}
+
+// Project abandoned transactions without rewriting the owner's durable state or racing a new
+// reservation. A long phase alone is never evidence of failure: only a missing/dead owner is.
+export function readUpdateStatus({
+  root = gatewayRoot(), now = Date.now(), pidAlive = defaultPidAlive,
+  reservationGraceMs = RESERVATION_GRACE_MS,
+} = {}) {
+  const state = readUpdateState({ root });
+  if (!state || state.status !== "running") return state;
+  const lock = readJson(lockFile(root));
+  if (lock?.transactionId === state.id && activeLock(lock, { now, pidAlive, reservationGraceMs })) return state;
+  if (now - Number(state.updatedAt || state.startedAt || 0) < reservationGraceMs) return state;
+  return {
+    ...state, status: "terminal", result: "failed", interrupted: true,
+    reason: `Update runner stopped during ${state.phase || "startup"}; completion and rollback are unverified. Check the host update log before retrying.`,
+  };
 }
 
 export function publicUpdateState(state = readUpdateState()) {

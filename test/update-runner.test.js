@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { Readable } from "node:stream";
+import { launchUpdate } from "../scripts/update-launcher.mjs";
 import path from "node:path";
 
 import { expectedImageBuild } from "../src/runtimes/container/image.js";
@@ -20,7 +22,59 @@ import {
   containerSettings,
   defaultImageBuild,
   expectedImageSpecVersion,
+  installUpdateDependencies,
+  applyPendingServiceReload,
+  serviceReloadMarkerFile,
 } from "../scripts/update-runner.mjs";
+
+test("updates explicitly install dev tools despite production omit configuration", async () => {
+  let call;
+  await installUpdateDependencies({ repoRoot: "/checkout", run: async (...args) => { call = args; } });
+  assert.deepEqual(call, ["npm", ["ci", "--include=dev"], { cwd: "/checkout" }]);
+});
+
+test("production-configured npm still installs a local dev dependency needed by update checks", async () => {
+  const root = tempDir("cg-update-production-npm-");
+  try {
+    mkdirSync(path.join(root, "tool"));
+    writeFileSync(path.join(root, "tool", "package.json"), JSON.stringify({ name: "update-check-fixture", version: "1.0.0", main: "index.js" }));
+    writeFileSync(path.join(root, "tool", "index.js"), 'module.exports = "check-ready";');
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "update-fixture", version: "1.0.0", private: true, devDependencies: { "update-check-fixture": "file:./tool" } }));
+    const env = { ...process.env, NODE_ENV: "production", npm_config_omit: "dev", npm_config_cache: path.join(root, "cache"), npm_config_audit: "false", npm_config_fund: "false" };
+    await runCommand("npm", ["install", "--package-lock-only", "--ignore-scripts", "--offline"], { cwd: root, env, quiet: true });
+    await installUpdateDependencies({ repoRoot: root, run: (command, args, options) => runCommand(command, [...args, "--offline"], { ...options, env, quiet: true }) });
+    const check = await runCommand(process.execPath, ["-e", 'if (require("update-check-fixture") !== "check-ready") process.exit(1)'], { cwd: root, env, quiet: true });
+    assert.equal(check.code, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("isolated launcher restores the exact inherited environment before starting the runner", async () => {
+  const env = { HOME: "/wrong-home", MANAGER_ONLY: "should disappear" };
+  const inherited = { HOME: "/operator", CHANNELGATE_DIR: "/runtime", CG_UPDATE_OWNER_TOKEN: "private-token", NODE_ENV: "production" };
+  const payload = JSON.stringify(inherited);
+  let called = false;
+  await launchUpdate({ input: Readable.from([payload.slice(0, 20), payload.slice(20)]), env, run: async () => {
+    called = true;
+    assert.deepEqual(env, inherited);
+  } });
+  assert.equal(called, true);
+  await assert.rejects(launchUpdate({ input: Readable.from(['{"CG_UPDATE_OWNER_TOKEN":false}']), env, run: () => assert.fail() }), /invalid/);
+});
+
+test("failed service reload preserves its marker for retry", async () => {
+  const root = tempDir("cg-update-reload-fail-");
+  try {
+    const marker = serviceReloadMarkerFile(root);
+    writeFileSync(marker, JSON.stringify({ files: ["channelgate.service"] }));
+    await assert.rejects(applyPendingServiceReload({ root, service: { kind: "systemd", scope: "user" }, log() {}, run: async (command, args, options) => {
+      assert.equal(command, "systemctl");
+      assert.deepEqual(args, ["--user", "daemon-reload"]);
+      assert.notEqual(options.allowFailure, true);
+      throw new Error("reload denied");
+    } }), /reload denied/);
+    assert.equal(existsSync(marker), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("update command failures are plain-language while the raw status stays structured", async () => {
   await assert.rejects(

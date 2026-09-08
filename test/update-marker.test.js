@@ -3,7 +3,7 @@
 // reported. The detached start path is tested here too so every entry point shares the same lock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 import { finishUpdate, releaseUpdate, reserveUpdate } from "../src/gateway/update-state.js";
@@ -94,7 +94,9 @@ test("startUpdate reserves once, binds the marker, and keeps its owner token out
   const root = tempDir("cg-updater-start-");
   try {
     const calls = [];
+    let launchPayload;
     const child = {
+      stdin: { on() {}, end(value) { launchPayload = JSON.parse(value); } },
       pid: process.pid,
       once() {},
       unref() {},
@@ -119,9 +121,18 @@ test("startUpdate reserves once, binds the marker, and keeps its owner token out
     assert.equal(second.transaction.id, first.transaction.id);
     assert.equal(calls.length, 1);
     const [command, args, options] = calls[0];
-    assert.equal(command, process.execPath);
+    assert.equal(command, "systemd-run");
+    assert.ok(args.includes("--user"));
+    assert.ok(args.includes("--service-type=exec"));
+    assert.ok(args.includes("--pipe"));
+    assert.equal(options.stdio[0], "pipe");
+    assert.equal(typeof options.stdio[1], "number");
+    assert.equal(options.stdio[1], options.stdio[2], "stdout/stderr are direct log-file descriptors, not wrapper pipes");
+    assert.equal(launchPayload.CHANNELGATE_DIR, root);
+    assert.ok(launchPayload.CG_UPDATE_OWNER_TOKEN);
     assert.deepEqual(args.slice(-2), ["--transaction", first.transaction.id]);
-    assert.equal(args.includes(options.env.CG_UPDATE_OWNER_TOKEN), false);
+    assert.equal(JSON.stringify(args).includes(launchPayload.CG_UPDATE_OWNER_TOKEN), false);
+    assert.equal(options.env.CG_UPDATE_OWNER_TOKEN, undefined);
     assert.equal(readUpdateMarker({ root }).transactionId, first.transaction.id);
   } finally {
     clearUpdateMarker(undefined, { root });
@@ -164,4 +175,49 @@ test("terminal update results have explicit operator-facing summaries", () => {
 
 test("successful code update never hides an image failure", () => {
   assert.match(formatUpdateResult({ result: "updated", imageWarning: "build failed" }), /⚠️.*image needs attention.*build failed/);
+});
+
+test("pre-change and interrupted failures never claim a rollback happened", () => {
+  const before = formatUpdateResult({ result: "failed", changed: false, candidateError: "user bus unavailable" });
+  assert.match(before, /before changes.*user bus unavailable/);
+  assert.doesNotMatch(before, /rollback/);
+  const interrupted = formatUpdateResult({ result: "failed", interrupted: true, changed: true, reason: "runner stopped during verifying" });
+  assert.match(interrupted, /interrupted.*runner stopped during verifying/);
+  assert.doesNotMatch(interrupted, /rollback also failed/);
+});
+
+test("systemd launch failure finalizes the reservation without starting a fallback runner", () => {
+  const root = tempDir("cg-updater-unit-fail-");
+  try {
+    const handlers = {};
+    let spawns = 0;
+    const result = startUpdate({ root }, { spawnImpl: () => {
+      spawns++;
+      return { pid: 2147483647, once(event, fn) { handlers[event] = fn; }, unref() {}, stdin: { on() {}, end() {} } };
+    } });
+    assert.equal(result.ok, true);
+    handlers.close(1, null);
+    const state = JSON.parse(readFileSync(path.join(root, "update-state.json"), "utf8"));
+    assert.equal(state.result, "failed");
+    assert.equal(state.changed, false);
+    assert.match(state.reason, /independent systemd update service/);
+    assert.equal(existsSync(path.join(root, "update.lock")), false);
+    assert.equal(spawns, 1, "never fall back to an updater in the daemon cgroup");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("wrapper exit does not finalize or unlock an independently claimed live runner", () => {
+  const root = tempDir("cg-updater-unit-live-");
+  try {
+    const handlers = {};
+    startUpdate({ root }, { spawnImpl: () => ({
+      pid: 2147483647, once(event, fn) { handlers[event] = fn; }, unref() {}, stdin: { on() {}, end() {} },
+    }) });
+    const file = path.join(root, "update.lock");
+    const lock = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...lock, pid: process.pid }));
+    handlers.close(null, "SIGKILL");
+    assert.equal(existsSync(file), true);
+    assert.equal(JSON.parse(readFileSync(path.join(root, "update-state.json"), "utf8")).status, "running");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
