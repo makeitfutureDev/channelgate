@@ -10,6 +10,19 @@ import { tempDir } from "./helpers.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 
+// The canonical selectors take precedence over legacy aliases. These destructive operator
+// scripts must always receive fixture paths, including when tests run inside a live updater.
+function runtimeEnv(runtime, dbFile = path.join(runtime, "gateway.db"), inherited = process.env) {
+  return {
+    ...inherited,
+    CHANNELGATE_DIR: runtime,
+    CLAUDE_GATEWAY_DIR: runtime,
+    CHANNELGATE_DB: dbFile,
+    CLAUDE_GATEWAY_DB: dbFile,
+    CG_WORKSPACE_DIR: path.join(runtime, "workspace"),
+  };
+}
+
 test("central log redaction removes credential-shaped values", () => {
   const text = redactLogValue("xoxb-123-secret Bearer abc.def.ghi? token=oops https://x/?secret=bad");
   assert.doesNotMatch(text, /xoxb-123-secret|abc\.def\.ghi|secret=bad/);
@@ -23,9 +36,7 @@ test("encrypted backup includes a verified SQLite snapshot and restore drill pas
   const db = new DatabaseSync(path.join(runtime, "gateway.db"));
   db.exec("CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES ('durable')");
   db.close();
-  // CLAUDE_GATEWAY_DB is emptied ("" counts as unset via ${...:-}): the scripts honor it now,
-  // and the test-harness scratch override in process.env must not leak into the scripted root.
-  const env = { ...process.env, CLAUDE_GATEWAY_DIR: runtime, CLAUDE_GATEWAY_DB: "", CG_BACKUP_PASSPHRASE: "test-only-passphrase" };
+  const env = { ...runtimeEnv(runtime), CG_BACKUP_PASSPHRASE: "test-only-passphrase" };
   execFileSync("bash", [path.join(root, "scripts/backup-config.sh")], { env, stdio: "pipe" });
   assert.ok(existsSync(path.join(runtime, "backups", "config.tar.gz.enc")));
   execFileSync("bash", [path.join(root, "scripts/restore-drill.sh")], { env, stdio: "pipe" });
@@ -42,9 +53,7 @@ test("restore over an existing runtime removes the discarded database's WAL/SHM 
   const db = new DatabaseSync(path.join(runtime, "gateway.db"));
   db.exec("CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES ('durable')");
   db.close();
-  // CLAUDE_GATEWAY_DB is emptied ("" counts as unset via ${...:-}): the scripts honor it now,
-  // and the test-harness scratch override in process.env must not leak into the scripted root.
-  const env = { ...process.env, CLAUDE_GATEWAY_DIR: runtime, CLAUDE_GATEWAY_DB: "", CG_BACKUP_PASSPHRASE: "test-only-passphrase" };
+  const env = { ...runtimeEnv(runtime), CG_BACKUP_PASSPHRASE: "test-only-passphrase" };
   execFileSync("bash", [path.join(root, "scripts/backup-config.sh")], { env, stdio: "pipe" });
   // Simulate the post-shutdown state of a DIFFERENT, newer database being discarded.
   writeFileSync(path.join(runtime, "gateway.db-wal"), "stale-wal-from-discarded-db");
@@ -75,9 +84,9 @@ test("backup and restore honor the CLAUDE_GATEWAY_DB override", () => {
   db.exec("CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES ('override')");
   db.close();
   const env = {
-    ...process.env,
-    CLAUDE_GATEWAY_DIR: runtime,
-    CLAUDE_GATEWAY_DB: dbFile,
+    ...runtimeEnv(runtime, dbFile),
+    // Exercise the legacy DB override deliberately; never inherit a canonical production path.
+    CHANNELGATE_DB: "",
     CG_BACKUP_PASSPHRASE: "test-only-passphrase",
   };
   execFileSync("bash", [path.join(root, "scripts/backup-config.sh")], { env, stdio: "pipe" });
@@ -87,9 +96,8 @@ test("backup and restore honor the CLAUDE_GATEWAY_DB override", () => {
   mkdirSync(path.dirname(targetDb), { recursive: true });
   execFileSync("bash", [path.join(root, "scripts/restore-config.sh")], {
     env: {
-      ...env,
-      CLAUDE_GATEWAY_DIR: target,
-      CLAUDE_GATEWAY_DB: targetDb,
+      ...runtimeEnv(target, targetDb, env),
+      CHANNELGATE_DB: "",
       CG_BACKUP_FILE: path.join(runtime, "backups", "config.tar.gz.enc"),
       CG_RESTORE_CONFIRM: "YES",
     },
@@ -108,7 +116,7 @@ test("log rotation copy-truncates the live file instead of renaming its inode", 
   writeFileSync(log, "x".repeat(1024 * 1024 + 1)); // just over the 1 MiB floor
   const inodeBefore = statSync(log).ino;
   execFileSync(process.execPath, [path.join(root, "scripts/runtime-maintenance.mjs")], {
-    env: { ...process.env, CLAUDE_GATEWAY_DIR: runtime, CG_MAX_LOG_BYTES: "1048576" },
+    env: { ...runtimeEnv(runtime), CG_MAX_LOG_BYTES: "1048576" },
     stdio: "pipe",
   });
   // Same inode, now empty: systemd keeps the daemon's fd open, so a rename would let the

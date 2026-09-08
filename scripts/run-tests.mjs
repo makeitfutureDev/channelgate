@@ -79,10 +79,20 @@ function homeSnapshot() {
   return seen;
 }
 
+// npm test may be invoked by the live updater, whose environment points at the serving DB.
+// Do not let those production selectors override fixtures that exercise legacy aliases. Each
+// test supplies its own runtime through helpers or explicit subprocess env; direct `node --test`
+// invocations remain available for tests intentionally given a particular environment.
+const testEnv = { ...process.env };
+for (const key of ["CHANNELGATE_DIR", "CHANNELGATE_DB", "CLAUDE_GATEWAY_DIR", "CLAUDE_GATEWAY_DB", "CG_WORKSPACE_DIR", "CG_TEST_SCRATCH"]) {
+  delete testEnv[key];
+}
+
 const before = homeSnapshot();
 const result = spawnSync(process.execPath, [...nodeFlags, "--test", ...files], {
   cwd: repoRoot,
   stdio: "inherit",
+  env: testEnv,
 });
 const leaked = [...homeSnapshot()].filter((entry) => !before.has(entry)).sort();
 

@@ -2230,6 +2230,11 @@ are retired, bullet by bullet; everything else stands.
   from Settings → System (or `ADMIN_PASSWORD`). `/api/health` and the login routes stay open.
 - Daemon controls (Settings → System): **Restart daemon** (polls health, reloads) and Slack
   disconnect/reconnect. The old "Stop daemon" button was removed as a footgun.
+- **Update regression checks isolate runtime paths**: the aggregate test runner removes inherited
+  production runtime/database/workspace selectors before launching fixtures. Backup, restore, and
+  maintenance tests pin both current and legacy path variables, including direct `node --test`
+  invocation. An operator's configured runtime root must never turn a fixture into a live backup,
+  restore, or log rotation. → TEST-PLAN: Update regression path isolation.
 - **Enterprise managed updates and durable progress**: only an entitled Enterprise deployment
   exposes the Update button and accepts managed update requests (Admin UI, Slack, or MCP).
   Other editions retain the behind count and host-managed `npm run update`. Eligibility follows
