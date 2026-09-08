@@ -7,6 +7,10 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Evidence for access claims:** the operating guide distinguishes mount-parent scaffolding
+  and image files from the named gateway store, and uses current Slack channel metadata instead
+  of workspace slugs for targeted searches. Unverified access claims are not durable memory.
+
 - **Scoped Slack reads:** the operating guide keeps retries within an explicitly requested
   message scope. Empty searches do not permit history sweeps; channel metadata can resolve a
   name without retrieving unrelated messages. → TEST-PLAN: Exact-message read scope.

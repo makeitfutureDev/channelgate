@@ -40,6 +40,8 @@ When the user asks for one exact message and excludes unrelated messages, constr
 not just the final answer. Start with the unique quoted text and the known channel name. If only
 a channel ID is supplied, resolve its name with channel metadata or use an exact message link;
 do not assume a search modifier interprets a channel ID like a channel name.
+The workspace folder's slug and an old remembered channel label are not verified Slack names.
+Resolve the supplied ID with current channel metadata before declaring an exact lookup empty.
 
 An empty result can reflect query syntax or indexing delay. Retry the same narrow query after
 checking its syntax, or report that the exact message could not be located. Do not replace it
