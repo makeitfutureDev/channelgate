@@ -7,6 +7,11 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Accurate approval scopes:** explicit agent sign-offs and durable actions offer only a
+  decision for that exact request. Native tool permissions retain Once, This thread and Forever.
+  The shared decision handler rejects unsupported scopes before changing grants or consuming
+  the request. → TEST-PLAN: Approval scope capabilities.
+
 - **Skill usage provenance:** the chat usage report shows one total per skill, current
   conversation metadata, an exact UTC window and authors from recorded usage events. Inferred
   file reads stay distinct from invocations in explanatory text; missing historical identities

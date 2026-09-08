@@ -55,6 +55,11 @@ const APPROVAL_TIMEOUT_MS = 4 * 60 * 1000;
 // How far an "approve" reaches. A Slack button carries it in its action_id; the admin HTTP API
 // carries it in the request body. Both hand the same value to applyApprovalDecision().
 export const APPROVAL_SCOPES = ["once", "thread", "forever"];
+// Remembered grants apply only to native tool permissions. Plans and durable actions
+// require a decision about this exact request, even when their titles match an earlier one.
+export function approvalScopesFor({ approvalType, durable = false } = {}) {
+  return approvalType === "permission" && !durable ? [...APPROVAL_SCOPES] : ["once"];
+}
 const SCOPE_BY_ACTION = {
   cg_approve: "once",
   cg_approve_once: "once",
@@ -483,6 +488,9 @@ export async function applyApprovalDecision({
   if (!entry) return { ok: false, code: 404, error: "no such approval" };
   // A comment is a request for CHANGES: it never approves, whichever button carried it.
   const approve = decision === "approve" && !comment;
+  if (approve && !approvalScopesFor({ approvalType: entry.approvalType, durable }).includes(scope)) {
+    return { ok: false, code: 400, error: "Approval scope is not supported for this request." };
+  }
   const who = actorLabel || (actorId ? `<@${actorId}>` : "the admin UI");
   const cardTs = entry.msgTs || messageTs;
   const reason = comment ? `Changes requested by ${who}` : approve ? `Approved by ${who}` : `Denied by ${who}`;

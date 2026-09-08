@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Show only supported scopes for explicit agent and durable approvals. Reject unsupported
+  thread/forever decisions before consuming the request or persisting ineffective grants;
+  native tool permissions retain all three scopes.
+
 - Inject explicitly selected Claude MCP transport definitions into isolated runs without enabling
   ambient settings. Fresh configuration reads and warm fingerprints apply additions, changes and
   revocations to resumed threads; unavailable or credential-dependent definitions fail closed.
