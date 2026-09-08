@@ -24,6 +24,9 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Correct the bundled skill-authoring workflow: updates and change proposals accept only changed
+  files while retaining omitted files; complete packages are required for initial creation.
+
 - Correct Composio guidance that assumed the agent identity always belonged to other people or
   was shared across every channel. Preserve account selection and no-substitution rules, including
   when personal and agent connections reach the same underlying service owner.
