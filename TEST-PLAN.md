@@ -795,18 +795,25 @@ unchanged-Slack-behaviour proof for the extracted mention matcher.
 
 ## Google Chat and Teams transports
 
-- [x] Flat Teams personal/group chats and Google Chat DM/group messages reach the real capability
-      signer with a nonempty conversation-scoped session key; successive messages resume, another
-      conversation stays separate, and outgoing posts/edits retain an empty native thread handle.
-      `node --test test/platform-ingest.test.js` also preserves real threaded message identities.
-- [ ] LIVE (Claude and Codex, separately): install the bot in a Teams personal chat and group chat;
-      approve the test author and explicitly grant that author access in the group's Access settings.
-      With each engine selected, send `Remember the word amber. Reply READY` (mention the bot in
-      the group), then `What word did I ask you to remember?`. Pass: READY then amber, flat replies,
-      and no `Cannot mint gateway capability` error. Repeat in a Google Chat DM. Send a mentioned
-      message in a Teams channel and confirm its reply remains in the original thread. Record the
-      private fixture IDs, engine, prompts and observed replies in the deployment QA registry.
-      Live acceptance remains unexecuted until recorded.
+- [x] Flat Teams/Google Chat DMs reach the real capability signer with a stable, nonempty session
+      key. Flat groups start separate sessions per new message; quotes of original user messages,
+      bot answers, and follow-ups resume the original. Conversation isolation and mention gating
+      remain intact. Both Claude and Codex session identities are exercised through the real
+      signer and session store in `node --test test/platform-ingest.test.js`.
+- [x] Teams quote parsing handles current quotedReply entities and legacy Reply blockquotes
+      (including mirrored HTML), ignores ordinary/ambiguous/deleted/invalid quotes, and never
+      mistakes replyToId for a group-chat quote. Synthetic session keys do not become native
+      channel reply handles: `node --test test/platform-teams.test.js`.
+- [ ] LIVE (Claude and Codex separately): approve the test author and grant access to a Teams group.
+      Select the engine in admin Settings. Send `@Bot Remember amber. Reply READY`; send a new
+      unquoted `@Bot Remember violet. Reply READY`. Quote the first user message and ask
+      `@Bot What word did I give you?`; expect amber. Quote the second bot answer and ask the same;
+      expect violet. Repeat after a safe daemon restart. Pass only with distinct sessions for the
+      two new messages, the original session reused for each quote, flat replies and no capability
+      error. In a personal chat, repeat a two-message memory check without mentions; in a Teams
+      channel verify a mentioned reply stays in its native thread. Repeat the flat DM check in
+      Google Chat. Record exact private fixtures, prompts, engines and observed evidence in the QA
+      registry. Live cases remain unexecuted until recorded.
 
 Automated: `test/platform-googlechat.test.js` (30), `test/platform-teams.test.js` (25),
 `test/platform-ingest.test.js` (12), `test/teams-onboarding.test.js` (2). Manual checks need a real
