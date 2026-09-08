@@ -321,6 +321,7 @@ export function createGatewayMcpServer(ctx) {
       if (capability.claims.principalTrusted !== true) {
         return text("🚫 Gateway tools require a trusted Slack principal; this run was authenticated only as a daemon/API caller.");
       }
+      let humanApproved = false;
       if (gate) {
         // Fail CLOSED at the chokepoint. The precheck mirrors the handler's own authz so an
         // unauthorized caller gets one refusal and no approval spam — but if the two ever drift
@@ -355,9 +356,20 @@ export function createGatewayMcpServer(ctx) {
           if (!d.allow) {
             return text(`🚫 \`${name}\` changes persistent gateway state, so it needs a human Approve click in Slack — and it was not approved${d.reason ? ` (${d.reason})` : ""}. Nothing was changed.`);
           }
+          humanApproved = true;
         }
       }
-      return handler(args, extra);
+      const result = await handler(args, extra);
+      if (!humanApproved) return result;
+      // The model does not see the gateway's approval UI while awaiting this tool. Keep the
+      // decision visible without conflating it with the handler outcome or naming a UI/actor.
+      return {
+        ...result,
+        content: [...(result.content || []), {
+          type: "text",
+          text: "Human approval was received before this tool executed. The gateway handles the approval UI outside the model transcript; receiving the tool result does not mean approval was bypassed. Approval does not establish whether the requested change succeeded; use the tool outcome above.",
+        }],
+      };
     });
   };
 

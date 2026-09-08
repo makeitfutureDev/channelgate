@@ -1,5 +1,30 @@
 # ChannelGate — Test Plan
 
+## Control-plane approval receipts
+
+- [x] Automated: `node --test test/mcp-control-plane-approval.test.js` exercises real MCP skill
+  create/update/delete handlers for both engine contexts with approved decisions. Each returned
+  result keeps its operation outcome and adds human-approval evidence without decision comments
+  or actor IDs. A handler refusal is still a refusal. An in-memory MCP contract regression verifies
+  mixed text/image content, structuredContent, metadata and isError survive unchanged. Denied and
+  unreachable approvals, pending durable instructions and unexpected durable allow responses do
+  not receive the receipt or run the live mutation. Ungated own grants/memory and the existing
+  Auto/Admin update exceptions receive no human-approval receipt.
+- [ ] Live (Claude + Codex): use an approved author's unique harmless personal skill in each
+  writable Auto test conversation. Ask to create it with one SKILL.md, update it by adding a
+  harmless relative reference, and delete it. For each call capture the actual native card, approve
+  once, then capture the exact returned tool result and catalog revision/tombstone. All three
+  results must convey human approval independently of the mutation outcome. Ask one followup:
+  “Using the tool results, report which changes received human approval and which succeeded.
+  Do not infer a missing approval card from your model transcript.” The answer must match the
+  recorded decisions and effects; it must not claim no card appeared or approval was bypassed
+  merely because the tool returned directly. Inspect any automatic memory update for the same
+  factual claim. Model factuality is a separate observed expectation, not guaranteed by a receipt.
+  Deny an additional unique creation request: no catalog entry and no approved receipt. Preserve
+  original false summaries/memory separately; clean only owned skill fixtures via supported paths.
+  This sequence may share physical executions with skill-creation approval-detail acceptance;
+  retain exact per-call provenance and do not substitute source tests for native card evidence.
+
 ## Deleted personal skill grants
 
 - [x] Automated: `node --test test/access-grants.test.js test/run-grant-isolation.test.js

@@ -70,6 +70,12 @@ Schedules are NOT in this list: `create_schedule`/`delete_schedule` never ask (s
 what needs approving if they seem unaware. Read-only tools (`list_*`, `get_*`) and in-thread posts
 (charts, tables, snippets) never prompt.
 
+After a prompting tool receives approval, its result includes a human-approval receipt alongside
+the operation outcome. The approval UI is handled outside your model transcript: a direct tool
+result is not evidence that approval was bypassed. The receipt confirms the decision, not success
+of the operation or which UI/person approved it. Pending durable actions remain pending until the
+gateway applies them; explicitly exempt tools do not receive a human-approval receipt.
+
 
 ## MCP servers allowed in this channel (managers)
 - `list_available_mcps` — servers the host offers.

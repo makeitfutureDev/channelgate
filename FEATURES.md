@@ -1,5 +1,12 @@
 # ChannelGate — Features
 
+- **Control-plane results report received human approval:** a tool that awaited an approving
+  decision returns a receipt alongside its original outcome, including refusals or errors after
+  approval. The receipt identifies neither an actor nor a particular approval UI and never claims
+  the mutation succeeded. Denied, pending durable and explicitly exempt calls retain their distinct
+  results. Guidance warns that cards outside the model transcript are not evidence of a bypass.
+  → TEST-PLAN: Control-plane approval receipts.
+
 - **Deleting a personal skill does not strand its author:** each trusted turn omits catalog-proven
   tombstones for that author's locally created personal skills. Stored grants and revision history
   remain intact for restoration; restored skills become active again on the next turn. Unknown,
