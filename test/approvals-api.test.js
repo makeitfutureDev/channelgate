@@ -158,6 +158,39 @@ test("scope thread and scope forever carry the same meaning they do on the butto
   assert.ok((await getChannelMeta(SLUG)).approvedTools.includes("Grep"), "forever persists to meta.approvedTools");
 });
 
+test("agent approvals expose only once and reject broader scopes without consuming the request", async () => {
+  const toolName = "One explicit plan";
+  const input = { channelId: CHANNEL, slug: SLUG, authorId: MEMBER, threadKey: "2.plan", toolName,
+    toolInput: { details: "Reply with an approved marker" }, approvalType: "agent" };
+  const pending = requestApproval(null, input);
+  await tick();
+  const id = cardId();
+  try {
+    const list = await (await get("/api/approvals", { cookie })).json();
+    assert.deepEqual(list.approvals.find((a) => a.id === id).scopes, ["once"]);
+    const before = (await getChannelMeta(SLUG)).approvedTools;
+    for (const scope of ["thread", "forever"]) {
+      const response = await admin(`/api/approvals/${id}`, { decision: "approve", scope });
+      assert.equal(response.status, 400);
+      assert.match((await response.json()).error, /scope.*not supported/i);
+      assert.ok((await (await get("/api/approvals", { cookie })).json()).approvals.some((a) => a.id === id));
+      assert.deepEqual((await getChannelMeta(SLUG)).approvedTools, before);
+      assert.equal(readEvents({ limit: 100 }).some((e) => e.event === "approval_resolved_by_admin" && e.approvalId === id), false);
+    }
+    assert.equal((await admin(`/api/approvals/${id}`, { decision: "approve", scope: "once" })).status, 200);
+    assert.equal((await pending).allow, true);
+    const repeat = requestApproval(null, input);
+    await tick();
+    const secondId = cardId();
+    assert.notEqual(secondId, id, "a repeated explicit plan still requires a fresh human decision");
+    await admin(`/api/approvals/${secondId}`, { decision: "deny" });
+    assert.equal((await repeat).allow, false);
+  } finally {
+    await admin(`/api/approvals/${id}`, { decision: "deny" });
+    await pending;
+  }
+});
+
 test("unknown id → 404, a second resolution → 409, a malformed decision → 400", async () => {
   assert.equal((await admin("/api/approvals/does-not-exist", { decision: "deny" })).status, 404);
 
@@ -238,6 +271,12 @@ test("a durable background-shell approval executes once through the API and cann
   assert.equal(listed.expiresAt, null, "a durable approval never expires — that is the point of it");
   assert.deepEqual(listed.scopes, ["once"], "there is no thread/forever scope for a one-shot action");
 
+  for (const scope of ["thread", "forever"]) {
+    const refused = await admin(`/api/approvals/${id}`, { decision: "approve", scope });
+    assert.equal(refused.status, 400, "one-shot durable actions cannot accept persistent scopes");
+    assert.deepEqual(started, [], "invalid scope must not consume or execute the action");
+    assert.ok((await (await get("/api/approvals", { cookie })).json()).approvals.some((a) => a.id === id));
+  }
   const res = await admin(`/api/approvals/${id}`, { decision: "approve" });
   assert.equal(res.status, 200);
   assert.equal((await res.json()).jobId, "job-api-1");

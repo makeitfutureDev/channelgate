@@ -3,6 +3,24 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Approval scope capabilities
+
+- [x] `node --test test/approvals-api.test.js`: actual authenticated routes list agent and
+  durable approvals as once-only; thread/forever submissions return 400 with the pending
+  request, stored grants and audit history unchanged. Once resolves the exact request; repeating
+  the same agent title requires a fresh decision. Native permission thread/forever semantics
+  and durable execution exactly once remain covered.
+- [ ] Live, Claude and Codex: in authorized Auto fixtures, ask each engine to call
+  `request_approval` for a unique harmless plan to reply with a marker. In the authenticated
+  admin browser, verify the exact requester/thread card has no scope selector. Submit a
+  thread and forever decision through the authenticated API and require 400 plus the same
+  pending card and unchanged channel grants. Approve in the browser, require the marker in
+  the original thread, then repeat the same plan title and deny its new card. Require a fresh
+  decision despite Auto, no marker after denial and no retained tool grant. Retest previously
+  failed threads, preserving original failures. Separately verify the native Claude permission
+  card still offers all three scopes. Codex has no native permission-prompt bridge; agent
+  sign-offs do not prove native Codex permission scopes. Durable actions remain once-only.
+
 ## Skill usage report provenance
 
 - [x] `test/skill-usage-report.test.js`: real catalog events and chat handlers verify one
