@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
+import { createFakeRuntime } from "./fixtures/fake-runtime-backend.js";
 
 ensureTestEnv();
 const { buildClaudeArgs, buildPersistentArgs, buildClaudeEnv, canUseClaudeWarmPool } = await import("../src/engines/claude.js");
@@ -18,6 +19,17 @@ function argsFor(overrides = {}) {
     ...overrides,
   });
 }
+
+test("Claude startup allows slow MCP handshakes without overriding operator or tool budgets", () => {
+  for (const target of [null, createFakeRuntime().target()]) {
+    const source = { PATH: "/bin", MCP_TOOL_TIMEOUT: "300000" };
+    const env = buildClaudeEnv({ target, extraEnv: { MCP_TIMEOUT: "1" } }, source);
+    assert.equal(env.MCP_TIMEOUT, "120000");
+    assert.equal(env.MCP_TOOL_TIMEOUT, "300000");
+    assert.equal(source.MCP_TIMEOUT, undefined, "never mutate shared operator environment");
+    assert.equal(buildClaudeEnv({ target }, { ...source, MCP_TIMEOUT: "45000" }).MCP_TIMEOUT, "45000");
+  }
+});
 
 test("one-shot args carry the stream-json contract and the trimmed prompt", () => {
   const args = argsFor({ prompt: "  check schedules  " });

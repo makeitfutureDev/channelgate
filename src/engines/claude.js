@@ -6,6 +6,7 @@
 import { claudeProviderError, createStreamConsumer } from "./stream.js";
 import { argvSafePrompt } from "./contract.js";
 import { buildChildEnv } from "./child-env.js";
+import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
 import { browserSpawnEnv } from "../gateway/browser-env.js";
 import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
@@ -33,6 +34,9 @@ export function canUseClaudeWarmPool(runtime = {}) {
 // same last group: it decides which channel's browser daemon a browser MCP child attaches to
 // (gateway/browser-env.js), so a channel secret must not be able to name it.
 export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, browserNamespace = "", target = null, oauthToken = "" } = {}, source = process.env) {
+  // Apply at every spawn (cold, warm, background and reviewer), preserving an operator override.
+  // Channel secrets cannot override this reserved name; never mutate the shared source object.
+  source = { ...source, MCP_TIMEOUT: source.MCP_TIMEOUT || String(MCP_STARTUP_TIMEOUT_SECONDS * 1000) };
   // An ISOLATED runtime (a channel container) has none of the host's layout: HOME, the config dir
   // and PATH are the image's, the daemon's toolchain launcher dir does not exist there, and the
   // engine authenticates with the gateway-held OAuth token rather than the operator's own login

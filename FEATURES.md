@@ -9,6 +9,13 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Consistent MCP startup budgets:** selected optional Codex HTTP and stdio servers receive
+  the same 120-second handshake ceiling as other remote integrations. Claude's default
+  `MCP_TIMEOUT` is 120 seconds at every engine spawn, with explicit operator overrides preserved.
+  Tool-call deadlines, the gateway control server's 60-second Codex budget, grant filtering and
+  the quiet-run watchdog are unchanged. A startup ceiling does not promise that a provider will
+  await every server before its first model request. → TEST-PLAN: MCP startup budgets.
+
 - **Accurate channel-control descriptions:** MCP mode/network descriptions and confirmations
   describe the container boundary, advisory networking and separately resolved operator-home
   grant. They do not promise domain filtering or automatic access to host credentials. Auto

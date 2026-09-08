@@ -8,6 +8,23 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## MCP startup budgets
+
+- [x] `node --test test/claude-args.test.js test/codex-args.test.js
+  test/engine-runtime-isolated.test.js test/child-env.test.js test/channel-env.test.js`:
+  both optional Codex transports receive a 120-second startup ceiling on fresh/resumed turns;
+  ungranted and Clean servers stay absent. Claude receives a 120-second default in local and
+  isolated spawn environments, preserves an explicit operator override and tool-call timeout,
+  rejects channel-secret overrides and does not mutate the shared environment.
+- [ ] Live, both engines: grant a credential-free fixture MCP whose initialize response waits
+  45 seconds, then ask for its harmless marker tool and progress while initialization proceeds.
+  Capture the actual invocation config, server initialize/initialized/tool-call timestamps,
+  final result and delivery/progress events. Require the 120-second default to reach the runner,
+  no rejection at the old 10/30-second defaults, and an unchanged quiet watchdog. Record missing
+  first-turn provider discovery separately; a longer handshake ceiling alone is not proof that
+  a provider waits for readiness. Retain original attempts, and restore only this fixture's delay
+  and grants. Native client progress requires actual client evidence when the case asks for it.
+
 ## Channel-control description accuracy
 
 - [x] Existing `test/channel-policy-audit.test.js`, `test/mcp-control-plane-approval.test.js`

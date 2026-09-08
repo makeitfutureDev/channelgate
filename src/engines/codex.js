@@ -38,6 +38,7 @@ import { redactLogValue } from "../util/redact.js";
 import { conciseProcessDiagnostic, embeddedJsonObject, plainFailureText, processFailureMessage } from "../util/process-outcome.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.js";
+import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 const MAX_RETAINED = 64_000; // stdout/stderr/delta kept for error context — tail only, never unbounded
@@ -692,6 +693,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     const definition = server.definition;
     if (!definition) throw new Error(`Optional MCP ${server.name} is missing a complete safe definition`);
     args.push("-c", `mcp_servers.${name}.enabled=true`);
+    args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
     if (definition.transport === "http" && definition.url) {
       args.push("-c", `mcp_servers.${name}.url=${JSON.stringify(definition.url)}`);
     } else if (definition.transport === "stdio" && definition.command) {
@@ -738,7 +740,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
     // Still a ceiling on the handshake itself: the remote endpoint can be slow to answer the first
     // initialize, and Codex's default window (10s) intermittently dropped a server outright.
-    args.push("-c", `mcp_servers.${name}.startup_timeout_sec=120`);
+    args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
     headerHelpers.push({ path: helperPath, secretName, headerName, prefix });
   };
 
@@ -749,7 +751,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
       args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(sdk.command)}`);
       args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(sdk.args || []), endpoint.url])}`);
       args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
-      args.push("-c", `mcp_servers.${name}.startup_timeout_sec=120`);
+      args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
       return;
     }
     const url = endpoint?.url || composioUrl();

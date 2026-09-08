@@ -212,6 +212,23 @@ test("Codex runs allow only selected runtime app families and servers", () => {
   assert.ok(args.includes(`mcp_servers.local-docs.args=["docs-server.js"]`));
 });
 
+test("selected optional MCP transports get the remote startup budget without granting other servers", () => {
+  const codexMcpPolicy = { servers: [
+    { name: "slow-http", enabled: true, definition: { transport: "http", url: "https://example.com/mcp" } },
+    { name: "slow-stdio", enabled: true, definition: { transport: "stdio", command: "node", args: ["mcp.js"] } },
+    { name: "ungranted", enabled: false },
+  ] };
+  for (const isNewSession of [true, false]) {
+    const args = argsFor({ codexMcpPolicy, isNewSession });
+    for (const name of ["slow-http", "slow-stdio"]) {
+      assert.ok(args.includes(`mcp_servers.${name}.startup_timeout_sec=120`));
+      assert.ok(!args.some((value) => value.startsWith(`mcp_servers.${name}.tool_timeout_sec=`)));
+    }
+    assert.ok(!args.some((value) => value.startsWith("mcp_servers.ungranted.")));
+    assert.ok(!argsFor({ codexMcpPolicy, isNewSession, clean: true }).some((value) => /^mcp_servers.slow-/.test(value)));
+  }
+});
+
 test("Codex runs disable optional runtime apps when no family is selected", () => {
   const args = argsFor({
     codexMcpPolicy: {
