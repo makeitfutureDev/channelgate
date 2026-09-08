@@ -7,6 +7,12 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Skill usage provenance:** the chat usage report shows one total per skill, current
+  conversation metadata, an exact UTC window and authors from recorded usage events. Inferred
+  file reads stay distinct from invocations in explanatory text; missing historical identities
+  remain unknown. Author aggregation stays channel-scoped and discloses partial results.
+  Structured API signal counters are preserved. → TEST-PLAN: Skill usage report provenance.
+
 - **Evidence for access claims:** the operating guide distinguishes mount-parent scaffolding
   and image files from the named gateway store, and uses current Slack channel metadata instead
   of workspace slugs for targeted searches. Unverified access claims are not durable memory.
