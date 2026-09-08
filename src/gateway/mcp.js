@@ -9,8 +9,8 @@
 //   - makeitfuture-toolbox: injected only when a (per-user, channel, or org-default) token is
 //     available, carrying it in the Authorization: Bearer header. (Skills come from the gateway's
 //     own catalog as files — src/gateway/skills — never from an MCP server.)
-// The channel's other picked MCP servers are NOT injected — they're the machine's
-// globally-configured servers, reachable via the lockdown's allowedMcpServers allowlist.
+// Selected optional definitions are added by run-engine-mcp.js through the engine adapter.
+// Claude receives explicit safe definitions; ambient user/project settings remain disabled.
 //
 // RUNTIME TARGETS (v0.8): an `isolated` target (the container backend) gets the SAME servers with
 // two differences — the two STDIO entries are the image's socket bridge instead of a script in this

@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Inject explicitly selected Claude MCP transport definitions into isolated runs without enabling
+  ambient settings. Fresh configuration reads and warm fingerprints apply additions, changes and
+  revocations to resumed threads; unavailable or credential-dependent definitions fail closed.
+
 - Resolve optional Codex MCP launch definitions from effective configuration when native tool
   status omits them, while rejecting credential-bearing transports and retaining fail-closed
   selection when no safe definition is available.

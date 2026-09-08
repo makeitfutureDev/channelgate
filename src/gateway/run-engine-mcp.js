@@ -2,6 +2,7 @@
 // A fallback is a new authority decision, not merely another runner: engine-scoped mutations are
 // authorized from this claim, so Claude's capability must never be reused by a Codex fallback.
 import { buildMcpConfig } from "./mcp.js";
+import { requireAdapter } from "../engines/registry.js";
 
 // Capabilities live for six hours; a persistent Claude process idles out after ten minutes, but a
 // continuously active thread can keep it alive much longer. Rotate the warm fingerprint at least
@@ -12,13 +13,18 @@ const CAPABILITY_FINGERPRINT_BUCKET_MS = 5 * 60 * 60 * 1000;
 // engine reaches the gateway control server: a host run spawns the stdio server from this checkout,
 // an isolated run gets the in-container bridge instead (there is no DB and no checkout on that
 // side). Passed through explicitly rather than riding in `identity`, so the dependency is visible.
-export async function buildEngineMcpRuntime({ clean = false, engine = "claude", target = null, fingerprintNow = Date.now(), ...identity } = {}) {
+export async function buildEngineMcpRuntime({ clean = false, engine = "claude", target = null, allowedMcps = [], fingerprintNow = Date.now(), ...identity } = {}) {
   if (clean) {
     const mcpConfigJson = JSON.stringify({ mcpServers: {} });
     return { mcpConfigJson, mcpConfigFingerprint: mcpConfigJson, gatewayCapability: "" };
   }
-  const mcpConfigJson = await buildMcpConfig({ ...identity, engine, target });
-  const parsed = JSON.parse(mcpConfigJson);
+  const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps) || {};
+  const parsed = JSON.parse(await buildMcpConfig({ ...identity, engine, target }));
+  for (const [name, definition] of Object.entries(optional)) {
+    if (Object.hasOwn(parsed.mcpServers, name)) throw new Error("Selected MCP server conflicts with a built-in identity.");
+    parsed.mcpServers[name] = definition;
+  }
+  const mcpConfigJson = JSON.stringify(parsed);
   const gatewayCapability = parsed.mcpServers.gateway.env.CG_GATEWAY_CAPABILITY;
 
   // The signed token contains volatile iat/exp/jti fields, so hashing the raw MCP JSON tears down

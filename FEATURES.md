@@ -1152,7 +1152,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   → TEST-PLAN: CLI integrations.
 - Engine-aware optional MCP picker: channel, DM, and access-template editors load the catalog for
   their effective Claude/Codex engine and retain each engine's selections independently. Claude
-  keeps its configured-server catalog; Codex queries the active app-server inventory and exposes
+  keeps its configured-server catalog and resolves selected transport definitions from fresh
+  operator configuration bytes at run admission. Its strict MCP payload contains only explicitly
+  selected, credential-free definitions plus the scoped built-ins; user/project setting sources
+  remain disabled. Missing, stale-URL, reserved-name, auth-dependent or unsupported definitions
+  fail closed with an admin remedy. Changes and revocations alter the warm-process fingerprint.
+  Codex queries the active app-server inventory and exposes
   each runtime app family (Boost.space, GitHub, Sites, Skill Library, etc.) plus each configured
   server as its own checkbox. Codex launches default-deny optional apps, explicitly enable only
   the live connector IDs represented by selected families, and gates every discovered optional
