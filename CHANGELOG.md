@@ -20,6 +20,9 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Make skill assignment rows compact, reveal descriptions and metadata on click, and give Active
+  skills and Add skills matching fixed heights with preserved scroll position when managing skills.
+
 - Make existing channel API/CLI credentials discoverable through a current names-only inventory
   on non-Clean attempts, including resumed turns. Teach the operating guide to check credentials
   alongside skills, CLI logins and selected-account MCPs before requesting another connection;

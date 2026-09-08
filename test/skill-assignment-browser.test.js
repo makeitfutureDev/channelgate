@@ -176,3 +176,57 @@ test("conversation and template skill pickers preserve grants, drafts, filtering
   await screenshot("skill-template-mobile.png");
   assert.deepEqual(errors, []);
 });
+
+test("compact skill lists match heights and reveal details without changing selection", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const app = express();
+  app.use(express.static(fileURLToPath(new URL("../public", import.meta.url))));
+  app.get("/picker-fixture", (_req, res) => res.send('<html><head><link rel="stylesheet" href="/styles.css"></head><body><main style="padding:24px;width:100%"><div id="picker"></div></main></body></html>'));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(`http://127.0.0.1:${server.address().port}/picker-fixture`);
+  await page.evaluate(async () => {
+    const { mountSkillAssignmentPicker } = await import('/skill-assignment-picker.js');
+    const skills = Array.from({ length: 80 }, (_, i) => ({ slug: `skill-${String(i).padStart(2, "0")}`, name: `Skill ${String(i).padStart(2, "0")}`, sourceId: 1, currentRevisionId: 1, enabled: true, description: 'Full description with <literal markup> and enough detail to span multiple lines. '.repeat(5) }));
+    globalThis.pickerChanges = 0;
+    mountSkillAssignmentPicker(globalThis.document.getElementById('picker'), { skills, sources: [{ id: 1, label: 'Example source' }], selected: skills.slice(0, 30).map((s) => s.slug), onChange: () => { globalThis.pickerChanges++; } });
+  });
+  const picker = page.locator('#picker');
+  const panels = picker.locator('.skill-assignment-panel');
+  const sameHeight = async () => {
+    const heights = await panels.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+    assert.ok(Math.abs(heights[0] - heights[1]) < 1, 'both panels have equal fixed heights');
+    return heights[0];
+  };
+  const height = await sameHeight();
+  const row = picker.locator('[data-skill="skill-00"]');
+  assert.ok((await row.boundingBox()).height <= 42, 'collapsed row remains compact');
+  assert.equal(await row.locator('.skill-assignment-description').isVisible(), false);
+  const inline = await row.locator('.skill-assignment-identity').evaluate((el) => [...el.children].map((child) => child.getBoundingClientRect().top));
+  assert.ok(Math.max(...inline) - Math.min(...inline) < 5, 'name, slug and source share one line');
+  await row.locator('summary').click();
+  assert.equal(await row.locator('.skill-assignment-description').isVisible(), true);
+  assert.match(await row.locator('.skill-assignment-description').textContent(), /Full description with <literal markup>/);
+  assert.equal(await row.locator('.skill-assignment-description literal').count(), 0, 'description is escaped');
+  assert.equal(await page.evaluate(() => globalThis.pickerChanges), 0, 'opening details never changes grants');
+  assert.equal(await sameHeight(), height, 'expanded details cannot grow either panel');
+  await row.locator('summary').press('Enter');
+  assert.equal(await row.locator('.skill-assignment-description').isVisible(), false);
+  const available = picker.locator('[data-picker-available]');
+  await available.evaluate((el) => { el.scrollTop = 450; });
+  const scrolled = await available.evaluate((el) => el.scrollTop);
+  await picker.getByRole('button', { name: 'Add skill-45', exact: true }).click();
+  assert.equal(await page.evaluate(() => globalThis.pickerChanges), 1);
+  assert.ok(Math.abs(await available.evaluate((el) => el.scrollTop) - scrolled) < 2, 'adding from a long list retains its scroll position');
+  assert.equal(await picker.locator('[data-skill="skill-45"] details').getAttribute('open'), null, 'Add does not open details');
+  if (process.env.CG_UI_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.CG_UI_SCREENSHOTS, 'skill-compact-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await sameHeight();
+  assert.equal(await picker.evaluate((el) => el.scrollWidth <= el.clientWidth), true);
+  await picker.locator('[data-skill="skill-00"] summary').click();
+  assert.equal(await picker.locator('[data-skill="skill-00"] .skill-assignment-description').isVisible(), true);
+  if (process.env.CG_UI_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.CG_UI_SCREENSHOTS, 'skill-compact-mobile.png'), fullPage: true });
+});

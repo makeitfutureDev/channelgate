@@ -161,6 +161,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   longer offered. MCP Connections, Cloud MCP, Environment tokens, and Skills are separate first-class
   channel pages rather than nested beneath Tools. Conversation Skills and Skills → Templates share
   an Active skills / Add skills editor with name/description search and source filtering.
+  Compact rows keep name, slug and source inline, with descriptions hidden until the skill is
+  clicked (or expanded by keyboard). Both panels have matching fixed heights and one scrollbar
+  each; add/remove retains list position. Narrow screens keep the source in expanded details.
   Conversations separate locked organization, template and repository-section grants from removable
   additional skills; inherited skills cannot be added twice. Template changes preserve explicit
   additions, unavailable saved grants remain visible, and failed assignment loads preserve saved
