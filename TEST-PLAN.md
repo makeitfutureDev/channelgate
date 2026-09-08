@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Skill creation approval details
+
+- [x] Automated: `node --test test/mcp-control-plane-approval.test.js test/skills-platform.test.js
+  test/skills-standalone.test.js`. Real MCP clients in both engine contexts inspect the daemon
+  approval request before denial, then approve harmless temporary catalog creations and compare
+  preview semantics with persisted visibility, personal/channel grants and channel scope. Cover
+  defaults, shared/personal library with grant_here true/false, channel scope true/false, and the
+  rejected personal+channel combination. Denied previews must create nothing.
+- [ ] Live separately from Claude and Codex in approved QA channels: ask for a unique harmless
+  personal skill with `personal:true, scope:library, grant_here:false`. Before approving, capture
+  the actual native permission card. It must name personal creation and automatic grant to the
+  requester's own runs, never shared-catalog creation or a channel grant. Approve only the owned
+  fixture, then verify personal visibility and the requester grant, with no channel grant or
+  shared-source publication. Repeat preview-only requests for shared-library grant true/false
+  and channel scope grant false; deny those cards and verify no skill was created. Shared-library
+  cards must distinguish granting here from no channel grant; channel-scope cards must state
+  automatic activation here. Capture exact tool inputs, native card text and decisions, plus
+  catalog/grant readback; clean up only the uniquely owned fixtures. Model explanations and raw
+  request payloads alone do not prove native approval text.
+
 ## Commands after file sharing
 
 - [x] Automated: `node --test test/inherited-file-commands.test.js test/slack-attachment-recovery.test.js

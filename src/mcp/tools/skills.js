@@ -353,13 +353,13 @@ export function register(server, ctx) {
   server.registerTool(
     "create_skill",
     {
-      description: "Add a NEW skill to the shared catalog from files (SKILL.md with name + description frontmatter is required; add references/*, scripts/* as needed) and grant it in this conversation. `personal: true` keeps it private to you (granted to your own runs only). Any approved member may create skills. Read the skill-authoring skill first.",
+      description: "Create a NEW skill from files (SKILL.md with name + description frontmatter is required; add references/*, scripts/* as needed). Shared library skills are granted here by default; grant_here:false leaves them ungranted. Personal skills are automatically granted to your own runs and are not published; channel-scoped shared skills are automatically active here. Any approved member may create skills. Read the skill-authoring skill first.",
       inputSchema: {
         slug: z.string().optional().describe("Folder name; defaults to the frontmatter name, slugified"),
         files: z.array(FILE_INPUT).min(1),
         note: z.string().optional(),
-        grant_here: z.boolean().optional().describe("Grant the new skill in this conversation (default true)"),
-        personal: z.boolean().optional().describe("Only you can see and use it (default false)"),
+        grant_here: z.boolean().optional().describe("For shared library skills, add a grant in this conversation (default true). Personal and channel-scoped skills activate automatically regardless of this flag."),
+        personal: z.boolean().optional().describe("Personal visibility and automatic grant to your own runs (default false); admins retain catalog visibility. Cannot be combined with scope channel."),
         scope: z.enum(["library", "channel"]).optional().describe("library (default): the shared library, usable by every conversation. channel: specific to THIS channel's customer or project — kept in the channel's own section of the skills repository and granted here automatically. Ask the user before choosing channel."),
       },
     },

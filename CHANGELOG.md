@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Correct skill-creation approval descriptions to show personal versus shared ownership,
+  optional channel grants and automatic personal/channel-scope activation accurately.
+
 - Keep text-only gateway commands on their control path after thread file sharing, while
   preserving canonical current attachments and ordinary agent attachment recovery.
 
