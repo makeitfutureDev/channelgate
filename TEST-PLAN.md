@@ -501,6 +501,15 @@ a pass.
 
 ## Conversation settings + on-demand memory
 
+- [ ] Skills wording (engine-independent Slack modal): in a disposable channel with a selected
+      template, one direct channel skill, and one organization skill, open Settings → Skills.
+      Verify Skill Template, Channel Skills, Channel Skills Including Template, Org Skills, and
+      All Shared Skills are shown with configuration guidance. Manage Channel Skills and Change
+      Template open the existing editors. Org Skills says only admins can add/remove them in
+      admin UI → Skills, and combined groups explain they update automatically. Duplicate skills
+      appear once in All Shared Skills. This is a copy-only change; grants and permissions remain
+      unchanged. Live Slack rendering pending.
+
 Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 `test/memory-snapshot-run.test.js`, `test/channel-members-ui.test.js`,
 `test/access-grants.test.js`, `test/gateway-mcp-authz.test.js`,

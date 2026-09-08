@@ -290,16 +290,21 @@ function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false } = {}
 function skillsBlocks(snapshot = {}, state = {}) {
   const skills = snapshot.skills || {};
   return [
-    fieldBlock("Skill template", skills.template ? inlineCode(skills.template) : "_none_"),
-    fieldBlock("Additional channel skills", listLabel(skills.additional)),
-    fieldBlock("Channel tier now", listLabel(skills.channel)),
-    fieldBlock("Inherited from organization", listLabel(skills.organization)),
-    fieldBlock("Effective shared grants", listLabel(skills.effective)),
+    fieldBlock("Skill Template", skills.template ? inlineCode(skills.template) : "_none_"),
+    { type: "context", elements: [mrkdwn("A reusable set of skills for this channel. Use Change Template below to choose a different set.")] },
+    fieldBlock("Channel Skills", listLabel(skills.additional)),
+    { type: "context", elements: [mrkdwn("Added directly to this channel. Use Manage Channel Skills below to add or remove them.")] },
+    fieldBlock("Channel Skills Including Template", listLabel(skills.channel)),
+    { type: "context", elements: [mrkdwn("Channel Skills plus the selected template. This summary updates automatically when either changes.")] },
+    fieldBlock("Org Skills", listLabel(skills.organization)),
+    { type: "context", elements: [mrkdwn("Inherited from the organization. Only admins can add or remove Org Skills in the admin UI → Skills. They cannot be removed for just this channel.")] },
+    fieldBlock("All Shared Skills", listLabel(skills.effective)),
+    { type: "context", elements: [mrkdwn("Org Skills plus Channel Skills Including Template, with duplicates listed once. Configure the groups above to change this summary.")] },
     {
       type: "actions",
       elements: [
-        button(CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, "Manage skills", state, "skills_manage", {}, { style: "primary" }),
-        button(CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, "Change template", state, "template_edit"),
+        button(CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, "Manage Channel Skills", state, "skills_manage", {}, { style: "primary" }),
+        button(CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, "Change Template", state, "template_edit"),
       ],
     },
     { type: "context", elements: [mrkdwn("Personal skill grants are user-specific, so they are not channel settings and are not included here.")] },
