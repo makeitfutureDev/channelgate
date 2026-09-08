@@ -34,10 +34,10 @@ function persistedRow(id) {
 
 test("the job wrapper writes its own log and records an exit status the daemon can read back", () => {
   const script = containerJobScript("npm test", "/work/.runtime/jobs/abc.log");
-  // A detached exec hands back no stdio, so the job redirects itself into the file the artifact
-  // mount makes identical on both sides — that file IS the daemon's view of the job.
-  assert.match(script, /^exec >'\/work\/\.runtime\/jobs\/abc\.log' 2>&1\n/);
-  assert.match(script, /\nnpm test\n/);
+  // The runtime-side wrapper owns both pipes and persists only redacted output to the artifact
+  // mount. It receives command/path/secret NAMES as data, never secret values.
+  assert.match(script, /^exec node --input-type=module -e /);
+  assert.match(script, /-- 'npm test' '\/work\/\.runtime\/jobs\/abc\.log'/);
   assert.match(script, /cg-exit/);
   // A path with a quote in it must not break out of the redirect.
   assert.match(containerJobScript("ls", "/tmp/o'ops.log"), /'\/tmp\/o'\\''ops\.log'/);
@@ -52,7 +52,9 @@ test("the job wrapper writes its own log and records an exit status the daemon c
 
 test("a shell job in an isolated runtime spawns through the backend, holds a lease, and records where it ran", async () => {
   const backend = createFakeRuntimeBackend();
-  const { entry } = await autoChannel("C_JOB_CTR", "job-ctr");
+  const { entry, meta } = await autoChannel("C_JOB_CTR", "job-ctr");
+  const canary = "synthetic-job-log-canary";
+  await saveChannelMeta(entry.slug, { ...meta, env: { QA_BG_CANARY: { provider: "local", value: canary } } });
   // Auto mode still requires an admin to sign off on the exact command; that gate is not what
   // this test is about, so it is answered rather than bypassed.
   const approve = async () => ({ allow: true, decidedBy: "U_JOB" });
@@ -72,7 +74,11 @@ test("a shell job in an isolated runtime spawns through the backend, holds a lea
   assert.equal(spawn.detached, true);
   assert.equal(spawn.kind, "job");
   assert.match(spawn.runId, /^job-/);
-  assert.match(spawn.args[1], /^exec >'/, "the command was wrapped so the job writes its own log");
+  assert.equal(spawn.args[0], "-c", "only the inner command shell is a login shell");
+  assert.match(spawn.args[1], /^exec node /, "the command was wrapped so redaction precedes durable logging");
+  assert.match(spawn.args[1], /\["QA_BG_CANARY"\]/);
+  assert.equal(spawn.args[1].includes(canary), false, "the wrapper receives names, never resolved values in argv");
+  assert.equal(spawn.env.QA_BG_CANARY, canary, "the existing job environment supplies the secret");
 
   const row = persistedRow(started.id);
   assert.deepEqual(row.runtime, { backend: "container", runId: spawn.runId, container: FAKE_CONTAINER });

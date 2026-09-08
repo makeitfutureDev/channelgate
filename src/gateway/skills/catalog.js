@@ -716,7 +716,7 @@ export function recordSkillUsage({ ts = nowIso(), slug, skillId = null, revision
 
 // Per-skill counts since `since` (ISO), optionally for one channel. Exact and inferred are kept
 // apart so the report can be honest about Codex's best-effort signal.
-export function usageSummary({ channelSlug = "", since = "", engine = "", limit = 500 } = {}) {
+export function usageSummary({ channelSlug = "", since = "", until = "", engine = "", limit = 500 } = {}) {
   const where = [];
   const args = [];
   if (channelSlug) {
@@ -731,6 +731,10 @@ export function usageSummary({ channelSlug = "", since = "", engine = "", limit 
     where.push("engine = ?");
     args.push(engine);
   }
+  if (until) {
+    where.push("ts <= ?");
+    args.push(until);
+  }
   const sql = `SELECT slug,
       SUM(CASE WHEN signal = 'exact' THEN 1 ELSE 0 END) AS exact,
       SUM(CASE WHEN signal = 'inferred' THEN 1 ELSE 0 END) AS inferred,
@@ -744,7 +748,7 @@ export function usageSummary({ channelSlug = "", since = "", engine = "", limit 
     .map((r) => ({ slug: r.slug, exact: r.exact, inferred: r.inferred, total: r.total, lastTs: r.last_ts, users: r.users, channels: r.channels, byEngine: { claude: r.claude, codex: r.codex } }));
 }
 
-export function usageByChannel({ channelSlug = "", since = "", limit = 500 } = {}) {
+export function usageByChannel({ channelSlug = "", since = "", until = "", limit = 500 } = {}) {
   const where = ["channel_slug <> ''"];
   const args = [];
   if (channelSlug) {
@@ -754,6 +758,10 @@ export function usageByChannel({ channelSlug = "", since = "", limit = 500 } = {
   if (since) {
     where.push("ts >= ?");
     args.push(since);
+  }
+  if (until) {
+    where.push("ts <= ?");
+    args.push(until);
   }
   const sql = `SELECT channel_slug,
       COUNT(*) AS total,
@@ -772,6 +780,26 @@ export function usageCountsBySlug({ since = "", engine = "" } = {}) {
   const out = new Map();
   for (const row of usageSummary({ since, engine, limit: 100000 })) out.set(row.slug.toLowerCase(), row);
   return out;
+}
+
+// Attribution comes from the captured event, never from the person requesting the report.
+// Bound the number of groups and disclose truncation; missing historical IDs stay missing.
+export function usageByAuthor({ channelSlug = "", since = "", until = "", slugs = [], limit = 1000 } = {}) {
+  if (!slugs.length) return { rows: [], truncated: false };
+  const cap = Math.max(1, Math.min(1000, Math.floor(Number(limit) || 1000)));
+  const where = [`slug IN (${slugs.map(() => "?").join(",")})`];
+  const args = [...slugs];
+  for (const [column, operator, value] of [["channel_slug", "=", channelSlug], ["ts", ">=", since], ["ts", "<=", until]]) {
+    if (value) { where.push(`${column} ${operator} ?`); args.push(value); }
+  }
+  const rows = getDb().prepare(`SELECT slug, channel_slug, conversation_id, user_id, COUNT(*) AS total
+    FROM skill_usage WHERE ${where.join(" AND ")}
+    GROUP BY slug, channel_slug, conversation_id, user_id
+    ORDER BY slug, total DESC, user_id, conversation_id LIMIT ?`).all(...args, cap + 1);
+  return {
+    rows: rows.slice(0, cap).map((r) => ({ slug: r.slug, channelSlug: r.channel_slug || "", conversationId: r.conversation_id || "", userId: r.user_id || "", total: r.total })),
+    truncated: rows.length > cap,
+  };
 }
 
 // ── Proposals ───────────────────────────────────────────────────────────────────────────────

@@ -5,13 +5,13 @@
 // allowed in the channel; a member's own tier needs no card. Registered via register(server, ctx).
 import { z } from "zod";
 import { readFileSync } from "node:fs";
-import { getUser, isAdmin, isApproved, getChannelMeta } from "../../config/store.js";
+import { getUser, isAdmin, isApproved, getChannelMeta, getChannelEntry } from "../../config/store.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine } from "../../config/settings.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
-import { skillUsageReport } from "../../gateway/skills/usage.js";
+import { skillUsageReport, formatSkillUsageReport } from "../../gateway/skills/usage.js";
 import { fileToApi } from "../../gateway/skills/files.js";
 import {
   createLocalSkill,
@@ -513,13 +513,14 @@ export function register(server, ctx) {
 
   server.registerTool(
     "skill_usage_report",
-    { description: "Which skills fired in this conversation recently (exact for Claude's Skill tool, inferred for Codex file reads) and which granted skills never fired.", inputSchema: { days: z.number().int().min(1).max(365).optional() } },
+    { description: "This conversation's skill usage: one total per skill, recorded user/channel attribution, exact time window, inferred-read provenance and granted skills never used. Missing historical identities stay unknown.", inputSchema: { days: z.number().int().min(1).max(365).optional() } },
     async ({ days = 30 }) => {
       const { shared } = await channelProfile();
-      const r = skillUsageReport({ channelSlug: slug, days, grants: shared.skills });
-      const used = r.used.length ? r.used.map((u) => `• \`${u.slug}\` — ${u.total}× (${u.exact} exact, ${u.inferred} inferred), last ${u.lastTs.slice(0, 10)}`).join("\n") : "• (no skill use recorded)";
-      const never = r.neverUsed.length ? r.neverUsed.map((n) => `\`${n.slug}\`${n.via === "dependency" ? ` (required by ${n.requiredBy.join(", ")})` : ""}`).join(", ") : "(none)";
-      return text(clipText(`Skill use here in the last ${r.days} days:\n${used}\n\nGranted but never fired: ${never}\n_${r.notes[0]}_`));
+      const r = skillUsageReport({ channelSlug: slug, days, grants: shared.skills, includeAttribution: true });
+      const entry = await getChannelEntry(channelId);
+      const ids = [...new Set(r.attribution.rows.map((row) => row.userId).filter(Boolean))];
+      const userNames = new Map(await Promise.all(ids.map(async (id) => [id, (await getUser(id))?.name || ""])));
+      return text(clipText(formatSkillUsageReport(r, { conversationId: channelId, conversationName: entry?.name || "", userNames })));
     },
   );
 

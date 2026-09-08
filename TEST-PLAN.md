@@ -3,6 +3,51 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Skill usage report provenance
+
+- [x] `test/skill-usage-report.test.js`: real catalog events and chat handlers verify one
+  Usage total column, named recorded authors and conversation IDs, current channel names after
+  rename, unknown historical identities, bounded author attribution and the same UTC time
+  window for totals/channel/author groups. A second channel, old events and future events do
+  not leak into the report. Existing API exact/inferred counters remain intact.
+- [ ] Live, both Claude and Codex: use prepared authorized member/admin identities in channels
+  with the same known granted skill and a second intentionally unused grant. Record a baseline,
+  then perform one known-skill read in Claude and two in Codex, preserving exact thread links,
+  author IDs and timestamps. Ask each engine: “Show the last 7 days of skill usage for this
+  channel, including granted skills never used. Use one usage total per skill, report channel,
+  time window and recorded user attribution, and distinguish inferred reads from invocations.”
+  Pass only when counts match the before/after ledger, the unused skill is included, attribution
+  comes from stored events rather than the requester, and no separate Exact/Inferred columns
+  appear. Unknown historical users must stay unknown. Repeat the exact report prompt in any
+  previously failed thread after deployment without invoking the tested skills again; retain
+  original failures. API/UI fixtures supplement these engine-dependent live report gates.
+
+## Detached shell log redaction (2026-09-08 regression)
+
+- [x] Deterministic subprocess regression: `node --test test/container-job-log-redaction.test.js`
+  executes the actual container wrapper with a random disposable environment canary. Split writes
+  on stdout and stderr, including interleaving streams and a split UTF-8 character, leave only
+  `[REDACTED]` in the persisted log. No canary is placed in the generated argv. The log is already
+  safe while the command is running; an exited launcher does not terminate detached work, and
+  explicit exits 17/23 remain recoverable through the terminal marker. Short final tails survive.
+- [x] Runtime integration: `test/runtime-integration-jobs.test.js` confirms the isolated spawn
+  receives only secret names in wrapper arguments and values through its existing environment,
+  keeps its container run ID/lease, and uses the same durable recovery path.
+- [x] Candidate wrapper executed directly as a detached exec in an owned live container with a
+  disposable random canary: raw artifact bytes contained exactly two `[REDACTED]` markers and a
+  recoverable exit 23. This wrapper-level check does not substitute for the engine-origin gate.
+- [ ] Live, Claude and Codex separately: in owned Admin fixtures, use an approved admin author
+  and a unique disposable `QA_*` environment secret through the supported channel-env API (never
+  overwrite an existing name or use operator credentials). Request a gateway background shell
+  job that sleeps 20 seconds, prints an engine-specific done marker, then prints only that named
+  canary. Inspect raw artifact log, live/delivered payload and completion checkpoint with a private
+  exact-value checker that emits booleans only. PASS requires the done marker, `[REDACTED]`, no raw
+  canary on any inspected output surface, truthful exit status and exactly one final delivery.
+  Repeat split stdout/stderr plus a safe nonzero exit using the same disposable fixture. Restore
+  metadata and remove only the newly created secret after terminal state. Preserve original FAIL
+  evidence privately; pre-fix historical raw logs are not retroactively sanitized. The broader
+  two-provider SEC-06 authenticated-read/cross-channel-error matrix remains a separate live gate.
+
 ## Exact-message read scope
 
 - Supply a channel ID whose current Slack name differs from its workspace slug. Verify the
