@@ -4158,6 +4158,19 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 
 ### Skills platform (round two) — personal skills, publishing, webhook, MCP endpoint, peers, migration
 
+- [x] Existing authoring/proposal regression: `node --test test/skills-platform.test.js
+      test/skills-standalone.test.js` verifies partial files merge with the current revision,
+      explicit removal, immutable revisions, proposal approval and personal publishing rules.
+      The bundled authoring instructions distinguish initial packages from partial updates.
+- [ ] Live (Claude + Codex, SKL-07): as an approved author, create a unique disposable personal
+      skill containing `SKILL.md` and `references/ids.md`, with the actual control-plane approval.
+      Use it in the next turn, then ask “Update only SKILL.md to revision 2; keep every other file
+      unchanged” and approve that exact update. Capture actual `update_skill` input containing
+      only `SKILL.md`, immutable revision-1 bytes, revision-2 bytes and unchanged reference hash;
+      require the next turn to read the retained relative reference. Continue the existing history,
+      UI rollback where supported, deletion and publishing gates; this wording correction does not
+      mark any unexecuted part passed. Delete only the owned skill and restore its personal grant.
+
 - [x] Unit: the Skills Manager integration is gone from source (no `makeitfuture-skills` server, no
       skills tokens in identity resolution, MCP config, Codex argv, secrets allowlist or user/channel
       defaults); leftover stub folders are pruned on workspace configure while real skill folders

@@ -6,7 +6,7 @@ description: >-
   a skill", "turn this procedure into a skill", "add a skill to the library", "improve the X
   skill", or when a task has become a repeatable procedure worth keeping for every channel.
 category: Skills
-version: 1.0.0
+version: 1.0.1
 tags:
   - skills
   - authoring
@@ -61,8 +61,14 @@ Rules for a description that actually fires:
 
 1. Check for an existing skill (`list_skills` with a query). Prefer improving one over cloning it.
 2. Draft `SKILL.md` first; test the trigger by asking yourself which requests should load it.
-3. Call `create_skill` (or `update_skill` / `propose_skill_change`) with **every** file — a
-   revision is the complete folder, not a diff.
+3. For `create_skill`, pass every file in the initial package, including `SKILL.md`.
+   For `update_skill`, pass only changed or new files; files you omit are retained. To delete
+   a file, name it explicitly in `remove` — omission is not deletion. For example, updating only
+   `SKILL.md` keeps an existing `references/ids.md` unchanged.
+   For a `propose_skill_change` of kind `change`, pass the changed or new files plus a note;
+   approval merges them with the existing package. The proposal tool has no file-removal argument.
+   Each resulting revision stores the complete folder; partial input does not replace prior
+   revisions or discard unspecified files.
 4. Tell the user what was created and where it applies. If a proposal was filed, say that an
    admin has to approve it before it becomes active.
 

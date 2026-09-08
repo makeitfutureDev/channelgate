@@ -2448,6 +2448,9 @@ are retired, bullet by bullet; everything else stands.
   skill becomes a **pinned local override** so the source keeps flowing and the pin holds until
   unpinned; an approved promotion adds the skill to the organization tier), `skill_usage_report`,
   `sync_skill_sources`. Documented for the model in `gateway-usage` → `references/skills.md`.
+  The bundled `skill-authoring` workflow distinguishes the complete initial package from partial
+  update/proposal input: omitted files remain, and `update_skill.remove` explicitly deletes files.
+  Every resulting revision remains a complete immutable package.
   → TEST-PLAN: Skills platform (Core).
 - **Usage telemetry** (`usage.js`, on the run event stream in `run.js`): Claude's `Skill` tool call
   is an **exact** signal (the stream parser now names the skill as the tool target); a Codex/shell
