@@ -1332,7 +1332,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
     const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
-      + runtimeAccessPreamble(target)
+      + runtimeAccessPreamble(target, { clean })
       + (promptOverride ?? turnText);
     return adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
@@ -1551,7 +1551,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh })
-          + runtimeAccessPreamble(target) + fbPrompt,
+          + runtimeAccessPreamble(target, { clean }) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
         // which machine boundary the channel runs behind.

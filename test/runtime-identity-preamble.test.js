@@ -22,9 +22,9 @@ backend.prepareTarget = (base) => {
   return target;
 };
 await useFakeRuntime(backend);
-const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { setUser, upsertChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
-const { setThreadModel } = await import("../src/gateway/thread-engine.js");
+const { setThreadModel, setThreadClean } = await import("../src/gateway/thread-engine.js");
 const { runMessage } = await import("../src/gateway/run.js");
 
 async function fixture(name, engine, model, extra = {}) {
@@ -52,7 +52,48 @@ function metadata(call) {
   assert.match(prompt, /\[Gateway container access for THIS attempt\]/);
   assert.match(prompt, /current access facts supersede earlier turns/);
   assert.match(prompt, /Write-only means masked listing\/reveal surfaces and redacted outputs/);
+  assert.match(prompt, /Clean mode for this attempt: \*\*(enabled|disabled)\*\*/);
+  assert.match(prompt, /Host gateway runtime directory: \*\*(not )?mounted\*\*/);
+  assert.match(prompt, /Container-local \/opt\/channelgate and \/home\/agent/);
   return JSON.parse(match[1]);
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: Clean explanations follow resolved channel, thread and author policy on each attempt`, async () => {
+    const context = await fixture(`CLEAN_FACTS_${engine}`, engine, engine === "claude" ? "sonnet" : "gpt-5.6-sol");
+    const start = backend.calls.spawn.length;
+    await runMessage({ ...context, text: "List my Composio connections and yours." });
+    await patchChannelMeta(context.entry.slug, { cleanMode: true });
+    await runMessage({ ...context, text: "You previously called the missing connectors a configuration fault. Why are they absent?" });
+    await runMessage({ ...context, text: "And now?" });
+    await patchChannelMeta(context.entry.slug, { cleanMode: false });
+    await setThreadClean(context.entry.slug, context.threadKey, true);
+    await runMessage({ ...context, text: "Check this thread's actual mode." });
+    await setThreadClean(context.entry.slug, context.threadKey, false);
+    await runMessage({ ...context, text: "Are optional connectors still deliberately omitted?" });
+    await patchChannelMeta(context.entry.slug, { cleanMode: true, adminMode: true });
+    await setUser(context.authorId, { name: "Clean admin fixture", approved: true, isAdmin: true });
+    await runMessage({ ...context, text: "Does the saved Lean toggle apply to this Admin author's run?" });
+    const calls = attempts(start);
+    assert.equal(calls.length, 6);
+    const enabled = [false, true, true, true, false, false];
+    for (let i = 0; i < calls.length; i++) {
+      const prompt = calls[i].args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
+      assert.match(prompt, new RegExp("Clean mode for this attempt: \\*\\*" + (enabled[i] ? "enabled" : "disabled") + "\\*\\*"));
+      if (enabled[i]) {
+        assert.match(prompt, /intentionally omits all MCP servers/);
+        assert.match(prompt, /composio-user.*composio-agent/);
+        assert.match(prompt, /explain that Clean mode makes these capabilities unavailable/);
+        assert.match(prompt, /not a broken connection, missing login, or configuration fault/);
+        assert.match(prompt, /engine-bundled baseline tools may remain/);
+        assert.doesNotMatch(prompt, /\[Channel memory|\[Composio identities/);
+      } else {
+        assert.match(prompt, /does not prove that any optional account is configured or connected/);
+        assert.doesNotMatch(prompt, /intentionally omits all MCP servers/);
+      }
+    }
+    assert.equal(metadata(calls[2]).session, "resumed", "an already-Clean conversation gets current facts again");
+  });
 }
 
 for (const engine of ["claude", "codex"]) {
@@ -125,6 +166,7 @@ test("model retry recomputes facts using the accepted replacement model", async 
   assert.equal(metadata(calls[0]).configured_model, "gpt-5.6");
   assert.equal(metadata(calls[1]).configured_model, "gpt-5.6-sol");
   assert.ok(calls[1].args.includes("gpt-5.6-sol"));
+  for (const call of calls) assert.ok(call.args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
 });
 
 test("cross-engine fallback and its model retry use their own engine, model, effort and session", async () => {
@@ -133,6 +175,7 @@ test("cross-engine fallback and its model retry use their own engine, model, eff
   await runMessage({ ...context, text: "CLAUDE_STUB_LIMIT_FAIL_SAFE CODEX_STUB_REJECT_MODEL" });
   const calls = attempts(start);
   assert.equal(calls.length, 3);
+  for (const call of calls) assert.ok(call.args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
   assert.deepEqual(metadata(calls[0]), { engine: "claude", configured_model: "sonnet", configured_effort: "high", session: "fresh" });
   assert.deepEqual(metadata(calls[1]), { engine: "codex", configured_model: "gpt-5.6", configured_effort: null, session: "fresh" });
   assert.deepEqual(metadata(calls[2]), { engine: "codex", configured_model: "gpt-5.6-sol", configured_effort: null, session: "fresh" });
@@ -140,6 +183,7 @@ test("cross-engine fallback and its model retry use their own engine, model, eff
   await runMessage({ ...context, text: "CODEX_STUB_REJECT_MODEL" });
   const followup = attempts(followupStart);
   assert.equal(followup.length, 2, "the cooldown resumes the existing fallback conversation");
+  for (const call of followup) assert.ok(call.args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
   assert.deepEqual(metadata(followup[1]), { engine: "codex", configured_model: "gpt-5.6-sol", configured_effort: null, session: "resumed" });
 });
 
@@ -160,7 +204,9 @@ test("a lost resumed session gets fresh metadata when the gateway heals it", asy
   await runMessage({ ...context, text: "Continue the conversation.", getFallbackContext: async () => "Prior fixture conversation." });
   assert.equal(seen.length, 1);
   assert.equal(metadata(seen[0]).session, "resumed");
+  assert.ok(seen[0].args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
   const calls = attempts(start);
   assert.equal(calls.length, 1);
   assert.equal(metadata(calls[0]).session, "fresh");
+  assert.ok(calls[0].args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
 });
