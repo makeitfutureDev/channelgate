@@ -92,7 +92,7 @@ export function collectSlackFiles(message) {
   return [...byKey.values()];
 }
 
-async function canonicalMessage(event, client) {
+async function canonicalMessage(event, client, includeThreadFiles) {
   if (!event?.channel || !event?.ts) return null;
   let messages;
   if (event.thread_ts) {
@@ -118,7 +118,7 @@ async function canonicalMessage(event, client) {
   const exact = (Array.isArray(messages) ? messages : []).find(
     (message) => String(message?.ts) === String(event.ts),
   ) || null;
-  if (!exact || !event.thread_ts || collectSlackFiles(exact).length) return exact;
+  if (!exact || !event.thread_ts || collectSlackFiles(exact).length || !(await includeThreadFiles(exact))) return exact;
 
   // Slack lets a user upload a file and then @mention the bot in the next thread reply. Recover
   // only when the immediately preceding message carries a file; never reach backward past an
@@ -200,6 +200,9 @@ function pendingFiles(files) {
 }
 
 export async function hydrateSlackMessage(event, client, {
+  // Exact current-message files are always hydrated. Callers may suppress only inferred
+  // thread context (for example, a text-only daemon control command).
+  includeThreadFiles = () => true,
   maxAttempts = DEFAULT_ATTEMPTS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -211,7 +214,7 @@ export async function hydrateSlackMessage(event, client, {
   for (let attempt = 0; attempt < attempts; attempt++) {
     let canonical = null;
     try {
-      canonical = await canonicalMessage(event, client);
+      canonical = await canonicalMessage(event, client, includeThreadFiles);
     } catch (error) {
       logger?.warn?.(`[slack] canonical Slack message lookup failed: ${error.message}`);
     }

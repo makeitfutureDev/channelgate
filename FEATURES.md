@@ -1,5 +1,11 @@
 # ChannelGate — Features
 
+- **Text commands remain controls after file sharing:** canonical current-message attachments
+  are recovered even when Slack omits them from a trigger. Historical thread files cannot turn
+  text-only `/files`, stop/cancel, pending or other gateway controls into an agent request.
+  Ordinary followups, unknown commands, queued tasks and engine-native `/compact` retain their
+  normal attachment context; bare `/next` gives its usage hint. → TEST-PLAN: Commands after file sharing.
+
 - **Accurate Composio ownership guidance:** logical personal/agent identities describe routing,
   not proof of a connected service owner's identity or universal sharing across channels. Managed
   instructions and each attempt's identity preamble preserve explicit personal/shared routing and
