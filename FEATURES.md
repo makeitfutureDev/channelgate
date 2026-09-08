@@ -1,5 +1,12 @@
 # ChannelGate — Features
 
+- **Deleting a personal skill does not strand its author:** each trusted turn omits catalog-proven
+  tombstones for that author's locally created personal skills. Stored grants and revision history
+  remain intact for restoration; restored skills become active again on the next turn. Unknown,
+  unavailable and unapproved grants still fail visibly when materialized. Foreign personal skills,
+  including dependencies, are refused rather than exposed or treated as the author's deletions.
+  → TEST-PLAN: Deleted personal skill grants.
+
 - **Skill approval cards describe the requested ownership and grants:** personal creation
   previews its automatic personal grant; shared-library creation distinguishes a channel grant
   from no grant; channel-scoped creation states its automatic activation here. Invalid personal
