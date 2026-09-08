@@ -11,8 +11,8 @@
 // gateway skill, we let the native one run unchanged and adopt its intent: the daemon already
 // watches every tool-use block in the engine stream (see isProgressReportTool), so it can read the
 // pacing decision the model just made and re-arm the thread itself, durably, from the schedule
-// store. Whatever the harness does with its own copy of the call is irrelevant — its timer dies
-// with the process; ours does not.
+// store. A warm process can fire its own timer while idle, so PersistentClaudeSession retires
+// a pacing process after its completed result. Only the daemon owns subsequent ticks.
 //
 // This module is pure normalization: no store access, no scheduling. `gateway/loops.js` owns the
 // arming, so the parsing can be unit-tested without a database.

@@ -206,7 +206,11 @@ export class PersistentClaudeSession {
         // the WHOLE session's chatter — only the slice written since this turn began can explain
         // how this turn ended.
         stderrAt: (this.stderr || "").length,
-        stream: createStreamConsumer({ onDelta, onEvent }),
+        stream: createStreamConsumer({ onDelta, onEvent: (event) => {
+          if (event?.kind === "loop_wakeup") this.turn.nativeLoopSeen = true;
+          onEvent?.(event);
+        } }),
+        nativeLoopSeen: false,
         providerError: null,
         result: null,
         onDelta,
@@ -304,6 +308,14 @@ export class PersistentClaudeSession {
         interrupted: Boolean(t.interrupted), // we steered this turn — result is intentionally cut short
         raw: p,
       });
+      // The completed turn handed its pacing intent to the daemon. A warm CLI can also fire
+      // its own timer while idle; retire it at this result boundary so only the durable owner
+      // can run the next tick. Never interrupt the live turn or discard its completed result.
+      if (t.nativeLoopSeen) {
+        this.nativeLoopRetired = true;
+        this.retiredSessionId = p.session_id || "";
+        this.terminate();
+      }
     }
   }
 }

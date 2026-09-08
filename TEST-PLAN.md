@@ -21,6 +21,23 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   card still offers all three scopes. Codex has no native permission-prompt bridge; agent
   sign-offs do not prove native Codex permission scopes. Durable actions remain once-only.
 
+## Native loop timer ownership
+
+- [x] `node --test test/native-loop-warm-owner.test.js`: real stub subprocesses schedule
+  delayed native wake-ups after emitting completed results. ScheduleWakeup, CronCreate and
+  CronDelete retire before those timers fire; a queued follow-up resumes the same session once
+  with fresh process argv. Ordinary turns retain one warm process. Four regressions failed
+  before the fix. Existing native-loop store budgets and thread-only cancellation remain tested.
+- [ ] Live Claude, authorized Auto fixture with warm sessions enabled and `qa-ready.txt` absent:
+  ask “Check every minute whether qa-ready.txt exists. Stop after three checks and summarize.”
+  Capture the complete root transcript, every actual file-check tool call, native pacing calls
+  and durable loop rows. Require exactly three checks, no duplicated native/daemon tick, one
+  final summary and no pending loop. Retest the prior failed campaign separately; retain its
+  four actual calls. Arm another finite loop, cancel only that thread and verify normal
+  reminders remain unchanged. A normal subsequent message must resume context successfully.
+- Codex has no native pacing-tool bridge in this release; record that capability prerequisite
+  explicitly instead of treating a simulated native-loop test as live Codex acceptance.
+
 ## Skill usage report provenance
 
 - [x] `test/skill-usage-report.test.js`: real catalog events and chat handlers verify one
