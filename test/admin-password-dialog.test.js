@@ -11,7 +11,7 @@ test("admin reauthentication uses a masked dialog that clears secrets on accept 
   const savedDocument = globalThis.document;
   const document = new EventTarget();
   const controls = new Map();
-  for (const id of ["confirm-modal", "confirm-title", "confirm-body", "confirm-ok", "confirm-cancel", "confirm-password-field", "confirm-password", "previous"]) {
+  for (const id of ["confirm-modal", "confirm-title", "confirm-body", "confirm-ok", "confirm-cancel", "confirm-alternative", "confirm-password-field", "confirm-password", "previous"]) {
     const control = new EventTarget();
     Object.assign(control, { style: {}, classList: { toggle() {} }, hidden: true, value: "", focus() { document.activeElement = control; } });
     controls.set(id, control);

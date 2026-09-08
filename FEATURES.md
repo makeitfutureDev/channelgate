@@ -2243,8 +2243,11 @@ are retired, bullet by bullet; everything else stands.
   Settings toggle (`agentsFile`) still governs the whole feature. → TEST-PLAN: Admin UI.
 - Optional admin **password login** for the UI/API (httpOnly session cookie); set, change, or remove it
   from Settings → System (or `ADMIN_PASSWORD`). `/api/health` and the login routes stay open.
-- Daemon controls (Settings → System): **Restart daemon** (polls health, reloads) and Slack
-  disconnect/reconnect. The old "Stop daemon" button was removed as a footgun.
+- Daemon controls (Settings → System): **Restart daemon** asks for **Wait until idle**,
+  **Force restart**, or Cancel. Wait preserves the five-minute idle check; Force interrupts active
+  turns/jobs and skips the drain, preserving recovery markers and process cleanup. A pending wait
+  can be upgraded to Force. The UI polls health and reloads on the new daemon instance; systemd
+  receives the restart exit code even with `Restart=on-failure`. Slack supports disconnect/reconnect. The old "Stop daemon" button was removed as a footgun.
 - **Update regression checks isolate runtime paths**: the aggregate test runner removes inherited
   production runtime/database/workspace selectors before launching fixtures. Backup, restore, and
   maintenance tests pin both current and legacy path variables, including direct `node --test`

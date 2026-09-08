@@ -1545,6 +1545,22 @@ structural invariants are automated; rendered navigation and feature claims also
       restarts only after a clear observation, cancels at the five-minute deadline, coalesces
       concurrent restart requests, and exposes waiting/cancelled state to the Admin UI.
       → `restart-coordinator.test.js`, `run-api.test.js`.
+- [x] Restart choice regression (engine-independent UI/API/coordinator fixtures): Settings opens
+      Wait until idle / Force restart / Cancel; Enter defaults to Wait, focused Force works, Escape
+      cancels without a request. API requires authentication and CSRF and rejects nonboolean force.
+      Busy force skips waiting; upgrading an existing wait keeps the same request id and wakes its
+      poll, including a slow notification. Forced shutdown marks interrupted work, sweeps engines,
+      and uses the systemd restart exit code. → `restart-choice.test.js`, `run-api.test.js`,
+      `restart-coordinator.test.js`, `runtime-lifecycle.test.js`.
+- [ ] Live restart choice acceptance (repeat separately with Claude and Codex in a disposable
+      container-backed gateway managed by a user systemd unit with `Restart=on-failure`): start an
+      engine turn with prompt “Run sleep 120, then reply finished”; while its process is active,
+      open Settings → System → Restart daemon. Cancel must leave the daemon instance unchanged.
+      Choose Wait: status must show waiting and the same instance; choose Restart again then Force:
+      the instance must change promptly, old engine processes must disappear, and the interrupted
+      turn must recover on boot in the same thread. Repeat Wait alone: completion precedes restart.
+      Pass only if both engines meet every observation. Not executed for this change; private QA
+      registry records also pending because the personal Airtable connection is unavailable.
 - [ ] When the job finishes, the thread shows a "🔔 … finished — continuing…" notice and then the
       agent's continuation, with prior context intact (same session resumed). → bg_start/bg_finish in `logs/`.
 - [ ] A failing/non-zero-exit job still continues, with the output tail handed to the agent.

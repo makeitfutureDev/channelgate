@@ -3,13 +3,14 @@ import { api } from "./admin-api.js";
 export const escapeHtml = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-export function openDialog({ title, body, confirmLabel, cancelLabel, danger, confirmOnly, password = false }) {
+export function openDialog({ title, body, confirmLabel, cancelLabel, danger, confirmOnly, password = false, alternativeLabel = "", alternativeDanger = false }) {
   return new Promise((resolve) => {
     const modal = document.getElementById("confirm-modal");
     const titleEl = document.getElementById("confirm-title");
     const bodyEl = document.getElementById("confirm-body");
     const okBtn = document.getElementById("confirm-ok");
     const cancelBtn = document.getElementById("confirm-cancel");
+    const alternativeBtn = document.getElementById("confirm-alternative");
     const passwordField = document.getElementById("confirm-password-field");
     const passwordInput = document.getElementById("confirm-password");
     const previousFocus = document.activeElement;
@@ -22,6 +23,9 @@ export function openDialog({ title, body, confirmLabel, cancelLabel, danger, con
     okBtn.classList.toggle("danger-btn", !!danger);
     cancelBtn.textContent = cancelLabel || "Cancel";
     cancelBtn.hidden = !!confirmOnly;
+    alternativeBtn.hidden = !alternativeLabel;
+    alternativeBtn.textContent = alternativeLabel;
+    alternativeBtn.classList.toggle("danger-btn", !!alternativeDanger);
     modal.hidden = false;
     const done = (value) => {
       modal.hidden = true;
@@ -30,6 +34,8 @@ export function openDialog({ title, body, confirmLabel, cancelLabel, danger, con
       previousFocus?.focus?.();
       okBtn.removeEventListener("click", onOk);
       cancelBtn.removeEventListener("click", onCancel);
+      alternativeBtn.removeEventListener("click", onAlternative);
+      alternativeBtn.hidden = true;
       modal.removeEventListener("click", onBackdrop);
       document.removeEventListener("keydown", onKey);
       resolve(value);
@@ -39,12 +45,18 @@ export function openDialog({ title, body, confirmLabel, cancelLabel, danger, con
       done(password ? passwordInput.value : true);
     };
     const onCancel = () => done(password ? "" : false);
+    const onAlternative = () => done("alternative");
     const onBackdrop = (event) => { if (event.target === modal) onCancel(); };
     const onKey = (event) => {
       if (event.key === "Escape") onCancel();
-      else if (event.key === "Enter") { event.preventDefault(); onOk(); }
+      else if (event.key === "Enter") {
+        event.preventDefault();
+        if (document.activeElement === alternativeBtn && alternativeLabel) onAlternative();
+        else if (document.activeElement === cancelBtn && !confirmOnly) onCancel();
+        else onOk();
+      }
       else if (event.key === "Tab") {
-        const controls = [password ? passwordInput : null, confirmOnly ? null : cancelBtn, okBtn].filter(Boolean);
+        const controls = [password ? passwordInput : null, confirmOnly ? null : cancelBtn, alternativeLabel ? alternativeBtn : null, okBtn].filter(Boolean);
         const current = controls.indexOf(document.activeElement);
         const next = (current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
         event.preventDefault();
@@ -53,6 +65,7 @@ export function openDialog({ title, body, confirmLabel, cancelLabel, danger, con
     };
     okBtn.addEventListener("click", onOk);
     cancelBtn.addEventListener("click", onCancel);
+    alternativeBtn.addEventListener("click", onAlternative);
     modal.addEventListener("click", onBackdrop);
     document.addEventListener("keydown", onKey);
     (password ? passwordInput : okBtn).focus();

@@ -237,6 +237,10 @@ admin rights or change the permissions required by separate gateway control tool
   `~/.channelgate/update-backups/`.
 
 ## Restarting the gateway safely (admin)
+- Settings → System → Restart daemon offers **Wait until idle**, **Force restart**, and Cancel.
+  Wait checks for idle for up to five minutes. Force interrupts active turns/jobs and can disrupt
+  an update; it also upgrades a pending wait immediately. The UI reloads after the new daemon starts.
+  The chat tool below retains its safe wait behavior.
 - Use `restart_gateway`; never run `systemctl`, `kill`, or another restart command via
   `run_in_background`.
 - The daemon lets the requesting turn finish, then checks foreground/queued engine turns,
