@@ -279,7 +279,7 @@ export async function authorizedControlEntry(channelId, userId) {
 // Shared by the file explorer and the secrets manager: same channel resolution, same
 // authorization gate, same "are you still a member" re-check on a modal click. `purpose` only
 // shapes the message a user reads — never the checks.
-export async function fileExplorerContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false, purpose = { expired: "This channel file explorer expired. Open it again with `/files`.", denied: "You're not authorized to browse files in this channel." } } = {}) {
+export async function fileExplorerContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false, purpose = { expired: "This channel file explorer expired. Open it again with the 📂 button on a reply.", denied: "You're not authorized to browse files in this channel." } } = {}) {
   const entry = await getChannelEntry(channelId);
   if (!entry || (expectedSlug && entry.slug !== expectedSlug)) throw new Error(purpose.expired);
   const meta = await getChannelMeta(entry.slug);
@@ -888,7 +888,7 @@ async function connectAndWire(app) {
         return;
       }
       const state = parseExplorerMetadata(body?.view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This file explorer isn't yours. Open your own with `/files`.");
+      if (!clicker || state.ownerId !== clicker) throw new Error("This file explorer isn't yours. Open your own with the 📂 button on a reply.");
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
         userId: clicker,
@@ -982,7 +982,7 @@ async function connectAndWire(app) {
         });
         return;
       } else {
-        throw new Error("This file explorer control expired. Open it again with `/files`.");
+        throw new Error("This file explorer control expired. Open it again with the 📂 button on a reply.");
       }
       await updateFileExplorerView(client, body, view);
     } catch (e) {
@@ -1464,7 +1464,7 @@ async function connectAndWire(app) {
     const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This file editor isn't yours. Open your own with `/files`.");
+      if (!clicker || state.ownerId !== clicker) throw new Error("This file editor isn't yours. Open your own with the 📂 button on a reply.");
       if (!state.editRelative || !state.editHash) throw new Error("This file editor expired. Reopen the file and try again.");
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
@@ -1508,7 +1508,7 @@ async function connectAndWire(app) {
     const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This file dialog isn't yours. Open your own with `/files`.");
+      if (!clicker || state.ownerId !== clicker) throw new Error("This file dialog isn't yours. Open your own with the 📂 button on a reply.");
       const submittedName = view?.state?.values?.[FILES_NEW_FILE_NAME_BLOCK_ID]?.[FILES_NEW_FILE_NAME_INPUT_ACTION_ID]?.value;
       const submittedContent = view?.state?.values?.[FILES_NEW_FILE_CONTENT_BLOCK_ID]?.[FILES_NEW_FILE_CONTENT_INPUT_ACTION_ID]?.value;
       const fileName = normalizeNewFileName(submittedName);
@@ -1516,7 +1516,7 @@ async function connectAndWire(app) {
       if (typeof initialContent !== "string") throw new Error("Slack didn't return the initial file contents.");
 
       const loadingEntry = await getChannelEntry(state.channelId);
-      if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with `/files`.");
+      if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with the 📂 button on a reply.");
       await navigation.show(buildFilesLoadingView(state, { channelName: loadingEntry.name }));
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
@@ -1557,12 +1557,12 @@ async function connectAndWire(app) {
     const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This folder dialog isn't yours. Open your own with `/files`.");
+      if (!clicker || state.ownerId !== clicker) throw new Error("This folder dialog isn't yours. Open your own with the 📂 button on a reply.");
       const submittedName = view?.state?.values?.[FILES_NEW_FOLDER_BLOCK_ID]?.[FILES_NEW_FOLDER_INPUT_ACTION_ID]?.value;
       const folderName = normalizeNewFolderName(submittedName);
 
       const loadingEntry = await getChannelEntry(state.channelId);
-      if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with `/files`.");
+      if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with the 📂 button on a reply.");
       await navigation.show(buildFilesLoadingView(state, { channelName: loadingEntry.name }));
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
@@ -1854,23 +1854,6 @@ async function connectAndWire(app) {
     }
   });
 
-  // Native Block Kit file browser. Slack slash commands only run at conversation top-level, so
-  // this shares selected files into the channel; the message shortcut / `@bot /files` path carries
-  // a thread_ts when users want the selected file posted inside a particular thread.
-  app.command("/files", async ({ command, ack, respond, client }) => {
-    await ack();
-    try {
-      await openFileExplorer(client, command.trigger_id, {
-        channelId: command.channel_id,
-        userId: command.user_id,
-        threadTs: command.thread_ts || "",
-      });
-    } catch (e) {
-      console.error("[slack] /files error:", e.message);
-      await respond({ response_type: "ephemeral", text: e.message || "Couldn't open this channel's files." });
-    }
-  });
-
   // Per-channel environment secrets. Lists what exists (names + last 4), and lets anyone who can
   // run commands here add or replace one. No path in or out of this modal reveals a value.
   app.command("/secrets", async ({ command, ack, respond, client }) => {
@@ -2080,7 +2063,7 @@ async function connectAndWire(app) {
     if (orgSkills.length) favLines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
 
     // In-thread commands + the active engine / how to switch models.
-    const commands = "`/help` · `/status` · `/files` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/update` _(admin)_";
+    const commands = "`/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/update` _(admin)_";
     const engineInfo =
       `• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n` +
       "• Switch runtime: `/model` — channel or one thread → harness (Claude/Codex) → model → effort _(channel access set in Settings)_";

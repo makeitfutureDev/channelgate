@@ -255,10 +255,10 @@ export function parseExplorerMetadata(raw) {
   try {
     value = JSON.parse(String(raw || ""));
   } catch {
-    throw new Error("This file explorer expired. Open it again with `/files`.");
+    throw new Error("This file explorer expired. Open it again with the 📂 button on a reply.");
   }
   if (!value || typeof value !== "object" || !value.c || !value.s || !value.u) {
-    throw new Error("This file explorer expired. Open it again with `/files`.");
+    throw new Error("This file explorer expired. Open it again with the 📂 button on a reply.");
   }
   const state = {
     channelId: String(value.c),

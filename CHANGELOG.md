@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Remove the `/files` slash command and typed file-browser entry. The reply folder button and
+  Browse channel files shortcut remain available; legacy typed requests explain the replacement.
+
 - Explain in the All Shared Skills hint that its summary updates automatically when its source
   groups are configured, matching the other combined skill summary.
 

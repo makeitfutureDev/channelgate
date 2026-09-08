@@ -155,7 +155,7 @@ catalog, including edge cases and links to regression coverage.
 
 - **Attachments:** download supported images and documents into the channel's uploads folder;
   retrieve earlier Slack attachments on demand. Large downloads stream to disk, with a 500 MB ceiling.
-- **File explorer in Slack:** `/files` opens the channel workspace with bounded previews,
+- **File explorer in Slack:** the 📂 reply button opens the channel workspace with bounded previews,
   folder navigation and permission-checked editing, creation and sharing.
 - **Browser editor and uploads:** with a configured public URL, open larger text files in a
   browser editor with Markdown preview and conflict checks, or upload nested folders directly

@@ -95,7 +95,7 @@
 - [x] Automated: `node --test test/inherited-file-commands.test.js test/slack-attachment-recovery.test.js
   test/message-normalize.test.js test/message-to-reply-e2e.test.js test/codex-message-to-reply-e2e.test.js`.
   The actual message pipeline handles current text commands after a preceding bot file, a root
-  attachment and no attachment. Require control responses and zero engine starts for `/files`,
+  attachment and no attachment. Require retirement guidance and zero engine starts for legacy `/files`,
   stop, pending, `/help` and bare `/next`. Canonical text overrides incomplete trigger text;
   current canonical files omitted from the trigger and trigger files retained after a lookup
   failure must keep attachment semantics. Ordinary/unknown commands, queued tasks and Claude's
@@ -2672,7 +2672,7 @@ release, no egress cut-off — so the network entry has no container equivalent 
       settings, and every skill directory. `..` and symlinks escaping the channel root are refused;
       escaping/broken links remain visible without open controls, contained symlinks work, text and
       binary previews are distinguished, modal state/actions are built, and the manifest registers
-      `/files` plus the message shortcut.
+      the 📂 reply button plus the message shortcut.
 - [x] Unit (`test/file-explorer.test.js`): the authoritative
       stored channel name reaches the modal title with Slack-safe ASCII and Unicode truncation; the
       subtitle shows the full absolute root/nested directory and refreshes on navigation, while
@@ -2776,7 +2776,7 @@ release, no egress cut-off — so the network entry has no container equivalent 
       directories, escaping symlinks, and absent run/requester context do not. The direct action
       opens the existing preview with its parent as Back state, while the click path retains the
       explorer's authorization, membership, and realpath checks.
-- [ ] `/files` at conversation top-level opens the native file explorer without starting a
+- [ ] The 📂 reply button opens the native file explorer without starting a
       Claude/Codex run. At root, its title is the stored Slack channel name and its subtitle is the
       full absolute effective-root path; after nested navigation, the subtitle updates to that
       absolute directory, and Up/Root return only within the effective root. More than 18 items
@@ -2784,9 +2784,12 @@ release, no egress cut-off — so the network entry has no container equivalent 
       confinement settings, instructions, memory, and complete skill trees—appear and can be
       previewed. Broken/escaping symlinks appear without an open control, and protected/internal
       paths expose no write controls.
-- [ ] Use *Browse channel files* on a thread message, and typed `@bot /files` in that thread: both
-      open the same explorer with the thread retained. (Slack custom slash commands cannot run in a
-      thread, so the shortcut/button are the thread-aware entries.)
+- [ ] Use *Browse channel files* on a thread message and the 📂 reply button: both open the same
+      explorer with the thread retained. `/files` is absent from the exported manifest and native
+      command handlers. In both Claude and Codex fixtures, send `@bot /files` without a current
+      attachment: require a removal notice pointing to the button/shortcut, no Open files action,
+      and zero engine starts, including when an older thread message contains a file. Help and
+      expired-control messages must not recommend the removed command.
 - [ ] An unauthorized user is refused; after an authorized user leaves the channel, a click in an
       already-open modal is refused. Forged state cannot change owner/channel, traverse `..`, open a
       path outside the confined root, follow an escaping symlink, or access a sibling channel.
