@@ -198,8 +198,8 @@ export function register(server, ctx) {
       }
       return text(
         enabled
-          ? "✅ Network policy ON — internet use permitted, with no domain allowlist. Effective next message."
-          : "✅ Network policy OFF — the engine is instructed not to use the network; this is advisory, not an egress cutoff. Effective next message."
+          ? "✅ Network ON — policy permits internet use, with no domain allowlist. Effective next message."
+          : "✅ Network OFF — policy instructs the engine not to use the network; this is advisory, not an egress cutoff. Effective next message."
       );
     }
   );
