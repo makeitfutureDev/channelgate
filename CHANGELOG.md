@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Resolve optional Codex MCP launch definitions from effective configuration when native tool
+  status omits them, while rejecting credential-bearing transports and retaining fail-closed
+  selection when no safe definition is available.
+
 - Explain deliberately omitted connectors, skills and memory from each attempt's resolved Clean
   mode. Distinguish the host gateway runtime store from container-local engine files and mount
   scaffolding using actual mount coverage, without disclosing unmounted host paths.

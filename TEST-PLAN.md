@@ -4648,3 +4648,24 @@ acceptance gates; no production restart or external message was performed by the
   verifying exact upstream bytes, not merely finding the value on the internet. Do not exempt
   entire paths, packages, credential patterns or repository/history scans.
 - Candidate execution remains pending; this regression does not waive the separate live QA campaign.
+
+### Optional MCP effective-definition regression (2026-09-08)
+
+- Automated: `node --test test/mcp-discovery.test.js` uses real-shaped native status (tools/auth,
+  no command or URL) plus effective `config/read`. Assert exact-name safe stdio/HTTP reconstruction,
+  no config-only/inherited entry, no credential-bearing definitions, and retained runtime app
+  discovery when `config/read` is unsupported. Selected policy must include the complete safe
+  definition, not just an enabled flag.
+- Live Claude and Codex: use separate disposable Auto channels and a harmless credential-free stdio
+  MCP with one `qa_echo(marker)` tool. Configure it in the engine discovery environment; keep its
+  script in that channel's mounted work folder. Start with no optional grant and ask “Discover
+  qa_echo; report only callable tools; do not install anything or substitute shell.” It must be
+  absent. Grant exactly that server, then ask in the same thread “Call qa_echo with marker
+  MCP-ADDED.” Require the actual MCP request/result and delivered marker. Remove the grant and
+  repeat discovery on the next turn: the tool must be unavailable, with no stale callable tool.
+  Record engine/session, exact grant transitions, tool evidence, and deployment revision. Restore
+  original selections and remove only the owned fixture/config entry. Codex status/config metadata
+  probes are not engine turns; all live turns remain in the channel container.
+- Negative: add a disposable status fixture with nonempty `http_headers`, `env_http_headers`,
+  `env_vars`, or bearer-token dependency. The catalog/policy must not expose credentials or silently
+  launch without required auth. Keep the refusal explicit. Never use real secrets for this probe.
