@@ -339,6 +339,34 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   updates at most every 30 seconds with elapsed time, last activity, and running subagents;
   pending progress edits finish before the final answer replaces the placeholder. Interactive
   permission escalation is not enabled by these text controls.
+- Native Adaptive Cards provide Approve/Deny/Request changes actions and an inline session engine/model/effort
+  form. `/settings` opens that private session form; `/secrets` opens the same form with a link
+  to the existing authenticated administration website. This does not introduce a secret input
+  card or expose secret values in Teams. Signed Bot Framework invoke envelopes establish the
+  actor; opaque expiring card state retains the source conversation and session. An optional
+  changes comment refuses the current action even if Approve was clicked. Task-module dialogs
+  and broadcast mentions remain unimplemented. Current approval/channel access is rechecked
+  when deciding, including for the original requester using a private fallback link.
+- `/files [folder]` opens a private, paginated workspace browser. Download, upload and eligible
+  text-edit links use the existing signed browser grants, filesystem confinement and edit policy,
+  with current Teams membership and gateway authorization checked again at use. A failed private
+  delivery never posts the file list or bearer links to a group. `/sendfile <relative-path>`
+  offers a native file-consent card in the requester's personal chat: nonempty files up to 10 MB,
+  ten-minute consent expiry, a bounded pending snapshot pool, and explicit Accept/Decline.
+  Revocation, expiry, actor mismatch or an uncertain prior upload cannot become another upload.
+- Optional group/channel file reading (`teamsFilesEnabled`, default false) uses at most 32
+  explicitly allowed drive IDs (`teamsFileDriveIds`). A canonical SharePoint path is resolved
+  inside an allowed drive and its returned identity is checked before downloading. Selected-site
+  application read grants must be configured externally; the gateway grants nothing automatically
+  and does not use the broad-permission Graph `/shares` route. Sharing shortlinks are unsupported.
+  Metadata and byte streams are bounded, redirects are refused, and Graph tokens never accompany
+  the file-host request. Native preauthenticated personal uploads remain available independently.
+- Downloadable audio is transcribed locally with the shared Whisper setting and cancellation;
+  the portable path never calls Slack transcript APIs. Raw audio paths are withheld from the
+  engine, ordinary files remain available, failed audio alone produces an explanation without an
+  engine turn, and typed text can continue with a visible missing-transcript note. Progress starts
+  before download/transcription. Every attachment intake has a unique storage directory so
+  simultaneous same-name files or later edits cannot overwrite bytes another turn is reading.
 - The branch's Slack parity inventory and remaining surface-specific work live in
   `docs/TEAMS-PARITY.md`. These additions have mocked regression coverage; actual Microsoft
   delivery, tenant consent, federated chats, and Claude/Codex live acceptance remain unexecuted.

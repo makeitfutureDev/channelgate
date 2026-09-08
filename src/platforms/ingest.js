@@ -16,6 +16,7 @@ import { saveInboundAttachments } from "./attachments.js";
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
 // the mapping is explicit rather than a passthrough of whatever a platform calls things.
+import { prepareVoiceAttachments, hasVoiceAttachments } from "./voice.js";
 import { createConversationControls } from "./conversation-controls.js";
 
 const STORE_TYPE = { dm: "im", group: "mpim", channel: "channel" };
@@ -50,7 +51,7 @@ async function ensureUserKnown(message) {
   await setUser(message.userId, { name: message.userName || message.userEmail || message.userId });
 }
 
-export function createIngest({ connector, log = console, run = runMessage } = {}) {
+export function createIngest({ connector, log = console, run = runMessage, onCommand = null, voice = prepareVoiceAttachments } = {}) {
   const adapter = platformOr(connector?.platform);
   const bankUsage = createUsageBank();
   const controls = createConversationControls();
@@ -92,12 +93,9 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
     };
 
     const reply = async (text) => deliver(connector, message, null, text, rememberReply);
+    if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, controls })) return { command: true };
     if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply })) return { command: true };
     return controls.execute({ message, sessionKey, queued: reply, work: async (signal) => {
-    // Attachments land in the channel folder, exactly where the Slack path puts them, so the model
-    // reads them with the same tool and the same confinement.
-    const { paths, skipped } = await saveInboundAttachments(message, { slug: entry.slug, meta, log });
-
     // These surfaces have no typing indicator the daemon can drive for minutes, and no streaming.
     // A placeholder message is the only honest "I'm working on it" available — and it is also the
     // message the answer edits, so a finished turn leaves ONE message behind, not two.
@@ -106,7 +104,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
       placeholder = await connector.post({
         conversationId: message.rawConversationId,
         threadKey: message.threadKey,
-        text: "_Working on it…_",
+        text: hasVoiceAttachments(message) ? "_Preparing voice transcription…_" : "_Working on it…_",
       });
       rememberReply(placeholder);
     } catch (err) {
@@ -115,14 +113,28 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
 
     const progress = createConversationProgress({ connector, message, placeholder, adapter, log });
     let result;
+    let skipped = [];
+    let prepared;
     try {
+      signal.throwIfAborted();
+      const saved = await saveInboundAttachments(message, { slug: entry.slug, meta, log });
+      skipped = saved.skipped;
+      signal.throwIfAborted();
+      if (hasVoiceAttachments(message)) progress.phase('Transcribing voice locally');
+      prepared = await voice(message, saved.paths, { signal });
+      if (prepared.hasVoice && !prepared.hasPrompt && !prepared.paths.length) {
+        await progress.stop();
+        await deliver(connector, message, placeholder, prepared.failureNotice || 'Could not transcribe this audio. Please send text or ask an administrator to check local Whisper.', rememberReply);
+        return { skipped: 'voice-unavailable' };
+      }
+      progress.activity();
       result = await run({
         channelId: message.conversationId,
         authorId: message.userId,
-        text: message.text,
+        text: prepared.text,
         // Session roots for flat chats must never become native reply addresses.
         threadKey: sessionKey,
-        attachments: paths,
+        attachments: prepared.paths,
         signal,
         onDelta: progress.activity,
         onEvent: progress.event,
@@ -145,6 +157,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
     await bankUsage({ channelId: message.conversationId, slug: entry.slug, authorId: message.userId, engine: result.engine, taskKind: "interactive", result });
 
     let text = String(result.content || "").trim() || "_(no output)_";
+    if (prepared.failureNotice) text += `\n\n${prepared.failureNotice}`;
     if (skipped.length) {
       text += `\n\n_Couldn't read ${skipped.length} attachment(s): ${skipped.join(", ")} — this surface only hands the bot files it uploaded directly._`;
     }
@@ -216,6 +229,7 @@ export function createConversationProgress({ connector, message, placeholder, ad
   const timer = setInterval(tick, Math.max(30000, intervalMs));
   timer.unref?.();
   return {
+    phase(label) { state = label; lastActivity = now(); },
     activity() { lastActivity = now(); state = 'Working'; },
     event(event) {
       if (event?.kind === 'agent_activity') {

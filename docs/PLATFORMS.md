@@ -206,13 +206,61 @@ acceptance has not been performed as part of this branch's local implementation.
 
 See [the full Slack-to-Teams parity audit](TEAMS-PARITY.md) for remaining UI and integration gaps.
 
+### Native cards, workspace files and voice (teams-ms branch)
+
+These additions are branch-only; they do not imply a deployment or completed live acceptance.
+Update the installed app's reviewed manifest so the bot entry has `supportsFiles: true` for native
+personal-chat file consent, then upload/install that app revision with the Teams CLI as described
+above. Adaptive Cards and their inline forms do not require additional Graph RSC permissions.
+Task-module dialogs and broadcast mentions remain unavailable.
+
+- `/settings` opens a private session engine/model/effort form. `/secrets` opens the same card with
+  a link to the existing authenticated admin website. Enter secrets there, never in Teams cards.
+  Native approvals provide Approve/Deny/Request changes and supported scope choices. An optional
+  changes comment refuses the current action, including when Approve was clicked. Card submissions
+  take identity from the verified Microsoft envelope.
+- `/files [folder]` privately browses the current conversation workspace. Open a file to download
+  it or edit eligible text; users with file-write access can open the uploader. Browser links are
+  short-lived grants and recheck current Teams membership and gateway policy. A group request
+  keeps the original group workspace even though its controls arrive in a personal chat.
+- `/sendfile <workspace-relative-path>` sends a personal-chat file-consent card. Accept uploads
+  the prepared snapshot; Decline does not upload. The native limit is a nonempty file of at most
+  10 MB, consent expires after ten minutes, and uncertain upload outcomes are not replayed.
+  Larger files use the private browser download path. Install/open a personal chat first if
+  Microsoft cannot deliver private controls or file-consent cards.
+- Downloadable audio uses local Whisper only, controlled by the existing Whisper setting. No
+  Slack-generated transcript is requested. A failed audio-only request explains the missing
+  transcript without invoking an engine; accompanying typed text can continue. Stop cancels
+  local transcription as well as engine work. Separate intake directories keep simultaneous
+  uploads and edits from overwriting another request's audio or files.
+
+For optional **group/channel file reading**, enable **Read group and channel files from allowed
+drives** under Microsoft Teams settings and enter up to 32 exact Microsoft drive IDs, one per
+line (`teamsFilesEnabled`, `teamsFileDriveIds`). Configure application read access to those sites
+externally using [Microsoft's selected permissions](https://learn.microsoft.com/en-us/graph/permissions-selected-overview),
+then save and reconnect Teams. The deployment's configured Graph identity must have access to
+those drives; neither the checkbox nor the allowlist grants Microsoft permissions. This is a
+gateway-wide allowlist for authorized conversations, not a per-user Microsoft file entitlement.
+
+Use canonical SharePoint file URLs whose paths lie inside an allowed drive root. The resolver
+reads only configured drive roots, addresses the matching item within that drive, verifies its
+returned identity, and downloads with no Graph bearer on the file-host request. Redirects and
+oversized responses are refused. Sharing shortlinks are unsupported: use a canonical file link
+or upload directly in a personal chat. The implementation deliberately does not use Graph's
+[sharing-link endpoint](https://learn.microsoft.com/en-us/graph/api/shares-get?view=graph-rest-1.0),
+whose documented application permissions include broad write access. Selected-site consent and
+real SharePoint download compatibility remain live acceptance gates.
+
+See `TEST-PLAN.md` for exact native-card, file, voice and both-engine fixtures. Native file flow
+reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/bots-filesv4).
+
 ### Notes and limits
 
 - **No public URL ⇒ no inbound.** The bot will connect and can send, but Azure has nowhere to
   deliver to. ChannelGate says so at boot and on the health check rather than looking merely quiet.
 - **Attachments in:** 1:1 uploads arrive with a pre-authenticated download URL and are fetched (only
-  from Microsoft-owned hosts). Channel files live in SharePoint and need Graph application
-  permissions with tenant admin consent — not requested, so those are reported as skipped.
+  from Microsoft-owned hosts). Group/channel references require the optional scoped drive
+  configuration above; unsupported or unconsented files are explicitly reported as skipped.
 - **Threads and sessions:** channel replies thread under the user's message. Personal chats keep
   one continuous session. Group chats remain visually flat, but every new message to the bot starts
   a separate session. Quote an earlier user message or bot reply to continue that session; quote
@@ -237,10 +285,10 @@ See [the full Slack-to-Teams parity audit](TEAMS-PARITY.md) for remaining UI and
 | Channel folder confinement, authorization, MCP allowlist | ✅ | ✅ | ✅ |
 | Attachments in | ✅ | partial | partial |
 | Threads | ✅ | spaces only | channels only |
-| Live progress rendering | ✅ | placeholder → answer | placeholder → answer |
-| Interactive approval buttons | ✅ | ❌ (actions named in text) | ❌ (actions named in text) |
+| Live progress rendering | ✅ | bounded progress → answer | bounded progress → answer (branch) |
+| Interactive approval buttons | ✅ | ❌ (actions named in text) | native cards (branch) |
 | Approvals by signed link | ✅ (in addition to the buttons) | ✅ (the mechanism) | ✅ (the mechanism) |
-| In-thread commands (`/model`, `/clear`, stop, steer) | ✅ | ❌ | ❌ |
+| Session commands | full Slack controls | portable text subset (branch) | text subset + native settings/files (branch) |
 | Native tables / charts / Lists / canvases | ✅ | ❌ | ❌ |
 | Escalation to full-access in an admin-mode channel | ✅ | ❌ | ❌ |
 
@@ -258,11 +306,11 @@ a button click runs. The gateway needs a **Public URL** for a link to be reachab
 host, and the behaviour is Settings → Connection → **Approval links** (`auto` / `always` / `off`).
 See `FEATURES.md` → Modes & approvals for the security properties.
 
-This is what makes approvals *possible* on Teams and Google Chat rather than *already wired* there:
-the link mechanism, its private delivery and its confirmation page are platform-neutral and honour
-each adapter's declared `ephemeral` capability, but a turn on those surfaces still does not RAISE a
-permission card (see the header of `src/platforms/ingest.js` — interactive approvals are a slice of
-their own). When it does, the answer arrives by link with no further work.
+On `teams-ms`, native Teams approval cards call the shared actor-checked decision path. Inline
+cards do not automatically widen the engine permission policy: escalation remains separately
+gated, and its live acceptance must pass before release. Google Chat retains its existing
+surface limitations. Task-module dialogs and Slack's full busy-thread interaction flow are not
+supplied by the Teams card implementation.
 
 ---
 

@@ -36,6 +36,7 @@ import {
   resolveGoogleChatConfig,
   hasTeamsConfig,
   resolveTeamsConfig,
+  validateTeamsFileDriveIds,
   CONTAINER_CLIS,
   CONTAINER_IMAGE_RE,
   CONTAINER_MEMORY_RE,
@@ -192,6 +193,14 @@ export function createSettingsRouter({
       if (body.clearTeamsAppPassword === true) patch.teamsAppPassword = "";
       if (typeof body.teamsTenantId === "string") patch.teamsTenantId = body.teamsTenantId.trim();
       if (typeof body.teamsAllMessageEvents === "boolean") patch.teamsAllMessageEvents = body.teamsAllMessageEvents;
+      if (Object.hasOwn(body, "teamsFilesEnabled")) {
+        if (typeof body.teamsFilesEnabled !== "boolean") return res.status(400).json({ error: "teamsFilesEnabled must be a boolean" });
+        patch.teamsFilesEnabled = body.teamsFilesEnabled;
+      }
+      if (Object.hasOwn(body, "teamsFileDriveIds")) {
+        try { patch.teamsFileDriveIds = validateTeamsFileDriveIds(body.teamsFileDriveIds); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      }
       if (typeof body.sessionKeepalive === "string") patch.sessionKeepalive = body.sessionKeepalive.trim();
       // Mode selection and credentials are deliberately independent: changing the mode never
       // clears either the existing personal/channel/org tokens or this organization SDK key.

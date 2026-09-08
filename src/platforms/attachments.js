@@ -1,12 +1,13 @@
 // Inbound attachments → files inside the channel's gated folder.
 //
-// Same destination and the same write discipline as the Slack path (uploads/<thread>/<name>, real
+// Same destination and the same write discipline as the Slack path (uploads/<thread>/<intake>/<name>, real
 // directories, no-follow writes): the workspace beneath the folder is agent-writable, so a symlink
 // planted at any of those paths must be REPLACED as a node, never written through. The download
 // itself differs per platform — a Chat attachment needs the service-account bearer, a Teams one has
 // a pre-authenticated URL — which is why each transport hands us a `download()` and this file never
 // touches the network itself.
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { ensureRealDir, writeStreamNoFollow } from "../gateway/safe-fs.js";
 import { effectiveWorkDir } from "../gateway/folders.js";
 import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
@@ -35,6 +36,10 @@ export async function saveInboundAttachments(message, { slug, meta, log = consol
   // The thread groups a conversation's files. Platform thread handles are resource names full of
   // slashes and colons, so the subfolder is a sanitized form — it is a grouping label, not an id.
   const sub = String(message.threadKey || "thread").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) || "thread";
+  // Session keys and native reply addresses are not storage identities. Two independent flat
+  // group messages (or revisions) can have the same filename and no thread handle. Each intake
+  // gets its own directory so one run cannot replace bytes another is transcribing/reading.
+  const intake = randomUUID();
   let destDir = "";
 
   for (const [index, attachment] of message.attachments.entries()) {
@@ -46,7 +51,7 @@ export async function saveInboundAttachments(message, { slug, meta, log = consol
     try {
       const source = await attachment.download();
       if (!source || (Buffer.isBuffer(source) && !source.length)) { skipped.push(name); continue; }
-      destDir ||= await ensureRealDir(root, "uploads", sub);
+      destDir ||= await ensureRealDir(root, "uploads", sub, intake);
       const dest = path.join(destDir, `${index + 1}-${name}`);
       const { bytes } = await writeStreamNoFollow(dest, source, { maxBytes });
       if (!bytes) { skipped.push(name); continue; }

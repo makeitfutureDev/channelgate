@@ -24,6 +24,9 @@ import {
 import { retireApprovalLinkTokens } from "../gateway/approval-link-tokens.js";
 import { approvalLinkBase, approvalLinksMessage, buildApprovalLinks } from "../web/approval-links.js";
 import { slackAdapter } from "../platforms/slack.js";
+import { approvalDeliveryFor } from "../platforms/approval-delivery.js";
+import { platformOfConversation } from "../platforms/ids.js";
+import { platformOr } from "../platforms/registry.js";
 import { postPrivately } from "../platforms/notify.js";
 import { INSTRUCTION_ACTION } from "../gateway/instruction-approvals.js";
 
@@ -144,7 +147,12 @@ function approvalBlocks(id, toolName, target, authorId, { approvalType = "permis
 // posts TOP-LEVEL, which is what turns a synthetic session key into a real, replyable thread.
 // Fails loudly when Slack answers without a usable ts: an un-updatable card is a request nobody
 // can ever resolve or expire, and swallowing that is how scheduled approvals went missing.
-async function postApprovalCard(client, { channelId, threadTs, text, blocks, context = {} }) {
+async function postApprovalCard(client, { channelId, threadTs, text, blocks, approval, context = {} }) {
+  if (client?.approvalDelivery) {
+    const posted = await client.approvalDelivery.post({ threadKey: threadTs, ...approval });
+    if (!posted?.messageId) throw new Error("Approval delivery returned no message identity");
+    return posted.messageId;
+  }
   const posted = await client.chat.postMessage({ channel: channelId, thread_ts: threadTs || undefined, text, blocks });
   const ts = posted?.ts;
   if (!isSlackTs(ts)) {
@@ -196,19 +204,22 @@ async function approvalLinkChoices(entry, { durable = false, approveText = "Appr
 // answerable by its buttons, so a failure here must never fail the approval.
 async function deliverApprovalLinks(client, entry, { id, threadKey, durable = false, approveText, denyText } = {}) {
   try {
-    const baseUrl = approvalLinkBase({ capabilities: slackAdapter.capabilities, requester: entry.authorId });
+    const baseUrl = approvalLinkBase({ capabilities: client?.approvalDelivery?.capabilities || slackAdapter.capabilities, requester: entry.authorId });
     if (!baseUrl || !client) return [];
     const choices = await approvalLinkChoices(entry, { durable, approveText, denyText });
     if (!choices.length) return [];
     const links = buildApprovalLinks({ baseUrl, id, kind: "approval", requester: entry.authorId || "", choices });
     if (!links.length) return [];
     const text = approvalLinksMessage({ toolName: entry.toolName || "", links, expiresAt: links[0].expiresAt });
-    await postPrivately(client, {
+    const sent = client?.approvalDelivery
+      ? await client.approvalDelivery.privately({ threadKey, userId: entry.authorId, text })
+      : await postPrivately(client, {
       conversationId: entry.channelId,
       threadKey: slackThreadFor(threadKey) || "",
       userId: entry.authorId,
       text,
     });
+    if (!sent) return [];
     return links;
   } catch {
     return []; // the buttons still work; a link is an addition, never a precondition
@@ -218,10 +229,13 @@ async function deliverApprovalLinks(client, entry, { id, threadKey, durable = fa
 // Called by the daemon's /internal/approval route. Posts buttons, returns { allow, reason } once
 // resolved (click or timeout). Pre-approves via the per-thread cache without re-asking.
 export async function requestApproval(slack, { channelId, slug, authorId, threadKey, toolName, toolInput, approvalType = "permission", approveText = "Approve", denyText = "Deny", requiredTier = "", durableAction = null } = {}) {
-  const client = slack?.getClient?.() || currentClient;
+  const adapter = platformOr(platformOfConversation(channelId));
+  const delivery = approvalDeliveryFor(channelId);
+  const client = delivery ? { approvalDelivery: delivery } : adapter.capabilities.richCards === "block-kit" ? slack?.getClient?.() || currentClient : null;
+  const cardThread = (key) => delivery ? key : slackThreadFor(key);
   const durable = ["background_shell", INSTRUCTION_ACTION].includes(durableAction?.kind);
   if (durableAction && !durable) return { allow: false, reason: "unsupported durable approval action" };
-  if (!channelId || !threadKey) return { allow: false, reason: "gateway can't reach Slack to ask for approval" };
+  if (!channelId || !threadKey) return { allow: false, reason: `gateway can't reach ${adapter.label} to ask for approval` };
   const runKey = `${slug}::${threadKey}`;
   // Auto mode → approve without asking; tools "approved forever" here → likewise. Still sandboxed.
   if (approvalType === "permission") {
@@ -263,7 +277,8 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
         try {
           const ts = await postApprovalCard(client, {
             channelId: existing.channelId,
-            threadTs: slackThreadFor(existing.action?.threadKey || threadKey),
+            threadTs: cardThread(existing.action?.threadKey || threadKey),
+            approval: { id: existing.id, title: existing.toolName, target: existing.target, authorId: existing.authorId, approvalType: existing.approvalType, scopes: approvalScopesFor({ approvalType: existing.approvalType, durable: true }) },
             text: `Approval requested: ${existing.toolName}`,
             blocks: approvalBlocks(existing.id, existing.toolName, existing.target, existing.authorId, {
               approvalType: existing.approvalType,
@@ -275,7 +290,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
           });
           patchPendingApproval(existing.id, { msgTs: ts });
         } catch {
-          return { allow: false, pending: true, approvalId: existing.id, reason: "approval is saved but Slack couldn't restore its card yet" };
+          return { allow: false, pending: true, approvalId: existing.id, reason: "approval is saved but its conversation card could not be restored yet" };
         }
       }
       return {
@@ -285,7 +300,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
         reason: "approval is still pending; the existing approval button remains active",
       };
     }
-    if (!client) return { allow: false, reason: "gateway can't reach Slack to ask for approval" };
+    if (!client) return { allow: false, reason: `gateway can't reach ${adapter.label} to ask for approval` };
     const id = randomUUID();
     try {
       createApprovalRequest({
@@ -314,7 +329,8 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
     try {
       const ts = await postApprovalCard(client, {
         channelId,
-        threadTs: slackThreadFor(threadKey),
+        threadTs: cardThread(threadKey),
+        approval: { id, title: toolName, target, authorId, approvalType, scopes: approvalScopesFor({ approvalType, durable }) },
         text: `Approval requested: ${toolName}`,
         blocks: approvalBlocks(id, toolName, target, authorId, { approvalType, approveText, denyText, durable: true }),
         context: { approvalId: id, toolName, slug },
@@ -324,13 +340,18 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
       deleteApprovalRequest(id);
       return { allow: false, reason: `couldn't post the approval prompt: ${error.message}` };
     }
-    await deliverApprovalLinks(client, { channelId, slug, authorId, toolName, approvalType, requiredTier }, {
+    const deliveredLinks = await deliverApprovalLinks(client, { channelId, slug, authorId, toolName, approvalType, requiredTier }, {
       id,
       threadKey,
       durable: true,
       approveText,
       denyText,
     });
+    if (delivery?.requiresLinks && !deliveredLinks.length) {
+      deleteApprovalRequest(id);
+      rememberResolved(id, { decision: "deny", scope: "" });
+      return { allow: false, reason: "Approval refused: private decision links could not be delivered." };
+    }
     return {
       allow: false,
       pending: true,
@@ -339,13 +360,14 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
     };
   }
 
-  if (!client) return { allow: false, reason: "gateway can't reach Slack to ask for approval" };
+  if (!client) return { allow: false, reason: `gateway can't reach ${adapter.label} to ask for approval` };
   const id = randomUUID();
   let msgTs = null;
   try {
     msgTs = await postApprovalCard(client, {
       channelId,
-      threadTs: slackThreadFor(threadKey),
+      threadTs: cardThread(threadKey),
+        approval: { id, title: toolName, target, authorId, approvalType, scopes: approvalScopesFor({ approvalType, durable }) },
       text: approvalType === "agent" ? `Approval requested: ${toolName}` : `🔒 Permission needed: ${toolName}`,
       blocks: approvalBlocks(id, toolName, target, authorId, { approvalType, approveText, denyText }),
       context: { approvalId: id, toolName, slug },
@@ -365,8 +387,8 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
       finish({ allow: false, reason: "approval timed out (no one clicked)" });
       // Best-effort: flip the card so dead buttons can't be mistaken for a live request. The
       // deny itself already surfaced in-thread via the tool's refusal reply.
-      client.chat
-        .update({ channel: channelId, ts: msgTs, text: "Approval expired", blocks: [{ type: "section", text: { type: "mrkdwn", text: `⏱ *${toolName}* — nobody clicked within ${Math.round(APPROVAL_TIMEOUT_MS / 60000)} minutes; the request was refused.` } }] })
+      (delivery ? delivery.update({ messageId: msgTs, title: "Approval expired", text: "No decision arrived before the request expired." }) : client.chat
+        .update({ channel: channelId, ts: msgTs, text: "Approval expired", blocks: [{ type: "section", text: { type: "mrkdwn", text: `⏱ *${toolName}* — nobody clicked within ${Math.round(APPROVAL_TIMEOUT_MS / 60000)} minutes; the request was refused.` } }] }))
         .catch(() => {});
     }, APPROVAL_TIMEOUT_MS);
     timer.unref?.();
@@ -389,7 +411,13 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
     // exist the instant the card does, or a click landing in the gap between the two would find
     // no request and answer "already handled" while the run waits forever. The links are an
     // addition to a card that already works.
-    void deliverApprovalLinks(client, { channelId, slug, authorId, toolName, approvalType, requiredTier }, { id, threadKey, approveText, denyText });
+    void deliverApprovalLinks(client, { channelId, slug, authorId, toolName, approvalType, requiredTier }, { id, threadKey, approveText, denyText }).then((links) => {
+      if (delivery?.requiresLinks && !links.length) {
+        finish({ allow: false, reason: "Approval refused: private decision links could not be delivered." });
+        rememberResolved(id, { decision: "deny", scope: "" });
+        void delivery.update({ messageId: msgTs, title: "Approval unavailable", text: "The request was refused because private decision links could not be delivered." }).catch(() => {});
+      }
+    });
   });
 }
 
@@ -497,6 +525,11 @@ export async function applyApprovalDecision({
   const cardTs = entry.msgTs || messageTs;
   const reason = comment ? `Changes requested by ${who}` : approve ? `Approved by ${who}` : `Denied by ${who}`;
   const updateCard = async (text, blocks) => {
+    const delivery = approvalDeliveryFor(entry.channelId);
+    if (delivery && cardTs) {
+      await delivery.update({ messageId: cardTs, title: text, text: `${entry.toolName}: ${text}. ${reason}${comment ? `: ${comment}` : ""}` }).catch(() => {});
+      return;
+    }
     if (!client?.chat?.update || !entry.channelId || !cardTs) return;
     try {
       await client.chat.update({ channel: entry.channelId, ts: cardTs, text, blocks });
@@ -554,6 +587,9 @@ export async function applyApprovalDecision({
     return { ok: false, code: 502, decision: "approve", started: false, error: String(result?.error || "the approved job could not start") };
   }
 
+  // Volatile claims must be atomic too: two callbacks may race during a persisted scope write.
+  if (entry.deciding || pendingApprovals.get(String(id)) !== entry) return { ok: false, code: 409, error: "this approval was already handled" };
+  entry.deciding = true;
   // Volatile (long-poll) approval: apply the scope, then release the waiting MCP call.
   if (approve && scope === "thread") {
     if (!threadAllow.has(entry.runKey)) threadAllow.set(entry.runKey, new Set());
@@ -597,7 +633,6 @@ export async function canResolveApproval(entry, clicker) {
   const clickerIsApproved = await isApproved(clicker);
   const m = await getChannelMeta(entry.slug).catch(() => null);
   const allowed =
-    clicker === entry.authorId ||
     clickerIsAdmin ||
     (m ? isAuthorized(m, clicker, Boolean(m.isDM), { isAdminUser: clickerIsAdmin, isApprovedUser: clickerIsApproved }) : false);
   // The gated action's authority tier. Being eligible to click is NOT the same as being allowed
@@ -733,4 +768,19 @@ export async function handleApprovalCommentSubmit({ ack, body, view, client }) {
   await ack();
   // Request-changes is a DENY that carries feedback — same shared applier, same card update.
   await applyApprovalDecision({ id, entry, durable, decision: "deny", comment, actorId: clicker, client });
+}
+
+// Only verified platform invoke handlers may supply these transport-derived identity fields.
+export async function handlePlatformApproval({ id, conversationId, messageId, actorId, decision, scope = "once", comment = "" } = {}) {
+  if (!["approve", "deny"].includes(decision) || typeof comment !== "string" || comment.length > 4000) return { ok: false, code: 400, error: "Invalid approval decision" };
+  const { entry, durable, resolved } = lookupApproval(id);
+  if (!entry) return { ok: false, code: resolved ? 409 : 404, error: "Approval expired or already handled" };
+  if (!actorId || !messageId || entry.channelId !== conversationId || entry.msgTs !== messageId) return { ok: false, code: 403, error: "Approval does not belong to this message" };
+  const meta = await getChannelMeta(entry.slug).catch(() => null);
+  const admin = await isAdmin(actorId);
+  const approved = await isApproved(actorId);
+  if (!meta || !isAuthorized(meta, actorId, Boolean(meta.isDM), { isAdminUser: admin, isApprovedUser: approved })) return { ok: false, code: 403, error: "You are not authorized for this conversation" };
+  const authority = await canResolveApproval(entry, actorId);
+  if (!authority.allowed || (decision === "approve" && !comment && (!authority.meetsTier || (scope === "forever" && !authority.clickerIsAdmin)))) return { ok: false, code: 403, error: "You cannot approve this action at the requested scope" };
+  return applyApprovalDecision({ id, entry, durable, decision, scope, comment, actorId, actorLabel: actorId });
 }

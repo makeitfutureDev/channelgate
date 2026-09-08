@@ -182,6 +182,11 @@ export function hasGoogleChatConfig() {
 // An Azure Bot registration. Outbound needs the app id + secret (+ tenant for a single-tenant app);
 // INBOUND needs a publicly reachable HTTPS endpoint, which is why `publicUrl` matters here — the
 // messaging endpoint an operator registers in Azure is `<publicUrl>/api/teams/messages`.
+export function validateTeamsFileDriveIds(value) {
+  if (!Array.isArray(value) || value.length > 32 || value.some(id => typeof id !== "string" || !/^[A-Za-z0-9!_-]{1,512}$/.test(id))) throw new TypeError("Teams file drives must be an array of at most 32 valid drive IDs");
+  return [...new Set(value)];
+}
+
 export function resolveTeamsConfig() {
   const s = getSettings();
   return {
@@ -189,6 +194,8 @@ export function resolveTeamsConfig() {
     appPassword: s.teamsAppPassword || process.env.TEAMS_APP_PASSWORD || "",
     tenantId: String(s.teamsTenantId || process.env.TEAMS_TENANT_ID || "").trim(),
     allMessageEvents: s.teamsAllMessageEvents === true,
+    filesEnabled: s.teamsFilesEnabled === true,
+    fileDriveIds: (() => { try { return validateTeamsFileDriveIds(s.teamsFileDriveIds || []); } catch { return []; } })(),
     publicUrl: getPublicUrl(),
   };
 }
@@ -836,6 +843,8 @@ export function settingsForApi() {
       appPasswordLast4: last4(resolveTeamsConfig().appPassword),
       tenantId: resolveTeamsConfig().tenantId,
       allMessageEvents: resolveTeamsConfig().allMessageEvents,
+      filesEnabled: resolveTeamsConfig().filesEnabled,
+      fileDriveIds: resolveTeamsConfig().fileDriveIds,
       configured: hasTeamsConfig(),
       // What the operator must paste into the Azure bot registration. Empty when no public URL is
       // set, which is exactly when Teams cannot receive anything.

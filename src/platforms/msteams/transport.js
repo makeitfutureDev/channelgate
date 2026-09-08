@@ -3,6 +3,7 @@
 // Note the asymmetry with Google Chat: there is nothing to "start" on the inbound side. Teams pushes
 // to us, so the transport's job is to hold a verified handler that the Express app can route to and
 // to prove the outbound credentials work before reporting itself connected.
+import { createTeamsFileResolver } from "./files.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createDurableInbox } from "../durable-inbox.js";
 import { createTeamsGraphEvents } from "./graph-events.js";
@@ -26,8 +27,12 @@ export async function startTeams({
   serviceUrl = DEFAULT_SERVICE_URL,
   allMessageEvents = false,
   publicUrl = "",
+  filesEnabled = false,
+  fileDriveIds = [],
   capabilities,
   onMessage,
+  onInvoke = null,
+  onStop = null,
   log = console,
   deps = {},
 } = {}) {
@@ -39,6 +44,10 @@ export async function startTeams({
 
   const api = deps.api || createTeamsApi({ auth, serviceUrl });
   const botId = botIdFor(appId);
+  const resolveFile = filesEnabled === true ? createTeamsFileResolver({
+    auth: deps.graphAuth || createTeamsAuth({ clientId: appId, clientSecret: appPassword, tenantId, scope: GRAPH_SCOPE }),
+    allowedDriveIds: fileDriveIds,
+  }) : null;
   const connector = deps.connector || createTeamsConnector({ auth, capabilities, api, botId, tenantId, serviceUrl, log });
   const jwks = deps.jwks || createJwksCache();
   let graph = null;
@@ -58,6 +67,7 @@ export async function startTeams({
       namespace: `msteams-graph-dispatch:${appId}`,
       handle: async ({ inbound, serviceUrl: sourceUrl, subscription }) => {
         if (!await activeSubscription(subscription)) return;
+        if (resolveFile) inbound.attachments = (inbound.attachments || []).map(file => ({ ...file, download: file.reference ? resolveFile(file.reference) : null }));
         await onMessage(inbound, { serviceUrl: sourceUrl });
       },
       interrupted: async ({ inbound }) => {
@@ -167,7 +177,7 @@ export async function startTeams({
     // Subscription errors are retried by Graph maintenance and never block a normal bot turn.
     void graph.ensure(row).catch(() => log.warn?.("[msteams] could not register conversation event subscription"));
   }
-  const handler = createTeamsWebhook({ appId, botId, onMessage, onActivity, graphEventsEnabled, jwks, log });
+  const handler = createTeamsWebhook({ appId, botId, onMessage, onInvoke, resolveFile, onActivity, graphEventsEnabled, jwks, log });
 
   return {
     platform: "msteams",
@@ -178,6 +188,6 @@ export async function startTeams({
     onActivity,
     botId,
     detail: `bot ${appId}`,
-    async stop() { notificationInbox?.stop(); inbox?.stop(); dispatchInbox?.stop(); await graph?.stop(); },
+    async stop() { onStop?.(); notificationInbox?.stop(); inbox?.stop(); dispatchInbox?.stop(); await graph?.stop(); },
   };
 }

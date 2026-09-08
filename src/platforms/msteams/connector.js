@@ -1,4 +1,5 @@
 // The Microsoft Teams ChatConnector.
+import { adaptiveCardAttachment } from "./cards.js";
 import { validateConnector } from "../connector.js";
 import { parseConversationId } from "../ids.js";
 import { createTeamsApi, isConversationId } from "./api.js";
@@ -76,6 +77,24 @@ export function createTeamsConnector({ auth, capabilities, api = null, botId = "
       const thread = threadFor(threadKey) || "";
       const res = await teams.sendActivity(id, { text: body, entities: mentions, threadKey: thread });
       return { messageId: res.messageId, conversationId: id, threadKey: thread };
+    },
+
+    async postCard({ conversationId, threadKey, card, text = "", ephemeralTo = "" } = {}) {
+      const attachment = adaptiveCardAttachment(card);
+      let id = toConversationId(conversationId);
+      let thread = threadFor(threadKey) || "";
+      if (ephemeralTo) {
+        const dm = await openDm(ephemeralTo);
+        // Native private forms must not fall back to posting their contents into a room.
+        if (!dm) throw new Error("Cannot open a private Teams chat for this card");
+        id = dm; thread = "";
+      }
+      const res = await teams.sendActivity(id, { text: String(text), threadKey: thread, attachments: [attachment] });
+      return { messageId: res.messageId, conversationId: id, threadKey: thread, ...(ephemeralTo ? { ephemeral: true } : {}) };
+    },
+
+    async updateCard({ conversationId, messageId, card, text = "" } = {}) {
+      await teams.updateActivity(toConversationId(conversationId), messageId, { text: String(text), attachments: [adaptiveCardAttachment(card)] });
     },
 
     async edit({ conversationId, messageId, text, mentions = [], footer = "" } = {}) {

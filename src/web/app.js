@@ -15,6 +15,8 @@ import { createAdminRouter } from "./routes/admin.js";
 import { mountSkillsPublicRoutes } from "./skills-mcp.js";
 import { triggerSourceSync } from "../gateway/skills/index.js";
 import { createRunsRouter } from "./routes/runs.js";
+import { platformOfConversation } from "../platforms/ids.js";
+import { platformOr } from "../platforms/registry.js";
 import { createFileEditorRouter } from "./file-editor.js";
 import { createFileDownloadRouter } from "./file-download.js";
 import { createApprovalLinkRouter } from "./routes/approve.js";
@@ -180,6 +182,12 @@ export function createWebApp({
   // the full Slack authorization/membership/mode check on open, page load, and every save.
   app.use("/file-editor", createFileEditorRouter({
     authorize: async (grant) => {
+      const adapter = platformOr(platformOfConversation(grant.channelId));
+      if (adapter.workspaceAccess) {
+        const context = await adapter.workspaceAccess(grant);
+        if (!canEditChannelFiles(effectiveMeta(context.meta), { isAdminUser: context.userIsAdmin })) throw new Error("This workspace is read-only for you.");
+        return context;
+      }
       const client = slack?.getClient?.();
       if (!client) throw new Error("Slack is disconnected; reconnect the gateway and reopen the editor.");
       const context = await fileExplorerContext(client, {
@@ -200,6 +208,8 @@ export function createWebApp({
   // re-confined file; it grants no write capability and creates no Slack file copy.
   app.use("/file-download", createFileDownloadRouter({
     authorize: async (grant) => {
+      const adapter = platformOr(platformOfConversation(grant.channelId));
+      if (adapter.workspaceAccess) return adapter.workspaceAccess(grant);
       const client = slack?.getClient?.();
       if (!client) throw new Error("Slack is disconnected; reconnect the gateway and reopen the file preview.");
       return fileExplorerContext(client, {
@@ -216,6 +226,12 @@ export function createWebApp({
   // never sit in memory as one giant archive.
   app.use("/file-upload", createFileUploadRouter({
     authorize: async (grant) => {
+      const adapter = platformOr(platformOfConversation(grant.channelId));
+      if (adapter.workspaceAccess) {
+        const context = await adapter.workspaceAccess(grant);
+        if (!canEditChannelFiles(effectiveMeta(context.meta), { isAdminUser: context.userIsAdmin })) throw new Error("This workspace is read-only for you.");
+        return context;
+      }
       const client = slack?.getClient?.();
       if (!client) throw new Error("Slack is disconnected; reconnect the gateway and reopen the uploader.");
       const context = await fileExplorerContext(client, {

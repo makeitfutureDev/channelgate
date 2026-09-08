@@ -54,7 +54,7 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
       mentionsBot,
       // Graph attachment retrieval has a separate permission path. Preserve descriptors so the
       // shared attachment sink reports unavailable files instead of silently dropping them.
-      attachments: (message.attachments || []).map(file => ({ name: String(file.name || "attachment"), contentType: String(file.contentType || "application/octet-stream"), download: null })),
+      attachments: (message.attachments || []).map(file => ({ name: String(file.name || "attachment"), contentType: String(file.contentType || "application/octet-stream"), download: null, ...(file.contentUrl ? { reference: { contentUrl: file.contentUrl } } : {}) })),
       raw: { eventId, aadObjectId: actorId, tenantId: context.channelData?.tenant?.id || "",
         serviceUrl: context.serviceUrl || "", teamId: context.channelData?.team?.aadGroupId || "" },
     }));

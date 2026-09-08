@@ -68,7 +68,7 @@ export function quotedReplyId(activity) {
   return ids.size === 1 ? [...ids][0] : "";
 }
 
-export function normalizeActivity(activity, { botId = "", fetchImpl = fetch } = {}) {
+export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, resolveFile = null } = {}) {
   const type = String(activity?.type || "").toLowerCase();
   const edit = type === "messageupdate" && activity.channelData?.eventType === "editMessage";
   const reaction = type === "messagereaction" && (activity.reactionsAdded || []).some(r => isRobotReaction(r?.type));
@@ -108,7 +108,7 @@ export function normalizeActivity(activity, { botId = "", fetchImpl = fetch } = 
     userEmail: "",
     text: reaction ? "Continue the task from this message." : stripMentionTags(activity.text),
     mentionsBot,
-    attachments: normalizeAttachments(activity.attachments, fetchImpl),
+    attachments: normalizeAttachments(activity.attachments, fetchImpl, resolveFile),
     raw: {
       activity,
       aadObjectId: String(from.aadObjectId || ""),
@@ -119,7 +119,7 @@ export function normalizeActivity(activity, { botId = "", fetchImpl = fetch } = 
   });
 }
 
-function normalizeAttachments(list, fetchImpl) {
+function normalizeAttachments(list, fetchImpl, resolveFile) {
   const out = [];
   for (const att of Array.isArray(list) ? list : []) {
     const contentType = String(att?.contentType || "");
@@ -138,6 +138,13 @@ function normalizeAttachments(list, fetchImpl) {
         contentType: String(content.fileType ? `application/${content.fileType}` : "application/octet-stream"),
         download: isAllowedDownloadUrl(url) ? () => fetchBytes(url, fetchImpl) : null,
       });
+      continue;
+    }
+    // Graph reference attachments stay lazy: the ingest author/channel authorization gate runs
+    // before download() can ask Graph for metadata or file bytes.
+    if (contentType.toLowerCase() === "reference") {
+      out.push({ name: String(att.name || "attachment"), contentType: "application/octet-stream",
+        download: typeof resolveFile === "function" ? resolveFile({ contentUrl: String(contentUrl) }) : null });
       continue;
     }
     out.push({

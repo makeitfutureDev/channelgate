@@ -99,12 +99,12 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
       return { messageId: res?.id || "" };
     },
 
-    async updateActivity(conversationId, activityId, { text, entities = [] } = {}) {
+    async updateActivity(conversationId, activityId, { text, entities = [], attachments = null } = {}) {
       const id = String(activityId || "");
       if (!isActivityId(id)) throw new Error("Teams activity id contains characters outside the Bot Framework set");
       await call(`v3/conversations/${target(conversationId)}/activities/${encodeURIComponent(id)}`, {
         method: "PUT",
-        body: { type: "message", textFormat: "markdown", text: String(text ?? ""), ...(entities?.length ? { entities } : {}) },
+        body: { type: "message", textFormat: "markdown", text: String(text ?? ""), ...(entities?.length ? { entities } : {}), ...(attachments?.length ? { attachments } : {}) },
       });
     },
 

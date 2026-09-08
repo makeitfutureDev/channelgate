@@ -53,7 +53,7 @@ export const teamsAdapter = validatePlatformAdapter({
     blockQuotes: false,
     richCards: "adaptive-cards",
     buttons: true,
-    modals: true, // task modules
+    modals: false, // forms are inline Adaptive Cards; task-module dialogs are not wired
     nativeTables: false,
     nativeCharts: false,
     lists: false,
@@ -68,7 +68,7 @@ export const teamsAdapter = validatePlatformAdapter({
     seesUnmentionedMessages: false,
     mentionSyntax: "teams",
     mentionByEmail: true, // mention by UPN/email or Entra object id
-    broadcast: true,
+    broadcast: false,
     proactivePost: true,
     proactiveDm: true, // stored conversation references; 1:1 by Entra object id
   },
@@ -84,6 +84,10 @@ export const teamsAdapter = validatePlatformAdapter({
     );
   },
   normalizeName,
+  async workspaceAccess(grant) {
+    const { teamsWorkspaceContext } = await import("./msteams/workspace-access.js");
+    return teamsWorkspaceContext(grant);
+  },
   // Lazy settings import for the same reason as the Google Chat adapter: no static cycle from a
   // descriptor into the config/database stack.
   health: async () => {

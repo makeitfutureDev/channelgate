@@ -15,6 +15,7 @@ import { startGoogleChat } from "./googlechat/transport.js";
 import { createTeamsAuth } from "./msteams/auth.js";
 import { createTeamsApi } from "./msteams/api.js";
 import { createTeamsConnector } from "./msteams/connector.js";
+import { createTeamsControls } from "./msteams/controls.js";
 import { startTeams, botIdFor } from "./msteams/transport.js";
 
 // The connector is built BEFORE the transport starts, on purpose: a Pub/Sub pull can deliver its
@@ -42,8 +43,9 @@ async function startTeamsTransport(config, log) {
   const connector = createTeamsConnector({
     auth, capabilities, api, botId: botIdFor(config.appId), tenantId: config.tenantId, log,
   });
-  const ingest = createIngest({ connector, log });
-  return startTeams({ ...config, capabilities, onMessage: ingest, log, deps: { auth, api, connector } });
+  const controls = createTeamsControls({ connector });
+  const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
+  return startTeams({ ...config, capabilities, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
 }
 
 export function createPlatformTransports({ log = console } = {}) {

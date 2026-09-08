@@ -486,6 +486,9 @@
                   </label>
                   <label class="check"><input id="set-teams-all-message-events" type="checkbox" /> Observe edits and robot reactions on all messages (experimental)</label>
                   <p class="desc">Off by default. Requires application RSC consent for <code>ChatMessage.Read.Chat</code> and <code>ChannelMessage.Read.Group</code> in the Teams app manifest, then app update/reinstallation in each intended conversation. Graph subscriptions start after an installed conversation sends an activity; this is not a tenant-wide message feed. Chat subscriptions use Microsoft Graph beta. Keep both <code>/api/teams/messages</code> and <code>/api/teams/notifications</code> reachable at the Public URL. Save, then reconnect Teams to apply. Normal messages still require a mention outside personal chats; only the robot reaction activates a message without one.</p>
+                  <label class="check"><input id="set-teams-files-enabled" type="checkbox" /> Read group and channel files from allowed drives</label>
+                  <label class="field"><span>Allowed Microsoft drive IDs (one per line, maximum 32)</span><textarea id="set-teams-file-drives" rows="3" placeholder="b!drive-id"></textarea></label>
+                  <p class="desc">Off by default. Requires separately configured selected-site application read access. Only files within these drives can download; no permissions are granted automatically. Use canonical SharePoint file links; sharing shortlinks are not supported. Personal-chat file uploads keep their existing download path. Save, then reconnect Teams to apply.</p>
                   <p class="desc">Microsoft event endpoint: <code id="teams-endpoint">set a Public URL first</code></p>
                   <div class="tok-foot">
                     <button type="button" class="clear-tok" id="teams-connect">Connect</button>
@@ -564,7 +567,7 @@
                 </select>
                 <em class="state">"Ask" posts a message with buttons in the Slack thread and runs nothing until someone clicks; the click re-runs the same message on the chosen harness. Scheduled runs, background agents and API runs cannot be asked and always switch automatically.</em>
               </label>
-                  <label class="toggle"><input type="checkbox" id="set-whisper-enabled" /> Use <strong>local Whisper</strong> for voice notes when installed. When off or unavailable, the gateway uses a completed Slack transcript instead.</label>
+                  <label class="toggle"><input type="checkbox" id="set-whisper-enabled" /> Use <strong>local Whisper</strong> for voice notes when installed. Slack can fall back to a completed Slack transcript. Teams requires local Whisper for voice notes.</label>
                   <label class="field">
                     <span>Warm-session keep-alive (e.g. <code>10m</code>, <code>0</code> to disable)</span>
                     <input id="set-keepalive" type="text" placeholder="10m" />

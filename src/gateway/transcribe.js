@@ -242,8 +242,9 @@ function timeoutMs(value = process.env.WHISPER_TIMEOUT_MS) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 30 * 60 * 1000) : DEFAULT_WHISPER_TIMEOUT_MS;
 }
 
-export function runProcess(command, args, { cwd, timeout = DEFAULT_WHISPER_TIMEOUT_MS, maxOutput = MAX_PROCESS_OUTPUT, envExtra = {} } = {}) {
+export function runProcess(command, args, { cwd, timeout = DEFAULT_WHISPER_TIMEOUT_MS, maxOutput = MAX_PROCESS_OUTPUT, envExtra = {}, signal = null } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason || Object.assign(new Error("Transcription cancelled"), { name: "AbortError" })); return; }
     let child;
     try {
       child = spawn(command, args, {
@@ -263,6 +264,7 @@ export function runProcess(command, args, { cwd, timeout = DEFAULT_WHISPER_TIMEO
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       fn(value);
     };
     const append = (current, chunk) => `${current}${chunk}`.slice(-maxOutput);
@@ -276,12 +278,20 @@ export function runProcess(command, args, { cwd, timeout = DEFAULT_WHISPER_TIMEO
       finish(reject, new Error(`${path.basename(command)} timed out after ${Math.round(timeout / 1000)}s`));
     }, timeout);
     timer.unref?.();
+    const onAbort = () => {
+      try { child.kill("SIGTERM"); } catch {}
+      setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000).unref?.();
+      // Wait for close before rejecting: scratch cleanup must not race a still-writing child.
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
     child.on("error", (error) => finish(reject, new Error(processFailureMessage(path.basename(command), { spawnError: error }))));
-    child.on("close", (code, signal) => {
+    child.on("close", (code, exitSignal) => {
+      if (signal?.aborted) { finish(reject, signal.reason || Object.assign(new Error("Transcription cancelled"), { name: "AbortError" })); return; }
       if (code === 0) finish(resolve, { stdout, stderr });
       else finish(reject, new Error(processFailureMessage(path.basename(command), {
         code,
-        signal,
+        signal: exitSignal,
         diagnostic: stderr.trim().slice(-1000) || "No diagnostic output was provided",
         maxDiagnosticChars: 1000,
       })));
@@ -295,7 +305,9 @@ async function transcribeCore(filePath, {
   cliPath = whisperCliPath(),
   modelPath = whisperModelPath(),
   timeout = timeoutMs(),
+  signal = null,
 } = {}) {
+  signal?.throwIfAborted();
   const source = path.resolve(filePath);
   const scratch = await mkdtemp(path.join(path.dirname(source), ".whisper-"));
   const wav = path.join(scratch, "audio.wav");
@@ -309,12 +321,14 @@ async function transcribeCore(filePath, {
     await runner(ffmpegPath, [
       "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
       "-i", source, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav,
-    ], { cwd: scratch, timeout, maxOutput: MAX_PROCESS_OUTPUT });
+    ], { cwd: scratch, timeout, maxOutput: MAX_PROCESS_OUTPUT, signal });
+    signal?.throwIfAborted();
     const result = await runner(cliPath, ["-m", modelPath, "-f", wav, "-nt"], {
       cwd: scratch,
       timeout,
       maxOutput: MAX_PROCESS_OUTPUT,
       envExtra: runtimeEnv,
+      signal,
     });
     return normalizeTranscript(result?.stdout);
   } finally {
@@ -323,7 +337,7 @@ async function transcribeCore(filePath, {
 }
 
 export async function transcribeAudioFile(filePath, options = {}) {
-  const release = await whisperSemaphore.acquire();
+  const release = await whisperSemaphore.acquire({ signal: options.signal });
   try {
     return await transcribeCore(filePath, options);
   } finally {
@@ -336,10 +350,11 @@ export async function transcribeAudioFiles(files, options = {}) {
   const failed = [];
   const custom = typeof options.transcribe === "function" ? options.transcribe : null;
   for (const file of files || []) {
+    options.signal?.throwIfAborted();
     try {
       let text;
       if (custom) {
-        const release = await whisperSemaphore.acquire();
+        const release = await whisperSemaphore.acquire({ signal: options.signal });
         try { text = await custom(file.path, options); } finally { release(); }
       } else {
         text = await transcribeAudioFile(file.path, options);

@@ -1,6 +1,82 @@
 # ChannelGate — Test Plan
 
+Latest `teams-ms` verification (2026-09-09): 2,448 passed, 10 skipped under
+`npm run test:coverage`; coverage floors, static checks and security coverage passed.
+The dependency audit passed the high-severity threshold with one existing moderate
+transitive Hono advisory group reported; no dependencies changed in this feature.
+Live Microsoft/Claude/Codex gates remain unexecuted.
+
 ## Teams events and portable controls — teams-ms branch only
+
+### Native controls, scoped files and voice acceptance
+
+Automated fixtures to include in the final candidate rerun (mocked Microsoft transport; therefore
+engine-independent):
+
+```sh
+node --test test/teams-native-cards.test.js test/teams-controls.test.js test/teams-file-consent.test.js test/platform-teams-files.test.js test/platform-voice.test.js test/platform-attachments.test.js test/file-download.test.js test/file-upload.test.js test/file-editor.test.js test/whisper-transcribe.test.js test/slack-voice-prompts.test.js
+```
+
+Native controls use signed RSA/JWKS activity fixtures, source group `teams:19:group@thread.v2`,
+private conversation `a:personal`/`a:private`, actor `29:user`, and a scratch `report.txt` containing
+`snapshot`. Require private delivery, actor/conversation/expiry rejection, current membership and
+approval checks, compatible runtime values, safe Execute/Submit behavior, scope validation and
+single-outcome replay. File consent must upload the original snapshot only on valid acceptance,
+reject empty/oversized/outside-root files, expire at ten minutes, cap pending snapshots, and never
+retry an uncertain upload. Graph file fixtures use drive `b!fixture_drive`, canonical host
+`fixture.sharepoint.com`, and a synthetic bearer; require lazy authorization-before-fetch,
+allowlisted drive identity, no `/shares` request, no bearer on the byte request, no redirects,
+and bounded streams. Voice fixtures inject transcripts/failures, plus a cancellable local Node
+child; require no raw audio engine attachments, no engine on audio-only failure and preserved
+text/file fallback. Simultaneous flat messages named `audio.wav` plus a revision must retain
+three different storage paths and each original byte sequence.
+
+- [ ] UNEXECUTED live native-card gate, separately with Claude and Codex pinned: install the
+  reviewed branch manifest in an owned personal chat, channel and external-member group. It must
+  declare `supportsFiles: true` on the bot for file consent. Card/form use requires no additional
+  Graph RSC permission. Request `/settings` by quoting an existing root and mentioning the bot;
+  choose a compatible engine/model/effort and verify that root's next run uses the choice. Reject
+  another actor's submission, an expired state, a revoked member and a prohibited non-admin
+  runtime change. Trigger a harmless approval fixture; Approve must allow once, Deny must not,
+  Request changes must refuse and preserve the comment. A typed changes comment with Approve
+  must also refuse. Repeat Execute and a client using Submit fallback. Replaying a decision
+  must not repeat its effect. Revoke the original requester's current approval/channel access
+  before deciding by native card or private fallback link: neither path may retain authority
+  merely because they created the request. Record actor, anonymized root, scope and result.
+- [ ] UNEXECUTED live settings/secrets gate: `/secrets` and the card's settings link must open the
+  existing authenticated admin website; verify login and existing reveal/re-auth policy still
+  apply. No secret value or new secret-entry form may appear in the Teams chat/card. A failed
+  private delivery must explain failure without publishing private control links to the group.
+- [ ] UNEXECUTED live workspace gate, both engines: create owned `fixtures/report.txt` containing
+  `ORIGINAL` and `fixtures/note.txt` containing `EDIT_ME`. Invoke `/files fixtures` from the group;
+  its private browser must remain scoped to that group's workspace. Download report and verify
+  bytes; upload `new.txt`, then edit note where current write policy permits. A read-only user
+  cannot upload/edit. Revoke gateway approval or Teams membership before opening a link and
+  require denial; an escaped path/symlink cannot disclose another workspace. Confirm conflicting
+  text edits preserve the existing stale-write safeguard.
+- [ ] UNEXECUTED live native-send gate, both engines: `/sendfile fixtures/report.txt` from the
+  group must deliver file consent only in the requester's personal chat. Accept must upload the
+  prepared bytes and return a native file attachment. Decline, a different actor, revoked access,
+  expiry after ten minutes and duplicate invocation must not upload. Try a zero-byte and an
+  over-10-MB file; require refusal and browser-download guidance. Simulate interrupted upload;
+  the uncertain outcome must not retry automatically. No group/channel direct native upload is
+  claimed by this personal-consent flow.
+- [ ] UNEXECUTED live scoped-read gate, both engines: configure `teamsFilesEnabled: true` with
+  one owned drive in `teamsFileDriveIds` and externally grant selected-site application read
+  access. Send a canonical SharePoint file reference inside that drive, then an unlisted drive
+  and a sharing shortlink. Only the allowed canonical file may download. Native personal uploads
+  must continue with the opt-in off. Record tenant consent and exact sanitized resource paths;
+  metadata access alone is not evidence that content was delivered. Test revoked consent and
+  blocked redirect behavior. No broad sharing-link permission may be silently added to pass.
+- [ ] UNEXECUTED live voice/collision gate, both engines: attach a short owned WAV saying
+  `Reply VOICE_NATIVE_OK`. Verify a preparing/transcribing status and the correct text response.
+  Disable Whisper and repeat audio-only: clear explanation, zero engine runs. Add typed
+  `Reply TEXT_FALLBACK_OK` with unavailable audio: text must run and the failure remain visible.
+  Stop a long local transcription and verify child exit and no later engine start. Send two
+  simultaneous group messages each attaching `audio.wav` with distinct spoken markers, then
+  edit/retrigger one; require independent stored bytes, transcripts and group session roots.
+  Preserve ordinary attached files. There is no Slack transcript fallback on Teams.
+
 
 Verification on 2026-09-09: full coverage suite passed (2,404 passed, 10 skipped);
 static checks, secret scan, security coverage and production dependency audit passed.

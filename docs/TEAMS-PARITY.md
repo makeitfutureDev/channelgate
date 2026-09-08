@@ -45,19 +45,29 @@ A Teams event subscription can make an event observable; it does not authorize a
 The requester remains the person editing or reacting, not the target message's original author.
 The current channel policy, bot installation scope and selected-account permissions still apply.
 
+## Native additions implemented on this branch
+
+These paths have automated fixture coverage; Microsoft tenant/client and both-engine live
+acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms`.
+
+| Feature | Implemented behavior | Boundary |
+| --- | --- | --- |
+| Approval cards | Native Approve/Deny/Request changes with optional comment, supported scope choices, Execute and Submit fallback, verified actor identity | A changes comment refuses the current action even with Approve; escalation policy is separate |
+| Session form | `/settings` opens private engine/model/effort choices through existing controls | Runtime-change authorization and active-session safeguards still apply |
+| Settings and secrets | `/secrets` and the session card link to the existing authenticated admin website | No secret values or new secret-entry form in Teams |
+| Workspace browser | `/files [folder]` provides private pagination and browser download/upload/text-edit links | Source workspace and current Teams membership are rechecked; no public fallback |
+| Native file sending | `/sendfile <relative-path>` asks for personal-chat Accept/Decline and sends the approved file snapshot | Nonempty files up to 10 MB; ten-minute consent; bounded pending pool; manifest `supportsFiles: true` |
+| Group/channel file reading | Optional Graph resolution of canonical SharePoint paths inside explicitly allowed drives | External selected-site read grants; no `/shares` route or shortlinks; redirects blocked and token isolated |
+| Voice | Local Whisper transcription, cancellable work, text fallback with explicit failure notes | No Slack transcript service; unavailable downloads/Whisper do not become raw-audio engine requests |
+| Concurrent attachments | A unique intake directory preserves each message/revision's bytes | Storage IDs do not change reply/session identity |
+
 ## Remaining feasible adaptations
 
 | Slack feature | Teams gap | Next implementation slice |
 | --- | --- | --- |
-| Explicit tool/action approvals | Shared signed-link and durable-approval primitives exist, but `slack/approvals.js` still posts a Slack card first and validates a Slack timestamp; Teams delivery is not wired merely because the helper mentions Teams | Extract a connector-backed approval prompt, private single-use decision links, decision replay protection and private-delivery failure reporting; leave escalation disabled until acceptance proves it |
-| File explorer and file links in reply footer | Native Slack modal and requester-bound footer actions do not have a Teams entry point | Provide authorized browser entry links using existing file access checks; never post bearer file/editor links publicly |
-| Channel settings and secret explorer | Browser admin settings work; Slack's per-message settings buttons, secret forms and modals are not a Teams UI | Authenticated settings deep links first; later Adaptive Card/dialog entry points with actor-bound state and unchanged secret policy |
-| Interactive model picker | Slack wizard uses Block Kit actions | Text commands using the shared model catalog first; optional card picker later |
 | Busy-thread steer/queue choice | Slack posts authenticated decision controls and handles active-run steering | Port explicit choices to text/private links or cards; preserve author checks, session identity and queue ordering |
 | Background status button | Job execution/delivery is shared; Slack button callback is not | Add text status access or safe authenticated browser status links |
 | Restart recovery presentation | Durable run state exists; some recovery orchestration and notification hooks remain Slack-owned | Audit and route recovery through the connector while preserving queue reservations and uncertain-outcome rules |
-| Instruction approval comments | Durable approval decisions exist, but freeform Comment is a Slack interaction | Add an actor-bound text/dialog comment path after approval transport |
-| Local voice transcription | Local transcription backend is reusable; Slack pipeline currently performs audio classification, transcription and Slack VTT fallback | Use common downloaded-file transcription; explain unavailable transcript without claiming Slack's VTT feature exists on Teams |
 | On-demand history/thread reads | Built-in MCP history tools are Slack-specific | Add conversation-scoped Teams reads through a separately authorized Graph route; expose safe metadata and respect explicit message scope |
 | Re-download a historical file | `slack_download_file` requires Slack file descriptors and channel membership proof | Teams-specific descriptor lookup and scoped Graph/SharePoint retrieval, using the existing confined streaming sink |
 | Follow-up digests, done/reopen reactions and nudges | Delivery plumbing is shared but Slack reaction and history ingestion drive parts of tracking | Audit the tracking inputs and map explicit Teams reactions; avoid treating robot activation as digest acknowledgement |
@@ -73,7 +83,7 @@ The current channel policy, bot installation scope and selected-account permissi
 | --- | --- |
 | All-message observation | Default bot delivery is not equivalent to Slack history/reaction coverage. Declare exact installation/RSC/Graph permission prerequisites and subscription scope. No tenant-wide feed by default |
 | Group/channel files | Files may live in SharePoint/OneDrive and require a distinct Graph permission path; a bot message credential is not proof of file access |
-| Native file sending | Teams platform file possibilities do not mean this connector implements outgoing upload or file-consent flow |
+| Native file sending | Implemented personal-chat consent path requires manifest `supportsFiles: true`; this does not provide direct arbitrary group/channel uploads |
 | Proactive DMs | Conversation creation can fail when installation, identity or tenant policy prevents it. Private approval links must never fall back into the group |
 | Reaction shape/coverage | Validate the robot reaction's real payload and availability on desktop/mobile and user/bot messages. Unknown reactions are ignored; reaction removal is not an implicit new request |
 | External/federated chats | Acceptance must include a group containing external members; successful same-tenant tests alone do not prove this works |
@@ -98,14 +108,12 @@ independent API compatibility certification.
 
 ## Capability descriptor accuracy checks
 
-In the baseline `src/platforms/msteams.js`, `buttons`, `modals`, `fileUpload`, `broadcast` and
-`richCards: "adaptive-cards"` advertise platform possibilities more broadly than this gateway's
-implemented surface. The connector turns button labels into text; it does not dispatch a card.
-No task-module invocation route or native outgoing file uploader is established by those flags.
-`reactions: true` similarly did not establish inbound trigger handling before this branch.
-Consumers and operating guides must not confuse those declarations with shipped functionality.
-Prefer separate explicit effective capability facts or conservative flags until the corresponding
-end-to-end path exists. Test any flag change against guide materialization and UI behavior.
+The branch declares native buttons/cards and file sending only alongside their implemented
+handlers. `modals: false` is intentional: forms render inline in Adaptive Cards, not task-module
+dialogs. `broadcast: false` remains intentional: no broad mention entity builder exists.
+Reaction trigger support is separate from general reaction capability, and observing an event
+never substitutes for gateway authorization. Validate capability changes against guide
+materialization and the actual connector, not Microsoft platform possibilities alone.
 
 This branch also corrects `supportsThreads()` to recognize channel ID suffixes without treating
 flat `@thread.v2` group chats as native threads. Inbound normalization still uses conversation kind.
