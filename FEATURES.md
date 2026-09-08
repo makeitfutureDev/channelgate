@@ -1,5 +1,11 @@
 # ChannelGate — Features
 
+- **Current network policy accompanies every attempt:** fresh, resumed, recovered and fallback
+  prompts state the resolved network switch, including Clean runs. An off switch instructs the
+  engine to explain the current restriction rather than present a cached response as a new request.
+  This remains advisory policy, not container egress enforcement; other tool restrictions still
+  apply. The added fact contains no credential inventory or values. → TEST-PLAN: Network policy on resumed turns.
+
 - **Control-plane results report received human approval:** a tool that awaited an approving
   decision returns a receipt alongside its original outcome, including returned refusals or error
   results after approval. The receipt identifies neither an actor nor a particular approval UI and never claims

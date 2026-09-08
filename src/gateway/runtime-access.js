@@ -45,6 +45,16 @@ function cleanModeNote(clean) {
   return "Clean mode for this attempt is unknown because the resolved run mode was not supplied. Do not infer it from missing tools alone.";
 }
 
+function networkPolicyNote(allowNetwork) {
+  if (typeof allowNetwork !== "boolean") {
+    return "Network policy for this attempt is unknown because the resolved policy was not supplied. Do not infer network permission from earlier turns or successful requests.";
+  }
+  const policy = allowNetwork
+    ? "Outbound requests are permitted by the channel network switch, subject to this attempt's other tool permissions and the user's requested scope. There is no per-domain allow-list."
+    : "Do not make outbound requests. When a request needs the network, explain that the current policy is off and that no fresh request was made. Do not present an earlier response as a fresh network result.";
+  return `Network policy for THIS attempt: **${allowNetwork ? "on" : "off"}**. This current network policy supersedes earlier turns and cached results. ${policy} The switch is advisory, not container egress enforcement: the container remains on the bridge network, and an engine may impose its own additional restrictions. An off policy does not prove that a connection is technically blocked.`;
+}
+
 export function containerAccessNote(target) {
   if (!Array.isArray(target?.container?.mounts)) {
     return "**Container access:** no resolved runtime target was supplied at prompt/guide construction. Do not infer host access from the author's role; check the current runtime before claiming a path is mounted or absent.";
@@ -57,7 +67,7 @@ export function containerAccessNote(target) {
   return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access} Switching this channel to Admin/Full-access qualifies it for the operator-home mount on the next resolved run ONLY while that gateway switch is on; with the switch off, Admin adds no home mount. The container remains the filesystem/process boundary. \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See the \`gateway-usage\` skill's \`references/administration.md\` for the boundary and the optional grant.`;
 }
 
-export function runtimeAccessPreamble(target, { clean } = {}) {
+export function runtimeAccessPreamble(target, { clean, allowNetwork } = {}) {
   return "[Gateway container access for THIS attempt]\n"
     + "These current access facts supersede earlier turns and generic claims about host isolation. "
     + "Answer access questions from this resolved runtime, even when the conversation previously said otherwise.\n"
@@ -65,6 +75,7 @@ export function runtimeAccessPreamble(target, { clean } = {}) {
     + gatewayStoreAccessNote(target) + "\n"
     + "Respect the user's requested scope when checking access. For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only. Do not read file contents or create, modify, or delete probe files, even temporarily. If metadata cannot establish write access, report it as unverified; do not upgrade an access-check request into a write test.\n"
     + cleanModeNote(clean) + "\n"
+    + networkPolicyNote(allowNetwork) + "\n"
     + "Environment secrets, when injected into a run, are usable by its process and CLI. Write-only means masked listing/reveal surfaces and redacted outputs; it does not mean the process cannot read its environment. Do not print secret values.\n"
     + "[End gateway container access]\n\n";
 }
