@@ -75,7 +75,7 @@ for (const kind of ["editor", "upload"]) {
     assert.equal(cookies[0].httpOnly, true);
     assert.equal(cookies[0].secure, true);
     assert.equal(cookies[0].path, new URL(sessionUrl).pathname);
-    assert.equal(await page.evaluate(() => document.cookie), "", "the session secret stays HttpOnly");
+    assert.equal(await page.evaluate(() => globalThis.document.cookie), "", "the session secret stays HttpOnly");
     const endpoint = `${new URL(sessionUrl).pathname}/api/${kind === "editor" ? "save" : "upload?path=forged.txt"}`;
     const denied = await page.evaluate(async (url) => (await fetch(url, {
       method: "POST", headers: { "Content-Type": "application/json", "X-CG-CSRF": "wrong" },
@@ -100,8 +100,8 @@ for (const kind of ["editor", "upload"]) {
     await page.goto(sourceUrl);
     const csrfResponse = page.waitForResponse((response) => response.request().method() === "POST");
     await page.evaluate((action) => {
-      const form = document.createElement("form"); form.method = "POST"; form.action = action;
-      document.body.append(form); form.submit();
+      const form = globalThis.document.createElement("form"); form.method = "POST"; form.action = action;
+      globalThis.document.body.append(form); form.submit();
     }, `${baseUrl}${endpoint}`);
     assert.equal((await csrfResponse).status(), 401);
     await page.waitForURL((url) => url.pathname === new URL(`${baseUrl}${endpoint}`).pathname);
