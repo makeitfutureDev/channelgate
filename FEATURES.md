@@ -7,6 +7,12 @@
 
 A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
+- **Accurate channel-control descriptions:** MCP mode/network descriptions and confirmations
+  describe the container boundary, advisory networking and separately resolved operator-home
+  grant. They do not promise domain filtering or automatic access to host credentials. Auto
+  distinguishes engine tool approval from explicit control-plane sign-offs.
+  → TEST-PLAN: Channel-control description accuracy.
+
 - **Accurate approval scopes:** explicit agent sign-offs and durable actions offer only a
   decision for that exact request. Native tool permissions retain Once, This thread and Forever.
   The shared decision handler rejects unsupported scopes before changing grants or consuming

@@ -135,10 +135,12 @@ export function register(server, ctx) {
     "set_channel_admin_mode",
     {
       description:
-        "ADMIN ONLY. Turn this channel's ADMIN MODE (full access) on or off. With it ON, ADMIN authors " +
-        "run with NO sandbox and NO permission prompts (--dangerously-skip-permissions): full filesystem " +
-        "+ network access, runs anything. Non-admin authors are unaffected (restricted + sandboxed). " +
-        "Takes effect on the next message.",
+        "ADMIN ONLY. Turn this channel's Admin/Full-access tool preset on or off. Admin authors bypass " +
+        "engine tool permission prompts inside the channel's container; admitted non-admin authors retain " +
+        "restricted tools. The container remains the filesystem/process boundary. While the operator's " +
+        "separate gateway-wide Full-access home switch is on, qualifying channels also mount the operator's " +
+        "whole home read-write, except masked container-engine storage; use current resolved mount facts. " +
+        "This tool changes neither that global switch nor the network policy. Effective next message.",
       inputSchema: { enabled: z.boolean() },
     },
     async ({ enabled }) => {
@@ -149,7 +151,7 @@ export function register(server, ctx) {
       }
       return text(
         enabled
-          ? "✅ Admin mode ON — admin authors now have ALL permissions in this channel (effective on the next message). Non-admins remain restricted."
+          ? "✅ Admin mode ON — admin authors bypass engine tool permission prompts inside this channel's container; non-admins retain restricted tools. Resolved mounts still apply, including the optional operator-home grant. Effective next message."
           : "✅ Admin mode OFF — this channel is back to the restricted tool allowlist (effective on the next message)."
       );
     }
@@ -160,10 +162,10 @@ export function register(server, ctx) {
     {
       description:
         "ADMINS / CHANNEL MANAGERS. Turn shell access on or off for this channel. With it ON, the agent can use Bash " +
-        "and the file-edit tools. Reads stay confined to the working folder; for writes, secrets, the " +
-        "gateway config and other channels are protected, but the agent CAN also write elsewhere in the " +
-        "host's home dir (writes are not confined to the folder alone). Network is blocked. This is NOT " +
-        "full admin mode. Takes effect on the next message.",
+        "and file-edit tools inside this channel's container. The tool preset does not add host mounts; " +
+        "filesystem visibility follows the current resolved runtime, including any separately configured " +
+        "Admin/Full-access operator-home grant. Network policy is a separate channel setting. " +
+        "Takes effect on the next message.",
       inputSchema: { enabled: z.boolean() },
     },
     async ({ enabled }) => {
@@ -173,8 +175,8 @@ export function register(server, ctx) {
       }
       return text(
         enabled
-          ? "✅ Bash + file edits ON for this channel — sandboxed to the working folder (effective on the next message)."
-          : "✅ Bash OFF — back to read-only tools (Read/Glob/Grep) + allowed MCPs (effective on the next message)."
+          ? "✅ Bash + file edits ON inside this channel's container; resolved mounts and separate network policy still apply. Effective next message."
+          : "✅ Bash preset OFF — read-only tool policy applies when no other mode enables writes. Effective next message."
       );
     }
   );
@@ -183,10 +185,10 @@ export function register(server, ctx) {
     "set_channel_network",
     {
       description:
-        "ADMIN ONLY. Turn network access on or off for this channel (needs Bash on to be useful). " +
-        "With it ON, sandboxed commands can reach the configured domains (GitHub by default) so " +
-        "`git push` / `gh` / `curl` work; the git/gh credential files become readable so the existing " +
-        "login authenticates. All other domains stay blocked. Takes effect on the next message.",
+        "ADMIN ONLY. Set this channel's allowed network policy. On permits internet use; off tells the " +
+        "engine not to use the network. This policy is advisory: containers remain on the bridge network, " +
+        "with no domain allowlist or enforced egress cutoff. It grants no host credential files or mounts. " +
+        "Takes effect on the next message.",
       inputSchema: { enabled: z.boolean() },
     },
     async ({ enabled }) => {
@@ -196,8 +198,8 @@ export function register(server, ctx) {
       }
       return text(
         enabled
-          ? "✅ Network ON for this channel. Make sure Bash is also on. Effective on the next message."
-          : "✅ Network OFF for this channel (effective on the next message)."
+          ? "✅ Network ON — policy permits internet use, with no domain allowlist. Effective next message."
+          : "✅ Network OFF — policy instructs the engine not to use the network; this is advisory, not an egress cutoff. Effective next message."
       );
     }
   );
@@ -207,9 +209,9 @@ export function register(server, ctx) {
     {
       description:
         "ADMINS / CHANNEL MANAGERS. Turn AUTO MODE on or off for this channel. With it ON, the agent works " +
-        "autonomously: permission prompts are auto-approved (no Slack buttons) and it can read/write " +
-        "its working folder — still sandboxed (secrets, gateway config, other channels and the network " +
-        "stay off-limits unless separately allowed). This is NOT full admin mode. Effective next message.",
+        "autonomously: engine tool permission prompts are auto-approved and workspace writes are enabled. " +
+        "The channel's container remains the boundary; resolved mounts and network policy are separate. " +
+        "Explicit control-plane sign-offs still require their authorized human decision. Effective next message.",
       inputSchema: { enabled: z.boolean() },
     },
     async ({ enabled }) => {
@@ -219,7 +221,7 @@ export function register(server, ctx) {
       }
       return text(
         enabled
-          ? "✅ Auto mode ON — the agent runs autonomously here (prompts auto-approved, folder writable), still sandboxed. Effective on the next message."
+          ? "✅ Auto mode ON — engine tool prompts auto-approved and workspace writable inside the channel's container. Control-plane sign-offs still require a human decision. Effective next message."
           : "✅ Auto mode OFF — back to asking for approval on tool permissions (effective on the next message)."
       );
     }

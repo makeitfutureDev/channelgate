@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Correct channel-control MCP descriptions and confirmations to reflect container confinement,
+  advisory networking and the separate optional operator-home mount. Preserve all permissions,
+  setting mutations and approval checks.
+
 - Show only supported scopes for explicit agent and durable approvals. Reject unsupported
   thread/forever decisions before consuming the request or persisting ineffective grants;
   native tool permissions retain all three scopes.

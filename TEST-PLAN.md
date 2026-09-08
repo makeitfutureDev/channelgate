@@ -3,6 +3,21 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Channel-control description accuracy
+
+- [x] Existing `test/channel-policy-audit.test.js`, `test/mcp-control-plane-approval.test.js`
+  and `test/mcp-socket-server.test.js` exercise actual registered handlers, their authorization,
+  approval requirements, metadata changes and audit behavior after the prose correction.
+- [ ] Live, both engines: in a non-admin Read fixture, discover `set_channel_admin_mode`,
+  `set_channel_bash`, `set_channel_network` and `set_channel_auto_mode` without invoking them.
+  Ask: “Explain the filesystem boundary, network enforcement and approval behavior described
+  by these tools; change no settings.” Compare exact returned tool schemas and answer against
+  current resolved mounts and stored policy. Require container confinement, advisory networking
+  without a domain allowlist, no credential-file grant from network policy, the conditional
+  operator-home widening, and explicit control-plane sign-offs surviving Auto. Metadata remains
+  unchanged. The original stale-description discovery remains failure evidence; no mount,
+  authorization or runtime behavior is changed by this wording fix.
+
 ## Approval scope capabilities
 
 - [x] `node --test test/approvals-api.test.js`: actual authenticated routes list agent and
