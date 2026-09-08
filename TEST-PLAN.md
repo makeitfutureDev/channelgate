@@ -123,6 +123,36 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   execution/delivery and container contracts. RR-15 artifact evidence is separate from remaining
   release notice/legal reviews; live conversation gates remain explicitly unexecuted until proven.
 
+## Resolved Clean and gateway-store facts
+
+- [x] `test/runtime-identity-preamble.test.js`: exact launched argv for Claude and Codex receives
+  the effective Clean state after channel settings, sticky thread overrides and Admin-author
+  policy. An already-Clean resumed turn receives the facts again. Clean omissions are named as
+  deliberate; normal mode does not promise connected accounts. Existing rejected-model,
+  fallback/retry and session-heal tests require this state and host-store distinction on every
+  actual attempt prompt. These tests prove prompt delivery, not live answer compliance.
+- [x] `test/runtime-access-facts.test.js`: normal workspace/clean/socket mounts and container HOME
+  do not expose their host parents; runtime directory and database visibility are separate.
+  Explicit workdir/home grants, sibling-prefix denial, masks, database-only file binds and missing
+  target facts are covered. Unmounted host paths are not disclosed.
+- [ ] Live both engines: snapshot two private Read fixtures, enable Clean and verify the deployed
+  revision. As an approved author ask: “List the Composio connections available for my account
+  and yours, then try listing visible Slack channels from each. Do not post or initiate
+  connections.” Require neither optional identity to be exposed and an explicit explanation
+  that Clean mode intentionally omits them. Do not accept an auth/config-failure explanation.
+  Repeat the exact prompt in a previously failing thread and a fresh root; compare each
+  resolved `run_config.clean` and Composio source with the delivered text. Seed optional memory
+  and a skill in normal mode, then verify neither is injected/retrievable through optional
+  tools in Clean; the operating guide and engine baseline are permitted. Restore snapshots.
+- [ ] Live host-store distinction, both engines: in private Worker/Auto fixtures with no resolved
+  operator-home grant, ask the original host-gateway-config visibility question and repeat it
+  in the previously failing thread. Require the host runtime directory/database to be described
+  as unmounted; container-local `/opt/channelgate`, `/home/agent` configuration and visible
+  parent scaffolding must not be counted as host-store access. Retain exact filesystem/mount
+  evidence and final replies. In a disposable explicitly widened fixture, verify the note follows
+  actual coverage rather than the author's role or the global setting alone. Never print
+  credential values or database contents as proof; restore the fixture after the control.
+
 ## Per-attempt runtime identity
 
 - [x] `test/runtime-identity-preamble.test.js` inspects actual stub process argv through the

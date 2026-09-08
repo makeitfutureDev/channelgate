@@ -1592,6 +1592,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   distinguished from the current channel's actual grant and a proposed switch to Admin mode.
   Environment credentials are described as usable when injected, with masked listing/reveal
   surfaces and redacted outputs. → TEST-PLAN: Container runtime (resumed access facts).
+- **Host gateway store attribution:** attempt prompts separately report whether the gateway's
+  runtime directory and database are covered by resolved host mounts, without naming unmounted
+  host paths. Container-local `/opt/channelgate`, `/home/agent` state and parent scaffolding
+  around a bind mount do not establish host-store access. Explicitly mounted workdirs and
+  operator-home grants are recognized; engine-storage masks remain excluded. This guidance
+  describes existing mounts and never changes authorization. → TEST-PLAN: Resolved Clean and
+  gateway-store facts.
 **Since 2026-09-03 this is the ONLY runtime (Linux + containers only):** the `host` backend, the
 gateway-wide kill switch, the per-channel runtime pin and the host↔container session carry below
 are retired, bullet by bullet; everything else stands.
@@ -1957,15 +1964,20 @@ are retired, bullet by bullet; everything else stands.
   total cost remain intact, and the footer continues to name the governing configured variant.
   → TEST-PLAN: primary model attribution.
 - Clean mode (per channel / DM): run bare for the lowest token cost — no MCP servers injected
-  (gateway control, Composio, Toolbox), no skills copied, no skills-favorites block, and no
+  (gateway control, Composio, Toolbox), no optional granted skills copied, no skills-favorites block, and no
   per-author tokens. The per-run `--mcp-config` is empty + `--strict-mcp-config` (so global servers
   are replaced by nothing) and the lockdown's `allowedMcpServers` is empty; Codex skips its gateway
   `-c mcp_servers.*` injection. Loads as close to the model's base prompt as the harness allows.
+  The operating guide and engine-bundled baseline tools may remain. Every attempt receives its
+  resolved Clean state after channel, author and thread policy, including retries and fallback.
+  Missing connectors, optional skills and injected memory are explained as deliberate Clean
+  omissions, not broken connections. When Clean is off, the note does not imply that any account
+  is configured or connected. → TEST-PLAN: Resolved Clean and gateway-store facts.
   → TEST-PLAN: Performance (clean mode).
 - **`/clean` thread directive**: "@bot /clean <message>" applies clean-mode semantics to THIS thread
-  only — plus no provenance line and no thread-context replay, so the model sees nothing but the
-  user's message on top of Claude Code's own baseline (~27.5k input tokens measured; the CLI's
-  hard floor). Sticky per thread (a session built bare must resume bare, mirroring the engine
+  only — plus no provenance line and no thread-context replay. The user's message and safe
+  per-attempt runtime facts supplement the harness baseline and operating guide.
+  Sticky per thread (a session built bare must resume bare, mirroring the engine
   directive); `/clean off` reverts for the next message. Stored in
   `channels/<slug>/thread-clean.json`. → TEST-PLAN: Performance (clean mode).
 
