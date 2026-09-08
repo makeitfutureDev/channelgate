@@ -1,0 +1,52 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { ensureTestEnv } from "./helpers.js";
+ensureTestEnv();
+
+test("one-time editor preserves the browser's chosen instant across daemon timezones", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
+  const previousTz = process.env.TZ;
+  process.env.TZ = "Europe/Bucharest";
+  t.after(() => { if (previousTz === undefined) delete process.env.TZ; else process.env.TZ = previousTz; });
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const { createAdminRouter } = await import("../src/web/routes/admin.js");
+  const { addSchedule, getSchedules } = await import("../src/config/schedules.js");
+  const { upsertChannelEntry } = await import("../src/config/store.js");
+  await upsertChannelEntry("CTZTEST", { name: "timezone-test", type: "channel" });
+  const fixture = addSchedule({ channelId: "CTZTEST", slug: "timezone-test", once: true, runAt: "2030-06-10T12:00:00.000Z", prompt: "Harmless test", description: "Timezone test", createdBy: "UTZTEST", notify: "none" });
+  const app = express();
+  app.use(express.json());
+  app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
+  app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
+  app.get("/api/health", (_req, res) => res.json({ slack: { connected: false }, engines: {} }));
+  app.use("/api", createAdminRouter({ slack: { snapshot: () => ({ status: "disconnected", connected: false }) } }));
+  const publicDir = fileURLToPath(new URL("../public", import.meta.url));
+  app.use(express.static(publicDir));
+  app.get("/automations", (_req, res) => res.sendFile(path.join(publicDir, "index.html")));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  t.after(() => browser.close());
+  for (const timezoneId of ["UTC", "America/New_York"]) {
+    const context = await browser.newContext({ timezoneId });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${server.address().port}/automations`);
+    await page.locator(".sched-open").click();
+    const initial = await page.locator("#schedule-modal-run-at").inputValue();
+    const initialInstant = await page.evaluate((value) => new Date(value).toISOString(), initial);
+    assert.equal(initialInstant, getSchedules().find((s) => s.id === fixture.id).runAt);
+    const chosen = "2030-06-11T15:42";
+    const expected = await page.evaluate((value) => new Date(value).toISOString(), chosen);
+    await page.locator("#schedule-modal-run-at").fill(chosen);
+    const response = page.waitForResponse((r) => r.url().endsWith(`/api/schedules/${fixture.id}`) && r.request().method() === "PUT");
+    await page.locator("#schedule-modal-save").click();
+    assert.equal((await response).status(), 200);
+    assert.equal(getSchedules().find((s) => s.id === fixture.id).runAt, expected, `${timezoneId}: chosen instant must not be reinterpreted in daemon timezone`);
+    await page.reload();
+    await page.locator(".sched-open").click();
+    assert.equal(await page.locator("#schedule-modal-run-at").inputValue(), chosen);
+    await context.close();
+  }
+});

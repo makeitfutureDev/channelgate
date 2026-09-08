@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Fix one-time automation edits shifting by the browser/daemon timezone difference and potentially firing future tasks immediately.
+
 ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original
 wording. All notable changes to the gateway, newest first. Dates are when the work landed.
 This project brings Claude Code (and optionally OpenAI Codex) into Slack as a self-hosted,

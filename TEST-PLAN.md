@@ -1,5 +1,10 @@
 # ChannelGate — Test Plan
 
+## One-time automation editor timezone
+
+- [x] `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test test/schedule-timezone-browser.test.js`: actual Chromium, Admin router and SQLite, daemon Europe/Bucharest with browser UTC and America/New_York. A one-time task displays its current instant correctly; editing to a future local time saves the corresponding exact ISO instant and hard reload retains the same local input.
+- [ ] Live Claude and Codex: in an authenticated Admin browser whose timezone differs from the daemon, edit an owned future one-time task to a time two minutes ahead and a unique harmless prompt. Reload and compare the API ISO time with the browser-selected instant; require no early execution, then exact prompt delivery at/after due within the scheduler polling interval. Clean up only owned tasks. UI serialization is shared; actual scheduled engine delivery remains a separate gate.
+
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 

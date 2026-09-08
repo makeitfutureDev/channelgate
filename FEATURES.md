@@ -1,5 +1,7 @@
 # ChannelGate — Features
 
+- **Timezone-safe one-time automation edits:** the Admin editor sends the browser-selected local time as an explicit ISO instant. Saving and reloading preserves the chosen time even when the browser and daemon use different timezones; recurring cron timezone policy is unchanged. → TEST-PLAN: One-time automation editor timezone.
+
 - Release artifact scanning recognizes only exact SHA-256 fingerprints of reviewed public
   toolchain fixtures. PEM exceptions bind the complete key, never a header or first body line;
   repository/history scans and unknown or altered artifact credentials remain strict. Public

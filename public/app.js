@@ -2371,7 +2371,9 @@ async function saveScheduleEditor() {
       notify: document.getElementById("schedule-modal-notify").value,
       notifyUserId: document.getElementById("schedule-modal-notify-user").value,
     };
-    if (schedule.once) body.runAt = document.getElementById("schedule-modal-run-at").value;
+    // datetime-local is in the browser's timezone. Send an explicit instant so a daemon in
+    // another timezone cannot shift it (or turn a future task into an immediately due one).
+    if (schedule.once) body.runAt = new Date(document.getElementById("schedule-modal-run-at").value).toISOString();
     else body.cron = cronFromScheduleEditor();
     if (schedule.kind !== "reminder") body.delivery = document.getElementById("schedule-modal-delivery").value;
     const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
