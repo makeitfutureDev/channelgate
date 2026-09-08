@@ -74,3 +74,40 @@ test("warm MCP fingerprint ignores capability nonce but retains scoped authority
     assert.notEqual(runtime.mcpConfigFingerprint, first.mcpConfigFingerprint);
   }
 });
+
+test("selected Claude MCP definitions reach the isolated payload and warm fingerprint", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cg-selected-mcp-"));
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = temp;
+  try {
+    const file = path.join(temp, ".claude.json");
+    const definition = { type: "stdio", command: "node", args: ["/workspace/echo.mjs"], env: {} };
+    await fs.writeFile(file, JSON.stringify({ mcpServers: { echo: definition, unselected: { command: "never" } } }));
+    const input = { engine: "claude", channelId: "C_PICK", slug: "pick", authorId: "U_PICK", threadKey: "1.2", origin: "slack_foreground", fingerprintNow: 10000 };
+    const allowedMcps = [{ name: "echo", namespace: "mcp__echo", match: { serverName: "echo" } }];
+    const beforeGrant = await buildEngineMcpRuntime(input);
+    const granted = await buildEngineMcpRuntime({ ...input, allowedMcps });
+    assert.deepEqual(JSON.parse(granted.mcpConfigJson).mcpServers.echo, { type: "stdio", command: "node", args: ["/workspace/echo.mjs"] });
+    assert.equal(JSON.parse(granted.mcpConfigJson).mcpServers.unselected, undefined);
+    assert.notEqual(granted.mcpConfigFingerprint, beforeGrant.mcpConfigFingerprint);
+    const resumed = await buildEngineMcpRuntime({ ...input, allowedMcps });
+    assert.equal(resumed.mcpConfigFingerprint, granted.mcpConfigFingerprint);
+    definition.args = ["/workspace/echo-v2.mjs"];
+    await fs.writeFile(file, JSON.stringify({ mcpServers: { echo: definition } }));
+    const changed = await buildEngineMcpRuntime({ ...input, allowedMcps });
+    assert.notEqual(changed.mcpConfigFingerprint, granted.mcpConfigFingerprint);
+    const revoked = await buildEngineMcpRuntime(input);
+    assert.equal(revoked.mcpConfigFingerprint, beforeGrant.mcpConfigFingerprint);
+    assert.equal(JSON.parse(revoked.mcpConfigJson).mcpServers.echo, undefined);
+    const clean = await buildEngineMcpRuntime({ ...input, allowedMcps, clean: true });
+    assert.deepEqual(JSON.parse(clean.mcpConfigJson), { mcpServers: {} });
+    const fallback = await buildEngineMcpRuntime({ ...input, engine: "codex", allowedMcps });
+    assert.equal(JSON.parse(fallback.mcpConfigJson).mcpServers.echo, undefined, "fallback engine never inherits Claude definitions");
+  } finally {
+    if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = before;
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});

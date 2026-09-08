@@ -4696,3 +4696,33 @@ acceptance gates; no production restart or external message was performed by the
 - Negative: add a disposable status fixture with nonempty `http_headers`, `env_http_headers`,
   `env_vars`, or bearer-token dependency. The catalog/policy must not expose credentials or silently
   launch without required auth. Keep the refusal explicit. Never use real secrets for this probe.
+
+
+### Selected Claude MCP definitions in isolated launches (2026-09-08)
+
+- Automated: `node --test test/claude-selected-mcp.test.js test/run-engine-mcp.test.js`.
+  Inspect actual spawned Claude argv and parsed `--mcp-config` across no grant → grant → resumed
+  grant → changed definition → removal. Require `--strict-mcp-config`, empty `--setting-sources`,
+  the exact selected command/argument bytes, and no unselected server. Stable fingerprints must
+  ignore capability nonces but change with selected definitions/revocation. Clean emits no MCPs;
+  Codex fallback must not inherit Claude selections. Test local/project/user precedence, fresh
+  configuration reads, reserved names, missing definitions, stale URL grants, malformed config,
+  credential maps/helpers, interpolation and credential flags; errors must not disclose config.
+- Live release gate, Claude and Codex: separate disposable Auto channels, approved test author,
+  ordinary mode and a harmless credential-free stdio echo server whose script already exists in
+  each container's permitted work folder. Configure the server in the operator engine catalog;
+  snapshot each engine's independent selections. Begin with no selection and ask “List optional
+  MCP tools available in this run.” Add only the echo server through Admin or the authorized MCP
+  picker; in the same thread ask “Call the selected echo MCP tool with text CG-MCP-4821 and show
+  its returned text.” Repeat in a fresh root, then remove the selection and ask the same original
+  thread to call it again. Capture engine/session, actual tool calls and fixture server events.
+  PASS requires real initialization/tools-call and exact returned nonce after the grant, absence
+  after removal, no unrelated server or cross-engine selection exposure, and preserved isolation
+  flags; self-reported availability alone is insufficient. Restore exact original selections.
+- Negative live variant: select a server with no safe current transport definition; require a
+  named configuration remedy and no unselected or credential-bearing MCP startup. Do not copy
+  operator tokens into a channel to make the fixture pass. Selected HTTP/SSE transports must use
+  literal credential-free URLs without userinfo, query or fragment; explicit auth headers, env,
+  helpers, interpolation, unknown transport options and literal credential flags are refused.
+- Local regression passes are candidate evidence. These live gates remain pending until the
+  reviewed change is deployed and both engines have real delivered exact-thread retests.

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveClaudeMcpConfig } from "./claude-mcp.js";
 import { runClaude, buildClaudeEnv, buildPersistentArgs, canUseClaudeWarmPool } from "./claude.js";
 import { runCodex } from "./codex.js";
 import { runOpenCode } from "./opencode.js";
@@ -50,6 +51,7 @@ const baseCompile = (engine, request = {}, supportedModes = ["off"]) => {
 };
 
 const claude = validateEngineAdapter({
+  resolveOptionalMcpConfig: resolveClaudeMcpConfig,
   id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", mcpMetaKey: "allowedMcps",
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
   efforts: ["low", "medium", "high", "xhigh"], models: [
