@@ -1,5 +1,31 @@
 # ChannelGate — Test Plan
 
+## Standalone Slack menu
+
+- [x] Automated: `node --test test/menu.test.js test/inherited-file-commands.test.js test/help-text.test.js`.
+  Fresh approved channel/DM fixtures receive exactly one actions block with four controls and no
+  session creation; typed channel commands retain mention gating and the current thread. Root or
+  previous attachments do not send `/menu` to an engine. Unapproved users receive no card. Resume
+  reads only the selected thread, honors the stored Claude/Codex session owner despite a changed
+  thread pin, wraps the command for the container and uses per-thread Clean cwd. Empty/top-level
+  and cleared sessions do not select another thread; foreign/revoked/nonmember clicks fail closed.
+- [ ] Live (Claude + Codex session fixtures): register `/menu` from the shipped Slack manifest and
+  restart the candidate daemon. Use an approved test author, one owned Worker channel for each
+  harness, and a DM. Create an existing session with `@agent Reply MENU_READY`; also create a
+  per-thread Clean session with `@agent /clean Reply MENU_CLEAN`. Keep a fresh thread with no
+  session and one thread with a harmless uploaded `menu-fixture.txt`.
+  Invoke native `/menu` at top level, `@agent /menu` in each channel thread and `/menu` in a DM
+  thread. Pass: exactly the four-button card, no visible intro/stats/progress and no new
+  `run_start`. Click Files, Secrets and Settings: the existing channel-scoped modals open without
+  changing data. Click Resume: existing sessions show their owning harness and container cwd,
+  including Clean cwd; fresh/top-level cases show guidance. Clear an existing thread and click its
+  old Resume button: no old session command. A channel message `/menu` without mention is ignored;
+  a revoked/nonmember or different author cannot open an old menu's controls. Capture Slack
+  payloads/screenshots, session identity and event evidence. Card delivery is engine-independent;
+  resume ownership/cwd requires both harness fixtures. Live cases remain unexecuted at development
+  check time and are required before stable release.
+
+
 ## Network policy on resumed turns
 
 - [x] Automated: `node --test test/runtime-identity-preamble.test.js test/runtime-access-facts.test.js`

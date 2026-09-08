@@ -44,7 +44,7 @@ async function execute(text, variant, opts) {
 }
 for (const variant of ["previous", "root", "none"]) {
   test(`current controls bypass the engine with ${variant} historical attachments`, async () => {
-    for (const [command, expected] of [["/files", /Browse this channel's files/], ["stop", /Nothing is running/], ["pending", /follow|pending|waiting/i], ["/help", /ChannelGate|Commands|commands/], ["/next", /Add the task after/]]) {
+    for (const [command, expected] of [["/menu", /Channel menu/], ["/files", /Browse this channel's files/], ["stop", /Nothing is running/], ["pending", /follow|pending|waiting/i], ["/help", /ChannelGate|Commands|commands/], ["/next", /Add the task after/]]) {
       const result = await execute(`<@${BOT}> ${command}`, variant);
       assert.equal(result.starts.length, 0, `${command} must not start an engine`);
       assert.match(result.text, expected);

@@ -136,6 +136,10 @@ and rollback unverified. Check the log and service before retrying an interrupte
 
 ## 4. Create the Slack app (from the manifest)
 
+For an existing app, add `/menu` from the updated `slack-app-manifest.json` to its App Manifest
+(or Slash Commands configuration) to enable the native command. After restarting the gateway,
+`@agent /menu` also works as a normal channel message without an app configuration update.
+
 1. Go to <https://api.slack.com/apps> → **Create New App** → **From a manifest**.
 2. Pick your workspace, paste the contents of [`slack-app-manifest.json`](./slack-app-manifest.json),
    and create. It preconfigures Socket Mode, all scopes, events, the Assistant feature, and the

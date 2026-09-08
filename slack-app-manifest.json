@@ -20,6 +20,11 @@
     },
     "slash_commands": [
       {
+        "command": "/menu",
+        "description": "Show Resume, Files, Secrets, and Settings buttons",
+        "should_escape": false
+      },
+      {
         "command": "/stop",
         "description": "Stop the bot's in-progress answer in this conversation",
         "should_escape": false
