@@ -4887,3 +4887,29 @@ acceptance gates; no production restart or external message was performed by the
   PR and approval before promotion. Do not execute a real promotion to test this policy. These
   agent scenarios remain manual acceptance cases until actual per-engine evidence is attached;
   documentation inspection alone is not a live pass.
+
+### Skill assignment editor — conversations and templates (2026-09-08)
+
+- Automated model: `node --test test/skill-assignment-picker.test.js` proves inherited/explicit
+  deduplication, preservation of explicit overlap after a template switch, unavailable saved
+  selections, and exclusion of personal, disabled and unapproved skills from Add skills.
+- Browser: `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test
+  test/skill-assignment-browser.test.js` runs the real admin UI and API on a disposable database.
+  Set `CG_UI_SCREENSHOTS` to an existing artifact directory to retain screenshots.
+- Fixture: two folder sources, an organization skill, a template skill also granted explicitly,
+  one additional skill, one unavailable saved grant, and an available skill from the second source.
+  Use a disposable channel and template; no production grants or personal skill content.
+- Action: open Conversations → the fixture → Skills. Inspect Organization skills, Template skills,
+  and Additional skills. Filter by source and name, add/remove a skill, switch the template to none,
+  save and reload. Edit the fixture under Skills → Templates; change its name/description, filter
+  skills by source/name, add/remove, save and reopen. Repeat at desktop and 390px widths. Simulate
+  failed assignment metadata loading and save an unrelated conversation field.
+- Pass: inherited skills are locked and absent from Add skills; overlapping skills appear once;
+  filters affect both lists without dirtying the conversation or modifying selection; template
+  switching retains existing explicit overlap; unavailable saved grants survive; template text
+  edits survive selection changes; exact saved grants return after reload; failed metadata loads
+  omit skill/template changes from unrelated saves; controls fit narrow screens with no uncaught
+  browser errors. Automatically included repository-section skills use a separate locked group.
+- Engine-independent: this change renders and saves existing admin configuration contracts; no
+  engine executes during the browser cases. Existing dual-engine grant/materialization release
+  gates remain in Skills platform and Real project skill synchronization above.

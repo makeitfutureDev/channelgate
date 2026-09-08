@@ -149,7 +149,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Focused conversation settings:** Access presents Read-only, Worker, and Admin as the
   base modes, with Auto and Lean as independent options; Custom is no
   longer offered. MCP Connections, Cloud MCP, Environment tokens, and Skills are separate first-class
-  channel pages rather than nested beneath Tools; enabled skills sort first and the channel-level
+  channel pages rather than nested beneath Tools. Conversation Skills and Skills → Templates share
+  an Active skills / Add skills editor with name/description search and source filtering.
+  Conversations separate locked organization, template and repository-section grants from removable
+  additional skills; inherited skills cannot be added twice. Template changes preserve explicit
+  additions, unavailable saved grants remain visible, and failed assignment loads preserve saved
+  grants on unrelated saves. Filters never alter selections or mark a conversation dirty. The channel-level
   Grant Tier switch is gone.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web

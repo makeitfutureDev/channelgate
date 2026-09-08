@@ -981,20 +981,38 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .skills-category-picker { margin: 0; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; }
 .skills-category-picker legend { color: var(--muted); font-size: 12px; padding: 0 5px; }
 .skills-category-picker label { display: inline-flex; align-items: center; gap: 5px; margin: 3px 14px 3px 0; font-size: 12px; }
-.skills-picker { margin-top: 12px; }
-.skills-picker .field { max-width: 520px; }
-.skills-picker-selected { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; margin: 8px 0; }
-.skills-picker-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid rgba(145, 201, 206, .3); border-radius: 999px; background: rgba(49, 123, 128, .2); }
-.skills-picker-chip button { border: 0; padding: 0 2px; background: none; color: var(--muted); }
-.skills-picker-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px; max-height: 260px; padding: 8px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--panel-dark); }
-.skills-picker-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; text-align: left; background: var(--panel); border: 1px solid var(--line-soft); }
-/* The template skill search hides non-matching rows with `row.hidden = true`; without this
-   the display above would keep every row on screen and the search would do nothing. */
-.skills-picker-row[hidden] { display: none; }
-.skills-picker-row span:first-child { min-width: 0; }
-.skills-picker-row strong, .skills-picker-row code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.skills-picker-row code { margin-top: 2px; color: var(--faint); font-size: 10.5px; }
-.skills-picker-row.selected { border-color: var(--orange); background: var(--orange-soft); }
+/* One assignment editor for conversations and skill templates. Filters never own selection. */
+.skill-assignment { margin-top: 18px; min-width: 0; }
+.skill-assignment-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; margin-bottom: 18px; }
+.skill-assignment-filters .field { min-width: 0; margin: 0; }
+.skill-assignment-filters input, .skill-assignment-filters select { width: 100%; min-width: 0; }
+.skill-assignment-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.skill-assignment-panel { min-width: 0; background: var(--panel-dark); border: 1px solid var(--line-soft); border-radius: 12px; padding: 16px; }
+.skill-assignment-panel > h3 { font-size: 15px; margin: 0 0 6px; }
+.skill-assignment-panel h3 > span, .skill-assignment-group h4 > span { font-size: 11px; font-weight: 500; color: var(--muted); }
+.skill-assignment-group { margin-top: 18px; }
+.skill-assignment-group h4 { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; font-size: 12px; }
+.skill-assignment-list { max-height: 320px; overflow-y: auto; scrollbar-gutter: stable; }
+.skill-assignment-catalog { max-height: 620px; margin-top: 16px; }
+.skill-assignment-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+.skill-assignment-row:last-child { border-bottom: 0; }
+.skill-assignment-row > div { flex: 1; min-width: 0; }
+.skill-assignment-row strong, .skill-assignment-row code { display: block; overflow-wrap: anywhere; font-size: 12px; }
+.skill-assignment-row code { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.skill-assignment-row p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.skill-assignment-source { display: block; color: var(--faint); font-size: 11px; margin-top: 4px; overflow-wrap: anywhere; }
+.skill-assignment-row > button { flex-shrink: 0; padding: 6px 10px; font-size: 12px; }
+.skill-assignment-locked { color: var(--faint); font-size: 11px; white-space: nowrap; }
+.skill-assignment-row > button:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.skill-assignment-empty { color: var(--faint); font-size: 12px; padding: 14px 0; margin: 0; }
+.skill-assignment-status { min-height: 18px; font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+@media (max-width: 1000px) { .skill-assignment-columns { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 540px) {
+  .skill-assignment-filters { grid-template-columns: minmax(0, 1fr); }
+  .skill-assignment-panel { padding: 12px; }
+  .skills-tabs { overflow-x: auto; }
+  .skills-tab { white-space: nowrap; }
+}
 .skills-segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .skills-segmented button { border: 0; border-radius: 0; background: var(--panel-2); color: var(--muted); }
 .skills-segmented button.active { background: var(--orange); color: white; }

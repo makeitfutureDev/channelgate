@@ -5,6 +5,7 @@
 import { api } from "./admin-api.js";
 import { confirmDialog, escapeHtml as esc } from "./admin-view.js";
 import { filterSkillCatalog } from "./skills-catalog-filters.js";
+import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 
 const state = {
   tab: "usage",
@@ -29,7 +30,6 @@ const state = {
   newSkill: false,
   sourceModal: false,
   editTemplate: null,
-  templateSkillQuery: "",
   usageChannel: "",
   usageDays: 30,
   usage: null,
@@ -135,6 +135,13 @@ function render() {
   const status = state.error ? `<p class="skills-error">${esc(state.error)}</p>` : state.message ? `<p class="skills-ok">${esc(state.message)}</p>` : "";
   const panel = { catalog: renderCatalog, review: renderReview, sources: renderSources, sync: renderSyncSettings, mcp: renderMcp, templates: renderTemplates, usage: renderUsage }[state.tab] || renderCatalog;
   body().innerHTML = status + panel();
+  const picker = document.getElementById("template-skills-picker");
+  if (picker && state.editTemplate) mountSkillAssignmentPicker(picker, {
+    skills: state.catalogAll?.skills || [], sources: state.catalogAll?.sources || [],
+    selected: state.editTemplate.skills || [], selectedLabel: "Template skills",
+    activeNote: "Skills selected for this template. Save to update conversations that follow it.",
+    onChange: (skills) => { state.editTemplate.skills = skills; },
+  });
 }
 
 function renderSummary() {
@@ -421,13 +428,7 @@ function renderMcp() {
 
 function renderTemplates() {
   const templates = state.overview?.templates || [];
-  const channels = state.profiles || [];
   const e = state.editTemplate;
-  const skills = (state.catalogAll?.skills || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-  const selected = new Set(e?.skills || []);
-  const selectedChips = [...selected].sort().map((slug) => `<span class="skills-picker-chip"><code>${esc(slug)}</code><button type="button" data-action="toggle-template-skill" data-slug="${esc(slug)}" aria-label="Remove ${esc(slug)}">×</button></span>`).join("");
-  const pickerQuery = state.templateSkillQuery.trim().toLowerCase();
-  const skillOptions = skills.filter((s) => !pickerQuery || `${s.name} ${s.slug} ${s.description}`.toLowerCase().includes(pickerQuery)).map((s) => `<button type="button" class="skills-picker-row${selected.has(s.slug) ? " selected" : ""}" data-action="toggle-template-skill" data-slug="${esc(s.slug)}" data-search="${esc(`${s.name} ${s.slug} ${s.description}`.toLowerCase())}"><span><strong>${esc(s.name)}</strong><code>${esc(s.slug)}</code></span><span>${selected.has(s.slug) ? "Selected" : "Add"}</span></button>`).join("");
   const form = e ? `
     <div class="card skills-detail">
       <h3>${e.isNew ? "New template" : `Edit ${esc(e.name)}`}</h3>
@@ -436,11 +437,7 @@ function renderTemplates() {
         <label class="field"><span>Slug</span><input id="tpl-slug" value="${esc(e.slug || "")}"${e.isNew ? "" : " readonly"} /></label>
         <label class="field wide"><span>Description</span><input id="tpl-desc" value="${esc(e.description || "")}" /></label>
       </div>
-      <div class="skills-picker">
-        <label class="field"><span>Selected skills (${selected.size})</span><input id="template-skill-q" type="search" placeholder="Search skills to add…" value="${esc(state.templateSkillQuery)}" /></label>
-        <div class="skills-picker-selected">${selectedChips || '<span class="muted">No explicit skills selected.</span>'}</div>
-        <div class="skills-picker-results">${skillOptions || '<span class="muted">No skills in the catalog.</span>'}</div>
-      </div>
+      <div id="template-skills-picker"></div>
       <div class="skills-actions"><button type="button" data-action="save-template">Save</button><button type="button" class="ghost" data-action="cancel-template">Cancel</button></div>
     </div>` : "";
   return `
@@ -732,19 +729,10 @@ async function act(action, el) {
     }
     case "new-template":
       state.editTemplate = { isNew: true, name: "", slug: "", description: "", categories: [], skills: [] };
-      state.templateSkillQuery = "";
       break;
     case "edit-template":
       state.editTemplate = { ...(state.overview.templates.find((t) => t.slug === slug) || {}), isNew: false };
-      state.templateSkillQuery = "";
       break;
-    case "toggle-template-skill": {
-      rememberTemplateDraft();
-      const selected = new Set(state.editTemplate?.skills || []);
-      if (selected.has(slug)) selected.delete(slug); else selected.add(slug);
-      state.editTemplate.skills = [...selected];
-      break;
-    }
     case "cancel-template":
       state.editTemplate = null;
       break;
@@ -850,7 +838,6 @@ function wire() {
     if (el.id === "template-select") {
       const template = state.overview?.templates?.find((t) => t.slug === el.value);
       state.editTemplate = template ? { ...template, isNew: false } : null;
-      state.templateSkillQuery = "";
       render();
       return;
     }
@@ -878,11 +865,6 @@ function wire() {
       render();
       document.getElementById("usage-q")?.focus();
       return;
-    }
-    if (event.target.id === "template-skill-q") {
-      state.templateSkillQuery = event.target.value;
-      const q = event.target.value.trim().toLowerCase();
-      for (const row of root.querySelectorAll(".skills-picker-row")) row.hidden = Boolean(q) && !row.dataset.search.includes(q);
     }
   });
 }
