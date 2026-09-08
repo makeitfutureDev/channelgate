@@ -16,6 +16,7 @@ export function toConversationId(conversationId) {
 export function createTeamsConnector({ auth, capabilities, api = null, botId = "", tenantId = "", serviceUrl, log = console } = {}) {
   const teams = api || createTeamsApi({ auth, ...(serviceUrl ? { serviceUrl } : {}) });
   const directories = new Map();
+  const threadFor = (key) => (/^[0-9]+$/.test(String(key || "")) ? String(key) : null);
 
   async function directoryFor(conversationId) {
     const id = toConversationId(conversationId);
@@ -72,8 +73,9 @@ export function createTeamsConnector({ auth, capabilities, api = null, botId = "
           return { messageId: res.messageId, conversationId: dm, threadKey: "", ephemeral: true };
         }
       }
-      const res = await teams.sendActivity(id, { text: body, entities: mentions, threadKey: threadKey || "" });
-      return { messageId: res.messageId, conversationId: id, threadKey: threadKey || "" };
+      const thread = threadFor(threadKey) || "";
+      const res = await teams.sendActivity(id, { text: body, entities: mentions, threadKey: thread });
+      return { messageId: res.messageId, conversationId: id, threadKey: thread };
     },
 
     async edit({ conversationId, messageId, text, mentions = [], footer = "" } = {}) {
@@ -90,7 +92,7 @@ export function createTeamsConnector({ auth, capabilities, api = null, botId = "
     // A Teams thread handle is the root activity id, which is digits. Anything else is a synthetic
     // key from shared plumbing and must post into the conversation itself rather than be smuggled
     // into a ";messageid=" suffix.
-    threadFor: (threadKey) => (/^[0-9]+$/.test(String(threadKey || "")) ? String(threadKey) : null),
+    threadFor,
     // Only channels have reply chains; 1:1 and group chats are flat.
     supportsThreads: (conversationId) => String(toConversationId(conversationId)).includes("@thread."),
     directory: (conversationId) => directoryFor(conversationId),

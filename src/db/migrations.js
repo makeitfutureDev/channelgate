@@ -760,4 +760,17 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 23,
+    up(db) {
+      db.exec(`
+        CREATE TABLE conversation_reply_sessions (
+          conversation_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          thread_key TEXT NOT NULL,
+          PRIMARY KEY(conversation_id, message_id)
+        );
+      `);
+    },
+  },
 ];

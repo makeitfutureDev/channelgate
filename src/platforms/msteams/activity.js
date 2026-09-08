@@ -42,6 +42,32 @@ export function splitConversationId(raw) {
 
 const KINDS = { personal: "dm", groupchat: "group", channel: "channel" };
 
+// Current Teams SDK: quotedReply entity. Older clients use a schema.skype.com/Reply
+// blockquote, sometimes carried only in the mirrored HTML attachment. Never infer a reference
+// from an ordinary quote, nested itemid, or a quote explicitly marked invalid/deleted.
+export function quotedReplyId(activity) {
+  const quotes = (Array.isArray(activity.entities) ? activity.entities : []).filter(e => e?.type === "quotedReply");
+  if (quotes.length) {
+    if (quotes.length !== 1) return "";
+    const quote = quotes[0].quotedReply;
+    return quote?.isReplyDeleted || quote?.validatedMessageReference === false || typeof quote?.messageId !== "string"
+      ? "" : quote.messageId.trim();
+  }
+  const texts = [activity.text, ...(Array.isArray(activity.attachments) ? activity.attachments : [])
+    .filter(a => a.contentType === "text/html" && typeof a.content === "string").map(a => a.content)];
+  const ids = new Set();
+  for (const text of texts) {
+    for (const match of String(text || "").matchAll(/<blockquote\b([^>]*)>/gi)) {
+      const attributes = Object.create(null);
+      for (const attr of match[1].matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+        attributes[attr[1].toLowerCase()] = attr[2] ?? attr[3];
+      }
+      if (attributes.itemtype === "http://schema.skype.com/Reply" && attributes.itemid) ids.add(attributes.itemid);
+    }
+  }
+  return ids.size === 1 ? [...ids][0] : "";
+}
+
 export function normalizeActivity(activity, { botId = "", fetchImpl = fetch } = {}) {
   if (String(activity?.type || "").toLowerCase() !== "message") return null;
   const from = activity.from || {};
@@ -65,6 +91,9 @@ export function normalizeActivity(activity, { botId = "", fetchImpl = fetch } = 
     // chat is flat, so nothing is carried and replies land in the chat itself.
     threadKey: threadKey || (kind === "channel" ? String(activity.id || "") : ""),
     messageId: String(activity.id || ""),
+    // Teams SDK quoted replies carry an entity; text markup alone is not a trustworthy
+    // reference. Ignore ambiguous multiple quotes and quotes explicitly marked deleted.
+    replyToId: quotedReplyId(activity),
     // The Bot Framework id (`29:…`) is the one that can address a message or open a 1:1; the Entra
     // object id is the one an operator recognizes. Both are kept — `userId` is the addressable one.
     userId: String(from.id || ""),

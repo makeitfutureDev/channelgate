@@ -24,6 +24,7 @@ export function makeInbound({
   kind = "channel",
   threadKey = "",
   messageId = "",
+  replyToId = "",
   userId = "",
   userName = "",
   userEmail = "",
@@ -47,6 +48,8 @@ export function makeInbound({
     // conversation. The gateway's session key is derived from it, never parsed out of it.
     threadKey: String(threadKey || ""),
     messageId: String(messageId || ""),
+    // A quoted message ID, distinct from a native thread address.
+    replyToId: String(replyToId || ""),
     userId: String(userId || ""),
     userName: String(userName || ""),
     userEmail: String(userEmail || ""),

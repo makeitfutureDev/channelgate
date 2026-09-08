@@ -184,3 +184,98 @@ test("ensureConversation is idempotent and keeps the platform stamp", async () =
   assert.equal(first.entry.slug, second.entry.slug);
   assert.equal(second.meta.platform, "googlechat");
 });
+
+// Exercise the real capability signer inside the fake engine boundary: the previous fake run
+// accepted an empty thread key and hid the failure every flat Teams chat hit before spawning.
+for (const platform of ["msteams", "googlechat"]) {
+  for (const kind of ["dm"]) {
+    test(`${platform} ${kind} uses a stable signed session identity while replies stay flat`, async () => {
+      const { mintGatewayCapability, verifyGatewayCapability } = await import("../src/gateway/mcp-capability.js");
+      const { resolveSession } = await import("../src/gateway/sessions.js");
+      const authorId = `${platform}-${kind}-tester`;
+      await setUser(authorId, { name: "Flat chat tester", approved: true });
+      const connector = fakeConnector({ platform });
+      const sessions = [];
+      const ingest = createIngest({ connector, log: { info() {}, warn() {} }, run: async (args) => {
+        const entry = await getChannelEntry(args.channelId);
+        const token = mintGatewayCapability({ ...args, slug: entry.slug, secret: "fixture-signing-secret", engine: "claude" });
+        const verified = verifyGatewayCapability(token, { secret: "fixture-signing-secret" });
+        assert.equal(verified.ok, true);
+        assert.equal(verified.claims.threadKey, args.channelId);
+        sessions.push((await resolveSession(entry.slug, args.threadKey, "claude")).sessionId);
+        return { content: "FLAT_OK", engine: "claude" };
+      } });
+      const message = makeInbound({ platform, kind, conversationId: `flat-${platform}-${kind}-a`, userId: authorId, text: "hello", mentionsBot: kind !== "dm" });
+      assert.equal((await ingest(message)).result?.content, "FLAT_OK");
+      assert.equal((await ingest({ ...message, messageId: "next-message" })).result?.content, "FLAT_OK");
+      await ingest(makeInbound({ ...message, conversationId: `flat-${platform}-${kind}-b` }));
+      assert.equal(sessions[0], sessions[1], "successive messages resume the same session");
+      assert.notEqual(sessions[0], sessions[2], "another conversation has its own session");
+      assert.equal(message.threadKey, "", "the native thread handle stays empty");
+      assert.ok(connector.posted.every(p => p.threadKey === ""));
+      assert.ok(connector.edited.every(p => (p.threadKey || "") === ""));
+    });
+  }
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`group chat new messages split sessions and quotes of user/bot replies resume (${engine})`, async () => {
+    const { mintGatewayCapability } = await import("../src/gateway/mcp-capability.js");
+    const { resolveSession } = await import("../src/gateway/sessions.js");
+    const { normalizeActivity } = await import("../src/platforms/msteams/activity.js");
+    const { sessionKeyForMessage } = await import("../src/platforms/reply-sessions.js");
+    const authorId = `group-${engine}-tester`;
+    await setUser(authorId, { name: "Quote tester", approved: true });
+    const connector = fakeConnector({ platform: "msteams" });
+    const sessions = [];
+    const run = async (args) => {
+      const entry = await getChannelEntry(args.channelId);
+      mintGatewayCapability({ ...args, slug: entry.slug, secret: "fixture-signing-secret", engine });
+      sessions.push((await resolveSession(entry.slug, args.threadKey, engine)).sessionId);
+      return { content: "QUOTE_OK", engine };
+    };
+    const message = (id, quoted = "", conversationId = `19:quotes-${engine}@thread.v2`) => normalizeActivity({
+      type: "message", id, from: { id: authorId },
+      conversation: { id: conversationId, conversationType: "groupChat" }, text: "<at>Bot</at> hello",
+      entities: [{ type: "mention", mentioned: { id: "28:bot" } },
+        ...(quoted ? [{ type: "quotedReply", quotedReply: { messageId: quoted } }] : [])],
+    }, { botId: "28:bot" });
+    let ingest = createIngest({ connector, run });
+    await ingest(message("100")); // first topic, bot placeholder m1
+    await ingest(message("200")); // unrelated new topic
+    ingest = createIngest({ connector, run }); // no in-memory routing dependency
+    await ingest(message("300", "100")); // quote the original user message
+    await ingest(message("400", "m1")); // quote the bot's answer
+    await ingest(message("500", "300")); // quote a follow-up
+    await ingest(message("600", "100", `19:other-${engine}@thread.v2`));
+    assert.equal(sessions.length, 6);
+    assert.notEqual(sessions[0], sessions[1]);
+    assert.equal(sessions[0], sessions[2]);
+    assert.equal(sessions[0], sessions[3]);
+    assert.equal(sessions[0], sessions[4]);
+    assert.notEqual(sessions[0], sessions[5]);
+    assert.equal(sessionKeyForMessage(message("100")), "group:100", "redelivery keeps its root");
+    assert.ok(connector.posted.every(p => p.threadKey === ""), "session roots never become native reply addresses");
+    assert.ok(connector.edited.every(p => !p.threadKey));
+    const count = sessions.length;
+    await ingest({ ...message("700", "m1"), mentionsBot: false });
+    assert.equal(sessions.length, count, "quoting never bypasses mention gating");
+  });
+}
+
+test("a visible fallback chunk keeps its quote mapping even if the next chunk fails", async () => {
+  const { sessionKeyForMessage } = await import("../src/platforms/reply-sessions.js");
+  await setUser("partial-quote-user", { approved: true });
+  const connector = fakeConnector({ platform: "msteams" });
+  let posts = 0;
+  connector.post = async () => {
+    posts += 1;
+    if (posts === 1) throw new Error("placeholder unavailable");
+    if (posts === 3) throw new Error("second chunk unavailable");
+    return { messageId: "first-visible-chunk" };
+  };
+  const message = makeInbound({ platform: "msteams", kind: "group", conversationId: "19:partial-quote@thread.v2", userId: "partial-quote-user", messageId: "original-message", mentionsBot: true, text: "long answer" });
+  const ingest = createIngest({ connector, run: async () => ({ content: "word\n".repeat(3000), engine: "claude" }), log: { warn() {} } });
+  await assert.rejects(ingest(message), /second chunk unavailable/);
+  assert.equal(sessionKeyForMessage({ ...message, messageId: "followup", replyToId: "first-visible-chunk" }), "group:original-message");
+});

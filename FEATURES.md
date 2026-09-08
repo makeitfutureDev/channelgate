@@ -274,6 +274,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
 ## Google Chat and Microsoft Teams transports (Beta)
 
+- Flat DMs use their qualified conversation ID as a nonempty engine session key. In flat group
+  chats, each new message starts a separate session; quoting a user message, follow-up, or bot
+  reply resumes its original session. Reply-to-session mappings persist across restarts and are
+  scoped to the conversation. Teams recognizes current quotedReply entities and legacy Skype
+  Reply blockquotes. Native channel threads are preserved, and flat replies stay flat. Group
+  messages still require a bot mention, including quoted replies.
+
 - **Google Chat runs outbound-only**, like Slack: a Cloud Pub/Sub PULL subscription consumes the
   events Google publishes for the Chat app, so there is no inbound endpoint and no tunnel. The pull
   loop long-polls, backs off with full jitter, acks before dispatching (a turn outlives any ack

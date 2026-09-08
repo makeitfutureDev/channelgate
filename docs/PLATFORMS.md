@@ -151,7 +151,13 @@ You need a Microsoft 365 account permitted to register the app and install custo
 - **Attachments in:** 1:1 uploads arrive with a pre-authenticated download URL and are fetched (only
   from Microsoft-owned hosts). Channel files live in SharePoint and need Graph application
   permissions with tenant admin consent — not requested, so those are reported as skipped.
-- **Threads:** channel replies thread under the user's message. 1:1 and group chats are flat.
+- **Threads and sessions:** channel replies thread under the user's message. Personal chats keep
+  one continuous session. Group chats remain visually flat, but every new message to the bot starts
+  a separate session. Quote an earlier user message or bot reply to continue that session; quote
+  mappings survive daemon restarts. Include an @mention in group-chat quoted replies too, because
+  Teams does not deliver them to the bot by default without one. Current quotedReply entities and
+  legacy Reply blockquotes identify the quoted message; ordinary blockquotes do not.
+  See Microsoft's [quoted reply format](https://microsoft.github.io/teams-sdk/blog/quoted-and-threaded-replies/).
 - **Formatting:** no tables, no headings, no inline images, and lists render on desktop only — all
   four are degraded on the way out by `src/platforms/format/degrade.js`.
 - **Mentions** are structural: the text carries `<at>Name</at>` and the activity must carry a

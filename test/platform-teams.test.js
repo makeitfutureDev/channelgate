@@ -339,3 +339,25 @@ test("with no transport connected the Teams connector THROWS on a write", async 
   const connector = teamsAdapter.createConnector();
   await assert.rejects(connector.post({ conversationId: "19:a", text: "x" }), /cannot post/);
 });
+
+test("Teams quote references normalize current entities and legacy HTML without using replyToId", () => {
+  const base = { type: "message", id: "200", from: { id: "29:user" }, conversation: { id: "19:quote@thread.v2", conversationType: "groupChat" }, text: "reply", replyToId: "not-a-chat-quote" };
+  assert.equal(normalizeActivity(base).replyToId, "");
+  const entity = { type: "quotedReply", quotedReply: { messageId: "100" } };
+  assert.equal(normalizeActivity({ ...base, entities: [entity] }).replyToId, "100");
+  assert.equal(normalizeActivity({ ...base, entities: [entity, entity] }).replyToId, "");
+  for (const field of ["isReplyDeleted", "validatedMessageReference"]) {
+    assert.equal(normalizeActivity({ ...base, entities: [{ ...entity, quotedReply: { messageId: "100", [field]: field === "isReplyDeleted" } }] }).replyToId, "");
+  }
+  const html = '<blockquote itemscope="" itemtype="http://schema.skype.com/Reply" itemid="100"><strong itemid="sender">User</strong></blockquote> hello';
+  assert.equal(normalizeActivity({ ...base, text: html }).replyToId, "100");
+  assert.equal(normalizeActivity({ ...base, attachments: [{ contentType: "text/html", content: html }] }).replyToId, "100");
+  assert.equal(normalizeActivity({ ...base, text: '<blockquote itemid="100">ordinary quote</blockquote>' }).replyToId, "");
+});
+
+test("Teams connector never sends a synthetic group session key as a channel thread", async () => {
+  let sent;
+  const connector = createTeamsConnector({ capabilities: teamsAdapter.capabilities, api: { sendActivity: async (id, body) => { sent = { id, body }; return { messageId: "300" }; } } });
+  await connector.post({ conversationId: "19:quote@thread.v2", threadKey: "group:100", text: "done" });
+  assert.equal(sent.body.threadKey, "");
+});

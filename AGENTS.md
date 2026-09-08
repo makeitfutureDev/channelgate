@@ -178,6 +178,7 @@ and the store modules; never read the tables from a gated folder.
   — one-time import of the pre-SQLite JSON/JSONL into the tables (guarded by a `_meta` flag; old
   files are left on disk as inert backups).
 - Tables: `users`, `channels`, `channel_meta`, `sessions`, `schedules`, `acks`,
+  `conversation_reply_sessions` (conversation-scoped user/bot message IDs → group session roots),
   `followup_threads` + `followup_done`, `bg_jobs` (config-shaped rows keep their full record in a
   JSON `data` blob so every field survives + no migration for new fields); `usage` and `events`
   (the dashboard data — fully typed, indexed columns for day/week/month/channel/user rollups).

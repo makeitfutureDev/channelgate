@@ -21,6 +21,7 @@ import { createUsageBank } from "../gateway/usage.js";
 import { logEvent } from "../util/logger.js";
 import { platformOr } from "./registry.js";
 import { postFormatted } from "./connector.js";
+import { sessionKeyForMessage, rememberReplySession } from "./reply-sessions.js";
 import { saveInboundAttachments } from "./attachments.js";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
@@ -91,6 +92,13 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
       return { skipped: "unauthorized" };
     }
 
+    const sessionKey = sessionKeyForMessage(message);
+    const rememberReply = (sent) => {
+      if (message.kind === "group" && !message.threadKey && sent?.messageId) {
+        rememberReplySession(message.conversationId, sent.messageId, sessionKey);
+      }
+    };
+
     // Attachments land in the channel folder, exactly where the Slack path puts them, so the model
     // reads them with the same tool and the same confinement.
     const { paths, skipped } = await saveInboundAttachments(message, { slug: entry.slug, meta, log });
@@ -105,6 +113,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
         threadKey: message.threadKey,
         text: "_Working on it…_",
       });
+      rememberReply(placeholder);
     } catch (err) {
       log.warn?.(`[${adapter.id}] placeholder post failed: ${err?.message || err}`);
     }
@@ -115,7 +124,8 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
         channelId: message.conversationId,
         authorId: message.userId,
         text: message.text,
-        threadKey: message.threadKey,
+        // Session roots for flat chats must never become native reply addresses.
+        threadKey: sessionKey,
         attachments: paths,
         progressReport: false,
         // Not `slack_foreground`: that origin is what permits escalation to dangerous permissions,
@@ -126,7 +136,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
       });
     } catch (err) {
       log.error?.(`[${adapter.id}] run failed in ${entry.slug}: ${err?.message || err}`);
-      await deliver(connector, message, placeholder, `⚠️ ${err?.message || err}`);
+      await deliver(connector, message, placeholder, `⚠️ ${err?.message || err}`, rememberReply);
       return { error: err };
     }
 
@@ -136,7 +146,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
     if (skipped.length) {
       text += `\n\n_Couldn't read ${skipped.length} attachment(s): ${skipped.join(", ")} — this surface only hands the bot files it uploaded directly._`;
     }
-    await deliver(connector, message, placeholder, text);
+    await deliver(connector, message, placeholder, text, rememberReply);
     return { result };
   };
 }
@@ -144,7 +154,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
 // One answer, formatted for the surface, replacing the placeholder where the surface allows it.
 // A long answer is split at the platform's cap; the FIRST chunk edits the placeholder and the rest
 // are posted after it, so the "Working on it…" line never survives next to the real answer.
-async function deliver(connector, message, placeholder, text) {
+async function deliver(connector, message, placeholder, text, rememberReply = () => {}) {
   const adapter = platformOr(connector.platform);
   const directory = await connector.directory?.(message.rawConversationId).catch(() => null);
   const formatted = adapter.formatOutbound(text, { directory, capabilities: adapter.capabilities });
@@ -159,12 +169,12 @@ async function deliver(connector, message, placeholder, text) {
         mentions: chunks[0].mentions || [],
       });
       for (const chunk of chunks.slice(1)) {
-        await connector.post({
+        rememberReply(await connector.post({
           conversationId: message.rawConversationId,
           threadKey: placeholder.threadKey || message.threadKey,
           text: chunk.text,
           mentions: chunk.mentions || [],
-        });
+        }));
       }
       return;
     } catch (err) {
@@ -176,5 +186,6 @@ async function deliver(connector, message, placeholder, text) {
     conversationId: message.rawConversationId,
     threadKey: placeholder?.threadKey || message.threadKey,
     formatted: { chunks },
+    onPosted: rememberReply,
   });
 }
