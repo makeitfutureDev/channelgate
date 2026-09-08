@@ -3,6 +3,9 @@
 - Include the current advisory network policy in every engine attempt, including resumed and
   Clean turns, so a changed switch supersedes stale context and cached request results.
 
+- Preserve existing channel guest grants when an unrelated Admin UI setting is saved, even if
+  the current member roster omits a saved guest. Explicit guest edits retain membership validation.
+
 - Include received human approval in completed control-plane tool results while preserving the
   operation outcome; clarify that approval cards can be outside the model transcript and that
   the receipt records an explicit human decision, not an approval supplied by channel Auto mode.

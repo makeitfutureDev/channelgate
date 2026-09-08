@@ -1373,6 +1373,18 @@ structural invariants are automated; rendered navigation and feature claims also
 - [ ] Disconnect Slack and open a channel: the guest picker shows an unavailable/preserved state.
       Saving another channel setting omits `allowedUsers` and keeps the existing grants unchanged;
       an explicit guest-list API write returns unavailable rather than accepting unvalidated IDs.
+- [ ] Unrelated channel saves preserve guests even when the roster succeeds: in an owned test
+      conversation, retain a pre-existing saved guest ID absent from the current human roster,
+      alongside one listed guest and an approved member. Open Admin UI → conversation → Access.
+      Toggle Network, save, toggle Lean, save, and reload. Both actual PUT bodies must omit
+      `allowedUsers`; the saved list must remain byte-for-byte equal and inherited access checked.
+      Then explicitly remove the listed guest and add another current human: this save must send
+      the edited list and retain existing server validation (absent/bot IDs are not newly granted).
+      A failed save followed by retry must retain the edit; the next unrelated save must omit it.
+      Restore the owned fixture. Engine-independent: no engine turn participates. Reproducible
+      isolated acceptance: `CG_BROWSER_MODULE=/path/to/playwright/index.mjs node --test
+      test/channel-guests-browser.test.js` runs the real admin form/router, including roster outage
+      and save failure. `test/channel-members-admin.test.js` retains member-left race coverage.
 - [ ] Setting a user's Composio token + admin flag persists and affects the next run.
 - [ ] Composio token shows masked after save (write-only).
 

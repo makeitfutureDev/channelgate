@@ -33,10 +33,16 @@ test("guest options reject malformed roster payloads instead of falling back to 
 });
 
 test("channel save omits guest grants until the live roster loaded successfully", () => {
-  assert.deepEqual(channelGuestSavePatch(false, ["U_EXISTING"]), {});
-  assert.deepEqual(channelGuestSavePatch(true, ["U_EXTERNAL", "U_EXTERNAL", "U_INTERNAL"]), {
+  assert.deepEqual(channelGuestSavePatch(false, ["U_EXISTING"], true), {});
+  assert.deepEqual(channelGuestSavePatch(true, ["U_EXTERNAL", "U_EXTERNAL", "U_INTERNAL"], true), {
     allowedUsers: ["U_EXTERNAL", "U_INTERNAL"],
   });
+});
+
+test("an unchanged successful guest roster cannot replace saved grants on unrelated saves", () => {
+  assert.deepEqual(channelGuestSavePatch(true, ["U_VISIBLE"]), {});
+  assert.deepEqual(channelGuestSavePatch(true, []), {});
+  assert.deepEqual(channelGuestSavePatch(true, [], true), { allowedUsers: [] }, "explicit removal remains a validated replacement");
 });
 
 test("successful saves expose the server-accepted guest IDs for checklist repainting", () => {

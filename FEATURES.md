@@ -1593,7 +1593,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Slack's bulk user directory with targeted Slack Connect fallbacks; saves resolve profiles only
   for submitted current candidates. If Slack is disconnected or its roster cannot be read, guest
   editing disables without falling back to the org directory or clearing existing grants, while
-  unrelated channel settings remain saveable.
+  unrelated channel settings remain saveable. Even a successful roster can omit a saved guest:
+  Network, Lean and other unrelated saves omit `allowedUsers` until the operator edits the guest
+  checklist. A successful save clears that pending edit; a failed save retains it for retry.
+  Explicit guest edits still replace the list through current-member validation, and inherited
+  approved access stays visibly checked after a save.
   → TEST-PLAN: Channel access model; Admin UI.
 - Interactive permission approvals in Slack: a non-admin run that hits a non-allowlisted tool posts
   buttons in the thread — **Approve once**, **Approve for this thread**, **Approve forever** (persisted
