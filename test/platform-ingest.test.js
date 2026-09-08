@@ -275,7 +275,7 @@ test("a visible fallback chunk keeps its quote mapping even if the next chunk fa
     return { messageId: "first-visible-chunk" };
   };
   const message = makeInbound({ platform: "msteams", kind: "group", conversationId: "19:partial-quote@thread.v2", userId: "partial-quote-user", messageId: "original-message", mentionsBot: true, text: "long answer" });
-  const ingest = createIngest({ connector, run: async () => ({ content: "word ".repeat(10000), engine: "claude" }), log: { warn() {} } });
+  const ingest = createIngest({ connector, run: async () => ({ content: "word\n".repeat(3000), engine: "claude" }), log: { warn() {} } });
   await assert.rejects(ingest(message), /second chunk unavailable/);
   assert.equal(sessionKeyForMessage({ ...message, messageId: "followup", replyToId: "first-visible-chunk" }), "group:original-message");
 });
