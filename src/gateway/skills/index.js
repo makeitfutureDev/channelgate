@@ -68,7 +68,7 @@ export async function bootSkillsPlatform({ log = console.log } = {}) {
 // last-sync state on the source row.
 export async function syncFolderSource(source) {
   const src = getSource(typeof source === "number" ? source : source?.id) || source;
-  const result = await importSkillTree(src.url, { ownerKind: "git", sourceId: src.id, sourceRef: src.url, status: src.mode === "auto" ? "active" : "staged" });
+  const result = await importSkillTree(src.url, { ownerKind: "git", sourceId: src.id, sourceRef: src.url, status: src.mode === "auto" ? "active" : "staged", requireRoot: true });
   const stats = {
     discovered: result.presentSlugs.length + result.conflicts.length,
     created: result.imported.filter((x) => x.created).length,

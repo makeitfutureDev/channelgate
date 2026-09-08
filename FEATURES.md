@@ -2371,6 +2371,10 @@ are retired, bullet by bullet; everything else stands.
   conversation. Mandatory implies enabled + discoverable; effective profiles remain mandatory ∪
   template ∪ channel ∪ personal ∪ dependencies. Catalog search includes source labels, category
   and source API filters; usage-led screens sort descending and Overview charts the top ten skills.
+  Explicit folder sources report missing, unreadable or non-directory roots as failed syncs in
+  the API and source status, preserving the last approved skill revision. A valid empty directory
+  remains a successful empty scan; optional host discovery may still skip absent directories.
+  Restoring the source and syncing clears the failure. → TEST-PLAN: Skill source read failures.
   Templates select explicit skills only. → TEST-PLAN: Skills platform (governance and usage).
 - **Personal skills and self-service grants.** A skill created with `personal: true` (or switched in
   the admin UI) is visible and grantable only to its author (admins see everything) and is never

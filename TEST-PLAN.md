@@ -123,6 +123,21 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   execution/delivery and container contracts. RR-15 artifact evidence is separate from remaining
   release notice/legal reviews; live conversation gates remain explicitly unexecuted until proven.
 
+## Skill source read failures
+
+- [x] `test/skills-admin-api.test.js`: through the real admin router, import and approve a folder
+  source revision, move its directory away and sync. Require `result.ok:false`, an ENOENT error
+  in the result and persisted source status, and unchanged approved revision/files. Restore it
+  and sync: status recovers without inventing another revision. A file root reports ENOTDIR,
+  a valid empty directory succeeds, and absent optional host discovery remains tolerated.
+- [x] Reproduced with a disposable authenticated admin app and browser Sources view: approve v1,
+  stage/approve v2, move the source directory offline, sync and inspect the visible failure.
+  Verify the v2 file checksum remains unchanged; restore the source and confirm status recovery.
+- [ ] Live both engines, when each can reach the approved fixture: use the cached skill after
+  the source goes offline and require its last approved behavior. Capture the source failure
+  state separately from model use; an API/cache check alone does not prove model compliance.
+  Restore and remove only the disposable source/grants after testing.
+
 ## Resolved Clean and gateway-store facts
 
 - [x] `test/runtime-identity-preamble.test.js`: exact launched argv for Claude and Codex receives

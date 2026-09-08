@@ -74,13 +74,17 @@ export async function importSkillDirectory(dir, { slug = "", ownerKind = "folder
 }
 
 // Import every immediate child of `root` that holds a SKILL.md. The child's name is the slug.
-export async function importSkillTree(root, { ownerKind = "folder", sourceId = null, sourceRef = "", status = "active", createdBy = "", dereference = true } = {}) {
+export async function importSkillTree(root, { ownerKind = "folder", sourceId = null, sourceRef = "", status = "active", createdBy = "", dereference = true, requireRoot = false } = {}) {
   const result = { root, imported: [], unchanged: [], conflicts: [], errors: [], presentSlugs: [] };
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
-  } catch {
-    return result; // absent root: nothing to import
+  } catch (err) {
+    // Optional host discovery may have no directory yet. An explicitly configured source
+    // must report a failed read, so its last good catalog revision is not mistaken for a
+    // successful empty sync. Use the actual read failure rather than a racy existence probe.
+    if (requireRoot) result.errors.push({ slug: "(source root)", error: `Cannot read skill source directory: ${err?.message || String(err)}` });
+    return result;
   }
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (SKIP_NAMES.has(entry.name) || entry.name.startsWith(".")) continue;

@@ -22,6 +22,9 @@ product overview.
   per-attempt guidance to use non-mutating metadata, avoid content reads and temporary write
   probes, and leave unverified write access explicit.
 
+- Report failed reads of explicitly configured skill source folders as sync failures while
+  retaining the last approved revision; a recovered source clears the error on successful sync.
+
 - Explain deliberately omitted connectors, skills and memory from each attempt's resolved Clean
   mode. Distinguish the host gateway runtime store from container-local engine files and mount
   scaffolding using actual mount coverage, without disclosing unmounted host paths.
