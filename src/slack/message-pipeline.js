@@ -9,7 +9,7 @@ import { engineSupports, engineLabel, ENGINE_IDS } from "../engines/registry.js"
 import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult } from "../gateway/run.js";
-import { modeLabel, MODES, modeSettingsPatch, canManage, isAuthorized } from "../gateway/modes.js";
+import { modeLabel, MODES, modeSettingsPatch, canManage, isAuthorized, authorizationDenialReason } from "../gateway/modes.js";
 
 import { postModelWizard } from "./model-wizard.js";
 import { getSessionMap, clearSession, hasThreadSession, getSessionEngine, saveSession } from "../gateway/sessions.js";
@@ -594,11 +594,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     const authorIsAdmin = await isAdmin(event.user);
     const authorApproved = await isApproved(event.user);
     if (!isAuthorized(meta, event.user, isDM, { isAdminUser: authorIsAdmin, isApprovedUser: authorApproved })) {
-      console.log(`[slack] unapproved author ${event.user} in ${entry.slug} — ignoring`);
+      console.log(`[slack] access denied for author ${event.user} in ${entry.slug} — ignoring`);
       await client.chat.postMessage({
         channel: event.channel,
         thread_ts: event.thread_ts ?? event.ts,
-        text: `Sorry <@${event.user}>, you're not approved to use ChannelGate yet. An admin can approve you in the Users settings.`,
+        text: `Sorry <@${event.user}>, ${authorizationDenialReason(meta, isDM)}`,
       });
       return;
     }

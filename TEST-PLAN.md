@@ -4782,3 +4782,16 @@ acceptance gates; no production restart or external message was performed by the
   helpers, interpolation, unknown transport options and literal credential flags are refused.
 - Local regression passes are candidate evidence. These live gates remain pending until the
   reviewed change is deployed and both engines have real delivered exact-thread retests.
+
+
+### Channel access denial wording
+
+- [ ] **Engine-independent Slack gate:** use a disposable group DM or private channel with
+  `access=admins`, an approved non-admin member, and an admin member. As the approved member,
+  mention the bot with a harmless reply request. Require a reply in that exact thread saying the
+  conversation is restricted to admins and naming Access settings; it must not say the already
+  approved user needs deployment approval. No attachment fetch or engine run may occur. Repeat
+  with `access=none` and no explicit user grant: require the named-user restriction/remedy. Verify
+  an unapproved DM author still receives the Users-settings approval remedy. Both Claude/Codex
+  directives encounter this same pre-engine gate; neither harness is spawned. Restore the fixture
+  access policy. Automated counterpart: `test/message-to-reply-e2e.test.js` channel access denials.
