@@ -57,7 +57,7 @@ test("operator-script tests leave an inherited canonical runtime and database un
   };
   // Direct invocation bypasses run-tests.mjs deliberately: each destructive operator-script
   // fixture must be safe even when a contributor runs this one file from a daemon environment.
-  runNode(["--test", "--test-name-pattern=encrypted backup|restore over an existing|backup and restore honor|log rotation", "test/operations-readiness.test.js"], {
+  runNode(["--test", "--test-reporter=tap", "--test-name-pattern=encrypted backup|restore over an existing|backup and restore honor|log rotation", "test/operations-readiness.test.js"], {
     env, output: path.join(fixture, "operations.log"),
   });
   assert.match(readFileSync(path.join(fixture, "operations.log"), "utf8"), /# pass 4\b/, "all four destructive-script fixtures actually ran");
