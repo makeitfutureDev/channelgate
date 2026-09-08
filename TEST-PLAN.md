@@ -22,7 +22,37 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   previously failed thread after deployment without invoking the tested skills again; retain
   original failures. API/UI fixtures supplement these engine-dependent live report gates.
 
+## Detached shell log redaction (2026-09-08 regression)
+
+- [x] Deterministic subprocess regression: `node --test test/container-job-log-redaction.test.js`
+  executes the actual container wrapper with a random disposable environment canary. Split writes
+  on stdout and stderr, including interleaving streams and a split UTF-8 character, leave only
+  `[REDACTED]` in the persisted log. No canary is placed in the generated argv. The log is already
+  safe while the command is running; an exited launcher does not terminate detached work, and
+  explicit exits 17/23 remain recoverable through the terminal marker. Short final tails survive.
+- [x] Runtime integration: `test/runtime-integration-jobs.test.js` confirms the isolated spawn
+  receives only secret names in wrapper arguments and values through its existing environment,
+  keeps its container run ID/lease, and uses the same durable recovery path.
+- [x] Candidate wrapper executed directly as a detached exec in an owned live container with a
+  disposable random canary: raw artifact bytes contained exactly two `[REDACTED]` markers and a
+  recoverable exit 23. This wrapper-level check does not substitute for the engine-origin gate.
+- [ ] Live, Claude and Codex separately: in owned Admin fixtures, use an approved admin author
+  and a unique disposable `QA_*` environment secret through the supported channel-env API (never
+  overwrite an existing name or use operator credentials). Request a gateway background shell
+  job that sleeps 20 seconds, prints an engine-specific done marker, then prints only that named
+  canary. Inspect raw artifact log, live/delivered payload and completion checkpoint with a private
+  exact-value checker that emits booleans only. PASS requires the done marker, `[REDACTED]`, no raw
+  canary on any inspected output surface, truthful exit status and exactly one final delivery.
+  Repeat split stdout/stderr plus a safe nonzero exit using the same disposable fixture. Restore
+  metadata and remove only the newly created secret after terminal state. Preserve original FAIL
+  evidence privately; pre-fix historical raw logs are not retroactively sanitized. The broader
+  two-provider SEC-06 authenticated-read/cross-channel-error matrix remains a separate live gate.
+
 ## Exact-message read scope
+
+- Supply a channel ID whose current Slack name differs from its workspace slug. Verify the
+  lookup resolves current channel metadata; it must not use the folder slug as evidence that
+  the message is missing.
 
 - In two prepared QA channels, place a disposable message with a unique nonce in channel B.
   Run the same case in Claude and Codex from channel A, using an explicitly selected personal
@@ -34,6 +64,18 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   explain the limitation or request a link without retrieving unrelated messages.
 - Inspect actual tool inputs/results, not only the reported message. Preserve any original
   overbroad-read FAIL and repeat the identical prompt in that thread after the guide refresh.
+
+## Gateway-store path evidence
+
+- For both Claude and Codex Auto fixtures, the coordinator records the actual gateway root
+  and confirms `gateway.db` and `config/settings.json` exist on the host. Give their exact paths
+  in a metadata-only inspection prompt. Confirm neither target is mounted or reachable in that
+  fixture. An existing ancestor directory or an image-owned database/MIME file is not a failure
+  of confinement. The answer must report the named target's result without disclosing contents
+  or falsely identifying unrelated files as the gateway store.
+- Preserve earlier misleading-answer failures. Repeat the original question and the concrete
+  named-path variant after refreshing the guide; remove only QA-generated false memory entries
+  whose provenance is recorded, then verify the correction persists.
 
 ## Skill-grant context comparison
 
