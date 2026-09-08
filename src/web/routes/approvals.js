@@ -19,7 +19,7 @@
 // an `approval_resolved_by_admin` audit event naming the principal and the decision — never a
 // value, a command or a token.
 import { Router } from "express";
-import { applyApprovalDecision, APPROVAL_SCOPES, listPendingApprovals, lookupApproval } from "../../slack/approvals.js";
+import { applyApprovalDecision, approvalScopesFor, APPROVAL_SCOPES, listPendingApprovals, lookupApproval } from "../../slack/approvals.js";
 import { applyBusyThreadChoice, busyThreadChoices, BUSY_THREAD_CHOICE_KIND, BUSY_THREAD_CHOICES } from "../../slack/busy-thread-choice.js";
 import { processMessageEvent } from "../../slack/message-pipeline.js";
 import { getChannelsIndex, getUsers } from "../../config/store.js";
@@ -61,7 +61,7 @@ export function createApprovalsRouter({ slack, processMessage = processMessageEv
         expiresAt: iso(a.expiresAt),
         channelName: index[a.channelId]?.name || a.slug || a.channelId,
         requesterName: users[a.requesterId]?.name || a.requesterId,
-        scopes: a.durable ? ["once"] : SCOPES,
+        scopes: approvalScopesFor(a),
       }));
       const threadChoices = await named(
         busyThreadChoices.list().map((record) => ({
