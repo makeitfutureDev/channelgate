@@ -63,6 +63,7 @@ export function runtimeAccessPreamble(target, { clean } = {}) {
     + "Answer access questions from this resolved runtime, even when the conversation previously said otherwise.\n"
     + containerAccessNote(target) + "\n"
     + gatewayStoreAccessNote(target) + "\n"
+    + "Respect the user's requested scope when checking access. For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only. Do not read file contents or create, modify, or delete probe files, even temporarily. If metadata cannot establish write access, report it as unverified; do not upgrade an access-check request into a write test.\n"
     + cleanModeNote(clean) + "\n"
     + "Environment secrets, when injected into a run, are usable by its process and CLI. Write-only means masked listing/reveal surfaces and redacted outputs; it does not mean the process cannot read its environment. Do not print secret values.\n"
     + "[End gateway container access]\n\n";

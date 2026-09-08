@@ -55,6 +55,9 @@ function metadata(call) {
   assert.match(prompt, /Clean mode for this attempt: \*\*(enabled|disabled)\*\*/);
   assert.match(prompt, /Host gateway runtime directory: \*\*(not )?mounted\*\*/);
   assert.match(prompt, /Container-local \/opt\/channelgate and \/home\/agent/);
+  assert.match(prompt, /For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only/);
+  assert.match(prompt, /Do not read file contents or create, modify, or delete probe files, even temporarily/);
+  assert.match(prompt, /If metadata cannot establish write access, report it as unverified/);
   return JSON.parse(match[1]);
 }
 

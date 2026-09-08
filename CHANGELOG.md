@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Keep existence/access-only requests within their requested scope: both engines receive
+  per-attempt guidance to use non-mutating metadata, avoid content reads and temporary write
+  probes, and leave unverified write access explicit.
+
 - Report failed reads of explicitly configured skill source folders as sync failures while
   retaining the last approved revision; a recovered source clears the error on successful sync.
 
