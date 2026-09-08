@@ -47,6 +47,7 @@ import { randomUUID } from "node:crypto";
 import { createSemaphore } from "../util/semaphore.js";
 import { logEvent } from "../util/logger.js";
 import { resolveRunAccessGrants, resolveRunUserIdentity, userOnlySkillGrants } from "./access-grants.js";
+import { getSkill } from "./skills/catalog.js";
 import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntimeReadPaths } from "./run-grant-artifacts.js";
 import { isForceStopping } from "./shutdown.js";
 import { allowedFsRoot } from "../web/security.js";
@@ -752,6 +753,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     authorId,
     untrustedPrincipal,
     loadUser: getUser,
+    lookupSkill: getSkill,
   });
   let meta = { ...channelMeta, ...runGrants.effective };
 

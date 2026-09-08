@@ -68,6 +68,35 @@ export function resolveAccessGrants({ organization = {}, channel = {}, user = {}
   );
 }
 
+// Tombstones preserve grants for catalog history/restoration, but an author's deleted personal
+// skill is no longer an active instruction. Omit only that proven state, never an unknown or
+// unavailable source. Check ownership before considering deletion, including dependencies, so
+// a stale or forged grant cannot turn another author's private skill into a readable overlay.
+function currentUserSkillGrants(names, authorId, lookupSkill) {
+  const lookup = (name) => {
+    const skill = lookupSkill(name);
+    if (skill?.visibility === "personal" && (!authorId || skill.createdBy !== authorId)) {
+      throw new Error("Personal skill grant is not available to this author");
+    }
+    return skill;
+  };
+  const retained = sanitizeSkillGrantNames(names).filter((name) => {
+    const skill = lookup(name);
+    return !(skill?.deleted && skill.ownerKind === "local" && skill.visibility === "personal");
+  });
+  const visited = new Set();
+  const visit = (name) => {
+    const key = String(name).toLowerCase();
+    if (visited.has(key)) return;
+    visited.add(key);
+    const skill = lookup(name);
+    if (!skill || skill.deleted) return;
+    for (const dependency of skill.requires || []) visit(dependency);
+  };
+  for (const name of retained) visit(name);
+  return retained;
+}
+
 // Resolve the durable (organization + channel) grants separately from the active principal's
 // effective grants. HTTP run callers supply an author id but do not authenticate that Slack user,
 // so an untrusted principal must not even trigger a stored-user lookup: naming somebody else's
@@ -78,8 +107,10 @@ export async function resolveRunAccessGrants({
   authorId = "",
   untrustedPrincipal = false,
   loadUser = async () => null,
+  lookupSkill = () => null,
 } = {}) {
-  const user = untrustedPrincipal ? {} : ((await loadUser(authorId)) || {});
+  const storedUser = untrustedPrincipal ? {} : ((await loadUser(authorId)) || {});
+  const user = { ...storedUser, skills: currentUserSkillGrants(storedUser.skills, authorId, lookupSkill) };
   return {
     shared: resolveAccessGrants({ organization, channel }),
     effective: resolveAccessGrants({ organization, channel, user }),

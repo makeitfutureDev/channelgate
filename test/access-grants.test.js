@@ -27,6 +27,7 @@ test("untrusted caller-supplied principals never load or inherit stored user gra
     authorId: "U_PUBLIC_ID",
     untrustedPrincipal: true,
     loadUser,
+    lookupSkill: () => { throw new Error("untrusted principal must not consult the skill catalog"); },
   });
 
   assert.equal(loads, 0, "stored user lookup must be skipped completely");
@@ -41,6 +42,37 @@ test("untrusted caller-supplied principals never load or inherit stored user gra
   });
   assert.equal(loads, 1);
   assert.deepEqual(trusted.effective.skills, ["org", "channel", "private-skill"]);
+});
+
+test("personal tombstones are inactive without erasing grants or ignoring broken selections", async () => {
+  const skills = {
+    removed: { slug: "removed", ownerKind: "local", visibility: "personal", createdBy: "owner", deleted: true },
+    staged: { slug: "staged", ownerKind: "local", visibility: "personal", createdBy: "owner", deleted: false },
+    sharedRemoved: { slug: "sharedRemoved", ownerKind: "git", visibility: "org", deleted: true },
+  };
+  const stored = { skills: ["removed", "staged", "unknown", "sharedRemoved"], allowedMcps: ["private-mcp"] };
+  const resolve = () => resolveRunAccessGrants({ authorId: "owner", loadUser: async () => stored, lookupSkill: (name) => skills[name] || null });
+  assert.deepEqual((await resolve()).user.skills, ["staged", "unknown", "sharedRemoved"], "only the proven own local personal tombstone is omitted");
+  assert.deepEqual(stored.skills, ["removed", "staged", "unknown", "sharedRemoved"], "persisted grants remain intact");
+  assert.deepEqual((await resolve()).user.allowedMcps, ["private-mcp"]);
+  skills.removed.deleted = false;
+  assert.deepEqual((await resolve()).user.skills, stored.skills, "restoring the catalog skill reactivates its retained grant");
+  await assert.rejects(resolveRunAccessGrants({ authorId: "owner", loadUser: async () => stored, lookupSkill: () => { throw new Error("catalog unavailable"); } }), /catalog unavailable/);
+});
+
+test("personal ownership stays closed for live, removed and dependency grants", async () => {
+  for (const deleted of [false, true]) {
+    const foreign = { slug: "foreign", ownerKind: "local", visibility: "personal", createdBy: "other", deleted };
+    for (const authorId of ["owner", ""]) {
+      await assert.rejects(resolveRunAccessGrants({ authorId, loadUser: async () => ({ skills: ["foreign"] }), lookupSkill: () => foreign }), /not available to this author/);
+    }
+    const skills = { foreign, parent: { slug: "parent", visibility: "org", requires: ["foreign"] } };
+    await assert.rejects(resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["parent"] }), lookupSkill: (name) => skills[name] }), /not available to this author/);
+  }
+  const dependency = { slug: "removed", ownerKind: "local", visibility: "personal", createdBy: "owner", deleted: true };
+  const parent = { slug: "parent", visibility: "org", requires: ["parent", "removed"] };
+  const grants = await resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["parent"] }), lookupSkill: (name) => name === "parent" ? parent : dependency });
+  assert.deepEqual(grants.user.skills, ["parent"], "a removed required dependency is not silently excised from an active parent; materialization still fails");
 });
 
 test("untrusted caller-supplied principals never load personal tokens or role state", async () => {

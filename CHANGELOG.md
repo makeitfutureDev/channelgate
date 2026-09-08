@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Keep subsequent turns working after an author deletes a personal skill, while retaining its
+  grant and revision history for restoration and refusing foreign personal skill access.
+
 - Correct skill-creation approval descriptions to show personal versus shared ownership,
   optional channel grants and automatic personal/channel-scope activation accurately.
 

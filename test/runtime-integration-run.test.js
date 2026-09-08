@@ -43,6 +43,49 @@ const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
 const { createFakeRuntimeBackend, fakeContainerPath, fakeTarget, FAKE_IMAGE } = await import("./runtime-fake.js");
 
+test("deleted personal grants do not block subsequent Claude or Codex turns", async (t) => {
+  const { createLocalSkill, deleteOwnSkill } = await import("../src/gateway/skills/authoring.js");
+  const { getSkill, listRevisions, restoreSkill } = await import("../src/gateway/skills/catalog.js");
+  const { getUser } = await import("../src/config/store.js");
+  saveSettings({ memoryReviewEvery: 0, composioMode: "personal", engineFallback: false, codexEnabled: true });
+  await setUser("U_RT", { skills: [] });
+  t.after(() => setUser("U_RT", { skills: [] }));
+  const names = ["deleted-personal-one", "deleted-personal-two"];
+  for (const name of names) {
+    const created = await createLocalSkill({ slug: name, createdBy: "U_RT", personal: true, publish: false,
+      files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Private deletion fixture\n---\nPRIVATE-DELETED-BODY\n` }] });
+    deleteOwnSkill({ skill: created.skill, userId: "U_RT" });
+    assert.equal(getSkill(name).deleted, true);
+    assert.equal(listRevisions(created.skill.id).length, 1, "deletion preserves revision history");
+  }
+  assert.deepEqual((await getUser("U_RT")).skills, names, "stored tombstone grants remain restorable");
+  for (const engine of ["claude", "codex"]) {
+    const backend = createFakeRuntimeBackend();
+    const resolved = [];
+    useBackend(backend, { record: resolved });
+    const id = `C_RT_DELETED_${engine.toUpperCase()}`;
+    await channel(id, `rt-deleted-${engine}`, { engine });
+    for (const text of ["hello after deletion", "continue after deletion"]) {
+      const result = await runMessage({ channelId: id, authorId: "U_RT", text, threadKey: "9200.001", origin: "slack_foreground", preferCold: true });
+      assert.equal(result.engine, engine);
+      assert.match(result.content, /stub.*reply/i);
+    }
+    assert.equal(backend.calls.spawn.length, 2, "fresh and resumed turns reach the configured engine");
+    assert.ok(resolved.length > 0);
+    assert.ok(resolved.every((meta) => !meta.skills.some((name) => names.includes(name))), "deleted instructions are absent from every runtime preparation");
+  }
+  restoreSkill(names[0]);
+  for (const engine of ["claude", "codex"]) {
+    const backend = createFakeRuntimeBackend();
+    const resolved = [];
+    useBackend(backend, { record: resolved });
+    await runMessage({ channelId: `C_RT_DELETED_${engine.toUpperCase()}`, authorId: "U_RT", text: "hello after restoration", threadKey: "9200.001", origin: "slack_foreground", preferCold: true });
+    assert.equal(backend.calls.spawn.length, 1);
+    assert.ok(resolved.every((meta) => meta.skills.includes(names[0]) && !meta.skills.includes(names[1])), "catalog restoration reactivates only the restored retained grant");
+  }
+  assert.deepEqual((await getUser("U_RT")).skills, names, "run preparation never mutates stored grants");
+});
+
 async function channel(id, name, meta = {}) {
   await setUser("U_RT", { name: "Runtime User", approved: true, isAdmin: false });
   const entry = await upsertChannelEntry(id, { name, type: "channel" });

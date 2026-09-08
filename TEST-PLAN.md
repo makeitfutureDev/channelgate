@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Deleted personal skill grants
+
+- [x] Automated: `node --test test/access-grants.test.js test/run-grant-isolation.test.js
+  test/runtime-integration-run.test.js` covers actual personal creation/automatic grants, deletion,
+  fresh and resumed Claude/Codex turns, retained raw grants/history and catalog restoration.
+  Only the trusted author's known local personal tombstones are inactive. Unknown, staged and
+  removed shared selections remain subject to materialization failure; unavailable catalog reads
+  propagate errors. Foreign personal grants/dependencies fail closed; untrusted principals never
+  query the user or personal catalog. Required removed dependencies are not silently discarded.
+- [ ] Live (Claude + Codex, SKL-07): in each writable test conversation, use an approved author's
+  unique personal skill with two recorded revisions and a relative reference file. Approve deletion
+  through the normal control plane. Verify the catalog tombstone and retained revision hashes;
+  leave the raw personal grant in place. In the same thread send “Reply exactly AFTER-DELETE” and
+  repeat in a fresh thread. Both must reach the configured engine and complete without a personal
+  grant loading error; neither new catalog/plugin may expose the deleted skill. Raw grants and
+  revision history remain unchanged. Restore only this owned fixture through the supported admin
+  path, then ask to use its relative reference again: its retained grant must work on the next turn.
+  Record actual prompts, engine/run events, artifact/catalog absence and unchanged raw grants.
+  Never remove grants manually to make the deletion test pass. Retain original failures separately.
+
 ## Skill creation approval details
 
 - [x] Automated: `node --test test/mcp-control-plane-approval.test.js test/skills-platform.test.js
@@ -4244,7 +4264,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       only `SKILL.md`, immutable revision-1 bytes, revision-2 bytes and unchanged reference hash;
       require the next turn to read the retained relative reference. Continue the existing history,
       UI rollback where supported, deletion and publishing gates; this wording correction does not
-      mark any unexecuted part passed. Delete only the owned skill and restore its personal grant.
+      mark any unexecuted part passed. Delete only the owned skill, then verify the next fresh and
+      resumed turns as specified in Deleted personal skill grants; retain raw grants for restoration.
 
 - [x] Unit: the Skills Manager integration is gone from source (no `makeitfuture-skills` server, no
       skills tokens in identity resolution, MCP config, Codex argv, secrets allowlist or user/channel
