@@ -360,7 +360,7 @@ export function register(server, ctx) {
         note: z.string().optional(),
         grant_here: z.boolean().optional().describe("For shared library skills, add a grant in this conversation (default true). Personal and channel-scoped skills activate automatically regardless of this flag."),
         personal: z.boolean().optional().describe("Personal visibility and automatic grant to your own runs (default false); admins retain catalog visibility. Cannot be combined with scope channel."),
-        scope: z.enum(["library", "channel"]).optional().describe("library (default): the shared library, usable by every conversation. channel: specific to THIS channel's customer or project — kept in the channel's own section of the skills repository and granted here automatically. Ask the user before choosing channel."),
+        scope: z.enum(["library", "channel"]).optional().describe("library (default): catalog placement; visibility follows personal. Shared library skills can be granted across conversations. channel: a shared skill specific to THIS channel's customer or project, kept in its repository section and active here automatically; incompatible with personal. Ask the user before choosing channel."),
       },
     },
     async ({ slug: wanted = "", files, note = "", grant_here = true, personal = false, scope = "library" }) => {
