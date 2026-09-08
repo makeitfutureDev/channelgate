@@ -39,3 +39,20 @@ result inline — unlike `run_in_background`, you do NOT end your turn. Then:
 
 Use it for consequential steps (destructive changes, sends to other channels, spending, irreversible
 actions) — not for routine replies.
+
+## Saved instruction updates
+
+`update_channel_instructions` saves the exact proposed rule and returns **pending** immediately.
+Its approval has **no deadline** and survives gateway and engine restarts. End the turn with a
+brief pending notice; the daemon applies the saved change when the user clicks Approve. Do not
+retry it in a loop or report the instructions as changed before approval. Deny or Comment cancels
+the request. Identical requests in the same thread reuse the pending card.
+
+The entire rule must fit on the card (at most 2400 characters, no triple-backtick fences). Split
+larger rules into separately reviewed requests. A changed working folder, changed instruction
+file, or revoked permissions prevents application and requires a fresh request. Replacing the
+instructions requires both an admin requester and admin approval.
+
+Slack buttons and the admin approvals page remain available indefinitely for these requests.
+Supplemental bearer links retain their separate 30-minute expiry. Ordinary `request_approval`
+and native permission prompts still require a live tool call and retain their existing timeout.

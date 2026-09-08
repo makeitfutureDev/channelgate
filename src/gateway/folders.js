@@ -396,7 +396,7 @@ async function ensureMirrorSymlink(linkPath, target, targetPath) {
 // the daemon-side MCP process writes the file on the daemon host, outside the run's container. The existing managed block is
 // kept verbatim (default folders); a block-less file (custom project folder) is appended to
 // as-is. Returns { path }.
-export async function updateChannelInstructions(slug, meta, { text, replace = false }) {
+export async function channelInstructionsSnapshot(slug, meta) {
   const cwd = effectiveWorkDir(slug, meta);
   let file = path.join(cwd, "CLAUDE.md");
   // A custom project folder may keep AGENTS.md as the real file with CLAUDE.md as the gateway's
@@ -413,6 +413,24 @@ export async function updateChannelInstructions(slug, meta, { text, replace = fa
     if (target === LEGACY_MIRROR_TARGET && (await pathKind(agents)) === "file") file = agents;
   }
   const cur = (await readNoFollow(file)) ?? "";
+  const fingerprint = createHash("sha256").update(JSON.stringify([file, cur])).digest("hex");
+  return { cwd, file, cur, fingerprint };
+}
+
+export async function updateChannelInstructions(slug, meta, options) {
+  const release = await acquireKeyedLock("channel-instructions", effectiveWorkDir(slug, meta));
+  try {
+    return await writeChannelInstructions(slug, meta, options);
+  } finally {
+    release();
+  }
+}
+
+async function writeChannelInstructions(slug, meta, { text, replace = false, expectedFingerprint = "" }) {
+  const { cwd, file, cur, fingerprint } = await channelInstructionsSnapshot(slug, meta);
+  if (expectedFingerprint && fingerprint !== expectedFingerprint) {
+    throw new Error("The channel instructions changed while approval was pending. Submit a fresh request to review the current version.");
+  }
   const isDefault = cwd === workspaceFolder(slug, meta?.platform);
   const addition = text.replace(/\s+$/, "");
   let next;

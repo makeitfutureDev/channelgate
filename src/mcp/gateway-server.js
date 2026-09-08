@@ -32,6 +32,7 @@ import { register as registerSlackNative } from "./tools/slack-native.js";
 import { register as registerLicense } from "./tools/license.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
+import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 
 export const text = (t) => ({ content: [{ type: "text", text: t }] });
 
@@ -225,7 +226,7 @@ export function buildControlPlane({ loadMeta }) {
     ["remove_skill_source", { authz: "admin", details: ({ id }) => `REMOVE skill source #${Number(id) || "?"} and tombstone its skills.` }],
     ["set_skill_excluded", { authz: "admin", details: ({ skill, excluded }) => `${excluded ? "EXCLUDE" : "Include"} skill \`${summarize(skill)}\` in the catalog.` }],
     ["set_skill_governance", { authz: "admin", details: ({ skill, enabled, discoverable, mandatory }) => `Change skill governance for \`${summarize(skill)}\`: enabled=${enabled ?? "unchanged"}, discoverable=${discoverable ?? "unchanged"}, mandatory=${mandatory ?? "unchanged"}.` }],
-    ["update_channel_instructions", { authz: "any", details: ({ mode, text: t }) => `${mode === "replace" ? "REPLACE" : "Append to"} this channel's standing instructions:\n${summarize(t, 600)}` }],
+    ["update_channel_instructions", { authz: "any", details: ({ mode, text: t }) => `${mode === "replace" ? "REPLACE" : "Append to"} this channel's standing instructions:\n${t}` }],
     ["update_gateway", {
       authz: "admin",
       details: async () => {
@@ -275,7 +276,7 @@ export function createGatewayMcpServer(ctx) {
 
   // Ask the daemon to post Slack Approve/Deny buttons and block for the click. Fail closed: no
   // reachable daemon, no secret, or an error means NOT approved.
-  async function requireToolApproval(toolName, details, requiredTier = "") {
+  async function requireToolApproval(toolName, details, requiredTier = "", durableAction = null) {
     if (!ctx.daemon.available("approval")) return { allow: false, reason: "approvals are unavailable right now" };
     try {
       const data = await ctx.daemon.call("approval", {
@@ -289,8 +290,9 @@ export function createGatewayMcpServer(ctx) {
         approveText: "Approve",
         denyText: "Deny",
         requiredTier,
+        ...(durableAction ? { durableAction } : {}),
       }, { timeoutMs: 280_000 });
-      return { allow: Boolean(data.allow), reason: data.comment || data.reason || "" };
+      return { allow: Boolean(data.allow), pending: Boolean(data.pending), approvalId: data.approvalId || "", reason: data.comment || data.reason || "" };
     } catch (e) {
       return { allow: false, reason: e.message };
     }
@@ -322,11 +324,27 @@ export function createGatewayMcpServer(ctx) {
             ? `🚫 Only admins can run \`${name}\`. Nothing was changed.`
             : `🚫 Only this channel's managers (or an admin) can run \`${name}\`. Nothing was changed.`);
         }
-        const details = await gate.details(args ?? {});
+        let details = await gate.details(args ?? {});
         if (details !== null) {
           // The clicker must independently hold the gate's own tier ("any" needs no extra rank):
           // the human factor for an admin-tier change must come from an admin, never a bystander.
-          const d = await requireToolApproval(name, details, gate.authz === "any" ? "" : gate.authz);
+          let durableAction = null;
+          if (name === "update_channel_instructions") {
+            try {
+              durableAction = await prepareInstructionApproval(ctx, args);
+              details = await gate.details(durableAction);
+            } catch (error) {
+              return text(`Couldn't request the instruction update: ${error.message}`);
+            }
+          }
+          const tier = durableAction?.mode === "replace" ? "admin" : gate.authz === "any" ? "" : gate.authz;
+          const d = await requireToolApproval(name, details, tier, durableAction);
+          if (d.pending) {
+            return text(`⏳ \`${name}\` is awaiting your approval (request ${d.approvalId}). The exact change is saved with no deadline and survives gateway restarts. You can end this turn; the gateway applies it when you click Approve. Deny or Comment cancels it. Nothing has changed yet.`);
+          }
+          // Durable actions are applied only by the daemon's single-use executor. An unexpected
+          // transport response must never also run the live handler and duplicate the write.
+          if (durableAction) return text(`Couldn't save the instruction approval: ${d.reason || "the gateway did not return a pending request"}. Nothing was changed.`);
           if (!d.allow) {
             return text(`🚫 \`${name}\` changes persistent gateway state, so it needs a human Approve click in Slack — and it was not approved${d.reason ? ` (${d.reason})` : ""}. Nothing was changed.`);
           }

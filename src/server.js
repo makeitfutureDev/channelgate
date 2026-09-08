@@ -25,6 +25,7 @@ import { createPlatformTransports, connectConfiguredPlatforms } from "./platform
 import { startScheduler } from "./gateway/scheduler.js";
 import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js";
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
+import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
@@ -253,7 +254,9 @@ async function main() {
   // job rows have been re-tracked, or the first API/approval-triggered job would rewrite bg_jobs
   // from a still-empty map and wipe every unrecovered row.
   backgroundJobs.armRecovery();
-  setDurableApprovalExecutor((record) => backgroundJobs.startApproved(record));
+  setDurableApprovalExecutor((record) => record.action?.kind === INSTRUCTION_ACTION
+    ? executeInstructionApproval(record)
+    : backgroundJobs.startApproved(record));
   const recoveredApprovals = recoverInterruptedApprovalExecutions();
   if (recoveredApprovals.consumed || recoveredApprovals.failed) {
     console.log(`[gateway] recovered durable approvals: ${recoveredApprovals.consumed} already started, ${recoveredApprovals.failed} failed closed`);
