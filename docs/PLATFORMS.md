@@ -68,23 +68,50 @@ before anything else happens; that check is the entire authentication boundary f
 
 ### Setup
 
-ChannelGate follows the same low-friction setup used by Hermes: Microsoft's Teams CLI creates the
-bot registration and Teams app together, so the normal path does not require hand-building an app
-manifest in Azure Portal.
+Use Microsoft's [Teams Developer CLI](https://learn.microsoft.com/en-us/microsoftteams/platform/teams-sdk/get-started/quickstart-register)
+to create the bot registration and Teams app together. These commands were checked against CLI
+3.0.3; install the stable package below. The normal Teams-managed bot path does not need an Azure
+subscription or a hand-built manifest.
+
+Before starting, identify the target ChannelGate installation and its public HTTPS origin. If
+multiple gateways exist, do not use the current checkout's URL or settings for another bot.
+You need a Microsoft 365 account permitted to register the app and install custom Teams apps.
 
 1. **Install and sign in to the Teams CLI:**
 
    ```sh
-   npm install -g @microsoft/teams.cli@preview
-   teams login
-   teams status --verbose
+   npm install -g @microsoft/teams.cli
+   teams --version
+   teams login --device-code
+   teams status
    ```
+
+   Open the URL printed by the CLI, enter its short-lived code, and sign in to the intended
+   organization. Keep the login process alive until it confirms success, then check the account,
+   tenant and custom-app upload status with `teams status`. A browser saying "done" alone is not
+   proof the CLI authenticated. On a desktop, `teams login` also supports browser sign-in.
+   If `teams` is not found after installation, add the npm global prefix's `bin` directory to
+   your shell's PATH (`npm prefix -g` prints the prefix).
+
+   When an assistant runs this flow, it must keep the same interactive process alive, provide
+   the code in a progress message, and poll until success or expiry before ending the turn.
+   An expired code needs a fresh login. Do not request passwords or authentication tokens in chat.
 
 2. **Create the public event URL.** Teams cannot deliver events to `localhost`. For production,
    set Settings → Connection → *Public URL* to the daemon's public HTTPS origin. For local use,
    expose the daemon with a persistent HTTPS tunnel and use that origin. The Admin UI shows the
    resulting endpoint: `<public-url>/api/teams/messages`.
-3. **Generate the bot and Teams app with that endpoint:**
+3. **Generate the bot and Teams app with that endpoint.** Run this in a private operator terminal;
+   creation can print the client secret. Change the display name to your bot's name. To capture
+   credentials, add `--env /absolute/private/path/teams.env` with a protected destination outside
+   the repository and channel work folders; use `umask 077` before creation. Do not stream the
+   creation output into chat or commit the credentials.
+
+   ```sh
+   umask 077
+   ```
+
+   Then create the app:
 
    ```sh
    teams app create \
@@ -93,7 +120,10 @@ manifest in Azure Portal.
    ```
 
    Save the emitted `CLIENT_ID`, `CLIENT_SECRET`, and `TENANT_ID`; the secret is shown only once.
-   Also retain the emitted Teams app ID for installation.
+   Also retain the emitted Teams app ID for installation; it is distinct from the Application
+   (client) ID. Keep personal, team and groupChat scopes for the conversations you intend to use.
+   For an existing registration, use `teams app list` and `teams app get <teamsAppId>` to inspect
+   it before creating a duplicate.
 4. **Configure ChannelGate** — Settings → Connection → *Microsoft Teams*: paste `CLIENT_ID` as the
    Application ID, `CLIENT_SECRET` as the client secret, and `TENANT_ID` as the tenant, Save, then
    **Connect**.
@@ -105,7 +135,14 @@ manifest in Azure Portal.
 
    Open the printed link in a browser or Teams client and install the app. If the public URL later
    changes, update the registered event endpoint with
-   `teams app update --id <teamsAppId> --endpoint "https://<new-public-url>/api/teams/messages"`.
+   `teams app update <teamsAppId> --endpoint "https://<new-public-url>/api/teams/messages"`.
+
+6. **Verify the connection with a real conversation.** Approve the test user's Teams identity in
+   the target ChannelGate installation; a Slack approval does not grant a separate Teams identity.
+   Send `Reply with TEAMS_OK` in a personal chat, then `@<bot-name> Reply with TEAMS_OK` in a test
+   team/channel. Confirm a real answer in the personal chat and a threaded channel reply. A
+   "Connected" badge alone does not prove inbound delivery. See the live acceptance case in
+   `TEST-PLAN.md`; Teams remains beta until tenant verification is completed.
 
 ### Notes and limits
 

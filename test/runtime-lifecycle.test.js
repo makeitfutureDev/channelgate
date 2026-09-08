@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setImmediate as nextTurn } from "node:timers/promises";
+import { readFileSync } from "node:fs";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
@@ -596,4 +597,45 @@ test("an admin restart exits with the code its service manager treats as 'relaun
   // so exit cleanly rather than reporting a failure that never happened.
   assert.equal(detectServiceManager({ platform: "linux", env: {} }), "none");
   assert.equal(restartExitCode({ platform: "linux", env: {} }), 0);
+});
+
+test("force shutdown skips the drain while preserving durable interruptions and both sweep passes", async () => {
+  const events = [];
+  const result = await performShutdown({
+    force: true,
+    drainTimeoutMs: 60_000,
+    killAfterMs: 0,
+    getActivity: () => ({ total: 1, queued: 1, cold: 1, warmPending: 0 }),
+    sleep: () => assert.fail("force restart must not enter the configured drain"),
+    markForce: () => {
+      events.push("mark-interrupted");
+      assert.equal(shouldClearActiveRun({ terminal: false, forceStopping: true }), false);
+    },
+    sweepCold: () => { events.push("cold"); return 1; },
+    sweepWarm: () => { events.push("warm"); return 1; },
+    sweepColdFinal: () => { events.push("final-cold"); return 0; },
+    sweepWarmFinal: () => { events.push("final-warm"); return 0; },
+    exit: () => events.push("exit"),
+    logger: { log() {}, warn() {} },
+  });
+  assert.equal(result.drained, false);
+  assert.deepEqual(events, ["mark-interrupted", "cold", "warm", "final-cold", "final-warm", "exit"]);
+});
+
+test("the server restart callback passes force and the systemd relaunch exit code to shutdown", () => {
+  const server = readFileSync(new URL("../src/server.js", import.meta.url), "utf8");
+  const callback = server.match(/restart: (\(\{ reason[^\n]+?=> requestShutdown\([^\n]+?\)),\n/);
+  assert.ok(callback, "server must provide its restart shutdown callback");
+  const observed = [];
+  // Execute the actual callback without importing/booting the server or restarting a service.
+  const restart = new Function("slack", "requestShutdown", "restartExitCode", `return ${callback[1]};`)(
+    "fixture-slack", (input) => observed.push(input),
+    () => restartExitCode({ platform: "linux", env: { INVOCATION_ID: "fixture-systemd" } }),
+  );
+  restart({ reason: "wait" });
+  restart({ reason: "force", force: true });
+  assert.deepEqual(observed, [
+    { slack: "fixture-slack", code: 1, reason: "wait", force: false },
+    { slack: "fixture-slack", code: 1, reason: "force", force: true },
+  ]);
 });

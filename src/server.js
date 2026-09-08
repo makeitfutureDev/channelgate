@@ -38,7 +38,7 @@ import { startDriveSync } from "./gateway/drivesync.js";
 import { configDir } from "./config/paths.js";
 import { hardenRuntimeFiles, ensureAdminPasswordOnFirstBoot, isOperatorConfigured, assertRuntimeHardening } from "./config/harden.js";
 import { acquireSingletonLock } from "./util/singleton.js";
-import { requestShutdown } from "./gateway/shutdown.js";
+import { requestShutdown, restartExitCode } from "./gateway/shutdown.js";
 import { RestartCoordinator } from "./gateway/restart.js";
 import { randomUUID, randomBytes } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -263,7 +263,7 @@ async function main() {
   }
   setActiveBackgroundJobs(backgroundJobs); // expose to the Slack /status command
   const restartCoordinator = new RestartCoordinator({
-    restart: ({ reason }) => requestShutdown({ slack, code: 0, reason }),
+    restart: ({ reason, force = false }) => requestShutdown({ slack, code: restartExitCode(), reason, force }),
     notify: async ({ channelId, threadKey, text }) => {
       if (!channelId || !threadKey || !slack.snapshot?.().connected) return;
       await postNotice(slack.getClient?.(), { conversationId: channelId, threadKey, text });

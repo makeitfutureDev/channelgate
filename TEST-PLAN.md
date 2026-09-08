@@ -838,7 +838,17 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       connector still THROWS on write.
 - [x] Teams setup in the Admin UI and operator guide names the official Teams CLI install/login
       flow, the exact `/api/teams/messages` event endpoint, the app-creation command, emitted
-      credential mapping, and the generated Teams install link.
+      credential mapping, and the generated Teams install link. Documentation checked against CLI
+      3.0.3: `login --device-code`, `status` (no `--verbose`), and positional app ID for `app update`.
+- [ ] MANUAL (Teams CLI onboarding; Claude AND Codex): use a tenant with custom-app upload enabled,
+      a target gateway with public HTTPS, one approved Teams test user, a personal chat and a test
+      team/channel. Follow `docs/PLATFORMS.md`: device login completes in the same live process,
+      status identifies the intended tenant, register/install the app, and save credentials only
+      in the target gateway's Settings. Select Claude for the test conversations and send
+      `Reply with TEAMS_OK` in the personal chat and `@<bot-name> Reply with TEAMS_OK` in the channel;
+      repeat with Codex selected in admin Settings. Pass only if both engines return `TEAMS_OK`,
+      channel answers thread correctly, and no client secret appears in chat. Record CLI version,
+      target endpoint, engine and observed replies privately. This live case remains unexecuted.
 - [x] The shared name directory drops a name two people answer to, and a single-word key that is
       several people's first name, while keeping the full names — on every platform.
 - [ ] MANUAL (Google Workspace): a Chat app with a Pub/Sub connection delivers a mentioned space
@@ -1588,6 +1598,22 @@ structural invariants are automated; rendered navigation and feature claims also
       restarts only after a clear observation, cancels at the five-minute deadline, coalesces
       concurrent restart requests, and exposes waiting/cancelled state to the Admin UI.
       → `restart-coordinator.test.js`, `run-api.test.js`.
+- [x] Restart choice regression (engine-independent UI/API/coordinator fixtures): Settings opens
+      Wait until idle / Force restart / Cancel; Enter defaults to Wait, focused Force works, Escape
+      cancels without a request. API requires authentication and CSRF and rejects nonboolean force.
+      Busy force skips waiting; upgrading an existing wait keeps the same request id and wakes its
+      poll, including a slow notification. Forced shutdown marks interrupted work, sweeps engines,
+      and uses the systemd restart exit code. → `restart-choice.test.js`, `run-api.test.js`,
+      `restart-coordinator.test.js`, `runtime-lifecycle.test.js`.
+- [ ] Live restart choice acceptance (repeat separately with Claude and Codex in a disposable
+      container-backed gateway managed by a user systemd unit with `Restart=on-failure`): start an
+      engine turn with prompt “Run sleep 120, then reply finished”; while its process is active,
+      open Settings → System → Restart daemon. Cancel must leave the daemon instance unchanged.
+      Choose Wait: status must show waiting and the same instance; choose Restart again then Force:
+      the instance must change promptly, old engine processes must disappear, and the interrupted
+      turn must recover on boot in the same thread. Repeat Wait alone: completion precedes restart.
+      Pass only if both engines meet every observation. Not executed for this change; private QA
+      registry records also pending because the personal Airtable connection is unavailable.
 - [ ] When the job finishes, the thread shows a "🔔 … finished — continuing…" notice and then the
       agent's continuation, with prior context intact (same session resumed). → bg_start/bg_finish in `logs/`.
 - [ ] A failing/non-zero-exit job still continues, with the output tail handed to the agent.
