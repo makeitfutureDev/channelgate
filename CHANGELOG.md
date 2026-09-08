@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Resolve optional Codex MCP launch definitions from effective configuration when native tool
+  status omits them, while rejecting credential-bearing transports and retaining fail-closed
+  selection when no safe definition is available.
+
 - Keep existence/access-only requests within their requested scope: both engines receive
   per-attempt guidance to use non-mutating metadata, avoid content reads and temporary write
   probes, and leave unverified write access explicit.

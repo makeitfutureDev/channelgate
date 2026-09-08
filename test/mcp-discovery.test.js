@@ -238,3 +238,62 @@ test("channel MCP helpers preserve the engine-specific persisted selection shape
     },
   );
 });
+
+test("Codex status inventory resolves launch definitions from effective config without copying credentials", async () => {
+  const requests = [];
+  const child = new EventEmitter();
+  child.stdout = new PassThrough(); child.stderr = new PassThrough();
+  child.kill = () => child.emit("close", 0);
+  const configured = {
+    echo: { command: "node", args: ["/workspace/echo.mjs"], enabled: true, environment_id: "local" },
+    http: { url: "https://mcp.example.test/rpc" },
+    secret: { url: "https://mcp.example.test/rpc", http_headers: { Authorization: "secret-canary" } },
+    inherited: { command: "node", args: ["inherited.js"], env_vars: ["PRIVATE_TOKEN"] },
+    absent: { command: "must-not-add" },
+  };
+  child.stdin = { end() {}, write(chunk) {
+    const msg = JSON.parse(String(chunk)); requests.push(msg);
+    if (!msg.id) return true;
+    const result = msg.method === "initialize" ? {} : msg.method === "config/read"
+      ? { config: { mcp_servers: configured, unrelated_secret: "never-expose" }, layers: null }
+      : { data: [{ name: "codex_apps", tools: { "github.read": {} } }, ...["echo", "http", "secret", "inherited"].map(name => ({ name, tools: { ping: {} } }))], nextCursor: null };
+    queueMicrotask(() => child.stdout.write(JSON.stringify({ id: msg.id, result }) + "\n"));
+    return true;
+  } };
+  const result = await discovery.listCodexRuntimeMcps({ spawnImpl: () => child, timeoutMs: 250 });
+  assert.deepEqual(result.find(x => x.id === "echo").definition, { transport: "stdio", command: "node", args: ["/workspace/echo.mjs"] });
+  assert.deepEqual(result.find(x => x.id === "http").definition, { transport: "http", url: "https://mcp.example.test/rpc" });
+  assert.equal(result.find(x => x.id === "secret").definition, undefined);
+  assert.equal(result.find(x => x.id === "inherited").definition, undefined);
+  assert.equal(result.some(x => x.id === "absent"), false);
+  assert.doesNotMatch(JSON.stringify(result), /secret-canary|PRIVATE_TOKEN|never-expose|http_headers/);
+  assert.deepEqual(requests.find(x => x.method === "config/read").params, { includeLayers: false });
+  const policy = discovery.codexMcpPolicyFor(result, [{ kind: "server", id: "echo" }]);
+  assert.deepEqual(policy.servers.find(x => x.name === "echo"), { name: "echo", enabled: true, definition: { transport: "stdio", command: "node", args: ["/workspace/echo.mjs"] } });
+});
+
+test("Codex configured transport rejects auth-bearing effective configuration and unsafe shadowing", () => {
+  for (const credentials of [
+    { http_headers: { Authorization: "private" } }, { env_http_headers: { Authorization: "TOKEN" } },
+    { env_vars: ["TOKEN"] }, { bearer_token_env_var: "TOKEN" }, { bearer_token: "private" },
+    { http_headers_helper: "/host/credential-helper" },
+  ]) assert.equal(discovery.safeCodexMcpDefinition({ url: "https://example.test/mcp", ...credentials }), null);
+  const result = discovery.catalogFromCodexStatus([{ name: "echo", command: "node" }], { echo: { command: "node", env: { TOKEN: "private" } } });
+  assert.equal(result[0].definition, undefined);
+  const inherited = discovery.catalogFromCodexStatus([{ name: "echo" }], Object.create({ echo: { command: "must-not-copy" } }));
+  assert.equal(inherited[0].definition, undefined);
+});
+
+test("unsupported effective config read preserves app discovery and unresolved servers", async () => {
+  const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+  child.kill = () => child.emit("close", 0);
+  child.stdin = { end() {}, write(chunk) {
+    const msg = JSON.parse(String(chunk)); if (!msg.id) return true;
+    const reply = msg.method === "config/read" ? { error: { message: "Method not found" } }
+      : { result: msg.method === "initialize" ? {} : { data: [{ name: "echo", tools: {} }, { name: "codex_apps", tools: { "github.read": {} } }], nextCursor: null } };
+    queueMicrotask(() => child.stdout.write(JSON.stringify({ id: msg.id, ...reply }) + "\n")); return true;
+  } };
+  const result = await discovery.listCodexRuntimeMcps({ spawnImpl: () => child, timeoutMs: 250 });
+  assert.deepEqual(result.map(x => x.id), ["echo", "github"]);
+  assert.equal(result[0].definition, undefined);
+});

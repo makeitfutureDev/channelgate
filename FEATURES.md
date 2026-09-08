@@ -2798,3 +2798,12 @@ CLI logins and provider sessions stay unchanged. A selected personal skill that 
 materialized fails with its name before engine launch. This provides per-run discovery isolation
 within the channel's existing shared container boundary, not separate filesystem identities for
 people admitted to the same channel.
+
+### Optional Codex MCP launch definitions (2026-09-08)
+
+Optional Codex servers discovered through native tool status are joined by exact server name to
+`config/read` effective MCP configuration in the same metadata-only app-server session. This carries
+safe command/arguments or URL into the per-run allowlist even though the engine ignores user config.
+Configuration-only servers are never added to the runtime inventory. Environment/header credentials
+and auth dependencies are rejected; an unsupported config read preserves app discovery but leaves
+unlaunchable servers fail-closed. Claude discovery is unchanged.

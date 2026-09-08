@@ -69,9 +69,15 @@ function codexGroupLabel(prefix) {
 // needs a complete, credential-free transport definition in the per-run policy; an `enabled=true`
 // bit by itself can never recreate it. Anything carrying headers/env/userinfo fails closed.
 export function safeCodexMcpDefinition(server = {}) {
+  if (!server || typeof server !== "object") return null;
   const source = server.definition || server.transport || server;
-  if (source.headers && Object.keys(source.headers).length) return null;
-  if (source.env && Object.keys(source.env).length) return null;
+  if (!source || typeof source !== "object") return null;
+  // Effective config uses different names from transport/status responses. Never relay host
+  // credentials or silently drop auth dependencies when reconstructing a container server.
+  for (const key of ["headers", "env", "http_headers", "env_http_headers", "env_vars"]) {
+    if (source[key] && Object.keys(source[key]).length) return null;
+  }
+  if (source.bearer_token_env_var || source.bearer_token || source.http_headers_helper) return null;
   const url = String(source.url || source.httpUrl || "").trim();
   if (url) {
     try { if (new URL(url).username || new URL(url).password) return null; } catch { return null; }
@@ -153,7 +159,7 @@ function parseClaude(text) {
 // Turn app-server's status response into the small, secret-free catalog used by the gateway.
 // Tool schemas, auth details, and resources are discarded; only safe connector IDs needed for
 // launch policy are retained from tool metadata, and they are never persisted in channel config.
-export function catalogFromCodexStatus(servers = []) {
+export function catalogFromCodexStatus(servers = [], configuredServers = {}) {
   const entries = [];
   for (const server of Array.isArray(servers) ? servers : []) {
     const serverName = String(server?.name || "").trim();
@@ -199,7 +205,9 @@ export function catalogFromCodexStatus(servers = []) {
       transport: "runtime",
       target: serverName,
       namespace: namespaceFor(serverName),
-      definition: safeCodexMcpDefinition(server) || undefined,
+      definition: safeCodexMcpDefinition(
+        configuredServers && Object.hasOwn(configuredServers, serverName) ? configuredServers[serverName] : server,
+      ) || undefined,
     });
   }
   return entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -309,7 +317,22 @@ export async function listCodexRuntimeMcps({
         cursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
         if (!cursor) break;
       }
-      return catalogFromCodexStatus(servers);
+      // Status lists runtime tools/auth, not the command/url needed by --ignore-user-config.
+      // Read effective layered config in this same metadata-only session and join by exact name;
+      // config-only entries must never become discovered/allowed capabilities.
+      let configuredServers = {};
+      if (servers.some((server) => server?.name && server.name !== "codex_apps" &&
+          !BUILTIN_SERVER_NAMES.has(server.name) && !safeCodexMcpDefinition(server))) {
+        try {
+          const effective = await request("config/read", { includeLayers: false });
+          const configured = effective?.config?.mcp_servers;
+          if (configured && typeof configured === "object" && !Array.isArray(configured)) configuredServers = configured;
+        } catch {
+          // Older app-servers can omit config/read. Keep their tool inventory, but leave missing
+          // definitions unresolved so selecting an unlaunchable server still fails closed.
+        }
+      }
+      return catalogFromCodexStatus(servers, configuredServers);
     })();
 
     const result = await Promise.race([work, failed]);
