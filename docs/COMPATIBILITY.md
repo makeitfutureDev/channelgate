@@ -1,6 +1,7 @@
 # Compatibility matrix
 
-Candidate: **0.6.0-rc.2**, prepared 2026-09-08. Stable promotion awaits full live QA.
+Next release: **0.5.1**, in development on `beta`. Stable promotion awaits full testing and
+explicit owner approval of the exact candidate.
 The component matrix below describes this candidate.
 
 ## What the GitHub checks prove

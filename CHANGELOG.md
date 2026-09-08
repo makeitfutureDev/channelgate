@@ -18,7 +18,11 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## 0.5.1 — Unreleased
+
+Next release version selected by the owner. Development continues on `beta`; full testing and
+explicit approval of the exact candidate are required before promotion to `main`. Earlier
+0.6.0 candidate tags and evidence below are retained as historical snapshots, not published releases.
 
 - Give selected optional Codex MCPs the existing 120-second remote startup budget and raise
   Claude's default initialize timeout to the same ceiling. Preserve explicit operator overrides,
@@ -76,7 +80,7 @@ product overview.
   the footer. Recompute after retries, recovery and fallback; never infer a provider model
   from an alias or an unexposed harness default.
 
-## 0.6.0-rc.2 — 2026-09-08 (release candidate)
+## 0.6.0-rc.2 — 2026-09-08 (superseded draft)
 
 Follow-up candidate for the installer findings from disposable Linux acceptance. Full live QA
 remains deferred; stable promotion is not approved.
@@ -92,7 +96,7 @@ remains deferred; stable promotion is not approved.
 - Add disposable Linux installation, encrypted backup/restore, real updater rollback and actual
   OS reboot checks; authenticated engine and chat acceptance remains a separate live gate.
 
-## 0.6.0-rc.1 — 2026-09-08 (release candidate)
+## 0.6.0-rc.1 — 2026-09-08 (superseded draft)
 
 Candidate source and build evidence for review. The GitHub Release remains a draft; the planned
 full live QA campaign is pending. This is not approval for stable-release promotion.
