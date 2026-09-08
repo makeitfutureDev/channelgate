@@ -1,5 +1,19 @@
 # ChannelGate — Features
 
+## Standalone Slack menu
+
+- `/menu` returns only one card with **Resume, Files, Secrets, Settings**, directly from the
+  daemon without starting Claude or Codex. The registered slash command is private to its caller;
+  `@agent /menu` inside a channel thread (or `/menu` in a DM message) posts the card in that thread.
+- All four controls remain available before a session exists. Resume reads the current thread's
+  session when clicked, uses its owning harness and container workspace (including per-thread
+  Clean mode), and explains when there is no session. Top-level slash commands do not guess a
+  thread. Existing file, secret and settings controls retain their authorization checks; Resume
+  is bound to the requester/channel and rechecks access and membership on click.
+- Existing Slack installations must add `/menu` from `slack-app-manifest.json` to their installed
+  app configuration. The typed `@agent /menu` route needs no Slack app reconfiguration.
+
+
 - **Current network policy accompanies every attempt:** fresh, resumed, recovered and fallback
   prompts state the resolved network switch, including Clean runs. An off switch instructs the
   engine to explain the current restriction rather than present a cached response as a new request.

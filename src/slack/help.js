@@ -2,7 +2,7 @@
 // from app.js so its important workflows can be regression-tested without wiring a Slack app.
 export const HELP_TEXT =
   "*How to use me*\n" +
-  "In a DM, just send your request. In a channel, write `@agent your request`; keep follow-ups in the thread and @mention me again there. For typed commands in a channel, use forms such as `@agent /help`. The registered `/files`, `/secrets`, `/status`, and `/stop` Slack commands run at conversation top level without a mention.\n\n" +
+  "In a DM, just send your request. In a channel, write `@agent your request`; keep follow-ups in the thread and @mention me again there. For typed commands in a channel, use forms such as `@agent /help`. The registered `/menu`, `/files`, `/secrets`, `/status`, and `/stop` Slack commands run at conversation top level without a mention.\n\n" +
   "• *Act on a message:* react 🤖 to a new top-level message or a message in one of my threads. In another bot's thread, @mention me instead.\n" +
   "• *Voice prompts:* attach a voice clip. In channels, @mention me or react 🤖 to start; DMs keep their normal behavior. When enabled and installed, audio is transcribed locally with Whisper large-v3-turbo; otherwise I use a completed Slack transcript. If none exists, click *Generate transcript* and trigger me again. Typed text stays as instructions, and raw audio is never sent to Claude or Codex.\n" +
   "• *Control a live run:* in a channel thread send `@agent stop` (a bare `stop` needs no mention only in a DM) or react 🛑 to stop just that run. `/stop` at top level stops every active run in this channel. If you send another message while I work, choose *Steer Conversation*, *Add to Queue*, or *Cancel Request*; the choice card disappears after a valid selection. `/next <message>` queues directly without asking.\n" +
@@ -15,6 +15,7 @@ export const HELP_TEXT =
   "• *Long-running work:* ask me to run it in the background. In an Auto/Full-access channel, the gateway keeps the job alive after the current turn and reports back in this thread when it finishes.\n" +
   "• *Useful checks:* `/status` shows active runs, background jobs, and schedules; `/pending` shows threads waiting on your decision; `/model` changes Claude/Codex, model, and effort; `/mode` shows the channel's tool-access mode.\n\n" +
   "*Commands* (this thread/channel)\n" +
+  "• `/menu` — show only the Resume, Files, Secrets, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
   "• `/help` — show this guide\n" +
   "• `/clear` — start a fresh session in this thread\n" +
   "• `/delete` — delete this thread's messages (admin; irreversible—everyone's if an admin user token is set in Settings, otherwise mine only)\n" +
