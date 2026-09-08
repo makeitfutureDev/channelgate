@@ -226,8 +226,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Only admins can see or manage Cloud MCP capabilities, independently for Claude and Codex;
   Skills labels each source as Skill Template, Channel Skills, Channel Skills Including Template,
   Org Skills, or All Shared Skills, with directions to the corresponding controls. Org Skills
-  explicitly require admins to add/remove them in the admin UI; combined lists are automatic
-  summaries. Skills supports direct grants and live template assignment; and Secrets opens the established
+  explicitly require admins to add/remove them in the admin UI; both combined lists explicitly
+  explain that their summaries update automatically when their source groups change. Skills
+  supports direct grants and live template assignment; and Secrets opens the established
   add/update/remove manager. Inherited and template grants are labelled and cannot be removed from
   the wrong tier. Credential forms never prefill stored values, and all views expose only
   configured/masked state. Opening it, navigating, submitting, and every individual mutation

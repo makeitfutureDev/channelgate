@@ -776,7 +776,8 @@ a pass.
       Verify Skill Template, Channel Skills, Channel Skills Including Template, Org Skills, and
       All Shared Skills are shown with configuration guidance. Manage Channel Skills and Change
       Template open the existing editors. Org Skills says only admins can add/remove them in
-      admin UI → Skills, and combined groups explain they update automatically. Duplicate skills
+      admin UI → Skills, and both combined groups each explain they update automatically.
+      All Shared Skills also directs users to configure the source groups above. Duplicate skills
       appear once in All Shared Skills. This is a copy-only change; grants and permissions remain
       unchanged. Live Slack rendering pending.
 
