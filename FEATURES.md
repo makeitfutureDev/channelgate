@@ -1,5 +1,12 @@
 # ChannelGate — Features
 
+- **Accurate Composio ownership guidance:** logical personal/agent identities describe routing,
+  not proof of a connected service owner's identity or universal sharing across channels. Managed
+  instructions and each attempt's identity preamble preserve explicit personal/shared routing and
+  the ambiguity stop even when both connections reach the same service owner. The guide explains
+  channel-specific identities and optional organization-default reuse without exposing credentials.
+  → TEST-PLAN: Composio ownership and channel scope.
+
 - **Truthful completion and visible restart recovery:** explicit Claude/Codex execution failures
   remain failures even after partial output; missing terminal completion cannot masquerade as a
   finished answer. Partial diagnostics and spent usage are retained, and ambiguous failed work is

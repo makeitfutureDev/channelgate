@@ -217,7 +217,10 @@ test("the managed block carries the hard rules a run must never get wrong", () =
     assert.match(block, /"My X" is the requester's X/);
     assert.match(block, /served ONLY by `composio-user`/);
     assert.match(block, /do not read\n?\s*`composio-agent` to answer it/);
-    assert.match(block, /holds OTHER people's/);
+    assert.match(block, /may expose someone else's data/);
+    assert.doesNotMatch(block, /holds OTHER people's|never the requester's/);
+    assert.match(block, /Logical identities do not prove who owns/);
+    assert.match(block, /not necessarily shared across channels/);
     // …and the mirror direction: "your X" must not be answered from the requester's identity.
     assert.match(block, /"the agent's X" never\n?\s*touches `composio-user`/);
 

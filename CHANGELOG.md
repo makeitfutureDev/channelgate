@@ -24,6 +24,10 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Correct Composio guidance that assumed the agent identity always belonged to other people or
+  was shared across every channel. Preserve account selection and no-substitution rules, including
+  when personal and agent connections reach the same underlying service owner.
+
 - Fix missing run identities in flat chats. Group-chat messages start separate sessions; quoting
   user or bot messages resumes the original session, including after restart. Teams quotes support
   both current entities and legacy Reply markup; personal chats remain continuous.
