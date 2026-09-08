@@ -505,7 +505,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   bare hostname, which is normalized to HTTPS. When a public URL is configured, the single *Upload files / folder* button
   opens a one-time, user-bound browser session for up to 200 files / 250 MB total and preserves
   nested folder paths (browser pickers omit empty folders). Selected files travel directly from
-  the browser to the gateway folder and are never staged in Slack file storage. These flows
+  the browser to the gateway folder and are never staged in Slack file storage. Editor/upload
+  sessions open directly from Slack on the first cross-site navigation: explicit SameSite=Lax
+  cookies support the top-level GET redirect, with HttpOnly, HTTPS Secure, per-session path and
+  expiry unchanged. Cross-site POSTs do not receive those cookies; every write still requires its
+  session's CSRF header and current channel authorization. These flows
   refuse protected/traversal names, never overwrite collisions, and audit every result. Read-only
   mode hides write controls and Full remains admin-only. With a Public URL configured, every file
   preview also offers *Download*: a requester-bound, 10-minute, single-use URL rechecks channel

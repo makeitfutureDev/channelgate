@@ -24,6 +24,10 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Fix the first browser editor/upload opening from Slack: narrowly scoped SameSite=Lax session
+  cookies survive the cross-site GET redirect while preserving CSRF, authorization and cookie
+  confidentiality protections.
+
 - Correct the bundled skill-authoring workflow: updates and change proposals accept only changed
   files while retaining omitted files; complete packages are required for initial creation.
 
