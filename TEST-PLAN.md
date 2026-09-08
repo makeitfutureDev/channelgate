@@ -5026,3 +5026,20 @@ acceptance gates; no production restart or external message was performed by the
 - Engine-independent: this change renders and saves existing admin configuration contracts; no
   engine executes during the browser cases. Existing dual-engine grant/materialization release
   gates remain in Skills platform and Real project skill synchronization above.
+
+### Compact skill rows and matching panels (2026-09-08)
+
+- Run `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test
+  test/skill-assignment-browser.test.js`. The compact fixture mounts the real picker/CSS with
+  80 skills, 30 selected, different display names/slugs, one named source and long descriptions
+  containing literal markup. Screenshots use optional `CG_UI_SCREENSHOTS`.
+- At 1440×900, both panels must have identical fixed heights, collapsed rows must be at most
+  42px, and name/slug/source must share one line. Descriptions must initially be hidden. Click a
+  skill, verify its full description and metadata, then press Enter to collapse it. Neither action
+  changes selection; descriptions render as escaped text. Expanded details never grow a panel.
+- Scroll Add skills down, add skill-45, and verify selection changes once, details stay collapsed,
+  and list scroll position is retained. At 390×844 both panels retain equal heights, stack without
+  horizontal overflow, and skill details remain accessible. Source moves into expanded details.
+- The existing conversation/template browser case continues to verify inherited locks, drafts,
+  filters, save/reload and unavailable-template handling. This is engine-independent presentation;
+  no engine execution or grant-resolution behavior changes.
