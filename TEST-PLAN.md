@@ -4191,6 +4191,19 @@ Manual checks for the daemon-level behavior:
 - [ ] Live Claude + Codex: search for a discoverable skill, grant/revoke it in the channel, change
       the template, and confirm a mandatory skill materializes on the next turn in both harnesses.
 
+### Update regression path isolation
+
+- Automated fixture: supply conflicting canonical/legacy DIR and DB selectors pointing at a
+  disposable sentinel runtime, then run the maintenance regression subprocesses. Pass only when
+  the tests succeed in their own fixtures and every sentinel file/database remains unchanged.
+- Aggregate-runner fixture: run a copy of `scripts/run-tests.mjs` with inherited runtime,
+  database, workspace, and test-scratch selectors. Its child must receive none of those selectors,
+  retain unrelated environment/CLI flags, and use fixture-owned paths. Direct `node --test`
+  invocation remains supported by explicit path isolation inside the maintenance tests.
+- Reproduce with `node --test test/operations-readiness.test.js test/test-runner-isolation.test.js`
+  and `npm run test:coverage`. These are engine-independent test-harness checks; they never invoke
+  a real engine or modify a deployed service.
+
 ### Managed update recovery and eligibility
 
 - [x] Automated: `test/update-entitlement.test.js`, `test/run-api.test.js`, and
