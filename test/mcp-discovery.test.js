@@ -276,6 +276,7 @@ test("Codex configured transport rejects auth-bearing effective configuration an
   for (const credentials of [
     { http_headers: { Authorization: "private" } }, { env_http_headers: { Authorization: "TOKEN" } },
     { env_vars: ["TOKEN"] }, { bearer_token_env_var: "TOKEN" }, { bearer_token: "private" },
+    { http_headers_helper: "/host/credential-helper" },
   ]) assert.equal(discovery.safeCodexMcpDefinition({ url: "https://example.test/mcp", ...credentials }), null);
   const result = discovery.catalogFromCodexStatus([{ name: "echo", command: "node" }], { echo: { command: "node", env: { TOKEN: "private" } } });
   assert.equal(result[0].definition, undefined);

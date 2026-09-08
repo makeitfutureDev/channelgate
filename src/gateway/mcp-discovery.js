@@ -77,7 +77,7 @@ export function safeCodexMcpDefinition(server = {}) {
   for (const key of ["headers", "env", "http_headers", "env_http_headers", "env_vars"]) {
     if (source[key] && Object.keys(source[key]).length) return null;
   }
-  if (source.bearer_token_env_var || source.bearer_token) return null;
+  if (source.bearer_token_env_var || source.bearer_token || source.http_headers_helper) return null;
   const url = String(source.url || source.httpUrl || "").trim();
   if (url) {
     try { if (new URL(url).username || new URL(url).password) return null; } catch { return null; }
