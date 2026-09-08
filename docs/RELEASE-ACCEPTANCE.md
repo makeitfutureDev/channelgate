@@ -1,7 +1,7 @@
 # Release acceptance packet
 
 Status: **prepared; full live QA deferred to the planned campaign** (owner instruction,
-2026-09-08). Candidate: **0.6.0-rc.2**. These are reproducible definitions, not claimed
+2026-09-08). Next release: **0.5.1** (development on `beta`). These are reproducible definitions, not claimed
 passes. Use disposable private fixtures only. Record the actual channel IDs, host/image revision,
 engine/model versions, timestamps and evidence links when executing. No live chat/provider fixture
 was created or used during the source remediation. A separate disposable container lifecycle test
@@ -9,12 +9,14 @@ passed against the existing installed image; it does not complete the candidate/
 below. Private QA registry actions require the operator's selected personal connection. Current
 release preparation does not execute or modify that registry; existing definitions remain pending.
 
-Completed candidate evidence (2026-09-08): RR-15 passed for immutable tag `v0.6.0-rc.2`, source
+Historical evidence for the superseded draft (2026-09-08): RR-15 passed for immutable tag `v0.6.0-rc.2`, source
 `7842559b0350434a3651f66ce32e4bb74468c439`, in the
 [release workflow](https://github.com/makeitfutureDev/channelgate/actions/runs/34165366930).
 The downloaded nine subjects passed checksum and exact-source/tag/workflow attestation checks;
 all 15 layer digests and all 17 model file/link records verified against the archive. Tagged CI reported
-2,186 passes, zero failures and four explicit browser/live skips.
+2,186 passes, zero failures and four explicit browser/live skips. These results apply only to
+that historical source. The 0.5.1 candidate requires its own full checks and exact-source artifacts
+before release approval; the old files are not relabelled as 0.5.1 evidence.
 
 The [Linux lifecycle run](https://github.com/makeitfutureDev/channelgate/actions/runs/34165355246)
 and [actual guest reboot](https://github.com/makeitfutureDev/channelgate/actions/runs/34165355203)
