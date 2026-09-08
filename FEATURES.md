@@ -314,6 +314,36 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 
 ## Google Chat and Microsoft Teams transports (Beta)
 
+### Teams event and control additions (teams-ms branch; not deployed)
+
+- Native signed Bot Framework edit events (`messageUpdate` / `editMessage`) preserve message
+  session identity and require an actual bot mention outside DMs. Robot reaction additions
+  (`🤖`, `robot`, `robot_face`) act as the reactor, with normal user/channel authorization;
+  removal and unrelated reactions do nothing. Native reaction coverage is limited by Microsoft's
+  bot event delivery; reacting to arbitrary user messages requires the separate Graph feed.
+- Optional Graph subscriptions observe only configured installed conversations, fetch messages
+  using daemon-owned credentials, validate subscription/tenant/client-state/resource scope, and
+  persist event work before dispatch. Subscription renewal and restart recovery are daemon-owned.
+  When enabled, Graph owns group/channel edit/reaction dispatch while Bot Framework keeps new
+  messages, attachment delivery, and personal-chat edits/reactions. Graph events older than 24 hours
+  are ignored to prevent historical replay after deduplication retention; uninstall retires the
+  subscription and invalidates queued work. This does not grant tenant-wide observation or auto-approve any author.
+- Portable text controls provide `/help`, `/status`, `/stop` (`/cancel`), `/clear`,
+  `/model [engine] [model|default]`, and `/effort [level|default]`. Quote the original message or
+  bot reply and include the bot mention to control an existing flat group session. Unquoted
+  group commands refer to their own new session. Runtime changes use the existing channel admin
+  policy (approved personal chats retain their own runtime choices); stop/clear cannot cancel
+  another person's active or queued work unless the requester is an administrator.
+- Work in one session queues with a visible position; unrelated sessions remain independent.
+  Clear aborts active/queued work, waits for completion, and fences late session saves. Progress
+  updates at most every 30 seconds with elapsed time, last activity, and running subagents;
+  pending progress edits finish before the final answer replaces the placeholder. Interactive
+  permission escalation is not enabled by these text controls.
+- The branch's Slack parity inventory and remaining surface-specific work live in
+  `docs/TEAMS-PARITY.md`. These additions have mocked regression coverage; actual Microsoft
+  delivery, tenant consent, federated chats, and Claude/Codex live acceptance remain unexecuted.
+
+
 - Flat DMs use their qualified conversation ID as a nonempty engine session key. In flat group
   chats, each new message starts a separate session; quoting a user message, follow-up, or bot
   reply resumes its original session. Reply-to-session mappings persist across restarts and are

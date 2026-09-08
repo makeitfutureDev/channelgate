@@ -773,4 +773,17 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 24,
+    up(db) {
+      db.exec(`
+        CREATE TABLE teams_graph_subscriptions (
+          app_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          data TEXT NOT NULL,
+          PRIMARY KEY(app_id, conversation_id)
+        );
+      `);
+    },
+  },
 ];

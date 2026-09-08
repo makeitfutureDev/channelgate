@@ -1,5 +1,71 @@
 # ChannelGate — Test Plan
 
+## Teams events and portable controls — teams-ms branch only
+
+Verification on 2026-09-09: full coverage suite passed (2,404 passed, 10 skipped);
+static checks, secret scan, security coverage and production dependency audit passed.
+The skipped/live cases below remain unverified; this branch is not a release candidate.
+
+- [x] Automated, engine-independent transport/control tests:
+  `node --test test/platform-teams-events.test.js test/platform-controls.test.js test/platform-ingest.test.js`.
+  Native event fixtures use a generated RSA signing key, fake JWKS, group `19:events@thread.v2`,
+  bot `28:events-bot`, author `29:author`, and real mention entities. Require signed requests to
+  acknowledge before dispatch, duplicate revisions to run once, distinct revisions to run again,
+  forged/absent authentication to dispatch nothing, bot echoes/delete subtypes/removals/non-robot
+  reactions to be ignored, and Graph mode to suppress group/channel native revisions/reactions only (personal stays native).
+  Controls use a temporary database, approved fixture users, injected deferred engines and fake
+  connectors: same-root requests serialize, other roots run, only owner/admin stops, cancelled
+  queued requests never invoke the engine, clear rejects stale generation writes, and runtime
+  policy is enforced. Fake-clock progress must stay below one update per 30 seconds, show queue
+  position, and drain its in-flight edit before final delivery. These tests mock the engine and
+  Microsoft transport; they do not establish real event delivery or CLI execution.
+- [x] Automated Graph fixtures: `node --test test/platform-teams-graph-events.test.js
+  test/platform-teams-graph-activity.test.js test/platform-teams-event-transport.test.js
+  test/teams-event-settings.test.js`. Use fake Graph HTTP responses, scoped store and roster,
+  group `19:test@thread.v2`, author `author`, reactor `reactor`, and a fixed clock. Require
+  reactor identity, stable action IDs, edit-time gating, removed/historical reaction rejection,
+  persisted intake before dispatch, subscription renewal, callback replacement, personal-chat
+  exclusion, team GUID lookup, uninstall revocation, and strict-boolean masked settings roundtrip.
+  Advance the clock beyond seven days and refetch the same history: zero runs. Personal native
+  bot events stay enabled. Graph attachments preserve unavailable descriptors, not download grants.
+- [ ] UNEXECUTED live gate, repeat separately with Claude and Codex pinned: install the branch's
+  bot in an owned personal chat, group chat, channel, and a group containing an external fixture
+  member. Use one approved user, one unapproved user, and one administrator. Record commit,
+  engine, consent mode, conversation kind, anonymized message/session identifiers and outcomes.
+  Send `Remember EVENT_SEED_A and reply READY_A` with a genuine bot mention where required.
+  Edit the same message to `Remember EVENT_SEED_B and reply READY_B`, preserving/adding a real
+  mention. Require one authorized turn per delivered revision and the original session root.
+  Retry the identical event: no second turn. A new unquoted message must start another group
+  session; quoting the first user message or bot answer and asking `Which seed did I give you?`
+  must resume its root. A text-only `@Xavier` string without a real entity must not bypass gating.
+- [ ] UNEXECUTED live reaction gate, each engine and conversation kind above: react with robot to
+  a bot answer; require one continuation owned by the approved reactor. Try the same as the
+  unapproved fixture user; require denial and zero engine calls. Remove robot and add a different
+  reaction; require no run. Repeat with another approved reactor to establish distinct identity.
+  Test robot on a user's message with scoped Graph subscriptions enabled; require its content to
+  become the request with the reactor as author. Record native delivery limitations explicitly;
+  native bot events alone do not pass the arbitrary-user-message requirement. Test desktop and
+  mobile robot payloads. An unavailable robot picker or missing Microsoft delivery is a blocked
+  gate, not a pass and not permission to silently substitute another emoji.
+- [ ] UNEXECUTED Graph permission/recovery gate: use only owned installed fixture conversations;
+  grant documented per-conversation permissions, enable Graph mode, create subscriptions, and
+  observe renewal. Reject notifications with wrong tenant, client state, subscription, or resource
+  before dispatch. Restart after durable receipt and before execution; require recovery without
+  duplicated completed work. Verify edits/reactions delivered by both transports execute once,
+  new native messages retain attachment handling, and an unrelated conversation is never fetched.
+  Exercise revoked consent/expired subscription and require observable failure/recovery evidence.
+- [ ] UNEXECUTED live control/progress gate, both engines: in each owned session ask `Run a harmless
+  command that waits 70 seconds, then reply WAIT_DONE`. Quote its user message or placeholder with
+  another request; require a queue-position notice and no simultaneous engine turn in that root.
+  Observe elapsed/activity/subagent progress at a maximum of one periodic edit per 30 seconds.
+  Send quoted `/stop` as a different non-admin author: it must not cancel the first user's work.
+  Send quoted `/stop` as its owner: require cancellation and no queued engine start. Repeat with
+  `/clear`; require a waiting notice, completed abort, and a fresh session on the next quoted turn,
+  even if the previous engine completes late. New unquoted group `/stop` must not stop a different
+  root. Verify `/status`, `/help`, permitted `/model` and `/effort`, and rejected non-admin channel
+  runtime changes. A final answer must never be overwritten by a late progress edit.
+
+
 ## Network policy on resumed turns
 
 - [x] Automated: `node --test test/runtime-identity-preamble.test.js test/runtime-access-facts.test.js`

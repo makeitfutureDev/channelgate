@@ -69,7 +69,11 @@ export function quotedReplyId(activity) {
 }
 
 export function normalizeActivity(activity, { botId = "", fetchImpl = fetch } = {}) {
-  if (String(activity?.type || "").toLowerCase() !== "message") return null;
+  const type = String(activity?.type || "").toLowerCase();
+  const edit = type === "messageupdate" && activity.channelData?.eventType === "editMessage";
+  const reaction = type === "messagereaction" && (activity.reactionsAdded || []).some(r => isRobotReaction(r?.type));
+  if (type !== "message" && !edit && !reaction) return null;
+  if (reaction && !activity.replyToId) return null;
   const from = activity.from || {};
   // Our own echo. Bot Service delivers the bot's own messages back on some configurations, and
   // answering one is an infinite loop with a bill attached.
@@ -89,11 +93,12 @@ export function normalizeActivity(activity, { botId = "", fetchImpl = fetch } = 
     kind,
     // In a channel the user's own message is the root a reply must thread under; a 1:1 or group
     // chat is flat, so nothing is carried and replies land in the chat itself.
-    threadKey: threadKey || (kind === "channel" ? String(activity.id || "") : ""),
+    threadKey: threadKey || (kind === "channel" ? String((reaction ? activity.replyToId : activity.id) || "") : ""),
     messageId: String(activity.id || ""),
+    trigger: reaction ? "reaction" : edit ? "edit" : "message",
     // Teams SDK quoted replies carry an entity; text markup alone is not a trustworthy
     // reference. Ignore ambiguous multiple quotes and quotes explicitly marked deleted.
-    replyToId: quotedReplyId(activity),
+    replyToId: reaction ? String(activity.replyToId) : quotedReplyId(activity),
     // The Bot Framework id (`29:…`) is the one that can address a message or open a 1:1; the Entra
     // object id is the one an operator recognizes. Both are kept — `userId` is the addressable one.
     userId: String(from.id || ""),
@@ -101,7 +106,7 @@ export function normalizeActivity(activity, { botId = "", fetchImpl = fetch } = 
     // Teams does not put an email on the `from` account; a UPN needs a roster read, which the bot
     // may not be consented for. Left empty rather than guessed.
     userEmail: "",
-    text: stripMentionTags(activity.text),
+    text: reaction ? "Continue the task from this message." : stripMentionTags(activity.text),
     mentionsBot,
     attachments: normalizeAttachments(activity.attachments, fetchImpl),
     raw: {
@@ -150,4 +155,8 @@ async function fetchBytes(url, fetchImpl) {
   const res = await fetchImpl(url);
   if (!res.ok) throw new Error(`Teams attachment download failed (${res.status})`);
   return res;
+}
+
+export function isRobotReaction(value) {
+  return ["🤖", "robot", "robot_face"].includes(String(value || "").replace(/\uFE0F/g, ""));
 }

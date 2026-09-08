@@ -3013,6 +3013,7 @@ function readSettingsForm() {
     ...(tokenValue(document.getElementById("set-teams-secret")) ? { teamsAppPassword: tokenValue(document.getElementById("set-teams-secret")) } : {}),
     ...(document.getElementById("clear-teams-secret").classList.contains("armed") ? { clearTeamsAppPassword: true } : {}),
     teamsTenantId: document.getElementById("set-teams-tenant").value,
+    teamsAllMessageEvents: document.getElementById("set-teams-all-message-events").checked,
     ...(tokenValue(document.getElementById("set-license-key")) ? { licenseKey: tokenValue(document.getElementById("set-license-key")) } : {}),
     ...(document.getElementById("clear-license-key").classList.contains("armed") ? { clearLicenseKey: true } : {}),
     platformUrl: document.getElementById("set-platform-url").value,
@@ -3121,6 +3122,7 @@ function paintSettings(s) {
   // value is still fetchable through /api/secrets/reveal for an admin who needs it back.
   document.getElementById("set-teams-app").value = s.teams?.appId || "";
   document.getElementById("set-teams-tenant").value = s.teams?.tenantId || "";
+  document.getElementById("set-teams-all-message-events").checked = s.teams?.allMessageEvents === true;
   document.getElementById("state-teams-secret").textContent = tokenState(s.teams?.hasAppPassword, s.teams?.appPasswordLast4);
   attachReveal(document.getElementById("set-teams-secret"), { has: Boolean(s.teams?.hasAppPassword), last4: s.teams?.appPasswordLast4 || "", fetch: revealSecret("settings", "teamsAppPassword") });
   const teamsEndpoint = s.teams?.messagingEndpoint || "set a Public URL first";

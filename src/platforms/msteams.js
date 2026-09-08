@@ -43,6 +43,7 @@ export const teamsAdapter = validatePlatformAdapter({
     ephemeral: false,
     deleteMessage: true,
     reactions: true,
+    reactionTriggers: true,
     maxMessageChars: MAX_TEAMS_MESSAGE_CHARS,
     markdown: "subset",
     markdownTables: false,

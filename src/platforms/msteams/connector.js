@@ -94,7 +94,7 @@ export function createTeamsConnector({ auth, capabilities, api = null, botId = "
     // into a ";messageid=" suffix.
     threadFor,
     // Only channels have reply chains; 1:1 and group chats are flat.
-    supportsThreads: (conversationId) => String(toConversationId(conversationId)).includes("@thread."),
+    supportsThreads: (conversationId) => /@thread\.(?:tacv2|skype)(?:;|$)/.test(String(toConversationId(conversationId))),
     directory: (conversationId) => directoryFor(conversationId),
   });
 }

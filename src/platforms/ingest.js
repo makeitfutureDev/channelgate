@@ -1,17 +1,6 @@
 // From a normalized inbound message to an answered turn, for platforms that are not Slack.
-//
-// The Slack path (src/slack/message-pipeline.js) does a great deal more than this: Block Kit
-// progress cards, approval buttons, busy-thread steering, the file explorer, in-thread slash
-// commands. None of that is portable, and pretending otherwise would mean either a Slack-shaped
-// façade over surfaces that cannot honour it, or a rewrite of 1400 lines before either new platform
-// could say a word. So this is the HONEST subset — gate, authorize, register, run, answer — built
-// on the same platform-neutral pieces the Slack pipeline uses (`runMessage`, the channel store,
-// `ensureChannelFolder`, the usage ledger), so nothing here is a second implementation of a rule.
-//
-// What is deliberately NOT here yet, and must not be silently faked: interactive approvals (a
-// non-admin channel's permission prompt has no button to press on these surfaces), live progress
-// rendering, and stop/steer controls. Each is a capability question the adapter already answers, and
-// each gets its own slice.
+// Text controls, per-session serialization and conservative progress edits use the same gateway
+// policy/stores as Slack. Interactive approval escalation remains deliberately unavailable here.
 import { upsertChannelEntry, getChannelMeta, saveChannelMeta, defaultChannelMeta, getUser, setUser, isAdmin, isApproved } from "../config/store.js";
 import { getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges } from "../config/settings.js";
 import { ensureChannelFolder } from "../gateway/folders.js";
@@ -19,7 +8,7 @@ import { isAuthorized } from "../gateway/modes.js";
 import { runMessage } from "../gateway/run.js";
 import { createUsageBank } from "../gateway/usage.js";
 import { logEvent } from "../util/logger.js";
-import { platformOr } from "./registry.js";
+import { platformOr, platformSupports } from "./registry.js";
 import { postFormatted } from "./connector.js";
 import { sessionKeyForMessage, rememberReplySession } from "./reply-sessions.js";
 import { saveInboundAttachments } from "./attachments.js";
@@ -27,6 +16,8 @@ import { saveInboundAttachments } from "./attachments.js";
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
 // the mapping is explicit rather than a passthrough of whatever a platform calls things.
+import { createConversationControls } from "./conversation-controls.js";
+
 const STORE_TYPE = { dm: "im", group: "mpim", channel: "channel" };
 
 // Register (or refresh) the conversation and make sure its gated folder exists. The platform is
@@ -62,6 +53,7 @@ async function ensureUserKnown(message) {
 export function createIngest({ connector, log = console, run = runMessage } = {}) {
   const adapter = platformOr(connector?.platform);
   const bankUsage = createUsageBank();
+  const controls = createConversationControls();
 
   return async function ingest(message) {
     if (message.platform !== adapter.id) throw new Error(`${adapter.id} ingest received a ${message.platform} message`);
@@ -74,7 +66,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
     // else must say so. Both surfaces additionally only DELIVER mentioned messages by default
     // (`seesUnmentionedMessages: false`), so this is belt and braces — and it stays correct if an
     // operator grants Teams RSC or Chat's space-wide events later.
-    if (!message.isDM && !message.mentionsBot) return { skipped: "not-mentioned" };
+    if (!message.isDM && !message.mentionsBot && !(message.trigger === "reaction" && platformSupports(adapter.id, "reactionTriggers"))) return { skipped: "not-mentioned" };
 
     const { entry, meta } = await ensureConversation(message);
     await ensureUserKnown(message);
@@ -99,6 +91,9 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
       }
     };
 
+    const reply = async (text) => deliver(connector, message, null, text, rememberReply);
+    if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply })) return { command: true };
+    return controls.execute({ message, sessionKey, queued: reply, work: async (signal) => {
     // Attachments land in the channel folder, exactly where the Slack path puts them, so the model
     // reads them with the same tool and the same confinement.
     const { paths, skipped } = await saveInboundAttachments(message, { slug: entry.slug, meta, log });
@@ -118,6 +113,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
       log.warn?.(`[${adapter.id}] placeholder post failed: ${err?.message || err}`);
     }
 
+    const progress = createConversationProgress({ connector, message, placeholder, adapter, log });
     let result;
     try {
       result = await run({
@@ -127,6 +123,9 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
         // Session roots for flat chats must never become native reply addresses.
         threadKey: sessionKey,
         attachments: paths,
+        signal,
+        onDelta: progress.activity,
+        onEvent: progress.event,
         progressReport: false,
         // Not `slack_foreground`: that origin is what permits escalation to dangerous permissions,
         // and it means "a watched, Slack-authenticated turn". These turns are watched and
@@ -136,10 +135,13 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
       });
     } catch (err) {
       log.error?.(`[${adapter.id}] run failed in ${entry.slug}: ${err?.message || err}`);
-      await deliver(connector, message, placeholder, `⚠️ ${err?.message || err}`, rememberReply);
+      await progress.stop();
+      await deliver(connector, message, placeholder, signal.aborted ? "Stopped." : `⚠️ ${err?.message || err}`, rememberReply);
       return { error: err };
     }
 
+    await progress.stop();
+    if (signal.aborted) { await deliver(connector, message, placeholder, "Stopped.", rememberReply); return { skipped: "cancelled" }; }
     await bankUsage({ channelId: message.conversationId, slug: entry.slug, authorId: message.userId, engine: result.engine, taskKind: "interactive", result });
 
     let text = String(result.content || "").trim() || "_(no output)_";
@@ -148,6 +150,7 @@ export function createIngest({ connector, log = console, run = runMessage } = {}
     }
     await deliver(connector, message, placeholder, text, rememberReply);
     return { result };
+    } });
   };
 }
 
@@ -188,4 +191,41 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
     formatted: { chunks },
     onPosted: rememberReply,
   });
+}
+
+// Progress contains state only, never model/tool payloads. At most one periodic update per
+// 30 seconds, with in-flight edits drained before the final answer to prevent stale overwrites.
+export function createConversationProgress({ connector, message, placeholder, adapter, log = console, intervalMs = 30000, now = Date.now }) {
+  const started = now();
+  let lastActivity = started;
+  let state = 'Working';
+  let pending = Promise.resolve();
+  let updating = false;
+  let stopped = false;
+  const agents = new Set();
+  const tick = () => {
+    if (stopped || updating) return;
+    const text = `${state} — ${Math.floor((now() - started) / 1000)}s elapsed; last activity ${Math.floor((now() - lastActivity) / 1000)}s ago; ${agents.size} subagent(s) running. Still connected.`;
+    updating = true;
+    pending = Promise.resolve().then(() => placeholder?.messageId && adapter.capabilities.messageEdit
+      ? connector.edit({ conversationId: placeholder.conversationId || message.rawConversationId, messageId: placeholder.messageId, text })
+      : connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey, text }))
+      .catch((err) => log.warn?.(`[${adapter.id}] progress update failed: ${err?.message || err}`))
+      .finally(() => { updating = false; });
+  };
+  const timer = setInterval(tick, Math.max(30000, intervalMs));
+  timer.unref?.();
+  return {
+    activity() { lastActivity = now(); state = 'Working'; },
+    event(event) {
+      if (event?.kind === 'agent_activity') {
+        const key = String(event.id || event.name || 'agent');
+        if (event.status === 'running') agents.add(key); else agents.delete(key);
+      }
+      if (event?.kind === 'run_queued') state = `Waiting for a gateway run slot (position ${Number(event.position) || 1})`;
+      else if (event?.kind === 'notice') state = 'Working; waiting for the engine';
+      else { lastActivity = now(); state = 'Working'; }
+    },
+    async stop() { stopped = true; clearInterval(timer); await pending; },
+  };
 }

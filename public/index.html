@@ -484,6 +484,8 @@
                     <span>Tenant ID (blank = multi-tenant bot)</span>
                     <input id="set-teams-tenant" type="text" placeholder="botframework.com" />
                   </label>
+                  <label class="check"><input id="set-teams-all-message-events" type="checkbox" /> Observe edits and robot reactions on all messages (experimental)</label>
+                  <p class="desc">Off by default. Requires application RSC consent for <code>ChatMessage.Read.Chat</code> and <code>ChannelMessage.Read.Group</code> in the Teams app manifest, then app update/reinstallation in each intended conversation. Graph subscriptions start after an installed conversation sends an activity; this is not a tenant-wide message feed. Chat subscriptions use Microsoft Graph beta. Keep both <code>/api/teams/messages</code> and <code>/api/teams/notifications</code> reachable at the Public URL. Save, then reconnect Teams to apply. Normal messages still require a mention outside personal chats; only the robot reaction activates a message without one.</p>
                   <p class="desc">Microsoft event endpoint: <code id="teams-endpoint">set a Public URL first</code></p>
                   <div class="tok-foot">
                     <button type="button" class="clear-tok" id="teams-connect">Connect</button>

@@ -191,6 +191,7 @@ export function createSettingsRouter({
       if (typeof body.teamsAppPassword === "string" && body.teamsAppPassword) patch.teamsAppPassword = body.teamsAppPassword.trim();
       if (body.clearTeamsAppPassword === true) patch.teamsAppPassword = "";
       if (typeof body.teamsTenantId === "string") patch.teamsTenantId = body.teamsTenantId.trim();
+      if (typeof body.teamsAllMessageEvents === "boolean") patch.teamsAllMessageEvents = body.teamsAllMessageEvents;
       if (typeof body.sessionKeepalive === "string") patch.sessionKeepalive = body.sessionKeepalive.trim();
       // Mode selection and credentials are deliberately independent: changing the mode never
       // clears either the existing personal/channel/org tokens or this organization SDK key.

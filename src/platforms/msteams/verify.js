@@ -129,6 +129,6 @@ export async function verifyTeamsRequest({ authorization, appId, serviceUrl = ""
 // carry a list of message identifiers.
 export function activityFingerprint(activity) {
   return createHash("sha256")
-    .update(`${activity?.id || ""}|${activity?.conversation?.id || ""}|${activity?.timestamp || ""}`)
+    .update(JSON.stringify([activity?.type, activity?.id, activity?.conversation?.id, activity?.timestamp, activity?.from?.id, activity?.text, activity?.entities, activity?.reactionsAdded, activity?.reactionsRemoved, activity?.channelData?.eventType, activity?.replyToId, activity?.attachments]))
     .digest("hex");
 }

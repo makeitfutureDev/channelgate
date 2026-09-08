@@ -7,6 +7,7 @@
 const LOGIN_HOST = "https://login.microsoftonline.com";
 // The audience every Bot Framework connector call is issued against.
 export const BOT_SCOPE = "https://api.botframework.com/.default";
+export const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
 // A multi-tenant bot authenticates against the shared Bot Framework tenant; a single-tenant bot
 // against its own directory. Operators paste whichever their app registration uses.
 export const MULTI_TENANT = "botframework.com";
@@ -16,7 +17,8 @@ const EXPIRY_MARGIN_MS = 60_000;
 // typo or an attempt to redirect our client credentials at an attacker-controlled STS.
 const TENANT_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,120}$/;
 
-export function createTeamsAuth({ clientId, clientSecret, tenantId = MULTI_TENANT, fetchImpl = fetch, now = Date.now } = {}) {
+export function createTeamsAuth({ clientId, clientSecret, tenantId = MULTI_TENANT, scope = BOT_SCOPE, fetchImpl = fetch, now = Date.now } = {}) {
+  if (![BOT_SCOPE, GRAPH_SCOPE].includes(scope)) throw new Error("Unsupported Teams token scope");
   const id = String(clientId || "").trim();
   const secret = String(clientSecret || "");
   const tenant = String(tenantId || MULTI_TENANT).trim() || MULTI_TENANT;
@@ -34,7 +36,7 @@ export function createTeamsAuth({ clientId, clientSecret, tenantId = MULTI_TENAN
         grant_type: "client_credentials",
         client_id: id,
         client_secret: secret,
-        scope: BOT_SCOPE,
+        scope,
       }).toString(),
     });
     const text = await res.text();

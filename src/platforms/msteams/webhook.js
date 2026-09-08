@@ -15,7 +15,7 @@ import { normalizeActivity } from "./activity.js";
 import { validateServiceUrl } from "./api.js";
 import { createDedupe } from "../googlechat/pubsub.js";
 
-export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, log = console, dedupe = null } = {}) {
+export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, log = console, dedupe = null, onActivity = null, graphEventsEnabled = false } = {}) {
   if (!appId) throw new Error("Teams webhook requires the bot app id");
   if (typeof onMessage !== "function") throw new TypeError("Teams webhook requires an onMessage handler");
   const keys = jwks || createJwksCache();
@@ -49,6 +49,10 @@ export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, 
 
     try {
       if (seen.isDuplicate(activityFingerprint(activity))) return;
+      if (onActivity) await onActivity(activity);
+      // Graph is the sole owner of revisions/reactions when enabled; two transports must not
+      // dispatch the same action twice. New Bot Framework messages retain their attachment path.
+      if (graphEventsEnabled && String(activity.conversation?.conversationType).toLowerCase() !== "personal" && ["messageupdate", "messagereaction"].includes(String(activity.type).toLowerCase())) return;
       const message = normalizeActivity(activity, { botId });
       if (!message) return; // not a message activity, or our own echo
       await onMessage(message, { serviceUrl });

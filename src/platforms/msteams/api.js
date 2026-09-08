@@ -129,6 +129,12 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
       return res?.id || "";
     },
 
+    // Resolve the Microsoft 365 group GUID needed for Graph from an authenticated team activity.
+    async teamInfo(teamId) {
+      if (!isConversationId(teamId)) throw new Error("Teams team id contains invalid characters");
+      return call(`v3/teams/${encodeURIComponent(teamId)}`, { method: "GET" });
+    },
+
     // Roster for mention resolution. In a channel this needs RSC consent; without it Teams answers
     // 403 and the caller keeps its previous (possibly empty) directory.
     async listMembers(conversationId) {

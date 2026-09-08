@@ -165,6 +165,15 @@ export function createWebApp({
     }
   });
 
+  // Graph basic notifications authenticate using persisted subscription identity and clientState.
+  // No admin cookie is consumed; the handler also handles Graph's endpoint validation challenge.
+  app.post("/api/teams/notifications", async (req, res) => {
+    const handler = transports?.msteams?.getTransport?.()?.graphHandler;
+    if (!handler) return res.status(503).json({ error: "Teams message events are not enabled" });
+    try { await handler(req, res); }
+    catch { if (!res.headersSent) res.status(503).json({ error: "Teams event delivery failed" }); }
+  });
+
   // Short-lived, single-file browser editor links originate from an authorized Slack file modal.
   // This router sits outside the admin login because ordinary approved channel members are allowed
   // to edit in writable modes; it has its own one-time grant → HttpOnly cookie exchange and repeats

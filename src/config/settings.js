@@ -188,6 +188,8 @@ export function resolveTeamsConfig() {
     appId: String(s.teamsAppId || process.env.TEAMS_APP_ID || "").trim(),
     appPassword: s.teamsAppPassword || process.env.TEAMS_APP_PASSWORD || "",
     tenantId: String(s.teamsTenantId || process.env.TEAMS_TENANT_ID || "").trim(),
+    allMessageEvents: s.teamsAllMessageEvents === true,
+    publicUrl: getPublicUrl(),
   };
 }
 
@@ -833,6 +835,7 @@ export function settingsForApi() {
       hasAppPassword: Boolean(resolveTeamsConfig().appPassword),
       appPasswordLast4: last4(resolveTeamsConfig().appPassword),
       tenantId: resolveTeamsConfig().tenantId,
+      allMessageEvents: resolveTeamsConfig().allMessageEvents,
       configured: hasTeamsConfig(),
       // What the operator must paste into the Azure bot registration. Empty when no public URL is
       // set, which is exactly when Teams cannot receive anything.

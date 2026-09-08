@@ -323,6 +323,7 @@ test("only a real activity id is used as a thread", () => {
   assert.equal(connector.threadFor("spaces/AAA/threads/T"), null);
   assert.equal(connector.supportsThreads("teams:19:abc@thread.tacv2"), true);
   assert.equal(connector.supportsThreads("teams:a:personal-chat"), false);
+  assert.equal(connector.supportsThreads("teams:19:group@thread.v2"), false);
 });
 
 test("an ephemeral-only notice becomes a 1:1 chat, because Teams has no ephemeral message", async () => {

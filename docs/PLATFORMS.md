@@ -144,6 +144,68 @@ You need a Microsoft 365 account permitted to register the app and install custo
    "Connected" badge alone does not prove inbound delivery. See the live acceptance case in
    `TEST-PLAN.md`; Teams remains beta until tenant verification is completed.
 
+### Optional all-message edit and reaction events (experimental)
+
+The `teams-ms` branch adds an opt-in **Observe edits and robot reactions on all messages**
+setting under Settings → Connection → Microsoft Teams (`teamsAllMessageEvents`, default `false`).
+It requests Graph subscriptions for known installed conversations, not a tenant-wide message feed.
+Normal group/channel messages still need a real bot mention. A robot reaction is an explicit
+activation by the reacting user and is checked against that user's current ChannelGate access.
+
+For a test installation, extend the CLI setup above:
+
+1. Download the app's current manifest using `teams app manifest download --help` for the installed
+   CLI's output options. Preserve its IDs, icons, scopes and existing permissions. Merge these
+   entries into `authorization.permissions.resourceSpecific` (do not replace other grants):
+
+   ```json
+   [
+     { "name": "ChatMessage.Read.Chat", "type": "Application" },
+     { "name": "ChannelMessage.Read.Group", "type": "Application" }
+   ]
+   ```
+
+   Ensure `webApplicationInfo.id` identifies this bot's Entra application and retain the valid
+   `webApplicationInfo.resource` field. These are resource-specific **application** grants,
+   consented for the chat/team where the app is installed. See Microsoft's
+   [RSC manifest and consent instructions](https://learn.microsoft.com/en-us/microsoftteams/platform/graph-api/rsc/grant-resource-specific-consent).
+2. Upload the reviewed manifest, using the separate Teams app ID:
+
+   ```sh
+   teams app manifest upload ./manifest.json <teamsAppId>
+   teams app get <teamsAppId> --install-link
+   ```
+
+   Current CLI syntax puts the file before the app ID; verify with `teams app manifest upload --help`
+   when using an older CLI. The [upload command](https://microsoft.github.io/teams-sdk/cli/commands/app/manifest-upload/)
+   preserves icons and can bump the package version. Alternatively,
+   [`teams app manifest update`](https://microsoft.github.io/teams-sdk/cli/commands/app/manifest-update/)
+   supports `--set-json` and `--dry-run`; preview the complete merged permission array before upload.
+3. Update or reinstall the app in each intended test chat/team and accept the new permissions under
+   that tenant's policies. Updating the developer registration alone does not prove resource consent.
+4. Set the public HTTPS URL, enable the checkbox, save, then disconnect/reconnect Teams. Allow both
+   `/api/teams/messages` (Bot Framework) and `/api/teams/notifications` (Graph notification validation
+   and delivery) through the existing public reverse proxy. The Graph notification URL is separate
+   from the bot messaging endpoint; do not replace the bot endpoint with it.
+5. Send a bot mention in each installed test conversation. An authenticated activity establishes the
+   known conversation before automatic subscription creation. Existing messages from unknown chats
+   are not swept or retroactively subscribed across the tenant. Subscriptions renew while enabled;
+   inspect event logs for consent, renewal or delivery failures. A Connected banner verifies neither
+   Graph consent nor subscription coverage.
+6. Perform the event tests in `TEST-PLAN.md`: add a real mention by editing an existing user message,
+   react with 🤖 to a user message, and react to a bot reply to continue its session. Confirm actor,
+   target and session attribution with both Claude and Codex. Include an external-member group and
+   desktop/mobile clients. Do not declare all-message coverage from bot-reply reaction tests alone.
+
+The chat Graph route uses **Microsoft Graph beta**, so this feature remains experimental. A granted
+read permission does not guarantee every client emits the same reaction shape or that every
+federated conversation supports the subscription. The switch does not grant file/SharePoint access,
+allow unapproved users, or enable agent responses to every observed ordinary message. Bot Framework
+edit/reaction handling and optional Graph observation have distinct delivery coverage. Real tenant
+acceptance has not been performed as part of this branch's local implementation.
+
+See [the full Slack-to-Teams parity audit](TEAMS-PARITY.md) for remaining UI and integration gaps.
+
 ### Notes and limits
 
 - **No public URL ⇒ no inbound.** The bot will connect and can send, but Azure has nowhere to
@@ -213,3 +275,11 @@ state, and neither can see the other's files.
 
 Conversation ids are namespaced too (`gchat:spaces/AAA`, `teams:19:…`); Slack ids stay bare, so
 every row written before multi-platform support keeps resolving with no migration.
+
+Graph event processing intentionally accepts only edits/reaction additions from the preceding
+24 hours (and after subscription activation). This is shorter than the seven-day deduplication
+retention, so later updates cannot replay old message history. Personal Bot Framework conversations
+use different IDs from Graph chats: personal edits and reactions to bot answers stay on the native
+bot event path. Graph subscriptions here cover group chats and channels. Removing Xavier retires
+the corresponding subscription and invalidates its queued event work. Graph file descriptors are
+reported when unavailable; this option does not grant SharePoint file-download permissions.

@@ -34,6 +34,7 @@ export const CAPABILITY_SPEC = Object.freeze({
   ephemeral: { default: false },
   deleteMessage: { default: false },
   reactions: { default: false },
+  reactionTriggers: { default: false },
   maxMessageChars: { default: 4_000, type: "number" },
 
   // ── Formatting ────────────────────────────────────────────────────────────
