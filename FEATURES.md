@@ -1599,6 +1599,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   operator-home grants are recognized; engine-storage masks remain excluded. This guidance
   describes existing mounts and never changes authorization. → TEST-PLAN: Resolved Clean and
   gateway-store facts.
+- **Access checks honor the requested scope:** attempt guidance limits existence, metadata and
+  permission-only checks to resolved mount facts and non-mutating metadata. It forbids reading
+  contents or creating, changing or deleting temporary probe files for such requests; write
+  access that metadata cannot establish is reported as unverified. This applies to both engines,
+  including resumed and fallback attempts, without changing permission enforcement.
 **Since 2026-09-03 this is the ONLY runtime (Linux + containers only):** the `host` backend, the
 gateway-wide kill switch, the per-channel runtime pin and the host↔container session carry below
 are retired, bullet by bullet; everything else stands.
@@ -2366,6 +2371,10 @@ are retired, bullet by bullet; everything else stands.
   conversation. Mandatory implies enabled + discoverable; effective profiles remain mandatory ∪
   template ∪ channel ∪ personal ∪ dependencies. Catalog search includes source labels, category
   and source API filters; usage-led screens sort descending and Overview charts the top ten skills.
+  Explicit folder sources report missing, unreadable or non-directory roots as failed syncs in
+  the API and source status, preserving the last approved skill revision. A valid empty directory
+  remains a successful empty scan; optional host discovery may still skip absent directories.
+  Restoring the source and syncing clears the failure. → TEST-PLAN: Skill source read failures.
   Templates select explicit skills only. → TEST-PLAN: Skills platform (governance and usage).
 - **Personal skills and self-service grants.** A skill created with `personal: true` (or switched in
   the admin UI) is visible and grantable only to its author (admins see everything) and is never
