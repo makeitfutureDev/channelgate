@@ -20,6 +20,10 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Clarify the Slack Skills categories and where each is configured. Org Skills explicitly
+  states that only admins can add or remove organization skills; combined lists are labelled
+  as automatic summaries.
+
 Next release version selected by the owner. Development continues on `beta`; full testing and
 explicit approval of the exact candidate are required before promotion to `main`. Earlier
 0.6.0 candidate tags and evidence below are retained as historical snapshots, not published releases.
