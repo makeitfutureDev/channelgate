@@ -12,6 +12,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   The shared decision handler rejects unsupported scopes before changing grants or consuming
   the request. → TEST-PLAN: Approval scope capabilities.
 
+- **One owner for native loop ticks:** after a warm Claude turn completes a native pacing
+  call, its process retires so its idle timer cannot duplicate the daemon's durable tick.
+  Already queued messages resume the stored session in a fresh process; ordinary turns keep
+  warm reuse. No running turn is interrupted. → TEST-PLAN: Native loop timer ownership.
+
 - **Skill usage provenance:** the chat usage report shows one total per skill, current
   conversation metadata, an exact UTC window and authors from recorded usage events. Inferred
   file reads stay distinct from invocations in explanatory text; missing historical identities

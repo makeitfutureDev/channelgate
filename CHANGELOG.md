@@ -22,6 +22,9 @@ product overview.
   thread/forever decisions before consuming the request or persisting ineffective grants;
   native tool permissions retain all three scopes.
 
+- Retire completed warm Claude pacing sessions so native timers cannot duplicate daemon-owned
+  loop ticks; queued messages resume safely and ordinary turns retain warm reuse.
+
 - Inject explicitly selected Claude MCP transport definitions into isolated runs without enabling
   ambient settings. Fresh configuration reads and warm fingerprints apply additions, changes and
   revocations to resumed threads; unavailable or credential-dependent definitions fail closed.

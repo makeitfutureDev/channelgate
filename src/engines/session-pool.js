@@ -134,6 +134,16 @@ export function createSessionPool({
       // (abortPooled tears down the session for the IN-FLIGHT turn; this covers the queued ones).
       if (closed) throw shutdownError();
       if (signal?.aborted) throw Object.assign(new Error("Run aborted while queued"), { name: "AbortError" });
+      // A preceding completed pacing turn deliberately retired its native timer. Callers that
+      // were already queued on that entry must re-enter the pool, not send to its dead process.
+      // The session now exists on disk even if this caller arrived before its first result.
+      if (entry.session.nativeLoopRetired) {
+        const resumeArgs = [...(args || [])];
+        const fresh = resumeArgs.indexOf("--session-id");
+        if (fresh >= 0 && resumeArgs[fresh + 1] === entry.session.retiredSessionId) resumeArgs[fresh] = "-r";
+        return runPooled({ key, cwd, args: resumeArgs, env, idleMs, mcpConfigJson, dangerouslySkip,
+          fingerprintExtra, target, text, turnTimeoutMs, maxSilenceMs, signal, onDelta, onEvent });
+      }
       return entry.session.send(text, { onDelta, onEvent, timeoutMs: turnTimeoutMs, maxSilenceMs });
     });
     entry.chain = run.then(settle, settle);
