@@ -30,8 +30,10 @@ export async function loadChannelGuestOptions(request, channelId) {
   }));
 }
 
-export function channelGuestSavePatch(ready, selectedIds) {
-  if (!ready) return {};
+export function channelGuestSavePatch(ready, selectedIds, changed = false) {
+  // A successful roster may omit a saved grant. Only an explicit guest edit authorizes
+  // replacing the list; an unrelated save must not turn a partial display into revocation.
+  if (!ready || !changed) return {};
   return {
     allowedUsers: [...new Set((selectedIds || []).map(String))],
   };

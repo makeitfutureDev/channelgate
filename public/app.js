@@ -1440,6 +1440,8 @@ function renderChannelDetail(ch) {
   const usersBox = card.querySelector(".ch-users");
   usersBox.dataset.kind = "u";
   usersBox.dataset.ready = "";
+  usersBox.dataset.changed = "";
+  usersBox.addEventListener("change", () => { usersBox.dataset.changed = "1"; });
   usersBox.classList.add("empty");
   usersBox.textContent = "Loading current Slack members…";
   loadChannelGuestOptions(api, ch.channelId)
@@ -1797,7 +1799,7 @@ function renderChannelDetail(ch) {
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
         method: "PUT",
         body: JSON.stringify({
-          ...channelGuestSavePatch(usersBox.dataset.ready === "1", explicitCheckedValues(usersBox)),
+          ...channelGuestSavePatch(usersBox.dataset.ready === "1", explicitCheckedValues(usersBox), usersBox.dataset.changed === "1"),
           allowedMcps: selectedMcpEntries(mcpsBox, "claude")
             .map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
           allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
@@ -1846,9 +1848,10 @@ function renderChannelDetail(ch) {
       if (acceptedGuests) {
         const accepted = new Set(acceptedGuests);
         for (const input of usersBox.querySelectorAll('input[type="checkbox"]')) {
-          input.checked = accepted.has(input.value);
+          input.checked = input.dataset.inherited === "1" || accepted.has(input.value);
         }
       }
+      usersBox.dataset.changed = "";
       makeToolboxUrlInput.value = ch.meta.makeToolboxUrl || "";
       attachReveal(makeToolboxKeyInput, { has: ch.meta.hasMakeToolboxKey, last4: ch.meta.makeToolboxKeyLast4, fetch: revealSecret("channel", "makeToolboxKey", ch.slug) });
       makeToolboxState.textContent = ch.meta.hasMakeToolboxKey ? "saved" : "not configured";
