@@ -188,7 +188,11 @@ policy applies to this entire page; changing Full access still leaves run-time b
 Every interaction re-checks agent access and channel membership. This console does not grant
 admin rights or change the permissions required by separate gateway control tools.
 
-## Updating the gateway itself (admin)
+## Updating the gateway itself (Enterprise admin)
+- Managed updates require an active Enterprise entitlement. Other editions show their commit count
+  behind and must be updated manually by the host operator using `npm run update` in the checkout.
+- The managed runner starts in a separate systemd user service so it survives the daemon restart.
+  Long phases continue reporting; an absent runner is reported as interrupted, never as success.
 - `update_gateway` starts the same locked transaction as Slack `/update`, the Admin UI, and
   `npm run update`. If an update is already active it reports that transaction instead of starting
   another.

@@ -2230,6 +2230,15 @@ are retired, bullet by bullet; everything else stands.
   from Settings → System (or `ADMIN_PASSWORD`). `/api/health` and the login routes stay open.
 - Daemon controls (Settings → System): **Restart daemon** (polls health, reloads) and Slack
   disconnect/reconnect. The old "Stop daemon" button was removed as a footgun.
+- **Enterprise managed updates and durable progress**: only an entitled Enterprise deployment
+  exposes the Update button and accepts managed update requests (Admin UI, Slack, or MCP).
+  Other editions retain the behind count and host-managed `npm run update`. Eligibility follows
+  the existing verified-license and outage-grace rules. A separate systemd user service carries
+  the updater across daemon cgroup teardown; inherited credentials travel through stdin, not unit
+  properties or command arguments. Candidate and rollback installs explicitly include development
+  dependencies needed by static checks. The UI keeps polling after 15 minutes, shows reconnect
+  waits, requests login when restart clears the admin session, and retains the latest terminal result after refresh, and marks dead runners interrupted without
+  inventing a successful update or rollback. → TEST-PLAN: Managed update recovery and eligibility.
 - **Transactional self-update**: Slack `/update`, the `update_gateway` gateway tool, the Admin UI,
   and `npm run update` all reserve one stale-safe global transaction. A second caller gets the
   active transaction instead of starting an overlapping updater. Before touching Git, the runner
@@ -2244,7 +2253,7 @@ are retired, bullet by bullet; everything else stands.
   channels; Claude and Codex share the same gateway MCP policy.
 - **Candidate validation and automatic rollback**: the updater snapshots the exact revision,
   lockfile, local config, `.env`, and a consistent SQLite copy under mode-0700
-  `~/.channelgate/update-backups/<transaction>/`; fast-forwards, runs exact `npm ci`, the
+  `~/.channelgate/update-backups/<transaction>/`; fast-forwards, runs exact `npm ci --include=dev`, the
   production advisory gate, all tests, and optional provisioning; then restarts through the exact
   systemd `MainPID` (the launchd restart retired 2026-09-03 — Linux only). Success requires a new
   daemon instance on the expected revision,

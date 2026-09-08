@@ -3,6 +3,7 @@
 // filesystem browser, and UI reference data (/skills, /mcp/available). Split from admin.js;
 // mounted by createAdminRouter so every URL is unchanged.
 import { hasComposioSdkEntitlement } from "../../ee/composio-entitlement.js";
+import { hasAutomaticUpdateEntitlement, MANUAL_UPDATE_MESSAGE } from "../../ee/update-entitlement.js";
 import { Router } from "express";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
 import { readdir } from "node:fs/promises";
@@ -520,7 +521,7 @@ export function createSettingsRouter({
   // when the restart is too quick to produce an observable failed health request.
   router.get("/update/check", async (_req, res, next) => {
     try {
-      res.json(await checkForUpdate());
+      res.json({ ...await checkForUpdate(), automaticUpdates: hasAutomaticUpdateEntitlement() });
     } catch (e) {
       next(e);
     }
@@ -528,9 +529,10 @@ export function createSettingsRouter({
 
   router.post("/update/run", async (_req, res, next) => {
     try {
+      if (!hasAutomaticUpdateEntitlement()) return res.status(403).json({ ok: false, error: MANUAL_UPDATE_MESSAGE });
       const started = startGatewayUpdate({ source: "admin-ui" });
       if (!started.ok) {
-        const status = started.conflict ? 409 : 500;
+        const status = started.forbidden ? 403 : started.conflict ? 409 : 500;
         return res.status(status).json({
           ok: false,
           error: started.conflict

@@ -4191,6 +4191,55 @@ Manual checks for the daemon-level behavior:
 - [ ] Live Claude + Codex: search for a discoverable skill, grant/revoke it in the channel, change
       the template, and confirm a mandatory skill materializes on the next turn in both harnesses.
 
+### Managed update recovery and eligibility
+
+- [x] Automated: `test/update-entitlement.test.js`, `test/run-api.test.js`, and
+  `test/mcp-control-plane-approval.test.js` exercise valid Enterprise, free/no-key/expired
+  rejection, outage grace/revocation, and both Claude/Codex MCP contexts. Non-Enterprise managed
+  requests create no lock or runner; the authenticated HTTP mutation returns 403.
+- [x] Automated: `test/update-ui.test.js` exercises the actual browser functions: 76 commits
+  behind shows a button only with explicit entitlement; other editions see manual guidance;
+  polling continues at 20 minutes and during connection loss; terminal errors survive refresh;
+  unreachable upstream does not claim up to date; restart session loss asks for login without
+  disclosing private health details or claiming completion.
+- [x] Automated: `test/update-status.test.js` distinguishes live owners and reservation grace
+  from missing/dead owners; interruption preserves the durable candidate-error evidence and
+  never claims verified rollback. `test/update-marker.test.js` covers independent service launch
+  refusal, runner ownership after wrapper death, and truthful failure wording.
+- [x] Automated: `test/update-runner.test.js` installs a real local development-package fixture
+  under `NODE_ENV=production` plus npm `omit=dev`, then imports it successfully. Failed service
+  reload keeps its retry marker. These cases are engine-independent (no engine invocation).
+- [x] Live systemd survival (2026-09-08, engine-independent): run
+  `node scripts/check-update-service-survival.mjs` as a Linux user with a systemd user bus.
+  The script creates uniquely named disposable parent/child units and synthetic runner, then
+  stops both units. Observed: parent PID changed on restart, wrapper died, child remained in a
+  separate cgroup, environment handoff passed, post-restart output and terminal result were
+  written, and the synthetic owner token was absent from the log. This verifies launch transport
+  and cgroup survival, not real engine health or candidate/rollback acceptance.
+- [ ] Live eligibility/UI (engine-independent): disposable deployment with upstream exactly one
+  commit ahead. As an admin, load the dashboard with no license, a signed free license, and an
+  expired Enterprise license. Each must show `1 commit behind`, manual-host guidance, no Update
+  button, and HTTP 403 for `POST /api/update/run`, with no new update lock. Install a valid
+  Enterprise fixture: the button appears; POST returns 202 and a transaction ID. Use the host
+  `npm run update` with the free fixture to verify manual operation remains available.
+- [ ] Live candidate/rollback (repeat with **Claude and Codex**): disposable rootless Podman
+  installation, baseline A on an active systemd daemon (`KillMode=mixed`), verified Enterprise
+  fixture and only the engine under test enabled. Set `NODE_ENV=production`; candidate B is a
+  fast-forward with static checks importing `acorn`. Prompt `Update the gateway now using
+  update_gateway` as an admin in an Auto channel. Record baseline and replacement confined smoke
+  output, old/target/running revisions, transient updater PID/cgroup and daemon PID before/after.
+  Pass only when the updater survives the restart, status becomes `updated`, and exactly one
+  result is posted. Repeat with candidate C containing a failing test: must restore B and report
+  terminal `rolled_back` with a successful real engine smoke. Repeat for a user and system daemon
+  unit. No production checkout should be used for the injected failures.
+- [ ] Live interrupted progress (engine-independent): on the disposable fixture, terminate only
+  its updater during a long phase after recording its PID. After reservation grace, the dashboard
+  must show interrupted/unverified completion, retain the last phase/error after refresh, and
+  never claim success. A live owner in a phase longer than 15 minutes must continue polling.
+- Private QA registry entries for this slice are pending: the available Composio CLI reports no
+  connected Airtable account. The cases above are ready to transfer using the operator's personal
+  connection; this is not a claim of live engine acceptance or stable-release readiness.
+
 ### Transactional self-update
 
 - [x] Unit: exclusive reservation, live-owner refusal, dead/abandoned-owner recovery, ownership

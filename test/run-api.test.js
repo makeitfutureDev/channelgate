@@ -6,7 +6,7 @@
 // process, so these env writes don't leak into the rest of the suite.
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, clearTestLicense, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
 process.env.ADMIN_PASSWORD = "test-admin-pw"; // authEnabled() → true, so the run-API key gate is live
@@ -180,6 +180,22 @@ test("POST /api/update/run returns the transaction and rejects an overlapping up
   const conflict = await post("/api/update/run", {}, { cookie, "x-cg-request": "1" });
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).transaction.id, "tx-existing");
+});
+
+test("POST /api/update/run refuses non-Enterprise before invoking the updater", async () => {
+  const login = await post("/api/login", { password: "test-admin-pw" });
+  const cookie = login.headers.get("set-cookie").split(";", 1)[0];
+  try {
+    for (const tier of ["none", "free", "expired"]) {
+      if (tier === "none") clearTestLicense();
+      else testLicenseEnv(tier === "free" ? { tier: "free" } : { expiresAt: "2020-01-01T00:00:00Z" });
+      lastUpdateStartOptions = null;
+      const response = await post("/api/update/run", {}, { cookie, "x-cg-request": "1" });
+      assert.equal(response.status, 403, tier);
+      assert.match((await response.json()).error, /Enterprise/);
+      assert.equal(lastUpdateStartOptions, null);
+    }
+  } finally { testLicenseEnv(); }
 });
 
 test("POST /internal/update-smoke requires loopback IPC auth", async () => {

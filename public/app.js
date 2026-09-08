@@ -3723,6 +3723,10 @@ const UPDATE_PHASES = {
 };
 
 function updateResultHtml(transaction) {
+  if (transaction.interrupted) {
+    const cause = transaction.candidateError ? ` Candidate error: ${transaction.candidateError}` : "";
+    return `<span class="statuschip"><span class="dot warn"></span>${escapeHtml(transaction.reason + cause)}</span>`;
+  }
   const revision = transaction.runningRevision ? ` <code>${escapeHtml(transaction.runningRevision)}</code>` : "";
   if (transaction.result === "updated" && transaction.imageWarning) {
     return `<span class="statuschip"><span class="dot warn"></span>container image needs attention — ${escapeHtml(transaction.imageWarning)}</span>`;
@@ -3741,7 +3745,8 @@ function updateResultHtml(transaction) {
     return `<span class="statuschip" title="${escapeHtml(transaction.reason || "")}"><span class="dot warn"></span>update refused — ${escapeHtml(transaction.reason || "preflight failed")}</span>`;
   }
   const detail = transaction.rollbackError || transaction.candidateError || transaction.reason || "check update.log";
-  return `<span class="statuschip" title="${escapeHtml(detail)}"><span class="dot warn"></span>update and rollback failed — ${escapeHtml(detail)}</span>`;
+  const failure = transaction.rollbackError ? "update and rollback failed" : "update failed";
+  return `<span class="statuschip" title="${escapeHtml(detail)}"><span class="dot warn"></span>${failure} — ${escapeHtml(detail)}</span>`;
 }
 
 function renderRunningUpdate(el, transaction) {
@@ -3750,18 +3755,21 @@ function renderRunningUpdate(el, transaction) {
   const disk = transaction.requiredDiskBytes
     ? ` · ${gib(transaction.requiredDiskBytes)} GiB required / ${gib(transaction.availableDiskBytes)} GiB free${transaction.optionalDownloadBytes ? " · includes missing 1.5 GiB Whisper model" : ""}`
     : "";
-  el.innerHTML = `<span class="statuschip"><span class="dot warn"></span>Updating · ${escapeHtml(phase + disk)}</span>`;
+  const elapsed = Math.max(0, Math.floor((Date.now() - (Number(transaction.startedAt) || Date.now())) / 60_000));
+  el.innerHTML = `<span class="statuschip"><span class="dot warn"></span>Updating · ${escapeHtml(phase + disk)} · ${elapsed} min elapsed${elapsed >= 15 ? " · still monitoring" : ""}</span>`;
 }
 
 async function monitorGatewayUpdate(transactionId, el, startedAt = Date.now()) {
-  if (Date.now() - startedAt > 15 * 60_000) {
-    el.innerHTML = `<span class="statuschip"><span class="dot warn"></span>Update is taking long — check ~/.channelgate/logs/update.log.</span>`;
-    return;
-  }
   try {
     const response = await fetch("/api/health", { cache: "no-store" });
     if (!response.ok) throw new Error(`health ${response.status}`);
     const health = await response.json();
+    // Restart clears in-memory admin sessions. Public health intentionally omits transaction
+    // details; ask for login instead of polling that restricted response forever.
+    if (!Object.hasOwn(health, "update")) {
+      el.innerHTML = `<span class="statuschip"><span class="dot warn"></span>Gateway is reachable. <a href="/login">Sign in again to resume update status</a>; completion is not yet verified.</span>`;
+      return;
+    }
     const transaction = health.update;
     if (transaction?.id === transactionId) {
       if (transaction.status === "terminal") {
@@ -3791,9 +3799,11 @@ async function monitorGatewayUpdate(transactionId, el, startedAt = Date.now()) {
       } else {
         renderRunningUpdate(el, transaction);
       }
+    } else {
+      el.innerHTML = `<span class="statuschip"><span class="dot warn"></span>Update status changed or is unavailable; checking again…</span>`;
     }
   } catch {
-    // A restart can briefly refuse connections; durable state remains available when it returns.
+    el.innerHTML = `<span class="statuschip"><span class="dot warn"></span>Waiting for the gateway to reconnect · ${Math.max(0, Math.floor((Date.now() - startedAt) / 60_000))} min elapsed · still monitoring</span>`;
   }
   setTimeout(() => monitorGatewayUpdate(transactionId, el, startedAt), 2_000);
 }
@@ -3815,12 +3825,17 @@ async function loadUpdateStatus() {
       monitorGatewayUpdate(transaction.id, el, transaction.startedAt || Date.now());
       return;
     }
-    const cur = u.current ? `<span class="statuschip" title="gateway version"><span class="dot ok"></span><code>${escapeHtml(u.current)}</code></span>` : "";
+    const previous = transaction?.status === "terminal" ? updateResultHtml(transaction) : "";
+    const cur = previous + (u.current ? `<span class="statuschip" title="gateway version"><span class="dot ok"></span><code>${escapeHtml(u.current)}</code></span>` : "");
     if (u.behind > 0) {
+      if (u.automaticUpdates !== true) {
+        el.innerHTML = `${cur}<span class="statuschip"><span class="dot warn"></span>${Number(u.behind)} commit${u.behind === 1 ? "" : "s"} behind · update manually on the host. Automatic updates require Enterprise.</span>`;
+        return;
+      }
       el.innerHTML = `${cur}<button id="update-now" class="ghost update-btn">Update (${u.behind} commit${u.behind === 1 ? "" : "s"} behind)</button>`;
       document.getElementById("update-now").addEventListener("click", runGatewayUpdate);
     } else {
-      el.innerHTML = `${cur}<span class="statuschip"><span class="dot ok"></span>up to date${u.checked ? "" : " (couldn't reach remote)"}</span>`;
+      el.innerHTML = `${cur}<span class="statuschip"><span class="dot ${u.checked ? "ok" : "warn"}"></span>${u.checked ? "up to date" : "update check unavailable — could not reach remote"}</span>`;
     }
   } catch {
     el.innerHTML = ""; // non-admin / locked-down — just hide the chip
@@ -3830,7 +3845,7 @@ async function loadUpdateStatus() {
 async function runGatewayUpdate() {
   const ok = await confirmDialog({
     title: "Update the gateway now?",
-    body: "It pulls the latest version and restarts — the bot is offline for a few seconds.",
+    body: "It checks the installation, installs and tests the candidate, then restarts and verifies it. This can take several minutes; failures trigger rollback.",
     confirmLabel: "Update",
   });
   if (!ok) return;

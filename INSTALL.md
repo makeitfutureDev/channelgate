@@ -106,7 +106,15 @@ The admin UI + health endpoint come up on <http://localhost:4747> (set `PORT` in
 
 ### Safe updates
 
-Run `npm run update`, use the dashboard Update button, or ask an admin to use Slack `/update`.
+Operators of any edition can update manually: sign in to the host as the service account, enter
+its checkout, and run `npm run update`. Keep the deployment on its configured upstream branch
+(`main` for stable installations). Enterprise additionally offers the dashboard Update button,
+Slack `/update`, and `update_gateway`; other editions show the commit count behind and manual
+update guidance, and managed update requests are refused by the server.
+
+Managed updates require the service account's systemd user manager and bus. They launch a
+separate transient service so restarting the daemon cannot kill the updater. A missing user bus
+is a reported launch failure; operators can still invoke the CLI manually from a host terminal.
 The updater requires an active `channelgate.service` under systemd (system or user scope) so it
 can prove both candidate and rollback restarts.
 
@@ -116,13 +124,15 @@ staging requires 1 GiB free. If local Whisper is enabled but its 1.5 GiB model i
 calculated requirement becomes 3 GiB; disabling local Whisper makes the large optional download
 explicit and skips it.
 
-The candidate runs `npm ci`, the production advisory gate, the full test suite, and provisioning
+The candidate runs `npm ci --include=dev` (static checks need development tools even on production hosts), the production advisory gate, the full test suite, and provisioning
 before restart. It is accepted only after the replacement reports the expected revision, Claude is
 available, Slack reconnects when previously connected, and a second isolated Claude turn succeeds.
 A post-change failure automatically restores the prior revision and dependencies and verifies that
 restored build. See `~/.channelgate/logs/update.log` and
 `~/.channelgate/update-state.json`; operator recovery snapshots are saved under
-`~/.channelgate/update-backups/`.
+`~/.channelgate/update-backups/`. The dashboard keeps polling through long phases and reconnects,
+asks for login if the restart cleared the admin session, retains the last result across refreshes, and reports a dead updater as interrupted with completion
+and rollback unverified. Check the log and service before retrying an interrupted update.
 
 ## 4. Create the Slack app (from the manifest)
 

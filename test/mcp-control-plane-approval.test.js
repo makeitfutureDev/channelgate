@@ -10,7 +10,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, testLicenseEnv } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const scratch = ensureTestEnv();
@@ -56,6 +56,10 @@ function gatewayClient({ author = "U_CTRL_ADMIN", port = stubPort, engine = "cla
     env: {
       PATH: process.env.PATH || "",
       NODE_ENV: "test",
+      CHANNELGATE_LICENSE_PUBLIC_KEY: process.env.CHANNELGATE_LICENSE_PUBLIC_KEY,
+      CHANNELGATE_LICENSE_PAYLOAD: process.env.CHANNELGATE_LICENSE_PAYLOAD,
+      CHANNELGATE_LICENSE_KEY: process.env.CHANNELGATE_LICENSE_KEY,
+      CHANNELGATE_PLATFORM_URL: "http://127.0.0.1:9/channelgate/api",
       CG_TEST_SCRATCH: scratch,
       CHANNELGATE_DIR: scratch,
       CHANNELGATE_DB: path.join(scratch, "gateway.db"),
@@ -243,6 +247,23 @@ test("update_gateway skips the extra card in Admin/Auto mode but stays admin-onl
   } finally {
     releaseUpdate({ root: scratch, owner: reserved.owner });
     await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), adminMode: false, autoMode: false });
+  }
+});
+
+test("both engine MCP contexts refuse managed updates for a free license", async () => {
+  try {
+    testLicenseEnv({ tier: "free" });
+    await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), adminMode: true });
+    for (const engine of ["claude", "codex"]) {
+      await withGateway({ engine }, async (client) => {
+        const result = await client.callTool({ name: "update_gateway", arguments: {} });
+        assert.match(resultText(result), /Enterprise/);
+        assert.match(resultText(result), /manually/);
+      });
+    }
+  } finally {
+    testLicenseEnv();
+    await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), adminMode: false });
   }
 });
 

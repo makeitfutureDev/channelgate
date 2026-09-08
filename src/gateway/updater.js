@@ -1,6 +1,7 @@
 // Shared self-update entry point and restart-safe reporting helpers. Slack, MCP, Admin UI, and
 // scripts/update.sh all converge on the same durable transaction/lock in update-state.js; only
 // the built-in-only Node runner performs repository, dependency, service, or rollback mutations.
+import { hasAutomaticUpdateEntitlement, MANUAL_UPDATE_MESSAGE } from "../ee/update-entitlement.js";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import {
   closeSync,
@@ -19,8 +20,10 @@ import {
   claimUpdate,
   finishUpdate,
   isTerminalUpdate,
+  isUpdateActive,
   publicUpdateState,
   readUpdateState,
+  readUpdateStatus,
   releaseUpdate,
   reserveUpdate,
 } from "./update-state.js";
@@ -29,6 +32,7 @@ const execFileP = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const UPDATE_SCRIPT = path.join(REPO_ROOT, "scripts", "update.sh");
 export const UPDATE_RUNNER = path.join(REPO_ROOT, "scripts", "update-runner.mjs");
+export const UPDATE_LAUNCHER = path.join(REPO_ROOT, "scripts", "update-launcher.mjs");
 const MARKER_MAX_AGE_MS = 6 * 60 * 60_000;
 
 const git = async (...args) => (await execFileP("git", args, { cwd: REPO_ROOT, timeout: 20_000 })).stdout.trim();
@@ -129,14 +133,14 @@ export function readTerminalUpdateMarker({
     clearUpdateMarker(marker.transactionId, { root });
     return null;
   }
-  const transaction = publicUpdateState(readUpdateState({ root }));
+  const transaction = publicUpdateState(readUpdateStatus({ root }));
   if (!isTerminalUpdate(transaction) || transaction.id !== marker.transactionId) return null;
   return { marker, transaction };
 }
 
 export function formatUpdateResult(transaction = {}) {
   const revision = transaction.runningRevision ? ` \`${transaction.runningRevision}\`` : "";
-  const reason = safeMessage(transaction.reason || transaction.candidateError || "");
+  const reason = transaction.reason || transaction.candidateError ? safeMessage(transaction.reason || transaction.candidateError) : "";
   if (transaction.result === "updated" && transaction.imageWarning) return `⚠️ Gateway code is current${revision}; container image needs attention: ${transaction.imageWarning}`;
   if (transaction.result === "updated" && transaction.changed === false) {
     return `✅ Gateway already up to date${revision}. ${transaction.reason || "Preflight and configured container engine smoke checks passed."}`;
@@ -153,7 +157,10 @@ export function formatUpdateResult(transaction = {}) {
   }
   if (transaction.result === "failed") {
     const candidate = safeMessage(transaction.candidateError || reason);
-    const rollback = safeMessage(transaction.rollbackError || "");
+    const rollback = transaction.rollbackError ? safeMessage(transaction.rollbackError) : "";
+    if (transaction.interrupted) return `❌ Update interrupted: ${reason || "the runner stopped"}${transaction.candidateError ? ` Candidate: ${safeMessage(transaction.candidateError)}.` : ""} Check ` + "`~/.channelgate/logs/update.log`.";
+    if (!rollback && transaction.changed !== true) return `❌ Update failed before changes${candidate ? `: ${candidate}.` : "."}`;
+    if (!rollback) return `❌ Update interrupted${candidate ? `: ${candidate}.` : "."} Automatic rollback was not confirmed. Check ` + "`~/.channelgate/logs/update.log`.";
     return `❌ Update failed and automatic rollback also failed.${candidate ? ` Candidate: ${candidate}.` : ""}${rollback ? ` Rollback: ${rollback}.` : ""} Check \`~/.channelgate/logs/update.log\`.`;
   }
   return `Update status: ${safeMessage(transaction.phase || transaction.status || "unknown")}.`;
@@ -202,6 +209,10 @@ export function startUpdate(
     spawnImpl = spawn,
   } = {},
 ) {
+  if (!hasAutomaticUpdateEntitlement()) {
+    return { ok: false, forbidden: true, error: MANUAL_UPDATE_MESSAGE,
+      transaction: { status: "terminal", result: "refused", reason: MANUAL_UPDATE_MESSAGE } };
+  }
   const reserved = reserveUpdate({ root, source });
   if (!reserved.ok) return { ok: false, conflict: true, transaction: reserved.transaction };
 
@@ -228,11 +239,18 @@ export function startUpdate(
   let fd;
   try {
     fd = openSync(path.join(logsDir, "update.log"), "a", 0o600);
-    const child = spawnImpl(process.execPath, [UPDATE_RUNNER, "--transaction", reserved.transaction.id], {
+    // setsid/detached alone stays in the daemon's systemd cgroup and dies when it restarts.
+    // A separate user service survives that cgroup teardown. --pipe passes file descriptors;
+    // credentials travel only through stdin, never argv, unit properties, or an environment file.
+    const child = spawnImpl("systemd-run", [
+      "--user", "--quiet", "--pipe", "--wait", "--collect", "--service-type=exec",
+      `--unit=channelgate-update-${reserved.transaction.id}`,
+      process.execPath, UPDATE_LAUNCHER, "--transaction", reserved.transaction.id,
+    ], {
       cwd: REPO_ROOT,
       detached: true,
-      stdio: ["ignore", fd, fd],
-      env: { ...process.env, CHANNELGATE_DIR: root, CG_UPDATE_OWNER_TOKEN: reserved.owner.token },
+      stdio: ["pipe", fd, fd],
+      env: { ...process.env },
     });
     if (Number.isInteger(child?.pid) && child.pid > 0) {
       claimUpdate({ root, owner: reserved.owner, pid: child.pid });
@@ -244,6 +262,19 @@ export function startUpdate(
         console.error(`[update] detached runner failed and status could not be finalized: ${safeMessage(finishError)}`);
       }
     });
+    child?.once?.("close", (code, signal) => {
+      try {
+        const state = readUpdateState({ root });
+        if (state?.id !== reserved.transaction.id || isTerminalUpdate(state) || isUpdateActive({ root })) return;
+        failReservedStart({ root, owner: reserved.owner, context,
+          error: new Error(`independent systemd update service stopped before completing (${signal || code || "no result"}); check update.log and the user systemd service`) });
+      } catch (error) {
+        console.error(`[update] couldn't finalize stopped update service: ${safeMessage(error)}`);
+      }
+    });
+    // Attach before writing: a missing user bus or systemd-run may close its stdin immediately.
+    child.stdin?.on?.("error", () => { /* The child error/close event records the launch failure. */ });
+    child.stdin?.end(JSON.stringify({ ...process.env, CHANNELGATE_DIR: root, CG_UPDATE_OWNER_TOKEN: reserved.owner.token }));
     child?.unref?.();
     return { ok: true, transaction: reserved.transaction };
   } catch (error) {

@@ -30,7 +30,7 @@ import { canEditChannelFiles } from "../slack/file-explorer.js";
 import { ADMIN_CONVERSATION_PATH_RE, ADMIN_VIEW_PATHS } from "../../public/admin-routes.js";
 import { runUpdateSmoke } from "../gateway/update-smoke.js";
 import { runningRevision, startUpdate } from "../gateway/updater.js";
-import { publicUpdateState, readUpdateState } from "../gateway/update-state.js";
+import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js";
 import { renderShell } from "./assets.js";
 
 const escapeHtml = (s) =>
@@ -280,7 +280,7 @@ export function createWebApp({
       ok: true,
       instanceId,
       revision: runningRevision,
-      update: publicUpdateState(readUpdateState()),
+      update: publicUpdateState(readUpdateStatus()),
       claude: engines.claude,
       engines,
       gatewayRoot: gatewayRoot(),
