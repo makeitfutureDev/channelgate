@@ -5508,3 +5508,9 @@ acceptance gates; no production restart or external message was performed by the
 - The existing conversation/template browser case continues to verify inherited locks, drafts,
   filters, save/reload and unavailable-template handling. This is engine-independent presentation;
   no engine execution or grant-resolution behavior changes.
+
+## Teams settings card placement
+
+Automated: `node --test test/teams-controls.test.js` verifies source conversation/thread delivery, foreign actor/conversation denial, one-use settings submission and private file controls.
+
+Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings` in an owned channel thread and group chat, then send `/settings` in a DM. Require the form in that same conversation (and channel thread), no private-delivery notice, and a valid owner submission affecting that session only. Another member must be denied; revoke the owner before submitting and require denial. Files and secrets remain private.

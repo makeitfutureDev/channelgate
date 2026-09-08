@@ -208,13 +208,14 @@ See [the full Slack-to-Teams parity audit](TEAMS-PARITY.md) for remaining UI and
 
 ### Native cards, workspace files and voice (teams-ms branch)
 
-These additions are branch-only; they do not imply a deployment or completed live acceptance.
+These additions are available on beta; live acceptance remains required before stable release.
 Update the installed app's reviewed manifest so the bot entry has `supportsFiles: true` for native
 personal-chat file consent, then upload/install that app revision with the Teams CLI as described
 above. Adaptive Cards and their inline forms do not require additional Graph RSC permissions.
 Task-module dialogs and broadcast mentions remain unavailable.
 
-- `/settings` opens a private session engine/model/effort form. `/secrets` opens the same card with
+- `/settings` opens a session engine/model/effort form in the source channel thread, group chat or DM.
+  Only the requesting user may submit it, subject to current access policy. `/secrets` privately opens the same card with
   a link to the existing authenticated admin website. Enter secrets there, never in Teams cards.
   Native approvals provide Approve/Deny/Request changes and supported scope choices. An optional
   changes comment refuses the current action, including when Approve was clicked. Card submissions

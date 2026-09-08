@@ -53,7 +53,7 @@ acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms
 | Feature | Implemented behavior | Boundary |
 | --- | --- | --- |
 | Approval cards | Native Approve/Deny/Request changes with optional comment, supported scope choices, Execute and Submit fallback, verified actor identity | A changes comment refuses the current action even with Approve; escalation policy is separate |
-| Session form | `/settings` opens private engine/model/effort choices through existing controls | Runtime-change authorization and active-session safeguards still apply |
+| Session form | `/settings` opens engine/model/effort choices in the source channel thread, group chat or DM through existing controls | Runtime-change authorization and active-session safeguards still apply |
 | Settings and secrets | `/secrets` and the session card link to the existing authenticated admin website | No secret values or new secret-entry form in Teams |
 | Workspace browser | `/files [folder]` provides private pagination and browser download/upload/text-edit links | Source workspace and current Teams membership are rechecked; no public fallback |
 | Native file sending | `/sendfile <relative-path>` asks for personal-chat Accept/Decline and sends the approved file snapshot | Nonempty files up to 10 MB; ten-minute consent; bounded pending pool; manifest `supportsFiles: true` |

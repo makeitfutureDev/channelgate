@@ -49,13 +49,13 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) actions.push(execute('Upload files', 'files.upload', stateId, { relative: listing.relative }));
     return card('Conversation files (private)', body, actions);
   }
-  async function privateCard(state, build) {
-    const destination = state.message.isDM ? state.message.rawConversationId : await connector.openDm(state.message.userId);
+  async function deliverCard(state, build, inConversation = false) {
+    const destination = inConversation || state.message.isDM ? state.message.rawConversationId : await connector.openDm(state.message.userId);
     if (!destination) throw new Error('Open a personal chat with the bot first; private controls could not be delivered.');
     prune(); const id = randomUUID();
     state = { ...state, deliveryId: destination, expires: now() + 15 * 60_000 };
     states.set(id, state);
-    try { await connector.postCard({ conversationId: destination, card: await build(state, id), text: 'Private conversation controls' }); }
+    try { await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, card: await build(state, id), text: inConversation ? 'Session settings' : 'Private conversation controls' }); }
     catch (error) { states.delete(id); throw error; }
   }
   async function onCommand(args) {
@@ -74,8 +74,9 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         await reply('Check your personal chat to accept or decline the file.');
         return true;
       }
-      await privateCard(args, (state, id) => match[1].toLowerCase() === 'files' ? files(state, id, match[2] || '') : settings(state, id));
-      if (!message.isDM) await reply('I sent the controls to your personal chat.');
+      const inConversation = match[1].toLowerCase() === 'settings';
+      await deliverCard(args, (state, id) => match[1].toLowerCase() === 'files' ? files(state, id, match[2] || '') : settings(state, id), inConversation);
+      if (!inConversation && !message.isDM) await reply('I sent the controls to your personal chat.');
     } catch (error) { await reply(error.message); }
     return true;
   }

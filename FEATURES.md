@@ -355,7 +355,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   pending progress edits finish before the final answer replaces the placeholder. Interactive
   permission escalation is not enabled by these text controls.
 - Native Adaptive Cards provide Approve/Deny/Request changes actions and an inline session engine/model/effort
-  form. `/settings` opens that private session form; `/secrets` opens the same form with a link
+  form. `/settings` opens in the source channel thread, group chat or DM, with submissions restricted
+  to the requesting user and current runtime policy. `/secrets` privately opens the same form with a link
   to the existing authenticated administration website. This does not introduce a secret input
   card or expose secret values in Teams. Signed Bot Framework invoke envelopes establish the
   actor; opaque expiring card state retains the source conversation and session. An optional

@@ -49,9 +49,9 @@ test('model form uses existing controls and consumes its state on a successful s
   const f = fixture(); await f.controls.onCommand(f.args('/settings'));
   const stateId = f.sent[0].card.actions[0].data.stateId;
   const payload = { stateId, engine: 'claude', model: 'default', effort: 'default' };
-  await f.controls.onInvoke(invoke(payload, 'model.save'));
+  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', '19:source@thread.v2'));
   assert.deepEqual(f.commands, ['/model claude default', '/effort default']);
-  await f.controls.onInvoke(invoke(payload, 'model.save')); assert.equal(f.commands.length, 2);
+  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', '19:source@thread.v2')); assert.equal(f.commands.length, 2);
 });
 test('approval invocation trusts envelope identity over malicious card data', async () => {
   let received;
@@ -78,4 +78,18 @@ test('legacy Submit explicitly updates its private card', async () => {
   const result = await f.controls.onInvoke(activity);
   assert.deepEqual(result, { status: 200, body: {} });
   assert.equal(f.sent.length, 2); assert.equal(f.sent[1].messageId, 'card1'); assert.equal(f.sent[1].conversationId, 'a:private');
+});
+
+test('settings stay in the source thread and reject another actor or conversation', async () => {
+  const f = fixture(); const args = f.args('/settings'); args.message.threadKey = 'root-message';
+  await f.controls.onCommand(args);
+  assert.equal(f.sent[0].conversationId, args.message.rawConversationId);
+  assert.equal(f.sent[0].threadKey, 'root-message');
+  assert.deepEqual(f.replies, []);
+  const data = { ...f.sent[0].card.actions[0].data, engine: 'claude', model: 'default', effort: 'default' };
+  for (const [actor, conversation] of [['29:other', args.message.rawConversationId], ['29:owner', 'a:private']]) {
+    const result = await f.controls.onInvoke(invoke(data, 'model.save', actor, conversation));
+    assert.equal(result.body.value.body[0].text, 'Action could not be completed');
+  }
+  assert.deepEqual(f.commands, []);
 });
