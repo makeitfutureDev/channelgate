@@ -24,6 +24,7 @@ test("/help explains the gateway's essential user workflows", () => {
     "Slack transcript",
     "Generate transcript",
     "`/status`",
+    "`/menu`",
     "`/pending`",
   ];
 

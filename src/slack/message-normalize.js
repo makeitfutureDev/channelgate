@@ -3,7 +3,7 @@
 export const SLACK_MENTION_RE = /<@([A-Z0-9]+)(?:\|[^>]+)?>/g;
 const STOP_WORDS = new Set(["stop", "cancel", "abort", "halt", "stop it", "please stop", "stop please", "nevermind", "never mind"]);
 const PENDING_WORDS = new Set(["pending", "my followups", "my follow-ups", "followups", "follow-ups"]);
-const SLASH_COMMANDS = new Set(["help", "clear", "context", "model", "effort", "engine", "compact", "update", "mode", "pending", "followups", "resume", "delete", "files"]);
+const SLASH_COMMANDS = new Set(["help", "menu", "clear", "context", "model", "effort", "engine", "compact", "update", "mode", "pending", "followups", "resume", "delete", "files"]);
 
 function normalizedControlText(text, punctuation = /[!.…]+$/) {
   return (text || "").trim().toLowerCase().replace(punctuation, "").replace(/\s+/g, " ");

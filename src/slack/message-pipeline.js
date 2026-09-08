@@ -44,6 +44,7 @@ import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry
 import { getDirectory } from "./directory.js";
 import { listConversationMemberIds } from "./members.js";
 
+import { buildMenuCard } from "./menu.js";
 import { HELP_TEXT } from "./help.js";
 import { formatAppContextProvenance } from "./app-context.js";
 import { isIgnorable, isPendingCommand, isStopCommand, mentionsBot, parseNextCommand, parseSlashCommand, SLACK_MENTION_RE, stripMentions } from "./message-normalize.js";
@@ -673,6 +674,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       const reply = (t) => client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: t });
       if (sc.cmd === "help") {
         await reply(HELP_TEXT);
+      } else if (sc.cmd === "menu") {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, ...buildMenuCard(event.channel, threadKey, event.user) });
       } else if (sc.cmd === "clear") {
         // Kill the thread's LIVE run first, through the same terminal path as `stop` — otherwise
         // a late-finishing run would post its answer after the clear, auto-continue a warm death,

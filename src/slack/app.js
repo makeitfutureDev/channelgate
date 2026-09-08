@@ -96,6 +96,7 @@ import { appContextForMessage, appContextObservedAt, appContextUserId, createApp
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
+import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { buildStatusReport } from "./status-controller.js";
 // Re-exported for existing importers (tests) — moved to slack/message-pipeline.js.
 export { stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages };
@@ -296,6 +297,37 @@ export async function fileExplorerContext(client, { channelId, userId, expectedS
     if (!members.includes(userId)) throw new Error("You are no longer a member of this channel.");
   }
   return { entry, meta, userIsAdmin, userIsApproved, root: effectiveWorkDir(entry.slug, meta) };
+}
+
+export async function handleMenuCommand({ command, ack, respond, client }) {
+  await ack();
+  try {
+    if (!(await getChannelEntry(command.channel_id))) {
+      await ensureRegistered(client, { channel: command.channel_id, user: command.user_id, channel_type: syntheticChannelType(command.channel_id) });
+    }
+    await ensureUserKnown(client, command.user_id);
+    await fileExplorerContext(client, { channelId: command.channel_id, userId: command.user_id });
+    await respond({ response_type: "ephemeral", ...buildMenuCard(command.channel_id, command.thread_ts || "", command.user_id) });
+  } catch (error) {
+    await respond({ response_type: "ephemeral", text: error.message || "Couldn't open the channel menu." });
+  }
+}
+
+export async function handleMenuResumeAction({ ack, body, action, client }) {
+  await ack();
+  const channelId = body?.channel?.id || body?.container?.channel_id;
+  const userId = body?.user?.id;
+  try {
+    const value = JSON.parse(action?.value || "{}");
+    if (!userId || value.u !== userId || value.c !== channelId || typeof value.t !== "string") {
+      throw new Error("This menu isn't yours. Open your own with `/menu`.");
+    }
+    const context = await fileExplorerContext(client, { channelId, userId, verifyMembership: true });
+    const view = await buildMenuResumeView({ ...context, meta: effectiveMeta(context.meta) }, value.t);
+    await client.views.open({ trigger_id: body.trigger_id, view });
+  } catch (error) {
+    if (channelId && userId) await client.chat.postEphemeral({ channel: channelId, user: userId, text: error.message || "Couldn't open Resume." });
+  }
 }
 
 async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "" } = {}) {
@@ -1840,6 +1872,10 @@ async function connectAndWire(app) {
     }
   });
 
+  // Standalone controls, available even before the first engine session.
+  app.command("/menu", handleMenuCommand);
+  app.action(MENU_RESUME_ACTION_ID, handleMenuResumeAction);
+
   // /status slash command — reports what the current channel is working on.
   app.command("/status", async ({ command, ack, respond, client }) => {
     await ack();
@@ -2063,7 +2099,7 @@ async function connectAndWire(app) {
     if (orgSkills.length) favLines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
 
     // In-thread commands + the active engine / how to switch models.
-    const commands = "`/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/update` _(admin)_";
+    const commands = "`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/update` _(admin)_";
     const engineInfo =
       `• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n` +
       "• Switch runtime: `/model` — channel or one thread → harness (Claude/Codex) → model → effort _(channel access set in Settings)_";
