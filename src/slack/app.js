@@ -96,6 +96,7 @@ import { appContextForMessage, appContextObservedAt, appContextUserId, createApp
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
+import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { buildStatusReport } from "./status-controller.js";
 // Re-exported for existing importers (tests) — moved to slack/message-pipeline.js.
 export { stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages };
@@ -279,7 +280,7 @@ export async function authorizedControlEntry(channelId, userId) {
 // Shared by the file explorer and the secrets manager: same channel resolution, same
 // authorization gate, same "are you still a member" re-check on a modal click. `purpose` only
 // shapes the message a user reads — never the checks.
-export async function fileExplorerContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false, purpose = { expired: "This channel file explorer expired. Open it again with `/files`.", denied: "You're not authorized to browse files in this channel." } } = {}) {
+export async function fileExplorerContext(client, { channelId, userId, expectedSlug = "", verifyMembership = false, purpose = { expired: "This channel file explorer expired. Open it again with the 📂 button on a reply.", denied: "You're not authorized to browse files in this channel." } } = {}) {
   const entry = await getChannelEntry(channelId);
   if (!entry || (expectedSlug && entry.slug !== expectedSlug)) throw new Error(purpose.expired);
   const meta = await getChannelMeta(entry.slug);
@@ -296,6 +297,37 @@ export async function fileExplorerContext(client, { channelId, userId, expectedS
     if (!members.includes(userId)) throw new Error("You are no longer a member of this channel.");
   }
   return { entry, meta, userIsAdmin, userIsApproved, root: effectiveWorkDir(entry.slug, meta) };
+}
+
+export async function handleMenuCommand({ command, ack, respond, client }) {
+  await ack();
+  try {
+    if (!(await getChannelEntry(command.channel_id))) {
+      await ensureRegistered(client, { channel: command.channel_id, user: command.user_id, channel_type: syntheticChannelType(command.channel_id) });
+    }
+    await ensureUserKnown(client, command.user_id);
+    await fileExplorerContext(client, { channelId: command.channel_id, userId: command.user_id });
+    await respond({ response_type: "ephemeral", ...buildMenuCard(command.channel_id, command.thread_ts || "", command.user_id) });
+  } catch (error) {
+    await respond({ response_type: "ephemeral", text: error.message || "Couldn't open the channel menu." });
+  }
+}
+
+export async function handleMenuResumeAction({ ack, body, action, client }) {
+  await ack();
+  const channelId = body?.channel?.id || body?.container?.channel_id;
+  const userId = body?.user?.id;
+  try {
+    const value = JSON.parse(action?.value || "{}");
+    if (!userId || value.u !== userId || value.c !== channelId || typeof value.t !== "string") {
+      throw new Error("This menu isn't yours. Open your own with `/menu`.");
+    }
+    const context = await fileExplorerContext(client, { channelId, userId, verifyMembership: true });
+    const view = await buildMenuResumeView({ ...context, meta: effectiveMeta(context.meta) }, value.t);
+    await client.views.open({ trigger_id: body.trigger_id, view });
+  } catch (error) {
+    if (channelId && userId) await client.chat.postEphemeral({ channel: channelId, user: userId, text: error.message || "Couldn't open Resume." });
+  }
 }
 
 async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "" } = {}) {
@@ -888,7 +920,7 @@ async function connectAndWire(app) {
         return;
       }
       const state = parseExplorerMetadata(body?.view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This file explorer isn't yours. Open your own with `/files`.");
+      if (!clicker || state.ownerId !== clicker) throw new Error("This file explorer isn't yours. Open your own with the 📂 button on a reply.");
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
         userId: clicker,
@@ -982,7 +1014,7 @@ async function connectAndWire(app) {
         });
         return;
       } else {
-        throw new Error("This file explorer control expired. Open it again with `/files`.");
+        throw new Error("This file explorer control expired. Open it again with the 📂 button on a reply.");
       }
       await updateFileExplorerView(client, body, view);
     } catch (e) {
@@ -1464,7 +1496,7 @@ async function connectAndWire(app) {
     const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This file editor isn't yours. Open your own with `/files`.");
+      if (!clicker || state.ownerId !== clicker) throw new Error("This file editor isn't yours. Open your own with the 📂 button on a reply.");
       if (!state.editRelative || !state.editHash) throw new Error("This file editor expired. Reopen the file and try again.");
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
@@ -1508,7 +1540,7 @@ async function connectAndWire(app) {
     const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This file dialog isn't yours. Open your own with `/files`.");
+      if (!clicker || state.ownerId !== clicker) throw new Error("This file dialog isn't yours. Open your own with the 📂 button on a reply.");
       const submittedName = view?.state?.values?.[FILES_NEW_FILE_NAME_BLOCK_ID]?.[FILES_NEW_FILE_NAME_INPUT_ACTION_ID]?.value;
       const submittedContent = view?.state?.values?.[FILES_NEW_FILE_CONTENT_BLOCK_ID]?.[FILES_NEW_FILE_CONTENT_INPUT_ACTION_ID]?.value;
       const fileName = normalizeNewFileName(submittedName);
@@ -1516,7 +1548,7 @@ async function connectAndWire(app) {
       if (typeof initialContent !== "string") throw new Error("Slack didn't return the initial file contents.");
 
       const loadingEntry = await getChannelEntry(state.channelId);
-      if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with `/files`.");
+      if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with the 📂 button on a reply.");
       await navigation.show(buildFilesLoadingView(state, { channelName: loadingEntry.name }));
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
@@ -1557,12 +1589,12 @@ async function connectAndWire(app) {
     const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This folder dialog isn't yours. Open your own with `/files`.");
+      if (!clicker || state.ownerId !== clicker) throw new Error("This folder dialog isn't yours. Open your own with the 📂 button on a reply.");
       const submittedName = view?.state?.values?.[FILES_NEW_FOLDER_BLOCK_ID]?.[FILES_NEW_FOLDER_INPUT_ACTION_ID]?.value;
       const folderName = normalizeNewFolderName(submittedName);
 
       const loadingEntry = await getChannelEntry(state.channelId);
-      if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with `/files`.");
+      if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with the 📂 button on a reply.");
       await navigation.show(buildFilesLoadingView(state, { channelName: loadingEntry.name }));
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
@@ -1840,6 +1872,10 @@ async function connectAndWire(app) {
     }
   });
 
+  // Standalone controls, available even before the first engine session.
+  app.command("/menu", handleMenuCommand);
+  app.action(MENU_RESUME_ACTION_ID, handleMenuResumeAction);
+
   // /status slash command — reports what the current channel is working on.
   app.command("/status", async ({ command, ack, respond, client }) => {
     await ack();
@@ -1851,23 +1887,6 @@ async function connectAndWire(app) {
     } catch (e) {
       console.error("[slack] /status error:", e.message);
       await respond({ response_type: "ephemeral", text: "Couldn't build the status — check the gateway logs." });
-    }
-  });
-
-  // Native Block Kit file browser. Slack slash commands only run at conversation top-level, so
-  // this shares selected files into the channel; the message shortcut / `@bot /files` path carries
-  // a thread_ts when users want the selected file posted inside a particular thread.
-  app.command("/files", async ({ command, ack, respond, client }) => {
-    await ack();
-    try {
-      await openFileExplorer(client, command.trigger_id, {
-        channelId: command.channel_id,
-        userId: command.user_id,
-        threadTs: command.thread_ts || "",
-      });
-    } catch (e) {
-      console.error("[slack] /files error:", e.message);
-      await respond({ response_type: "ephemeral", text: e.message || "Couldn't open this channel's files." });
     }
   });
 
@@ -2080,7 +2099,7 @@ async function connectAndWire(app) {
     if (orgSkills.length) favLines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
 
     // In-thread commands + the active engine / how to switch models.
-    const commands = "`/help` · `/status` · `/files` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/update` _(admin)_";
+    const commands = "`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/update` _(admin)_";
     const engineInfo =
       `• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n` +
       "• Switch runtime: `/model` — channel or one thread → harness (Claude/Codex) → model → effort _(channel access set in Settings)_";

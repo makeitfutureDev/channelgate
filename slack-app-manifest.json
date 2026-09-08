@@ -20,6 +20,11 @@
     },
     "slash_commands": [
       {
+        "command": "/menu",
+        "description": "Show Resume, Files, Secrets, and Settings buttons",
+        "should_escape": false
+      },
+      {
         "command": "/stop",
         "description": "Stop the bot's in-progress answer in this conversation",
         "should_escape": false
@@ -27,11 +32,6 @@
       {
         "command": "/status",
         "description": "Show what this channel is working on (jobs, schedules, sessions)",
-        "should_escape": false
-      },
-      {
-        "command": "/files",
-        "description": "Browse this channel's files and share a selected file",
         "should_escape": false
       },
       {

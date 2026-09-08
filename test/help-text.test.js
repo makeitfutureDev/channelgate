@@ -9,7 +9,7 @@ test("/help explains the gateway's essential user workflows", () => {
     "react 🤖",
     "`@agent stop`",
     "react 🛑",
-    "`@agent /files`",
+    "📂 button",
     "set my Composio token",
     "list skills",
     "`remember that …`",
@@ -24,6 +24,7 @@ test("/help explains the gateway's essential user workflows", () => {
     "Slack transcript",
     "Generate transcript",
     "`/status`",
+    "`/menu`",
     "`/pending`",
   ];
 
@@ -55,4 +56,8 @@ test("/help describes creating files and broad UTF-8 text editing", () => {
   assert.match(HELP_TEXT, /create new files/i);
   assert.match(HELP_TEXT, /UTF-8 text files.*including `\.env`/i);
   assert.match(HELP_TEXT, /Worker\/Auto/i);
+});
+
+test("help does not advertise the removed files command", () => {
+  assert.doesNotMatch(HELP_TEXT, /\/files/);
 });
