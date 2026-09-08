@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Give selected optional Codex MCPs the existing 120-second remote startup budget and raise
+  Claude's default initialize timeout to the same ceiling. Preserve explicit operator overrides,
+  tool-call deadlines, grant boundaries and quiet-run liveness behavior.
+
 - Persist Codex's native thread ID as soon as the CLI announces it, so stopping a first turn
   offers a valid resume control. Late announcements cannot restore a cleared session.
 
