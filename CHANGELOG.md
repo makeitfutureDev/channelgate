@@ -24,6 +24,9 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Fix repeated native file creation and inline editing exhausting Slack’s modal stack. Successful
+  forms return to the existing browser/preview; Cancel and validation retain their prior behavior.
+
 - Fix the first browser editor/upload opening from Slack: narrowly scoped SameSite=Lax session
   cookies survive the cross-site GET redirect while preserving CSRF, authorization and cookie
   confidentiality protections.

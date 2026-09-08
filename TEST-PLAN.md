@@ -2620,6 +2620,22 @@ release, no egress cut-off — so the network entry has no container equivalent 
       without replacing or creating anything outside the root. Slack source coverage verifies
       requester/membership/mode reauthorization, `channel_file_created`, and immediate preview/editor
       refresh.
+- [x] Interaction (`test/file-form-stack.test.js`): execute the actual file submission callbacks
+      against a three-view Slack stack model and real confined files. Five folder/file creation
+      cycles and repeated inline saves return to the existing explorer level; Cancel preserves the
+      parent and bytes; duplicate names never overwrite; invalid owner/name and stale edit hashes
+      keep forms open. Current membership/mode denial and an update failure after early ack do not
+      mutate files or acknowledge twice; standalone forms retain their update-in-place fallback.
+- [ ] Live, engine-independent (native file forms): in an approved writable QA conversation, open
+      Files with a supported native entry point and create at least five disposable folders/files
+      successively in the same modal session, navigating between browser and preview. Repeat inline
+      Edit/Save and cancel each kind of form with unsaved input; verify Cancel returns to the prior
+      view and leaves bytes/audits unchanged. Attempt a duplicate name and a save after externally
+      changing the file: require no overwrite and a visible error. Pass only if all successful
+      operations refresh the current browser/preview without `push_limit_reached`, preserve current
+      requester/membership/mode authorization and file-hash checks, and create no engine runs.
+      Record actual native controls, resulting confined bytes and audit actors; remove only owned
+      fixtures. This is independent of Claude/Codex because these modal operations run daemon-side.
 - [x] Interactive run footers show `💻` and `📂` as adjacent actions; the Files value is bound to
       the current requester/channel/thread, native-stream and classic fallback trailers match, and
       clicking it opens the explorer without another AI turn.
