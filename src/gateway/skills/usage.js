@@ -3,7 +3,7 @@
 // SKILL.md file with a shell or file tool — so a read of `…/skills/<slug>/SKILL.md` is an
 // INFERRED signal and is labelled that way everywhere it is shown. One row per (run, skill,
 // signal); the recorder dedupes inside a run. Nothing here stores prompt text or skill content.
-import { recordSkillUsage, getSkill, usageSummary, usageByChannel, effectiveRevisionFor } from "./catalog.js";
+import { recordSkillUsage, getSkill, usageSummary, usageByChannel, usageByAuthor, effectiveRevisionFor } from "./catalog.js";
 import { resolveSkillProfile } from "./resolve.js";
 
 // `.claude/skills/<slug>/SKILL.md`, `.agents/skills/<slug>/SKILL.md`, or a plugin's
@@ -116,10 +116,11 @@ export function createSkillUsageRecorder({
 
 // The report a channel (or the whole gateway) asks for: what fired, how often, with what
 // confidence, and — the more useful half — which granted skills never fired at all.
-export function skillUsageReport({ channelSlug = "", days = 30, grants = null, limit = 200 } = {}) {
+export function skillUsageReport({ channelSlug = "", days = 30, grants = null, limit = 200, includeAttribution = false } = {}) {
   const d = Math.max(1, Math.min(365, Number(days) || 30));
-  const since = new Date(Date.now() - d * 86400000).toISOString();
-  const rows = usageSummary({ channelSlug, since, limit });
+  const until = new Date().toISOString();
+  const since = new Date(Date.parse(until) - d * 86400000).toISOString();
+  const rows = usageSummary({ channelSlug, since, until, limit });
   const used = rows.map((r) => {
     const skill = getSkill(r.slug);
     return {
@@ -147,10 +148,12 @@ export function skillUsageReport({ channelSlug = "", days = 30, grants = null, l
   }
   return {
     since,
+    until,
     days: d,
     channelSlug,
     used,
-    channels: usageByChannel({ channelSlug, since, limit }),
+    channels: usageByChannel({ channelSlug, since, until, limit }),
+    ...(includeAttribution ? { attribution: usageByAuthor({ channelSlug, since, until, slugs: used.map((u) => u.slug) }) } : {}),
     neverUsed,
     notes: [
       "exact = Claude's Skill tool fired the skill; inferred = a Codex (or shell) read of the skill's SKILL.md — best effort, may miss uses.",
@@ -158,4 +161,40 @@ export function skillUsageReport({ channelSlug = "", days = 30, grants = null, l
     ],
     ...(profile ? { contextTokens: profile.contextTokens } : {}),
   };
+}
+
+const reportCell = (value) => String(value ?? "").replace(/[\r\n]+/g, " ").replace(/\|/g, "\\|").replace(/`/g, "\\`");
+
+// The chat report has ONE usage total. Signal provenance qualifies that total in prose;
+// exact/inferred counters remain available in the structured API for diagnostics.
+export function formatSkillUsageReport(report, { conversationId = "", conversationName = "", userNames = new Map() } = {}) {
+  const authors = new Map();
+  for (const row of report.attribution?.rows || []) {
+    const name = row.userId ? userNames.get(row.userId) : "";
+    const user = row.userId ? `${name ? `${name} ` : ""}(${row.userId})` : "unrecorded user";
+    const source = row.conversationId || `unrecorded conversation ID; workspace ${row.channelSlug || "unknown"}`;
+    const lines = authors.get(row.slug) || [];
+    lines.push(`${user}: ${row.total} (recorded conversation ${source})`);
+    authors.set(row.slug, lines);
+  }
+  const lines = [
+    "Skill usage report. Present one Usage total per skill; keep signal provenance as text, never separate Exact/Inferred columns.",
+    `Conversation: ${JSON.stringify({ id: conversationId || null, name: conversationName || null, workspaceSlug: report.channelSlug })}. The workspace slug is not a channel name.`,
+    `Window: ${report.since} through ${report.until} (rolling ${report.days} days, UTC).`,
+    "Attribution below is from recorded usage events, not the current requester. Unrecorded identities are unknown.",
+    ...(report.attribution?.truncated ? [`Author attribution is partial: only the first ${report.attribution.rows.length} groups are shown; usage totals remain complete for each listed skill.`] : []),
+    "", "| Skill | Usage total | Recorded authors | Evidence | Last recorded |", "| --- | ---: | --- | --- | --- |",
+  ];
+  for (const skill of report.used) {
+    const evidence = skill.exact && skill.inferred ? "Mixed invocation and inferred file-read signals; not all invocations"
+      : skill.exact ? "Exact Skill-tool invocation signals" : "Inferred SKILL.md file reads; not confirmed invocations";
+    lines.push(`| ${reportCell(skill.slug)} | ${skill.total} | ${reportCell((authors.get(skill.slug) || ["Attribution unavailable in this report"]).join("; "))} | ${evidence} | ${reportCell(skill.lastTs)} |`);
+  }
+  for (const skill of report.neverUsed) {
+    const via = skill.via === "dependency" ? `Dependency required by ${skill.requiredBy.join(", ")}` : "Granted";
+    lines.push(`| ${reportCell(skill.slug)} | 0 | No usage recorded | ${reportCell(via)}; never used in this window | — |`);
+  }
+  if (!report.used.length && !report.neverUsed.length) lines.push("No skill usage or unused grants in this report.");
+  lines.push("", "Totals count recorded signals, not unique runs: one run can produce both an invocation and a file-read signal.", ...report.notes);
+  return lines.join("\n");
 }

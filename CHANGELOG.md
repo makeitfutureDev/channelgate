@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Include recorded user/channel attribution and an exact time window in chat skill-usage
+  reports, with one usage total and honest inferred-read provenance.
+
 - Show current and projected context costs alongside the soft-cap warning when granting
   channel skills through chat or the admin UI/API, while keeping activation advisory.
 

@@ -3,6 +3,25 @@
 Cumulative functional + security regression. Extended per slice. Run top-to-bottom for a full
 pass. Many checks are manual (require a real Slack workspace + an authenticated `claude` CLI).
 
+## Skill usage report provenance
+
+- [x] `test/skill-usage-report.test.js`: real catalog events and chat handlers verify one
+  Usage total column, named recorded authors and conversation IDs, current channel names after
+  rename, unknown historical identities, bounded author attribution and the same UTC time
+  window for totals/channel/author groups. A second channel, old events and future events do
+  not leak into the report. Existing API exact/inferred counters remain intact.
+- [ ] Live, both Claude and Codex: use prepared authorized member/admin identities in channels
+  with the same known granted skill and a second intentionally unused grant. Record a baseline,
+  then perform one known-skill read in Claude and two in Codex, preserving exact thread links,
+  author IDs and timestamps. Ask each engine: “Show the last 7 days of skill usage for this
+  channel, including granted skills never used. Use one usage total per skill, report channel,
+  time window and recorded user attribution, and distinguish inferred reads from invocations.”
+  Pass only when counts match the before/after ledger, the unused skill is included, attribution
+  comes from stored events rather than the requester, and no separate Exact/Inferred columns
+  appear. Unknown historical users must stay unknown. Repeat the exact report prompt in any
+  previously failed thread after deployment without invoking the tested skills again; retain
+  original failures. API/UI fixtures supplement these engine-dependent live report gates.
+
 ## Exact-message read scope
 
 - In two prepared QA channels, place a disposable message with a unique nonce in channel B.
