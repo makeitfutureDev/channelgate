@@ -501,7 +501,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Protected/internal paths remain read-only in the explorer, and forged action state cannot escape
   the working root. In writable modes, *New file* exclusively creates one safely named UTF-8 file
   with optional initial text and audits `channel_file_created`; *New folder* creates one safely
-  named directory in the folder on screen. Public URL settings accept either a complete URL or a
+  named directory in the folder on screen. Native create and inline-edit forms pop after successful
+  submission and refresh the existing browser/preview, so repeated operations do not exhaust Slack’s
+  modal stack. Cancel returns to the untouched parent; invalid inputs and stale edit hashes keep the
+  form open. Post-acknowledgement failures refresh the surviving parent rather than a closed form.
+  Public URL settings accept either a complete URL or a
   bare hostname, which is normalized to HTTPS. When a public URL is configured, the single *Upload files / folder* button
   opens a one-time, user-bound browser session for up to 200 files / 250 MB total and preserves
   nested folder paths (browser pickers omit empty folders). Selected files travel directly from

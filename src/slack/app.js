@@ -3,6 +3,7 @@
 // explicit @bot mention), authorizes the author against the channel's allowedUsers, then runs
 // the message through the gateway orchestrator and posts the reply in the thread.
 import { hasComposioSdkEntitlement } from "../ee/composio-entitlement.js";
+import { createFileFormNavigation } from "./file-form-navigation.js";
 import pkg from "@slack/bolt";
 const { App, LogLevel } = pkg;
 
@@ -1460,6 +1461,7 @@ async function connectAndWire(app) {
 
   app.view("cg_channel_files_edit_modal", async ({ ack, body, view, client }) => {
     const clicker = body?.user?.id;
+    const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
       if (!clicker || state.ownerId !== clicker) throw new Error("This file editor isn't yours. Open your own with `/files`.");
@@ -1483,17 +1485,18 @@ async function connectAndWire(app) {
         file: saved.relative,
         bytes: saved.bytes.length,
       });
-      await ack({
-        response_action: "update",
-        view: await buildFilePreviewView(root, state, saved.relative, filePreviewOptions({
-          state,
-          entry,
-          mayEdit: true,
-          notice: `✅ Saved ${path.basename(saved.relative)}.`,
-        })),
-      });
+      await navigation.show(await buildFilePreviewView(root, state, saved.relative, filePreviewOptions({
+        state,
+        entry,
+        mayEdit: true,
+        notice: `✅ Saved ${path.basename(saved.relative)}.`,
+      })));
     } catch (e) {
       console.warn(`[slack] file editor error: ${e.message}`);
+      if (navigation.acknowledged) {
+        await navigation.show(fileExplorerErrorView(e.message)).catch(() => {});
+        return;
+      }
       await ack({
         response_action: "errors",
         errors: { file_content: String(e.message || "Couldn't save this file.").slice(0, 500) },
@@ -1502,7 +1505,7 @@ async function connectAndWire(app) {
   });
   app.view("cg_channel_files_new_file_modal", async ({ ack, body, view, client }) => {
     const clicker = body?.user?.id;
-    let didAck = false;
+    const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
       if (!clicker || state.ownerId !== clicker) throw new Error("This file dialog isn't yours. Open your own with `/files`.");
@@ -1514,8 +1517,7 @@ async function connectAndWire(app) {
 
       const loadingEntry = await getChannelEntry(state.channelId);
       if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with `/files`.");
-      await ack({ response_action: "update", view: buildFilesLoadingView(state, { channelName: loadingEntry.name }) });
-      didAck = true;
+      await navigation.show(buildFilesLoadingView(state, { channelName: loadingEntry.name }));
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
         userId: clicker,
@@ -1532,30 +1534,27 @@ async function connectAndWire(app) {
         file: created.relative,
         bytes: created.bytes.length,
       });
-      await client.views.update({
-        view_id: body.view.id,
-        view: await buildFilePreviewView(root, state, created.relative, filePreviewOptions({
-          state,
-          entry,
-          mayEdit: true,
-          notice: `✅ Created ${created.name}.`,
-        })),
-      });
+      await navigation.show(await buildFilePreviewView(root, state, created.relative, filePreviewOptions({
+        state,
+        entry,
+        mayEdit: true,
+        notice: `✅ Created ${created.name}.`,
+      })));
     } catch (e) {
       console.warn(`[slack] file creation error: ${e.message}`);
-      if (!didAck) {
+      if (!navigation.acknowledged) {
         await ack({
           response_action: "errors",
           errors: { [FILES_NEW_FILE_NAME_BLOCK_ID]: String(e.message || "Couldn't create this file.").slice(0, 500) },
         }).catch(() => {});
         return;
       }
-      await client.views.update({ view_id: body.view.id, view: fileExplorerErrorView(e.message) }).catch(() => {});
+      await navigation.show(fileExplorerErrorView(e.message)).catch(() => {});
     }
   });
   app.view("cg_channel_files_new_folder_modal", async ({ ack, body, view, client }) => {
     const clicker = body?.user?.id;
-    let didAck = false;
+    const navigation = createFileFormNavigation({ ack, client, view });
     try {
       const state = parseExplorerMetadata(view?.private_metadata);
       if (!clicker || state.ownerId !== clicker) throw new Error("This folder dialog isn't yours. Open your own with `/files`.");
@@ -1564,8 +1563,7 @@ async function connectAndWire(app) {
 
       const loadingEntry = await getChannelEntry(state.channelId);
       if (!loadingEntry || loadingEntry.slug !== state.slug) throw new Error("This channel file explorer expired. Open it again with `/files`.");
-      await ack({ response_action: "update", view: buildFilesLoadingView(state, { channelName: loadingEntry.name }) });
-      didAck = true;
+      await navigation.show(buildFilesLoadingView(state, { channelName: loadingEntry.name }));
       const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, {
         channelId: state.channelId,
         userId: clicker,
@@ -1581,25 +1579,22 @@ async function connectAndWire(app) {
         slug: entry.slug,
         folder: created.relative,
       });
-      await client.views.update({
-        view_id: body.view.id,
-        view: await buildFilesView(root, { ...state, page: 0 }, fileExplorerViewOptions({
-          state: { ...state, page: 0 },
-          entry,
-          mayEdit: true,
-          notice: `✅ Created ${created.name}.`,
-        })),
-      });
+      await navigation.show(await buildFilesView(root, { ...state, page: 0 }, fileExplorerViewOptions({
+        state: { ...state, page: 0 },
+        entry,
+        mayEdit: true,
+        notice: `✅ Created ${created.name}.`,
+      })));
     } catch (e) {
       console.warn(`[slack] folder creation error: ${e.message}`);
-      if (!didAck) {
+      if (!navigation.acknowledged) {
         await ack({
           response_action: "errors",
           errors: { [FILES_NEW_FOLDER_BLOCK_ID]: String(e.message || "Couldn't create this folder.").slice(0, 500) },
         }).catch(() => {});
         return;
       }
-      await client.views.update({ view_id: body.view.id, view: fileExplorerErrorView(e.message) }).catch(() => {});
+      await navigation.show(fileExplorerErrorView(e.message)).catch(() => {});
     }
   });
   for (const a of APPROVAL_ACTIONS) app.action(a, handleApprovalClick);
