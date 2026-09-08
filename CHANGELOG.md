@@ -20,6 +20,11 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Make existing channel API/CLI credentials discoverable through a current names-only inventory
+  on non-Clean attempts, including resumed turns. Teach the operating guide to check credentials
+  alongside skills, CLI logins and selected-account MCPs before requesting another connection;
+  clarify runtime environment use without exposing values or silently changing accounts.
+
 - Improve conversation and template skill selection with a shared Active skills / Add skills
   editor, name and source filters, locked inherited groups, and preserved explicit selections.
 

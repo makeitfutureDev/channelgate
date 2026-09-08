@@ -146,7 +146,7 @@ every other channel.
 
 **Never copy secrets into the working folder.** The folder is often a git checkout and may sync
 elsewhere; a credential pasted there can end up committed. A credential this channel should have
-is a `/secrets` variable (below) — it arrives as environment, never as a file.
+is a `/secrets` variable (below) — use its injected environment value, not a project `.env` file.
 
 ## Working folder & Drive
 - `get_channel_workdir` / `set_channel_workdir` (admin) / `clear_channel_workdir` (admin) — run
@@ -161,16 +161,44 @@ available to that process and its CLI for authorized use; do not claim it is unr
 Listings remain masked and outputs are redacted. Never print a value to demonstrate availability.
 
 This channel can hold its OWN credentials — its own Supabase project, its own Vercel account —
-instead of sharing whatever login the gateway host has. They are stored per channel and passed to
-every run here as environment variables, so a CLI picks them up by itself: `supabase`, `vercel`
-and friends read `SUPABASE_ACCESS_TOKEN` / `VERCEL_TOKEN` without being told to.
+instead of sharing whatever login the gateway host has. Values are stored in channel metadata in
+the gateway's SQLite database and injected into the engine process environment at spawn. They
+are not written to the project's `.env`; the container backend uses a protected internal
+environment file to pass them into the process. Do not read the gateway store or internal files
+to discover credentials.
+
+**Start with this attempt's inventory.** The prompt's **[Channel credentials for THIS attempt]**
+lists sorted names from the channel variables actually supplied to that run, never values or
+token suffixes. It refreshes on resumed turns and overrides earlier inventories, including an
+explicit empty result after removal. Clean runs omit it. This is not an inventory of host logins,
+MCP accounts or every process environment variable, and a name is not proof of validity, account
+ownership or scope. Before asking for a new credential, follow the discovery and account-selection
+rules in `SKILL.md`: check relevant skills, these names, permitted non-secret CLI auth status and
+the selected account's MCP tools. Missing MCP access alone is not missing API/CLI access.
+
+When shell use is permitted, check only a relevant name without showing its value. For example:
+
+```sh
+node -e 'console.log("HUBSPOT_ACCESS_TOKEN present:", Boolean(process.env.HUBSPOT_ACCESS_TOKEN))'
+```
+
+This returns a boolean, not the token or its suffix. Never run a full environment dump (`env`,
+`printenv` or printing `process.env`), enable shell tracing, or print credentials to debug access.
+Use the value directly from the environment inside an authorized API client or CLI invocation.
+Check the tool's actual authentication mechanism: some consume an environment variable
+automatically; others require an explicit option or request header. Merely naming a variable
+`VERCEL_TOKEN` does not establish that a CLI automatically consumes it. Avoid embedding literal
+values in commands, generated files, replies or logs. Verify only the requested account and data
+scope; never silently fall back to another account or credential. A supplied credential does not
+override the channel's tool permissions or *Allow network* policy.
 
 - Anyone authorized to use the agent here manages them in Settings → Secrets, with `/secrets`,
   or the 🔑 reply button, in every channel mode. Admins can also use the
   Admin UI → the channel's card.
-- **You cannot read them and neither can anyone else.** Every surface shows the NAME and the last
-  four characters only; there is no reveal anywhere, deliberately. A lost token is re-issued at the
-  provider, not recovered here. To replace one, set it again.
+- **Settings and API listings never reveal values.** They show masked metadata (name, provider,
+  available suffix and who/when); no reveal endpoint exists for channel environment secrets.
+  The running process can consume an injected value for authorized work. Do not use that runtime
+  access to recover or display a token; re-issue a lost token at the provider and set it again.
 - You have no tool for setting them: it is a human action, on purpose. If a task needs a
   credential this channel does not have, say which variable name is missing and point at
   `/secrets` — do not ask anyone to paste a token into the conversation.

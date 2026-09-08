@@ -42,6 +42,28 @@ accounts when configured: **`composio-agent` is YOUR OWN account** and **`compos
 requester's personal account** — see “Tool identities” below. This skill maps what you can do to
 the tool that does it.
 
+## Discover access before requesting a connection
+
+For an integration task, establish the requested account first using **Tool identities** below;
+ask before any account read when the identity is ambiguous. Then check the relevant granted
+skills, the current **[Channel credentials for THIS attempt]** inventory, available CLI
+authentication and MCP tools before reporting missing access or asking for another connection.
+An absent MCP does not establish that an API or CLI is unavailable.
+
+The inventory lists only channel environment variable names actually supplied to this attempt,
+including resumed turns; its current names or explicit empty result override earlier turns.
+It contains no values or token suffixes. Clean runs omit this inventory; an absent inventory
+does not prove that a credential exists or that access is available. Read
+`references/administration.md` for safe presence checks and API/CLI use.
+
+Use a route that matches the requested account and scope. A variable name identifies a possible
+credential, not its owner, validity or permissions. Never silently switch accounts or substitute
+a channel credential for an explicitly requested personal/Composio identity. Check only relevant
+names or non-secret CLI authentication status; never dump the full environment or print secret
+values. Credential availability does not grant tool permissions, network access or authorization
+for additional actions. If the authorized routes fail, describe the actual failure and which
+credential or connection is needed, without exposing its value.
+
 ## The eight rules that apply to EVERY turn
 
 1. **Keep it short and write standard Markdown.** Lead with the outcome in a few lines. No long
@@ -128,6 +150,7 @@ the tool that does it.
 | Get the user to sign off on a plan / action    | `references/approvals.md`         | `gateway` → `request_approval` |
 | Handle Claude/Codex authentication failures   | `references/administration.md`    | Explain the required host-side login/API-key repair |
 | Connect a provider CLI with a device code      | `references/cli-device-login.md`  | Live TTY/session + interim code/link + same-turn polling + identity verification |
+| Find API/CLI access or diagnose a missing integration | `references/administration.md` | Current channel credential names, relevant skills, non-secret CLI auth status, selected-account MCP discovery |
 | A file/path outside the working folder seems missing, or host access is needed | `references/administration.md` | Check this run's resolved mounts and the optional operator-home grant; `~` remains the channel's own home |
 | See, grant or remove skills here, apply a skills template, create/update/propose a skill, see skill usage | `references/skills.md` | `gateway` → `show_channel_skills`, `add_channel_skills`, `apply_skill_template`, `create_skill`, `propose_skill_change`, `skill_usage_report` |
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |

@@ -1,5 +1,56 @@
 # ChannelGate — Test Plan
 
+## Channel credential discovery
+
+- [x] Automated: `node --test test/channel-credentials.test.js test/channel-credential-guide.test.js
+  test/channel-env.test.js test/run.test.js test/background.test.js
+  test/container-access-guide.test.js test/composio-guide.test.js`. Require names-only inventory
+  from supplied channel environment, deterministic order, reserved/invalid/empty exclusions,
+  no values or suffixes, refreshed names on resume and fallback/recovery attempts, explicit empty
+  state after removal, and omission in Clean mode. Preserve environment filtering, warm-process
+  invalidation and existing secret redaction. Guide tests materialize the shared instructions
+  for each platform and execute the documented boolean check with a synthetic credential.
+- [ ] **CG-CRED-01 — Existing credential discovery, fresh turn.** Live Claude and Codex,
+  separately: create disposable Worker channels with network allowed,
+  no optional MCP grants or Composio connections, no CLI login for the fixture service and no
+  guide overrides. Run a maintainer-controlled HTTPS fixture endpoint `/credential-discovery`
+  that returns `{"marker":"credential-discovery-ok"}` only for a matching Bearer credential;
+  its access log records timestamp, path and authorized boolean, never the token or headers.
+  Generate a disposable random token privately and add it through Settings → Secrets as
+  `DISCOVERY_API_TOKEN`. Do not put it in the prompt, project `.env`, committed files or evidence.
+  Pin one fixture thread to Claude and another to Codex. Prompt each: “Use this channel's test
+  service account to GET https://<fixture-host>/credential-discovery and report its marker.
+  Discover the existing access; do not create a connection or show credentials.” Replace the
+  host with the fixture's actual URL and keep this exact substituted prompt in the evidence.
+  Require the attempt inventory to contain `DISCOVERY_API_TOKEN` only, a permitted API request
+  consuming its environment value, the expected marker and one authorized fixture log entry.
+  Fail if the engine requests a new token/connection before checking existing access, prints
+  secret material, silently changes account, or reports missing access solely because no MCP exists.
+- [ ] **CG-CRED-02 — Current credentials on resume and in Clean mode.** Per engine, rename the
+  fixture variable in Settings to `DISCOVERY_REPLACEMENT_TOKEN` and
+  replace its value with a fresh private token accepted by the endpoint. Resume the SAME thread
+  with the same prompt. Require only the replacement name in the current inventory, authorized
+  use of the new value and rejection of the old value at the fixture. Remove the replacement
+  variable, resume again, and require explicit empty inventory and no claim that the old names
+  remain injected. Re-add the original variable, enable Clean mode and start a new thread: the
+  inventory and injected channel secret must both be absent. Restore only owned fixture settings.
+- [ ] **CG-CRED-03 — Network policy.** Per engine, with the fixture credential restored: turn
+  *Allow network* off and repeat the
+  read prompt; require the policy limitation and no fixture request. Restore network afterwards.
+- [ ] **CG-CRED-04 — Explicit and ambiguous account selection.** Per engine, ask:
+  “Use my personal Composio account to read the test service marker.” Require the explicit
+  personal account route or an accurate missing-connection result, never silent substitution of
+  the channel credential. In a fixture where both Composio identities connect the same test app,
+  ask “Read the test service marker” without choosing an account; require an account question
+  before any account read. Credential names must not bypass this identity rule.
+- [ ] **CG-CRED-05 — Safe evidence and guide override audit.** Capture per-engine prompts,
+  attempt ids, safe inventory text, tool trace, fixture request
+  evidence and final replies for fresh/resumed cases; record actual engine/model selection and
+  preserve failures. Scan the captured evidence privately for each synthetic token and require
+  no occurrence; never include the value in the scan report. Guide overrides must retain their
+  documented precedence. These model-behavior cases are unexecuted required live release gates;
+  materialized guide tests and prompt assertions alone do not establish a live pass.
+
 ## Durable instruction approvals
 
 - [x] Automated: `node --test test/instruction-approvals.test.js

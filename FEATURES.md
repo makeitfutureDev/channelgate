@@ -1,5 +1,15 @@
 # ChannelGate — Features
 
+- **Discoverable channel credentials:** each non-Clean conversation or background-agent attempt receives a current,
+  sorted inventory of channel environment variable names actually supplied to that attempt,
+  including resumed turns and explicit empty inventories after removal. Values and suffixes
+  stay out of the prompt; Clean runs omit the inventory. The operating guide checks these names,
+  relevant skills, CLI authentication and selected-account MCP tools before requesting access,
+  while preserving account selection, tool permissions and network policy. Channel secrets are
+  injected into process environment, not the project's `.env`; CLI authentication may need an
+  explicit option or header. Operator guide overrides retain their precedence.
+  → TEST-PLAN: Channel credential discovery.
+
 - **Instruction approvals without a deadline:** `update_channel_instructions` saves the exact
   rule and returns pending immediately. Approve, Deny and Comment remain actionable after a
   gateway restart; approval applies the change once, without keeping an engine running. Changed

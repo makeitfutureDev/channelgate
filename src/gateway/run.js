@@ -36,6 +36,7 @@ import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
+import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
@@ -1011,12 +1012,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const userSkills = clean ? [] : userOnlySkillGrants(runGrants);
 
   // The channel's OWN environment secrets (config/channel-env.js) — its per-project CLI logins.
-  // Resolved once per turn and handed to the engine as process environment: never a file the run
-  // can read, never another channel's. Clean mode runs bare, so it gets none, for the same reason
+  // Resolved once per turn and handed to the engine as process environment, not a project .env
+  // or another channel's credentials. Clean mode runs bare, so it gets none, for the same reason
   // it gets no MCP servers and no Composio tokens. A resolve FAILURE throws: a turn that quietly
   // ran without the credential looks like a deploy that did nothing.
   const channelEnv = clean ? {} : safeSpawnEnv(await resolveChannelEnv(meta));
   const channelEnvFp = channelEnvFingerprint(channelEnv);
+  const channelCredentialsPrefix = channelCredentialsPreamble(channelEnv, { clean });
   // Which browser daemon this channel's browser MCP server attaches to. Unconditional — clean
   // mode included: it injects no MCP servers, but the isolation must not depend on that staying
   // true, and a namespace costs nothing when nothing reads it. See gateway/browser-env.js.
@@ -1337,7 +1339,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     assertRuntimeCanStart();
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
-    const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix
+    const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean })
       + (promptOverride ?? turnText);
@@ -1557,7 +1559,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       assertRuntimeCanStart();
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
-        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix
+        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh })
           + runtimeAccessPreamble(target, { clean }) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
