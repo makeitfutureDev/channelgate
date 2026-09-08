@@ -524,10 +524,7 @@ export async function recoverRuns(stale, {
       // deleting the row would silently drop the turn. Keep it; the attempt cap above is the
       // terminal bound, and the next boot retries.
       if (told) markTerminal();
-      else {
-        keepRow = true;
-        recordActiveRun(id, { ...rec, id, attempts, recoveryPending: true });
-      }
+      else keepRow = true; // already attempted: reconnect must not replay uncertain side effects
     } finally {
       await stopStatus();
       runQueue.release(runKey, handle);

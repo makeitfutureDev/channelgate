@@ -119,3 +119,22 @@ test("Stop during recovered usage accounting prevents a late final answer", asyn
   assert.equal(runQueue.count(key(r)), 0);
   assert.equal(listActiveRuns().some((row) => row.id === r.id), false);
 });
+
+test("a reconnect does not replay attempted work when both delivery and its error notice failed", async () => {
+  let notify; let calls = 0;
+  const r = rec("failed-delivery"); recordActiveRun(r.id, r);
+  const slack = {
+    snapshot: () => ({ connected: true }),
+    getClient: () => ({ chat: { postMessage: async () => { throw new Error("offline"); } } }),
+    onConnected: (fn) => { notify = fn; return () => {}; },
+  };
+  const recovery = createRunRecovery(takeStaleRuns(), { slack,
+    runner: async () => { calls++; return answer; },
+    usageRecorder: async () => {}, deliver: async () => { throw new Error("offline"); },
+  });
+  await recovery.start();
+  await notify(); await notify();
+  assert.equal(calls, 1, "connection flaps must not replay a tool that may already have written");
+  assert.equal(runQueue.count(key(r)), 0);
+  clearActiveRun(r.id);
+});
