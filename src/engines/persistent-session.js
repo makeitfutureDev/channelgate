@@ -280,13 +280,14 @@ export class PersistentClaudeSession {
     this.turn.stream.consume(p);
     if (p.type === "result") {
       const t = this.turn;
+      const engineError = p.is_error === true || /^error(?:_|$)/.test(p.subtype || "");
       // The CLI reported a provider failure for this turn (the assistant `error` marker) and — a
       // long-lived process — stayed alive to end it as an is_error result. Print mode exits 1 on
       // the same failure and the cold runner rejects with the classified error; do the same here,
       // so the orchestrator's in-place retry and cross-engine failover see the outage instead of
       // the "API Error: …" text being posted as the reply. The process is retired with the turn
       // (_die evicts it from the pool); the retry spawns afresh, exactly as on the cold path.
-      if (p.is_error === true && t.providerError && !t.interrupted) {
+      if (engineError && t.providerError && !t.interrupted) {
         this._die(new Error(t.providerError.message));
         return;
       }
@@ -297,14 +298,15 @@ export class PersistentClaudeSession {
         sessionId: p.session_id ?? null,
         durationMs: Date.now() - t.startedAt,
         // Same contract as the cold runner (claude.js): the CLI's own verdict on the turn travels
-        // with the result, so a turn that ends with no text can say WHY instead of "(empty response)".
+        // with the result, so partial narration cannot hide an incomplete turn.
         endReason: String(p.subtype || ""),
-        engineError: p.is_error === true,
+        engineError,
+        completed: !engineError && !t.interrupted,
         toolUseCount: t.stream.toolUseCount,
         primaryModel: t.stream.model,
-        // Only when the turn produced no answer: on an abort the CLI never exits, so no error path
+        // On a failed or answerless turn: on an abort the CLI never exits, so no error path
         // ever reads what it wrote to stderr (redacted + capped by conciseProcessDiagnostic).
-        ...(t.stream.text || p.result ? {} : { diagnostic: conciseProcessDiagnostic((this.stderr || "").slice(t.stderrAt)) }),
+        ...(!engineError && (t.stream.text || p.result) ? {} : { diagnostic: conciseProcessDiagnostic((this.stderr || "").slice(t.stderrAt)) }),
         interrupted: Boolean(t.interrupted), // we steered this turn — result is intentionally cut short
         raw: p,
       });

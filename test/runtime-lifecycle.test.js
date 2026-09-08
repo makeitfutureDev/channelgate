@@ -225,7 +225,7 @@ test("restart recovery shares the live Slack thread queue and keeps the live fin
     threadTs: "111.222",
     ctx: { authorId: "U123", teamId: "", isDM: false, dir: { map: new Map(), maxWords: 5 } },
   });
-  assert.deepEqual(progressEvents.map(([kind]) => kind), ["runtime", "event", "delta"]);
+  assert.deepEqual(progressEvents.map(([kind]) => kind), ["event", "runtime", "event", "delta"]);
   assert.equal(runQueue.count(key), 0, "recovery must release its queue ownership");
   assert.match(posts[0].text, /picking it back up/i);
 });
@@ -292,7 +292,7 @@ test("restart recovery streams native progress instead of going silent until fin
   assert.equal(progressStarts[0].ctx.teamId, rec.workspaceId);
   assert.equal(progressStarts[0].ctx.isDM, false);
   assert.equal(progressStarts[0].ctx.dir.map.get("alex"), "U123");
-  assert.deepEqual(visible.map(([kind]) => kind), ["runtime", "event", "delta"]);
+  assert.deepEqual(visible.map(([kind]) => kind), ["event", "runtime", "event", "delta"]);
   assert.equal(finalized[0].content, "Live recovered answer.");
   assert.equal(deliveries.length, 0, "native recovery progress owns final delivery");
   assert.match(posts[0].text, /picking it back up/i);

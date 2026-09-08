@@ -109,6 +109,8 @@ fi
 # CLI's terminal line is an error subtype carrying no `result` text — the real shape behind the
 # "(empty response)" incidents. Exit 0, exactly like the CLI does.
 if [ "$answerless" = "yes" ]; then
+  case "$*" in *CLAUDE_STUB_ZERO_FAILURE*) printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"usage":{"input_tokens":0,"output_tokens":0}}'; exit 0 ;; esac
+  case "$*" in *CLAUDE_STUB_PARTIAL_NARRATION*) printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I will verify the update next."}}}' ;; esac
   printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_ans","name":"Bash","input":{}}}}'
   printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_stop","index":0}}'
   printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"stub-session","usage":{"input_tokens":900,"output_tokens":120},"total_cost_usd":0.02}'

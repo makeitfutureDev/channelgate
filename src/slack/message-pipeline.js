@@ -200,7 +200,7 @@ export async function stopRunsInChannel(client, channelId, slug, byUser, threadK
 // (config errors, usage limits, aborts) is not auto-recoverable.
 export function runDeathRecovery(err) {
   const m = String(err?.message || "");
-  if (err?.details?.explicitStop || err?.name === "AbortError") return null;
+  if (err?.details?.explicitStop || err?.details?.incompleteTurn || err?.name === "AbortError") return null;
   // A hard kill can happen after an external write but before its tool result is saved.
   // Do not infer OOM or replay that ambiguous work automatically.
   if (String(err?.details?.signal || "").toUpperCase() === "SIGKILL" || Number(err?.details?.exitCode) === 137) return null;

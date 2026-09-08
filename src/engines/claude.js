@@ -349,6 +349,9 @@ export async function runClaude({
       }
 
       const content = stream.text || result?.result || "";
+      // Process exit is not a turn-completion event. Commentary can be streamed before either
+      // an explicit harness failure or an exit that never delivered the terminal result.
+      const engineError = !result || result.is_error === true || /^error(?:_|$)/.test(result.subtype || "");
       resolve({
         content,
         sessionId: result?.session_id ?? sessionId,
@@ -358,15 +361,16 @@ export async function runClaude({
         // How the CLI itself says the turn ended ("success", "error_during_execution",
         // "error_max_turns", …). Exit 0 does NOT mean the turn succeeded: the CLI reports an
         // aborted turn as a terminal result line with is_error and no `result` text. Kept on the
-        // result so an answerless turn can name its reason instead of posting "(empty response)".
-        endReason: String(result?.subtype || ""),
-        engineError: result?.is_error === true,
+        // result so partial narration cannot hide an incomplete turn.
+        endReason: String(result?.subtype || (!result ? "missing_terminal_result" : "")),
+        engineError,
+        completed: !engineError,
         toolUseCount: stream.toolUseCount,
         primaryModel: stream.model,
-        // Only on a turn with no answer: the CLI's stderr tail is where the real cause of an
+        // On a failed or answerless turn: the CLI's stderr tail is where the real cause of an
         // aborted turn is written, and exit 0 means no error path ever reads it. Redacted and
         // capped by conciseProcessDiagnostic; carried for the log, not for the reply.
-        ...(content.trim() ? {} : { diagnostic: conciseProcessDiagnostic(stderr) }),
+        ...(!engineError && content.trim() ? {} : { diagnostic: conciseProcessDiagnostic(stderr) }),
         raw: result,
       });
     });
