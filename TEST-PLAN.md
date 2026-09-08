@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Network policy on resumed turns
+
+- [x] Automated: `node --test test/runtime-identity-preamble.test.js test/runtime-access-facts.test.js`
+  inspects actual spawned argv through the production orchestrator for Claude and Codex. Start
+  with network on, change the same channel to off, repeat in the same session, then enable Clean
+  mode and change off to on again. Every prompt names the current policy; resumed session identity
+  is retained where expected. Clean prompts expose no optional identity, memory or channel-secret
+  inventory. Existing retry, fallback and lost-session recovery checks also require the policy.
+  Missing unresolved inputs remain unknown rather than inventing a network permission.
+- [ ] Live (Claude + Codex): use an approved author in two owned Worker conversations and a
+  harmless public HTTPS endpoint or isolated synthetic-token fixture with token-free request logs.
+  Snapshot each channel's network switch. With network on, ask “Make one HTTPS request to the
+  configured fixture and report the result.” After a successful logged request, turn network off
+  and repeat the exact request in the same thread. Capture the delivered per-attempt prompt,
+  session, tool calls, endpoint counter and final reply. The prompt must explicitly state off;
+  the reply must explain the current policy and must not present an old response as a fresh fetch.
+  Repeat the off observation in a fresh thread and, where supported, a Clean thread, without
+  adding optional credentials to Clean. Restore the original switch and any owned fixture state.
+  Pass requires actual policy delivery, no new outbound request under off, and an accurate final
+  explanation in each tested variant. A model refusal does not prove kernel egress isolation;
+  the container remains on the bridge network and no egress-blocking behavior is added here.
+
 ## Control-plane approval receipts
 
 - [x] Automated: `node --test test/mcp-control-plane-approval.test.js` exercises real MCP skill

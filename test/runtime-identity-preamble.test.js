@@ -53,12 +53,47 @@ function metadata(call) {
   assert.match(prompt, /current access facts supersede earlier turns/);
   assert.match(prompt, /Write-only means masked listing\/reveal surfaces and redacted outputs/);
   assert.match(prompt, /Clean mode for this attempt: \*\*(enabled|disabled)\*\*/);
+  assert.match(prompt, /Network policy for THIS attempt: \*\*(on|off)\*\*/);
   assert.match(prompt, /Host gateway runtime directory: \*\*(not )?mounted\*\*/);
   assert.match(prompt, /Container-local \/opt\/channelgate and \/home\/agent/);
   assert.match(prompt, /For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only/);
   assert.match(prompt, /Do not read file contents or create, modify, or delete probe files, even temporarily/);
   assert.match(prompt, /If metadata cannot establish write access, report it as unverified/);
   return JSON.parse(match[1]);
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: network policy changes reach fresh and resumed prompts without exposing Clean credentials`, async () => {
+    const context = await fixture(`NETWORK_FACTS_${engine}`, engine, engine === "claude" ? "sonnet" : "gpt-5.6-sol", { allowNetwork: true });
+    const start = backend.calls.spawn.length;
+    await runMessage({ ...context, text: "Make the permitted public request." });
+    await patchChannelMeta(context.entry.slug, { allowNetwork: false });
+    await runMessage({ ...context, text: "Repeat the same request and report its current result." });
+    await patchChannelMeta(context.entry.slug, { cleanMode: true });
+    await runMessage({ ...context, text: "Repeat the request in Clean mode." });
+    await patchChannelMeta(context.entry.slug, { allowNetwork: true });
+    await runMessage({ ...context, text: "What network policy applies now?" });
+    const calls = attempts(start);
+    assert.equal(calls.length, 4);
+    const enabled = [true, false, false, true];
+    for (let i = 0; i < calls.length; i++) {
+      const prompt = calls[i].args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
+      assert.match(prompt, new RegExp("Network policy for THIS attempt: \\*\\*" + (enabled[i] ? "on" : "off") + "\\*\\*"));
+      assert.match(prompt, /current network policy supersedes earlier turns and cached results/);
+      assert.match(prompt, /advisory.*not.*container egress enforcement/);
+      if (!enabled[i]) {
+        assert.match(prompt, /explain that the current policy is off/);
+        assert.match(prompt, /Do not present an earlier response as a fresh network result/);
+      }
+      if (i >= 2) {
+        assert.match(prompt, /Clean mode for this attempt: \*\*enabled\*\*/);
+        assert.doesNotMatch(prompt, /\[Channel credentials for THIS attempt\]|\[Composio identities|\[Channel memory/);
+      }
+    }
+    assert.equal(metadata(calls[0]).session, "fresh");
+    assert.equal(metadata(calls[1]).session, "resumed", "the changed OFF fact must reach the existing session");
+    assert.equal(metadata(calls[3]).session, "resumed", "Clean resumed turns also receive the current ON fact");
+  });
 }
 
 for (const engine of ["claude", "codex"]) {

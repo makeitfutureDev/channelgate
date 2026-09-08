@@ -50,5 +50,6 @@ test("missing resolved facts stay unknown instead of inferring a mode or host is
   const note = runtimeAccessPreamble(undefined);
   assert.match(note, /database visibility are unknown/);
   assert.match(note, /Clean mode for this attempt is unknown/);
+  assert.match(note, /Network policy for this attempt is unknown/);
   assert.doesNotMatch(note, /runtime directory: \*\*(not )?mounted\*\*/);
 });
