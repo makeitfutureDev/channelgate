@@ -44,27 +44,28 @@ async function execute(text, variant, opts) {
 }
 for (const variant of ["previous", "root", "none"]) {
   test(`current controls bypass the engine with ${variant} historical attachments`, async () => {
-    for (const [command, expected] of [["/menu", /Channel menu/], ["/files", /Browse this channel's files/], ["stop", /Nothing is running/], ["pending", /follow|pending|waiting/i], ["/help", /ChannelGate|Commands|commands/], ["/next", /Add the task after/]]) {
+    for (const [command, expected] of [["/menu", /Channel menu/], ["/files", /The \/files command has been removed/], ["stop", /Nothing is running/], ["pending", /follow|pending|waiting/i], ["/help", /ChannelGate|Commands|commands/], ["/next", /Add the task after/]]) {
       const result = await execute(`<@${BOT}> ${command}`, variant);
       assert.equal(result.starts.length, 0, `${command} must not start an engine`);
       assert.match(result.text, expected);
+      if (command === "/files") assert.ok(result.client.posted.every(m => !m.blocks?.some(b => b.accessory?.text?.text === "Open files")));
     }
   });
 }
 test("canonical current attachments omitted from a trigger retain attachment semantics", async () => {
   const result = await execute("/files", "canonical-current");
   assert.equal(result.starts.length, 1);
-  assert.doesNotMatch(result.text, /Browse this channel's files/);
+  assert.doesNotMatch(result.text, /The \/files command has been removed/);
 });
 test("failed canonical reads preserve current trigger attachments", async () => {
   const result = await execute("/files", "trigger-current", { lookupFails: true });
   assert.equal(result.starts.length, 1);
-  assert.doesNotMatch(result.text, /Browse this channel's files/);
+  assert.doesNotMatch(result.text, /The \/files command has been removed/);
 });
 test("canonical text controls routing even when the trigger text is incomplete", async () => {
   const result = await execute("earlier envelope text", "previous", { canonicalText: `<@${BOT}> /files` });
   assert.equal(result.starts.length, 0);
-  assert.match(result.text, /Browse this channel's files/);
+  assert.match(result.text, /The \/files command has been removed/);
 });
 test("unknown commands and ordinary followups retain preceding attachment recovery", async () => {
   for (const prompt of ["/unknown-command", "read that file", "/next read that file", "/compact"]) {

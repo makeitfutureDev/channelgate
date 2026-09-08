@@ -44,7 +44,6 @@ import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry
 import { getDirectory } from "./directory.js";
 import { listConversationMemberIds } from "./members.js";
 
-import { actionValue as fileActionValue, FILES_ACTION_ID } from "./file-explorer.js";
 import { buildMenuCard } from "./menu.js";
 import { HELP_TEXT } from "./help.js";
 import { formatAppContextProvenance } from "./app-context.js";
@@ -740,29 +739,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           await client.chat.postMessage({ channel: event.channel, ...(res.parentDeleted ? {} : { thread_ts: threadKey }), text: summary }).catch(() => {});
         }
       } else if (sc.cmd === "files") {
-        // Message events have no trigger_id, so they cannot open a Slack modal directly. Post an
-        // ephemeral button; its click supplies the short-lived trigger and preserves this thread.
-        const value = fileActionValue("open", { c: event.channel, t: threadKey, u: event.user });
-        const message = {
-          channel: event.channel,
-          user: event.user,
-          thread_ts: threadKey,
-          text: "Browse this channel's files",
-          blocks: [
-            {
-              type: "section",
-              text: { type: "mrkdwn", text: "📂 Browse every file and folder contained in this channel's workspace." },
-              accessory: { type: "button", style: "primary", action_id: FILES_ACTION_ID, text: { type: "plain_text", text: "Open files" }, value },
-            },
-          ],
-        };
-        try {
-          await client.chat.postEphemeral(message);
-        } catch {
-          // Some Slack surfaces do not support threaded ephemerals; keep the control usable.
-          const { user: _user, ...publicMessage } = message;
-          await client.chat.postMessage(publicMessage);
-        }
+        await reply("The /files command has been removed. Use the 📂 button on a reply or the Browse channel files message shortcut.");
       } else if (sc.cmd === "context") {
         const c = lastCtx.get(runKey);
         await reply(

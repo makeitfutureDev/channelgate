@@ -43,7 +43,7 @@
 
 - **Text commands remain controls after file sharing:** canonical current-message attachments
   are recovered even when Slack omits them from a trigger. Historical thread files cannot turn
-  text-only `/files`, stop/cancel, pending or other gateway controls into an agent request.
+  text-only retired-command notices, stop/cancel, pending or other gateway controls into an agent request.
   Ordinary followups, unknown commands, queued tasks and engine-native `/compact` retain their
   normal attachment context; bare `/next` gives its usage hint. → TEST-PLAN: Commands after file sharing.
 
@@ -516,11 +516,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   transcript** and re-trigger. Fresh installers ask whether to provision Whisper, updates honor the
   stored setting, and disabled mode never downloads raw audio. Typed text remains instructions and
   raw audio is excluded from Claude/Codex. → TEST-PLAN: Voice prompts.
-- Native Slack **channel file explorer**: `/files` opens a Block Kit modal rooted at the channel's
+- Native Slack **channel file explorer**: the 📂 reply button opens a Block Kit modal rooted at the channel's
   effective working folder. Its title identifies the authoritative stored Slack channel name, and
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
-  *Browse channel files* message shortcut opens it for a selected thread, typed `@bot /files` posts
-  an ephemeral *Open files* button for thread-aware use, and every interactive run footer carries a
+  *Browse channel files* message shortcut opens it for a selected thread, and every interactive run footer carries a
   requester-bound `📂` button beside `💻` for one-click access; managers also receive the
   requester-bound **⚙️ Settings** snapshot button described above, and gateway admins may open a
   control attached to another user's bot reply. When an agent names up to five
@@ -582,8 +581,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   hash, atomically replaces the confined file, and records an audit event. Without a public URL the
   Slack controls its native modal dimensions; apps cannot request a larger popup. Without a public
   URL, the 3,000-character Slack modal editor remains available on its own. Existing Slack apps must
-  apply the latest manifest to activate the registered command + shortcut; typed `@bot /files` uses
-  normal messages.
+  apply the latest manifest to activate the message shortcut. `/files` is no longer registered or
+  advertised; a typed legacy request gets a retirement notice without starting an engine.
   → TEST-PLAN: Channel file explorer.
 - Slack Agent app (`agent_view`): native status animation (`assistant.threads.setStatus`) with
   progress-tracking phrases in agent threads. As soon as the spawn runtime resolves, the prominent
@@ -767,7 +766,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   channel/DM addressing, 🤖 engagement, thread stopping/steering, files, personal Composio setup,
   the skill catalog, channel memory/rules, the automatic gateway skills, reminders/schedules,
   long-running background work, useful status checks, and the complete command reference),
-  `/files` (native explorer; thread-aware open button), `/clear` (drop the thread's session — next
+  `/clear` (drop the thread's session — next
   message starts fresh), `/context` (token usage + % of the context window from the last turn),
   `/resume` (the copyable `cd "…" && claude --resume <id>` terminal command for this thread's
   session — kept out of reply footers; also behind the 💻 button on "🛑 Stopped." messages → modal.

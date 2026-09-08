@@ -35,11 +35,6 @@
         "should_escape": false
       },
       {
-        "command": "/files",
-        "description": "Browse this channel's files and share a selected file",
-        "should_escape": false
-      },
-      {
         "command": "/secrets",
         "description": "See and set this channel's environment secrets (values are never shown)",
         "should_escape": false

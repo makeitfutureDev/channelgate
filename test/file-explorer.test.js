@@ -595,9 +595,11 @@ test("binary preview is identified without dumping bytes into Slack", async (t) 
   assert.equal(preview.shareable, true);
 });
 
-test("manifest registers the native /files command and message shortcut", () => {
+test("manifest omits the removed files command and retains the message shortcut", () => {
   const manifest = JSON.parse(readFileSync(new URL("../slack-app-manifest.json", import.meta.url), "utf8"));
-  assert.ok(manifest.features.slash_commands.some((c) => c.command === "/files"));
+  assert.ok(!manifest.features.slash_commands.some((c) => c.command === "/files"));
+  const appSource = readFileSync(new URL("../src/slack/app.js", import.meta.url), "utf8");
+  assert.doesNotMatch(appSource, /app\.command\("\/files"/);
   assert.ok(manifest.features.shortcuts.some((s) => s.callback_id === FILES_SHORTCUT_ID && s.type === "message"));
   assert.equal(MAX_SHARED_FILE_BYTES, 25 * 1024 * 1024);
 });
