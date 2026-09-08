@@ -66,15 +66,23 @@ export class RestartCoordinator {
     this.current = null;
     this.latest = null;
     this.pending = null;
+    this.forceSignal = null;
+    this.resolveForce = null;
   }
 
-  request({ channelId = "", threadKey = "", requestedBy = "", reason = "gateway restart" } = {}) {
+  request({ channelId = "", threadKey = "", requestedBy = "", reason = "gateway restart", force = false } = {}) {
     if (this.current) {
+      if (force === true && !this.current.force && ["settling", "waiting"].includes(this.current.phase)) {
+        this.current.force = true;
+        this.current.message = "Force restart requested. Ongoing work will be interrupted.";
+        this.resolveForce?.();
+        return { ok: true, id: this.current.id, force: true, upgraded: true, waitMs: 0, pollMs: this.pollMs, message: this.current.message };
+      }
       return {
         ok: false,
         conflict: true,
         id: this.current.id,
-        message: "A safe gateway restart is already waiting for ongoing work to finish.",
+        message: this.current.force ? "A force gateway restart is already pending." : "A safe gateway restart is already waiting for ongoing work to finish.",
       };
     }
     const record = {
@@ -84,10 +92,13 @@ export class RestartCoordinator {
       requestedBy: String(requestedBy || ""),
       reason: String(reason || "gateway restart"),
       requestedAt: this.now(),
+      force: force === true,
       phase: "settling",
       activity: null,
-      message: "Waiting for the requesting turn to finish before checking gateway activity.",
+      message: force === true ? "Force restart queued. Ongoing work will be interrupted." : "Waiting for the requesting turn to finish before checking gateway activity.",
     };
+    this.forceSignal = new Promise((resolve) => { this.resolveForce = resolve; });
+    if (record.force) this.resolveForce();
     this.current = record;
     this.latest = record;
     this.pending = Promise.resolve()
@@ -99,9 +110,10 @@ export class RestartCoordinator {
     return {
       ok: true,
       id: record.id,
-      waitMs: this.waitMs,
+      force: record.force,
+      waitMs: record.force ? 0 : this.waitMs,
       pollMs: this.pollMs,
-      message: "Safe restart queued. The gateway will wait for ongoing work to finish before restarting.",
+      message: record.force ? "Force restart queued. Ongoing work will be interrupted." : "Safe restart queued. The gateway will wait for ongoing work to finish before restarting.",
     };
   }
 
@@ -116,7 +128,8 @@ export class RestartCoordinator {
       phase: record.phase,
       activity: record.activity,
       message: record.message,
-      waitMs: this.waitMs,
+      force: record.force,
+      waitMs: record.force ? 0 : this.waitMs,
       pollMs: this.pollMs,
     };
   }
@@ -127,9 +140,18 @@ export class RestartCoordinator {
 
   async _notify(record, text) {
     try {
-      await this.notify({ ...record, text });
+      await Promise.race([this.notify({ ...record, text }), this.forceSignal]);
     } catch {
       // Visibility is best-effort; a Slack outage must not turn the lifecycle guard into a crash.
+    }
+  }
+
+  async _waitForPoll(ms) {
+    const controller = new AbortController();
+    try {
+      await Promise.race([this.sleep(ms, undefined, { signal: controller.signal }), this.forceSignal]);
+    } finally {
+      controller.abort(); // retire the losing timer when a force upgrade wakes the poll
     }
   }
 
@@ -142,6 +164,17 @@ export class RestartCoordinator {
     for (;;) {
       let activity = this.getActivity();
       record.activity = activity;
+      if (record.force) {
+        record.phase = "restarting";
+        record.message = "Force restarting the gateway; ongoing work will be interrupted.";
+        // Status is already visible to the HTTP caller. A slow chat notification must not hold
+        // an explicitly forced restart behind the activity it was requested to interrupt.
+        void this._notify(record, "🔄 Force restarting the gateway now. Ongoing work will be interrupted.");
+        await this.restart({ reason: record.reason, force: true });
+        record.phase = "restarted";
+        record.message = "Gateway force restart started.";
+        return { restarted: true, force: true, activity };
+      }
       if (activity.total === 0) {
         record.phase = "restarting";
         record.message = wasBusy
@@ -177,6 +210,7 @@ export class RestartCoordinator {
         }
       }
 
+      if (record.force) continue; // upgraded while the busy notification was in flight
       const elapsed = this.now() - startedAt;
       if (elapsed >= this.waitMs) {
         record.phase = "cancelled";
@@ -187,7 +221,7 @@ export class RestartCoordinator {
         );
         return { restarted: false, reason: "busy", activity };
       }
-      await this.sleep(Math.min(this.pollMs, Math.max(1, this.waitMs - elapsed)));
+      await this._waitForPoll(Math.min(this.pollMs, Math.max(1, this.waitMs - elapsed)));
     }
   }
 }

@@ -3550,25 +3550,27 @@ function bindSettings() {
   });
 
   document.getElementById("restart-daemon").addEventListener("click", async () => {
-    const ok = await confirmDialog({
+    const choice = await confirmDialog({
       title: "Restart the daemon?",
-      body: "The gateway checks ongoing turns and jobs first, waits up to five minutes, and restarts only after it becomes idle.",
-      confirmLabel: "Restart when idle",
-      danger: true,
+      body: "Wait until idle allows ongoing work to finish (up to five minutes). Force restart skips the wait and interrupts active turns and jobs; an update in progress may fail.",
+      confirmLabel: "Wait until idle",
+      alternativeLabel: "Force restart",
+      alternativeDanger: true,
     });
-    if (!ok) return;
+    if (!choice) return;
+    const force = choice === "alternative";
     const msg = document.getElementById("daemon-msg");
     let before;
     let started;
     try {
       before = await api("/api/health");
-      started = await api("/api/daemon/restart", { method: "POST" });
+      started = await api("/api/daemon/restart", { method: "POST", body: JSON.stringify({ force }) });
     } catch (e) {
-      msg.textContent = "✗ " + e.message;
+      msg.textContent = "✗ " + (e.body?.message || e.message);
       return;
     }
-    msg.textContent = "Checking ongoing work…";
-    const deadline = Date.now() + Number(started.waitMs || 300_000) + 60_000;
+    msg.textContent = force ? "Force restart requested — active work will be interrupted…" : "Checking ongoing work…";
+    const deadline = Date.now() + (force ? 0 : Number(started.waitMs || 300_000)) + 60_000;
     const timer = setInterval(async () => {
       try {
         const health = await api("/api/health");
