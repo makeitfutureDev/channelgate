@@ -25,6 +25,7 @@ import { retireApprovalLinkTokens } from "../gateway/approval-link-tokens.js";
 import { approvalLinkBase, approvalLinksMessage, buildApprovalLinks } from "../web/approval-links.js";
 import { slackAdapter } from "../platforms/slack.js";
 import { postPrivately } from "../platforms/notify.js";
+import { INSTRUCTION_ACTION } from "../gateway/instruction-approvals.js";
 
 // The live Slack client of the currently-connected app (set from connectAndWire); the approval
 // flow is driven by the daemon's /internal/approval route rather than an event, so it can't take
@@ -218,7 +219,8 @@ async function deliverApprovalLinks(client, entry, { id, threadKey, durable = fa
 // resolved (click or timeout). Pre-approves via the per-thread cache without re-asking.
 export async function requestApproval(slack, { channelId, slug, authorId, threadKey, toolName, toolInput, approvalType = "permission", approveText = "Approve", denyText = "Deny", requiredTier = "", durableAction = null } = {}) {
   const client = slack?.getClient?.() || currentClient;
-  const durable = durableAction?.kind === "background_shell";
+  const durable = ["background_shell", INSTRUCTION_ACTION].includes(durableAction?.kind);
+  if (durableAction && !durable) return { allow: false, reason: "unsupported durable approval action" };
   if (!channelId || !threadKey) return { allow: false, reason: "gateway can't reach Slack to ask for approval" };
   const runKey = `${slug}::${threadKey}`;
   // Auto mode → approve without asking; tools "approved forever" here → likewise. Still sandboxed.
@@ -280,7 +282,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
         allow: false,
         pending: true,
         approvalId: existing.id,
-        reason: "approval is still pending; the existing Run it button remains active",
+        reason: "approval is still pending; the existing approval button remains active",
       };
     }
     if (!client) return { allow: false, reason: "gateway can't reach Slack to ask for approval" };
@@ -333,7 +335,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
       allow: false,
       pending: true,
       approvalId: id,
-      reason: "approval saved; click Run it now or after a gateway restart",
+      reason: "approval saved; decide now or after a gateway restart",
     };
   }
 
@@ -401,7 +403,7 @@ export function lookupApproval(id) {
   const key = String(id ?? "");
   const volatileEntry = pendingApprovals.get(key);
   const persisted = volatileEntry ? null : getApprovalRequest(key);
-  const durable = Boolean(persisted?.action?.kind === "background_shell");
+  const durable = Boolean(persisted);
   const record = volatileEntry || persisted || null;
   const live = Boolean(record) && (!durable || record.status === "pending");
   return {
@@ -530,21 +532,24 @@ export async function applyApprovalDecision({
       transitionApprovalRequest(id, "executing", "consumed", {
         jobId: result.id || "",
         jobLabel: result.label || claimed.action?.label || "background job",
+        ...(result.completed ? { result: result.message || "Action completed." } : {}),
       });
       rememberResolved(id, { decision: "approve", scope: "once" });
       const blocks = [
-        { type: "section", text: { type: "mrkdwn", text: `🔒 *${entry.toolName}* — ✅ Approved by ${who} and started *${result.label || "background job"}*. This exact approval is now consumed.` } },
+        { type: "section", text: { type: "mrkdwn", text: result.completed
+          ? `✅ *${entry.toolName}* — ${reason}. ${result.message || "Action completed."} This exact approval is now consumed.`
+          : `🔒 *${entry.toolName}* — ✅ Approved by ${who} and started *${result.label || "background job"}*. This exact approval is now consumed.` } },
       ];
       if (result.id) {
         blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Check status" }, action_id: "cg_bgjob_status", value: result.id }] });
       }
-      await updateCard("Approved and started", blocks);
+      await updateCard(result.completed ? "Approved and applied" : "Approved and started", blocks);
       return { ok: true, decision: "approve", scope: "once", outcome: reason, jobId: result.id || "", jobLabel: result.label || claimed.action?.label || "" };
     }
     transitionApprovalRequest(id, "executing", "failed", { error: String(result?.error || "the job could not be started").slice(0, 500) });
     rememberResolved(id, { decision: "approve", scope: "once" });
     await updateCard("Approved action could not start", [
-      { type: "section", text: { type: "mrkdwn", text: `⚠️ *${entry.toolName}* was approved by ${who}, but the exact job could not start: ${String(result?.error || "unknown error").slice(0, 500)}` } },
+      { type: "section", text: { type: "mrkdwn", text: `⚠️ *${entry.toolName}* was approved by ${who}, but the exact action could not complete: ${String(result?.error || "unknown error").slice(0, 500)}` } },
     ]);
     return { ok: false, code: 502, decision: "approve", started: false, error: String(result?.error || "the approved job could not start") };
   }

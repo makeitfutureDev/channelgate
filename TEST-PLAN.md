@@ -1,5 +1,32 @@
 # ChannelGate — Test Plan
 
+## Durable instruction approvals
+
+- [x] Automated: `node --test test/instruction-approvals.test.js
+  test/mcp-control-plane-approval.test.js test/durable-approvals.test.js
+  test/approvals-api.test.js test/approval-links.test.js`. Exact append/replace requests return
+  pending without writing, remain pending beyond four minutes, execute once from a fresh process,
+  and deny/comment never write. Same-action retries deduplicate; changed text, mode, destination,
+  principal or file version does not share approval. Revocation, stale files/folders and non-admin
+  replacements fail closed. Reserved authenticated admin-UI and requester-bound link decisions
+  work; native approval scope and link expiry regressions remain covered.
+- [ ] Live Claude and Codex (separate executions): use an approved-member Read fixture with a
+  disposable default working folder; save its initial instruction bytes. Prompt: “Call
+  update_channel_instructions to append exactly '- In QA summaries, include the marker
+  durable-instruction-<engine>-<unique-id>.' Report pending and stop.” Require the actual MCP call,
+  saved pending approval, full rule preview and unchanged file. Wait at least five minutes, end
+  the engine turn, and perform a coordinated gateway restart. Require the same approval id still
+  pending with no expiry; click Approve in Slack and verify exactly one marker in CLAUDE.md (or its
+  canonical AGENTS.md sibling), an applied card, and consumed status. Replay the click: no second
+  marker. In a fresh session, ask for the marker and require the correct rule to be loaded.
+- [ ] Repeat per engine: deny one marker and Comment on another; both remain absent. Create a
+  pending update, edit an unrelated instruction in the fixture before approval, then approve:
+  require a visible stale-version refusal and preservation of the newer file. With an admin
+  requester, create a replacement; a member approval must fail and an authenticated admin-UI
+  approval must apply once. Restore only the owned fixture's initial content after recording
+  evidence. Record prompts, ids, timestamps, before/after bytes and status; these live engine
+  cases are required release gates, not implied by hermetic tests.
+
 ## One-time automation editor timezone
 
 - [x] `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test test/schedule-timezone-browser.test.js`: actual Chromium, Admin router and SQLite, daemon Europe/Bucharest with browser UTC and America/New_York. A one-time task displays its current instant correctly; editing to a future local time saves the corresponding exact ISO instant and hard reload retains the same local input.

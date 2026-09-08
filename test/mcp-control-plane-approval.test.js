@@ -4,7 +4,7 @@
 // for the daemon's /internal/approval endpoint.
 import path from "node:path";
 import http from "node:http";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
@@ -83,6 +83,51 @@ async function withGateway(options, fn) {
 }
 
 const resultText = (r) => r.content?.map((i) => i.text || "").join("\n") || "";
+
+test("both engine contexts save exact instruction updates and return pending without writing", async () => {
+  for (const engine of ["claude", "codex"]) {
+    approvalRequests.length = 0;
+    approvalResponse = { allow: false, pending: true, approvalId: `instruction-${engine}` };
+    const rule = `- Use the ${engine} acceptance marker in test summaries.`;
+    const file = path.join(DEFAULT_WORKDIR, "CLAUDE.md");
+    const before = existsSync(file) ? readFileSync(file, "utf8") : null;
+    await withGateway({ engine }, async (client) => {
+      const result = await client.callTool({ name: "update_channel_instructions", arguments: { text: `${" ".repeat(3000)}${rule}\n` } });
+      assert.match(resultText(result), /no deadline.*survives gateway restarts/);
+      assert.match(resultText(result), /Nothing has changed yet/);
+    });
+    assert.equal(approvalRequests.length, 1);
+    assert.equal(existsSync(file) ? readFileSync(file, "utf8") : null, before);
+    const action = approvalRequests[0].body.durableAction;
+    assert.equal(action.kind, "channel_instructions");
+    assert.equal(action.text, rule);
+    assert.equal(action.mode, "append");
+    assert.equal(action.workDir, DEFAULT_WORKDIR);
+    assert.equal(action.channelId, CHANNEL);
+    assert.equal(action.authorId, "U_CTRL_ADMIN");
+    assert.match(action.fingerprint, /^[a-f0-9]{64}$/);
+    assert.ok(approvalRequests[0].body.toolInput.details.length < 2800, "preview uses the exact normalized text, not hidden leading whitespace");
+    assert.match(approvalRequests[0].body.toolInput.details, new RegExp(rule.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("instruction replacement requires an admin requester and admin approver; oversized rules never post", async () => {
+  approvalRequests.length = 0;
+  approvalResponse = { allow: false, pending: true, approvalId: "replacement" };
+  await withGateway({ author: "U_CTRL_MEMBER" }, async (client) => {
+    const denied = await client.callTool({ name: "update_channel_instructions", arguments: { text: "replacement", mode: "replace" } });
+    assert.match(resultText(denied), /Only admins can replace/);
+  });
+  assert.equal(approvalRequests.length, 0);
+  await withGateway({}, async (client) => {
+    await client.callTool({ name: "update_channel_instructions", arguments: { text: "replacement", mode: "replace" } });
+    assert.equal(approvalRequests[0].body.requiredTier, "admin");
+    approvalRequests.length = 0;
+    const oversized = await client.callTool({ name: "update_channel_instructions", arguments: { text: "x".repeat(2401) } });
+    assert.match(resultText(oversized), /at most 2400/);
+  });
+  assert.equal(approvalRequests.length, 0);
+});
 
 test.before(async () => {
   await setUser("U_CTRL_ADMIN", { name: "Ctrl Admin", approved: true, isAdmin: true });

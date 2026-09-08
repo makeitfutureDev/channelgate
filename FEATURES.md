@@ -1,5 +1,13 @@
 # ChannelGate — Features
 
+- **Instruction approvals without a deadline:** `update_channel_instructions` saves the exact
+  rule and returns pending immediately. Approve, Deny and Comment remain actionable after a
+  gateway restart; approval applies the change once, without keeping an engine running. Changed
+  instructions, destination or requester authority fail closed. Replace requires an admin
+  requester and approver. Complete rule previews are limited to 2400 characters without fenced
+  code. Native permission and freeform plan approvals retain their live-call timeout; bearer links
+  retain their independent expiry. → TEST-PLAN: Durable instruction approvals.
+
 - **Timezone-safe one-time automation edits:** the Admin editor sends the browser-selected local time as an explicit ISO instant. Saving and reloading preserves the chosen time even when the browser and daemon use different timezones; recurring cron timezone policy is unchanged. → TEST-PLAN: One-time automation editor timezone.
 
 - Release artifact scanning recognizes only exact SHA-256 fingerprints of reviewed public

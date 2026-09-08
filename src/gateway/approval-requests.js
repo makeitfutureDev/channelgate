@@ -18,6 +18,11 @@ export function approvalActionKey(action = {}) {
     workDir: String(action.workDir || ""),
     maxMs: Number(action.maxMs) || 0,
   };
+  if (action.kind === "channel_instructions") {
+    exact.text = String(action.text || "");
+    exact.mode = String(action.mode || "");
+    exact.fingerprint = String(action.fingerprint || "");
+  }
   return createHash("sha256").update(JSON.stringify(exact)).digest("hex");
 }
 
@@ -142,7 +147,7 @@ export function recoverInterruptedApprovalExecutions() {
         updatedAt: now,
         ...(job
           ? { jobId: job.id, jobLabel: job.label || current.action?.label || "background job" }
-          : { error: "Gateway restarted while starting the approved job; execution is uncertain, so this approval was consumed without retry." }),
+          : { error: "Gateway restarted while executing the approved action; execution is uncertain, so this approval was consumed without retry." }),
       };
       const changed = update.run(status, now, toJson(next), current.id).changes;
       if (changed && job) consumed += 1;

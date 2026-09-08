@@ -24,6 +24,10 @@ product overview.
   states that only admins can add or remove organization skills; combined lists are labelled
   as automatic summaries.
 
+- Save instruction-update approvals with no deadline. The exact rule remains actionable across
+  restarts and is applied once on approval; changed instructions, destinations or permissions
+  require a fresh request. Other live engine permission/plan approvals retain their timeout.
+
 Next release version selected by the owner. Development continues on `beta`; full testing and
 explicit approval of the exact candidate are required before promotion to `main`. Earlier
 0.6.0 candidate tags and evidence below are retained as historical snapshots, not published releases.
