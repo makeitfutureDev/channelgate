@@ -321,3 +321,26 @@ test("the Codex runner types the plan-limit rejection as a replay-safe provider 
     },
   );
 });
+
+test("ordinary Codex process exits retain container diagnostics without authorizing replay", async () => {
+  const { runFailureDiagnostics } = await import("../src/util/process-outcome.js");
+  for (const [prompt, exitCode, explanation] of [
+    ["CODEX_STUB_FAIL_GENERIC", 1, /general error/],
+    ["CODEX_STUB_FORCED_STOP_AFTER_TOOL", 137, /forcibly stopped/],
+  ]) {
+    const target = __directTarget();
+    await assert.rejects(runCodex({
+      cwd: fixtureBin, prompt, sessionId: "", isNewSession: true,
+      timeoutMs: 5_000, maxSilenceMs: 5_000, target, artifactDir: target.artifactDir,
+    }), (error) => {
+      assert.match(error.message, explanation);
+      assert.doesNotMatch(error.message, /out of memory|oom/i);
+      assert.deepEqual(runFailureDiagnostics(error), {
+        engine: "codex", runtime: "container", exitCode, signal: null,
+        processEnded: true, explicitStop: false, providerError: false,
+      });
+      assert.notEqual(error.details.replaySafe, true, "a process exit is not a replay-safe provider failure");
+      return true;
+    });
+  }
+});

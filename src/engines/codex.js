@@ -1240,6 +1240,9 @@ export async function runCodex({
           stderr: stderr.slice(0, 4000),
           exitCode: code,
           signal: exitSignal || null,
+          engine: "codex",
+          runtime: runtime.backend,
+          processEnded: true,
         }));
       }
 
