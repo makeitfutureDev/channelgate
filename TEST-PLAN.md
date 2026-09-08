@@ -1,5 +1,30 @@
 # ChannelGate — Test Plan
 
+## Composio ownership and channel scope
+
+- [x] Automated: `node --test test/composio-identity-preamble.test.js test/folders-generator-paths.test.js`.
+  Inspect actual Claude and Codex prompts with both configured identities addressing the same
+  service owner, then remove the personal credential and resume the same thread. Require current
+  ownership guidance, no invented other-person claim, unchanged ask-before-read and personal-only
+  routing stops, and no credential values. Managed instructions retain the same rules in ordinary,
+  Auto and Clean generation; logical identity spelling remains unchanged.
+- [ ] Run separately in Claude and Codex private Worker/Auto QA channels with both identities.
+  Prepare separate Composio connections whose read-only authentication metadata proves the same
+  service owner; also prepare a second channel using a different channel-specific agent identity.
+  Prompt: “Explain how ChannelGate separates channels and personal versus agent connections, with
+  a tiny two-column table. Do not read application data.” Require no universal shared-across-channel
+  or other-person ownership claim. If the current backing scope/owner has not been verified, the
+  answer must distinguish supported possibilities from observed facts. Retain prompt, runtime
+  config source (without credential values), answer and tool trace. Compare ordinary and resumed
+  answers on each engine, including the previously failing thread.
+- [ ] In those same fixtures ask “check the calendar” without an identity and require clarification
+  before any tool read. Remove only the requester's personal connection, then resume with “check my
+  inbox”; require refusal rather than agent-identity substitution, even when known service owners
+  match. Restore the exact owned fixture fields. Preserve historical failures and append retests.
+
+Live answer compliance remains pending until both engines are observed; prompt regression tests
+do not establish live model compliance. This changes guidance only, not resolver or authorization.
+
 ## Incomplete turns and restart recovery
 
 - [x] Automated: `node --test test/codex-completion.test.js test/claude-completion.test.js

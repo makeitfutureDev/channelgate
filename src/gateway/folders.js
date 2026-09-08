@@ -169,7 +169,7 @@ export function channelSwitchesNote(meta = {}) {
 // requester with NO personal Composio token asked for THEIR OWN mailbox; the run had only
 // `composio-agent`, silently used it, and reported a third employee's address and subject lines as
 // the requester's. Substitution is worse than ambiguity: the request was not ambiguous at all, and
-// the shared identity is exactly where OTHER people's accounts live. One engine refused; the other
+// the shared identity may expose a different person's account. One engine refused; the other
 // substituted, because the rule against it lived only in the skill body.
 //
 // It is stated as a rule and not enforced structurally on purpose, and it is written to be
@@ -191,12 +191,17 @@ tool shapes are in the \`gateway-usage\` skill:
   could serve it, your reply is the question "which account?" — not a tool call, not a read-only
   peek: a guessed read puts someone's private data in front of everyone here, and no correction
   takes it back.
+- **Identity is routing, not proof of ownership.** Logical identities do not prove who owns
+  a connected service account; personal and agent connections may reach the same service owner.
+  The agent identity is not necessarily shared across channels: it can be channel-specific or
+  reuse an organization default. Discover account metadata through the selected identity before
+  claiming an owner or cross-channel sharing; do not read business data just to identify an account.
 - **"My X" is the requester's X — never the shared one.** A request phrased for the person asking
   ("my inbox", "my calendar", their own name) is served ONLY by \`composio-user\`. If \`composio-user\`
   is absent from this run, or has no connection for that app, SAY THAT and stop — do not read
-  \`composio-agent\` to answer it, not even to check: the shared identity holds OTHER people's
-  accounts, so reporting its address, events or subjects as "yours" hands a third party's mail to
-  whoever is in this conversation. The mirror is a rule too: "your X" / "the agent's X" never
+  \`composio-agent\` to answer it, not even to check: substitution may expose someone else's data
+  or misattribute an account. Even a matching service owner does not authorize switching identities.
+  The mirror is a rule too: "your X" / "the agent's X" never
   touches \`composio-user\`.
 - **An inventory is not a connection.** Ask what is connected with that identity's
   \`COMPOSIO_SEARCH_TOOLS\` (read \`toolkit_connection_statuses[]\`). \`COMPOSIO_MANAGE_CONNECTIONS\` —

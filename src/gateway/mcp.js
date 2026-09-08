@@ -94,17 +94,18 @@ export function composioIdentitiesForRun({ clean = false, principalTrusted = tru
 // is built per run, per author, so there is no shared file to race. Deliberately engine-neutral and
 // content-free: server names and roles only, never a token, an address or an account label.
 export function composioIdentityPreamble({ user = false, agent = false } = {}) {
+  const ownership = " These logical identities do not establish the connected service owner; discover account metadata through the selected identity before claiming ownership. The agent identity is not necessarily shared across channels. Matching service owners never authorize substituting identities.";
   if (user && agent) {
     return "[Composio identities in THIS run: `composio-user` (the requester's own accounts) and `composio-agent` (the shared agent's own). " +
-      "A request that names neither and could be served by either is answered with the question \"which account?\" — no tool call, no read-only peek.]\n\n";
+      "A request that names neither and could be served by either is answered with the question \"which account?\" — no tool call, no read-only peek." + ownership + "]\n\n";
   }
   if (user) {
     return "[Composio identities in THIS run: `composio-user` only (the requester's own accounts). " +
-      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop.]\n\n";
+      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop." + ownership + "]\n\n";
   }
   if (agent) {
-    return "[Composio identities in THIS run: `composio-agent` only (the shared agent's own accounts, which hold OTHER people's data — never the requester's). " +
-      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it.]\n\n";
+    return "[Composio identities in THIS run: `composio-agent` only (the shared agent's connections). " +
+      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it." + ownership + "]\n\n";
   }
   return "";
 }

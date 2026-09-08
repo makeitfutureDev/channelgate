@@ -22,8 +22,16 @@ test("gateway operating guide frames the two Composio accounts as YOURS vs the r
 
   assert.match(skill, /`composio-agent`.*YOUR OWN Composio account/is);
   assert.match(skill, /`composio-user`.*requester's personal Composio account/is);
-  // The credential's origin is an admin detail the model must not surface.
-  assert.match(skill, /channel or organization configuration.*admin detail/is);
+  // A logical identity says how to route, not who owns an external account or whether channels
+  // share it. Clarifying those facts must never weaken selected-identity routing.
+  assert.match(skill, /not proof of the connected service owner's name or cross-channel sharing/is);
+  assert.match(skill, /may reach the same service owner or different owners/is);
+  assert.match(skill, /Matching owners never authorize substituting identities/is);
+  assert.match(skill, /not universally shared across channels/is);
+  assert.match(skill, /unless verified/is);
+  const admin = await read("references/administration.md");
+  assert.match(admin, /Routine replies need no credential details/is);
+  assert.match(admin, /without assuming the current source or connected service owner/is);
   // Pronoun rule, app-agnostic, with the email example the operator asked for.
   assert.match(skill, /“my[^”]*”.*`composio-user`/is);
   assert.match(skill, /“your[^”]*”.*`composio-agent`/is);

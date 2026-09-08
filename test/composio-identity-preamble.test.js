@@ -139,3 +139,32 @@ test("Codex receives the same line through its own prompt path", async () => {
   assert.equal((r.content.match(/\[Composio identities in THIS run:/g) || []).length, 1);
   assert.match(r.content, /\]\n\ncheck the calendar$/);
 });
+
+test("both engines preserve identity routing without inventing account ownership, including resumed shared-only turns", async () => {
+  for (const engine of ["claude", "codex"]) {
+    // Both configured credentials can legitimately address the same service owner. Identity
+    // routing must stay distinct; neither the resolver nor the prompt can infer a different human.
+    saveSettings({ engine, agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "ak_same_owner_3333" });
+    const authorId = `U_OWNER_${engine}`;
+    await setUser(authorId, { name: "Ownership Fixture", approved: true, isAdmin: false, composioToken: "ak_same_owner_3333" });
+    const channelId = `C_OWNER_${engine}`;
+    await channel(channelId, `ownership-${engine}`, { engine });
+    const threadKey = engine === "claude" ? "9101.001" : "9101.002";
+    for (const personal of [true, false]) {
+      if (!personal) await setUser(authorId, { composioToken: "" });
+      const result = await runMessage({ channelId, authorId, text: "check my inbox", threadKey, origin: "slack_foreground", preferCold: true });
+      const preamble = result.content.match(/^\[Composio identities in THIS run:.*$/m)?.[0];
+      assert.ok(preamble, "the actual engine prompt includes current identity guidance");
+      assert.match(preamble, /do not establish the connected service owner/);
+      assert.match(preamble, /not necessarily shared across channels/);
+      assert.doesNotMatch(preamble, /OTHER people's|never the requester's|ak_same_owner/);
+      if (personal) {
+        assert.match(preamble, /`composio-user`.*`composio-agent`/);
+        assert.match(preamble, /which account\?" — no tool call, no read-only peek/);
+      } else {
+        assert.match(preamble, /`composio-agent` only/);
+        assert.match(preamble, /do not read `composio-agent` to answer it/);
+      }
+    }
+  }
+});

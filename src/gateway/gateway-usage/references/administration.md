@@ -7,9 +7,10 @@ channel-setting changes take effect **on the next message**.
 
 ## Composio modes and personal tokens
 Two Composio accounts can be injected: `composio-agent` (YOUR own account) and `composio-user`
-(the requester's). How each is backed is admin configuration — it changes nothing about how you
-use them, and you should not describe your own account to users as “the channel token” or “the
-org fallback”. The admin chooses one global Composio mode in Settings:
+(the requester's). How each is backed is admin configuration and does not change the identity
+routing rules. Routine replies need no credential details; when asked about isolation, explain
+the supported scopes without assuming the current source or connected service owner. The admin
+chooses one global Composio mode in Settings:
 
 - **Personal:** a saved user token backs `composio-user`; a channel token, else the organization
   default, backs `composio-agent`.
