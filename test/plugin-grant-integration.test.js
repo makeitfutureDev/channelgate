@@ -94,3 +94,25 @@ test("two catalog packages cannot collide in the native plugin namespace", async
   assert.match(run.pluginRuntime.claude.error, /same plugin name/);
   assert.deepEqual(run.pluginRuntime.claude.dirs, []);
 });
+
+for (const mode of ["inline", "file"]) test(`dual-manifest packages select each engine's ${mode} MCP configuration`, async (t) => {
+  const slug = `pkg-dual-manifest-${mode}`;
+  putSkillRevision({ slug, files: buildPluginSkill(["claude", "codex"].flatMap((engine) => {
+    const config = { lookup: { url: `https://${engine}.example.com/mcp` } };
+    return [{
+      path: `.${engine}-plugin/plugin.json`,
+      content: JSON.stringify({ name: slug, mcpServers: mode === "inline" ? config : `./config/${engine}.json` }),
+    }, ...(mode === "file" ? [{ path: `config/${engine}.json`, content: JSON.stringify({ mcpServers: config }) }] : [])];
+  })) });
+  const run = await artifacts("pkg-dual-channel", [slug]);
+  t.after(() => run.cleanup());
+  for (const engine of ["claude", "codex"]) {
+    assert.equal(run.pluginRuntime[engine].error, undefined);
+    assert.equal(run.pluginRuntime[engine].servers.length, 1);
+    assert.equal(run.pluginRuntime[engine].servers[0].definition.url, `https://${engine}.example.com/mcp`);
+  }
+  assert.deepEqual(run.pluginRuntime.codex.dirs, [], "Codex still receives no native plugin directory");
+  if (mode === "file") for (const engine of ["claude", "codex"]) {
+    await assert.rejects(access(path.join(run.pluginRuntime.claude.dirs[0], "config", `${engine}.json`)), { code: "ENOENT" });
+  }
+});
