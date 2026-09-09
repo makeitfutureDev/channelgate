@@ -832,3 +832,26 @@ test("personal skill catalogs supplement fresh/resumed prompts, replace old gran
   assert.ok(clean.includes("Raw clean prompt"));
   assert.ok(!clean.join("\n").includes("private-proof"));
 });
+
+
+test("plugin skill catalogs replace grants independently on fresh, resumed, and clean turns", () => {
+  const pluginSkills = [{ name: "approved-package:proof", description: "Package instructions", path: "/artifact/plugins/package/skills/proof/SKILL.md" }];
+  const personalSkills = [{ name: "private-proof", path: "/artifact/personal/SKILL.md" }];
+  for (const isNewSession of [true, false]) {
+    const args = argsFor({ prompt: "Use package proof", isNewSession, pluginSkills, personalSkills });
+    const prompt = args.at(-1);
+    assert.match(prompt, /Current approved plugin skills/);
+    assert.match(prompt, /earlier plugin catalogs and paths have expired/);
+    assert.ok(prompt.includes(JSON.stringify(pluginSkills)));
+    assert.ok(prompt.includes(JSON.stringify(personalSkills)));
+    assert.ok(prompt.endsWith("Use package proof"));
+    for (const overrides of [{ pluginSkills: [] }, { clean: true }]) {
+      const revoked = argsFor({ prompt: "Next turn", isNewSession, pluginSkills, ...overrides }).at(-1);
+      assert.match(revoked, /earlier plugin catalogs and paths have expired/);
+      assert.match(revoked, /empty catalog means no plugin skills are available/);
+      assert.ok(revoked.includes("\n[]\n"));
+      assert.ok(!revoked.includes("approved-package"));
+      assert.ok(!revoked.includes("/artifact/plugins"));
+    }
+  }
+});

@@ -1,5 +1,69 @@
 # ChannelGate — Test Plan
 
+## Plugin source packages — acceptance gates
+
+Automated coverage: `test/skills-plugin-import.test.js`, `test/plugin-runtime.test.js`,
+`test/plugin-grant-integration.test.js`, `test/plugin-summary.test.js`, plus the skills admin API,
+assignment picker, Codex argv, and run MCP suites. These prove package bytes, revision approval,
+metadata sanitization, isolation and dispatch construction; they do not constitute live engine
+acceptance. `CG_LIVE_PLUGIN_CONTAINER=1 node --test test/plugin-container.live.test.js` validates
+compiled Claude manifests and a real stdio MCP echo inside a disposable channel container, without
+provider credentials. This container check passed during development. The following conversational
+live gates remain UNEXECUTED until observed on the tested candidate.
+
+**PLUG-01 — import, review, template, update, rollback, revoke (Claude and Codex separately).**
+Copy `test/fixtures/plugins/portable/` to a disposable host source directory. Use two empty Worker
+conversations with distinct work folders, one pinned to Claude and one to Codex; use a third
+ungranted conversation as a negative control. Add the directory through the admin API (`POST /api/skills/sources` with
+`{"kind":"folder","url":"/absolute/disposable/source","mode":"review"}`), then open Skills →
+Sources and sync it. Expect one Plugin item `fixture-portable-plugin`, no standalone `plugin-marker` item, and one
+staged revision. Put the package into a disposable template and assign the two conversations.
+Before approval, ask “Read the plugin acceptance marker from the granted plugin.” The package
+must be unavailable. Approve revision 1 and repeat: require an observed read of the bundled
+`marker.txt` and the answer `PLUGIN-REVISION-ONE` on each engine. The negative control must have
+neither the package's injected catalog nor its MCP server. Change the source marker to
+`PLUGIN-REVISION-TWO`, sync, and verify both still receive ONE until approval. Approve, verify
+TWO and a changed Claude warm fingerprint; pin revision 1 and verify ONE. Remove the template grant
+and send another message in the same threads: require absence of package MCP definitions/native
+paths/current Codex catalog entries, not merely an assistant claim. Restore fixture settings.
+
+**PLUG-02 — declared MCP tools and connection policy (Claude and Codex separately).**
+Use the approved portable fixture in each Worker conversation. Prompt: “Run plugin echo with the
+value ACCEPT-42.” Require an actual namespaced `plugin_echo` call, result
+`PLUGIN-ECHO:ACCEPT-42`, and the stdio command resolving inside that conversation's artifact
+mount. Repeat in Read-only mode: require a pre-spawn explanation that server commands need
+Worker/Full-access, with no server process. Restore Worker; add a synthetic header
+`Authorization: Bearer fixture-not-a-secret` to the source MCP definition, sync and approve.
+With no separately selected `fixture` connection, require a named connection error and no source
+credential in argv or listing summaries. Restore the fixture. Grant it personally to one approved
+author, remove shared grants, and verify another author receives neither its skill catalog nor
+MCP tools. Verify personal artifact cleanup after the first author's run completes.
+
+**PLUG-03 — native components and compatibility (both engines, with different expectations).**
+Import and approve `test/fixtures/plugins/native/`. Grant it only to disposable test conversations.
+As an admin in a Full-access Claude conversation, start a fresh thread and ask “Use the native
+plugin marker command and ask its plugin-inspector agent for its marker.” Require the command
+result `PLUGIN-COMMAND`, observed agent invocation/result `PLUGIN-AGENT`, and exactly one new
+`PLUGIN-HOOK` line in that conversation's `plugin-hook-marker.txt` on session start. Repeat as a
+non-admin and as an unattended scheduled/background run: require a hook-policy error and no new
+line. Pin Codex and repeat: require an explicit unsupported native component error before the
+engine starts. Add an apps or LSP declaration to a disposable source revision and approve it:
+both engines must refuse with the specific component named. Remove grants and fixture marker files.
+
+**PLUG-04 — source failure and package review (engine-independent control plane).**
+With portable revision 1 approved, independently try malformed manifest JSON, a `../outside`
+component path, a symlinked package file, and a file larger than 2 MiB. Each sync must fail without
+replacing/tombstoning revision 1 or importing nested skills separately. Repair the source and sync:
+recovery must preserve its grant. Inspect catalog/staged/revision-file response summaries: only
+component paths and manifest metadata appear; raw MCP header/env objects appear only when an
+admin explicitly opens the relevant source file. Test the Git source path and the folder source
+path. Remove the disposable source and template after recording evidence.
+
+For each live gate record candidate commit, engine/model, exact fixture and author role, prompt,
+observed tool/process/filesystem evidence, and verdict. A missing, skipped, or blocked live case
+is not a pass. Maintain the private QA registry alongside these reusable public instructions.
+
+
 ## Slack shared-folder conflict replies
 
 Automated regression: `node --test test/workspace-conflict-reply.test.js test/skills-workspace-sync.test.js`.

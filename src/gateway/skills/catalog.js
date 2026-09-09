@@ -16,6 +16,7 @@
 import path from "node:path";
 import { getDb, fromJson, toJson } from "../../db/index.js";
 import { parseFrontmatter, skillMetadata, slugFromName } from "./frontmatter.js";
+import { parsePluginPackage, buildPluginSkill } from "./plugin-package.js";
 import { normalizeSkillFiles, hashSkillFiles, isSkillManifestPath, classifyBytes, sha256, MAX_FILE_BYTES } from "./files.js";
 
 export const OWNER_KINDS = Object.freeze(["bundled", "local", "folder", "git"]);
@@ -369,7 +370,9 @@ export function putSkillRevision({
   if (!OWNER_KINDS.includes(ownerKind)) throw new SkillCatalogError(`unknown owner kind "${ownerKind}"`);
   if (!VISIBILITIES.includes(visibility)) throw new SkillCatalogError(`unknown visibility "${visibility}"`);
   if (!["active", "staged"].includes(status)) throw new SkillCatalogError(`a new revision is active or staged, not "${status}"`);
-  const normalized = normalizeSkillFiles(files);
+  let normalized = normalizeSkillFiles(files);
+  const plugin = parsePluginPackage(normalized);
+  if (plugin) normalized = buildPluginSkill(plugin.files);
   const manifest = normalized.find((f) => isSkillManifestPath(f.path));
   const parsed = parseFrontmatter(manifest.content.toString("utf8"));
   const md = skillMetadata(parsed.data);
@@ -385,6 +388,7 @@ export function putSkillRevision({
 
   return tx((db) => {
     const existing = db.prepare("SELECT * FROM skills WHERE slug = ? COLLATE NOCASE").get(resolvedSlug);
+    if (existing && !plugin && fromJson(existing.meta, {})?.plugin?.kind === "plugin") throw new SkillCatalogError("an existing plugin revision must retain its package manifest", { code: "plugin" });
     if (existing && (existing.owner_kind !== ownerKind || (existing.source_id ?? null) !== sid)) {
       return { changed: false, created: false, conflict: true, skill: rowToSkill(existing), revision: null, reason: `slug "${resolvedSlug}" is owned by ${existing.owner_kind}${existing.source_id ? ` source #${existing.source_id}` : ""}` };
     }

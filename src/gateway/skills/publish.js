@@ -8,7 +8,8 @@
 // that source (owner git, same source id) so the next sync recognizes its own files instead of
 // reporting a conflict — that is how "authored in chat → pushed to GitHub → part of the library"
 // closes the loop.
-import { getSkill, getRevision, revisionFiles, listSources, adoptSkillIntoSource, markRevisionPublished, SkillCatalogError } from "./catalog.js";
+import { parsePluginPackage } from "./plugin-package.js";
+import { getSkill, getRevision, revisionFiles, listRevisions, listSources, adoptSkillIntoSource, markRevisionPublished, SkillCatalogError } from "./catalog.js";
 import { parseRepoUrl } from "./git-sync.js";
 import { getSkillsPublishGithubToken, getSkillsPublish } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
@@ -16,6 +17,25 @@ import { CHANNEL_SECTION_DIR, normalizeChannelScope, setSkillChannelScope } from
 import { getChannelEntry } from "../../config/store.js";
 
 const USER_AGENT = "channelgate-skill-publish";
+
+function publishFiles(revision) {
+  const stored = revisionFiles(revision.id);
+  const plugin = parsePluginPackage(stored);
+  if (plugin?.files.some((f) => f.executable)) throw new SkillCatalogError("Publishing plugins with executable files requires Git mode-preserving publishing; use the source repository directly", { status: 409 });
+  return plugin?.files || stored;
+}
+
+// Packages may coexist with files added after the reviewed snapshot. Only
+// paths already recorded in this package's revision history are eligible for removal.
+function ownedPluginPaths(skill) {
+  const paths = new Set();
+  for (const revision of listRevisions(skill.id)) {
+    if (revision.status !== "active" && !revision.publishedAt) continue;
+    const plugin = parsePluginPackage(revisionFiles(revision.id));
+    for (const file of plugin?.files || []) paths.add(file.path);
+  }
+  return paths;
+}
 
 function ghHeaders(token) {
   return { "User-Agent": USER_AGENT, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -98,6 +118,7 @@ export function skillDir(target, { slug, channelScope = "" } = {}) {
 // A skill the publish repository already owns is written back to the folder it was synced from
 // (moving it is an explicit step, moveSkillFiles); anything else goes where its scope says.
 function publishDirFor(target, skill, source) {
+  if (source && skill.ownerKind === "git" && skill.sourceId === source.id && skill.sourcePath === "." && skill.meta?.plugin?.kind === "plugin") return "";
   if (source && skill.ownerKind === "git" && skill.sourceId === source.id && skill.sourcePath && skill.sourcePath !== ".") {
     const rel = skill.sourcePath.replace(/^\/+|\/+$/g, "");
     const base = (source.subpath || "").replace(/^\/+|\/+$/g, "");
@@ -128,21 +149,23 @@ export async function publishRevision({ slug, revisionId = null, message = "", a
   if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
   const revision = getRevision(revisionId ?? skill.pinnedRevisionId ?? skill.currentRevisionId);
   if (!revision || revision.skillId !== skill.id) throw new SkillCatalogError("revision not found", { status: 404 });
-  const files = revisionFiles(revision.id);
+  const files = publishFiles(revision);
   const source = publishSource(target);
   const dir = publishDirFor(target, skill, source);
   const remote = await listRemoteFiles(fetchImpl, token, target, dir);
+  const owned = skill.meta?.plugin?.kind === "plugin" ? ownedPluginPaths(skill) : null;
   const note = message || `skill(${skill.slug}): revision ${revision.revisionNo}${revision.version ? ` v${revision.version}` : ""}${revision.note ? ` — ${revision.note}` : ""}`;
   let lastCommit = "";
   const written = [];
   for (const f of files) {
-    const p = `${dir}/${f.path}`;
+    const p = dir ? `${dir}/${f.path}` : f.path;
     lastCommit = (await putFile(fetchImpl, token, target, p, f.content, note, remote.get(p))) || lastCommit;
     written.push(p);
     remote.delete(p);
   }
   const deleted = [];
   for (const [p, sha] of remote) {
+    if (owned && !owned.has(dir ? p.slice(dir.length + 1) : p)) continue;
     lastCommit = (await deleteFile(fetchImpl, token, target, p, sha, `${note} (remove ${p.slice(dir.length + 1)})`)) || lastCommit;
     deleted.push(p);
   }
@@ -174,17 +197,19 @@ export async function moveSkillFiles({ slug, channelId = "", actor = "", fetchIm
   const fromDir = publishDirFor(target, skill, source);
   const toDir = skillDir(target, { slug: skill.slug, channelScope: scope });
   if (fromDir === toDir) return { moved: false, path: toDir, commit: "" };
-  const files = revisionFiles(revision.id);
+  const files = publishFiles(revision);
   const note = `skill(${skill.slug}): move to ${scope ? `the ${scope} channel section` : "the shared library"}`;
   const stale = await listRemoteFiles(fetchImpl, token, target, toDir);
+  const previous = await listRemoteFiles(fetchImpl, token, target, fromDir);
+  const owned = skill.meta?.plugin?.kind === "plugin" ? ownedPluginPaths(skill) : null;
   let lastCommit = "";
   for (const f of files) {
     const p = `${toDir}/${f.path}`;
     lastCommit = (await putFile(fetchImpl, token, target, p, f.content, note, stale.get(p))) || lastCommit;
     stale.delete(p);
   }
-  for (const [p, sha] of stale) lastCommit = (await deleteFile(fetchImpl, token, target, p, sha, `${note} (replace ${p})`)) || lastCommit;
-  for (const [p, sha] of await listRemoteFiles(fetchImpl, token, target, fromDir)) lastCommit = (await deleteFile(fetchImpl, token, target, p, sha, `${note} (remove ${p})`)) || lastCommit;
+  for (const [p, sha] of stale) if (!owned || owned.has(p.slice(toDir.length + 1))) lastCommit = (await deleteFile(fetchImpl, token, target, p, sha, `${note} (replace ${p})`)) || lastCommit;
+  for (const [p, sha] of previous) if (!p.startsWith(`${toDir}/`) && (!owned || owned.has(fromDir ? p.slice(fromDir.length + 1) : p))) lastCommit = (await deleteFile(fetchImpl, token, target, p, sha, `${note} (remove ${p})`)) || lastCommit;
   if (scope) lastCommit = (await ensureSectionReadme(fetchImpl, token, target, scope, note)) || lastCommit;
   markRevisionPublished(revision.id, { ref: lastCommit });
   if (source) adoptSkillIntoSource(skill.slug, source.id, { sourcePath: toDir, sourceRef: lastCommit });

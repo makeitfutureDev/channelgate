@@ -38,6 +38,8 @@ import {
   SkillCatalogError,
 } from "../../gateway/skills/catalog.js";
 import { fileToApi, SkillFileError } from "../../gateway/skills/files.js";
+import { parseFrontmatter } from "../../gateway/skills/frontmatter.js";
+import { pluginSummaryFromMetadata } from "../../gateway/skills/plugin-summary.js";
 import { resolveSkillProfile, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, templateSummary, templateAssignments, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
@@ -80,11 +82,18 @@ function skillToApi(skill, usage = null) {
   return {
     ...skill,
     meta: undefined,
+    plugin: pluginSummaryFromMetadata(skill.meta),
     owner: describeOwner(skill),
     enabled: !skill.deleted,
     mandatory,
     usage30d: u ? { total: u.total, exact: u.exact, inferred: u.inferred, lastTs: u.lastTs } : { total: 0, exact: 0, inferred: 0, lastTs: "" },
   };
+}
+
+function revisionToApi(revision) {
+  const file = revisionFile(revision.id, "SKILL.md");
+  const metadata = file ? parseFrontmatter(file.content.toString("utf8")).data : {};
+  return { ...revision, plugin: pluginSummaryFromMetadata(metadata) };
 }
 
 function queryBoolean(value) {
@@ -116,7 +125,7 @@ export function createSkillsRouter() {
       stats: catalogStats(),
       sources: listSources(),
       templates: listTemplateSummaries(),
-      staged: listStagedRevisions(),
+      staged: listStagedRevisions().map(revisionToApi),
       proposals: listProposals({ status: "pending" }),
       hostFolders: skillSourceDirs(),
       settings: {
@@ -255,13 +264,13 @@ export function createSkillsRouter() {
   }));
 
   // ── Revisions (staged review) ─────────────────────────────────────────────────────────────
-  router.get("/skills/staged", guard(async (_req, res) => res.json({ staged: listStagedRevisions() })));
+  router.get("/skills/staged", guard(async (_req, res) => res.json({ staged: listStagedRevisions().map(revisionToApi) })));
 
   router.get("/skills/revisions/:id/files", guard(async (req, res) => {
     const rev = getRevision(Number(req.params.id));
     if (!rev) return res.status(404).json({ error: "revision not found" });
     const includeContent = req.query.content === "1";
-    res.json({ revision: rev, files: revisionFiles(rev.id).map((f) => fileToApi(f, { includeContent: includeContent && f.content.length <= 256 * 1024 })) });
+    res.json({ revision: revisionToApi(rev), files: revisionFiles(rev.id).map((f) => fileToApi(f, { includeContent: includeContent && f.content.length <= 256 * 1024 })) });
   }));
 
   router.post("/skills/revisions/:id/approve", guard(async (req, res) => {

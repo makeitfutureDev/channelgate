@@ -107,6 +107,54 @@ an admin) change persistent state, so they **always** post an Approve/Deny card 
 someone eligible clicks. Auto mode does not bypass it: auto-approval applies to tool permission
 prompts only, never to control-plane changes.
 
+## Plugin packages in the same library
+
+Add a plugin repository under **Skills → Sources**, just like a skill source. For a host folder,
+use `add_skill_source` or the admin API (`POST /api/skills/sources`, `kind: "folder"`,
+`url: "/absolute/source/directory"`); it then appears in the same Sources view.
+A `.claude-plugin/plugin.json` or `.codex-plugin/plugin.json` identifies a package. Git sources
+can contain several packages; folder sources accept a package root or immediate package children.
+ChannelGate stores each package as **one catalog item and one immutable revision**. Its nested
+skills are not imported separately. The Plugin badge and component summary appear in the existing
+catalog, Review queue, templates, and conversation picker. Review mode stages the entire package;
+approval, pins/rollback, source removal, personal grants, and template assignment use the existing
+controls. An automatic source activates package updates on sync, as it does ordinary skills.
+
+The synthetic root `SKILL.md` indexes the package. Original files are inspectable under `package/`
+in the revision browser. Publishing unwraps the package to its original source layout. Package
+files marked executable must be updated directly in the source repository: the current GitHub
+Contents publisher cannot preserve executable modes and refuses those package writes before editing.
+Package metadata is derived from the manifest on every revision; imported connection bodies never appear
+in listing summaries. Invalid, oversized, or symlink-containing packages fail source sync while
+retaining the last approved revision. Executable-bit changes also produce a new revision.
+
+Runtime support is checked before execution:
+
+- **Claude:** native skills, commands, agents, and hooks. Hooks require an authorized live admin
+  turn in a Full-access conversation; unattended runs and non-admin turns cannot activate them.
+- **Codex:** an explicit catalog of approved plugin skills and configured MCP transports. Native
+  commands, agents, and hooks are refused with a compatibility error. A manifest's presence is
+  format metadata, not a promise that every component works on that engine.
+- **MCP:** reviewed HTTP(S) or stdio definitions join the run's explicit MCP configuration under
+  collision-resistant `cg_plugin_…` names. Stdio requires Worker/Full-access permissions. Package
+  root variables (`${PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_ROOT}`, `${CODEX_PLUGIN_ROOT}`) resolve to
+  that channel's compiled artifact tree. Source authentication/environment fields and unsupported
+  transports require an independently selected, supported connection with the source server's
+  name. Plugin grants do not connect accounts or import source credentials. Existing connection
+  restrictions still apply; arbitrary authenticated plugin transport configuration is unsupported.
+- **Apps, LSP servers, and engine settings overrides:** retained for review but unsupported at
+  runtime. Such packages fail explicitly instead of loading partially.
+
+All executable artifacts remain inside the channel's mounted artifact directory. Shared packages
+use content-addressed snapshots verified against catalog bytes on each run; personal packages use
+run-private paths removed at completion. An update changes the warm-process fingerprint. Revoking
+a grant removes its native directories, skill catalog, and MCP definitions from the next run;
+previously read text remains in the conversation history, as with ordinary skills. Clean mode
+supplies no plugin grants. A plugin's raw MCP files are never an ambient engine configuration.
+
+See the plugin acceptance cases in `TEST-PLAN.md` and the disposable fixtures under
+`test/fixtures/plugins/`.
+
 ## Sources (GitHub and host folders)
 
 Admin UI → Skills → Sources. A **git** source is one GitHub repository, optionally a branch and a

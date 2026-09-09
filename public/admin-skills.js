@@ -6,6 +6,7 @@ import { api } from "./admin-api.js";
 import { confirmDialog, escapeHtml as esc } from "./admin-view.js";
 import { filterSkillCatalog } from "./skills-catalog-filters.js";
 import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
+import { pluginBadge, pluginSummary } from "./plugin-summary.js";
 
 const state = {
   tab: "usage",
@@ -177,7 +178,7 @@ function renderCatalog() {
   ].map(([value, label]) => `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`).join("");
   const rows = skills.map((s) => `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
-      <td><code>${esc(s.slug)}</code>${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
+      <td><code>${esc(s.slug)}</code>${pluginBadge(s)}${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
       <td class="desc">${esc(s.description)}</td>
       <td>${esc(s.category || "—")}</td>
       <td><span class="muted">${esc(ownerLabel(s))}</span></td>
@@ -202,7 +203,7 @@ function renderCatalog() {
     </div>
     ${state.newSkill ? renderNewSkillForm() : ""}
     <table class="skills-table">
-      <thead><tr><th>Skill</th><th>Description</th><th>Category</th><th>Owner</th><th>Version</th><th>Enabled</th><th>Discoverable</th><th>Mandatory</th><th>Usage 30d</th></tr></thead>
+      <thead><tr><th>Skill or plugin</th><th>Description</th><th>Category</th><th>Owner</th><th>Version</th><th>Enabled</th><th>Discoverable</th><th>Mandatory</th><th>Usage 30d</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="9" class="muted">No skills yet. Add a GitHub source under Sources, re-import the host folders, or create one here.</td></tr>`}</tbody>
     </table>
     ${state.detail && state.detail.skill.slug === state.selected ? renderDetail() : ""}`;
@@ -250,8 +251,9 @@ function renderDetail() {
   const usage = d.usage ? `${d.usage.total} use(s) in 90 days, last ${fmtWhen(d.usage.lastTs)}` : "no use recorded in 90 days";
   return `
     <div class="card skills-detail">
-      <div class="card-head"><h3><code>${esc(s.slug)}</code> ${esc(s.name !== s.slug ? s.name : "")}</h3><span class="badge">${esc(s.owner)}</span>${s.excluded ? '<span class="badge" title="Excluded by an admin; stays out across syncs until restored">excluded</span>' : s.deleted ? '<span class="badge" title="Dropped by its source; comes back if the source delivers it again">removed</span>' : ""}</div>
+      <div class="card-head"><h3><code>${esc(s.slug)}</code> ${esc(s.name !== s.slug ? s.name : "")}${pluginBadge(s)}</h3><span class="badge">${esc(s.owner)}</span>${s.excluded ? '<span class="badge" title="Excluded by an admin; stays out across syncs until restored">excluded</span>' : s.deleted ? '<span class="badge" title="Dropped by its source; comes back if the source delivers it again">removed</span>' : ""}</div>
       <p class="skills-note">${esc(s.description)}</p>
+      ${pluginSummary(s)}
       <p class="skills-note">Category: ${esc(s.category || "—")} · Version: ${esc(s.version || "—")} · Tags: ${esc((s.tags || []).join(", ") || "—")} · Requires: ${esc((s.requires || []).join(", ") || "—")}${s.createdBy ? ` · Author: ${esc(s.createdBy)}` : ""}</p>
       <p class="skills-note">${esc(usage)}</p>
       <div><strong>Files</strong> (effective revision)</div>
@@ -282,7 +284,7 @@ function renderReview() {
   const proposals = state.overview?.proposals || [];
   const stagedRows = staged.map((r) => `
     <tr>
-      <td><code>${esc(r.slug)}</code> <span class="muted">${esc(r.skillName || "")}</span></td>
+      <td><code>${esc(r.slug)}</code>${pluginBadge(r)} <span class="muted">${esc(r.skillName || "")}</span>${pluginSummary(r)}</td>
       <td>#${r.revisionNo}${r.version ? ` v${esc(r.version)}` : ""} · ${r.fileCount} file(s)</td>
       <td class="muted">${esc(r.ownerKind === "git" ? `git source #${r.sourceId}` : r.ownerKind)} · ${esc(r.sourceRef.slice(0, 12))}</td>
       <td class="muted">${fmtWhen(r.createdAt)}</td>
@@ -297,8 +299,8 @@ function renderReview() {
     </tr>`).join("");
   return `
     <h3>Staged source revisions</h3>
-    <p class="skills-note">Skills a review-mode source delivered. Approving makes the revision active for every conversation that grants the skill; rejecting keeps the current one.</p>
-    <table class="skills-table"><thead><tr><th>Skill</th><th>Revision</th><th>From</th><th>Received</th><th></th></tr></thead><tbody>${stagedRows || '<tr><td colspan="5" class="muted">Nothing staged.</td></tr>'}</tbody></table>
+    <p class="skills-note">Skills and plugins delivered by a source. Approving a plugin approves its whole package, including executable components. Review the files and engine requirements before approval. The revision becomes active for every conversation that grants it; rejecting keeps the current one.</p>
+    <table class="skills-table"><thead><tr><th>Skill or plugin</th><th>Revision</th><th>From</th><th>Received</th><th></th></tr></thead><tbody>${stagedRows || '<tr><td colspan="5" class="muted">Nothing staged.</td></tr>'}</tbody></table>
     ${state.fileView?.kind === "revision" ? `<div class="card skills-detail"><h3>Revision #${state.fileView.revisionNo} files</h3>${state.fileView.files.map((f) => `<p><strong>${esc(f.path)}</strong> <span class="skills-muted">${f.size} B</span></p>${f.content != null ? `<pre>${esc(f.content)}</pre>` : ""}`).join("")}</div>` : ""}
     <h3 style="margin-top:18px">Proposals</h3>
     <p class="skills-note">Changes members proposed from chat. Approving a change publishes a revision (pinned as a local override when the skill comes from a source); approving a promotion grants the skill organization-wide.</p>
@@ -336,8 +338,8 @@ function renderSourceSkills(source) {
     ${renderSourceSettings(source)}
     <div class="skills-toolbar"><input type="search" id="source-skills-q" aria-label="Search this source’s skills" placeholder="Search this source’s skills…" value="${esc(state.sourceQuery)}" /><span class="skills-note">${skills.length} of ${all.length} skills</span></div>
     <p class="skills-note">Discoverable applies across the organization. Mandatory loads a skill in every conversation and also enables discovery. Disabled skills stay listed here so you can enable them again.</p>
-    <div class="skills-source-table-wrap"><table class="skills-table skills-source-table"><thead><tr><th>Skill</th><th>Enabled</th><th>Discoverable · org-wide</th><th>Mandatory</th></tr></thead><tbody>
-    ${skills.map((skill) => `<tr><td><button type="button" class="skills-skill-link" data-action="select" data-slug="${esc(skill.slug)}">${esc(skill.name || skill.slug)}</button><code>${esc(skill.slug)}</code><p class="skills-source-description">${esc(skill.description)}</p>${skill.deleted ? '<span class="pill">disabled</span>' : ""}${skill.currentRevisionId == null && !skill.deleted ? '<span class="pill">awaiting approval</span>' : ""}</td><td>${toggle(skill, "enabled", "Enabled")}</td><td>${toggle(skill, "discoverable", "Discoverable organization-wide")}</td><td>${toggle(skill, "mandatory", "Mandatory")}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${all.length ? "No skills match your search." : "No catalog skills from this source yet. Sync the source to import them."}</td></tr>`}
+    <div class="skills-source-table-wrap"><table class="skills-table skills-source-table"><thead><tr><th>Skill or plugin</th><th>Enabled</th><th>Discoverable · org-wide</th><th>Mandatory</th></tr></thead><tbody>
+    ${skills.map((skill) => `<tr><td><button type="button" class="skills-skill-link" data-action="select" data-slug="${esc(skill.slug)}">${esc(skill.name || skill.slug)}</button>${pluginBadge(skill)}<code>${esc(skill.slug)}</code><p class="skills-source-description">${esc(skill.description)}</p>${skill.deleted ? '<span class="pill">disabled</span>' : ""}${skill.currentRevisionId == null && !skill.deleted ? '<span class="pill">awaiting approval</span>' : ""}</td><td>${toggle(skill, "enabled", "Enabled")}</td><td>${toggle(skill, "discoverable", "Discoverable organization-wide")}</td><td>${toggle(skill, "mandatory", "Mandatory")}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${all.length ? "No skills match your search." : "No catalog skills from this source yet. Sync the source to import them."}</td></tr>`}
     </tbody></table></div>
     ${state.detail && all.some((skill) => skill.slug === state.selected) ? renderDetail() : ""}`;
 }
@@ -356,9 +358,10 @@ function renderSources() {
     </button>`;
   }).join("");
   return `
-    ${selected ? renderSourceSkills(selected) : `<div class="skills-section-head"><div><h3>Sources</h3><p class="skills-note">Choose a source to browse its skills and manage how they are used.</p></div><button type="button" data-action="open-source">+ Add source</button></div><div class="skills-source-grid">${cards || '<p class="skills-note">No sources yet. Add a repository or another ChannelGate.</p>'}</div>`}
+    ${selected ? renderSourceSkills(selected) : `<div class="skills-section-head"><div><h3>Sources</h3><p class="skills-note">Choose a source to browse its skills and plugins and manage how they are used.</p></div><button type="button" data-action="open-source">+ Add source</button></div><div class="skills-source-grid">${cards || '<p class="skills-note">No sources yet. Add a repository or another ChannelGate.</p>'}</div>`}
     ${state.sourceModal ? `<div class="skills-modal" data-action="close-source"><div class="card skills-modal-card" role="dialog" aria-modal="true" aria-labelledby="add-source-title" data-modal-card>
       <div class="skills-section-head"><h3 id="add-source-title">Add a source</h3><button type="button" class="ghost" data-action="close-source" aria-label="Close">✕</button></div>
+      <p class="skills-note">Repositories may contain plain skills or plugin packages with a .claude-plugin/plugin.json or .codex-plugin/plugin.json manifest. Plugins are reviewed and selected as one item in the same templates and conversation picker.</p>
       <div class="skills-form">
         <label class="field"><span>Source type</span><select id="src-kind"><option value="git">GitHub repository</option><option value="gateway">Other ChannelGate</option></select></label>
         <label class="field"><span>Label</span><input id="src-label" placeholder="Anthropic skills" /></label>
@@ -468,7 +471,7 @@ function renderUsage() {
     </div>
     ${r ? `
     ${(r.notes || []).length ? `<p class="skills-note"><strong>How this is counted:</strong> ${(r.notes || []).map((n) => esc(n)).join(" ")}</p>` : ""}
-    ${state.usageView === "skill" ? `<table class="skills-table"><thead><tr><th>Skill</th><th>Usage</th><th>Users</th><th>Conversations</th><th>Last</th></tr></thead><tbody>${skillRows || '<tr><td colspan="5" class="muted">No matching skill use in this range.</td></tr>'}</tbody></table>` : `<table class="skills-table"><thead><tr><th>Conversation</th><th>Usage</th><th>Skills used</th><th>Last</th></tr></thead><tbody>${channelRows || '<tr><td colspan="4" class="muted">No matching conversation use in this range.</td></tr>'}</tbody></table>`}
+    ${state.usageView === "skill" ? `<table class="skills-table"><thead><tr><th>Skill or plugin</th><th>Usage</th><th>Users</th><th>Conversations</th><th>Last</th></tr></thead><tbody>${skillRows || '<tr><td colspan="5" class="muted">No matching skill use in this range.</td></tr>'}</tbody></table>` : `<table class="skills-table"><thead><tr><th>Conversation</th><th>Usage</th><th>Skills used</th><th>Last</th></tr></thead><tbody>${channelRows || '<tr><td colspan="4" class="muted">No matching conversation use in this range.</td></tr>'}</tbody></table>`}
     ${r.channelSlug ? `<p class="skills-note"><strong>Granted but never fired</strong> (${r.neverUsed.length}): ${r.neverUsed.map((n) => `<code>${esc(n.slug)}</code>${n.via === "dependency" ? ` <span class="muted">required by ${esc((n.requiredBy || []).join(", "))}</span>` : ""}`).join(" ") || "none"}${r.contextTokens != null ? ` · always-on context ~${r.contextTokens} tokens` : ""}</p>` : ""}
     ${warnings.length ? `<details class="skills-context-warnings"><summary>${warnings.length} conversation${warnings.length === 1 ? "" : "s"} over the skills context soft cap</summary><p>The warning means the always-loaded skill descriptions consume more context than the limit configured in Sync settings. It does not mean a skill failed.</p>${warnings.map((c) => `<div><strong>${esc(c.name || c.slug)}</strong> · ~${c.contextTokens} tokens<br/><span>${esc((c.warningMessages || []).join(" · "))}</span></div>`).join("")}</details>` : ""}
     ` : '<p class="skills-note">Choose a range, then load usage.</p>'}`;

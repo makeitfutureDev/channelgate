@@ -1,6 +1,7 @@
 // Shared conversation/template editor. Explicit selections remain separate from inherited
 // grants: changing a template must never silently rewrite the conversation's own saved list.
 import { escapeHtml as esc } from "./admin-view.js";
+import { pluginBadge, pluginSummary } from "./plugin-summary.js";
 
 const key = (slug) => String(slug).toLowerCase();
 const unique = (slugs) => [...new Map(slugs.map((slug) => [key(slug), slug])).values()];
@@ -27,10 +28,10 @@ export function mountSkillAssignmentPicker(root, options) {
   const expanded = new Set();
   root.classList.add("skill-assignment");
   root.innerHTML = `<div class="skill-assignment-filters">
-    <label class="field"><span>Search skills</span><input type="search" data-picker-query placeholder="Search by name or description…" autocomplete="off" /></label>
+    <label class="field"><span>Search skills and plugins</span><input type="search" data-picker-query placeholder="Search by name or description…" autocomplete="off" /></label>
     <label class="field"><span>Source</span><select data-picker-source aria-label="Skill source"></select></label>
-  </div><div class="skill-assignment-columns"><section class="skill-assignment-panel"><h3>Active skills <span data-active-count></span></h3><p class="skills-note" data-active-note></p><div data-picker-active></div></section>
-    <section class="skill-assignment-panel"><h3>Add skills <span data-available-count></span></h3><p class="skills-note">Search the catalog and add skills to your selection.</p><div data-picker-available></div></section></div><p class="skill-assignment-status" role="status" aria-live="polite"></p>`;
+  </div><div class="skill-assignment-columns"><section class="skill-assignment-panel"><h3>Active skills and plugins <span data-active-count></span></h3><p class="skills-note" data-active-note></p><div data-picker-active></div></section>
+    <section class="skill-assignment-panel"><h3>Add skills and plugins <span data-available-count></span></h3><p class="skills-note">Search the catalog and add skills or whole plugins to your selection.</p><div data-picker-available></div></section></div><p class="skill-assignment-status" role="status" aria-live="polite"></p>`;
   const query = root.querySelector("[data-picker-query]");
   const source = root.querySelector("[data-picker-source]");
   const sourceLabel = (skill) => config.sources.find((s) => String(s.id) === String(skill.sourceId))?.label
@@ -55,8 +56,8 @@ export function mountSkillAssignmentPicker(root, options) {
         : s.currentRevisionId == null && s.pinnedRevisionId == null ? "Awaiting approval" : sourceLabel(s);
       return `<div class="skill-assignment-row" data-skill="${esc(s.slug)}">
         <details data-picker-details="${esc(s.slug)}"${expanded.has(key(s.slug)) ? " open" : ""}>
-          <summary title="${esc(s.name || s.slug)} · ${esc(s.slug)} · ${esc(status)}"><span class="skill-assignment-identity"><strong>${esc(s.name || s.slug)}</strong>${s.name && s.name !== s.slug ? `<code>${esc(s.slug)}</code>` : ""}<span class="skill-assignment-source">${esc(status)}</span></span></summary>
-          <div class="skill-assignment-description"><p>${esc(s.description || "No description available.")}</p><dl><dt>Name</dt><dd>${esc(s.name || s.slug)}</dd><dt>Slug</dt><dd>${esc(s.slug)}</dd><dt>Source</dt><dd>${esc(status)}</dd>${s.version ? `<dt>Version</dt><dd>${esc(s.version)}</dd>` : ""}</dl></div>
+          <summary title="${esc(s.name || s.slug)} · ${esc(s.slug)} · ${esc(status)}"><span class="skill-assignment-identity"><strong>${esc(s.name || s.slug)}</strong>${pluginBadge(s)}${s.name && s.name !== s.slug ? `<code>${esc(s.slug)}</code>` : ""}<span class="skill-assignment-source">${esc(status)}</span></span></summary>
+          <div class="skill-assignment-description"><p>${esc(s.description || "No description available.")}</p>${pluginSummary(s)}<dl><dt>Name</dt><dd>${esc(s.name || s.slug)}</dd><dt>Slug</dt><dd>${esc(s.slug)}</dd><dt>Source</dt><dd>${esc(status)}</dd>${s.version ? `<dt>Version</dt><dd>${esc(s.version)}</dd>` : ""}</dl></div>
         </details>
         ${action ? `<button type="button" class="ghost" data-picker-action="${action}" data-slug="${esc(s.slug)}" aria-label="${action === "add" ? "Add" : "Remove"} ${esc(s.slug)}">${action === "add" ? "+ Add" : "Remove"}</button>` : '<span class="skill-assignment-locked" title="Managed by its inherited grant">Included</span>'}
       </div>`;

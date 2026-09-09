@@ -1,5 +1,18 @@
 # ChannelGate — Features
 
+## Plugin packages through skill sources
+
+Git and folder skill sources recognize Claude/Codex plugin manifests and store a complete package
+as one revision. Existing Review, rollback, templates, organization/channel/personal grants, and
+source sync govern the package. Catalog and assignment pickers show Plugin badges and safe
+component summaries. Claude loads approved native skills/commands/agents and admin-gated hooks;
+Codex receives approved skill catalogs. Both receive supported MCP transports through explicit
+namespaced grants. Unsupported components/authentication produce actionable failures. Compiled
+files stay inside the channel container's artifact mounts; updates rotate warm snapshots and
+revocation removes future runtime grants. Source path/symlink/size validation retains last-good
+revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
+
+
 - **Slack reports shared-folder conflicts:** an authorized mention or typed command that cannot
   start because channels share a folder with conflicting skills or memory settings gets a reply
   in its triggering thread. The reply asks an admin to assign separate folders or align settings,

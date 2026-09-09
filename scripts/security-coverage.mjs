@@ -10,6 +10,11 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const help = spawnSync(process.execPath, ["--help"], { encoding: "utf8" }).stdout || "";
 const branchFlag = help.includes("--test-coverage-branches") ? "--test-coverage-branches" : "--test-coverage-branch";
 const areas = [
+  {
+    name: "plugin-packages", floor: [95, 85, 90],
+    include: ["src/gateway/plugin-runtime.js", "src/gateway/skills/plugin-package.js"],
+    tests: ["test/plugin-runtime.test.js", "test/plugin-grant-integration.test.js", "test/skills-plugin-import.test.js"],
+  },
   { name: "authorization", floor: [95, 95, 95], include: ["src/gateway/modes.js"], tests: ["test/authorization.test.js", "test/modes.test.js"] },
   {
     name: "access-grants",
@@ -25,6 +30,8 @@ const areas = [
       "test/mcp-capability.test.js",
       "test/run-engine-mcp.test.js",
       "test/run-grant-isolation.test.js",
+      "test/plugin-grant-integration.test.js",
+      "test/plugin-runtime.test.js",
     ],
   },
   { name: "modes", floor: [90, 90, 80], include: ["src/gateway/modes.js", "src/engines/child-env.js"], tests: ["test/modes.test.js", "test/folders-settings.test.js", "test/child-env.test.js"] },

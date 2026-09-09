@@ -10,7 +10,14 @@ import { resolveSkillProfile } from "./resolve.js";
 // `…/skills/<slug>/SKILL.md` — inside a path, a shell command, or a quoted argument. The
 // lookbehind is what keeps `myskills/…` and `agent-skills/…` out while still accepting every
 // separator a shell puts in front of a path (`/`, a space, a quote, `=`, `(`, `;`, `&&`, `|`, `,`).
-const SKILL_FILE_RE = /(?<![A-Za-z0-9_.-])skills\/([A-Za-z0-9][A-Za-z0-9._-]{0,119})\/SKILL\.md(?![A-Za-z0-9])/gi;
+// Match an entire managed package path before its nested /skills/<inner>/ segment. This keeps
+// a bundled skill from being attributed to an unrelated standalone catalog entry of that name.
+const SAFE_SLUG = "[A-Za-z0-9][A-Za-z0-9._-]{0,119}";
+const PACKAGE_SKILL_PATH = "(?:(?!\\.\\.?/)[A-Za-z0-9._-]{1,120}/){0,32}SKILL\\.md(?![A-Za-z0-9._/-])";
+const SKILL_FILE_RE = new RegExp(`(?<![A-Za-z0-9_.-])(?:`
+  + `plugin-packages/[a-z][a-z0-9_-]{0,31}/(${SAFE_SLUG})-[a-f0-9]{24}/package/${PACKAGE_SKILL_PATH}`
+  + `|\\.(?:claude|agents)/skills/(${SAFE_SLUG})/package/${PACKAGE_SKILL_PATH}`
+  + `|skills/(${SAFE_SLUG})/SKILL\\.md(?![A-Za-z0-9]))`, "gi");
 
 // EVERY skill named in the text, in order, deduped. Codex reads skills with the shell, and one
 // `bash -lc` line routinely reads two of them
@@ -22,10 +29,11 @@ export function skillSlugsFromText(text) {
   const seen = new Set();
   SKILL_FILE_RE.lastIndex = 0;
   for (const m of String(text ?? "").matchAll(SKILL_FILE_RE)) {
-    const key = m[1].toLowerCase();
+    const slug = m[1] || m[2] || m[3];
+    const key = slug.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(m[1]);
+    out.push(slug);
   }
   return out;
 }
@@ -35,9 +43,8 @@ export function skillSlugFromText(text) {
 }
 
 // Claude names a plugin-provided skill as `<plugin>:<slug>` (e.g.
-// `gateway-shared-skills:code-review`) in its Skill tool call; the catalog only knows the bare
-// slug, so strip the prefix before looking it up — without it every Claude run recorded an
-// unmatched name with no skill/revision id.
+// `gateway-shared-skills:code-review`) in its Skill tool call. Managed packages attribute to
+// their catalog parent; synthetic shared-skill plugins still attribute to the bare skill slug.
 const PLUGIN_QUALIFIED_RE = /^[^:\s]+:([A-Za-z0-9][A-Za-z0-9._-]{0,119})$/;
 
 export function unqualifySkillName(name) {
@@ -67,7 +74,16 @@ export function createSkillUsageRecorder({
     if (!raw) return;
     const bare = unqualifySkillName(raw);
     let skill = null;
-    for (const candidate of bare ? [raw, bare] : [raw]) {
+    if (bare) {
+      const prefix = raw.slice(0, raw.indexOf(":"));
+      if (new RegExp(`^${SAFE_SLUG}$`).test(prefix)) {
+        try {
+          const parent = lookup(prefix);
+          if (parent?.meta?.plugin?.kind === "plugin") skill = parent;
+        } catch { /* usage capture must never break a run */ }
+      }
+    }
+    for (const candidate of skill ? [] : bare ? [raw, bare] : [raw]) {
       try {
         skill = lookup(candidate);
       } catch {

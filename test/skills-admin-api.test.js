@@ -353,3 +353,26 @@ test("catalog: the section endpoint scopes a local skill to a channel (granted b
   assert.equal((await request("/skills/catalog/scoped-api/scope", { method: "POST", body: { channelId: "C_NO_SUCH" } })).status, 404);
   assert.equal((await request("/skills/catalog/scoped-api/scope", { method: "POST", body: { channelId: "../etc" } })).status, 400);
 });
+
+test("plugin catalog and revision summaries expose only safe fields and review the staged package", async () => {
+  const { buildPluginSkill } = await import("../src/gateway/skills/plugin-package.js");
+  const files = (engine, component) => buildPluginSkill([
+    { path: `.${engine}-plugin/plugin.json`, content: JSON.stringify({ name: "api-package", description: "API package", mcpServers: { private: { url: "https://example.com", headers: { Authorization: "secret-plugin-header" }, env: { TOKEN: "secret-plugin-env" } } } }) },
+    { path: `${component}/SKILL.md`, content: skillMd("Package instruction", "Example") },
+  ]);
+  const active = catalog.putSkillRevision({ slug: "api-package", files: files("claude", "skills") });
+  catalog.putSkillRevision({ slug: "api-package", files: files("codex", "skills"), status: "staged" });
+  const listed = await request("/skills/catalog");
+  const entry = listed.json.skills.find((s) => s.slug === "api-package");
+  assert.equal(entry.plugin.kind, "plugin");
+  assert.deepEqual(entry.plugin.engines, ["claude"]);
+  assert.equal(entry.meta, undefined);
+  const staged = (await request("/skills/staged")).json.staged.find((r) => r.slug === "api-package");
+  assert.deepEqual(staged.plugin.engines, ["codex"], "review describes this revision, not the active plugin");
+  const overview = await request("/skills/overview");
+  assert.deepEqual(overview.json.staged.find((r) => r.id === staged.id).plugin, staged.plugin);
+  const revision = await request(`/skills/revisions/${staged.id}/files`);
+  assert.deepEqual(revision.json.revision.plugin, staged.plugin);
+  for (const response of [listed, overview, revision]) assert.doesNotMatch(JSON.stringify(response.json), /secret-plugin-header|secret-plugin-env|"Authorization"/);
+  assert.ok(active);
+});

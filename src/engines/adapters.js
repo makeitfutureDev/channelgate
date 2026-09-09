@@ -11,6 +11,7 @@ import { runtimeTargetOr } from "./runtime-target.js";
 import { readCodexAuthState } from "./codex-auth.js";
 import { claudeEngineHome, codexEngineHome } from "../config/paths.js";
 import { discoverCodexModels } from "./model-discovery.js";
+import { requirePluginRuntime } from "../gateway/plugin-runtime.js";
 
 // Which Claude login the gateway is using (src/gateway/claude-login.js). Imported LAZILY: that
 // module reads a setting, src/config/settings.js imports the engine registry, and the registry
@@ -51,6 +52,7 @@ const baseCompile = (engine, request = {}, supportedModes = ["off"]) => {
 };
 
 const claude = validateEngineAdapter({
+  pluginCapabilities: { manifest: "claude", components: ["skills", "commands", "agents", "hooks", "mcpServers"] },
   resolveOptionalMcpConfig: resolveClaudeMcpConfig,
   id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", mcpMetaKey: "allowedMcps",
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
@@ -91,6 +93,7 @@ const claude = validateEngineAdapter({
   compileConfinement: (request) => baseCompile("claude", request, FULL_NETWORK_MODES),
   async run(ctx) {
     const r = ctx.runtime;
+    requirePluginRuntime(r.pluginRuntime, this.id);
     // WHERE this turn runs (src/runtimes/): the channel's container, resolved once per turn by
     // run.js and put on the context.
     const target = runtimeTargetOr(ctx.target, ctx.cwd);
@@ -183,6 +186,16 @@ const claude = validateEngineAdapter({
 });
 
 const codex = validateEngineAdapter({
+  pluginCapabilities: { manifest: "", components: ["skills", "mcpServers"] },
+  async resolveOptionalMcpConfig(allowed) {
+    if (!Array.isArray(allowed) || !allowed.length) return {};
+    const policy = codexMcpPolicyFor(await listEngineMcps("codex"), allowed);
+    return Object.fromEntries(policy.servers.filter((server) => server.enabled).map((server) => {
+      const definition = server.definition;
+      if (!definition) throw new Error(`Optional MCP ${server.name} has no complete credential-safe definition; refusing Codex run`);
+      return [server.name, definition.transport === "http" ? { type: "http", url: definition.url } : { command: definition.command, args: definition.args || [] }];
+    }));
+  },
   id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", mcpMetaKey: "allowedCodexMcps",
   instructionFile: "AGENTS.md", skillsDir: ".agents/skills", mcpTransport: "argv", contextWindow: 272_000,
   efforts: ["none", "low", "medium", "high", "xhigh", "max", "ultra"], models: [
@@ -205,12 +218,14 @@ const codex = validateEngineAdapter({
   compileConfinement: (request) => baseCompile("codex", request, FULL_NETWORK_MODES),
   async run(ctx) {
     const r = ctx.runtime;
+    requirePluginRuntime(r.pluginRuntime, this.id);
     const target = runtimeTargetOr(ctx.target, ctx.cwd);
     const catalog = await listEngineMcps("codex").catch(() => []);
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
+    codexMcpPolicy.servers.push(...(r.pluginMcpServers || []));
     const unsafe = codexMcpPolicy.servers.find((server) => server.enabled && !server.definition);
     if (unsafe) throw new Error(`Optional MCP ${unsafe.name} has no complete credential-safe definition; refusing Codex run`);
-    return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, toolboxToken: r.toolboxToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexStateDir: r.codexStateDir, personalSkills: r.personalSkillCatalog, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent, onSessionResolved: r.onSessionResolved });
+    return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, toolboxToken: r.toolboxToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexStateDir: r.codexStateDir, personalSkills: r.personalSkillCatalog, pluginSkills: requirePluginRuntime(r.pluginRuntime, this.id).skills, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent, onSessionResolved: r.onSessionResolved });
   },
   interrupt: () => false,
   discoverMcps: () => listEngineMcps("codex"),

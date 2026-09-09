@@ -12,6 +12,7 @@
 //   • A source in `review` mode stages every new or changed skill for an admin; `auto` activates.
 //   • A source can be pinned to one commit; removed skills tombstone, never vanish.
 //   • Ingest limits (file count/size, path rules) come from files.js and reject before storage.
+import { buildPluginSkill, PLUGIN_MANIFESTS } from "./plugin-package.js";
 import { gunzipSync } from "node:zlib";
 import { putSkillRevision, tombstoneMissingSourceSkills, recordSourceSync, getSource, listSources, SkillCatalogError } from "./catalog.js";
 import { normalizeSkillPath, isSkillManifestPath, MAX_FILE_BYTES, MAX_FILES } from "./files.js";
@@ -134,7 +135,7 @@ function parsePax(buf) {
 }
 
 // Yield every regular file in a (gunzipped) tar buffer as { path, content, mode }.
-export function* readTar(tar) {
+export function* readTar(tar, { includeLinks = false } = {}) {
   let offset = 0;
   let longName = "";
   let pax = {};
@@ -161,6 +162,7 @@ export function* readTar(tar) {
     const entryPath = pax.path || longName || (prefix ? `${prefix}/${name}` : name);
     longName = "";
     pax = {};
+    if (includeLinks && (type === "1" || type === "2")) yield { path: entryPath, content: Buffer.alloc(0), mode, unsafeLink: true };
     if (type !== "0" && type !== "\0" && type !== "7") continue; // directories, links, devices
     yield { path: entryPath, content: Buffer.from(data), mode };
   }
@@ -185,11 +187,14 @@ export async function fetchRepoFiles({ owner, repo, sha, token = "", fetchImpl =
 // Map<repoRelativePath, { content, mode }> with the tarball's top-level `owner-repo-sha/` stripped.
 export function tarToFiles(tar) {
   const files = new Map();
-  for (const entry of readTar(tar)) {
+  const unsafeLinks = [];
+  for (const entry of readTar(tar, { includeLinks: true })) {
     const rel = entry.path.replace(/^\.\//, "").replace(/^[^/]+\//, "");
     if (!rel) continue;
+    if (entry.unsafeLink) { unsafeLinks.push(rel); continue; }
     files.set(rel, { content: entry.content, mode: entry.mode });
   }
+  files.unsafeLinks = unsafeLinks;
   return files;
 }
 
@@ -200,13 +205,22 @@ export function tarToFiles(tar) {
 export function discoverSkills(files, subpath = "") {
   const scope = String(subpath || "").replace(/^\/+|\/+$/g, "");
   const inScope = (p) => !scope || p === scope || p.startsWith(`${scope}/`);
+  const pluginDirs = [...new Set([...files.keys(), ...(files.unsafeLinks || [])].filter((p) => inScope(p) && Object.values(PLUGIN_MANIFESTS).some((m) => p === m || p.endsWith(`/${m}`))).map((p) => p.split("/").slice(0, -2).join("/")))].sort();
+  const outerPlugins = pluginDirs.filter((d) => !pluginDirs.some((parent) => parent !== d && (!parent || d.startsWith(`${parent}/`))));
+  const pluginSkills = outerPlugins.map((dir) => {
+    const prefix = dir ? `${dir}/` : "";
+    if (files.unsafeLinks?.some((p) => p.startsWith(prefix))) throw new Error(`plugin package cannot contain symlinks: ${dir || "."}`);
+    const bundle = [...files].filter(([p]) => p.startsWith(prefix) && !p.split("/").includes(".git")).map(([p, f]) => ({ path: p.slice(prefix.length), content: f.content, executable: (f.mode & 0o111) !== 0 }));
+    // A failed package must fail discovery before sync can tombstone the last approved copy.
+    return { dir, files: buildPluginSkill(bundle), oversized: [] };
+  });
   const skillDirs = [];
   for (const p of files.keys()) {
-    if (!isSkillManifestPath(p.split("/").pop()) || !inScope(p)) continue;
+    if (!isSkillManifestPath(p.split("/").pop()) || !inScope(p) || outerPlugins.some((d) => !d || p.startsWith(`${d}/`))) continue;
     skillDirs.push(p.split("/").slice(0, -1).join("/"));
   }
   skillDirs.sort();
-  const out = [];
+  const out = [...pluginSkills];
   for (const dir of skillDirs) {
     const prefix = dir ? `${dir}/` : "";
     const bundle = [];
@@ -215,6 +229,7 @@ export function discoverSkills(files, subpath = "") {
       if (!p.startsWith(prefix)) continue;
       const rel = p.slice(prefix.length);
       if (!rel) continue;
+      if (outerPlugins.some((d) => !d || p.startsWith(`${d}/`))) continue;
       // A deeper skill directory owns this file.
       if (skillDirs.some((d) => d.length > dir.length && d.startsWith(prefix) && p.startsWith(`${d}/`))) continue;
       if (/(^|\/)\.git\//.test(`${rel}/`) || rel.split("/").some((seg) => seg === ".git")) continue;
@@ -297,7 +312,7 @@ export async function syncGitSource(source, { token = "", fetchImpl = fetch, log
       else if (r.created) stats.created++;
       else stats.updated++;
     }
-    stats.tombstoned = tombstoneMissingSourceSkills(src.id, present);
+    if (!stats.skipped.length && !stats.conflicts.length) stats.tombstoned = tombstoneMissingSourceSkills(src.id, present);
     recordSourceSync(src.id, { ok: true, ref: sha, stats });
     return { ok: true, ref: sha, ...stats };
   } catch (err) {

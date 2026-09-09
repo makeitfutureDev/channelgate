@@ -3,6 +3,8 @@
 // authorized from this claim, so Claude's capability must never be reused by a Codex fallback.
 import { buildMcpConfig } from "./mcp.js";
 import { requireAdapter } from "../engines/registry.js";
+import { requirePluginRuntime } from "./plugin-runtime.js";
+import { safeCodexMcpDefinition } from "./mcp-discovery.js";
 
 // Capabilities live for six hours; a persistent Claude process idles out after ten minutes, but a
 // continuously active thread can keep it alive much longer. Rotate the warm fingerprint at least
@@ -13,7 +15,7 @@ const CAPABILITY_FINGERPRINT_BUCKET_MS = 5 * 60 * 60 * 1000;
 // engine reaches the gateway control server: a host run spawns the stdio server from this checkout,
 // an isolated run gets the in-container bridge instead (there is no DB and no checkout on that
 // side). Passed through explicitly rather than riding in `identity`, so the dependency is visible.
-export async function buildEngineMcpRuntime({ clean = false, engine = "claude", target = null, allowedMcps = [], fingerprintNow = Date.now(), ...identity } = {}) {
+export async function buildEngineMcpRuntime({ clean = false, engine = "claude", target = null, allowedMcps = [], pluginRuntime = null, fingerprintNow = Date.now(), ...identity } = {}) {
   if (clean) {
     const mcpConfigJson = JSON.stringify({ mcpServers: {} });
     return { mcpConfigJson, mcpConfigFingerprint: mcpConfigJson, gatewayCapability: "" };
@@ -23,6 +25,16 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
   for (const [name, definition] of Object.entries(optional)) {
     if (Object.hasOwn(parsed.mcpServers, name)) throw new Error("Selected MCP server conflicts with a built-in identity.");
     parsed.mcpServers[name] = definition;
+  }
+  const pluginServers = [];
+  for (const server of requirePluginRuntime(pluginRuntime, engine).servers) {
+    if (Object.hasOwn(parsed.mcpServers, server.name)) throw new Error("Plugin MCP server conflicts with a selected connection");
+    const definition = server.definition || safeCodexMcpDefinition(optional[server.sourceName]);
+    if (!definition) throw new Error(`Plugin ${server.plugin}: MCP ${server.sourceName} needs a separately selected, supported connection; source credentials are not imported`);
+    parsed.mcpServers[server.name] = definition.transport === "http"
+      ? { type: "http", url: definition.url }
+      : { command: definition.command, args: definition.args };
+    pluginServers.push({ name: server.name, enabled: true, definition });
   }
   const mcpConfigJson = JSON.stringify(parsed);
   const gatewayCapability = parsed.mcpServers.gateway.env.CG_GATEWAY_CAPABILITY;
@@ -46,5 +58,6 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
     mcpConfigJson,
     mcpConfigFingerprint: JSON.stringify(fingerprintView),
     gatewayCapability,
+    pluginServers,
   };
 }

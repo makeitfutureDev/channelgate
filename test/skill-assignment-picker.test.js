@@ -26,3 +26,14 @@ test("personal, disabled and unapproved catalog entries cannot be newly selected
   assert.deepEqual(result.available.map((s) => s.slug), ["normal", "pinned"]);
   assert.deepEqual(result.own.map((s) => s.slug), ["disabled", "missing"], "unavailable saved grants remain removable");
 });
+
+test("a plugin is one selectable item and retains package metadata through template inheritance", () => {
+  const plugin = { kind: "plugin", name: "workflow", engines: ["claude"], components: { skills: ["skills"], hooks: ["hooks/hooks.json"] } };
+  const skills = [skill("workflow", { plugin }), skill("plain")];
+  assert.deepEqual(assignmentGroups({ skills }).available.map((s) => s.slug), ["plain", "workflow"]);
+  const result = assignmentGroups({ skills, selected: ["workflow"], inherited: [{ id: "template", slugs: ["workflow"] }] });
+  assert.equal(result.groups[0].skills[0].plugin, plugin);
+  assert.equal(result.groups[0].locked, true);
+  assert.equal(result.own.length, 0);
+  assert.deepEqual(result.available.map((s) => s.slug), ["plain"]);
+});

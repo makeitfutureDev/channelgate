@@ -7,6 +7,11 @@ import path from "node:path";
 import { buildSettings, enableSkills } from "./folders.js";
 import { ensureRealDir } from "./safe-fs.js";
 import { parseFrontmatter, skillMetadata } from "./skills/frontmatter.js";
+import { grantedPluginPackages, compilePluginPackage, relocatePluginServers, pluginSkillCatalog } from "./plugin-runtime.js";
+import { ENGINE_IDS, requireAdapter } from "../engines/registry.js";
+import { materializeSkill } from "./skills/materialize.js";
+import { hashSkillFiles, normalizeSkillFiles } from "./skills/files.js";
+import { openWorkspaceDirectory } from "./skills/workspace-backup.js";
 
 // ── Isolated-runtime engine homes ─────────────────────────────────────────────────────────────
 // Inside a container the engine's HOME is the channel's own persistent volume (plan §5/§8), so
@@ -131,6 +136,9 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
   // Omit only that generated observation field here; ordinary workspace materialization keeps
   // its real timestamp, and all revision facts, skill bytes and grants remain fingerprinted.
   const copied = await enableSkills(skillsDir, skillNames, { recordMaterializationTime: false });
+  // A package is delivered through its own explicit native plugin or per-run catalog. Leaving
+  // its wrapper here would let recursive engine discovery activate the unsanitized source tree.
+  for (const pkg of grantedPluginPackages(skillNames)) await rm(path.join(skillsDir, pkg.slug), { recursive: true, force: true });
   // Gateway-generated rather than source-library entries. Import fixed names only, never an
   // arbitrary project skill. `cp` retains references/, scripts/, and assets.
   // Same no-follow rule as copyWorkspaceAgents: both the container and the named skill folder must
@@ -192,6 +200,49 @@ export async function createRunGrantArtifacts({
     const codexSkillsDir = "";
     const personalSkillCatalog = [];
     const claudePluginDirs = [];
+    const pluginRuntime = {};
+    const sharedPackages = grantedPluginPackages(sharedSkills);
+    const sharedPackageNames = new Set(sharedPackages.map((pkg) => pkg.slug));
+    const personalPackages = grantedPluginPackages(userSkills).filter((pkg) => !sharedPackageNames.has(pkg.slug));
+    for (const engine of ENGINE_IDS) {
+      const output = { dirs: [], skills: [], servers: [] };
+      pluginRuntime[engine] = output;
+      try {
+        const pluginNames = new Set();
+        for (const [packages, personal] of [[sharedPackages, false], [personalPackages, true]]) {
+          for (const pkg of packages) {
+            const pluginName = pkg.descriptor.name.toLowerCase();
+            if (pluginNames.has(pluginName)) throw new Error(`Plugin ${pkg.slug}: two granted packages use the same plugin name`);
+            pluginNames.add(pluginName);
+            const compiled = compilePluginPackage(pkg, {
+              capabilities: requireAdapter(engine).pluginCapabilities,
+              allowBypass,
+              writable: Boolean(meta.allowBash || meta.autoMode || meta.adminMode || allowBypass),
+            });
+            const files = normalizeSkillFiles([
+              { path: "SKILL.md", content: `---\nname: package-runtime\ndescription: Approved package runtime files\n---\n` },
+              ...compiled.files.map((f) => ({ ...f, path: `package/${f.path}` })),
+            ]);
+            const digest = hashSkillFiles(files);
+            const parent = path.join(personal ? root : artifactRoot, "plugin-packages", engine);
+            const handle = await openWorkspaceDirectory(parent, { create: true });
+            await handle.close();
+            const name = `${pkg.slug}-${digest.slice(0, 24)}`;
+            const revision = { ...pkg.revision, contentHash: digest };
+            const materialized = await materializeSkill(parent, name, {
+              lookup: () => ({ slug: name }), bundleFor: () => ({ revision, files }), recordMaterializationTime: false,
+            });
+            if (materialized.state === "project") throw new Error(`Plugin ${pkg.slug}: runtime package path has untrusted files; refusing to load it`);
+            const packageRoot = path.join(parent, name, "package");
+            if (compiled.native) output.dirs.push(packageRoot);
+            output.skills.push(...pluginSkillCatalog(compiled, packageRoot));
+            output.servers.push(...relocatePluginServers(compiled.servers, packageRoot));
+          }
+        }
+      } catch (error) {
+        pluginRuntime[engine] = { dirs: [], skills: [], servers: [], error: String(error.message || error) };
+      }
+    }
     let missingSkills = [];
     // The two content-addressed roots a warm process keeps reading between turns live under the
     // artifact dir, mounted at the same absolute path inside the container so the digest path the
@@ -230,7 +281,8 @@ export async function createRunGrantArtifacts({
 
     // User grants differ by author, so they remain per-run and make only those Claude turns cold.
     // They are deleted after the process exits.
-    let claudePluginEphemeral = false;
+    claudePluginDirs.push(...(pluginRuntime.claude?.dirs || []));
+    let claudePluginEphemeral = personalPackages.length > 0;
     if (userSkills.length > 0) {
       const pluginDir = path.join(root, "user-grants-plugin");
       const personal = await materializePlugin({
@@ -256,8 +308,12 @@ export async function createRunGrantArtifacts({
     }
 
     let settingsFile = "";
-    if (needsClaudeSettings) {
+    if (needsClaudeSettings || sharedPackages.length || personalPackages.length) {
       const settings = await buildSettings({ ...meta, _slug: slug }, { allowBypass, target });
+      for (const server of pluginRuntime.claude?.servers || []) {
+        settings.allowedMcpServers.push({ serverName: server.name });
+        settings.permissions.allow.push(`mcp__${server.name}`);
+      }
       const content = `${JSON.stringify(settings, null, 2)}\n`;
       const digest = createHash("sha256").update(content).digest("hex").slice(0, 24);
       const settingsRoot = path.join(stableArtifactRoot, "claude-settings");
@@ -282,6 +338,7 @@ export async function createRunGrantArtifacts({
       settingsFile,
       claudePluginDirs,
       claudePluginEphemeral,
+      pluginRuntime,
       claudeHome,
       claudeConfigDir,
       claudeStateDir,

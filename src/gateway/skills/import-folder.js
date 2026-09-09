@@ -5,6 +5,7 @@
 // grant still resolves, and it is re-imported by content hash on each boot: the directory stays
 // authoritative for that skill, the catalog mirrors it. A directory that disappears tombstones
 // its skill; one that comes back restores it.
+import { buildPluginSkill, PLUGIN_MANIFESTS } from "./plugin-package.js";
 import { readdir, readFile, stat, lstat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +25,13 @@ async function isDirLike(p, { dereference }) {
   }
 }
 
+async function hasPluginManifest(dir) {
+  for (const manifest of Object.values(PLUGIN_MANIFESTS)) {
+    try { const info = await lstat(path.join(dir, manifest)); if (info.isFile() || info.isSymbolicLink()) return true; } catch { /* absent */ }
+  }
+  return false;
+}
+
 async function hasManifest(dir) {
   try {
     const entries = await readdir(dir);
@@ -37,7 +45,7 @@ async function hasManifest(dir) {
 // folders (a subdirectory with its own SKILL.md) belong to that skill and are skipped, as are
 // gateway marker files and VCS/system noise. Symlinks are followed when `dereference` is set —
 // the operator's own folders are often links into a store of available skills.
-export async function readSkillDirectory(dir, { dereference = true } = {}) {
+export async function readSkillDirectory(dir, { dereference = true, plugin = false } = {}) {
   const files = [];
   const walk = async (current, rel) => {
     const entries = await readdir(current, { withFileTypes: true });
@@ -48,13 +56,14 @@ export async function readSkillDirectory(dir, { dereference = true } = {}) {
       const relPath = rel ? `${rel}/${entry.name}` : entry.name;
       let info;
       try {
-        info = dereference ? await stat(abs) : await lstat(abs);
+        info = dereference && !plugin ? await stat(abs) : await lstat(abs);
       } catch {
         continue; // dangling link or vanished entry
       }
+      if (plugin && info.isSymbolicLink()) throw new Error(`plugin packages cannot contain symlinks: ${relPath}`);
       if (info.isDirectory()) {
         // A nested skill is its own skill; never fold it into this one.
-        if (await hasManifest(abs)) continue;
+        if (!plugin && (await hasManifest(abs) || await hasPluginManifest(abs))) continue;
         await walk(abs, relPath);
         continue;
       }
@@ -69,7 +78,10 @@ export async function readSkillDirectory(dir, { dereference = true } = {}) {
 
 // Import one skill directory as a revision. Returns the catalog result plus the slug used.
 export async function importSkillDirectory(dir, { slug = "", ownerKind = "folder", sourceId = null, sourcePath = dir, sourceRef = "", status = "active", createdBy = "", dereference = true } = {}) {
-  const files = await readSkillDirectory(dir, { dereference });
+  const plugin = await hasPluginManifest(dir);
+  if (plugin && (await lstat(dir)).isSymbolicLink()) throw new Error("plugin source cannot be a symlink");
+  const raw = await readSkillDirectory(dir, { dereference, plugin });
+  const files = plugin ? buildPluginSkill(raw) : raw;
   return putSkillRevision({ slug, files, ownerKind, sourceId, sourcePath, sourceRef, status, createdBy });
 }
 
@@ -86,17 +98,20 @@ export async function importSkillTree(root, { ownerKind = "folder", sourceId = n
     if (requireRoot) result.errors.push({ slug: "(source root)", error: `Cannot read skill source directory: ${err?.message || String(err)}` });
     return result;
   }
+  const rootPlugin = await hasPluginManifest(root);
+  if (rootPlugin) entries = [{ name: path.basename(root), pluginRoot: true }];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (SKIP_NAMES.has(entry.name) || entry.name.startsWith(".")) continue;
-    const dir = path.join(root, entry.name);
+    const dir = entry.pluginRoot ? root : path.join(root, entry.name);
     if (!(await isDirLike(dir, { dereference }))) continue;
-    if (!(await hasManifest(dir))) continue;
-    if (!isValidSlug(entry.name)) {
+    const plugin = await hasPluginManifest(dir);
+    if (!(await hasManifest(dir)) && !plugin) continue;
+    if (!plugin && !isValidSlug(entry.name)) {
       result.errors.push({ slug: entry.name, error: "folder name is not a valid skill slug" });
       continue;
     }
     try {
-      const r = await importSkillDirectory(dir, { slug: entry.name, ownerKind, sourceId, sourcePath: dir, sourceRef, status, createdBy, dereference });
+      const r = await importSkillDirectory(dir, { slug: plugin ? "" : entry.name, ownerKind, sourceId, sourcePath: dir, sourceRef, status, createdBy, dereference });
       if (r.conflict) result.conflicts.push({ slug: entry.name, reason: r.reason });
       else {
         result.presentSlugs.push(r.skill.slug);
@@ -129,7 +144,7 @@ export async function importHostSkillFolders(dirs = []) {
     if (skill.sourceId != null) continue;
     const key = skill.slug.toLowerCase();
     const here = present.has(key);
-    if (!here && !skill.deleted) {
+    if (!here && !skill.deleted && !results.some((r) => r.errors.length)) {
       tombstoneSkill(skill.slug);
       tombstoned++;
     } else if (here && skill.deleted && !skill.excluded) {

@@ -1191,8 +1191,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   let mcpConfigJson = "";
   let mcpConfigFingerprint = "";
   let gatewayCapability = "";
+  let pluginMcpServers = [];
   const mintGatewayMcpRuntime = async () => {
-    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, pluginServers: pluginMcpServers = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
   };
 
   // Every granted definition is explicit in the per-run payload. Keep ambient MCPs disabled
@@ -1387,6 +1388,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         claudeConfigDir: grantArtifacts.claudeConfigDir,
         codexStateDir: grantArtifacts.codexStateDir,
         personalSkillCatalog: grantArtifacts.personalSkillCatalog,
+        pluginRuntime: grantArtifacts.pluginRuntime,
+        pluginMcpServers,
         grantFingerprint,
         attachments,
       },
@@ -1540,7 +1543,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Remint for the engine that will actually execute. The gateway MCP uses this signed engine
     // claim to choose allowedCodexMcps vs allowedMcps for mutations; reusing the failed engine's
     // token would cross that authority boundary even though a different runner executes.
-    const fallbackMcpRuntime = await buildEngineMcpRuntime({ ...mcpRuntimeInput, engine: fallbackEngine, target, allowedMcps: meta[fallbackAdapter.mcpMetaKey] || [] });
+    const fallbackMcpRuntime = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine: fallbackEngine, target, allowedMcps: meta[fallbackAdapter.mcpMetaKey] || [] });
     const fbKey = `${threadKey}::${fallbackEngine}-fallback`;
     const prior = await getSession(entry.slug, fbKey);
     // A FRESH fallback session can't resume the failed engine's conversation, so without help it
@@ -1601,6 +1604,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           claudeConfigDir: grantArtifacts.claudeConfigDir,
           codexStateDir: grantArtifacts.codexStateDir,
           personalSkillCatalog: grantArtifacts.personalSkillCatalog,
+          pluginRuntime: grantArtifacts.pluginRuntime,
+          pluginMcpServers: fallbackMcpRuntime.pluginServers || [],
           grantFingerprint },
       }));
     };
