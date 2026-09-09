@@ -390,6 +390,99 @@ async function openSecretsManager(client, triggerId, { channelId, userId, thread
   await logEvent("channel_secrets_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
+export async function handleSecretsAction({ ack, body, action, client }, { context = secretsContext, rootView = settingsRootView } = {}) {
+  await ack();
+  const clicker = body?.user?.id;
+  const command = parseSecretActionValue(action?.value);
+  try {
+    if (command.o === "open") {
+      if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
+      await openSecretsManager(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "" });
+      return;
+    }
+    const state = parseSecretsMetadata(body?.view?.private_metadata);
+    if (body?.view?.callback_id === "cg_channel_settings_modal") state.returnTo = "settings";
+    if (!clicker || state.ownerId !== clicker) throw new Error("This secrets manager isn't yours. Open your own with `/secrets`.");
+    const { entry, mayEdit, userIsAdmin } = await context(client, {
+      channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
+    });
+    if (!mayEdit) throw new Error("You can't change this channel's secrets.");
+    if (action?.action_id === SECRETS_ADD_ACTION_ID) {
+      await client.views.push({
+        trigger_id: body.trigger_id,
+        view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(cliIntegrationIds()) }),
+      });
+      return;
+    }
+    if (String(action?.action_id || "").startsWith(SECRETS_REMOVE_ACTION_PREFIX)) {
+      const name = String(command.n || "");
+      // Runs resolve env at spawn; no folder/skill provisioning is needed for an env-only edit.
+      const saved = await patchChannelMeta(entry.slug, (existing) => ({ env: patchChannelEnv(existing?.env, { remove: name }) }));
+      await logEvent("channel_env_removed", { slug: entry.slug, name, actor: clicker });
+      const notice = `🗑️ Removed *${name}*. New runs in this channel no longer receive it.`;
+      const nextView = state.returnTo === "settings"
+        ? await rootView(entry, saved, { ...state, tab: "secrets" }, userIsAdmin, { notice })
+        : buildSecretsView(listChannelEnv(saved), state, { channelName: entry.name, mayEdit, notice });
+      await updateFileExplorerView(client, body, nextView);
+    }
+  } catch (e) {
+    if (body?.view?.id) {
+      await client.views.update({ view_id: body.view.id, view: buildSecretsErrorView(e.message) }).catch(() => {});
+    } else if (body?.channel?.id && clicker) {
+      await client.chat.postEphemeral({ channel: body.channel.id, user: clicker, text: e.message }).catch(() => {});
+    }
+  }
+}
+
+export async function handleSecretFormSubmission({ ack, body, view, client }, { context = secretsContext, rootView = settingsRootView } = {}) {
+  const navigation = createFileFormNavigation({ ack, client, view });
+  const clicker = body?.user?.id;
+  let state;
+  try {
+    state = parseSecretsMetadata(view?.private_metadata);
+    if (!clicker || state.ownerId !== clicker) throw new Error("This secrets manager isn't yours. Open your own with `/secrets`.");
+  } catch (e) {
+    await ack({ response_action: "errors", errors: { [SECRETS_NAME_BLOCK_ID]: e.message.slice(0, 150) } });
+    return;
+  }
+  const { name: typedName, value } = readSecretForm(view);
+  // Validate each field against its own input so the error lands on the box that is wrong.
+  // assertValidEnvName returns the CANONICAL (uppercase) name — use that from here on so the
+  // stored key, the "added vs updated" check, the audit line and the confirmation all agree.
+  const errors = {};
+  let name = String(typedName || "").trim();
+  try { name = assertValidEnvName(typedName); } catch (e) { errors[SECRETS_NAME_BLOCK_ID] = e.message.slice(0, 150); }
+  try { assertValidEnvValue(value); } catch (e) { errors[SECRETS_VALUE_BLOCK_ID] = e.message.slice(0, 150); }
+  if (Object.keys(errors).length > 0) {
+    await ack({ response_action: "errors", errors });
+    return;
+  }
+  try {
+    const { entry, mayEdit, userIsAdmin } = await context(client, {
+      channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
+    });
+    if (!mayEdit) throw new Error("You can't change this channel's secrets.");
+    const existed = listChannelEnv(await getChannelMeta(entry.slug)).some((v) => v.name === name);
+    const saved = await patchChannelMeta(entry.slug, (existing) => ({
+      env: patchChannelEnv(existing?.env, { set: { name, value }, actor: `<@${clicker}>` }),
+    }));
+    await logEvent("channel_env_set", { slug: entry.slug, name, actor: clicker });
+    const notice = `✅ ${existed ? "Updated" : "Added"} *${name}*. It reaches the next run in this channel.`;
+    const nextView = state.returnTo === "settings"
+      ? await rootView(entry, saved, { ...state, tab: "secrets" }, userIsAdmin, { notice })
+      : buildSecretsView(listChannelEnv(saved), { ...state, editName: "" }, { channelName: entry.name, mayEdit, notice });
+    // Pop the temporary form and refresh its existing parent, preserving Settings navigation
+    // and Slack's three-view stack budget across repeated saves.
+    await navigation.show(nextView);
+  } catch (e) {
+    if (navigation.acknowledged) {
+      await client.views.update({ view_id: view.previous_view_id || view.id, view: buildSecretsErrorView(e.message) });
+    } else {
+      await ack({ response_action: "errors", errors: { [SECRETS_NAME_BLOCK_ID]: e.message.slice(0, 150) } });
+    }
+  }
+}
+
 // ── Settings for authorized channel users ──────────────────────────────────
 // Re-check access and membership on every interaction; Cloud MCP additionally requires admin.
 const SETTINGS_PURPOSE = {
@@ -1040,46 +1133,6 @@ async function connectAndWire(app) {
       if (channelId && userId) await client.chat.postEphemeral({ channel: channelId, user: userId, ...(threadTs ? { thread_ts: threadTs } : {}), text: e.message }).catch(() => {});
     }
   });
-  const handleSecretsAction = async ({ ack, body, action, client }) => {
-    await ack();
-    const clicker = body?.user?.id;
-    const command = parseSecretActionValue(action?.value);
-    try {
-      if (command.o === "open") {
-        if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
-        await openSecretsManager(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "" });
-        return;
-      }
-      const state = parseSecretsMetadata(body?.view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This secrets manager isn't yours. Open your own with `/secrets`.");
-      const { entry, mayEdit } = await secretsContext(client, {
-        channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
-      });
-      if (!mayEdit) throw new Error("You can't change this channel's secrets.");
-      if (action?.action_id === SECRETS_ADD_ACTION_ID) {
-        await client.views.push({
-          trigger_id: body.trigger_id,
-          view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(cliIntegrationIds()) }),
-        });
-        return;
-      }
-      if (String(action?.action_id || "").startsWith(SECRETS_REMOVE_ACTION_PREFIX)) {
-        const name = String(command.n || "");
-        const saved = await patchChannelMeta(entry.slug, (existing) => ({ env: patchChannelEnv(existing?.env, { remove: name }) }));
-        await ensureChannelFolder(entry.slug, effectiveMeta(saved));
-        await logEvent("channel_env_removed", { slug: entry.slug, name, actor: clicker });
-        await updateFileExplorerView(client, body, buildSecretsView(listChannelEnv(saved), state, {
-          channelName: entry.name, mayEdit, notice: `🗑️ Removed *${name}*. New runs in this channel no longer receive it.`,
-        }));
-      }
-    } catch (e) {
-      if (body?.view?.id) {
-        await client.views.update({ view_id: body.view.id, view: buildSecretsErrorView(e.message) }).catch(() => {});
-      } else if (body?.channel?.id && clicker) {
-        await client.chat.postEphemeral({ channel: body.channel.id, user: clicker, text: e.message }).catch(() => {});
-      }
-    }
-  };
   app.action(SECRETS_ACTION_PATTERN, handleSecretsAction);
   app.shortcut(SECRETS_SHORTCUT_ID, async ({ ack, body, client }) => {
     await ack();
@@ -1310,14 +1363,8 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID) {
-        const secretAccess = await secretsContext(client, {
-          channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
-        });
-        if (!secretAccess.mayEdit) throw new Error("You can't change this channel's secrets in its current mode.");
-        await client.views.push({
-          trigger_id: requireTrigger(),
-          view: buildSecretsView(listChannelEnv(meta), state, { channelName: entry.name, mayEdit: true }),
-        });
+        // Compatibility with Settings views opened before the inline Secrets controls shipped.
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "secrets" }, userIsAdmin));
         return;
       }
 
@@ -1443,53 +1490,7 @@ async function connectAndWire(app) {
 
   // Submitting the add/update form is the only moment a value exists in this process outside the
   // store. It is validated, written, and dropped — never put back into a view.
-  app.view(SECRETS_FORM_CALLBACK_ID, async ({ ack, body, view, client }) => {
-    const clicker = body?.user?.id;
-    let state;
-    try {
-      state = parseSecretsMetadata(view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker) throw new Error("This secrets manager isn't yours. Open your own with `/secrets`.");
-    } catch (e) {
-      await ack({ response_action: "errors", errors: { [SECRETS_NAME_BLOCK_ID]: e.message.slice(0, 150) } });
-      return;
-    }
-    const { name: typedName, value } = readSecretForm(view);
-    // Validate each field against its own input so the error lands on the box that is wrong.
-    // assertValidEnvName returns the CANONICAL (uppercase) name — use that from here on so the
-    // stored key, the "added vs updated" check, the audit line and the confirmation all agree.
-    const errors = {};
-    let name = String(typedName || "").trim();
-    try { name = assertValidEnvName(typedName); } catch (e) { errors[SECRETS_NAME_BLOCK_ID] = e.message.slice(0, 150); }
-    try { assertValidEnvValue(value); } catch (e) { errors[SECRETS_VALUE_BLOCK_ID] = e.message.slice(0, 150); }
-    if (Object.keys(errors).length > 0) {
-      await ack({ response_action: "errors", errors });
-      return;
-    }
-    try {
-      const { entry, mayEdit } = await secretsContext(client, {
-        channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
-      });
-      if (!mayEdit) throw new Error("You can't change this channel's secrets.");
-      const existed = listChannelEnv(await getChannelMeta(entry.slug)).some((v) => v.name === name);
-      const saved = await patchChannelMeta(entry.slug, (existing) => ({
-        env: patchChannelEnv(existing?.env, { set: { name, value }, actor: `<@${clicker}>` }),
-      }));
-      await ensureChannelFolder(entry.slug, effectiveMeta(saved));
-      await logEvent("channel_env_set", { slug: entry.slug, name, actor: clicker });
-      // Replace the form with the refreshed (masked) list, so the writer sees the new last4 and
-      // nothing else. A warm session started before this change is retired by its fingerprint.
-      await ack({
-        response_action: "update",
-        view: buildSecretsView(listChannelEnv(saved), { ...state, editName: "" }, {
-          channelName: entry.name,
-          mayEdit,
-          notice: `✅ ${existed ? "Updated" : "Added"} *${name}*. It reaches the next run in this channel.`,
-        }),
-      });
-    } catch (e) {
-      await ack({ response_action: "errors", errors: { [SECRETS_NAME_BLOCK_ID]: e.message.slice(0, 150) } });
-    }
-  });
+  app.view(SECRETS_FORM_CALLBACK_ID, handleSecretFormSubmission);
 
   app.view("cg_channel_files_edit_modal", async ({ ack, body, view, client }) => {
     const clicker = body?.user?.id;

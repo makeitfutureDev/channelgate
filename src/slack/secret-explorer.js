@@ -41,7 +41,7 @@ export function parseActionValue(raw) {
 }
 
 export function secretsMetadata(state = {}) {
-  return JSON.stringify({ c: state.channelId, s: state.slug, t: state.threadTs || "", u: state.ownerId, n: state.editName || "" });
+  return JSON.stringify({ c: state.channelId, s: state.slug, t: state.threadTs || "", u: state.ownerId, n: state.editName || "", ...(state.returnTo === "settings" ? { r: "settings" } : {}) });
 }
 
 export function parseSecretsMetadata(raw) {
@@ -58,6 +58,7 @@ export function parseSecretsMetadata(raw) {
     threadTs: String(value.t || ""),
     ownerId: String(value.u),
     editName: String(value.n || ""),
+    ...(value.r === "settings" ? { returnTo: "settings" } : {}),
   };
 }
 

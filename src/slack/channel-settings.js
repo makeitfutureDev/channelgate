@@ -4,6 +4,7 @@
 import { ACCESS_EDIT_ACTION_ID, accessSummary } from "./access-settings.js";
 import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
+import { buildSecretsView } from "./secret-explorer.js";
 
 export const CHANNEL_SETTINGS_MODE_PREFIX = "cg_channel_settings_mode_";
 export const CHANNEL_SETTINGS_OPTION_PREFIX = "cg_channel_settings_option_";
@@ -311,38 +312,11 @@ function skillsBlocks(snapshot = {}, state = {}) {
   ];
 }
 
-function secretLine(entry = {}) {
-  const tail = entry.last4 ? inlineCode(`••••${entry.last4}`) : "set · tail hidden";
-  const date = entry.setAt && !Number.isNaN(new Date(entry.setAt).getTime())
-    ? new Date(entry.setAt).toISOString().slice(0, 10)
-    : "";
-  const trail = [entry.setBy ? `by ${escapeMrkdwn(entry.setBy)}` : "", date].filter(Boolean).join(" · ");
-  const provider = entry.resolvable === false ? ` · ⚠️ provider ${inlineCode(entry.provider || "unknown")} unavailable` : "";
-  return `*${escapeMrkdwn(entry.name || "unnamed")}* — ${tail}${trail ? ` · ${trail}` : ""}${provider}`;
-}
-
 function secretsBlocks(snapshot = {}, state = {}, { canEditSecrets = false } = {}) {
-  const vars = Array.isArray(snapshot.secrets) ? snapshot.secrets : [];
-  const shown = vars.slice(0, MAX_LIST_ITEMS);
-  const blocks = shown.length
-    ? shown.map((entry) => ({ type: "section", text: mrkdwn(secretLine(entry)) }))
-    : [{ type: "section", text: mrkdwn("_No environment secrets are configured for this channel._") }];
-  if (vars.length > shown.length) {
-    blocks.push({ type: "context", elements: [mrkdwn(`_+${vars.length - shown.length} more variables. Open /secrets for the complete manager._`)] });
-  }
-  blocks.push({
-    type: "context",
-    elements: [mrkdwn("Values are write-only. This view shows names and, only for long locally stored values, the last four characters.")],
-  });
-  if (canEditSecrets) {
-    blocks.push({
-      type: "actions",
-      elements: [button(CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID, "Add, update, or remove secrets", state, "secrets_manage", {}, { style: "primary" })],
-    });
-  } else {
-    blocks.push({ type: "context", elements: [mrkdwn("_Secrets can only be changed when this channel's mode permits command execution._")] });
-  }
-  return blocks;
+  // The same masked rows and mutation controls as /secrets, directly in the Settings tab.
+  return buildSecretsView(Array.isArray(snapshot.secrets) ? snapshot.secrets : [], state, {
+    mayEdit: canEditSecrets,
+  }).blocks;
 }
 
 const TAB_LABELS = Object.freeze({

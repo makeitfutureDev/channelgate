@@ -993,7 +993,7 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       Connections/Cloud MCP, Skills, and masked Secrets tabs with unique action IDs. Runtime
       selection validates engine/model/effort compatibility; direct MCP and skill grants toggle
       without altering inherited/template tiers; skill templates can be assigned/cleared; the
-      Secrets tab reaches the existing write-only manager; and blank credential inputs preserve
+      Secrets tab directly exposes the shared write-only add/update/remove controls; and blank credential inputs preserve
       saved tokens while replacements are never prefilled or echoed. Composio labels can be
       prefilled, edited, or cleared without revealing a token; label-only saves keep
       the token, and submissions from older forms without a label field keep the saved label.
@@ -5535,3 +5535,32 @@ acceptance gates; no production restart or external message was performed by the
 Automated: `node --test test/teams-controls.test.js` verifies source conversation/thread delivery, foreign actor/conversation denial, one-use settings submission and private file controls.
 
 Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings` in an owned channel thread and group chat, then send `/settings` in a DM. Require the form in that same conversation (and channel thread), no private-delivery notice, and a valid owner submission affecting that session only. Another member must be denied; revoke the owner before submitting and require denial. Files and secrets remain private.
+
+
+## Slack Secrets tab removal and form navigation (2026-09-09)
+
+- [x] Automated: `node --test test/slack-secret-actions.test.js test/channel-settings-modal.test.js test/channel-env.test.js`.
+  Real Slack action/submission handlers with a scratch store and a stub Slack client: confirmed
+  removal deletes only the selected key, preserves sibling variables and unrelated metadata,
+  and updates the original Settings view with the Secrets tab selected. Four consecutive saves
+  push only entry forms, pop them with an empty submission acknowledgement, and refresh the same
+  parent. Standalone `/secrets` keeps its own surface. Wrong owner, revoked authorization and
+  mismatched slug leave storage untouched; views contain no full dummy values. All 32 supported
+  variables have inline Remove controls. These handler/store cases are engine-independent.
+- [ ] Live UI gate (engine-independent: Block Kit handlers do not invoke an engine): use an owned
+  private Slack fixture, an approved member and a separate admin; seed only absent disposable
+  `QA_SECRET_KEEP` and `QA_SECRET_DROP`. Open the reply Settings button → Secrets. Require both
+  rows with Remove and one Add/update button, with no intermediate manager. Cancel removal first
+  (both remain); confirm removal of DROP (only KEEP remains on the same tab). Close/reopen Settings
+  and `/secrets` to prove persistence. Add/update DROP four times; each save returns to the same
+  Settings tab, each next form opens, and Cancel preserves current data. Repeat standalone
+  `/secrets`. Revoke the member before using a held control and require refusal with no mutation.
+  Restore authorization and remove only fixture variables. Record screenshots, view IDs and
+  metadata names; never retain full values. Pass requires all UI transitions and persistence.
+- [ ] Live spawn gate, separately for Claude and Codex in owned Worker fixtures: as an approved
+  member set a disposable `QA_SECRET_DROP` through Settings → Secrets, then ask:
+  "Check only whether QA_SECRET_DROP exists in the process environment. Return present or absent;
+  never print its value." Require present. Remove it using that row's button, then repeat in the
+  same thread and a fresh thread; both must report absent. Preserve exact prompts, configured
+  engine, safe boolean tool output and thread evidence. Restore fixture state. Local handler
+  regressions do not claim live Slack-client or dual-engine acceptance.
