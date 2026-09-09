@@ -393,16 +393,18 @@ The skipped/live cases below remain unverified; this branch is not a release can
 - [x] Automated: `node --test test/inherited-file-commands.test.js test/slack-attachment-recovery.test.js
   test/message-normalize.test.js test/message-to-reply-e2e.test.js test/codex-message-to-reply-e2e.test.js`.
   The actual message pipeline handles current text commands after a preceding bot file, a root
-  attachment and no attachment. Require retirement guidance and zero engine starts for legacy `/files`,
-  stop, pending, `/help` and bare `/next`. Canonical text overrides incomplete trigger text;
+  attachment and no attachment. Require retirement guidance for legacy `/files` and ordinary daemon
+  responses for stop, pending, `/help` and bare `/next`, with zero engine starts for all of them.
+  Canonical text overrides incomplete trigger text;
   current canonical files omitted from the trigger and trigger files retained after a lookup
   failure must keep attachment semantics. Ordinary/unknown commands, queued tasks and Claude's
   native `/compact` keep prior-file recovery.
 - [ ] Live, separately for Claude and Codex in authorized Worker/Auto QA channels: create a
   disposable two-line text file and share it into a thread. Immediately type a native bot mention
   followed by `/files`, attaching nothing to that message. Repeat with an older root attachment
-  separated by a text reply. Require the ephemeral **Open files** button, working native explorer
-  and no engine run, download or file-content answer for either command. In the same fixtures
+  separated by a text reply. Require retirement guidance pointing to the retained reply folder
+  button or **Browse channel files** shortcut, with no **Open files** button, explorer, engine run,
+  download or file-content answer for either invocation. In the same fixtures
   test `pending`, `/help` and bare `/next`; require their ordinary daemon responses without a run.
   While an owned finite task is active, send mentioned `stop`/`cancel` after a file share and require
   the task to stop; then test `/next <harmless task>` during another active task and require normal
