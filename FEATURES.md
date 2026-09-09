@@ -1243,7 +1243,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   marker lives in the database, so a daemon restarted hourly cannot spam. A class change (expiring →
   missing) is news the same day, and a login that goes healthy again clears the class so the next
   expiry notifies afresh. One unreachable admin never costs the others their alert, and a tick that
-  reached nobody stays due. No token material ever rides the DM. → TEST-PLAN: Engines.
+  reached nobody stays due. Disabling Claude suppresses credential resolution, watch warnings and
+  admin DMs on the next tick, without restart; it clears the reminder marker so re-enabling Claude
+  reports an unresolved login again. No token material ever rides the DM. → TEST-PLAN: Engines.
 - **Codex sign-in is detected before, during, and after a turn** — a lost credential can no longer
   present as a hang. Before spawn, the runner reads the same `auth.json` the CLI reads (the stable
   engine `CODEX_HOME` first, the host state dir it is linked from second) and turns a signed-out
