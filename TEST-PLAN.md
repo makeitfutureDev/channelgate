@@ -1,5 +1,24 @@
 # ChannelGate — Test Plan
 
+## Slack shared-folder conflict replies
+
+Automated regression: `node --test test/workspace-conflict-reply.test.js test/skills-workspace-sync.test.js`.
+Exercises real registration and conflict detection for skill and memory mismatches, root/thread
+routing, mention and typed `/mode`, duplicate delivery, unauthorized authors, Slack delivery failure,
+and preservation of a workspace sentinel. No engine starts; this behavior is engine-independent.
+
+Live release gate — **UNEXECUTED** (engine-independent: registration fails before engine selection).
+On a disposable deployment, create two synthetic Slack test channels and register both. Assign both
+an empty fixture folder `shared-conflict-fixture`, with identical skills but memory enabled in one
+and disabled in the other. Use an approved author and an installed bot in the first channel.
+Send `@bot alive?` as a root message, then `@bot /mode` in its thread. Each must receive exactly one
+threaded explanation of the shared-folder conflict, a separate-folder/alignment remedy and retry
+instruction; no path, other-channel identity, engine run or workspace rewrite may occur. Repeat
+with equal memory settings and different shared skill grants. An unapproved, non-guest author must
+not receive configuration details. Assign separate folders, retry `@bot /mode`, and require the
+normal mode response. Restore the fixture configuration and remove disposable test folders.
+Record observed message links and daemon evidence before marking the live case passed.
+
 ## Read/search account routing
 
 Automated regression: `node --test test/channelgate-skill.test.js test/composio-guide.test.js test/channel-credential-guide.test.js test/composio-identity-preamble.test.js test/folders-generator-paths.test.js`.

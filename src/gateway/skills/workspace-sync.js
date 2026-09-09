@@ -48,7 +48,7 @@ export async function assertWorkspaceSkillsCompatible(slug, meta) {
     if (!channel.meta || channel.slug === slug) continue;
     if (effectiveWorkDir(channel.slug, { ...channel.meta, cleanMode: false }) !== cwd) continue;
     if (selectionSignature(channel.meta, organization) !== signature) {
-      throw new Error("This working folder is assigned to conversations with different shared skill grants or memory settings. Choose separate folders or align their selections.");
+      throw Object.assign(new Error("This working folder is assigned to conversations with different shared skill grants or memory settings. Choose separate folders or align their selections."), { code: "workspace_selection_conflict" });
     }
   }
 }

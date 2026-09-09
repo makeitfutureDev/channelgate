@@ -1,5 +1,11 @@
 # ChannelGate — Features
 
+- **Slack reports shared-folder conflicts:** an authorized mention or typed command that cannot
+  start because channels share a folder with conflicting skills or memory settings gets a reply
+  in its triggering thread. The reply asks an admin to assign separate folders or align settings,
+  then retry. It exposes no other channel names or filesystem paths. The conflict still blocks
+  workspace writes and engine startup. → TEST-PLAN: Slack shared-folder conflict replies.
+
 - **Read/search account routing:** unrestricted information requests may search either or both
   available Composio identities without an account-selection interruption. Explicit account and
   record restrictions remain binding. Writes, sends and other state changes require the intended

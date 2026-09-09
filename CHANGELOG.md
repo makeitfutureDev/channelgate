@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Reply in Slack when conflicting shared-folder skill or memory settings prevent a request
+  from starting, with admin repair instructions instead of silently logging the error.
+
 - Put Remove and Add/update directly on Slack Settings → Secrets. Refresh the same page after
   deletion, and return saved entry forms to their parent without duplicate lists or modal stack growth.
 

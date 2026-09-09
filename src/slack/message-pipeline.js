@@ -4,7 +4,7 @@
 // processMessageEvent takes an explicit { botUserId, teamId } context instead of closing over
 // connectAndWire scope, so the whole turn path is reachable by tests. app.js owns the Bolt app
 // and event registrations and delegates here; this module must never import ./app.js.
-import { upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
+import { getChannelEntry, upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
 import { engineSupports, engineLabel, ENGINE_IDS } from "../engines/registry.js";
 import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
@@ -1572,5 +1572,23 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     }
   } catch (outer) {
     console.error("[slack] handler error:", outer);
+    if (outer?.code === "workspace_selection_conflict") {
+      try {
+        // Registration can fail before the normal authorization gate. Do not disclose
+        // configuration to an unauthorized author, or identify another private conversation.
+        const entry = await getChannelEntry(event.channel);
+        const meta = entry && await getChannelMeta(entry.slug);
+        if (!meta || !isAuthorized(meta, event.user, event.channel_type === "im", {
+          isAdminUser: await isAdmin(event.user), isApprovedUser: await isApproved(event.user),
+        })) return;
+        await client.chat.postMessage({
+          channel: event.channel,
+          thread_ts: event.thread_ts ?? event.ts,
+          text: "⚠️ I couldn’t start: this working folder is assigned to more than one channel, with conflicting shared skills or memory settings. Ask a gateway admin to assign this folder to just one channel and choose a separate folder for the others, or align their shared skills and memory settings in the admin UI. Then send your request again.",
+        });
+      } catch (notificationError) {
+        console.error("[slack] workspace conflict notification failed:", notificationError);
+      }
+    }
   }
 }
