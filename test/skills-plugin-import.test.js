@@ -83,7 +83,8 @@ test("failed plugin sync preserves the last approved package", async () => {
   assert.equal(failed.ok, false);
   const after = getSkill("last-good-package");
   assert.equal(after.deleted, false);
-  assert.equal(after.activeRevisionId, before.activeRevisionId);
+  assert.ok(before.currentRevisionId);
+  assert.equal(after.currentRevisionId, before.currentRevisionId);
 });
 
 test("manifest edits regenerate catalog metadata and cannot disguise a plugin as a plain skill", async () => {

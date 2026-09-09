@@ -42,9 +42,13 @@ MCP tools. Verify personal artifact cleanup after the first author's run complet
 **PLUG-03 — native components and compatibility (both engines, with different expectations).**
 Import and approve `test/fixtures/plugins/native/`. Grant it only to disposable test conversations.
 As an admin in a Full-access Claude conversation, start a fresh thread and ask “Use the native
-plugin marker command and ask its plugin-inspector agent for its marker.” Require the command
+plugin marker command.” In a separate fresh thread ask “Ask the plugin-inspector agent for its
+own marker; do not invoke the marker command.” Separate threads keep command instructions from
+contaminating the agent probe. Require the command
 result `PLUGIN-COMMAND`, observed agent invocation/result `PLUGIN-AGENT`, and exactly one new
-`PLUGIN-HOOK` line in that conversation's `plugin-hook-marker.txt` on session start. Repeat as a
+`PLUGIN-HOOK` line in that conversation's `plugin-hook-marker.txt` per session start. The compiled
+manifest's `hooks` property must contain the event map directly; a nested `hooks.hooks` object
+is silently ignored by the CLI and is a failure even if manifest validation passes. Repeat as a
 non-admin and as an unattended scheduled/background run: require a hook-policy error and no new
 line. Pin Codex and repeat: require an explicit unsupported native component error before the
 engine starts. Add an apps or LSP declaration to a disposable source revision and approve it:

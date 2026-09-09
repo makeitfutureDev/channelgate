@@ -6,6 +6,7 @@ Git and folder skill sources recognize Claude/Codex plugin manifests and store a
 as one revision. Existing Review, rollback, templates, organization/channel/personal grants, and
 source sync govern the package. Catalog and assignment pickers show Plugin badges and safe
 component summaries. Claude loads approved native skills/commands/agents and admin-gated hooks;
+compiled inline hooks use Claude's event map so approved hooks execute instead of being ignored.
 Codex receives approved skill catalogs. Both receive supported MCP transports through explicit
 namespaced grants. Unsupported components/authentication produce actionable failures. Compiled
 files stay inside the channel container's artifact mounts; updates rotate warm snapshots and

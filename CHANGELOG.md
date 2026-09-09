@@ -55,6 +55,10 @@ product overview.
 
 ## 0.5.1 — Unreleased
 
+- Manage plugin packages through existing skill sources, review, templates and channel grants.
+  Compile native Claude hooks as an inline event map so SessionStart hooks execute correctly;
+  keep executable hooks restricted to authorized live admin turns.
+
 - Fix repeated native file creation and inline editing exhausting Slack’s modal stack. Successful
   forms return to the existing browser/preview; Cancel and validation retain their prior behavior.
 

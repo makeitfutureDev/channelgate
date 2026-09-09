@@ -102,7 +102,7 @@ export function compilePluginPackage(pkg, { capabilities, allowBypass = false, w
         merged[event] = [...(merged[event] || []), ...entries];
       }
     }
-    native.hooks = { hooks: merged };
+    native.hooks = merged;
   }
   const servers = [];
   const seen = new Set();

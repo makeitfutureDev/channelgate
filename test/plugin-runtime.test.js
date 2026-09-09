@@ -49,7 +49,7 @@ test("hooks require live admin bypass and are declared once without implicit hoo
   const compiled = compile({}, files, { allowBypass: true });
   assert.equal(compiled.files.some((f) => f.path === "hooks/hooks.json"), false);
   const native = JSON.parse(compiled.files.find((f) => f.path === ".claude-plugin/plugin.json").content);
-  assert.deepEqual(native.hooks, hooks);
+  assert.deepEqual(native.hooks, hooks.hooks);
   assert.throws(() => compile({ hooks: { Stop: "bad" } }, [], { allowBypass: true }), /invalid hook event/);
 });
 
