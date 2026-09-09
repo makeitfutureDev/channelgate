@@ -186,7 +186,7 @@ const claude = validateEngineAdapter({
 });
 
 const codex = validateEngineAdapter({
-  pluginCapabilities: { manifest: "", components: ["skills", "mcpServers"] },
+  pluginCapabilities: { sourceManifest: "codex", manifest: "", components: ["skills", "mcpServers"] },
   async resolveOptionalMcpConfig(allowed) {
     if (!Array.isArray(allowed) || !allowed.length) return {};
     const policy = codexMcpPolicyFor(await listEngineMcps("codex"), allowed);

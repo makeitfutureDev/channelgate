@@ -16,6 +16,7 @@ function componentPath(value, files) {
 function describe(files) {
   const manifests = {};
   const components = Object.fromEntries(Object.keys(componentDefaults).map((k) => [k, []]));
+  const componentsByEngine = {};
   let name = "", description = "", version = "", manifestPath = "";
   for (const [engine, p] of Object.entries(PLUGIN_MANIFESTS)) {
     const file = files.find((f) => f.path === p);
@@ -30,22 +31,31 @@ function describe(files) {
     version ||= manifest.version || "";
     manifestPath ||= p;
     manifests[engine] = manifest;
+    const engineComponents = Object.fromEntries(Object.keys(componentDefaults).map((k) => [k, []]));
+    componentsByEngine[engine] = engineComponents;
     for (const [key, defaultPath] of Object.entries(componentDefaults)) {
       const value = manifest[key];
       if (value != null) {
-        if ((["hooks", "mcpServers", "lspServers", "apps"].includes(key)) && typeof value === "object" && !Array.isArray(value)) components[key].push(p);
-        else for (const entry of Array.isArray(value) ? value : [value]) components[key].push(componentPath(entry, files));
+        if ((["hooks", "mcpServers", "lspServers", "apps"].includes(key)) && typeof value === "object" && !Array.isArray(value)) engineComponents[key].push(p);
+        else for (const entry of Array.isArray(value) ? value : [value]) engineComponents[key].push(componentPath(entry, files));
       }
       // Claude's conventional component directories remain enabled alongside custom paths.
-      if (files.some((f) => f.path === defaultPath || f.path.startsWith(`${defaultPath}/`))) components[key].push(defaultPath);
+      if (files.some((f) => f.path === defaultPath || f.path.startsWith(`${defaultPath}/`))) engineComponents[key].push(defaultPath);
+      engineComponents[key] = [...new Set(engineComponents[key])];
+      components[key].push(...engineComponents[key]);
     }
   }
   if (!name) throw new Error("plugin package needs a .claude-plugin/plugin.json or .codex-plugin/plugin.json manifest");
   for (const [key, extras] of Object.entries({ apps: [".app.json"], hooks: ["hooks.json"] })) {
-    for (const p of extras) if (files.some((f) => f.path === p)) components[key].push(p);
+    for (const p of extras) if (files.some((f) => f.path === p)) {
+      components[key].push(p);
+      for (const engineComponents of Object.values(componentsByEngine)) {
+        if (!engineComponents[key].includes(p)) engineComponents[key].push(p);
+      }
+    }
   }
   for (const key of Object.keys(components)) components[key] = [...new Set(components[key])];
-  return { kind: "plugin", name, description, version, engines: Object.keys(manifests), manifestPath, manifests, components, files };
+  return { kind: "plugin", name, description, version, engines: Object.keys(manifests), manifestPath, manifests, components, componentsByEngine, files };
 }
 
 export function buildPluginSkill(input) {

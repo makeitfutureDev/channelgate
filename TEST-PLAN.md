@@ -39,6 +39,22 @@ credential in argv or listing summaries. Restore the fixture. Grant it personall
 author, remove shared grants, and verify another author receives neither its skill catalog nor
 MCP tools. Verify personal artifact cleanup after the first author's run completes.
 
+Dual-manifest regression: `test/plugin-grant-integration.test.js` imports one package with distinct
+inline `mcpServers.lookup.url` values in its Claude and Codex manifests, then repeats with separate
+referenced JSON files. Each engine's compiled runtime must select its own endpoint. Codex must
+still emit no native plugin directory.
+Live follow-up (Claude and Codex separately; UNEXECUTED): copy the portable fixture and replace
+its manifests' `mcpServers` paths with inline `fixture` definitions. Both invoke the bundled echo
+server, with Claude's args containing `--fixture-engine=claude` and Codex's args containing
+`--fixture-engine=codex` after the server path. Import, approve and grant the package to the two
+disposable Worker conversations. Ask each "Run plugin echo with the value DUAL-42." Require the
+actual namespaced tool result `PLUGIN-ECHO:DUAL-42` and captured server argv showing only that
+engine's marker argument.
+Repeat after moving each engine's inline configuration into its own `config/<engine>.json` and
+updating each manifest's `mcpServers` path: neither engine may report duplicate server names or
+launch the other engine's command.
+Remove the fixture grants/source after capturing candidate and evidence.
+
 **PLUG-03 — native components and compatibility (both engines, with different expectations).**
 Import and approve `test/fixtures/plugins/native/`. Grant it only to disposable test conversations.
 As an admin in a Full-access Claude conversation, start a fresh thread and ask “Use the native
