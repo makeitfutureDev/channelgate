@@ -16,6 +16,7 @@
 //
 // Nothing here touches token material: the resolver hands out paths, expiries and an opaque
 // fingerprint, and this module forwards only the kind, the config dir, the expiry and the remedy.
+import { isEngineEnabled } from "../config/settings.js";
 import { getUsers } from "../config/store.js";
 import { metaGet, metaSet } from "../db/index.js";
 import { logEvent } from "../util/logger.js";
@@ -161,6 +162,13 @@ export async function claudeLoginWatchTick({
   readMark = () => metaGet(CLAUDE_LOGIN_ALERT_META_KEY) || "",
   writeMark = (value) => metaSet(CLAUDE_LOGIN_ALERT_META_KEY, value),
 } = {}) {
+  // Read the live setting on every tick: toggling an engine needs no restart.
+  // Disabled engines need neither credentials nor admin reminders.
+  if (!isEngineEnabled("claude")) {
+    const mark = String(readMark() || "");
+    if (mark) writeMark("");
+    return { alertClass: "", sent: 0, notified: false, reset: Boolean(mark), disabled: true };
+  }
   const at = now();
   let login = null;
   try {

@@ -319,3 +319,40 @@ test("startClaudeLoginWatch defers the first pass and stop() cancels it", async 
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(ticks, settled); // stopped means stopped
 });
+
+
+test("live Claude disable skips credential checks and notifications; re-enable alerts afresh", async () => {
+  const { getSettings, saveSettings } = await import("../src/config/settings.js");
+  const original = getSettings().engineEnabled;
+  const store = markStore(`missing:${DAY_KEY}`);
+  const rec = recorder();
+  const sent = [];
+  let resolves = 0;
+  let adminReads = 0;
+  const opts = {
+    now: () => NOW, log: rec.log, ...store,
+    resolve: () => { resolves++; return missingLogin(); },
+    admins: async () => { adminReads++; return ["UADMIN1"]; },
+    notify: async (message) => { sent.push(message); },
+  };
+  try {
+    saveSettings({ engineEnabled: { claude: false, codex: true } });
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await claudeLoginWatchTick(opts)).disabled, true);
+    }
+    assert.equal(resolves, 0);
+    assert.equal(adminReads, 0);
+    assert.equal(sent.length, 0);
+    assert.deepEqual(rec.warnings(), []);
+    assert.equal(store.get(), "");
+    saveSettings({ engineEnabled: { claude: true, codex: true } });
+    assert.equal((await claudeLoginWatchTick(opts)).notified, true);
+    assert.equal(resolves, 1);
+    assert.equal(sent.length, 1);
+    assert.equal(store.get(), `missing:${DAY_KEY}`);
+    assert.equal((await claudeLoginWatchTick(opts)).notified, false);
+    assert.equal(sent.length, 1);
+  } finally {
+    saveSettings({ engineEnabled: original ?? {} });
+  }
+});

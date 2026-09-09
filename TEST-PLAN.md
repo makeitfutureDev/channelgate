@@ -2276,6 +2276,17 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       and changes fingerprint only when the credential does; `/status` names the login source, the
       config dir and the session expiry date, and flags an expiring or missing login with a warning
       marker (`test/claude-login.test.js`).
+- [x] Regression: disabling Claude through live settings skips login resolution, admin lookup,
+      warnings and delivery across repeated ticks, clears the daily marker, and re-enabling
+      alerts once again on the same day (`test/claude-login-alert.test.js`).
+- [ ] Live release gate (engine-independent: daemon timer, no engine process): use an isolated
+      daemon with no Claude login, Codex enabled and one reachable test admin. Disable Claude in
+      Settings before the first watch tick (60 seconds after startup); observe two ticks via a
+      controlled invocation or the hourly timer. Pass: no Claude-login warning or admin DM.
+      Enable Claude without restart, observe the next tick: exactly one missing-login DM; a
+      further same-day tick must send none. Disable again: no warning or DM on the next tick.
+      Capture timestamps and notification counts. Live delivery and private QA registry update
+      remain unexecuted until release validation.
 - [x] Unit: the hourly login watch DMs every admin ONCE per UTC day per message class — the same
       class on the same day is silent, the next day notifies again, a class change (expiring →
       missing) is news the same day, and a healthy login sends nothing and clears the class so a
