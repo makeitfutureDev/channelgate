@@ -29,7 +29,8 @@ function readJson(descriptor, file) {
 
 function componentConfigs(descriptor, key, manifestEngine) {
   const out = [];
-  for (const file of descriptor.components[key] || []) {
+  const components = descriptor.componentsByEngine?.[manifestEngine] || descriptor.components;
+  for (const file of components[key] || []) {
     const owner = Object.entries(descriptor.manifests).find(([engine]) => file === `.${engine}-plugin/plugin.json`);
     if (owner) {
       if (owner[0] === manifestEngine) out.push(owner[1][key]);
@@ -79,7 +80,10 @@ export function compilePluginPackage(pkg, { capabilities, allowBypass = false, w
     }
   }
   if (d.components.hooks.length && !allowBypass) throw new Error(`Plugin ${slug}: hooks require an authorized live admin turn in a Full-access conversation`);
-  const manifestEngine = d.manifests[capabilities.manifest] ? capabilities.manifest : d.engines[0];
+  // Source selection is independent of native output: Codex uses its own declarations even
+  // though it receives a skill catalog and explicit MCP settings instead of a native manifest.
+  const preferredManifest = capabilities.sourceManifest || capabilities.manifest;
+  const manifestEngine = d.manifests[preferredManifest] ? preferredManifest : d.engines[0];
   const manifest = d.manifests[manifestEngine];
   // Only known component paths are forwarded. In particular settings, MCP, apps, and LSP
   // declarations cannot silently expand permissions or activate an unselected service.

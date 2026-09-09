@@ -8,7 +8,9 @@ source sync govern the package. Catalog and assignment pickers show Plugin badge
 component summaries. Claude loads approved native skills/commands/agents and admin-gated hooks;
 compiled inline hooks use Claude's event map so approved hooks execute instead of being ignored.
 Codex receives approved skill catalogs. Both receive supported MCP transports through explicit
-namespaced grants. Unsupported components/authentication produce actionable failures. Compiled
+namespaced grants. When both manifests exist, each engine uses its own inline or file-based MCP
+declarations; single-manifest portable packages remain supported. Unsupported components and
+authentication produce actionable failures. Compiled
 files stay inside the channel container's artifact mounts; updates rotate warm snapshots and
 revocation removes future runtime grants. Source path/symlink/size validation retains last-good
 revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.

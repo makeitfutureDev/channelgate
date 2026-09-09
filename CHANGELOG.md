@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Fix MCP configuration selection when a plugin package supplies both engine manifests. Each
+  engine uses its own inline declarations or referenced files, avoiding wrong endpoints and
+  duplicate server errors.
+
 - Reply in Slack when conflicting shared-folder skill or memory settings prevent a request
   from starting, with admin repair instructions instead of silently logging the error.
 
