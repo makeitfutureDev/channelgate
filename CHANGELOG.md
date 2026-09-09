@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Put Remove and Add/update directly on Slack Settings → Secrets. Refresh the same page after
+  deletion, and return saved entry forms to their parent without duplicate lists or modal stack growth.
+
 - Remove the `/files` slash command and typed file-browser entry. The reply folder button and
   Browse channel files shortcut remain available; legacy typed requests explain the replacement.
 

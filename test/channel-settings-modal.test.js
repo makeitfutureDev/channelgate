@@ -24,7 +24,6 @@ import {
   CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID,
   CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID,
   CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID,
-  CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_TABS,
   CONNECTION_COMPOSIO_ACTION_ID,
@@ -155,7 +154,9 @@ test("each Settings tab renders its channel setup snapshot", () => {
   assert.match(secrets, /SUPABASE_ACCESS_TOKEN/);
   assert.match(secrets, /••••beef/);
   assert.doesNotMatch(secrets, /actual-secret-value/);
-  assert.ok(allButtons(secretsView).some((button) => button.action_id === CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID));
+  assert.ok(allButtons(secretsView).some((button) => button.action_id === "cg_channel_secrets_add"));
+  assert.ok(secretsView.blocks.some((block) => block.accessory?.action_id === "cg_channel_secrets_remove_0"));
+  assert.doesNotMatch(secrets, /Add, update, or remove secrets/);
   const mcp = buildChannelSettingsView(snapshot, state, { tab: "mcp" });
   assert.ok(allButtons(mcp).some((button) => button.action_id === CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID));
 });
