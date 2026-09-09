@@ -204,11 +204,11 @@ test("the managed block carries the hard rules a run must never get wrong", () =
     assert.equal(splitGatewayBlock(block).found, true);
     assert.match(block, /Hard rules \(not optional\)/);
 
-    // 1. Composio identity + the privacy stop. Both identities are named, and an unnamed request
-    //    that either could serve is answered with a question, not a "harmless" read (CO-04).
+    // 1. Unrestricted reads can use both identities; writes retain account selection.
     assert.match(block, /`composio-user`/);
     assert.match(block, /`composio-agent`/);
-    assert.match(block, /which account\?" — not a tool call/);
+    assert.match(block, /Reads and searches may use either or\s+both identities without asking which account/);
+    assert.match(block, /Writes require the intended identity and connected account/);
 
     // 2. A request phrased for the requester's OWN accounts is `composio-user` or nothing — the
     //    agent's shared identity is never substituted for a missing personal one (CO-02: a

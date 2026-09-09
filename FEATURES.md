@@ -1,5 +1,12 @@
 # ChannelGate — Features
 
+- **Read/search account routing:** unrestricted information requests may search either or both
+  available Composio identities without an account-selection interruption. Explicit account and
+  record restrictions remain binding. Writes, sends and other state changes require the intended
+  identity and connected account, reusing prior choices; unresolved mutation identity asks while
+  independent reads can continue. The bundled guide, managed instructions and fresh/resumed
+  prompts carry the same rule for Claude and Codex. → TEST-PLAN: Read/search account routing.
+
 ## Standalone Slack menu
 
 - `/menu` returns only one card with **Resume, Files, Secrets, Settings**, directly from the

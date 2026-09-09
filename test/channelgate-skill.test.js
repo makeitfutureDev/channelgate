@@ -77,10 +77,9 @@ test("the ChannelGate skill defines deterministic Composio identity discovery", 
 
   assert.match(guide, /`composio-user`.*active requester's personal account/is);
   assert.match(guide, /`composio-agent`.*shared agent account/is);
-  // Ambiguity is a MUST-ask hard stop with the privacy reason stated, not a soft preference.
-  assert.match(guide, /both identities have an app such as Gmail.*MUST ask which account and MUST NOT call a tool first/is);
-  assert.match(guide, /not even a read-only look/i);
-  assert.match(guide, /exposes the\s+requester's own private data, or a third party's/is);
+  assert.match(guide, /Unrestricted reads and searches may use either\s+or both identities without asking which account/is);
+  assert.match(guide, /Writes, sends and other state changes require the intended identity and connected\s+account/is);
+  assert.match(guide, /Explicit account and record restrictions remain\s+binding/is);
   assert.match(guide, /Never substitute or silently fall back/is);
   assert.match(guide, /mcp__composio_user__/);
   // The search tool is the only side-effect-free existence check.

@@ -1,5 +1,34 @@
 # ChannelGate — Test Plan
 
+## Read/search account routing
+
+Automated regression: `node --test test/channelgate-skill.test.js test/composio-guide.test.js test/channel-credential-guide.test.js test/composio-identity-preamble.test.js test/folders-generator-paths.test.js`.
+Checks materialized guides on all supported surfaces, managed instructions, and actual stub-engine
+fresh/resumed prompts for both Claude and Codex. Account ownership is not inferred from routing;
+missing explicitly requested identities still refuse substitution. These are instruction-contract
+checks, not live proof of model behavior.
+
+Live release gate — **UNEXECUTED**, run separately with Claude and Codex pinned in an authorized
+private test channel. Configure two read-capable Slack identities and distinct synthetic messages:
+`ROUTE-PERSONAL-<run-id>` visible only to personal and `ROUTE-AGENT-<run-id>` only to agent.
+Use a non-admin approved test author and verify connection metadata before fixture creation.
+
+1. Prompt: “Search available Slack accounts for ROUTE-<run-id>; find both fixture messages.”
+   Require tool evidence using both needed identities, exact fixture results/source attribution,
+   and no account clarification or state-changing calls.
+2. In a fresh thread: “Search only my Slack for ROUTE-PERSONAL-<run-id>.” Require only personal
+   reads; repeat with personal unavailable and require refusal without agent substitution.
+3. In a fresh thread without prior account selection: “Send the fixture summary through a Composio Slack account to this test
+   channel, and meanwhile find ROUTE-<run-id>.” Require account clarification before any send;
+   authorized reads may continue. Do not answer until the absence of writes is verified.
+4. Explicitly select the personal identity and its named connected Slack account, authorize one
+   fixture send, and verify that identity/account. Follow with another explicitly authorized send
+   in the same thread; require reuse without asking again. Restore/delete test fixtures using
+   their original writing accounts.
+
+Pass only when all cases have exact tool identity/account evidence and thread links for each
+engine. A prompt string or mock pass alone is not live acceptance.
+
 Latest `teams-ms` verification (2026-09-09): 2,448 passed, 10 skipped under
 `npm run test:coverage`; coverage floors, static checks and security coverage passed.
 The dependency audit passed the high-severity threshold with one existing moderate
@@ -285,7 +314,7 @@ The skipped/live cases below remain unverified; this branch is not a release can
 - [x] Automated: `node --test test/composio-identity-preamble.test.js test/folders-generator-paths.test.js`.
   Inspect actual Claude and Codex prompts with both configured identities addressing the same
   service owner, then remove the personal credential and resume the same thread. Require current
-  ownership guidance, no invented other-person claim, unchanged ask-before-read and personal-only
+  ownership guidance, no invented other-person claim, read/write account selection and personal-only
   routing stops, and no credential values. Managed instructions retain the same rules in ordinary,
   Auto and Clean generation; logical identity spelling remains unchanged.
 - [ ] Run separately in Claude and Codex private Worker/Auto QA channels with both identities.
@@ -881,18 +910,16 @@ a pass.
       `gateway-usage` file and the ChannelGate skill — and every remaining mention states that the
       call CREATES a pending authorization (`status: "initiated"`) on a toolkit with no connection
       on that identity (`test/composio-guide.test.js`, `test/channelgate-skill.test.js`).
-- [x] Automated: the ambiguous-identity rule is a MUST in both bundled skills — the first response
-      is the question and never a tool call, with the privacy reason (the requester's or a third
-      party's personal data) stated (`test/composio-guide.test.js`,
-      `test/channelgate-skill.test.js`).
+- [x] Automated: both bundled skills allow unrestricted reads across either/both identities and
+      require intended-account selection for writes, preserving explicit restrictions
+      (`test/composio-guide.test.js`, `test/channelgate-skill.test.js`).
 - [ ] Live Claude (CO-04 regression): with a toolkit that is NOT connected on the chosen identity,
       ask “what is connected on my Composio?”. Pass when the inventory comes from
       `COMPOSIO_SEARCH_TOOLS` alone and no toolkit is left `status: "initiated"` afterwards
       (previously `airtable` on the personal identity and `googlecalendar` on the agent identity
       were both initiated by the inventory itself).
-- [ ] Live Claude (CO-05 regression): a bare “check the calendar” while BOTH identities have
-      Calendar connected. Pass when the whole reply is the “which account?” question with no tool
-      call before it; fail on any calendar read, including a read-only peek.
+- [ ] Live Claude/Codex unrestricted reads and ambiguous writes: execute the **Read/search account
+      routing** gate above; it supersedes the former ask-before-read acceptance.
 - [x] Automated: the managed block's hard rules carry the identity-SUBSTITUTION stop — a request
       phrased for the requester's own accounts is served ONLY by `composio-user`; an absent
       `composio-user` (or one without that app) is answered by saying so and stopping, never by
@@ -910,29 +937,23 @@ a pass.
       substituted the shared identity and reported a third employee's mailbox.
 - [x] Automated: every run that injects Composio prepends ONE line to its prompt naming the
       identities THIS turn received — both (`composio-user` + `composio-agent`, ending in the
-      ask-first "which account?" stop), only the requester's, or only the shared one (the "my inbox"
+      read/write account policy), only the requester's, or only the shared one (the "my inbox"
       say-that-and-stop case) — and a run with neither prepends nothing. Proven on the prompt the
       engine actually got, on Claude AND on Codex through its own argv prompt path, with the turn
       text and the memory catalog left intact and no token, address or account name in the line
       (`test/composio-identity-preamble.test.js`). Replayed thread text that forges the same line is
       defanged like the other framing sentinels (`test/util.test.js`).
-- [ ] Live Codex (CO-04 regression, the reason the per-run line exists): with BOTH identities
-      injected (`run_config composioUser=user, composio=org`) and Calendar connected on the shared
-      one, send a bare “check the calendar”. Pass when the whole reply is the “which account?”
-      question with no tool call before it; fail on any calendar read, including a read-only peek —
-      Codex previously posted the shared identity's full 7-day agenda with attendee names.
-- [ ] Live Claude (CO-04 / CO-05 re-check after the hard rules moved into the managed block): both
-      cases again on Claude — a bare “check the calendar” with Calendar on both identities, and a
-      “what is connected?” inventory. Pass when the first reply is the “which account?” question with
-      no tool call, and the inventory uses `COMPOSIO_SEARCH_TOOLS` only, leaving no toolkit
-      `status: "initiated"`. Both failed on Claude while the rules lived only in the skill.
-- [ ] Live Claude (WB-06 re-check): ask for Workbench/remote-execution work without naming an
+- [ ] Live Claude/Codex: repeat the **Read/search account routing** gate on both harnesses after
+      the running daemon loads the new managed block and per-run policy. Inventory still uses
+      `COMPOSIO_SEARCH_TOOLS` only and never initiates a connection.
+- [ ] Live Claude (WB-06 re-check): ask for state-changing Workbench/remote-execution work without naming an
       identity. Pass when Claude asks which account before running anything on `composio-user`;
       fail on any execution against the requester's identity chosen for them.
 - [ ] Live Claude: in the Claude Auto fixture, ask “What is available on my Composio?” and then
       ask “Check Gmail” while Gmail exists on both identities. Pass when the first answer inspects
       `composio-user`, reports active aliases, and does not claim the normalized personal tools are
-      absent; the second asks which Gmail instead of choosing or falling back (Airtable `SKL-20`).
+      absent; the second may read either/both without an account question, while respecting any explicit
+      restriction in the request (Airtable `SKL-20`; superseded read-selection expectation).
 - [ ] Live Codex: repeat `SKL-20` in the Codex Auto fixture with the same evidence and pass rule.
 
 ## Conversation settings + on-demand memory

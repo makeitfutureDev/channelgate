@@ -97,7 +97,7 @@ export function composioIdentityPreamble({ user = false, agent = false } = {}) {
   const ownership = " These logical identities do not establish the connected service owner; discover account metadata through the selected identity before claiming ownership. The agent identity is not necessarily shared across channels. Matching service owners never authorize substituting identities.";
   if (user && agent) {
     return "[Composio identities in THIS run: `composio-user` (the requester's own accounts) and `composio-agent` (the shared agent's own). " +
-      "A request that names neither and could be served by either is answered with the question \"which account?\" — no tool call, no read-only peek." + ownership + "]\n\n";
+      "Reads and searches may use either or both identities without asking which account unless the user restricts the account or scope. Writes, sends and other state changes require the intended identity and connected account: reuse an established choice, or ask \"which account?\" if unresolved before mutating; continue independent authorized reads." + ownership + "]\n\n";
   }
   if (user) {
     return "[Composio identities in THIS run: `composio-user` only (the requester's own accounts). " +

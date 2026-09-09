@@ -44,8 +44,9 @@ the tool that does it.
 
 ## Discover access before requesting a connection
 
-For an integration task, establish the requested account first using **Tool identities** below;
-ask before any account read when the identity is ambiguous. Then check the relevant granted
+For an integration task, use **Tool identities** below: reads and searches may use either or both
+identities unless the user restricts the account or scope; writes require the intended account.
+Then check the relevant granted
 skills, the current **[Channel credentials for THIS attempt]** inventory, available CLI
 authentication and MCP tools before reporting missing access or asking for another connection.
 An absent MCP does not establish that an API or CLI is unavailable.
@@ -190,15 +191,21 @@ because a tool-name search checked only one spelling.
 | “your / yours / you”, “the agent's”, “the team account” | `composio-agent` | “verify your email” → *your* Gmail |
 | A named account (“the sales@ inbox”, “the MIF HubSpot”) | inspect aliases, then use the identity that contains it | — |
 | No pronoun, only ONE identity has that app connected | that identity — and say which you used | “check the calendar” with Calendar only on `composio-user` |
-| No pronoun, BOTH have the app | **MUST ask which account — the question IS the reply, no tool call** | “send the email”, “check the calendar” |
+| No pronoun, BOTH have the app, read/search only | either or both identities; say which sources supplied the information | “search the Slack discussions” |
+| Write/send/state change | reuse the established intended identity and connected account; ask which account only if unresolved | “send the email” |
 
-**Ambiguity is a hard stop, not a preference.** When the request carries no pronoun and BOTH
-identities have the app, your first response MUST be the question “which account?” and MUST NOT be
-a tool call — no “quick look”, no read-only peek, no trying one identity to see what is there.
-Reading a calendar, inbox, chat or CRM on a guess exposes the requester's own private data, or a
-third party's, to everyone in the conversation, and no correction afterwards takes it back.
-Guessing right is not the standard; asking is. The same holds for writes: never send, schedule or
-post from a guessed account.
+**Reads and searches prioritize finding the information.** When no account is specified, use either
+or both available identities without asking which account merely to read. Honor explicit account,
+record and scope restrictions, and identify the sources used without assuming account ownership.
+Read authorization does not permit sending, modifying records, marking messages read, reacting,
+connecting accounts or any other state change.
+
+**Writes require the right account.** Before a send, edit, schedule, deletion or other state change,
+resolve the intended logical identity and connected service account from the request and existing
+conversation authorization. Reuse a previously established choice; do not ask again unnecessarily.
+If the intended account is still ambiguous, ask which account before that mutation. Continue
+independent authorized reads while awaiting the answer. A matching service owner never overrides
+an explicit identity restriction, and using an account for a read does not select it for a write.
 
 **Keep the requested read scope through retries.** Permission to search for one named message
 is not permission to fetch surrounding history. If the user excludes unrelated records, keep

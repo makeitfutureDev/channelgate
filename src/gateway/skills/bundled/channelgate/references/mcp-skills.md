@@ -14,11 +14,12 @@ External apps come from two deliberately distinct identities when configured:
   its user-facing meaning. DMs do not receive this shared identity.
 
 Personal and SDK provisioning modes preserve this semantic split. Pronouns select the identity;
-for a named account, inspect connection aliases. When both identities have an app such as Gmail
-and the request is ambiguous, the agent MUST ask which account and MUST NOT call a tool first —
-not even a read-only look. Reading a calendar, inbox, chat or CRM on a guess exposes the
-requester's own private data, or a third party's, to everyone in the conversation, and no later
-correction takes it back. Never substitute or silently fall back between them.
+for a named account, inspect connection aliases. Unrestricted reads and searches may use either
+or both identities without asking which account. Explicit account and record restrictions remain
+binding. Writes, sends and other state changes require the intended identity and connected
+account: reuse an established choice, or ask which account before mutating if still unresolved.
+Independent authorized reads can continue while waiting; a read does not select the writing
+account. Never substitute or silently fall back against an explicit identity restriction.
 
 The MCP server ids are hyphenated, but harness registries may expose callable prefixes with
 normalized underscores (`mcp__composio_user__*` / `mcp__composio_agent__*`). Determine presence by

@@ -1,13 +1,4 @@
-// CO-04: with BOTH Composio identities injected, "check the calendar" was answered from the SHARED
-// identity — a colleague's whole week, attendee names included, posted into the channel — while the
-// other harness asked "which account?" first. The rule already lived in the managed instructions
-// block; what was missing is the FACT it applies to: which identities THIS turn received. That
-// cannot live in the channel's shared instruction file (`composio-user` is per author, so two
-// concurrent authors would race each other's sentence), so it rides the per-run prompt beside the
-// fresh-session memory catalog and the caller's provenance line.
-//
-// The prompt-echo stubs make the assertion direct: their "answer" is the prompt they were handed,
-// so these tests read the exact text each engine received.
+// Read/search routing and write-account policy accompany every engine prompt, fresh or resumed.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir } from "node:fs/promises";
@@ -70,7 +61,11 @@ test("the run's identity set mirrors the servers the MCP config would carry", ()
 test("the identity line names only servers and roles — never a token, an address or an account", () => {
   const both = composioIdentityPreamble({ user: true, agent: true });
   assert.match(both, /^\[Composio identities in THIS run: `composio-user`.*`composio-agent`/);
-  assert.match(both, /which account\?" — no tool call, no read-only peek/);
+  assert.match(both, /Reads and searches may use either or both identities without asking which account/);
+  assert.match(both, /unless the user restricts the account or scope/);
+  assert.match(both, /Writes, sends and other state changes require the intended identity and connected account/);
+  assert.match(both, /reuse an established choice/);
+  assert.match(both, /continue independent authorized reads/);
   assert.ok(both.endsWith("]\n\n"), "self-closing, like the memory catalog and provenance notes");
   assert.equal(both.trim().split("\n").length, 1, "one line");
 
@@ -95,7 +90,7 @@ test("the identity line names only servers and roles — never a token, an addre
 });
 
 // ── The run boundary: the line reaches the engine ─────────────────────────────────────────────
-test("a run with BOTH identities prepends the ask-first line to the prompt", async () => {
+test("a run with BOTH identities prepends the read/write account policy to the prompt", async () => {
   saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "ak_org_9999" });
   await setUser("U_IDENT", { name: "Identity User", approved: true, isAdmin: false, composioToken: "ak_user_1111" });
   await channel("C_IDENT_BOTH", "identity-both");
@@ -160,7 +155,7 @@ test("both engines preserve identity routing without inventing account ownership
       assert.doesNotMatch(preamble, /OTHER people's|never the requester's|ak_same_owner/);
       if (personal) {
         assert.match(preamble, /`composio-user`.*`composio-agent`/);
-        assert.match(preamble, /which account\?" — no tool call, no read-only peek/);
+        assert.match(preamble, /Reads and searches may use either or both identities without asking which account/);
       } else {
         assert.match(preamble, /`composio-agent` only/);
         assert.match(preamble, /do not read `composio-agent` to answer it/);

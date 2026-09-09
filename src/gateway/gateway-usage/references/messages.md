@@ -12,8 +12,10 @@ identity rules in `SKILL.md` → “Tool identities”:
 
 - “my Slack” → `composio-user` (`mcp__composio-user__*`), the requester's own account.
 - “your Slack” → `composio-agent` (`mcp__composio-agent__*`), YOUR own account.
-- No pronoun → the only account with Slack connected (say which). If BOTH have Slack you MUST ask
-  which account first — the question is the whole reply, and you call no tool until it is answered.
+- Resolve the intended identity and connected Slack account from the request and prior explicit
+  choices. Reuse an established choice. If the writing account is still ambiguous, ask which
+  account before the send, schedule, reaction or other state change; continue independent
+  authorized reads while waiting. Reading through an account does not select it for a write.
 - In a DM only `composio-user` exists.
 
 - Find the right Slack action through Composio (e.g. its search/execute tools surface actions like
@@ -38,7 +40,7 @@ Even with no Composio: replying in-thread, native tables (`slack_post_table`), n
 (`references/charts.md`), Slack Lists (`references/tables.md`), uploading a table snippet
 (`slack_upload_snippet`), and reading THIS channel's history (`references/reading.md`) — those are
 gateway bot-token tools, always on. Posting to OTHER channels / scheduling sends / search uses the
-explicitly selected Composio account.
+intended Composio account for writes; searches may use either or both unless restricted.
 
 ## Don't leak secrets
 Never post tokens, credentials, or the contents of secret files into a Slack message — Slack keeps

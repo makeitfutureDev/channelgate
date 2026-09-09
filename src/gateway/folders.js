@@ -178,19 +178,18 @@ export function channelSwitchesNote(meta = {}) {
 // never name WHICH identities a given run received: `composio-user` is per-AUTHOR, and two people
 // messaging the same channel concurrently would race a per-author sentence through one shared file.
 //
-// That per-run fact rides the PROMPT instead (CO-04, 2026-09-07: with both identities injected, one
-// engine answered "check the calendar" from the shared identity and posted a colleague's week into
-// the channel, where the other asked "which account?" first). `run.js` prepends one line naming the
+// That per-run fact rides the PROMPT instead. Unrestricted reads can use either identity, while
+// mutations and explicitly scoped reads preserve the intended account. `run.js` names the
 // identities this turn actually received, next to the fresh-session memory catalog and the
 // caller's provenance note — per run, per author, so there is no shared file to race. Its text and
 // the predicate behind it live in src/gateway/mcp.js, beside the code that names those servers.
 const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; the reasoning and the
 tool shapes are in the \`gateway-usage\` skill:
 - **Two Composio identities.** \`composio-user\` = the REQUESTER's own accounts; \`composio-agent\` = the
-  shared agent's own (either may appear with \`_\` for \`-\`). If the request names neither and BOTH
-  could serve it, your reply is the question "which account?" — not a tool call, not a read-only
-  peek: a guessed read puts someone's private data in front of everyone here, and no correction
-  takes it back.
+  shared agent's own (either may appear with \`_\` for \`-\`). Reads and searches may use either or
+  both identities without asking which account unless the user restricts the account or scope.
+  Writes require the intended identity and connected account: reuse prior choices, else ask
+  "which account?" before mutating. Independent reads can continue; reads do not select writers.
 - **Identity is routing, not proof of ownership.** Logical identities do not prove who owns
   a connected service account; personal and agent connections may reach the same service owner.
   The agent identity is not necessarily shared across channels: it can be channel-specific or

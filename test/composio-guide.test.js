@@ -38,9 +38,9 @@ test("gateway operating guide frames the two Composio accounts as YOURS vs the r
   assert.match(skill, /verify my email.*requester's Gmail/is);
   assert.match(skill, /verify your email.*your\* Gmail/is);
   assert.match(skill, /named account.*inspect aliases/is);
-  // Tie-breakers: single-connected app is used (and named), both-connected asks.
+  // Unrestricted reads may use both; mutations preserve account selection.
   assert.match(skill, /only ONE identity has that app connected.*say which/is);
-  assert.match(skill, /BOTH have the app.*ask/is);
+  assert.match(skill, /Write\/send\/state change.*ask which account only if unresolved/);
   // Tool registries normalize punctuation; one spelling is not evidence of absence.
   assert.match(skill, /`composio-user` can appear as `composio_user`/is);
   assert.match(skill, /never declare an identity absent.*only one spelling/is);
@@ -66,19 +66,21 @@ test("the operating guide makes dual Gmail identity selection explicit", async (
 
   assert.match(skill, /“my[^”]*”.*requester's Gmail/is);
   assert.match(skill, /“your[^”]*”.*your\* Gmail/is);
-  assert.match(skill, /BOTH have the app.*MUST ask which account.*no tool call/is);
+  assert.match(skill, /BOTH have the app, read\/search only.*either or both identities/is);
 });
 
-test("the ambiguous identity case is a MUST-ask hard stop with a stated privacy reason", async () => {
+test("read discovery stays available while writes require the intended identity and account", async () => {
   const skill = await read("SKILL.md");
-
-  assert.match(skill, /Ambiguity is a hard stop, not a preference/i);
-  // The first response is the question, never a tool call — not even a read-only peek.
-  assert.match(skill, /first response MUST be the question.*MUST NOT be\s+a tool call/is);
-  assert.match(skill, /no read-only peek/i);
-  // The one-line rationale: private data of the requester or a third party.
-  assert.match(skill, /exposes the requester's own private data, or a\s+third party's/is);
-  assert.match(skill, /never send, schedule or\s+post from a guessed account/is);
+  assert.match(skill, /use either\s+or both available identities without asking which account merely to read/is);
+  assert.match(skill, /Honor explicit account,\s+record and scope restrictions/is);
+  assert.match(skill, /Reuse a previously established choice/is);
+  assert.match(skill, /ask which account before that mutation/is);
+  assert.match(skill, /Continue\s+independent authorized reads/is);
+  assert.match(skill, /using an account for a read does not select it for a write/is);
+  assert.match(skill, /marking messages read, reacting,\s+connecting accounts/is);
+  for (const file of ["SKILL.md", "references/reading.md", "references/messages.md"]) {
+    assert.doesNotMatch(await read(file), /no read-only peek|question is the whole reply|else ask/i);
+  }
 });
 
 test("no guide file still routes connection inventory through COMPOSIO_MANAGE_CONNECTIONS", async () => {

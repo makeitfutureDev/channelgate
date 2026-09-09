@@ -252,7 +252,10 @@ Config that stays as **JSON files** (read wholesale / bootstrap, hand-editable):
 - **Composio identities stay distinct.** Inject the active author's token as `composio-user` and
   independently inject shared `composio` from the channel token, falling back to the organization
   token. A channel folder never stores either token in plain settings. “My account” means
-  `composio-user`; “your/channel account” means `composio`; ambiguous identity must be clarified.
+  `composio-user`; “your/channel account” means `composio`. Reads/searches may use either or both
+  unless the user restricts the account or scope. Writes/sends/state changes require the intended
+  identity and connected account; reuse established choices and clarify only unresolved mutation
+  identity. Independent authorized reads can continue while that clarification is pending.
 - **Composio is the only external Slack MCP.** There is NO hosted per-user Slack MCP and no
   `connect_slack`/`xoxp` OAuth (removed). Slack actions beyond the gateway's own bot tools —
   cross-channel search, sending elsewhere, scheduled sends, canvases, reactions — go through the

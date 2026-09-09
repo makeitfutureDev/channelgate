@@ -30,8 +30,11 @@ missing from the folder.
 ## Other channels / workspace search — select the account
 To search or read **beyond this channel**, choose the Composio account per `SKILL.md` → “Tool
 identities”: `composio-user` for “my Slack” (the requester's), `composio-agent` for “your Slack”
-(your own); no pronoun → the only one with Slack connected, else ask. The selected connected Slack
-account controls visibility. Find its action via tool discovery — e.g. search
+(your own). With no account restriction, reads and searches may use either or both identities
+without asking which account. Honor explicit account and record scope restrictions, and identify
+which sources supplied the information. Each connected Slack account controls its own visibility.
+Read authorization does not authorize state changes such as marking read or reacting. Find actions
+via tool discovery — e.g. search
 messages/users/channels, read another channel/thread/file, or read a user profile. See
 `references/messages.md` for availability and the no-silent-substitution rule.
 

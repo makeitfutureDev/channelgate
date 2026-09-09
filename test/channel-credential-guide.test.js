@@ -21,7 +21,8 @@ test("materialized guides expose credential discovery without relaxing identity 
       assert.match(skill, /Clean runs omit this inventory/);
       assert.match(skill, /before reporting missing access or asking for another connection/);
       assert.match(skill, /Never silently switch accounts or substitute/);
-      assert.match(skill, /ask before any account read when the identity is ambiguous/);
+      assert.match(skill, /reads and searches may use either or both/);
+      assert.match(skill, /unless the user restricts the account or scope; writes require the intended account/);
       assert.match(skill, /Credential availability does not grant tool permissions, network access/);
       assert.match(admin, /not written to the project's `\.env`/);
       assert.match(admin, /some consume an environment variable\s+automatically; others require an explicit option or request header/);
