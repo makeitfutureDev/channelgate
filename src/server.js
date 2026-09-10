@@ -48,6 +48,7 @@ import { autoRepairCodexUsageHistory } from "./gateway/usage-repair.js";
 import { postNotice } from "./platforms/notify.js";
 import { startLicenseVerification } from "./ee/license.js";
 import { startUsageReporting } from "./ee/limits.js";
+import { startSystemHealth } from "./gateway/system-health.js";
 
 installConsoleRedaction();
 
@@ -168,6 +169,9 @@ async function main() {
   // relying on create-time modes.
   const { failed: hardenFailed } = hardenRuntimeFiles();
   assertRuntimeHardening({ failed: hardenFailed });
+  // Host metrics belong to the daemon, never to an engine container. Sampling is asynchronous
+  // and failure is reported on the admin page without holding up chat or startup.
+  void Promise.resolve().then(() => startSystemHealth()).catch(() => console.error("[system-health] collector startup failed"));
 
   // Brand-new install (nothing an operator wrote in settings.json — the installer's own
   // pre-boot keys don't count) → mint an admin password rather than leaving the whole API open.

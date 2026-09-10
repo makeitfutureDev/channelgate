@@ -786,4 +786,29 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 25,
+    up(db) {
+      db.exec(`
+        CREATE TABLE system_health_resources (
+          timestamp INTEGER PRIMARY KEY,
+          cpu REAL, cpu_peak REAL, memory REAL, memory_peak REAL, load REAL, load_peak REAL,
+          storage REAL, storage_peak REAL,
+          cpu_count INTEGER NOT NULL, memory_count INTEGER NOT NULL, load_count INTEGER NOT NULL, storage_count INTEGER NOT NULL
+        );
+        CREATE TABLE system_health_storage (
+          timestamp INTEGER NOT NULL, resolution INTEGER NOT NULL,
+          used REAL, total REAL, available REAL, percent REAL, peak REAL,
+          PRIMARY KEY(timestamp, resolution)
+        );
+        CREATE TABLE system_health_hardware (
+          id INTEGER PRIMARY KEY CHECK(id = 1), collected_at INTEGER NOT NULL, snapshot TEXT NOT NULL
+        );
+        CREATE TABLE system_health_changes (
+          id INTEGER PRIMARY KEY, timestamp INTEGER NOT NULL, fields TEXT NOT NULL
+        );
+        CREATE INDEX idx_system_health_changes_time ON system_health_changes(timestamp);
+      `);
+    },
+  },
 ];

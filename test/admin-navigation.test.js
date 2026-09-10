@@ -25,6 +25,7 @@ const EXPECTED = {
   skills: "/skills",
   api: "/api-docs",
   settings: "/settings",
+  "system-health": "/system-health",
 };
 
 test("every admin view has a canonical path and round-trips from it", () => {

@@ -538,6 +538,7 @@ test("graceful shutdown disconnects, drains, then sweeps idle warm and cold grou
   const result = await performShutdown({
     slack: { disconnect: async () => { events.push("disconnect"); } },
     reason: "test restart",
+    stopMonitoring: async () => { await Promise.resolve(); events.push("metrics-flushed"); },
     drainTimeoutMs: 100,
     pollMs: 10,
     killAfterMs: 0,
@@ -553,7 +554,7 @@ test("graceful shutdown disconnects, drains, then sweeps idle warm and cold grou
   });
 
   assert.equal(result.drained, true);
-  assert.deepEqual(events, ["disconnect", "wait", "freeze", "cold", "warm", "late-cold", "late-warm", "exit:0"]);
+  assert.deepEqual(events, ["disconnect", "wait", "freeze", "metrics-flushed", "cold", "warm", "late-cold", "late-warm", "exit:0"]);
   assert.equal(result.warm, 2, "idle warm groups are swept even after active work drained cleanly");
 });
 

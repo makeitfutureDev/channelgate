@@ -558,6 +558,57 @@ groups) so interrupted execution is recorded for reconciliation on the next boot
 turn may be recorded as a plain error before orderly state persistence. Existing installs: add
 `KillMode=mixed` under `[Service]` and `systemctl --user daemon-reload`.
 
+## System health
+
+Open **System health**, the last admin navigation item (`/system-health`). The host daemon reads
+Linux `/proc` and `/sys` without elevated privileges or subprocesses. It samples every five
+seconds even when no browser is open; browsers poll while visible and active. Pause affects only
+the page. Refresh also rescans hardware. CPU uses counter deltas (the first sample is unknown),
+RAM uses `MemAvailable`, and load is the Linux 1/5/15-minute load average. Storage measures the
+filesystem containing the configured gateway runtime root, not the sum of disks in the hardware
+inventory. Used bytes exclude free blocks; available bytes exclude filesystem-reserved blocks;
+the usage percentage is used / (used + available), as for an unprivileged process.
+References: [Linux proc documentation](https://www.kernel.org/doc/html/v6.2/filesystems/proc.html)
+and [Node filesystem statistics](https://nodejs.org/docs/latest-v22.x/api/fs.html#class-fsstatfs).
+
+Resource minute averages and peaks stay for 30 days. Storage stays for 186 days (at least six
+calendar months); samples older than 30 days are reduced to hourly observations with preserved
+peaks. Responses reduce long resource series to about 240 buckets and storage to daily points.
+Empty history and missing metrics are reported without simulated values. Forecasts require at
+least seven days of measured history and use only the segment since the last observed capacity
+change. The estimate assumes continued growth at the fitted rate, not a guarantee of free space.
+
+Hardware is read at startup, every five minutes and on refresh. The current snapshot and at most
+100 change events are retained; no temperatures, serial numbers, MAC addresses or machine IDs are
+collected. DIMM information and some device details may be unavailable without host interfaces;
+the page reports unknowns. RAM/disks recognized by Linux appear at the next scan. Distribution
+changes appear on rescan; a newly installed kernel appears only after booting it. Hardware details
+remain behind the admin session and never appear on the public liveness endpoint.
+
+Metrics use tables in the existing SQLite database. Retention applies only to these tables,
+not audit/usage records. Do not impose a 100 MiB limit on the entire gateway database or force
+global WAL truncation: other gateway records and readers share it. Measure incremental metrics
+storage using an isolated canary, with 100 MiB for its database plus WAL as a safety budget.
+
+Before enabling on a served host, run the canary **on that Linux host** from the tested checkout:
+
+```sh
+node scripts/system-health-soak.mjs --output /absolute/new-health-soak-report.json --storage-path /path/to/gateway-runtime-root
+```
+
+It runs in the foreground for 24 hours, reads the target filesystem, and writes metrics only to
+a fresh temporary database. The JSON report updates every 30 seconds and records actual elapsed
+time, errors, gaps, CPU, peak RSS, database plus WAL bytes, hardware visibility and persistence
+after reopening. The report path must be new; the scratch database is removed at completion.
+Use the service manager or a daemon-owned job to keep it alive when a session cannot remain open.
+`--duration-seconds 65` is a quick smoke; it explicitly cannot pass the 24-hour gate. A report
+with `containerDetected: true` describes the container's visible interfaces and is not evidence
+of a host deployment. Even when false, independently verify where the process ran.
+
+Review the measured overhead rather than treating the prototype estimates as guarantees. After
+the host canary passes, use the normal serialized beta landing and safe restart procedure, log in,
+and verify current samples, hardware visibility and history persistence on the actual daemon.
+
 ## Retention and log rotation
 
 Run `npm run maintenance` daily from the service manager. `CG_RETENTION_DAYS` defaults to 30 and

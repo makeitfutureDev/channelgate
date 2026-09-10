@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { shutdownPool, poolStats } from "../engines/session-pool.js";
 import { shutdownEngineChildren, forceKillEngineChildren, engineProcessStats } from "../engines/process-registry.js";
 import { runQueue } from "../slack/message-lifecycle.js";
+import { stopSystemHealth } from "./system-health.js";
 
 // Deferred import: src/ee/ is the proprietary licensing layer and shutdown.js is on the boot path
 // for every command-line entry point, including ones that never open the database.
@@ -96,6 +97,7 @@ export async function performShutdown({
   pollMs = DEFAULT_POLL_MS,
   killAfterMs = DEFAULT_KILL_AFTER_MS,
   disconnectTimeoutMs = DEFAULT_DISCONNECT_MS,
+  stopMonitoring = stopSystemHealth,
   getActivity = runtimeActivity,
   sweepWarm = shutdownPool,
   sweepCold = shutdownEngineChildren,
@@ -132,6 +134,10 @@ export async function performShutdown({
   // Freeze queue promotion before the final sweep. On a clean drain this is merely a short exit
   // phase; after a timeout it also tells interrupted turns to preserve their durable recovery row.
   markForce();
+
+  // Both signal stops and admin-requested restarts flush the last partial metrics minute.
+  // A stalled filesystem read must not hold up the process shutdown deadline.
+  await waitBounded(Promise.resolve().then(stopMonitoring).catch(() => {}), 1_000);
 
   // Sweep even after a clean drain: idle persistent sessions still own detached Claude/MCP process
   // groups and must never be re-parented to PID 1 when the daemon exits.
