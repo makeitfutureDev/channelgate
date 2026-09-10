@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Keep sidebar update messages inside the rail, wrapping long details and showing a short commit
+  revision with the full hash on hover.
+
 - Add System health to the admin UI with real CPU/RAM/load and storage metrics, historical
   charts and peaks, storage warnings and capacity estimates, and refreshed hardware inventory.
 

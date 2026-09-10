@@ -2491,6 +2491,9 @@ are retired, bullet by bullet; everything else stands.
   `refused`, or `failed`. Slack/MCP thread markers are transaction-bound and survive intermediate
   boots; only the matching terminal result is posted, with a deterministic Slack message id, then
   the marker is removed. → TEST-PLAN: Transactional self-update.
+- **Sidebar update text stays inside the rail**: completion, rollback, errors, progress and
+  sign-in links wrap as normal text, including long unbroken paths. Result revisions show seven
+  characters with the full hash on hover. → TEST-PLAN: Sidebar update layout (engine-independent).
 - **npm advisory policy**: candidate production dependencies are audited after `npm ci`.
   Critical/high findings block and roll back the update; moderate findings are reported and
   reviewed in the same development cycle. Weekly Dependabot discovery, exception policy, and the
