@@ -4948,6 +4948,22 @@ Manual checks for the daemon-level behavior:
   connected Airtable account. The cases above are ready to transfer using the operator's personal
   connection; this is not a claim of live engine acceptance or stable-release readiness.
 
+### Sidebar update layout (engine-independent)
+
+- [x] Chromium acceptance: `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test test/update-ui.test.js`.
+      Uses the shipped sidebar markup, stylesheet and update renderer in a disposable browser;
+      no daemon state changes or engine calls. At 1440, 800 and 390 px widths, render updated,
+      unchanged, rolled-back, refused, failed, image-warning, running preflight and sign-in states.
+      Fixtures use a 40-character revision and a `/tmp/` error path containing twelve repeated
+      `long-path-segment` strings. Pass: every rendered text/element rectangle stays within the
+      sidebar, dots remain 7 px wide, and the sign-in link remains visible. The revision unit case
+      requires a seven-character label and the complete hash in its tooltip.
+- Manual reproduction: open the Admin UI after a completed update, resize to desktop and mobile,
+      and hover the revision. Pass: no update text crosses into page content; the full revision
+      remains available on hover. Claude/Codex share this browser-only presentation; neither
+      engine participates in layout. Automated fixture passed; a real updater run is unnecessary
+      for this presentation-only change.
+
 ### Transactional self-update
 
 - [x] Unit: exclusive reservation, live-owner refusal, dead/abandoned-owner recovery, ownership

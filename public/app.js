@@ -3741,7 +3741,9 @@ function updateResultHtml(transaction) {
     const cause = transaction.candidateError ? ` Candidate error: ${transaction.candidateError}` : "";
     return `<span class="statuschip"><span class="dot warn"></span>${escapeHtml(transaction.reason + cause)}</span>`;
   }
-  const revision = transaction.runningRevision ? ` <code>${escapeHtml(transaction.runningRevision)}</code>` : "";
+  const revision = transaction.runningRevision
+    ? ` <code title="${escapeHtml(transaction.runningRevision)}">${escapeHtml(transaction.runningRevision.slice(0, 7))}</code>`
+    : "";
   if (transaction.result === "updated" && transaction.imageWarning) {
     return `<span class="statuschip"><span class="dot warn"></span>container image needs attention — ${escapeHtml(transaction.imageWarning)}</span>`;
   }
