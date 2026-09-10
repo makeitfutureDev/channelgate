@@ -562,8 +562,8 @@ turn may be recorded as a plain error before orderly state persistence. Existing
 
 Open **System health**, the last admin navigation item (`/system-health`). The host daemon reads
 Linux `/proc` and `/sys` without elevated privileges or subprocesses. It samples every five
-seconds even when no browser is open; browsers poll while visible and active. Pause affects only
-the page. Refresh also rescans hardware. CPU uses counter deltas (the first sample is unknown),
+seconds even when no browser is open; browsers poll while visible and active. Pausing the page
+does not stop background collection. Refresh also rescans hardware. CPU uses counter deltas (the first sample is unknown),
 RAM uses `MemAvailable`, and load is the Linux 1/5/15-minute load average. Storage measures the
 filesystem containing the configured gateway runtime root, not the sum of disks in the hardware
 inventory. Used bytes exclude free blocks; available bytes exclude filesystem-reserved blocks;
