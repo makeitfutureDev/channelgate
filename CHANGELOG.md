@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Add System health to the admin UI with real CPU/RAM/load and storage metrics, historical
+  charts and peaks, storage warnings and capacity estimates, and refreshed hardware inventory.
+
 - Fix MCP configuration selection when a plugin package supplies both engine manifests. Each
   engine uses its own inline declarations or referenced files, avoiding wrong endpoints and
   duplicate server errors.

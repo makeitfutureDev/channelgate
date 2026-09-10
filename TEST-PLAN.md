@@ -1,5 +1,47 @@
 # ChannelGate — Test Plan
 
+## System health — engine-independent acceptance
+
+These cases exercise the daemon collector and authenticated browser, not an engine turn;
+Claude/Codex selection cannot affect collection, authorization or rendering.
+Automated regressions: `test/system-health.test.js`, `test/system-health-api.test.js`,
+`test/admin-system-health.test.js`, and the admin navigation suite.
+
+- **SYS-01 — live and historical metrics.** Start a disposable Linux admin instance with an empty
+  runtime root and an admin password. Open `/system-health` after login. CPU's first delta may be
+  unknown; within two samples require current CPU/RAM/load and filesystem capacity from that
+  instance. Compare RAM against `/proc/meminfo`, load against `/proc/loadavg`, and capacity against
+  the runtime root's filesystem. Wait across a minute boundary; reload and restart the fixture.
+  Require persisted history and real peaks, no invented pre-install points. Select every range,
+  pause/resume, manually refresh, leave the page and hide the tab. Network evidence must show
+  five-second polling only while active, visible and unpaused, without overlapping/stale rendering.
+- **SYS-02 — history, retention and forecast.** Use the deterministic collector test fixtures
+  with data spanning at least 187 days and a capacity change. Require resources older than 30 days
+  purged, storage retained for 186 days with old minute samples downsampled, bounded chart responses
+  and preserved peaks. Empty/short history must not predict a date. A changed filesystem capacity
+  must not create a false growth forecast; missing samples must remain gaps.
+- **SYS-03 — hardware, error and responsive states.** In a disposable fixture, change synthetic
+  memory/disk inventory, advance the five-minute clock, then manually refresh. Require new values
+  and one change event, no duplicate event for an unchanged snapshot. Missing DMI/device files
+  must appear unavailable. In Chromium at 1440px and 430px verify cards, keyboard chart tooltips,
+  ranges, warning/critical states and peaks/Collection before hardware, without horizontal page
+  overflow. Simulate a failed request: require a visible error/stale state and successful retry.
+- **SYS-04 — boundary.** With a password absent, expect 403 for all metrics routes; with a password
+  configured but no session, expect 401, also for a valid run-API key. A logged-in admin can read
+  metrics; manual refresh requires the CSRF header and allowed Origin. Public `/api/health` must
+  not expose metrics/hardware. No endpoint accepts arbitrary filesystem paths or shell commands.
+- **SYS-05 — 24-hour host canary (release/deployment gate).** Run the isolated soak procedure in
+  `docs/OPERATIONS.md` on the target Linux host for at least 24 hours. Record candidate commit,
+  actual elapsed time, collector errors, CPU, RSS, database plus WAL size, persisted sample count,
+  gaps and hardware visibility. The original design's CPU/RAM/I/O figures are estimates, not pass
+  evidence. Require no collection/persistence errors, retained samples across restart, bounded
+  memory/history, and metrics storage below the 100 MiB safety budget. Review measured overhead
+  before enabling on the served instance. After activation, verify authenticated page and new
+  samples on the real daemon. A shorter container smoke is not a host soak pass.
+
+Private deployment QA records and the 24-hour host canary must be recorded separately; an
+unexecuted or unavailable check is not passing evidence.
+
 ## Plugin source packages — acceptance gates
 
 Automated coverage: `test/skills-plugin-import.test.js`, `test/plugin-runtime.test.js`,

@@ -20,6 +20,7 @@ import { createSchedulesRouter } from "./schedules.js";
 import { createChannelsRouter } from "./channels.js";
 import { createUsersRouter } from "./users.js";
 import { createSkillsRouter } from "./skills.js";
+import { createSystemHealthRouter } from "./system-health.js";
 
 export function createAdminRouter({
   slack,
@@ -33,6 +34,7 @@ export function createAdminRouter({
 
   router.use(createSettingsRouter({ slack, transports, instanceId, startGatewayUpdate, restartCoordinator }));
   router.use(createObservabilityRouter());
+  router.use(createSystemHealthRouter());
   router.use(createApprovalsRouter({ slack }));
   router.use(createSchedulesRouter());
   router.use(createChannelsRouter({ slack, testMakeToolbox }));

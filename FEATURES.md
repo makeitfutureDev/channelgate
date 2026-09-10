@@ -1,5 +1,22 @@
 # ChannelGate — Features
 
+## System health
+
+The last admin navigation item, **System health** (`/system-health`), shows daemon-side Linux
+CPU, RAM, swap, filesystem capacity and system load. The collector runs every five seconds
+independently of open browsers; the page supports pause, refresh and Live/1h/24h/7d/30d ranges.
+Minute aggregates retain resource averages and peaks for 30 days. Storage history lasts 186 days,
+with older samples reduced to hourly aggregates. The capacity forecast reports insufficient
+history until an observed trend supports it; no historical points are generated to fill gaps.
+Storage warnings start at 85%, critical at 95%. Peaks and collection status precede hardware.
+
+Hardware inventory refreshes at startup, every five minutes and on manual refresh, with a bounded
+change log. Unavailable hardware fields stay unknown; temperatures, serial numbers, credentials,
+and hardware-management writes are excluded. Metrics use the filesystem containing the gateway
+runtime root, and the collector runs in the host daemon without widening any engine container's
+mounts. All metrics endpoints require the existing admin session. See `docs/OPERATIONS.md` and
+the engine-independent System health acceptance gates in `TEST-PLAN.md`.
+
 ## Plugin packages through skill sources
 
 Git and folder skill sources recognize Claude/Codex plugin manifests and store a complete package

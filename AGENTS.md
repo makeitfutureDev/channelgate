@@ -76,7 +76,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   the changed keys), `dead-fields.js` (retired fields stripped on every write).
 - `src/db/` — `index.js` (the one lazy `node:sqlite` connection: WAL, `busy_timeout`,
   `foreign_keys`, migrations on open, the one-time legacy JSON import behind `_meta` flags),
-  `migrations.js` (versioned on `PRAGMA user_version`, currently 24 — append, never edit),
+  `migrations.js` (versioned on `PRAGMA user_version`, currently 25 — append, never edit),
   `import-legacy.js`, `fts.js` (the optional FTS5 `channel_memory_fts` index; without FTS5 memory
   search degrades to a scan).
 - `src/gateway/run.js` — the run orchestrator: engine adapter selection and precedence (per-run
@@ -169,6 +169,11 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   stays available to every operator): one durable transaction and lock, a detached built-ins-only
   runner (preflight, smoke, snapshot, install → restart → verify, automatic rollback), results on
   `/api/health`; `restart_gateway` drains turns, jobs, API runs and update transactions first.
+- `src/gateway/system-health.js` + `system-health-collect.js` + `system-health-store.js` —
+  daemon-side read-only Linux metrics, five-second samples, minute SQLite resource aggregates
+  (30 days), storage history (186 days, hourly after 30 days), hardware snapshots/change events,
+  and a data-dependent capacity forecast. Admin routes in `src/web/routes/system-health.js`,
+  browser page in `public/admin-system-health.js`, isolated canary in `scripts/system-health-soak.mjs`.
 - Smaller gateway modules: `sessions.js` + `thread-engine.js` (thread key ↔ engine session,
   per-thread pins), `session-adopt.js` + `session-carry.js` (`/resume` of a local session whose
   cwd is this channel; host → container carry-over), `stopped-turns.js`, `active-runs.js`
@@ -307,7 +312,8 @@ through the control MCP.
   `skill_revision_files`, `skill_sources`, `skill_templates`, `skill_usage`, `skill_proposals`,
   `skill_access_tokens`); Composio SDK (`composio_sessions`); licensing (`license_usage`);
   dashboard data (`usage`, `usage_components`, `usage_requests`, `usage_repair_batches`,
-  `events` — typed, indexed columns for day/week/month/channel/user rollups); plus `_meta`
+  `events` — typed, indexed columns for day/week/month/channel/user rollups); system telemetry
+  (`system_health_resources`, `system_health_storage`, `system_health_hardware`, `system_health_changes`); plus `_meta`
   (key/value, created at open) and the optional FTS5 `channel_memory_fts`. Config-shaped rows
   (`channel_meta`, `users`, `bg_jobs`) keep their full record in a JSON `data` blob so every field
   survives without a migration; `dead-fields.js` strips retired fields on write.
