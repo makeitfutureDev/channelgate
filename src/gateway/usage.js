@@ -18,7 +18,7 @@ import { normalizeCodexTokenUsage } from "../engines/codex-usage.js";
 // exact key → official dated-snapshot prefix. Empty/`codex` is a CLI sentinel, not an official API
 // model id, so it stays unpriced until the runtime model is resolved. The legacy blended rate is
 // retained only as an explicit admin fallback for an unknown non-empty runtime model.
-export const CODEX_PRICING_BASIS = "openai-standard-2026-09-13";
+export const CODEX_PRICING_BASIS = "openai-standard-effective-dates-2026-09-14";
 const LONG_CONTEXT_RATE_KEYS = new Set(["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"]);
 function codexRateKey(rates, model) {
   const m = String(model || "").toLowerCase();
@@ -50,8 +50,7 @@ function priceCodexRequest(rawUsage, model, rates, { allowLongContext = true } =
   ) / 1_000_000;
 }
 
-export function estimateCodexCost(u = {}, model = "", requests = []) {
-  const rates = getCodexModelRates();
+export function estimateCodexCost(u = {}, model = "", requests = [], { rates = getCodexModelRates() } = {}) {
   const detailed = Array.isArray(requests) ? requests.filter((request) => request?.usage) : [];
   if (detailed.length) {
     let cost = 0;

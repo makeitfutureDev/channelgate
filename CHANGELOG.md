@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Correct Codex history repricing to honor OpenAI's effective date for GPT-5.6 Sol: retain the
+  original $5 / $0.50 cached / $30 rate before 2026-08-21 and apply $4 / $0.40 / $20 from that
+  date onward. Upgraded instances rerun the backup-first correction under a new pricing basis.
+
 - Refresh Codex Standard API-equivalent pricing from official OpenAI documentation: add
   GPT-6 Astra at $10 / $1 cached / $50 per million tokens and reduce GPT-5.6 Sol (plus its
   `gpt-5.6` alias) to $4 / $0.40 / $20. Keep the fallback picker aligned with the current Codex

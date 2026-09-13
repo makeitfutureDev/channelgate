@@ -5117,8 +5117,14 @@ Manual checks for the daemon-level behavior:
 - [x] Unit: the 2026-09-13 pricing refresh selects only Codex usage at/after 2026-07-13, recomputes
       request, component and parent-run values from stored cache/context/model evidence, preserves
       older and Claude rows, leaves the internal `codex-auto-review` pseudo-model unpriced, writes
-      the new basis atomically, backs up once at boot, and skips the applied basis thereafter
+      the new basis atomically, applies GPT-5.6 Sol's $5/$0.50/$30 rate before the official
+      2026-08-21 cutover and $4/$0.40/$20 at/after it, backs up once at boot, and skips the applied basis thereafter
       (`test/usage-pricing.test.js`).
+- [x] Live dated-pricing correction (2026-09-14): apply the new basis to a production copy and the live ledger,
+      confirm every GPT-5.6 Sol component before 2026-08-21 uses $5/$0.50/$30 while every component
+      at/after the cutover uses $4/$0.40/$20, Astra remains $10/$1/$50, parent totals match their
+      priced components, non-Codex and pre-window rows are unchanged, both backups pass
+      `quick_check`, and a second dry run reports zero delta.
 - [x] Live upgrade/history drill (Codex only, 2026-09-13): before upgrade run `npm run usage:reprice` and retain
       its model/count/value summary; apply or restart the upgraded daemon, confirm the reported
       backup opens, rerun the preview, and query the last-two-month ledger. Pass: every GPT-6 Astra
