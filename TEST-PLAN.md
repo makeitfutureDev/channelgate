@@ -1437,6 +1437,10 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       inside the refresh window, maps model-specific effort choices, and survives the next failed
       refresh with the last good snapshot; a cold failure retains the bundled fallback
       (`test/model-discovery.test.js`).
+- [x] Automated: the bundled fallback matches the authenticated Codex CLI 0.153.4 catalog observed
+      2026-09-13 (`gpt-6-astra`, GPT-5.6 Sol/Terra/Luna, GPT-5.5 and
+      `gpt-5.3-codex-spark`, plus the unresolved `codex` sentinel); retired picker entries and the
+      rejected `gpt-5.6` alias are absent (`test/engine-registry.test.js`).
 - [x] Automated: Claude's picker and browser fallback use rolling aliases (including `best`,
       `fable`, and `sonnet[1m]`); the Admin UI consumes the registry's model/effort manifests and
       keeps a valid saved same-engine custom ID available (`test/model-options.test.js`,
@@ -5083,15 +5087,17 @@ Manual checks for the daemon-level behavior:
 
 ### Codex usage accounting and API-equivalent rates
 - [ ] Settings → Behavior shows the Codex/OpenAI rates table prefilled with the rates verified
-      2026-08-16 against OpenAI Standard pricing
+      2026-09-13 against OpenAI Standard pricing
       prices; editing a cell and saving persists it (reload shows the edited value; the others
       keep defaults). The old blended `$/1M` fallback input is not shown.
 - [ ] A Codex run's footer shows the estimated `$x.xx` API-equivalent value and Activity records the same figure
       with the estimated flag; a Claude run still shows the real `$` cost (never an OpenAI-rate
       estimate, even if total_cost_usd were missing).
-- [x] Unit: Terra/Luna current defaults, retired-default migration with custom override preservation,
-      nested cache-read/cache-write pricing, official model-boundary matching, unresolved-model
-      behavior, and the 272K threshold applied per request (`test/codex-rates.test.js`).
+- [x] Unit: GPT-6 Astra at $10/$1 cached/$50, GPT-5.6 Sol/alias at $4/$0.40/$20,
+      Terra/Luna current defaults, retired-default migration with custom override preservation,
+      nested cache-read/cache-write pricing, dated-snapshot-only inheritance, CLI-only Spark kept
+      unpriced, unresolved-model behavior, and the 272K threshold applied per request
+      (`test/codex-rates.test.js`).
 - [x] Unit: one provider session is serialized across gateway keys; aborted waiters do not strand
       the lock (`test/keyed-lock.test.js`).
 - [x] Unit: root rollout deltas, resumed baselines, actual runtime model/context metadata, child
@@ -5108,6 +5114,18 @@ Manual checks for the daemon-level behavior:
 - [x] Unit: boot-time auto-repair triggers only when legacy codex rows exist past the last applied
       batch cutoff, applies the shared repair path with a backup, records a batch even when nothing
       matches, and never rescans settled history (`test/usage-repair.test.js`).
+- [x] Unit: the 2026-09-13 pricing refresh selects only Codex usage at/after 2026-07-13, recomputes
+      request, component and parent-run values from stored cache/context/model evidence, preserves
+      older and Claude rows, leaves the internal `codex-auto-review` pseudo-model unpriced, writes
+      the new basis atomically, backs up once at boot, and skips the applied basis thereafter
+      (`test/usage-pricing.test.js`).
+- [x] Live upgrade/history drill (Codex only, 2026-09-13): before upgrade run `npm run usage:reprice` and retain
+      its model/count/value summary; apply or restart the upgraded daemon, confirm the reported
+      backup opens, rerun the preview, and query the last-two-month ledger. Pass: every GPT-6 Astra
+      request/component is priced at $10/$1 cached/$50 with the per-request >272K uplift; every
+      GPT-5.6 Sol request/component uses $4/$0.40/$20; the parent run equals its priced component
+      sum; entries before 2026-07-13 and Claude/provider costs are byte-for-byte unchanged; only
+      `codex-auto-review` remains unpriced; a second boot changes no row.
 - [x] Unit: a DM resolves ONLY `composio-user` — the channel token and the organization default are
       both refused (`source: "none-dm"`) in Personal mode, and SDK mode mints no channel session at
       all; channels/mpims keep both identities (`test/composio-resolution.test.js`,

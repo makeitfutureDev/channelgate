@@ -45,6 +45,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { installConsoleRedaction } from "./util/redact.js";
 import { autoRepairCodexUsageHistory } from "./gateway/usage-repair.js";
+import { autoRefreshCodexPricing } from "./gateway/usage-pricing.js";
 import { postNotice } from "./platforms/notify.js";
 import { startLicenseVerification } from "./ee/license.js";
 import { startUsageReporting } from "./ee/limits.js";
@@ -347,14 +348,18 @@ async function main() {
   // Scheduled two-way Google Drive ↔ channel-folder sync (dormant unless enabled + configured).
   startDriveSync();
 
-  // One-shot Codex usage-history repair. After an update introduces accounting schema v10 (which
+  // One-shot Codex usage-history maintenance. After an update introduces accounting schema v10 (which
   // marks pre-existing codex rows legacy-unverified), reconstruct per-turn + subagent usage from
   // surviving rollouts — the same idempotent path as `npm run usage:repair -- --apply`, with a DB
   // backup first. Fire-and-forget: rollout scanning can take a while and must not delay Slack.
   // Records a batch even when nothing matches, so later boots see nothing pending and skip.
   autoRepairCodexUsageHistory()
-    .then((r) => { if (!r.applied) return; console.log(`[gateway] usage history auto-repair done (batch ${r.batchId})`); })
-    .catch((e) => console.error("[gateway] usage auto-repair failed:", e?.message || e));
+    .then((r) => {
+      if (r.applied) console.log(`[gateway] usage history auto-repair done (batch ${r.batchId})`);
+      return autoRefreshCodexPricing();
+    })
+    .then((r) => { if (r.applied) console.log(`[gateway] Codex pricing history refresh done (${r.basis})`); })
+    .catch((e) => console.error("[gateway] usage maintenance failed:", e?.message || e));
 }
 
 for (const sig of ["SIGINT", "SIGTERM"]) {

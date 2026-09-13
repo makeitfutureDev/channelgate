@@ -1466,7 +1466,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Codex value is estimated, not billed spend: Settings exposes OpenAI Standard API-equivalent
   per-model `$/1M` rates. Root turns are priced from request-level rollout deltas and native child
   sessions are included without charging their copied fork prefix; Claude retains provider-reported
-  cost. The actual runtime model wins when a configured Claude model falls back to Codex.
+  cost. The actual runtime model wins when a configured Claude model falls back to Codex. The
+  fallback picker mirrors the current authenticated CLI catalog (`gpt-6-astra`, the GPT-5.6
+  family, GPT-5.5 and CLI-only `gpt-5.3-codex-spark`); live discovery still wins. Spark remains
+  explicitly unpriced because OpenAI publishes no Standard API rate for that distinct model.
 - Session recovery: Codex auth/session state uses a stable, grant-free `CODEX_HOME` while private
   skills remain per-run under synthetic `HOME/.agents/skills`, so Codex 0.147+'s persisted rollout
   paths survive cleanup without leaking grants. Resuming a session that no longer exists (including
@@ -2859,15 +2862,19 @@ are retired, bullet by bullet; everything else stands.
   no manual command.
 - **Per-model Codex Standard API-equivalent rates** (Settings → Behavior): Codex reports no dollar
   cost, so the ledger and reply footer estimate attribution value from an editable $/1M table —
-  input / cached-input / output per model (gpt-5.6-sol / gpt-5.6 alias / gpt-5.6-terra /
+  input / cached-input / output per model (gpt-6-astra, gpt-5.6-sol / gpt-5.6 alias / gpt-5.6-terra /
   gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.3-codex; defaults =
-  OpenAI's Standard pricing verified 2026-08-16). Cached reads are a subset of input and never
+  OpenAI's Standard pricing verified 2026-09-13). Cached reads are a subset of input and never
   double-counted; cache writes use 1.25× input, and eligible requests above 272K input use 2×
   input/cache plus 1.5× output. The threshold is evaluated per request, never against a turn
   aggregate. Official aliases/snapshots match on model boundaries; an unresolved CLI model remains
-  unpriced instead of being guessed. Retired full-table Terra/Luna defaults migrate to current rates
-  while genuine admin overrides survive. Claude runs are never priced with OpenAI rates. Legacy
-  blended rate remains a hidden last-resort fallback for explicitly unknown models.
+  unpriced instead of being guessed. Retired full-table GPT-5.6/Terra/Luna defaults migrate to
+  current rates while genuine admin overrides survive. On the first boot after this pricing basis
+  ships, the daemon backs up SQLite and reprices every request/component and its parent run since
+  2026-07-13, after legacy accounting repair, so upgraded instances do not retain stale dashboard
+  history; the basis marker makes later boots no-ops. `npm run usage:reprice` previews the exact
+  rows/model deltas and `--apply` runs the same path manually. Claude runs are never priced with
+  OpenAI rates. Legacy blended rate remains a hidden last-resort fallback for explicitly unknown models.
   → TEST-PLAN: Observability.
 - Audit admin tab: monthly totals, per-channel rollups, and a recent-runs feed over the ledger +
   event log (`GET /api/audit`, `GET /api/audit/events`). No spend cap — visibility only.
