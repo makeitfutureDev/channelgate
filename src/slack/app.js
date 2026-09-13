@@ -1633,7 +1633,7 @@ async function connectAndWire(app) {
   });
   for (const a of APPROVAL_ACTIONS) app.action(a, handleApprovalClick);
   registerBusyThreadChoiceActions(app, processMessageEvent);
-  registerQuestionActions(app, processMessageEvent);
+  registerQuestionActions(app, processMessageEvent, { botUserId, teamId });
   registerEngineSwitchChoiceActions(app, processMessageEvent);
   // Indexed ids (`cg_model_pick_2`) are the per-choice buttons; the bare id is the retired
   // static_select, still clickable in Slack history. One pattern covers both.

@@ -8,7 +8,7 @@ ensureTestEnv();
 const { setUser, upsertChannelEntry, saveChannelMeta, getChannelMeta } = await import("../src/config/store.js");
 const { getDb } = await import("../src/db/index.js");
 const { getQuestion, saveQuestionAnswers } = await import("../src/gateway/questions.js");
-const { postQuestions, handleQuestionAction, handleQuestionView, refreshQuestionCard } = await import("../src/slack/questions.js");
+const { postQuestions, handleQuestionAction, handleQuestionView, refreshQuestionCard, registerQuestionActions } = await import("../src/slack/questions.js");
 const { buildQuestionCard, buildQuestionModal, buildCustomAnswerModal } = await import("../src/slack/question-views.js");
 
 const OWNER = "UQUESTION_OWNER";
@@ -77,6 +77,25 @@ test("posting is idempotent and visible card carries the persisted revision", as
   assert.equal(f.log.posts.length, 1);
   const visible = f.log.updates.at(-1) || f.log.posts.at(-1);
   assert.equal(JSON.parse(elements(visible).find((el) => el.action_id === "cg_question_submit").value).revision, again.revision);
+});
+
+test("registered submit handlers preserve the live bot and workspace context", async () => {
+  const f = await fixture();
+  await f.act("cg_question_choose:access:0");
+  let handler;
+  let received;
+  registerQuestionActions({ action(_pattern, fn) { handler = fn; }, view() {} }, async (_event, _client, options) => {
+    received = options;
+    options.onQuestionSubmissionAccepted({ runId: randomUUID(), rec: f.context });
+  }, { botUserId: "U_BOT_CONTEXT", teamId: "T_WORKSPACE_CONTEXT" });
+  const record = f.current();
+  const action = elements(buildQuestionCard(record)).find((el) => el.action_id === "cg_question_submit");
+  await handler({ ack: async () => {}, action, client: f.client, body: { user: { id: OWNER }, channel: { id: CHANNEL }, message: { ts: record.messageTs } } });
+  await settle();
+  assert.equal(received.botUserId, "U_BOT_CONTEXT");
+  assert.equal(received.teamId, "T_WORKSPACE_CONTEXT");
+  assert.equal(received.bypassMention, true);
+  assert.equal(f.current().status, "submitted");
 });
 
 test("options and custom save are drafts; duplicate submit creates one durable continuation", async () => {
