@@ -1,5 +1,24 @@
 # ChannelGate — Features
 
+## Interactive Slack clarification questions
+
+Claude and Codex can ask for missing information through the shared `ask_questions` gateway tool.
+Short question sets appear in the thread; longer sets open a paged modal from **Answer questions**.
+Each request accepts 1–20 questions: single choice with up to four custom-labeled options (including
+Yes/No), multiple choice with up to ten options, or written text. Choice questions can also accept
+custom answers. Required and custom-answer settings default to true. Automatic presentation uses
+the message for at most four non-text questions and a modal launcher otherwise; the caller can
+explicitly choose message (at most four questions) or modal presentation.
+
+Custom text replaces a single choice or supplements multiple choices. Choices remain drafts until
+final submission. Only the requester can answer; stale forms and
+duplicate submissions cannot replace a completed answer. Requests and saved drafts persist through
+daemon restarts, while stop/clear cancels pending requests. Submission queues the answers into the
+same author's thread for continuation. The tool itself returns promptly with the pending request,
+so agents can finish independent work without occupying a waiting turn. Clarification never replaces
+the existing approval mechanism. The bundled guide teaches both engines when to use the tool and
+falls back to ordinary questions when it is unavailable. Live acceptance gates: `TEST-PLAN.md`.
+
 ## System health
 
 The last admin navigation item, **System health** (`/system-health`), shows daemon-side Linux

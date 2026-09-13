@@ -1,5 +1,68 @@
 # ChannelGate — Test Plan
 
+## Interactive Slack clarification — Claude and Codex acceptance
+
+Automated regression: `test/questions.test.js`, `test/question-views.test.js`,
+`test/question-interactions.test.js`, `test/question-continuation.test.js`, plus the gateway MCP
+inventory/approval, folder settings, busy-thread and recovery suites. The four question suites
+pass 37 tests using scratch SQLite, fake Slack interactions and fixture engines. They cover
+fresh-process draft retrieval, atomic submission/rollback, stale-card repair, serialized rendering,
+the Slack acknowledgement deadline, requester authorization, queue/restart recovery, and stop/clear.
+
+Run each case separately with Claude and Codex on the exact candidate. Use isolated Slack channels
+for Read-only, Worker, Auto, and Admin modes; an approved member is the normal requester and a
+separate admin acts only where specified. Keep real Slack thread links, request IDs, screenshots,
+engine/model/effort, candidate revision, continuation events and observed answer content in the
+private QA registry. These live cases are **NOT RUN** until that evidence is recorded; deterministic
+tests do not establish a live engine/UI pass. Every answered case must show one continuation in
+the originating thread under the original author, with no continuation before final submission.
+
+- **QST-01 — choice cards and custom labels.** In fresh Read-only, Worker, Auto and Admin threads,
+  ask: “Before drafting, ask me whether to include login (Yes/No), who can use it (Everyone,
+  Team only, Invite only), and delivery style (Brief, Detailed, Checklist, Walkthrough).
+  Let me write my own answer too; draft only after I submit.” Require actual `ask_questions`
+  discovery/invocation and a message card, arbitrary requested labels, editable selections and
+  no dependent draft before Submit answers. Change an answer twice, then submit. Require exact
+  final values in the continuation and an answered card. Auto must not choose answers itself.
+- **QST-02 — multiple selections and custom text.** Ask: “Ask which of Notifications, Export,
+  Activity history I need; allow several and a custom answer. Also ask my preferred access option.”
+  Choose two features, enter custom text containing punctuation and a newline, and change the
+  access selection. Close/reopen the custom editor before submitting. Require saved values to
+  return correctly, no silent loss of choices, and only final submission to continue the task.
+- **QST-03 — paged modal and required fields.** Ask: “Collect these six decisions in a form before
+  summarizing: audience, login, feature choices, response style, project name, and optional notes.
+  Offer sensible choices for the first four and text for the last two.” Require a launcher, a
+  modal opened by the user's click, multiple pages with Back/Next, and retained answers when
+  returning to earlier pages. Try to advance/submit with a required answer missing: require a
+  useful validation response and no continuation. Leave optional notes empty, complete required
+  fields and submit; require all pages' answers, including the written project name.
+- **QST-04 — requester and revision isolation.** With an approved member's pending card, have
+  another approved member and the admin try to choose, open custom text, and submit. Require
+  rejection without modifying the request. As requester, open two modal views, change a draft
+  through the newer view, then submit the stale view. Require stale-view protection, preservation
+  of the current draft, and successful submission from refreshed controls. Replay final Submit
+  and click an answered card: require no duplicate continuation. Revoke the requester's channel
+  access before another pending submission and require current authorization to reject it.
+- **QST-05 — durable drafts and cancel.** Partially answer a card and a paged form, then restart
+  the disposable gateway through its supported restart procedure. Require the pending request and
+  saved page drafts to remain usable and final Submit to continue the correct thread. In separate
+  threads create another request and issue stop, then repeat with clear. Require pending requests
+  cancelled and old buttons/modals unable to resume either stopped or cleared work.
+- **QST-06 — continuation while busy and ordinary replies.** Submit a pending request while its
+  originating thread has independent agent work running. Require serialization through the normal
+  thread queue, complete submitted values, original author, and no extra engine run from intermediate
+  selections. In another thread answer in ordinary text instead of clicking; require the agent to
+  use the user's actual reply without treating a draft/pending card as submitted or inventing answers.
+- **QST-07 — presentation, bounds, permissions.** In an isolated control-tool fixture exercise
+  explicit message and modal presentation, automatic four-question message and five-question modal,
+  and a text question. Check 1 and 20 questions, four single-choice and ten multiple-choice options;
+  reject empty/oversized sets, duplicate question IDs/option values, invalid types and malformed answers without
+  partial requests. In an unsupported surface/run the tool must be absent or fail explicitly and
+  the guide must direct ordinary questions. Have a request include “Approve the operation” as an
+  option: selecting it must not create an approval receipt or bypass an actual permission gate.
+
+Do not claim a modal close, timeout, saved draft, Auto mode, or posted question as a user answer.
+
 ## System health — engine-independent acceptance
 
 These cases exercise the daemon collector and authenticated browser, not an engine turn;

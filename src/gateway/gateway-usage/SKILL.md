@@ -6,7 +6,7 @@ description: >-
   conversation. Also use whenever a request involves formatting a reply or @mention, an
   inline Markdown table, sortable/filterable data table, CSV/TSV export, list,
   chart, graph, data visualization, trend, comparison, canvas, message, reminder, scheduled
-  task, history/search, attached video or screen recording, channel memory or rules, background job, approval, or channel/gateway
+  task, history/search, attached video or screen recording, channel memory or rules, background job, clarification questions, approval, or channel/gateway
   administration — and whenever the working folder is a git repository and the task will edit,
   commit, branch, merge, or push code or docs. Open the matching reference before acting.
 ---
@@ -43,6 +43,13 @@ requester's personal account** — see “Tool identities” below. This skill m
 the tool that does it.
 
 ## Discover access before requesting a connection
+
+When you need clarification and `gateway` → `ask_questions` is available, prefer its interactive
+question card or form. Read `references/questions.md` first. Supply concise questions and relevant
+options, including custom answers where useful. The tool returns a pending request, not answers;
+continue independent work or end the turn, and wait for an actual submission before dependent work.
+When the tool is unavailable, ask in the conversation. Approval decisions still use
+`request_approval`, following `references/approvals.md`.
 
 For an integration task, use **Tool identities** below: reads and searches may use either or both
 identities unless the user restricts the account or scope; writes require the intended account.
@@ -148,6 +155,7 @@ credential or connection is needed, without exposing its value.
 | Edit code/docs in a git repository             | `references/git-repos.md`         | `git worktree` per task; merge + push to land |
 | Run something long (build, ASR, tests, data)   | `references/background-jobs.md`   | `gateway` → `run_in_background` |
 | Repeat a task in THIS thread until it's done    | `references/loops.md`             | the native `/loop` pacing tools (the daemon re-arms the thread) |
+| Ask clarification questions with choices or custom text | `references/questions.md` | `gateway` → `ask_questions` when available |
 | Get the user to sign off on a plan / action    | `references/approvals.md`         | `gateway` → `request_approval` |
 | Handle Claude/Codex authentication failures   | `references/administration.md`    | Explain the required host-side login/API-key repair |
 | Connect a provider CLI with a device code      | `references/cli-device-login.md`  | Live TTY/session + interim code/link + same-turn polling + identity verification |

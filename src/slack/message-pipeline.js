@@ -23,7 +23,10 @@ import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { createUsageBank } from "../gateway/usage.js";
 import { contextWindowFor } from "../gateway/model-info.js";
 
-import { recordActiveRun, updateActiveRunRuntime, clearActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
+import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
+import { cancelPendingQuestions, listPendingQuestions } from "../gateway/questions.js";
+import { assertQuestionAccess } from "../gateway/question-access.js";
+import { refreshQuestionCard } from "./questions.js";
 import { clearStoppedTurn, formatStoppedTurnContext, saveStoppedTurn, takeStoppedTurn } from "../gateway/stopped-turns.js";
 import { isMemorySaveTool } from "../gateway/channel-memory.js";
 import { maybeQueueMemoryReview } from "../gateway/memory-review.js";
@@ -80,6 +83,7 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
   // A message waiting on the steer/queue card is accepted user intent too. Stop invalidates it
   // durably, so an old button cannot resurrect that message after the active turn was cancelled.
   const pendingChoices = clearPendingRunChoices({ channelId, threadKey });
+  const pendingQuestions = cancelPendingQuestions({ channelId, threadKey });
   const stoppedRuns = [];
   const stoppedTurns = [];
 
@@ -116,7 +120,17 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
       }
     }
   }
-  return { pendingChoices, stoppedRuns, stoppedTurns };
+  return { pendingChoices, pendingQuestions, stoppedRuns, stoppedTurns };
+}
+
+// State is already terminal before any Slack call. A failed update leaves harmless old buttons:
+// every interaction rechecks the durable record before applying a draft or continuing a run.
+function retireQuestionCards(client, records) {
+  if (!client?.chat?.update) return;
+  for (const record of records) {
+    if (!record.messageTs) continue;
+    refreshQuestionCard(record, client).catch(() => {});
+  }
 }
 
 // Abort in-flight runs in a channel/DM. When `threadKey` is given, only the run in that one thread
@@ -124,21 +138,29 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
 // whole channel is swept (the `/stop` slash command). Posts "🛑 Stopped." (with the resume link) in
 // each stopped run's thread. Returns how many were stopped.
 export async function stopRunsInChannel(client, channelId, slug, byUser, threadKey = null) {
-  const { pendingChoices, stoppedRuns, stoppedTurns } = abortRunsInChannel(channelId, slug, byUser, threadKey);
+  const { pendingChoices, pendingQuestions, stoppedRuns, stoppedTurns } = abortRunsInChannel(channelId, slug, byUser, threadKey);
   // Persist loop cancellation and outcome counts BEFORE any rate-limited Slack API can wait.
   const droppedLoops = stopLoops(channelId, threadKey);
   for (const turn of stoppedTurns) void logEvent("run_stopped", { channel: channelId, author: byUser, slug, ...turn });
-  if (stoppedTurns.length || pendingChoices.length || droppedLoops.length) {
+  if (stoppedTurns.length || pendingChoices.length || pendingQuestions.length || droppedLoops.length) {
     void logEvent("run_stop_requested", { channel: channelId, author: byUser, slug, threadKey,
       runs: stoppedTurns.length, queued: stoppedTurns.filter((turn) => turn.state === "queued").length,
-      choices: pendingChoices.length, loops: droppedLoops.length });
+      choices: pendingChoices.length, questions: pendingQuestions.length, loops: droppedLoops.length });
   }
   const deliveries = [];
-  const stopped = pendingChoices.length + stoppedRuns.length;
+  const stopped = pendingChoices.length + pendingQuestions.length + stoppedRuns.length;
+  retireQuestionCards(client, pendingQuestions);
 
   // All work is now terminal. User-facing cleanup may safely wait on Slack, grouped per thread so
   // a burst of pending cards produces one notice instead of a rate-limit-amplifying message storm.
   const pendingByThread = new Map();
+  for (const questionThread of new Set(pendingQuestions.map((record) => record.threadKey))) {
+    deliveries.push(client.chat.postMessage({
+      channel: channelId,
+      thread_ts: questionThread,
+      text: "🛑 Cancelled pending questions. Their old buttons can no longer continue this conversation.",
+    }).catch(() => {}));
+  }
   for (const pending of pendingChoices) {
     const kind = pending.kind || BUSY_THREAD_CHOICE_KIND;
     const key = `${pending.threadKey}\n${kind}`;
@@ -567,7 +589,7 @@ async function ensureUserKnown(client, userId) {
 // harness-switch card (src/slack/engine-switch-choice.js) re-entering with the original event —
 // run it on `engineChoice`, pin the thread there when `engineChoiceSwitch`, and hand the pending
 // row over exactly like a busy-thread choice.
-export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null } = {}) {
+export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null } = {}) {
   try {
     if (isIgnorable(event, botUserId, getTrustedBotApps())) return;
     // A message without a human author (e.g. a trusted-bot post carrying no `user`) can't be
@@ -607,7 +629,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // Only an authorized trigger may spend Slack read/file API calls. Hydrate it from the exact
     // canonical message so omitted/incomplete attachment fields cannot produce a text-only agent
     // prompt, while keeping the original event as a non-fatal fallback.
-    event = await hydrateSlackMessage(event, client, {
+    // A question continuation is an internal event containing the answers authenticated by its
+    // Slack interaction handler. It is not a message Slack can hydrate: using the card timestamp
+    // would replace the answers with the card's text and could carry unrelated attachments.
+    if (!questionSubmissionId) event = await hydrateSlackMessage(event, client, {
       includeThreadFiles: async (message) => {
         const text = stripMentions(message.text, botUserId);
         const command = parseSlashCommand(text);
@@ -636,6 +661,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
 
     const threadKey = event.thread_ts ?? event.ts;
     const runKey = `${entry.slug}::${threadKey}`;
+    // Synthetic question event IDs are stable idempotency keys, not numeric Slack timestamps.
+    // Keep them for run identity while using an actual cutoff for history/failover context.
+    const contextCurrentTs = questionSubmissionId ? Date.now() / 1000 : event.ts;
 
     // "stop"/"cancel" interrupts the in-flight run for this thread. Handled here (not via the
     // run path) so it isn't queued behind the very run it's trying to cancel.
@@ -683,6 +711,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // (clearSession also bumps the thread's clear-generation, so even a run that unwinds
         // AFTER this line cannot re-save over it).
         const halted = abortRunsInChannel(event.channel, entry.slug, event.user, threadKey);
+        retireQuestionCards(client, halted.pendingQuestions);
         await clearSession(entry.slug, threadKey);
         clearStoppedTurn(entry.slug, threadKey);
         abortPooled(`${entry.slug}::${threadKey}`); // evict an IDLE warm session too (no active run)
@@ -692,8 +721,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // still remembered the task. Clearing the thread ends its loop.
         const loopsDropped = stopThreadLoops(event.channel, threadKey);
         const stoppedNote = halted.stoppedRuns.length || halted.pendingChoices.length ? "stopped the in-flight run and " : "";
+        const questionNote = halted.pendingQuestions.length ? " Pending questions were cancelled too." : "";
         const loopNote = loopsDropped ? " The thread's loop was stopped too." : "";
-        await reply(`🧹 Cleared — ${stoppedNote}this thread will start a fresh session on your next message.${loopNote}`);
+        await reply(`🧹 Cleared — ${stoppedNote}this thread will start a fresh session on your next message.${loopNote}${questionNote}`);
       } else if (sc.cmd === "delete") {
         // Wipe THIS thread's messages (deleteThreadMessages is hard-scoped to the triggering
         // event's channel + thread — it can never touch any other conversation). Org-admin only —
@@ -906,7 +936,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // re-enters this pipeline with busyChoice="steer" or "queue". No persistent thread setting
     // changes and no attachment download happens until that choice is made.
     // A harness-choice re-entry never asks again: if the thread got busy meanwhile, it queues.
-    const busyTarget = !busyChoice && !forceQueue && !engineChoiceId ? runQueue.activeHandle(runKey) : null;
+    const busyTarget = !busyChoice && !forceQueue && !engineChoiceId && !questionSubmissionId ? runQueue.activeHandle(runKey) : null;
     if (busyTarget) {
       // Never ask about a message the gateway is ALREADY handling. Slack redelivers envelopes it
       // never saw acked — after a restart both in-memory dedupes (event id, message trigger) are
@@ -1222,11 +1252,15 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       authorId: event.user,
       threadKey,
       isDM: Boolean(meta.isDM),
+      ...(questionSubmissionId ? { questionSubmissionId } : {}),
       text: provenance + promptForClaude,
       attachments: attachmentPaths,
       startedAt: Date.now(),
     };
-    if (busyChoiceId) {
+    if (questionSubmissionId) {
+      const accepted = onQuestionSubmissionAccepted?.({ runId, rec: acceptedRun });
+      if (!accepted) throw new Error("These answers have already been submitted or the questions were cancelled.");
+    } else if (busyChoiceId) {
       const accepted = onBusyChoiceAccepted?.({ runId, rec: acceptedRun });
       if (!accepted) throw new Error("This busy-thread choice is no longer available. Send the message again if it still needs attention.");
     } else if (engineChoiceId) {
@@ -1328,7 +1362,20 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // Replay the earlier thread when the bot is first pulled into an existing thread OR when the
       // engine was just switched (the new engine starts a fresh, blind session — give it context).
       if (!threadClean && event.thread_ts && (!(await hasThreadSession(entry.slug, threadKey)) || engineSwitched)) {
-        threadContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: event.ts, botUserId });
+        threadContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: contextCurrentTs, botUserId });
+      }
+      // The requester may lose access while this accepted answer waits behind another turn.
+      // Recheck after all queue/preflight waits, then observe stop before recording or spawning.
+      if (questionSubmissionId) {
+        try {
+          await assertQuestionAccess(acceptedRun, client);
+        } catch {
+          markTerminal();
+          await status.stop();
+          await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey,
+            text: "The submitted answers were not run because the requester no longer has access or access could not be verified." }).catch(() => {});
+          return;
+        }
       }
       // Stop/force may arrive while the promoted owner awaits directory or thread-context
       // preflight. Recheck at the last asynchronous boundary before enriching the durable row;
@@ -1340,20 +1387,34 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         return;
       }
       const stoppedContext = formatStoppedTurnContext(takeStoppedTurn(entry.slug, threadKey));
+      const pendingQuestionReplies = questionSubmissionId ? [] : listPendingQuestions({
+        channelId: event.channel, threadKey, authorId: event.user,
+      });
+      if (pendingQuestionReplies.length) {
+        const snapshot = pendingQuestionReplies.map(({ title, questions, answers }) => ({ title, questions, draftAnswers: answers }));
+        promptForClaude = "The user replied in the thread while these questions were pending. The following JSON is question context; draft answers are not submitted answers. Interpret the user's message below and do not assume unanswered questions are resolved.\n" +
+          JSON.stringify(snapshot) + "\n\nUser's reply:\n" + promptForClaude;
+      }
       const textForRun = provenance + stoppedContext + threadContext + promptForClaude;
       // Durable in-flight marker: if the daemon restarts mid-run, boot recovery re-runs this exact
       // turn (same threadKey → resumes the session). Deleted in the finally on normal completion.
-      recordActiveRun(runId, {
+      const promotedRun = {
         channelId: event.channel,
         slug: entry.slug,
         workspaceId: teamId,
         authorId: event.user,
         threadKey,
         isDM: Boolean(meta.isDM),
+        ...(questionSubmissionId ? { questionSubmissionId } : {}),
         text: textForRun,
         attachments: attachmentPaths,
         startedAt: Date.now(),
-      });
+      };
+      if (pendingQuestionReplies.length) {
+        retireQuestionCards(client, acceptQuestionReply(pendingQuestionReplies, runId, promotedRun));
+      } else {
+        recordActiveRun(runId, promotedRun);
+      }
       let memorySavesInTurn = 0;
       const runArgs = {
         channelId: event.channel,
@@ -1379,7 +1440,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           status.onRuntimeResolved?.(runtime);
         },
         getFallbackContext: fallbackContextFetcher({ threadContext, threadClean }, () =>
-          fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: event.ts, botUserId })),
+          fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: contextCurrentTs, botUserId })),
       };
       // ONE bounded auto-resume: a recoverable process death (see runDeathRecovery) doesn't
       // surface an error the user would answer with "continue" anyway — send that turn

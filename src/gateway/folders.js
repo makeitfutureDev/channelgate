@@ -185,6 +185,10 @@ export function channelSwitchesNote(meta = {}) {
 // the predicate behind it live in src/gateway/mcp.js, beside the code that names those servers.
 const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; the reasoning and the
 tool shapes are in the \`gateway-usage\` skill:
+- **Clarification questions.** When \`ask_questions\` is available, use that gateway tool for
+  questions with choices or custom text. It returns a pending card, not answers: continue only
+  independent work or end this turn, and let Submit resume the thread. Do not poll or assume an
+  answer. If unavailable, ask in the conversation. Action approvals still use \`request_approval\`.
 - **Two Composio identities.** \`composio-user\` = the REQUESTER's own accounts; \`composio-agent\` = the
   shared agent's own (either may appear with \`_\` for \`-\`). Reads and searches may use either or
   both identities without asking which account unless the user restricts the account or scope.

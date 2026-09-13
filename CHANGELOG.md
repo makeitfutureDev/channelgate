@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Let agents ask clarification questions with Slack cards and paged forms: custom option buttons,
+  Yes/No, multiple selections, and written answers. Save drafts until submission, retain pending
+  questions across restarts, and continue the requester's thread after they submit.
+
 - Keep sidebar update messages inside the rail, wrapping long details and showing a short commit
   revision with the full hash on hover.
 
