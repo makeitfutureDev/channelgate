@@ -5,7 +5,7 @@
 Automated regression: `test/questions.test.js`, `test/question-views.test.js`,
 `test/question-interactions.test.js`, `test/question-continuation.test.js`, plus the gateway MCP
 inventory/approval, folder settings, busy-thread and recovery suites. The four question suites
-pass 37 tests using scratch SQLite, fake Slack interactions and fixture engines. They cover
+pass 38 tests using scratch SQLite, fake Slack interactions and fixture engines. They cover
 fresh-process draft retrieval, atomic submission/rollback, stale-card repair, serialized rendering,
 the Slack acknowledgement deadline, requester authorization, queue/restart recovery, and stop/clear.
 

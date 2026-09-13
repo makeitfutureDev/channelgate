@@ -204,8 +204,11 @@ export async function handleQuestionView({ ack, body, view = body?.view, client 
   }
 }
 
-export function registerQuestionActions(app, processMessage) {
-  app.action(/^cg_question_/, (payload) => handleQuestionAction(payload, { processMessage }));
-  app.view(QUESTION_FORM_CALLBACK, (payload) => handleQuestionView(payload, { processMessage }));
-  app.view(QUESTION_CUSTOM_CALLBACK, (payload) => handleQuestionView(payload, { processMessage }));
+export function registerQuestionActions(app, processMessage, context = {}) {
+  // The live connection owns bot/workspace identity; the synthetic answer must retain it for
+  // mention hydration and Slack's recipient_team_id on streamed channel replies.
+  const continuation = (event, client, options) => processMessage(event, client, { ...context, ...options });
+  app.action(/^cg_question_/, (payload) => handleQuestionAction(payload, { processMessage: continuation }));
+  app.view(QUESTION_FORM_CALLBACK, (payload) => handleQuestionView(payload, { processMessage: continuation }));
+  app.view(QUESTION_CUSTOM_CALLBACK, (payload) => handleQuestionView(payload, { processMessage: continuation }));
 }
