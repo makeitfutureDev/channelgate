@@ -92,6 +92,7 @@ import { setAssistantStatus, startProgress } from "./progress.js";
 export { buildResumeCommand, resumeButton, filesButton, secretsButton, settingsButton, footerButtons, footerText, footerBlocks };
 export { setAssistantStatus, startProgress };
 import { processMessageEvent, runQueue, stopRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
+import { registerQuestionActions } from "./questions.js";
 import { appContextForMessage, appContextObservedAt, appContextUserId, createAppContextStore } from "./app-context.js";
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
@@ -1632,6 +1633,7 @@ async function connectAndWire(app) {
   });
   for (const a of APPROVAL_ACTIONS) app.action(a, handleApprovalClick);
   registerBusyThreadChoiceActions(app, processMessageEvent);
+  registerQuestionActions(app, processMessageEvent);
   registerEngineSwitchChoiceActions(app, processMessageEvent);
   // Indexed ids (`cg_model_pick_2`) are the per-choice buttons; the bare id is the retired
   // static_select, still clickable in Slack history. One pattern covers both.

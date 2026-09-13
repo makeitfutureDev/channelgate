@@ -21,5 +21,7 @@ Write `@Name` and the gateway turns it into a real ping. `@channel`, `@here` and
 real Slack broadcasts — use them sparingly. Full rules: `references/mentions.md`.
 
 ## Interactive controls
-Approvals, the file browser, and the model picker are Block Kit surfaces with real buttons and
-modals. You do not build these — the gateway posts them.
+Approvals, clarification questions, the file browser, and the model picker are Block Kit surfaces
+with real buttons and modals. The gateway posts them. For clarification, use `ask_questions` when
+available: short sets can appear in the thread, and longer forms open from an **Answer questions**
+button. Choices and custom text remain drafts until submission. See `references/questions.md`.
