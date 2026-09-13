@@ -6,17 +6,21 @@ import { buildQuestionCard, buildQuestionModal, buildCustomAnswerModal, parseQue
 
 // The MCP connection lives in the daemon; no bot credential crosses into the engine container.
 export function questionSlackClient({ token = resolveSlackConfig().botToken, fetchImpl = fetch } = {}) {
-  const call = async (method, body) => {
+  const call = async (method, body, read = false) => {
     if (!token) throw new Error("Slack bot token is not configured.");
-    const response = await fetchImpl(`https://slack.com/api/${method}`, {
-      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(20_000),
+    // conversations.members requires query/form parameters; JSON POSTs lose its channel argument.
+    const url = new URL(`https://slack.com/api/${method}`);
+    if (read) url.search = new URLSearchParams(body).toString();
+    const response = await fetchImpl(url.toString(), {
+      method: read ? "GET" : "POST",
+      headers: { Authorization: `Bearer ${token}`, ...(!read ? { "Content-Type": "application/json; charset=utf-8" } : {}) },
+      ...(!read ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(20_000),
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(`Slack ${method} failed: ${data.error || response.status}`);
     return data;
   };
-  return { chat: { postMessage: (b) => call("chat.postMessage", b), update: (b) => call("chat.update", b) }, conversations: { members: (b) => call("conversations.members", b) } };
+  return { chat: { postMessage: (b) => call("chat.postMessage", b), update: (b) => call("chat.update", b) }, conversations: { members: (b) => call("conversations.members", b, true) } };
 }
 
 export async function refreshQuestionCard(record, client) {

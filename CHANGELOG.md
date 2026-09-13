@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Fix Slack question-card posting by encoding channel membership checks as GET query parameters.
+
 - Let agents ask clarification questions with Slack cards and paged forms: custom option buttons,
   Yes/No, multiple selections, and written answers. Save drafts until submission, retain pending
   questions across restarts, and continue the requester's thread after they submit.

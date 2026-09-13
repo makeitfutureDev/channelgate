@@ -8,7 +8,7 @@ ensureTestEnv();
 const { setUser, upsertChannelEntry, saveChannelMeta, getChannelMeta } = await import("../src/config/store.js");
 const { getDb } = await import("../src/db/index.js");
 const { getQuestion, saveQuestionAnswers } = await import("../src/gateway/questions.js");
-const { postQuestions, handleQuestionAction, handleQuestionView, refreshQuestionCard, registerQuestionActions } = await import("../src/slack/questions.js");
+const { postQuestions, handleQuestionAction, handleQuestionView, refreshQuestionCard, registerQuestionActions, questionSlackClient } = await import("../src/slack/questions.js");
 const { buildQuestionCard, buildQuestionModal, buildCustomAnswerModal } = await import("../src/slack/question-views.js");
 
 const OWNER = "UQUESTION_OWNER";
@@ -285,4 +285,41 @@ test("slow modal membership verification acknowledges an error before Slack's th
   await settle();
   assert.deepEqual(f.current().answers, {});
   assert.equal(f.log.continuations.length, 0);
+});
+
+
+test("question Slack transport encodes member queries and preserves JSON chat writes", async () => {
+  const requests = [];
+  const client = questionSlackClient({ token: "test-only-token", fetchImpl: async (url, init) => {
+    requests.push({ url: new URL(url), init });
+    return { ok: true, json: async () => ({ ok: true, members: ["UOWNER"] }) };
+  } });
+  await client.conversations.members({ channel: "CQUESTION", limit: 200, cursor: "next+/=&" });
+  const { url, init } = requests[0];
+  assert.equal(url.pathname, "/api/conversations.members");
+  assert.equal(url.searchParams.get("channel"), "CQUESTION");
+  assert.equal(url.searchParams.get("limit"), "200");
+  assert.equal(url.searchParams.get("cursor"), "next+/=&");
+  assert.equal(init.method, "GET");
+  assert.equal(init.body, undefined);
+  assert.equal(init.headers.Authorization, "Bearer test-only-token");
+  assert.equal(url.toString().includes("test-only-token"), false);
+  for (const method of ["postMessage", "update"]) {
+    const payload = { channel: "CQUESTION", text: "Demo" };
+    await client.chat[method](payload);
+    const request = requests.at(-1);
+    assert.equal(request.url.pathname, `/api/chat.${method}`);
+    assert.equal(request.init.method, "POST");
+    assert.deepEqual(JSON.parse(request.init.body), payload);
+  }
+});
+
+test("question Slack transport fails closed on API and HTTP errors", async () => {
+  for (const response of [
+    { ok: true, json: async () => ({ ok: false, error: "invalid_arguments" }) },
+    { ok: false, status: 503, json: async () => ({}) },
+  ]) {
+    const client = questionSlackClient({ token: "test-only-token", fetchImpl: async () => response });
+    await assert.rejects(client.conversations.members({ channel: "CQUESTION" }), /Slack conversations.members failed:/);
+  }
 });
