@@ -5,9 +5,12 @@
 Automated regression: `test/questions.test.js`, `test/question-views.test.js`,
 `test/question-interactions.test.js`, `test/question-continuation.test.js`, plus the gateway MCP
 inventory/approval, folder settings, busy-thread and recovery suites. The four question suites
-pass 38 tests using scratch SQLite, fake Slack interactions and fixture engines. They cover
+pass 40 tests using scratch SQLite, fake Slack interactions and fixture engines. They cover
 fresh-process draft retrieval, atomic submission/rollback, stale-card repair, serialized rendering,
 the Slack acknowledgement deadline, requester authorization, queue/restart recovery, and stop/clear.
+Transport regression verifies GET-encoded membership queries (including pagination cursors),
+JSON chat writes, authorization headers, and fail-closed API/HTTP errors. Live QST-01 must
+post through the real MCP client so request-encoding failures cannot hide behind a fake client.
 
 Run each case separately with Claude and Codex on the exact candidate. Use isolated Slack channels
 for Read-only, Worker, Auto, and Admin modes; an approved member is the normal requester and a
