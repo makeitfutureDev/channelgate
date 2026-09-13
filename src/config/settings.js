@@ -487,13 +487,14 @@ export function getCodexRatePer1MTokens() {
 }
 
 // Per-model Codex $/1M-token rates for the cost ESTIMATE (input / cached-input / output).
-// Defaults verified against OpenAI's STANDARD API pricing table on 2026-08-16; admins can adjust
+// Defaults verified against OpenAI's STANDARD API pricing table on 2026-09-13; admins can adjust
 // them in Settings → Integrations. `cachedInput` prices the cached_input_tokens subset of input.
 // Editable values are merged OVER these defaults, so a pricing change only needs the changed cell;
 // the model list itself is fixed and intentionally small.
 export const DEFAULT_CODEX_RATES = {
-  "gpt-5.6-sol": { input: 5, cachedInput: 0.5, output: 30 },
-  "gpt-5.6": { input: 5, cachedInput: 0.5, output: 30 }, // alias for gpt-5.6-sol
+  "gpt-6-astra": { input: 10, cachedInput: 1, output: 50 },
+  "gpt-5.6-sol": { input: 4, cachedInput: 0.4, output: 20 },
+  "gpt-5.6": { input: 4, cachedInput: 0.4, output: 20 }, // alias for gpt-5.6-sol
   "gpt-5.6-terra": { input: 2, cachedInput: 0.2, output: 12 },
   "gpt-5.6-luna": { input: 0.2, cachedInput: 0.02, output: 1.2 },
   "gpt-5.5": { input: 5, cachedInput: 0.5, output: 30 },
@@ -505,9 +506,11 @@ export const DEFAULT_CODEX_RATES = {
 
 // The admin UI historically saved the complete displayed table, including untouched defaults.
 // When OpenAI changes a default, an old full snapshot would therefore shadow the corrected code
-// forever. Treat only the two exact retired defaults as inherited values; genuinely customized
+// forever. Treat only the exact retired defaults as inherited values; genuinely customized
 // cells (anything else) remain authoritative. A subsequent Settings save persists the new table.
 const RETIRED_CODEX_DEFAULTS = {
+  "gpt-5.6-sol": { input: 5, cachedInput: 0.5, output: 30 },
+  "gpt-5.6": { input: 5, cachedInput: 0.5, output: 30 },
   "gpt-5.6-terra": { input: 2.5, cachedInput: 0.25, output: 15 },
   "gpt-5.6-luna": { input: 1, cachedInput: 0.1, output: 6 },
 };

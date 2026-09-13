@@ -39,6 +39,7 @@
     "restore:drill": "bash scripts/restore-drill.sh",
     "maintenance": "node scripts/runtime-maintenance.mjs",
     "usage:repair": "node scripts/repair-codex-usage-history.mjs",
+    "usage:reprice": "node scripts/refresh-codex-pricing.mjs",
     "release:artifacts": "node scripts/release-artifacts.mjs",
     "with-landing-lock": "node scripts/with-landing-lock.mjs --",
     "whisper:install": "node scripts/install-whisper.mjs",
