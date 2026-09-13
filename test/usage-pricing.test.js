@@ -7,6 +7,7 @@ ensureTestEnv();
 const { runMigrations } = await import("../src/db/index.js");
 const {
   CODEX_PRICING_HISTORY_SINCE,
+  CODEX_SOL_PRICE_CUTOVER,
   applyCodexPricingRefresh,
   autoRefreshCodexPricing,
   buildCodexPricingRefresh,
@@ -34,10 +35,14 @@ function fixture() {
      VALUES(?, 0, ?, ?, ?, 0, ?, 0, 1050000, ?, ?)`
   );
 
-  const sol = usage.run("2026-09-01T00:00:00.000Z", "gpt-5.6-sol", 300_000, 1_000, 2.145, "gpt-5.6-sol");
+  const sol = usage.run(CODEX_SOL_PRICE_CUTOVER, "gpt-5.6-sol", 300_000, 1_000, 2.145, "gpt-5.6-sol");
   const solComponent = component.run(Number(sol.lastInsertRowid), "sol", "gpt-5.6-sol", 300_000, 100_000, 0, 1_000, 2.145);
   request.run(Number(solComponent.lastInsertRowid), "gpt-5.6-sol", 300_000, 100_000, 1_000, 1, 2.145);
   component.run(Number(sol.lastInsertRowid), "review", "codex-auto-review", 1_000, 0, 0, 10, null);
+
+  const solBefore = usage.run("2026-08-20T23:59:59.999Z", "gpt-5.6-sol", 300_000, 1_000, 2.145, "gpt-5.6-sol");
+  const solBeforeComponent = component.run(Number(solBefore.lastInsertRowid), "sol-before", "gpt-5.6-sol", 300_000, 100_000, 0, 1_000, 2.145);
+  request.run(Number(solBeforeComponent.lastInsertRowid), "gpt-5.6-sol", 300_000, 100_000, 1_000, 1, 2.145);
 
   const astra = usage.run("2026-09-10T00:00:00.000Z", "gpt-6-astra", 1_000_000, 10_000, null, "gpt-6-astra");
   component.run(Number(astra.lastInsertRowid), "astra", "gpt-6-astra", 1_000_000, 500_000, 0, 10_000, null);
@@ -60,11 +65,11 @@ test("pricing refresh reprices the two-month evidence window and records an idem
   assert.deepEqual(pendingCodexPricingRefresh(db), { pending: true, appliedBasis: "", basis: CODEX_PRICING_BASIS });
   const plan = buildCodexPricingRefresh({ db });
   assert.equal(plan.since, CODEX_PRICING_HISTORY_SINCE);
-  assert.equal(plan.usageRows, 2);
-  assert.equal(plan.components, 3);
-  assert.equal(plan.requests, 1);
+  assert.equal(plan.usageRows, 3);
+  assert.equal(plan.components, 4);
+  assert.equal(plan.requests, 2);
   assert.equal(plan.unpricedComponents, 1);
-  assert.equal(plan.models["gpt-5.6-sol"].repricedValue, 1.71);
+  assert.equal(plan.models["gpt-5.6-sol"].repricedValue, 3.855);
   assert.equal(plan.models["gpt-6-astra"].repricedValue, 6);
   assert.equal(plan.models["codex-auto-review"].unpricedComponents, 1);
 
@@ -73,17 +78,19 @@ test("pricing refresh reprices the two-month evidence window and records an idem
   assert.deepEqual(db.prepare("SELECT source_key, cost_usd, cost_estimated, pricing_basis FROM usage_components ORDER BY id").all().map((row) => ({ ...row })), [
     { source_key: "sol", cost_usd: 1.71, cost_estimated: 1, pricing_basis: CODEX_PRICING_BASIS },
     { source_key: "review", cost_usd: null, cost_estimated: 0, pricing_basis: "unpriced" },
+    { source_key: "sol-before", cost_usd: 2.145, cost_estimated: 1, pricing_basis: CODEX_PRICING_BASIS },
     { source_key: "astra", cost_usd: 6, cost_estimated: 1, pricing_basis: CODEX_PRICING_BASIS },
     { source_key: "before-window", cost_usd: 9.99, cost_estimated: 1, pricing_basis: "openai-standard-2026-08-16" },
     { source_key: "claude", cost_usd: 8.88, cost_estimated: 1, pricing_basis: "openai-standard-2026-08-16" },
   ]);
   assert.deepEqual(db.prepare("SELECT model, cost_usd FROM usage ORDER BY id").all().map((row) => ({ ...row })), [
     { model: "gpt-5.6-sol", cost_usd: 1.71 },
+    { model: "gpt-5.6-sol", cost_usd: 2.145 },
     { model: "gpt-6-astra", cost_usd: 6 },
     { model: "gpt-5.6-sol", cost_usd: 9.99 },
     { model: "claude-opus-4-1", cost_usd: 8.88 },
   ]);
-  assert.equal(db.prepare("SELECT cost_usd FROM usage_requests").get().cost_usd, 1.71);
+  assert.deepEqual(db.prepare("SELECT cost_usd FROM usage_requests ORDER BY id").all().map((row) => row.cost_usd), [1.71, 2.145]);
 
   db.prepare("UPDATE usage_components SET pricing_basis = 'unpriced' WHERE source_key = 'astra'").run();
   assert.deepEqual(pendingCodexPricingRefresh(db), {

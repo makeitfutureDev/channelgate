@@ -2872,7 +2872,9 @@ are retired, bullet by bullet; everything else stands.
   current rates while genuine admin overrides survive. On the first boot after this pricing basis
   ships, the daemon backs up SQLite and reprices every request/component and its parent run since
   2026-07-13, after legacy accounting repair, so upgraded instances do not retain stale dashboard
-  history; the basis marker makes later boots no-ops. `npm run usage:reprice` previews the exact
+  history. Historical pricing follows official effective dates: GPT-5.6 Sol retains
+  $5/$0.50/$30 before 2026-08-21 and uses $4/$0.40/$20 from that date. The basis marker makes later
+  boots no-ops. `npm run usage:reprice` previews the exact
   rows/model deltas and `--apply` runs the same path manually. Claude runs are never priced with
   OpenAI rates. Legacy blended rate remains a hidden last-resort fallback for explicitly unknown models.
   → TEST-PLAN: Observability.

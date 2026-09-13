@@ -5,9 +5,14 @@
 // the database first, and records a basis marker so every upgraded gateway applies it once.
 import { CODEX_PRICING_BASIS, estimateCodexCost } from "./usage.js";
 import { backupGatewayDb } from "./usage-repair.js";
+import { DEFAULT_CODEX_RATES, getCodexModelRates } from "../config/settings.js";
 
 export const CODEX_PRICING_HISTORY_SINCE = "2026-07-13T00:00:00.000Z";
+export const CODEX_SOL_PRICE_CUTOVER = "2026-08-21T00:00:00.000Z";
 export const CODEX_PRICING_META_KEY = "codex_usage_pricing_basis";
+
+const RETIRED_SOL_RATES = Object.freeze({ input: 5, cachedInput: 0.5, output: 30 });
+const SOL_RATE_KEYS = Object.freeze(["gpt-5.6-sol", "gpt-5.6"]);
 
 const tokenUsage = (row = {}) => ({
   input_tokens: Number(row.tokens_in) || 0,
@@ -19,6 +24,24 @@ const tokenUsage = (row = {}) => ({
 
 const fixed = (value) => Number(Number(value || 0).toFixed(6));
 
+const sameRate = (left, right) => (
+  left?.input === right?.input
+  && left?.cachedInput === right?.cachedInput
+  && left?.output === right?.output
+);
+
+function codexRatesAt(ts) {
+  const current = getCodexModelRates();
+  if (String(ts || "") >= CODEX_SOL_PRICE_CUTOVER) return current;
+  const historical = { ...current };
+  for (const key of SOL_RATE_KEYS) {
+    // Respect genuine admin overrides. Only replace the shipped current default with the official
+    // rate that preceded OpenAI's August 21 reduction.
+    if (sameRate(current[key], DEFAULT_CODEX_RATES[key])) historical[key] = RETIRED_SOL_RATES;
+  }
+  return historical;
+}
+
 export function pendingCodexPricingRefresh(db, { basis = CODEX_PRICING_BASIS } = {}) {
   const appliedBasis = String(db.prepare("SELECT value FROM _meta WHERE key = ?").get(CODEX_PRICING_META_KEY)?.value || "");
   if (appliedBasis !== basis) return { pending: true, appliedBasis, basis };
@@ -26,13 +49,16 @@ export function pendingCodexPricingRefresh(db, { basis = CODEX_PRICING_BASIS } =
   // current, cheaply inspect only components written with another basis and refresh again if one
   // of their models is now priceable. Permanently-unpriced internal pseudo-models stay ignored.
   const stale = db.prepare(
-    `SELECT c.model, c.tokens_in, c.tokens_cached, c.tokens_cache_write, c.tokens_out, c.reasoning_tokens
+    `SELECT c.model, c.tokens_in, c.tokens_cached, c.tokens_cache_write, c.tokens_out, c.reasoning_tokens,
+            u.ts AS usage_ts
        FROM usage_components c
        JOIN usage u ON u.id = c.usage_id
       WHERE u.engine = 'codex' AND u.ts >= ? AND c.pricing_basis != ?`
   ).all(CODEX_PRICING_HISTORY_SINCE, basis);
   const rateableStaleComponent = stale.some((component) => (
-    estimateCodexCost(tokenUsage(component), component.model).costUSD != null
+    estimateCodexCost(tokenUsage(component), component.model, [], {
+      rates: codexRatesAt(component.usage_ts),
+    }).costUSD != null
   ));
   return { pending: rateableStaleComponent, appliedBasis, basis };
 }
@@ -43,7 +69,7 @@ export function buildCodexPricingRefresh({
   basis = CODEX_PRICING_BASIS,
 } = {}) {
   const components = db.prepare(
-    `SELECT c.*
+    `SELECT c.*, u.ts AS usage_ts
        FROM usage_components c
        JOIN usage u ON u.id = c.usage_id
       WHERE u.engine = 'codex' AND u.ts >= ?
@@ -71,18 +97,19 @@ export function buildCodexPricingRefresh({
   let repricedEstimatedValue = 0;
   let unpricedComponents = 0;
   for (const component of components) {
+    const rates = codexRatesAt(component.usage_ts);
     const detail = requestsByComponent.get(Number(component.id)) || [];
     const requestEvidence = detail.map((request) => ({
       model: request.model || component.model,
       usage: tokenUsage(request),
     }));
-    const estimate = estimateCodexCost(tokenUsage(component), component.model, requestEvidence);
+    const estimate = estimateCodexCost(tokenUsage(component), component.model, requestEvidence, { rates });
     const requestUpdates = detail.map((request) => ({
       id: Number(request.id),
       costUSD: estimateCodexCost(tokenUsage(request), request.model || component.model, [{
         model: request.model || component.model,
         usage: tokenUsage(request),
-      }]).costUSD,
+      }], { rates }).costUSD,
     }));
     const update = {
       id: Number(component.id),
