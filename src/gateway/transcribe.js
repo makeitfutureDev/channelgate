@@ -188,6 +188,7 @@ export async function transcribeSlackAudioFiles(files, {
 export async function resolveAudioTranscripts(files, {
   localEnabled = true,
   downloadLocal = async () => { throw new Error("Local audio download is unavailable."); },
+  removeProcessed = null,
   localTranscriber = transcribeAudioFiles,
   localOptions = {},
   slackTranscriber = transcribeSlackAudioFiles,
@@ -196,31 +197,46 @@ export async function resolveAudioTranscripts(files, {
   const transcripts = [];
   const failed = [];
   const localFailed = [];
+  const cleanupFailed = [];
   for (const source of files || []) {
     const name = safeLabel(source?.name);
+    let saved = null;
+    let complete = false;
     if (localEnabled) {
       try {
-        const saved = await downloadLocal(source);
+        saved = await downloadLocal(source);
         if (!saved?.path) throw new Error(saved?.skipped || "Local audio download failed.");
         const local = await localTranscriber([saved], localOptions);
         if (local.transcripts?.[0]?.text) {
           transcripts.push({ name, text: local.transcripts[0].text });
-          continue;
+          complete = true;
+        } else {
+          throw new Error(local.failed?.[0]?.reason || "Local Whisper produced no transcript.");
         }
-        throw new Error(local.failed?.[0]?.reason || "Local Whisper produced no transcript.");
       } catch (error) {
         localFailed.push({ name, reason: boundedReason(error) });
       }
     }
 
-    const slack = await slackTranscriber([source], slackOptions);
-    if (slack.transcripts?.[0]?.text) {
-      transcripts.push({ name, text: slack.transcripts[0].text });
-    } else {
-      failed.push({ name, reason: boundedReason(slack.failed?.[0]?.reason || "Slack transcript is not ready — click Generate transcript, then re-trigger the bot.") });
+    if (!complete) {
+      const slack = await slackTranscriber([source], slackOptions);
+      if (slack.transcripts?.[0]?.text) {
+        transcripts.push({ name, text: slack.transcripts[0].text });
+        complete = true;
+      } else {
+        failed.push({ name, reason: boundedReason(slack.failed?.[0]?.reason || "Slack transcript is not ready — click Generate transcript, then re-trigger the bot.") });
+      }
+    }
+    if (complete && saved?.path && typeof removeProcessed === "function") {
+      try {
+        const removed = await removeProcessed(saved);
+        if (removed === false) throw new Error("downloaded source was no longer a managed regular upload");
+      } catch (error) {
+        cleanupFailed.push({ name, reason: boundedReason(error) });
+      }
     }
   }
-  return { transcripts, failed, localFailed };
+  return { transcripts, failed, localFailed, cleanupFailed };
 }
 
 export function composeVoicePrompt({ text = "", transcripts = [], failed = [] } = {}) {
@@ -348,6 +364,7 @@ export async function transcribeAudioFile(filePath, options = {}) {
 export async function transcribeAudioFiles(files, options = {}) {
   const transcripts = [];
   const failed = [];
+  const cleanupFailed = [];
   const custom = typeof options.transcribe === "function" ? options.transcribe : null;
   for (const file of files || []) {
     options.signal?.throwIfAborted();
@@ -360,9 +377,17 @@ export async function transcribeAudioFiles(files, options = {}) {
         text = await transcribeAudioFile(file.path, options);
       }
       transcripts.push({ name: safeLabel(file.name), text });
+      if (typeof options.removeProcessed === "function") {
+        try {
+          const removed = await options.removeProcessed(file);
+          if (removed === false) throw new Error("downloaded source was no longer a managed regular upload");
+        } catch (error) {
+          cleanupFailed.push({ name: safeLabel(file?.name), reason: boundedReason(error) });
+        }
+      }
     } catch (error) {
       failed.push({ name: safeLabel(file?.name), reason: boundedReason(error) });
     }
   }
-  return { transcripts, failed };
+  return { transcripts, failed, cleanupFailed };
 }
