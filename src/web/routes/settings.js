@@ -11,6 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import { allowedFsRoot, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
 import { listAvailableSkills } from "../../gateway/folders.js";
+import { workspaceAssignmentsAtPath } from "../../gateway/workspace-assignments.js";
+import { listChannels } from "../../config/store.js";
 import { requireAdapter } from "../../engines/registry.js";
 import {
   getAdminPassword,
@@ -670,7 +672,8 @@ export function createSettingsRouter({
         .sort((a, b) => a.name.localeCompare(b.name));
       const parent = path.dirname(dir);
       const parentOk = parent !== dir && pathWithin(root, parent);
-      res.json({ path: dir, parent: parentOk ? parent : null, dirs, home: os.homedir() });
+      const assignedConversations = workspaceAssignmentsAtPath(await listChannels(), dir);
+      res.json({ path: dir, parent: parentOk ? parent : null, dirs, home: os.homedir(), assignedConversations });
     } catch (e) {
       res.status(400).json({ error: e.message });
     }

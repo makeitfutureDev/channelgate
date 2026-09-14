@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Highlight every conversation that shares its resolved working folder with another conversation
+  in red in the Admin UI, and warn in red while browsing a folder that is already assigned elsewhere.
+
 - Remove gateway-downloaded audio after a successful local or Slack-fallback transcript, while
   retaining failed inputs for retry and refusing symlinks or paths outside managed uploads. Teach
   the built-in video-understanding workflow to remove only successfully processed uploaded source

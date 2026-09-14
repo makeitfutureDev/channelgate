@@ -63,7 +63,7 @@ function fixture({ workDir = "/home/operator/project", saveError } = {}) {
     tokenValue: () => "", selectedMcpEntries: () => [], checkedValues: () => [],
     explicitCheckedValues: () => [], channelGuestSavePatch: () => ({}),
     channelGuestAcceptedIds: () => null, reconcileChannelMeta,
-    attachReveal() {}, revealSecret() {}, paintModePill() {}, renderConvList() {}, setTimeout() {},
+    attachReveal() {}, revealSecret() {}, paintModePill() {}, renderConvList() {}, async refreshConversationRows() { return true; }, setTimeout() {},
     openFolderPicker() { throw new Error("Reset must not browse folders"); },
     async api(url, request) {
       calls.push({ url, method: request.method, body: JSON.parse(request.body) });

@@ -3068,6 +3068,11 @@ are retired, bullet by bullet; everything else stands.
 - Skills admin saves refresh existing workspaces immediately. Boot and a five-second daemon
   reconciliation pass refresh changed catalog/template/grant state, including MCP changes. Failed
   writes are reported and retried; conflicting selections for a shared folder are reported.
+- The Admin UI makes shared-folder assignments visible before they break a run. Every channel or
+  DM whose effective working folder is assigned to another conversation gets a red warning row in
+  Conversations. The working-folder browser shows a red, named warning whenever the directory being
+  viewed is already assigned elsewhere, before **Use this folder** can create another shared
+  assignment. Both views use the runtime's resolved path logic rather than raw string comparison.
 - Runtime settings provide **Reset to default** beside **Browse**. It clears only the custom
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.
