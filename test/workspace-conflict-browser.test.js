@@ -1,5 +1,5 @@
 // Real browser acceptance for duplicate working-folder warnings.
-// CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test test/workspace-conflict-browser.test.js
+// In the shipped image, follow TEST-PLAN.md's Browser acceptance runner with this test path.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
@@ -33,6 +33,7 @@ test("duplicate conversation rows and used folders render red warnings that clea
   app.use(express.json());
   app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
+  app.get("/api/channels/:channelId/members", (_req, res) => res.json({ members: [] }));
   app.use("/api", createAdminRouter({ slack: { snapshot: () => ({ status: "disconnected", connected: false }), getClient: () => null } }));
   const publicDir = fileURLToPath(new URL("../public", import.meta.url));
   app.use(express.static(publicDir, { dotfiles: "allow" }));
@@ -44,8 +45,16 @@ test("duplicate conversation rows and used folders render red warnings that clea
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.setDefaultTimeout(15_000);
+  // The fixture targets folder warnings, not the daemon-wide live-session feed. Disabling SSE
+  // avoids a deliberately open stream producing teardown noise in the console-error assertion.
+  await page.addInitScript(() => Object.defineProperty(globalThis, "EventSource", { value: undefined }));
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    const source = message.location().url;
+    errors.push(`${message.text()}${source ? ` (${source})` : ""}`);
+  });
   await page.goto(`http://127.0.0.1:${server.address().port}/conversations/channel/C_FOLDER_WARNING_A`);
 
   const warningRows = page.locator("#channel-list .workdir-conflict");
