@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Browser acceptance runner
+
+Browser test files intentionally skip unless `CG_BROWSER_MODULE` points at a compatible Playwright
+module. In the shipped ChannelGate container image, use the pinned global module and bundled browser
+cache—not an arbitrary `~/.npm/_npx` copy:
+
+```sh
+node -e 'const expected=require("./containers/versions.json").npm.playwright; const actual=require("/usr/local/lib/node_modules/playwright/package.json").version; if(actual!==expected) throw new Error(`Playwright mismatch: expected ${expected}, found ${actual}`)'
+PLAYWRIGHT_BROWSERS_PATH=/opt/channelgate/browsers \
+  CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs \
+  node --test test/<browser-case>.test.js
+```
+
+A missing-browser-executable error normally means the selected Playwright module expects a different
+browser revision; it is a fixture failure, not evidence that the product case failed. Re-select the
+module pinned in `containers/versions.json` and rerun. Outside the shipped image, install that exact
+Playwright version, point `CG_BROWSER_MODULE` at its `index.mjs`, and set
+`PLAYWRIGHT_BROWSERS_PATH` to the matching installed browser cache. A browser case passes only when
+it executes rather than skips, its assertions pass, and it records no page or console errors.
+
 ## Interactive Slack clarification — Claude and Codex acceptance
 
 Automated regression: `test/questions.test.js`, `test/question-views.test.js`,
@@ -199,16 +219,21 @@ test/workspace-conflict-admin.test.js`.
 Exercises real registration and conflict detection for skill and memory mismatches, root/thread
 routing, mention and typed `/mode`, duplicate delivery, unauthorized authors, Slack delivery failure,
 preservation of a workspace sentinel, API annotations for shared channels and DMs, and folder-browser
-assignment discovery. The UI regression pins the red list-row and browser-message states. No engine
-starts; this behavior is engine-independent.
+assignment discovery. It assigns one conversation through a directory symlink and requires the
+resolved real folder to conflict, so equal strings alone cannot satisfy the regression. The UI
+regression pins the red list-row and browser-message states. No engine starts; this behavior is
+engine-independent.
 
 - [x] Browser (engine-independent, disposable Chromium fixture):
-  `CG_BROWSER_MODULE=/path/to/playwright/index.mjs node --test
-  test/workspace-conflict-browser.test.js` creates two conversations on one real folder, a control
-  on a separate folder and one unused folder. It requires exactly the duplicate rows to render red,
-  requires the folder modal to name only other assignments, verifies used/control/unused navigation,
-  saves the unused folder and waits for every stale red row to clear without reload. Browser errors
-  fail the case; no engine is spawned.
+  run the pinned-image procedure above with `test/workspace-conflict-browser.test.js`. The fixture
+  creates two conversations on one real folder, a control on a separate folder and one unused folder.
+  It requires exactly the duplicate rows to render red, requires the folder modal to name only other
+  assignments, verifies used/control/unused navigation, saves the unused folder and waits for every
+  stale red row to clear without reload. Require the PUT response to be HTTP 200 and the warning-row
+  count to reach zero; do not substitute a fixed delay for those waits. Browser errors fail the case;
+  no engine is spawned. The focused fixture returns an empty successful channel roster and disables
+  the unrelated long-lived active-runs EventSource before loading the app, so disconnected-Slack 503s
+  and SSE teardown noise cannot be mistaken for feature failures or silently allowlisted.
 - [x] Airtable: active engine-independent live definition `UI-WORKDIR-CONFLICT-01` mirrors the
   Admin UI shared-folder setup, navigation, immediate refresh and evidence requirements below.
 
