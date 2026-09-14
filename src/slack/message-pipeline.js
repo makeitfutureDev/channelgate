@@ -18,6 +18,7 @@ import { resolveRuntime } from "../runtimes/resolve.js";
 import { setThreadEngine, getThreadEngine, resolveThreadEngine, setThreadClean, getThreadClean, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
 import { abortPooled, pooledBusy, interruptPooled } from "../engines/session-pool.js";
 import { logEvent } from "../util/logger.js";
+import { removeRegularFileWithin } from "../gateway/safe-fs.js";
 // A typed `/mode` is a channel POLICY change like any admin-UI save — audited the same way.
 import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { createUsageBank } from "../gateway/usage.js";
@@ -1144,6 +1145,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
               if (!local?.path) throw new Error(local?.skipped || "Slack audio download failed.");
               return local;
             },
+            removeProcessed: (file) => removeRegularFileWithin(path.join(dest.root, "uploads"), file.path),
             slackOptions: { botToken },
           });
         } finally {
@@ -1164,6 +1166,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             author: event.user,
             slug: entry.slug,
             reasons: voice.failed.map((item) => `${item.name}: ${item.reason}`).join("; ").slice(0, 1000),
+          });
+        }
+        if (voice.cleanupFailed.length) {
+          await logEvent("attachment_cleanup_failed", {
+            channel: event.channel,
+            author: event.user,
+            slug: entry.slug,
+            reasons: voice.cleanupFailed.map((item) => `${item.name}: ${item.reason}`).join("; ").slice(0, 1000),
           });
         }
         if (!voice.transcripts.length && !prompt.trim()) {

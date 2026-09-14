@@ -1,5 +1,10 @@
 # Changelog — ChannelGate
 
+- Remove gateway-downloaded audio after a successful local or Slack-fallback transcript, while
+  retaining failed inputs for retry and refusing symlinks or paths outside managed uploads. Teach
+  the built-in video-understanding workflow to remove only successfully processed uploaded source
+  videos after all required re-sampling, never project files or failed inputs.
+
 - Correct Codex history repricing to honor OpenAI's effective date for GPT-5.6 Sol: retain the
   original $5 / $0.50 cached / $30 rate before 2026-08-21 and apply $4 / $0.40 / $20 from that
   date onward. Upgraded instances rerun the backup-first correction under a new pricing basis.

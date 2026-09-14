@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, stat, writeFile, symlink, lstat, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
@@ -19,7 +21,7 @@ ensureTestEnv();
 // test ever provisions a folder in the operator's real ~/Slack Agent.
 process.env.CG_WORKSPACE_DIR ||= await mkdtemp(path.join(os.tmpdir(), "cg-ws-"));
 
-const [{ readNoFollow, writeNoFollow, writeStreamNoFollow, createExclusive, ensureRealDir }, memory, guide, folders, librarySkills, apiRuns, pipeline, paths, attachments, { ATTACHMENT_MAX_BYTES }] =
+const [{ readNoFollow, writeNoFollow, writeStreamNoFollow, createExclusive, ensureRealDir, removeRegularFileWithin }, memory, guide, folders, librarySkills, apiRuns, pipeline, paths, attachments, { ATTACHMENT_MAX_BYTES }] =
   await Promise.all([
     import("../src/gateway/safe-fs.js"),
     import("../src/gateway/channel-memory.js"),
@@ -89,6 +91,25 @@ test("readNoFollow rethrows a REAL read failure instead of reporting the file as
   const dir = path.join(cwd, "AGENTS.md");
   await mkdir(dir);
   assert.equal(await readNoFollow(dir), null);
+});
+
+test("managed cleanup removes only regular files that remain inside its trusted root", async (t) => {
+  const { cwd, outside } = await scratch(t);
+  const uploads = path.join(cwd, "uploads");
+  await mkdir(uploads);
+  const processed = path.join(uploads, "voice.wav");
+  const outsideFile = path.join(outside, "keep.wav");
+  const plantedLink = path.join(uploads, "swapped.wav");
+  await writeFile(processed, "processed");
+  await writeFile(outsideFile, "outside");
+  await symlink(outsideFile, plantedLink);
+
+  assert.equal(await removeRegularFileWithin(uploads, processed), true);
+  await assert.rejects(readFile(processed), { code: "ENOENT" });
+  assert.equal(await removeRegularFileWithin(uploads, outsideFile), false);
+  assert.equal(await removeRegularFileWithin(uploads, plantedLink), false);
+  assert.equal(await readFile(outsideFile, "utf8"), "outside");
+  assert.equal((await lstat(plantedLink)).isSymbolicLink(), true);
 });
 
 test("writeNoFollow replaces a symlink node atomically and leaves no temp files behind", async (t) => {
@@ -234,7 +255,33 @@ test("the gateway-usage refresh replaces planted symlinks inside its own skill f
   await assertReplacedNode(path.join(skillDir, "SKILL.md"), skillVictim);
   assert.match(await readFile(path.join(skillDir, "SKILL.md"), "utf8"), /name: gateway-usage/);
   assert.match(await readFile(path.join(skillDir, "references", "video-understanding.md"), "utf8"), /two synchronized evidence streams/);
+  assert.match(await readFile(path.join(skillDir, "references", "video-understanding.md"), "utf8"), /remove the original only[\s\S]*beneath the current channel's `uploads\/` directory/);
   assert.match(await readFile(path.join(skillDir, "scripts", "analyze_video.py"), "utf8"), /timestamped visual\/audio evidence pack/);
+  assert.match(await readFile(path.join(skillDir, "scripts", "cleanup_uploaded_media.py"), "utf8"), /current channel's managed uploads directory/);
+});
+
+test("the video cleanup helper removes uploads and refuses outside files or symlinks", async (t) => {
+  const { cwd, outside } = await scratch(t);
+  const uploads = path.join(cwd, "uploads");
+  const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "gateway", "gateway-usage", "scripts", "cleanup_uploaded_media.py");
+  await mkdir(uploads);
+  const uploaded = path.join(uploads, "recording.mp4");
+  const outsideFile = path.join(outside, "project.mp4");
+  const link = path.join(uploads, "linked.mp4");
+  await writeFile(uploaded, "uploaded");
+  await writeFile(outsideFile, "project");
+  await symlink(outsideFile, link);
+
+  const removed = spawnSync("python3", [script, uploaded], { cwd, encoding: "utf8" });
+  assert.equal(removed.status, 0, removed.stderr);
+  await assert.rejects(readFile(uploaded), { code: "ENOENT" });
+
+  const outsideResult = spawnSync("python3", [script, outsideFile], { cwd, encoding: "utf8" });
+  assert.equal(outsideResult.status, 2);
+  const linkResult = spawnSync("python3", [script, link], { cwd, encoding: "utf8" });
+  assert.equal(linkResult.status, 2);
+  assert.equal(await readFile(outsideFile, "utf8"), "project");
+  assert.equal((await lstat(link)).isSymbolicLink(), true);
 });
 
 test("the gateway-usage refresh rebuilds a symlinked .claude/skills path as real directories", async (t) => {

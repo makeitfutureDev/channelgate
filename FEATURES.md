@@ -447,7 +447,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Downloadable audio is transcribed locally with the shared Whisper setting and cancellation;
   the portable path never calls Slack transcript APIs. Raw audio paths are withheld from the
   engine, ordinary files remain available, failed audio alone produces an explanation without an
-  engine turn, and typed text can continue with a visible missing-transcript note. Progress starts
+  engine turn, and typed text can continue with a visible missing-transcript note. A successfully
+  transcribed gateway-downloaded audio source is removed immediately; failed sources remain for a
+  retry, and symlinks or paths outside the managed `uploads/` root are refused. Progress starts
   before download/transcription. Every attachment intake has a unique storage directory so
   simultaneous same-name files or later edits cannot overwrite bytes another turn is reading.
 - The branch's Slack parity inventory and remaining surface-specific work live in
@@ -641,7 +643,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Slack's completed full VTT transcript; absent transcripts prompt the user to click **Generate
   transcript** and re-trigger. Fresh installers ask whether to provision Whisper, updates honor the
   stored setting, and disabled mode never downloads raw audio. Typed text remains instructions and
-  raw audio is excluded from Claude/Codex. → TEST-PLAN: Voice prompts.
+  raw audio is excluded from Claude/Codex. Successfully resolved downloaded audio is removed from
+  the channel's `uploads/` folder, including when Slack transcript fallback completes after a local
+  failure; unresolved audio is retained for retry. → TEST-PLAN: Voice prompts.
 - Native Slack **channel file explorer**: the 📂 reply button opens a Block Kit modal rooted at the channel's
   effective working folder. Its title identifies the authoritative stored Slack channel name, and
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
@@ -2211,7 +2215,10 @@ are retired, bullet by bullet; everything else stands.
   image includes `ffmpeg`/`ffprobe`, pinned `opencv-python-headless` + `faster-whisper`, and a
   root-owned pre-cached Whisper `small` model. The always-present `gateway-usage` skill owns the
   video workflow, sampling guidance, dependency diagnostics, and analyzer script, so it can extract representative frames, build contact sheets and transcribe timestamped
-  speech without a per-channel install or first-use model download. `npm run setup` builds the
+  speech without a per-channel install or first-use model download. After successful analysis and
+  any needed re-sampling, the workflow removes only gateway-downloaded regular video files beneath
+  the channel's `uploads/` directory; failures and user-managed project files remain untouched.
+  `npm run setup` builds the
   image as part of a fresh install (`--skip-image` / `CG_BUILD_IMAGE=no` defers it and names
   `npm run build:image` as the remedy; a failed build never aborts the install), so a new gateway
   never reaches its first message without the toolchain. The former standalone catalog skill is

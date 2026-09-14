@@ -11,9 +11,10 @@ const { runProcess, transcribeAudioFiles } = await import('../src/gateway/transc
 const audio = (name = 'clip.wav') => ({ name, contentType: 'audio/wav', download: async () => Buffer.from('fixture audio') });
 
 test('voice metadata follows original attachment index through download failures; files remain files', async () => {
-  let seen;
-  const result = await prepareVoiceAttachments({ text: 'Please summarize', attachments: [{ name: 'missing.pdf', contentType: 'application/pdf' }, audio(), { name: 'data.txt', contentType: 'text/plain' }] }, ['/fixture/2-clip.wav', '/fixture/3-data.txt'], { enabled: true, transcribe: async (files) => { seen = files; return { transcripts: [{ name: 'clip.wav', text: 'Book a meeting' }], failed: [] }; } });
+  let seen; let removed;
+  const result = await prepareVoiceAttachments({ text: 'Please summarize', attachments: [{ name: 'missing.pdf', contentType: 'application/pdf' }, audio(), { name: 'data.txt', contentType: 'text/plain' }] }, ['/fixture/2-clip.wav', '/fixture/3-data.txt'], { enabled: true, removeProcessed: async (file) => { removed = file.path; return true; }, transcribe: async (files, options) => { seen = files; await options.removeProcessed(files[0]); return { transcripts: [{ name: 'clip.wav', text: 'Book a meeting' }], failed: [], cleanupFailed: [] }; } });
   assert.equal(seen[0].path, '/fixture/2-clip.wav'); assert.deepEqual(result.paths, ['/fixture/3-data.txt']); assert.match(result.text, /Please summarize/); assert.match(result.text, /Book a meeting/);
+  assert.equal(removed, '/fixture/2-clip.wav'); assert.deepEqual(result.cleanupFailed, []);
 });
 
 test('local-only disabled, failed, missing and empty speech paths explain failure', async () => {

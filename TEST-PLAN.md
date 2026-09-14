@@ -269,7 +269,8 @@ allowlisted drive identity, no `/shares` request, no bearer on the byte request,
 and bounded streams. Voice fixtures inject transcripts/failures, plus a cancellable local Node
 child; require no raw audio engine attachments, no engine on audio-only failure and preserved
 text/file fallback. Simultaneous flat messages named `audio.wav` plus a revision must retain
-three different storage paths and each original byte sequence.
+three different storage paths while processing; completed audio sources are then removed and a
+failed source remains byte-for-byte available for retry.
 
 - [ ] UNEXECUTED live native-card gate, separately with Claude and Codex pinned: install the
   reviewed branch manifest in an owned personal chat, channel and external-member group. It must
@@ -314,8 +315,9 @@ three different storage paths and each original byte sequence.
   `Reply TEXT_FALLBACK_OK` with unavailable audio: text must run and the failure remain visible.
   Stop a long local transcription and verify child exit and no later engine start. Send two
   simultaneous group messages each attaching `audio.wav` with distinct spoken markers, then
-  edit/retrigger one; require independent stored bytes, transcripts and group session roots.
-  Preserve ordinary attached files. There is no Slack transcript fallback on Teams.
+  edit/retrigger one; require independent transcripts and group session roots, successful audio
+  sources removed after processing, and the stopped/failed source retained for retry. Preserve
+  ordinary attached files. There is no Slack transcript fallback on Teams.
 
 
 Verification on 2026-09-09: full coverage suite passed (2,404 passed, 10 skipped);
@@ -1717,8 +1719,11 @@ structural invariants are automated; rendered navigation and feature claims also
       the assistant status reads `is downloading 1 attachment(s) (… MB)…` while it fetches, the file
       lands under `uploads/<thread>/` with its full size, the daemon's RSS does not grow by the file
       size (`systemctl --user status` memory line before/after), and the `video-understanding` skill
-      analyzes it. Attach a >500 MB file → the reply says `<size> exceeds the 500 MB attachment
-      limit` and `events.attachment_failed` carries the same reason. Both engines (QA: ATT-01).
+      analyzes it. After the evidence pack and any targeted re-sampling are complete, the original
+      upload is gone while the evidence pack remains. A deliberately failed decode keeps its source,
+      and a project video outside `uploads/` is never deleted. Attach a >500 MB file → the reply
+      says `<size> exceeds the 500 MB attachment limit` and `events.attachment_failed` carries the
+      same reason. Both engines (QA: ATT-01).
 - [ ] Live attachment smoke: upload XLSX, PDF, image, and multiple files with an `@bot` mention in
       both a root and a reply; edit a file message to add the mention; and confirm each turn receives
       the local path under the same thread folder exactly once. Then read the thread with
@@ -1747,8 +1752,10 @@ structural invariants are automated; rendered navigation and feature claims also
       by `test/whisper-transcribe.test.js`.
 - [x] Unit: an unmentioned channel voice clip stays inert; mentioned, 🤖-reaction, and DM voice
       messages follow existing trigger semantics; authorization precedes both paths; typed text +
-      voice compose one prompt; raw audio is omitted; and no-transcript guidance exits before an
-      engine run (`test/slack-voice-prompts.test.js`).
+      voice compose one prompt; raw audio is omitted; successfully resolved downloads are removed;
+      failed originals remain for retry; cleanup refuses out-of-root files and symlinks; and
+      no-transcript guidance exits before an engine run (`test/slack-voice-prompts.test.js`,
+      `test/whisper-transcribe.test.js`, `test/managed-write-symlinks.test.js`).
 - [x] Unit: the backward-compatible setting and Admin UI/API wiring are covered by
       `test/whisper-settings.test.js`; installer flags/env/prompt/default behavior, platform/checksum
       selection, archive safety, persisted skip, and conditional updates are covered by
@@ -1757,7 +1764,9 @@ structural invariants are automated; rendered navigation and feature claims also
       clip runs after an `@mention` or 🤖 reaction, while a DM follows current no-mention behavior.
 - [ ] Live: an unauthorized author cannot cause an audio download/transcription in a channel or DM.
 - [ ] Live: English and Romanian clips transcribe accurately enough to execute the spoken request;
-      typed text acts as instructions, and two clips appear in their original order.
+      typed text acts as instructions, and two clips appear in their original order. A successful
+      local transcript removes its downloaded source from `uploads/`; local failure plus successful
+      Slack fallback also removes it; total failure retains it for retry.
 - [ ] Privacy: with local mode enabled, observe only local `ffmpeg`/`whisper-cli`; with it disabled,
       observe Slack metadata/VTT reads but no raw-audio download. In both modes, neither raw audio nor
       an audio path reaches Claude/Codex.
@@ -4275,9 +4284,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       cache, passes every pin through the image builder, and bumps the daemon/image spec in lockstep
       (automated: `test/container-image.test.js`).
 - [x] Unit: `gateway-usage` materializes its video workflow, dependency reference, and analyzer
-      script into every surface; the former standalone slug is rejected at the grant boundary,
-      excluded from the catalog, removed from organization/template/channel/personal grants at
-      boot, and stale gateway-managed workspace copies are pruned (automated:
+      script into every surface, including the successful-analysis-only cleanup rule for regular
+      gateway downloads beneath `uploads/`; the former standalone slug is rejected at the grant
+      boundary, excluded from the catalog, removed from organization/template/channel/personal
+      grants at boot, and stale gateway-managed workspace copies are pruned (automated:
       `test/access-grants.test.js`, `test/managed-write-symlinks.test.js`,
       `test/skills-platform.test.js`).
 - [x] Unit: `npm run setup` builds the channel image as part of the install (`scripts/install.sh`

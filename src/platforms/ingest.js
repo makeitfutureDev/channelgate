@@ -3,7 +3,7 @@
 // policy/stores as Slack. Interactive approval escalation remains deliberately unavailable here.
 import { upsertChannelEntry, getChannelMeta, saveChannelMeta, defaultChannelMeta, getUser, setUser, isAdmin, isApproved } from "../config/store.js";
 import { getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges } from "../config/settings.js";
-import { ensureChannelFolder } from "../gateway/folders.js";
+import { effectiveWorkDir, ensureChannelFolder } from "../gateway/folders.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { runMessage } from "../gateway/run.js";
 import { createUsageBank } from "../gateway/usage.js";
@@ -12,6 +12,8 @@ import { platformOr, platformSupports } from "./registry.js";
 import { postFormatted } from "./connector.js";
 import { sessionKeyForMessage, rememberReplySession } from "./reply-sessions.js";
 import { saveInboundAttachments } from "./attachments.js";
+import path from "node:path";
+import { removeRegularFileWithin } from "../gateway/safe-fs.js";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
@@ -121,7 +123,22 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       skipped = saved.skipped;
       signal.throwIfAborted();
       if (hasVoiceAttachments(message)) progress.phase('Transcribing voice locally');
-      prepared = await voice(message, saved.paths, { signal });
+      prepared = await voice(message, saved.paths, {
+        signal,
+        removeProcessed: (file) => removeRegularFileWithin(
+          path.join(effectiveWorkDir(entry.slug, meta), "uploads"),
+          file.path,
+        ),
+      });
+      if (prepared.cleanupFailed?.length) {
+        await logEvent("attachment_cleanup_failed", {
+          channel: message.conversationId,
+          author: message.userId,
+          slug: entry.slug,
+          platform: adapter.id,
+          reasons: prepared.cleanupFailed.map((item) => `${item.name}: ${item.reason}`).join("; ").slice(0, 1000),
+        });
+      }
       if (prepared.hasVoice && !prepared.hasPrompt && !prepared.paths.length) {
         await progress.stop();
         await deliver(connector, message, placeholder, prepared.failureNotice || 'Could not transcribe this audio. Please send text or ask an administrator to check local Whisper.', rememberReply);
