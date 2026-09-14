@@ -26,6 +26,7 @@ import {
 } from "../../config/store.js";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
 import { ensureChannelFolder, effectiveWorkDir, gatewayInstructionsBlock, splitGatewayBlock, channelSeed } from "../../gateway/folders.js";
+import { workspaceConflictsBySlug } from "../../gateway/workspace-assignments.js";
 import { memoryEnabled, countMemoryFacts, MEM_FILE, MEM_DIR } from "../../gateway/channel-memory.js";
 import {
   ENGINES,
@@ -148,7 +149,9 @@ export function createChannelsRouter({
   router.get("/dms", async (_req, res, next) => {
     try {
       const users = await getUsers();
-      const dms = (await listChannels())
+      const allChannels = await listChannels();
+      const conflicts = workspaceConflictsBySlug(allChannels);
+      const dms = allChannels
         .filter((c) => c.isDM)
         .map((c) => {
           const meta = c.meta || {};
@@ -159,6 +162,7 @@ export function createChannelsRouter({
             dmUserId: uid,
             userName: users[uid]?.name || uid || c.slug,
             template: meta.template || "user",
+            workDirConflict: conflicts.get(c.slug) || null,
             // A DM is a channel too, so it gets the SAME masker — the copy that used to live here
             // masked Composio and Toolbox but not the Make toolbox key or a dead field.
             meta: maskChannelMeta(meta),
@@ -218,13 +222,16 @@ export function createChannelsRouter({
   // ── Channels ────────────────────────────────────────────────────────────────
   router.get("/channels", async (_req, res, next) => {
     try {
+      const allChannels = await listChannels();
+      const conflicts = workspaceConflictsBySlug(allChannels);
       // DMs aren't shown here — a DM has no per-channel settings (access is governed by the
       // user's approval in the Users tab, not allowedUsers/MCPs/skills).
-      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im");
+      const channels = allChannels.filter((c) => !c.isDM && c.type !== "im");
       // Per-channel Composio / Toolbox / Make toolbox secrets are NOT returned — only has*/last4
       // for display. The UI fetches a value on demand via POST /secrets/reveal, which re-prompts
       // for the admin password. Only overwritten on save when a non-empty value is sent.
       for (const ch of channels) {
+        ch.workDirConflict = conflicts.get(ch.slug) || null;
         if (!ch.meta) continue;
         ch.meta = maskChannelMeta(ch.meta);
       }

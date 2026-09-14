@@ -192,12 +192,37 @@ observed tool/process/filesystem evidence, and verdict. A missing, skipped, or b
 is not a pass. Maintain the private QA registry alongside these reusable public instructions.
 
 
-## Slack shared-folder conflict replies
+## Shared-folder conflict detection and warnings
 
-Automated regression: `node --test test/workspace-conflict-reply.test.js test/skills-workspace-sync.test.js`.
+Automated regression: `node --test test/workspace-conflict-reply.test.js test/skills-workspace-sync.test.js
+test/workspace-conflict-admin.test.js`.
 Exercises real registration and conflict detection for skill and memory mismatches, root/thread
 routing, mention and typed `/mode`, duplicate delivery, unauthorized authors, Slack delivery failure,
-and preservation of a workspace sentinel. No engine starts; this behavior is engine-independent.
+preservation of a workspace sentinel, API annotations for shared channels and DMs, and folder-browser
+assignment discovery. The UI regression pins the red list-row and browser-message states. No engine
+starts; this behavior is engine-independent.
+
+- [x] Browser (engine-independent, disposable Chromium fixture):
+  `CG_BROWSER_MODULE=/path/to/playwright/index.mjs node --test
+  test/workspace-conflict-browser.test.js` creates two conversations on one real folder, a control
+  on a separate folder and one unused folder. It requires exactly the duplicate rows to render red,
+  requires the folder modal to name only other assignments, verifies used/control/unused navigation,
+  saves the unused folder and waits for every stale red row to clear without reload. Browser errors
+  fail the case; no engine is spawned.
+- [x] Airtable: active engine-independent live definition `UI-WORKDIR-CONFLICT-01` mirrors the
+  Admin UI shared-folder setup, navigation, immediate refresh and evidence requirements below.
+
+Admin UI live release gate — **UNEXECUTED** (engine-independent). On a disposable deployment, create
+three conversations: `folder-warning-a` and `folder-warning-b` use the same real folder, while
+`folder-warning-control` uses a separate folder. Reload Conversations. Require A and B—but not the
+control—to have red rows, a visible warning mark and “Shared working folder”; hovering each warning
+must name the other assignment. Open A → Runtime → Browse and navigate to the shared folder: require
+a red message naming B before selection. Navigate to the control's folder and an unused folder: the
+warning must update to name the control for the former and disappear for the latter. Open the control
+and browse the shared folder: require both A and B named before **Use this folder**. Reset B to its
+default folder, save and reload; A and B must return to normal rows and browsing A's folder must no
+longer warn about B. Record candidate revision, screenshots at desktop and narrow widths, API payloads
+with no secret values, and browser-console output in the private QA registry before marking passed.
 
 Live release gate — **UNEXECUTED** (engine-independent: registration fails before engine selection).
 On a disposable deployment, create two synthetic Slack test channels and register both. Assign both

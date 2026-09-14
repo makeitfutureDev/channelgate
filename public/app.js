@@ -991,6 +991,18 @@ async function openActiveSessions() {
 }
 
 // ── Conversations (master–detail): templates + channels + DMs in one list ─────────
+async function refreshConversationRows() {
+  try {
+    const [{ channels }, { dms }] = await Promise.all([api("/api/channels"), api("/api/dms")]);
+    CHANNELS = channels;
+    DMS = dms;
+    renderConvList();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function loadConversations() {
   const [{ channels }, { dms }, s] = await Promise.all([api("/api/channels"), api("/api/dms"), api("/api/settings")]);
   CHANNELS = channels;
@@ -1046,16 +1058,29 @@ function conversationExists(key) {
   return false;
 }
 
-function convRow(key, color, name, sub, cost) {
+function workDirConflictSummary(conflict) {
+  const others = Array.isArray(conflict?.conversations) ? conflict.conversations : [];
+  if (!others.length) return "";
+  const names = others.map((item) => item.isDM || item.type === "im"
+    ? (item.name || item.slug)
+    : hashName(item.name || item.slug));
+  return `Working folder is also assigned to ${names.join(", ")}`;
+}
+
+function convRow(key, color, name, sub, cost, conflict = null) {
   const el = document.createElement("a");
-  el.className = "list-item conv-item" + (selectedConv === key ? " active" : "");
+  const conflictText = workDirConflictSummary(conflict);
+  el.className = "list-item conv-item" + (conflictText ? " workdir-conflict" : "") + (selectedConv === key ? " active" : "");
   el.href = conversationPathForKey(key);
+  if (conflictText) el.title = conflictText;
   // Compact whole-dollar 30-day cost (skip sub-$1 rows so the list stays quiet).
   const dollars = cost == null ? null : Math.round(cost);
   const costHtml = dollars && dollars >= 1 ? `<span class="conv-cost">$${escapeHtml(dollars.toLocaleString())}</span>` : "";
+  const conflictHtml = conflictText ? '<span class="conv-conflict-mark" aria-label="Working folder conflict">!</span>' : "";
   el.innerHTML =
     `<span class="capdot" style="background:${color}"></span>` +
-    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}</span>` +
+    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}${conflictText ? '<small class="conv-conflict-text">Shared working folder</small>' : ""}</span>` +
+    conflictHtml +
     costHtml;
   el.addEventListener("click", (e) => {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -1090,7 +1115,7 @@ function renderConvList() {
       e.textContent = CHANNELS.length ? "No channels match." : "No channels yet — invite the bot and send a message.";
       list.appendChild(e);
     } else {
-      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), hashName(c.name || c.slug), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug)));
+      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), hashName(c.name || c.slug), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
     }
   }
 
@@ -1112,7 +1137,7 @@ function renderConvList() {
       for (const d of dmItems) {
         const tplName = d.template === "admin" ? "Admin template" : d.template === "custom" ? "Custom" : "User template";
         const capMeta = d.template === "custom" ? d.meta || {} : DM_TEMPLATES[d.template] || {};
-        list.appendChild(convRow("dm:" + d.channelId, capColorOf(capMeta), d.userName || d.slug, tplName, costFor(d.channelId, d.slug)));
+        list.appendChild(convRow("dm:" + d.channelId, capColorOf(capMeta), d.userName || d.slug, tplName, costFor(d.channelId, d.slug), d.workDirConflict));
       }
     }
   }
@@ -1860,7 +1885,9 @@ function renderChannelDetail(ch) {
       makeToolboxState.textContent = ch.meta.hasMakeToolboxKey ? "saved" : "not configured";
       clearMakeToolbox = false;
       paintModePill(ch.meta);
-      renderConvList();
+      // A work-folder save can add or remove warnings on several rows at once. Refresh both
+      // conversation collections from the authoritative server rather than repainting stale flags.
+      if (!(await refreshConversationRows())) renderConvList();
       detailDirty = false;
       savebarMsg.textContent = "Saved";
       savebarMsg.classList.add("clean");
@@ -3624,6 +3651,19 @@ async function fsBrowse(p) {
   const data = await api(`/api/fs/list${p ? `?path=${encodeURIComponent(p)}` : ""}`);
   fsCurrentPath = data.path;
   document.getElementById("fs-current").textContent = data.path;
+  const conflict = document.getElementById("fs-conflict");
+  const otherAssignments = (Array.isArray(data.assignedConversations) ? data.assignedConversations : [])
+    .filter((item) => `${item.isDM || item.type === "im" ? "dm" : "ch"}:${item.channelId}` !== selectedConv);
+  if (otherAssignments.length) {
+    const names = otherAssignments.map((item) => item.isDM || item.type === "im"
+      ? (item.name || item.slug)
+      : hashName(item.name || item.slug));
+    conflict.textContent = `Already assigned to ${names.join(", ")}. Selecting it here will share one working folder between conversations.`;
+    conflict.hidden = false;
+  } else {
+    conflict.textContent = "";
+    conflict.hidden = true;
+  }
   document.getElementById("fs-up").disabled = !data.parent;
   document.getElementById("fs-up").dataset.parent = data.parent || "";
   const list = document.getElementById("fs-list");
