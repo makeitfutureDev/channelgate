@@ -434,11 +434,12 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **Reason:** running a full agent session to say "submit your timesheet" was pure waste; and a
   reminder nobody acknowledges is indistinguishable from no reminder at all.
 
-#### Opt-in no-response nudges
-- **What:** per-channel opt-in: the bot posts one gentle follow-up in a thread quiet past a
-  window (default 24h). Strictly single-thread.
+#### Personal no-response nudges
+- **What:** each user can opt in or out in Slack App Home; the bot posts one gentle follow-up that
+  mentions that user when their agent thread is quiet past a window (default 24h). The preference
+  follows the person across channels and DMs. Strictly single-thread.
 - **Value:** dropped threads resurface themselves instead of dying in scrollback.
-- **Reason:** deliberately narrow (opt-in, one nudge, no cross-channel scanning) because an
+- **Reason:** deliberately narrow (personal opt-in, one nudge, no cross-channel scanning) because an
   over-eager nagging bot is worse than none.
 
 #### Personal pending-response digests

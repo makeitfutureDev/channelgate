@@ -29,7 +29,7 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../gateway/skills/authoring.js";
@@ -97,6 +97,7 @@ import { appContextForMessage, appContextObservedAt, appContextUserId, createApp
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
+import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { buildStatusReport } from "./status-controller.js";
 // Re-exported for existing importers (tests) — moved to slack/message-pipeline.js.
@@ -2055,6 +2056,7 @@ async function connectAndWire(app) {
     const admin = await isAdmin(userId);
     const approved = await isApproved(userId);
     const role = admin ? "an *admin*" : approved ? "an *approved* user" : "*not yet approved* (an admin can approve you)";
+    const homeUser = (await getUsers())[userId] || {};
 
     // Connection status distinguishes personal Composio from the shared org fallback. Only
     // ✅/⚪/❌ is ever rendered — never a token value. A channel token may replace the org source
@@ -2093,7 +2095,6 @@ async function connectAndWire(app) {
 
     // Your skills: the personal tier of the grant union (skills only your own runs carry) plus the
     // organization tier everyone gets. Channel grants are per conversation and not knowable here.
-    const homeUser = (await getUsers())[userId] || {};
     const personalSkills = Array.isArray(homeUser.skills) ? homeUser.skills : [];
     const orgSkills = Array.isArray(getOrgAccessGrants().skills) ? getOrgAccessGrants().skills : [];
     let favLines = personalSkills.length
@@ -2131,6 +2132,7 @@ async function connectAndWire(app) {
       { type: "header", text: { type: "plain_text", text: "ChannelGate", emoji: true } },
       { type: "section", text: { type: "mrkdwn", text: `Hi <@${userId}> — you're ${role} on this gateway.` } },
       { type: "section", text: { type: "mrkdwn", text: "I'm Claude, running self-hosted in per-channel sandboxes. *DM me* (no mention needed) or *@mention me* in a channel. Use `/status` to see what a channel is working on, `/pending` for the threads I'm waiting on you for, or `/help` for all commands." } },
+      ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
       { type: "divider" },
       { type: "section", text: { type: "mrkdwn", text: `*Your connections* — the MCP tools you get when you run me\n${conns}` } },
       // Personal Composio key, set from a modal — the value never becomes a Slack message. Absent
@@ -2177,6 +2179,7 @@ async function connectAndWire(app) {
   });
 
   registerComposioHomeActions(app, { publishHome: publishHomeTab });
+  registerNudgeHomeActions(app, { publishHome: publishHomeTab });
 
   // Removing a ✅ re-opens that thread in the reactor's follow-up digest (the inverse of marking
   // it done). Other removed reactions are acknowledged as no-ops.
@@ -2271,7 +2274,6 @@ async function connectAndWire(app) {
           if (current) return {};
           const fresh = applyChannelTemplate(defaultChannelMeta({ channelId: event.channel, ...info }));
           if (!fresh.isDM) fresh.access = getDefaultChannelAccess();
-          fresh.nudges = getDefaultNudges(); // capture the org-default nudge at join
           return fresh;
         });
         await ensureChannelFolder(entry.slug, meta);

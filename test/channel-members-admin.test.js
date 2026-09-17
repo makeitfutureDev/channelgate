@@ -125,14 +125,14 @@ test("channel save persists only submitted users who are current human members",
     method: "PUT",
     body: {
       allowedUsers: ["U_STALE", "U_EXTERNAL", "U_MEMBER", "U_BOT", "U_EXTERNAL"],
-      nudges: true,
+      memory: true,
     },
   });
 
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.json.meta.allowedUsers, ["U_EXTERNAL", "U_MEMBER"]);
   assert.deepEqual((await getChannelMeta(entry.slug)).allowedUsers, ["U_EXTERNAL", "U_MEMBER"]);
-  assert.equal((await getChannelMeta(entry.slug)).nudges, true);
+  assert.equal((await getChannelMeta(entry.slug)).memory, true);
 });
 
 test("disconnected Slack disables roster writes but unrelated saves preserve existing grants", async () => {
@@ -144,7 +144,7 @@ test("disconnected Slack disables roster writes but unrelated saves preserve exi
 
   const unrelated = await request(`/channels/${channelId}/meta`, {
     method: "PUT",
-    body: { nudges: true },
+    body: { memory: false },
   });
   assert.equal(unrelated.response.status, 200);
   assert.deepEqual(unrelated.json.meta.allowedUsers, ["U_MEMBER", "U_STALE"]);

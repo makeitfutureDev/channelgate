@@ -1590,7 +1590,6 @@ function renderChannelDetail(ch) {
   manageSel.addEventListener("change", applyManageUI);
 
   card.querySelector(".ch-memory").checked = meta.memory !== false; // default on (global default is on)
-  card.querySelector(".ch-nudges").checked = !!meta.nudges;
   card.querySelector(".ch-nodefaulttokens").checked = !!meta.noDefaultTokens;
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
@@ -1848,7 +1847,6 @@ function renderChannelDetail(ch) {
           autoMode: card.querySelector(".ch-auto").checked,
           cleanMode: card.querySelector(".ch-clean").checked,
           memory: card.querySelector(".ch-memory").checked,
-          nudges: card.querySelector(".ch-nudges").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
           workDir: card.querySelector(".ch-workdir").value,
@@ -2584,11 +2582,12 @@ function renderUsersTable() {
       <td class="mono">${escapeHtml(id)}</td>
       <td>${role}</td>
       <td class="user-skills-count" title="Skills enabled for this user (personal grants)">${accessGrantSkillOptions([], u.skills || []).length}</td>
+      <td>${u.nudges ? "On" : "Off"}</td>
       <td>${tok}</td>
     </tr>`;
   }).join("");
   wrap.innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Slack ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Tokens</th></tr></thead>
+    <thead><tr><th>Name</th><th>Slack ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Reminders</th><th>Tokens</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   for (const tr of wrap.querySelectorAll("tbody tr[data-id]")) tr.addEventListener("click", () => openUserDrawer(tr.dataset.id));
 }
@@ -2612,6 +2611,7 @@ function openUserDrawer(id) {
   node.querySelector(".ud-name").value = u.name || "";
   node.querySelector(".ud-approved").checked = !!u.approved;
   node.querySelector(".ud-admin").checked = !!u.isAdmin;
+  node.querySelector(".ud-nudges").checked = !!u.nudges;
   const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user" });
   const userGrantsHost = node.querySelector(".ud-grants");
   userGrantsHost.innerHTML = `<label class="field"><span>Grant tier</span><select class="ud-grant-tier"><option value="organization">Organization — applies everywhere</option><option value="channel">Channel</option><option value="user" selected>This user</option></select><em class="state">The effective run gets the live union of all three tiers.</em></label>`;
@@ -2649,6 +2649,7 @@ function openUserDrawer(id) {
           name: drawer.querySelector(".ud-name").value,
           isAdmin: drawer.querySelector(".ud-admin").checked,
           approved: drawer.querySelector(".ud-approved").checked,
+          nudges: drawer.querySelector(".ud-nudges").checked,
           ...(token ? { composioToken: token } : {}),
           ...(toolboxToken ? { toolboxToken } : {}),
           composioTokenLabel,
@@ -3494,18 +3495,18 @@ function bindSettings() {
     const saved = document.getElementById("reset-nudges-saved");
     const on = document.getElementById("set-default-nudges").checked;
     const ok = await confirmDialog({
-      title: `Turn no-response reminders ${on ? "ON" : "OFF"} everywhere?`,
-      body: `Every existing channel & DM will be set to the current default (${on ? "on" : "off"}). Per-conversation overrides are lost. Save the setting first if you just changed it. This can't be undone.`,
+      title: `Turn no-response reminders ${on ? "ON" : "OFF"} for every user?`,
+      body: `Every existing user will be set to the current default (${on ? "on" : "off"}). Personal choices are lost. Save the setting first if you just changed it. This can't be undone.`,
       confirmLabel: on ? "Enable on all" : "Disable on all",
       danger: true,
     });
     if (!ok) return;
     saved.textContent = "applying…";
     try {
-      const r = await api("/api/channels/reset-nudges", { method: "POST", body: JSON.stringify({}) });
-      saved.textContent = `✓ applied to ${r.count} conversation(s)`;
-      await loadConversations();
-      await infoDialog({ title: "Nudges applied", body: `Set no-response reminders ${r.nudges ? "on" : "off"} on ${r.count} conversation(s).` });
+      const r = await api("/api/users/reset-nudges", { method: "POST", body: JSON.stringify({}) });
+      saved.textContent = `✓ applied to ${r.count} user(s)`;
+      await loadUsers();
+      await infoDialog({ title: "Reminders applied", body: `Set no-response reminders ${r.nudges ? "on" : "off"} for ${r.count} user(s).` });
       setTimeout(() => (saved.textContent = ""), 4000);
     } catch (e) {
       saved.textContent = "✗ " + e.message;

@@ -1,5 +1,5 @@
 // Channel + DM admin routes: per-DM config, the channel list/members/meta, Make-toolbox and
-// Drive-sync probes, the org-wide access/nudge/runtime resets, channel memory, and channel
+// Drive-sync probes, the org-wide access/runtime resets, channel memory, and channel
 // instructions (CLAUDE.md). Split from admin.js; mounted by createAdminRouter so every URL is
 // unchanged.
 import { Router } from "express";
@@ -32,7 +32,6 @@ import {
   ENGINES,
   CHANNEL_ACCESS_MODES,
   getDefaultChannelAccess,
-  getDefaultNudges,
 } from "../../config/settings.js";
 import { testChannelSync } from "../../gateway/drivesync.js";
 import { PROFILE_FLAGS, BASE_MODE_FLAGS, modeSettingsPatch } from "../../gateway/modes.js";
@@ -82,6 +81,7 @@ export function maskChannelMeta(meta = {}) {
   const mk = mask(meta.makeToolboxKey);
   return {
     ...stripDeadFields(meta),
+    nudges: undefined,
     // `...meta` would otherwise spread the env bag — VALUES included — into every save response.
     env: undefined,
     envVars: listChannelEnv(meta),
@@ -336,7 +336,6 @@ export function createChannelsRouter({
             autoMode: typeof body.autoMode === "boolean" ? body.autoMode : current.autoMode,
             cleanMode: typeof body.cleanMode === "boolean" ? body.cleanMode : current.cleanMode,
             noDefaultTokens: typeof body.noDefaultTokens === "boolean" ? body.noDefaultTokens : current.noDefaultTokens,
-            nudges: typeof body.nudges === "boolean" ? body.nudges : current.nudges,
             memory: typeof body.memory === "boolean" ? body.memory : current.memory,
             engine: typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine)) ? body.engine : current.engine,
             approvedTools: Array.isArray(body.approvedTools) ? body.approvedTools.map(String) : current.approvedTools,
@@ -381,7 +380,7 @@ export function createChannelsRouter({
       const workspaceSync = await syncWorkspaceSkillsOrThrow({ channelSlugs: [entry.slug] });
       // One row per save, listing ONLY the policy keys that moved (and never a token or an env
       // value — see the allowlist in config/channel-audit.js). A save that changes nothing on that
-      // list — a nudge toggle, a token rotation, a re-submitted form — writes no event at all.
+      // list — a memory toggle, a token rotation, a re-submitted form — writes no event at all.
       await logChannelPolicyChange({ channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: replaced, after: next_ });
       res.json({ ok: true, meta: maskChannelMeta(next_), workspaceSync });
     } catch (e) {
@@ -463,30 +462,6 @@ export function createChannelsRouter({
       }
       await logEvent("channels_access_reset", { count: reset, orgDefault });
       res.json({ ok: true, count: reset, orgDefault });
-    } catch (e) {
-      next(e);
-    }
-  });
-
-  // Push the org-default no-response nudge onto EVERY existing channel AND DM's meta.nudges. New
-  // conversations already capture the default at join; this is the "apply to what's already here"
-  // action. Only meta.nudges changes — every other capability/token is left untouched. Audit-logged.
-  router.post("/channels/reset-nudges", async (_req, res, next) => {
-    try {
-      const nudges = getDefaultNudges();
-      const all = await listChannels(); // channels + DMs
-      let reset = 0;
-      for (const ch of all) {
-        // Function patch: atomic read-modify-write. A never-configured channel gets a full default
-        // record (never a nudges-only partial); an existing one keeps every other field.
-        const patched = await patchChannelMeta(ch.slug, (current) => {
-          const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
-          return { ...base, nudges };
-        });
-        if (patched) reset++;
-      }
-      await logEvent("channels_nudges_reset", { count: reset, nudges });
-      res.json({ ok: true, count: reset, nudges });
     } catch (e) {
       next(e);
     }

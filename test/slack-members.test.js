@@ -183,7 +183,7 @@ test("departed member cleanup removes only that guest grant and preserves other 
     channelId: "C_CHANNEL",
     allowedUsers: ["U_KEEP", "U_LEAVE"],
     allowedMcps: [{ name: "shared-tools" }],
-    nudges: true,
+    memory: true,
   };
   let provisioned = null;
   const deps = {
@@ -205,7 +205,7 @@ test("departed member cleanup removes only that guest grant and preserves other 
     channelId: "C_CHANNEL",
     allowedUsers: ["U_KEEP"],
     allowedMcps: [{ name: "shared-tools" }],
-    nudges: true,
+    memory: true,
   });
   assert.deepEqual(provisioned, { slug: entry.slug, next: stored });
 

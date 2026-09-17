@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Move quiet-thread reminders from conversation settings to a personal user preference. Each
+  reminder now follows and mentions the requester across channels and DMs; users can turn it on or
+  off in Slack App Home, while admins can manage individual or organization-default choices.
+
 - Add an optional operator-managed OpenVPN/MySQL service per channel, with dedicated tunnel
   privileges, database-only routing/firewall, protected channel-secret references, a persistent
   user service and read-only verification. Ordinary chat containers retain their existing rights.

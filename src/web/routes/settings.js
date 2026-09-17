@@ -409,7 +409,7 @@ export function createSettingsRouter({
       if (body.scheduleMinIntervalMinutes !== undefined && Number.isFinite(Number(body.scheduleMinIntervalMinutes)) && Number(body.scheduleMinIntervalMinutes) >= 1) patch.scheduleMinIntervalMinutes = Math.floor(Number(body.scheduleMinIntervalMinutes));
       if (body.scheduleMaxPerChannel !== undefined && Number.isFinite(Number(body.scheduleMaxPerChannel)) && Number(body.scheduleMaxPerChannel) >= 1) patch.scheduleMaxPerChannel = Math.floor(Number(body.scheduleMaxPerChannel));
       if (body.noResponseReminderHours !== undefined && Number.isFinite(Number(body.noResponseReminderHours)) && Number(body.noResponseReminderHours) >= 1) patch.noResponseReminderHours = Number(body.noResponseReminderHours);
-      // Org-default no-response nudge (on/off), captured onto new channels & DMs at join.
+      // Org-default no-response nudge (on/off), captured onto newly seen users.
       if (typeof body.defaultNudges === "boolean") patch.defaultNudges = body.defaultNudges;
       // Personal pending-response follow-up digests.
       if (typeof body.followupRemindersEnabled === "boolean") patch.followupRemindersEnabled = body.followupRemindersEnabled;

@@ -558,7 +558,6 @@ export async function ensureRegistered(client, event) {
   if (!meta) {
     meta = applyChannelTemplate(defaultChannelMeta({ channelId: event.channel, ...info }));
     if (!info.isDM) meta.access = getDefaultChannelAccess(); // capture the org default at join
-    meta.nudges = getDefaultNudges(); // capture the org-default no-response nudge (channels + DMs)
     if (info.isDM) meta.dmUserId = event.user; // remember the peer for name resolution
     await saveChannelMeta(entry.slug, meta);
   } else if (info.isDM && !meta.dmUserId && event.user) {
@@ -573,7 +572,12 @@ export async function ensureRegistered(client, event) {
 export // Record a Slack author in users.json the first time we see them, resolving a display name so
 // the admin UI has a populated list to grant access / set Composio tokens against.
 async function ensureUserKnown(client, userId) {
-  if (await getUser(userId)) return;
+  const existing = await getUser(userId);
+  if (existing) {
+    // One-time lazy migration for rows created before reminders became a user preference.
+    if (typeof existing.nudges !== "boolean") await setUser(userId, { nudges: getDefaultNudges() });
+    return;
+  }
   let name = userId;
   try {
     const info = await client.users.info({ user: userId });
@@ -581,7 +585,7 @@ async function ensureUserKnown(client, userId) {
   } catch {
     /* missing users:read scope — fall back to the id */
   }
-  await setUser(userId, { name });
+  await setUser(userId, { name, nudges: getDefaultNudges() });
 }
 
   // Core message processing, shared by the `message` event and the 🤖 reaction (which treats a
@@ -1598,8 +1602,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         costUSD: result.costUSD,
         durationMs: result.durationMs,
       });
-      // The bot just answered → track this thread for an opt-in no-response nudge.
-      noteBotReply(event.channel, entry.slug, threadKey);
+      // The bot just answered → track this thread against the requester's personal nudge setting.
+      noteBotReply(event.channel, entry.slug, threadKey, event.user);
       // Background memory review (gateway/memory-review.js): after the answer is delivered, decide
       // whether this thread deserves a reviewer pass that saves what the model itself did not.
       // Fire-and-forget — it must never delay or fail the turn; the module rate-limits itself.

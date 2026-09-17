@@ -39,7 +39,6 @@ export async function ensureConversation(message) {
   if (!meta) {
     meta = applyChannelTemplate(defaultChannelMeta({ channelId: message.conversationId, ...info }));
     if (!info.isDM) meta.access = getDefaultChannelAccess();
-    meta.nudges = getDefaultNudges();
     if (info.isDM) meta.dmUserId = message.userId;
     await saveChannelMeta(entry.slug, meta);
   }
@@ -50,8 +49,15 @@ export async function ensureConversation(message) {
 // First sighting of an author: record them so an admin has someone to approve in the Users page.
 // Unlike Slack there is no directory call to make — the display name rides the message.
 async function ensureUserKnown(message) {
-  if (await getUser(message.userId)) return;
-  await setUser(message.userId, { name: message.userName || message.userEmail || message.userId });
+  const existing = await getUser(message.userId);
+  if (existing) {
+    if (typeof existing.nudges !== "boolean") await setUser(message.userId, { nudges: getDefaultNudges() });
+    return;
+  }
+  await setUser(message.userId, {
+    name: message.userName || message.userEmail || message.userId,
+    nudges: getDefaultNudges(),
+  });
 }
 
 export function createIngest({ connector, log = console, run = runMessage, onCommand = null, voice = prepareVoiceAttachments } = {}) {
