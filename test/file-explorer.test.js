@@ -612,6 +612,20 @@ test("local uploads reject oversized files before contacting Slack", async (t) =
   await assert.rejects(() => uploadLocalFile({ filePath: huge, channelId: "C123" }), /larger than the 25 MB/i);
 });
 
+test("local uploads refuse a final-component symlink before reading or contacting Slack", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "cg-upload-root-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "cg-upload-outside-"));
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]));
+  await writeFile(path.join(outside, "private.png"), Buffer.from("private"));
+  const link = path.join(root, "preview.png");
+  await symlink(path.join(outside, "private.png"), link);
+
+  await assert.rejects(
+    () => uploadLocalFile({ filePath: link, rootPath: root, channelId: "C123" }),
+    /ELOOP|symbolic link|outside/i,
+  );
+});
+
 test("browser uploads preserve safe folder trees and collision-rename files", async (t) => {
   const { root } = await fixture(t);
   const first = await saveBrowserUploadedFile(root, "docs", "Project/assets/logo.txt", Buffer.from("first\n"));
