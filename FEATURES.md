@@ -1,5 +1,23 @@
 # ChannelGate — Features
 
+## Optional isolated VPN database service
+
+- The host operator can provision a per-channel OpenVPN service and an unprivileged MySQL
+  verification/extractor container with `npm run vpn`. Only the dedicated VPN receives TUN and
+  `NET_ADMIN`; ordinary channel images, mounts, networking and agent permissions stay unchanged.
+- Imported profiles are allowlisted and regenerated, with database-only tunnel routing, a
+  firewall kill switch, isolated credentials and no host socket or published ports. Configuration
+  is stored in channel metadata; protected profile revisions and a standalone operator bundle
+  survive channel recreation and gateway updates.
+- A user systemd supervisor starts the pair after reboot/user-manager startup, monitors routing
+  and stops both on failure. Kernel locking excludes concurrent changes. Operator controls cover
+  configuration, build, status, start, stop, enable/disable and read-only `SELECT 1`/schema verification.
+- This is an operator-only service, independent of Claude/Codex. It does not expose an agent tool
+  or authorize arbitrary SQL extraction. See `docs/CHANNEL-VPN.md` for requirements and limitations.
+
+Regression: `test/vpn-profile.test.js`, `test/vpn-service.test.js`,
+`services/vpn-image/test_checks.py`; live isolation: `services/vpn-image/live_acceptance.py`.
+
 ## System health
 
 The last admin navigation item, **System health** (`/system-health`), shows daemon-side Linux

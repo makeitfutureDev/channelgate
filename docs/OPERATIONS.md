@@ -438,6 +438,11 @@ like the channel's work directory. Both are visible on the host under
 `~/ChannelGate/.runtime/<platform>/<slug>/`, so an operator can see (and, if a channel ever hoards,
 clear) what an agent parked there. Nothing in the daemon deletes them.
 
+**Optional VPN database service.** `npm run vpn` provisions an operator-managed OpenVPN service
+and isolated database extractor without granting tunnel privileges to ordinary channel containers.
+See [CHANNEL-VPN.md](CHANNEL-VPN.md) for protected profiles, channel Secrets, systemd persistence,
+database-only routing and live acceptance requirements.
+
 **Installing tools in a channel.** An agent can install whatever it needs, and it stays installed —
 everything below writes inside the per-channel HOME volume:
 

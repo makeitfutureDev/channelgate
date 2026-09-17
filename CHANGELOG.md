@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Add an optional operator-managed OpenVPN/MySQL service per channel, with dedicated tunnel
+  privileges, database-only routing/firewall, protected channel-secret references, a persistent
+  user service and read-only verification. Ordinary chat containers retain their existing rights.
+
 - Keep sidebar update messages inside the rail, wrapping long details and showing a short commit
   revision with the full hash on hover.
 
