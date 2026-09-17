@@ -12,7 +12,7 @@ const threads = new Map(); // "<slug>::<threadKey>" -> { channelId, slug, thread
 const key = (slug, threadKey) => `${slug}::${threadKey}`;
 
 // How long a tracked thread may live before it's forgotten. Entries only leave the map when the
-// user replies — reminded threads (and never-answered ones in channels that never opt in) would
+// user replies — reminded threads (and never-answered ones owned by users who never opt in) would
 // otherwise accumulate forever. Well past the nudge threshold (default 24h), so nothing expires
 // before its reminder is due.
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;

@@ -1,5 +1,6 @@
-// User admin routes: the masked user list and per-user save (approval/admin flags + write-only
-// personal tokens). Split from admin.js; mounted by createAdminRouter so every URL is unchanged.
+// User admin routes: the masked user list and per-user save (approval/admin flags, personal
+// preferences, and write-only tokens). Split from admin.js; mounted by createAdminRouter so every
+// URL is unchanged.
 import { Router } from "express";
 import { getUsers, setUser } from "../../config/store.js";
 import { getDefaultNudges, userNudgesEnabled } from "../../config/settings.js";
