@@ -19,6 +19,10 @@ answer to Slack mrkdwn and posts it normally, so simple Markdown degrades safely
 - `- ` bullets and `1.` numbered lists.
 - `> ` blockquote.
 - Links: `[label](https://example.com)`.
+- Image previews: `![descriptive alt text](https://example.com/image.png)`. The URL must be a
+  publicly reachable HTTP(S) image. When the answer finishes, the gateway appends up to five unique
+  images as native Block Kit previews and keeps the Markdown reference as a clickable fallback.
+  References inside fenced code are examples only and never become previews.
 - Small GFM pipe tables when the rows belong directly in the explanation. See
   `references/tables.md` before choosing a table shape.
 
@@ -60,7 +64,8 @@ Practical rules:
 
 ## Avoid these
 - Long heading hierarchies. Use a short bold label for compact Slack answers.
-- HTML and images-by-Markdown.
+- HTML, data-URI images, local image paths, and private/non-public image URLs. Use standard Markdown
+  image syntax only with a public HTTP(S) asset that Slack can fetch.
 - Markdown links whose target is a local filesystem path; use the inline-code form above.
 - Wide pipe tables or hand-aligned fenced-code tables; both wrap badly on narrow Slack clients.
   Use `slack_post_table` for a sortable/filterable dataset and `slack_upload_snippet` for a large

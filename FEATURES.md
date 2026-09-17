@@ -545,6 +545,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a sentence. A shared queue preserves creation order, each stream rolls independently before
   Slack's age limit, and answer footer/fallback behavior stays on the answer only. Text-only turns
   keep their single-message shape. → TEST-PLAN: Observability (Slice 6).
+- Native Slack answer image previews: up to five unique public HTTP(S) images written with standard
+  Markdown image syntax become Block Kit image blocks when the answer finalizes. The original link
+  remains as a fallback; fenced examples, local/data URLs and duplicates are ignored. Native
+  streaming, classic recovery and unattended Slack delivery share the same bounded parser, and an
+  invalid preview never costs the completed text answer. → TEST-PLAN: Observability (Slice 6).
 - Mention gating: DM = no mention; channel/group/private = require `@bot`. → TEST-PLAN: Slack gateway.
 - Thread-scoped Claude sessions — new thread = new session, replies resume. → TEST-PLAN: Foundation.
 - Subagent completion contract (mechanical) — every generated channel settings file installs a

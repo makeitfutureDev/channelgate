@@ -11,6 +11,7 @@ import { formatOutboundFor } from "../platforms/registry.js";
 import { postFormatted } from "../platforms/connector.js";
 import { getDirectory } from "./directory.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
+import { answerImageBlocks } from "./images.js";
 import { postChunkedReply } from "./util.js";
 import { footerText, resumeButton } from "./footer.js";
 
@@ -29,9 +30,18 @@ export async function deliverResult(client, { channel, threadKey, result, dir, f
   // The prefix is gateway-authored control markup. Add it only after hostile model content has
   // passed through the normal control-sequence defanging pipeline.
   const md = `${trustedPrefix}${resolveMentions(mdToMrkdwn(result?.content || ""), directory).trim()}`.trim();
+  const answerBlocks = answerImageBlocks(result?.content || "");
   if (footer) {
-    await postChunkedReply(client, channel, threadKey, md, footerText(result), resumeButton(result.cwd, result.sessionId, result.engine));
+    await postChunkedReply(
+      client,
+      channel,
+      threadKey,
+      md,
+      footerText(result),
+      resumeButton(result.cwd, result.sessionId, result.engine),
+      { answerBlocks },
+    );
   } else {
-    await postChunkedReply(client, channel, threadKey, md);
+    await postChunkedReply(client, channel, threadKey, md, "", null, { answerBlocks });
   }
 }

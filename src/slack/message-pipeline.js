@@ -41,6 +41,7 @@ import { buildPendingReportForUser } from "../gateway/followups.js";
 
 import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode } from "../config/settings.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
+import { answerImageBlocks } from "./images.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
 import { hydrateSlackMessage } from "./attachments.js";
 import { QUEUE_FULL, neutralizeSentinels, postChunkedReply } from "./util.js";
@@ -1517,12 +1518,20 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // footer; a long answer is split into multiple threaded messages instead of truncated.
         const md = resolveMentions(mdToMrkdwn(result.content || ""), dir).trim() || "_(no output)_";
         if (await stopSuppressedDelivery()) return;
-        await postChunkedReply(client, event.channel, threadKey, md, footerText(result), footerButtons(result, {
-          channel: event.channel,
-          threadTs: threadKey,
-          authorId: event.user,
-          mayUseSettings,
-        }));
+        await postChunkedReply(
+          client,
+          event.channel,
+          threadKey,
+          md,
+          footerText(result),
+          footerButtons(result, {
+            channel: event.channel,
+            threadTs: threadKey,
+            authorId: event.user,
+            mayUseSettings,
+          }),
+          { answerBlocks: answerImageBlocks(result.content || "") },
+        );
       }
       // User-visible delivery is the durable terminal boundary. If force-stop begins while usage
       // bookkeeping finishes, boot must not replay an answer Slack already received.
