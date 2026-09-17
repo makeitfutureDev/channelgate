@@ -2571,6 +2571,8 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       authentication, usage-limit, model-rejection, invalid-request and the catch-all `provider`
       kinds are never treated as transient; the Codex classifier: a 404 naming the model is
       `model_rejected`, the CLI's underscore codes (`internal_server_error`, …) are `transient`, a
+      plain-string `turn.failed` saying the selected model is at capacity is a provider verdict
+      that retries twice and then answers through Claude when automatic failover is enabled, a
       "Reconnecting… (unexpected status 429 …)" progress line is transient (never a limit), and
       from stderr (`source: "stderr"`) only the explicit limit/auth phrasings count; the knobs are
       read per turn (clamped, duration syntax, unparseable → default).

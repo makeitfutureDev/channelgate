@@ -21,6 +21,7 @@ fail="no"
 two_segments="no"
 subagents="no"
 transient_times=0
+capacity_plain="no"
 transient_after_tool="no"
 reject_model="no"
 reject_all_models="no"
@@ -51,6 +52,7 @@ for arg in "$@"; do
     *CODEX_STUB_SUBAGENTS*) subagents="yes" ;;
     *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
     *CODEX_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
+    *CODEX_STUB_CAPACITY_PLAIN*) capacity_plain="yes" ;;
     *CODEX_STUB_TRANSIENT_AFTER_TOOL*) transient_after_tool="yes" ;;
     *CODEX_STUB_REJECT_MODEL_BODY*) reject_model_body="yes" ;;
     *CODEX_STUB_REJECT_ALL_MODELS_BODY*) reject_all_models_body="yes" ;;
@@ -150,6 +152,13 @@ if [ "$transient_times" -gt 0 ]; then
     printf '%s\n' '{"type":"error","message":"unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses, cf-ray: stub"}'
     exit 1
   fi
+fi
+# A current Codex capacity refusal: `turn.failed` carries a plain string instead of the structured
+# error object older CLI builds emitted. It is still a provider verdict and must take the same
+# transient retry/failover path.
+if [ "$capacity_plain" = "yes" ]; then
+  printf '%s\n' '{"type":"turn.failed","error":"Selected model is at capacity. Please try a different model."}'
+  exit 1
 fi
 # The same outage AFTER a tool ran: the turn may have mutated something, so it must NOT be retried.
 if [ "$transient_after_tool" = "yes" ]; then

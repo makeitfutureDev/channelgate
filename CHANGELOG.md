@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Fix Codex capacity refusals delivered as plain-text `turn.failed` events. They are now classified
+  as transient provider failures, retried in place, and automatically handed to the other enabled
+  harness when capacity remains unavailable.
+
 - Add an organization-admin-only `/sudo` posture for individual Slack threads. While enabled,
   admin messages and their background work execute directly on the gateway host as the daemon OS
   user; non-admin messages are rejected as sudo-thread traffic before work starts. `/sudo off`

@@ -1255,7 +1255,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   failure like print mode does, so the retry covers the default Slack path. Which failure kinds an
   engine may replay is its adapter fact (`transientKinds`, `src/engines/adapters.js`): Codex's
   `transient` (`classifyCodexFailure` — status codes, the CLI's underscore error codes, or outage
-  wording in the error EVENT; never its stderr, which can quote a retry it recovered from), Claude's
+  wording in the error EVENT, including a plain-text `turn.failed` capacity refusal; never its
+  stderr, which can quote a retry it recovered from), Claude's
   `availability` / `connection` (an overload, a 5xx, a `server_error` label, a dropped connection —
   never the catch-all `provider` kind or the bare "API Error:" prefix a rejected request also
   carries). The knobs are read per turn, so `.env` / settings values count without a restart.

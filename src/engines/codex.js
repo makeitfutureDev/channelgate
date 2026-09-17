@@ -228,7 +228,14 @@ export function codexTurnError(event) {
   const message = plainFailureText(reported, 600) || reported;
   const providerType = String(raw?.type || raw?.code || nested?.type || nested?.code || body?.type || "").trim();
   const status = Number(event?.status ?? raw?.status ?? body?.status ?? nested?.status ?? 0) || 0;
-  const providerError = Boolean(raw && typeof raw === "object") || event?.type === "error" || Boolean(body);
+  // Recent Codex builds sometimes report a provider refusal as
+  // `{ type: "turn.failed", error: "Selected model is at capacity…" }`: the error is a plain
+  // string rather than the object older builds emitted. `turn.failed` is still the CLI's terminal
+  // provider verdict. Treat the event shape as authoritative so the message reaches the normal
+  // classifier; an unrecognized sentence remains unclassified and therefore cannot authorize a
+  // replay on its own.
+  const providerError = event?.type === "turn.failed" || event?.type === "error"
+    || Boolean(raw && typeof raw === "object") || Boolean(body);
   return {
     message,
     details: {
