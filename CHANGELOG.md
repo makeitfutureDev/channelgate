@@ -4,6 +4,10 @@
   privileges, database-only routing/firewall, protected channel-secret references, a persistent
   user service and read-only verification. Ordinary chat containers retain their existing rights.
 
+- Fix Codex capacity refusals delivered as plain-text `turn.failed` events. They are now classified
+  as transient provider failures, retried in place, and automatically handed to the other enabled
+  harness when capacity remains unavailable.
+
 - Add an organization-admin-only `/sudo` posture for individual Slack threads. While enabled,
   admin messages and their background work execute directly on the gateway host as the daemon OS
   user; non-admin messages are rejected as sudo-thread traffic before work starts. `/sudo off`
@@ -13,7 +17,9 @@
 
 - Render up to five public images referenced in an agent's Slack answer as native Block Kit image
   previews, while preserving clickable Markdown fallbacks and completed text delivery when Slack
-  rejects a preview.
+  rejects a preview. Images referenced from the channel workspace are now uploaded into the thread
+  as native Slack files instead, so they get the same inline thumbnail, download control and full
+  preview as a human attachment.
 
 - Highlight every conversation that shares its resolved working folder with another conversation
   in red in the Admin UI, and warn in red while browsing a folder that is already assigned elsewhere.

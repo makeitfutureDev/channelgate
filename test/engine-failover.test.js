@@ -73,6 +73,15 @@ test("codexTurnError attaches the classification to the thrown details", () => {
   assert.equal(details.providerKind, "usage_limit");
 });
 
+test("a plain-text turn.failed capacity error is a transient provider failure", () => {
+  const message = "Selected model is at capacity. Please try a different model.";
+  const failure = codexTurnError({ type: "turn.failed", error: message });
+  assert.equal(failure.message, message);
+  assert.equal(failure.details.engine, "codex");
+  assert.equal(failure.details.providerError, true, "turn.failed is the terminal provider verdict even when error is a string");
+  assert.equal(failure.details.providerKind, "transient");
+});
+
 // ── Failover graph + replay safety ─────────────────────────────────────────────
 
 test("either harness is the other's failover target", () => {

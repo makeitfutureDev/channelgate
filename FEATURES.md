@@ -587,11 +587,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a sentence. A shared queue preserves creation order, each stream rolls independently before
   Slack's age limit, and answer footer/fallback behavior stays on the answer only. Text-only turns
   keep their single-message shape. → TEST-PLAN: Observability (Slice 6).
-- Native Slack answer image previews: up to five unique public HTTP(S) images written with standard
-  Markdown image syntax become Block Kit image blocks when the answer finalizes. The original link
-  remains as a fallback; fenced examples, local/data URLs and duplicates are ignored. Native
-  streaming, classic recovery and unattended Slack delivery share the same bounded parser, and an
-  invalid preview never costs the completed text answer. → TEST-PLAN: Observability (Slice 6).
+- Native Slack answer image previews: up to five unique image files referenced from the channel
+  workspace with standard Markdown image syntax are realpath-confined and uploaded into the thread
+  as native Slack files after the answer, giving them Slack's thumbnail, download and full-preview
+  UI. Public HTTP(S) references remain Block Kit image blocks. Fenced examples, missing/non-image
+  files, escaping symlinks and duplicates are ignored; upload/preview failure never costs the
+  completed text answer. Native streaming, classic recovery and unattended delivery use the same
+  bounded behavior. → TEST-PLAN: Observability (Slice 6).
 - Mention gating: DM = no mention; channel/group/private = require `@bot`. → TEST-PLAN: Slack gateway.
 - Thread-scoped Claude sessions — new thread = new session, replies resume. → TEST-PLAN: Foundation.
 - Subagent completion contract (mechanical) — every generated channel settings file installs a
@@ -1271,7 +1273,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   failure like print mode does, so the retry covers the default Slack path. Which failure kinds an
   engine may replay is its adapter fact (`transientKinds`, `src/engines/adapters.js`): Codex's
   `transient` (`classifyCodexFailure` — status codes, the CLI's underscore error codes, or outage
-  wording in the error EVENT; never its stderr, which can quote a retry it recovered from), Claude's
+  wording in the error EVENT, including a plain-text `turn.failed` capacity refusal; never its
+  stderr, which can quote a retry it recovered from), Claude's
   `availability` / `connection` (an overload, a 5xx, a `server_error` label, a dropped connection —
   never the catch-all `provider` kind or the bare "API Error:" prefix a rejected request also
   carries). The knobs are read per turn, so `.env` / settings values count without a restart.

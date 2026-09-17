@@ -19,10 +19,15 @@ answer to Slack mrkdwn and posts it normally, so simple Markdown degrades safely
 - `- ` bullets and `1.` numbered lists.
 - `> ` blockquote.
 - Links: `[label](https://example.com)`.
-- Image previews: `![descriptive alt text](https://example.com/image.png)`. The URL must be a
-  publicly reachable HTTP(S) image. When the answer finishes, the gateway appends up to five unique
-  images as native Block Kit previews and keeps the Markdown reference as a clickable fallback.
-  References inside fenced code are examples only and never become previews.
+- Images you create: save the image inside the working folder and write
+  `![descriptive alt text](reports/chart.png)`. When the answer finishes, the gateway uploads up to
+  five unique referenced images into the thread as native Slack files, giving the reader Slack's
+  inline thumbnail, download control, and full preview. Paths with spaces use angle brackets, for
+  example `![Revenue](<reports/revenue chart.png>)`. Only regular image files contained by the
+  working folder are eligible; escaping symlinks, missing files, and fenced examples are ignored.
+- Public image previews: `![descriptive alt text](https://example.com/image.png)`. The URL must be a
+  publicly reachable HTTP(S) image. The gateway appends it as a Block Kit image preview and keeps
+  the Markdown reference as a clickable fallback.
 - Small GFM pipe tables when the rows belong directly in the explanation. See
   `references/tables.md` before choosing a table shape.
 

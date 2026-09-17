@@ -10,7 +10,8 @@
 //   3. files.completeUploadExternal({ files, channel_id?, thread_ts?, initial_comment? })
 import { resolveSlackConfig } from "../config/settings.js";
 import path from "node:path";
-import { readFile, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, realpath } from "node:fs/promises";
 
 export const MAX_FILE_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -98,12 +99,30 @@ export async function uploadSnippet({ content, filename, title = "", channelId =
 // responsible for confinement and passes a realpath-validated file from the current channel root.
 // Capping at 25 MB keeps the daemon's in-memory Blob bounded; bigger files stay browseable but the
 // explorer explains that they need another transfer mechanism.
-export async function uploadLocalFile({ filePath, filename = "", title = "", channelId = "", threadTs = "", comment = "" } = {}) {
-  const info = await stat(filePath);
-  if (!info.isFile()) throw new Error("Only regular files can be shared.");
-  if (info.size > MAX_FILE_UPLOAD_BYTES) throw new Error(`File is larger than the ${Math.round(MAX_FILE_UPLOAD_BYTES / 1024 / 1024)} MB explorer limit.`);
-  const bytes = await readFile(filePath);
-  if (bytes.length > MAX_FILE_UPLOAD_BYTES) throw new Error(`File grew larger than the ${Math.round(MAX_FILE_UPLOAD_BYTES / 1024 / 1024)} MB explorer limit before it could be shared.`);
+export async function uploadLocalFile({ filePath, rootPath = "", filename = "", title = "", channelId = "", threadTs = "", comment = "" } = {}) {
+  // Open the resolved file itself without following a last-moment symlink swap. When a caller
+  // supplies its confinement root, validate the kernel-held descriptor through /proc before
+  // reading: even a concurrent parent-directory rename cannot redirect these bytes outside it.
+  const handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let bytes;
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error("Only regular files can be shared.");
+    if (rootPath) {
+      const [rootReal, openedReal] = await Promise.all([
+        realpath(rootPath),
+        realpath(`/proc/self/fd/${handle.fd}`),
+      ]);
+      if (openedReal !== rootReal && !openedReal.startsWith(`${rootReal}${path.sep}`)) {
+        throw new Error("The file moved outside the channel working folder before it could be shared.");
+      }
+    }
+    if (info.size > MAX_FILE_UPLOAD_BYTES) throw new Error(`File is larger than the ${Math.round(MAX_FILE_UPLOAD_BYTES / 1024 / 1024)} MB explorer limit.`);
+    bytes = await handle.readFile();
+    if (bytes.length > MAX_FILE_UPLOAD_BYTES) throw new Error(`File grew larger than the ${Math.round(MAX_FILE_UPLOAD_BYTES / 1024 / 1024)} MB explorer limit before it could be shared.`);
+  } finally {
+    await handle.close();
+  }
   return uploadBytes({ bytes, filename: filename || path.basename(filePath), title, channelId, threadTs, comment });
 }
 

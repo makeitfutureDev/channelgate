@@ -2015,6 +2015,10 @@ structural invariants are automated; rendered navigation and feature claims also
       classic and unattended delivery can place them beside the answer; and `invalid_blocks`
       preserves the complete text answer while native streaming retries with its healthy footer
       (`test/slack-answer-images.test.js`).
+- [x] Unit: Markdown image references to files in the run's working folder resolve through the
+      no-escape realpath boundary, deduplicate, reject non-images/escaping symlinks, and upload only
+      after the completed answer as native Slack thread files. Streaming and unattended paths share
+      each eligible file once; upload failure remains cosmetic (`test/slack-answer-images.test.js`).
 - [ ] Live (both engines): ask the agent to answer with
       `![ChannelGate preview](https://avatars.githubusercontent.com/u/9919?s=200&v=4)` and one short
       sentence. Require one completed answer whose final blocks contain a visible image preview
@@ -2022,6 +2026,11 @@ structural invariants are automated; rendered navigation and feature claims also
       example and require no preview; then run the same prompt through a background agent and
       require the unattended reply to show the preview. An unreachable/non-image HTTP(S) URL may
       omit the preview but must leave the text answer and link intact.
+- [ ] Live (both engines): ask the agent to create `artifacts/slack-preview.png` and end its answer
+      with `![ChannelGate preview](artifacts/slack-preview.png)`. Require the text answer to finish,
+      followed by a native Slack file card in the same thread with an inline thumbnail, filename,
+      download control and full-size preview. Repeat through an unattended/background delivery;
+      then reference an escaping symlink and require no upload and no loss of the text answer.
 - [x] Unit: stream progress receives a tool event and uses native `chatStream` +
       `assistant.threads.setStatus` without calling `chat.postMessage`/`chat.update` for the custom
       activity log; `loading_messages` puts the resolved model in the prominent
@@ -2597,6 +2606,8 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       authentication, usage-limit, model-rejection, invalid-request and the catch-all `provider`
       kinds are never treated as transient; the Codex classifier: a 404 naming the model is
       `model_rejected`, the CLI's underscore codes (`internal_server_error`, …) are `transient`, a
+      plain-string `turn.failed` saying the selected model is at capacity is a provider verdict
+      that retries twice and then answers through Claude when automatic failover is enabled, a
       "Reconnecting… (unexpected status 429 …)" progress line is transient (never a limit), and
       from stderr (`source: "stderr"`) only the explicit limit/auth phrasings count; the knobs are
       read per turn (clamped, duration syntax, unparseable → default).

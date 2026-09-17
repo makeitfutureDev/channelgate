@@ -41,7 +41,7 @@ import { buildPendingReportForUser } from "../gateway/followups.js";
 
 import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode } from "../config/settings.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
-import { answerImageBlocks } from "./images.js";
+import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
 import { hydrateSlackMessage } from "./attachments.js";
 import { QUEUE_FULL, neutralizeSentinels, postChunkedReply } from "./util.js";
@@ -1576,6 +1576,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           }),
           { answerBlocks: answerImageBlocks(result.content || "") },
         );
+        await shareAnswerImageFiles({
+          markdown: result.content || "",
+          cwd: result.cwd,
+          channel: event.channel,
+          threadTs: threadKey,
+        });
       }
       // User-visible delivery is the durable terminal boundary. If force-stop begins while usage
       // bookkeeping finishes, boot must not replay an answer Slack already received.
