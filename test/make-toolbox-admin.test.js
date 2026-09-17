@@ -72,7 +72,7 @@ test("channel API saves, preserves, masks, validates, and clears one Make toolbo
 
   const unrelated = await request("/channels/C_MAKE/meta", {
     method: "PUT",
-    body: { nudges: true },
+    body: { memory: true },
   });
   assert.equal(unrelated.response.status, 200);
   assert.equal((await getChannelMeta(entry.slug)).makeToolboxKey, "channel-key-1234");

@@ -618,12 +618,12 @@
                     <input id="set-sched-max" type="number" min="1" step="1" placeholder="20" />
                   </label>
                   <label class="field">
-                    <span>No-response reminder (hours) — opt-in per channel; a quiet thread gets one gentle nudge after this long</span>
+                    <span>No-response reminder (hours) — an opted-in user gets one personal nudge after this long</span>
                     <input id="set-nudge-hours" type="number" min="1" step="1" placeholder="24" />
                   </label>
-                  <label class="toggle"><input type="checkbox" id="set-default-nudges" /> <strong>New conversations start with quiet-thread reminders ON</strong> — ticked: every new channel &amp; DM gets the reminder enabled (a thread that goes quiet gets one gentle nudge after the hours set above). Unticked: new conversations start with it off. Each conversation's own toggle still overrides this. Changing it only affects conversations added afterward; use the button below to apply it to existing ones.</label>
+                  <label class="toggle"><input type="checkbox" id="set-default-nudges" /> <strong>New users start with quiet-thread reminders ON</strong> — ticked: a new user gets one personal mention when a thread goes quiet after the hours set above. Unticked: new users start with reminders off. Each user can change this in Slack App Home. Changing the default only affects users first seen afterward; use the button below to apply it to existing users.</label>
                   <div class="dz-row">
-                    <span class="t">Apply the default to all existing channels &amp; DMs<small>Overwrites every existing conversation's no-response nudge with the default above. Per-channel overrides are lost. Can't be undone.</small></span>
+                    <span class="t">Apply the default to all existing users<small>Overwrites every user's quiet-thread reminder preference with the default above. Personal choices are lost. Can't be undone.</small></span>
                     <button type="button" id="reset-nudges" class="dz-btn">Apply to all…</button>
                     <span class="saved" id="reset-nudges-saved"></span>
                   </div>
@@ -1242,7 +1242,6 @@
           </label>
           <div class="ch-toggles" style="margin-top:8px">
                 <label class="toggle"><input type="checkbox" class="ch-memory" /> Folder memory — uncapped <code>MEMORY.md</code> + <code>memory/</code> topic files, with compact catalog injection and on-demand FTS retrieval (overrides the global default)</label>
-            <label class="toggle"><input type="checkbox" class="ch-nudges" /> No-response nudges — if a thread goes quiet, post one gentle reminder after the configured window</label>
             <label class="toggle"><input type="checkbox" class="ch-nodefaulttokens" /> Refuse org-default tokens — don't fall back to the gateway-wide Composio/Skills/Toolbox tokens here (channel/user tokens still apply)</label>
           </div>
         </div>
@@ -1304,6 +1303,7 @@
         <div class="ud-toggles">
           <label class="toggle inline"><input type="checkbox" class="ud-approved" /> Approved</label>
           <label class="toggle inline"><input type="checkbox" class="ud-admin" /> Admin</label>
+          <label class="toggle inline"><input type="checkbox" class="ud-nudges" /> Quiet-thread reminders</label>
         </div>
 
         <div class="ud-row ud-grants"></div>

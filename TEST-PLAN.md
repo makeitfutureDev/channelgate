@@ -1938,7 +1938,7 @@ structural invariants are automated; rendered navigation and feature claims also
 - [ ] **Who can manage** = *Custom*: only a listed manager (or an admin) can change safe settings; others refused.
 - [ ] Default `manageAccess:"admins"` is unchanged behavior — non-admins cannot manage until opted in.
 - [ ] Network toggle is hidden in Read-only/Lean; visible for Worker/Autonomous/Full.
-- [ ] Advanced disclosure holds memory/nudges/refuse-org-tokens/work-dir/engine/model/effort; all still save.
+- [ ] Advanced disclosure holds memory/refuse-org-tokens/work-dir/engine/model/effort; all still save.
 - [ ] Settings → **Reset all channels' access to default**: confirm dialog; resets use→org default + manage→admins,
       clears custom guest + manager lists on every channel, leaves capability/skills/tokens untouched; logs
       a `channels_access_reset` event.
@@ -2226,7 +2226,7 @@ structural invariants are automated; rendered navigation and feature claims also
       channel to Full access and repoints its working folder logs exactly ONE `channel_meta_changed`
       carrying those three keys with before/after, actor `admin-ui`, source `admin-ui` — and nothing
       for the keys the save round-tripped unchanged (`test/channel-policy-audit.test.js`).
-- [x] Unit: a save that moves no policy key (a nudges toggle, a re-submitted form) writes no event,
+- [x] Unit: a save that moves no policy key (a memory toggle, a re-submitted form) writes no event,
       and a `PUT /channels/:id/env/:name` still writes only its own name-only `channel_env_set` —
       the value never reaches any audit row and the env change does not duplicate into
       `channel_meta_changed` (`test/channel-policy-audit.test.js`).
@@ -3691,7 +3691,7 @@ release, no egress cut-off — so the network entry has no container equivalent 
       capability radio-card selects it (Full access is red-treated + admin-tagged; Custom reveals
       the four raw flag checkboxes); the two access dropdowns show live per-option help; network is
       a switch row. Tools: MCP + skills checklists filter and show "N of M enabled"; offline servers
-      carry a badge. Runtime: engine/model/effort + working folder + memory/nudges/org-token toggles.
+      carry a badge. Runtime: engine/model/effort + working folder + memory/org-token toggles.
 - [ ] One sticky save bar per detail: any Access/Tools/Runtime edit shows "Unsaved changes";
       Discard restores the saved state; Save PUTs the FULL meta payload (same fields as before the
       redesign), updates the header pill + list row, then hides. Instructions & Memory are editor
@@ -3701,9 +3701,13 @@ release, no egress cut-off — so the network entry has no container equivalent 
       conversation and back, and verify every returned selection remains checked without a browser
       reload. Disable Settings → Slack replies → footer cost, save, and verify the checkbox remains
       off immediately and after a hard reload; the next Slack reply omits only the dollar segment.
-- [ ] Users: table rows show role chips, personal Skills counts and C/T token state; clicking a row opens
-      the edit drawer; Save from the drawer persists name/approved/admin/tokens (unchanged PUT) and
+- [ ] Users: table rows show role chips, personal Skills counts, quiet-thread reminder state and C/T
+      token state; clicking a row opens the edit drawer; Save persists name/approved/admin/reminders/tokens and
       the drawer stays on that user; "+ Add user" reveals the add form; adding opens the new user.
+- [x] Unit: the quiet-thread sweep checks the requesting user's live preference, addresses only that
+      user, and leaves opted-out users unnotified; App Home can toggle only the clicking user's row and
+      republishes their view; the bulk-default API preserves unrelated user fields and secret masking
+      (`test/nudges-ttl.test.js`, `test/home-nudges.test.js`, `test/default-nudges.test.js`).
 - [x] Browser (engine-independent, disposable Chromium fixture): `test/user-skills-browser.test.js` uses the real admin UI/API
       and disposable users U_EMPTY (no skills) and U_SKILLS (alpha + offline-skill), with alpha/beta
       and 30 long names in the available catalog. Run with `CG_BROWSER_MODULE=/path/to/playwright/index.mjs

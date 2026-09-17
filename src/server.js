@@ -334,7 +334,7 @@ async function main() {
   // Git skill sources: periodic sync (settings: skillsSyncIntervalMinutes; 0 = off).
   startSkillsSync({ log: (m) => console.log(m) });
 
-  // Opt-in no-response thread nudges (per-channel meta.nudges).
+  // Opt-in no-response thread nudges (per-user preference).
   startNudgeSweep({ slack });
 
   // Hourly watch on the Claude login the gateway authenticates with: it hard-expires every few

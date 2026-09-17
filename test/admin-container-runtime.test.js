@@ -158,7 +158,7 @@ test("the retired runtime pin is ignored by the meta and DM PUTs, and every chan
   // An older UI (or a hand-written client) may still send `runtime`; the save succeeds and the
   // value is simply not honoured — there is nothing it could select any more.
   for (const runtime of ["host", "container", "vm", "", 1, null]) {
-    const r = await request(`/channels/${CHANNEL}/meta`, { method: "PUT", body: { runtime, nudges: true } });
+    const r = await request(`/channels/${CHANNEL}/meta`, { method: "PUT", body: { runtime, memory: true } });
     assert.equal(r.status, 200, `runtime=${JSON.stringify(runtime)} is ignored, not refused`);
     assert.equal(r.json.meta.runtimeEffective, undefined, "listings no longer carry an effective-runtime field");
   }

@@ -1119,11 +1119,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Pending acks persist in `config/acks.json` so the chain survives a daemon restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
-- Opt-in no-response nudge: a channel can have the bot post one gentle reminder in a thread that has
-  gone quiet past a window (default 24h). Strictly single-thread; never scans other channels. An
-  org-level default (Settings → Schedules & nudges, `defaultNudges`) decides whether NEW channels &
-  DMs start with it on; a "Apply to all existing channels & DMs" button pushes the current default
-  onto every existing conversation at once.
+- Personal no-response nudge: each user chooses whether the bot posts one gentle reminder addressed
+  to them when their last agent reply has gone quiet past a window (default 24h). The live user
+  preference follows them across channels and DMs and is self-service in Slack App Home; admins can
+  also edit it in Users. Strictly single-thread; never scans other channels. An org-level default
+  (Settings → Schedules & nudges, `defaultNudges`) is captured for newly seen users, and an "Apply
+  to all existing users" button intentionally replaces every existing personal choice.
 - "AI is waiting on you" digests: the bot passively observes the channels it's in (every message,
   mention or not) and tracks, per thread, who took part and who spoke last. It reminds about **one
   thing only** — threads where the **AI is waiting for your decision**: a genuine AI thread (the bot
@@ -2381,7 +2382,7 @@ are retired, bullet by bullet; everything else stands.
   admin-tagged; Custom reveals the raw flags), the two access dropdowns with live help, the network
   switch and the guest-user checklist; Tools holds filterable MCP/skills checklists with
   "N of M enabled" counts + channel tokens; Runtime holds engine/model/effort, working folder,
-  memory/nudges/org-token toggles. Edits are saved by ONE sticky dirty-state save bar
+  memory/org-token toggles. Edits are saved by ONE sticky dirty-state save bar
   (Discard / Save changes) — Instructions & Memory are visibly file editors with their own Save.
   → TEST-PLAN: Admin UI (redesign).
 - **Authoritative Admin save reconciliation**: successful channel saves merge the complete

@@ -68,8 +68,8 @@ test("policyDiff reports only the policy keys that actually changed", () => {
 
 test("policyDiff can never carry a token, an env value, or any other non-policy field", () => {
   const changes = policyDiff(
-    { composioToken: "comp_old_1111", toolboxToken: "tb_old", makeToolboxKey: "mk_old", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-old" } }, nudges: false, allowNetwork: false },
-    { composioToken: "comp_new_2222", toolboxToken: "tb_new", makeToolboxKey: "mk_new", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-new" } }, nudges: true, allowNetwork: true },
+    { composioToken: "comp_old_1111", toolboxToken: "tb_old", makeToolboxKey: "mk_old", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-old" } }, memory: false, allowNetwork: false },
+    { composioToken: "comp_new_2222", toolboxToken: "tb_new", makeToolboxKey: "mk_new", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-new" } }, memory: true, allowNetwork: true },
   );
   assert.deepEqual(Object.keys(changes), ["allowNetwork"], "only the allowlisted policy key is diffed");
   const blob = JSON.stringify(changes);
@@ -127,10 +127,10 @@ test("a save that changes no policy key writes no audit row at all", async () =>
   // audit with noise.
   const again = await request(`/channels/${CHANNEL_ID}/meta`, {
     method: "PUT",
-    body: { allowNetwork: true, adminMode: true, workDir: PROJECT_DIR, nudges: true },
+    body: { allowNetwork: true, adminMode: true, workDir: PROJECT_DIR, memory: true },
   });
   assert.equal(again.response.status, 200);
-  assert.equal(policyEvents().length, before, "nudges is not a policy key — nothing is logged");
+  assert.equal(policyEvents().length, before, "memory is not a policy key — nothing is logged");
 });
 
 test("an environment-secret change stays in its own name-only audit and never duplicates into the policy row", async () => {

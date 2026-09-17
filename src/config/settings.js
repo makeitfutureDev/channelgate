@@ -669,18 +669,24 @@ export function getScheduleMaxPerChannel() {
   return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 20;
 }
 
-// Hours of silence before an opt-in channel's thread gets a single "no-response" nudge. Default 24.
+// Hours of silence before an opted-in user's thread gets a single "no-response" nudge. Default 24.
 export function getNoResponseReminderHours() {
   const v = Number(getSettings().noResponseReminderHours);
   return Number.isFinite(v) && v >= 1 ? v : 24;
 }
 
-// Org-level default for the no-response nudge, captured onto a channel's/DM's meta.nudges when the
-// bot first registers it (so changing this later only affects conversations added afterward; the
-// "reset all" button pushes it onto existing ones). Default off — nudges stay opt-in unless an
-// admin turns this on.
+// Org-level default for the no-response nudge, captured onto a user's record when the bot first
+// sees them (so changing this later only affects new users; the "apply to all" button pushes it
+// onto existing ones). Default off — nudges stay opt-in unless an admin turns this on.
 export function getDefaultNudges() {
   return Boolean(getSettings().defaultNudges);
+}
+
+// Old user rows predate the personal preference. Until first sight/backfill, interpret an absent
+// value through the current organization default instead of silently opting somebody in or out.
+export function userNudgesEnabled(user) {
+  if (!user || typeof user !== "object") return false;
+  return typeof user?.nudges === "boolean" ? user.nudges : getDefaultNudges();
 }
 
 // Personal "pending-response" follow-up digests. When on (default), each approved user gets a DM

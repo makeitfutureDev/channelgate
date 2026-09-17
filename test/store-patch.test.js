@@ -23,13 +23,21 @@ test("patchChannelMeta merges only the supplied keys", async () => {
 });
 
 test("patchChannelMeta: two writers patching different keys both persist", async () => {
-  await saveChannelMeta("chan-b", { adminMode: false, allowBash: false, nudges: false });
+  await saveChannelMeta("chan-b", { adminMode: false, allowBash: false, memory: false });
   await patchChannelMeta("chan-b", { adminMode: true });
-  await patchChannelMeta("chan-b", { nudges: true });
+  await patchChannelMeta("chan-b", { memory: true });
   const meta = await getChannelMeta("chan-b");
   assert.equal(meta.adminMode, true); // NOT clobbered by the second patch
-  assert.equal(meta.nudges, true);
+  assert.equal(meta.memory, true);
   assert.equal(meta.allowBash, false);
+});
+
+test("retired conversation-level nudge fields cannot be read or written back", async () => {
+  await saveChannelMeta("chan-retired-nudges", { channelId: "C_OLD", nudges: true, memory: true });
+  assert.deepEqual(await getChannelMeta("chan-retired-nudges"), { channelId: "C_OLD", memory: true });
+  const next = await patchChannelMeta("chan-retired-nudges", { nudges: false, allowBash: true });
+  assert.equal(Object.hasOwn(next, "nudges"), false);
+  assert.equal(next.allowBash, true);
 });
 
 test("patchChannelMeta function form derives the partial from the current record", async () => {
