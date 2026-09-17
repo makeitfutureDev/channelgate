@@ -44,7 +44,8 @@
     "with-landing-lock": "node scripts/with-landing-lock.mjs --",
     "whisper:install": "node scripts/install-whisper.mjs",
     "build:image": "node scripts/build-image.mjs",
-    "vscode": "node scripts/open-vscode.mjs"
+    "vscode": "node scripts/open-vscode.mjs",
+    "vpn": "node scripts/channel-vpn.mjs"
   },
   "engines": {
     "node": ">=22.13"

@@ -1,5 +1,40 @@
 # ChannelGate — Test Plan
 
+## Optional isolated VPN database service (operator-only, engine-independent)
+
+These cases do not invoke or depend on an engine. Run as the gateway's OS account against
+rootless Podman; never grant host runtime access to a chat agent for this fixture.
+
+- [x] `node test/vpn-profile.test.js`: accepted TCP/CBC profiles produce fixed credential paths,
+      server verification and only the database route; malicious directives, external files,
+      malformed inline material, duplicate options and invalid targets fail without echoing secrets.
+- [x] `node test/vpn-service.test.js`: foreign ownership is refused before removal; only the VPN
+      gets TUN/NET_ADMIN; credentials stay out of argv and the other service; missing/unsafe secret
+      selection, symlink imports, readiness failure and credential rotation are exercised.
+- [x] `python3 -B services/vpn-image/test_checks.py`: route/default validation, read-only SQL and
+      sanitized errors; protected credential-file and permission checks.
+- [x] Real rootless fixture: build `localhost/channelgate/vpn:1` with `--format docker`, then run
+      `python3 -B services/vpn-image/live_acceptance.py`. Require real TUN creation, firewall counter
+      evidence for rejected non-tunnel DB traffic/wrong tunnel destinations/ports, accepted DB SYN,
+      working public TCP, zero extractor capabilities/no VPN credentials and blocked DB after TUN
+      deletion. Require cleanup of only its two uniquely named fixture containers.
+- [x] Private provider profile: import into selected channel, require mode 0600 and immutable
+      revision selection, then call start with channel Secrets absent. Require named missing
+      variables and no service containers created; no provider authentication attempted.
+- [ ] Provider-backed fixture: add VPN and read-only MySQL credentials through that channel's
+      Secrets panel; enable unit, require VPN readiness and verify returning successful SELECT 1
+      plus accessible schema names. Require database route via tun0 and public route via the
+      original eth0/tap0 interface, unchanged host routes/public IP and no unrelated container in
+      the service namespace. Never run SQL writes or dump credential/profile content.
+- [ ] Rotate credentials, restart the unit and require both containers to be recreated together
+      with updated protected files; old credentials must not remain mounted. Stop the VPN
+      process in this fixture, require pair shutdown and visible failed unit; correct the cause
+      and restart. Restart gateway separately and require no service reaping. Test user-manager
+      boot recovery on an isolated host with linger already enabled.
+
+Provider-backed connection/restart gates remain unexecuted until the required channel Secrets
+are supplied. The kernel isolation fixture is not a substitute for those connection checks.
+
 ## Admin-only sudo thread → direct host execution
 
 Automated regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,

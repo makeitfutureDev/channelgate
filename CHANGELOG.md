@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Add an optional operator-managed OpenVPN/MySQL service per channel, with dedicated tunnel
+  privileges, database-only routing/firewall, protected channel-secret references, a persistent
+  user service and read-only verification. Ordinary chat containers retain their existing rights.
+
 - Add an organization-admin-only `/sudo` posture for individual Slack threads. While enabled,
   admin messages and their background work execute directly on the gateway host as the daemon OS
   user; non-admin messages are rejected as sudo-thread traffic before work starts. `/sudo off`
