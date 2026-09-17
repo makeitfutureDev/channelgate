@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Add an optional operator-managed OpenVPN/MySQL service per channel, with dedicated tunnel
+  privileges, database-only routing/firewall, protected channel-secret references, a persistent
+  user service and read-only verification. Ordinary chat containers retain their existing rights.
+
 - Fix Codex capacity refusals delivered as plain-text `turn.failed` events. They are now classified
   as transient provider failures, retried in place, and automatically handed to the other enabled
   harness when capacity remains unavailable.

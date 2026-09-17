@@ -1,0 +1,21 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates openvpn iproute2 iptables python3 python3-pymysql tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY entrypoint.sh /usr/local/bin/cg-vpn-start
+COPY firewall.sh /usr/local/bin/cg-vpn-firewall
+COPY checks.py /usr/local/lib/channelgate-vpn/checks.py
+COPY health.sh /usr/local/bin/cg-vpn-health
+COPY routes.sh /usr/local/bin/cg-vpn-routes
+COPY verify.sh /usr/local/bin/cg-vpn-verify
+RUN chmod 0555 /usr/local/bin/cg-vpn-start /usr/local/bin/cg-vpn-health \
+    /usr/local/bin/cg-vpn-routes /usr/local/bin/cg-vpn-verify /usr/local/bin/cg-vpn-firewall \
+    && chmod 0444 /usr/local/lib/channelgate-vpn/checks.py
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+HEALTHCHECK --interval=30s --timeout=30s --start-period=30s --retries=3 \
+    CMD ["/usr/local/bin/cg-vpn-health"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cg-vpn-start"]
