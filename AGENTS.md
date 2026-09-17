@@ -9,11 +9,12 @@ Contributor workflow).
 A **self-hosted Linux daemon** (Node ESM, Express, `node:sqlite`) that runs coding agents inside
 team chat. Every conversation — a Slack DM, group or channel; Microsoft Teams and Google Chat in
 Beta — gets its **own work folder** (`~/ChannelGate/<platform>/<slug>/`), its **own rootless
-Podman container**, its own persistent memory and one engine session per thread. Each message runs
+Podman container**, its own persistent memory and one engine session per thread. Each ordinary message runs
 a **headless engine turn inside that container**: Claude Code (`claude -p`, the primary engine),
 OpenAI Codex (`codex exec`), or OpenCode (a proof adapter admitted only read-only and
-network-off). The container is the confinement boundary; the folder's `.claude/settings.json`
-carries the tool policy. A built-in admin web UI (same process) manages users, channels, engines,
+network-off). An organization admin can explicitly turn one Slack thread into a direct-host
+`/sudo` thread; only admins may then message it. The container is the default confinement boundary;
+the folder's `.claude/settings.json` carries the tool policy. A built-in admin web UI (same process) manages users, channels, engines,
 MCP connections, skills, per-channel secrets, schedules, usage and the license. `src/ee/` is the
 proprietary licensing plane (see the rules).
 
@@ -38,13 +39,14 @@ Gateway daemon
   │  license admission (src/ee/limits.js), then provision ~/ChannelGate/<platform>/<slug>/
   │    (.claude/settings.json lockdown, managed CLAUDE.md block, gateway-usage + channel-memory skills,
   │     granted catalog skills)
-  │  ensure the channel's container is up (rootless Podman: HOME volume, work folder + clean workspace
-  │    + artifact dir at identical paths, control socket read-only, bridge network)
+  │  resolve runtime: normal → ensure the channel container; admin-authenticated `/sudo` thread → host
+  │    (container: HOME volume, work folder + clean workspace + artifact dir at identical paths,
+  │     control socket read-only, bridge network; host: daemon OS account and native HOME/toolchain)
   │  resolve session: thread key → engine session id (resume) | fresh (memory catalog prepended)
   │  build MCP config: gateway control (socket bridge) + composio-user (author) + composio-agent
   │    (channel → org token) + selected catalog/plugin servers → a 0600 file in the artifact dir
   ▼
-exec inside the container (Claude, cold):
+exec in the resolved runtime (Claude, cold):
   claude -p <text> --output-format stream-json --verbose --include-partial-messages
          --setting-sources "" --settings <lockdown> --append-system-prompt-file <CLAUDE.md>
          [--model M] [--effort E] (--session-id <new> | -r <id>) --mcp-config <file> --strict-mcp-config
@@ -201,8 +203,9 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   close a cycle through `config/settings.js`.
 - `src/runtimes/` — WHERE an engine process runs: `contract.js` (the RuntimeBackend contract),
   `resolve.js` (the one place that builds the RuntimeTarget a turn, a background job and the
-  memory reviewer each receive at their OWN spawn), `registry.js` (registers the container backend
-  and nothing else; `local.js` is the unregistered host spawner kept for direct-runner tests) and
+  memory reviewer each receive at their OWN spawn), `registry.js` (registers the default container
+  backend plus the admin-authenticated `/sudo` host backend; `local.js` remains an unregistered
+  daemon-internal spawner kept for direct-runner tests), `host.js` (direct daemon-account spawn) and
   `container/` — the rootless Podman backend: the CLI probe (`podman`, then `docker`), the image
   (expected version + digest over every file in `containers/` compared with the built image's
   labels; a missing or stale image fails the run closed with the `npm run build:image` remedy),
@@ -327,14 +330,15 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
 - `~/.channelgate/config/gateway-usage/` — per-file overrides of the `gateway-usage` skill.
 - `~/.channelgate/channels/<platform>/<slug>/.claude/settings.json` — the per-channel lockdown
   contract Claude Code itself reads (must be a file): tool permissions, the MCP allowlist,
-  memory-off and the Stop hook. No `sandbox` block — the container is the boundary.
+  memory-off and the Stop hook. No `sandbox` block — the container is the ordinary-run boundary;
+  a sudo-host turn is explicitly outside it.
 - `containers/versions.json` — the image contract: the spec version and every toolchain pin
   (`docs/COMPATIBILITY.md`; the nightly canaries read the same file).
 
 ## Non-negotiable rules
 
-- **Confinement is the product, and the container is the boundary.** Every turn — foreground,
-  background job, schedule, API run, memory review — runs inside the channel's own container
+- **Confinement is the product, and the container is the default boundary.** Every ordinary turn —
+  foreground, background job, schedule, API run, memory review — runs inside the channel's own container
   (rootless Podman, image-shipped toolchain, `--cap-drop ALL`, no `sudo`): a per-channel HOME
   volume at `/home/agent` (engine sessions, CLI logins, installed tools) and, bind-mounted at
   their identical absolute paths, ONLY the channel's work folder, its clean workspace and its
@@ -350,8 +354,14 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   the planned follow-up. Every channel folder still gets the lockdown file
   (`autoMemoryEnabled:false`, `autoDreamEnabled:false`, curated `permissions.allow`, the MCP
   allowlist, the Stop hook) — it carries POLICY, never a `sandbox` block, and nothing a run can
-  do changes what its container mounts. Never exec an engine outside a container. Admin channels
-  run in containers too: the admin author's live turn adds the bypass flag, and the work folder is
+  do changes what its container mounts. The one process-boundary escape hatch is typed Slack
+  `/sudo`, scoped to exactly one thread: only a current organization admin can enable or disable it,
+  every sender and background launch is re-authorized as an admin, non-admin messages are rejected
+  before hydration or process spawn, and the resolved engine runs directly as the daemon OS user
+  with its host filesystem, processes, HOME, commands and network. The flag is a thread posture,
+  never reusable authority; stored channel metadata and run-API overrides cannot select the host.
+  Turning it off restores the container, and native session state is carried across the boundary
+  when possible. Admin channels otherwise run in containers too: the admin author's live turn adds the bypass flag, and the work folder is
   mounted read-write like any other's — so an admin channel whose work folder is a host directory
   (the gateway's own checkout, say) hands that directory, and only that directory, to its
   container, everything in it included. That is the intended trust model for admin channels; put

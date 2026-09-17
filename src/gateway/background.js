@@ -31,13 +31,16 @@ import { resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 import { containerJobScript } from "./background-shell-log.js";
+import { getThreadSudo } from "./thread-engine.js";
+import { sudoModeMeta } from "./modes.js";
 export { containerJobScript } from "./background-shell-log.js";
 
 const MAX_TAIL = 6_000; // chars of combined stdout/stderr fed back to the agent
 // Runtime caps are a runaway backstop, NOT a budget — the same philosophy as the turn watchdog
-// (a run is never killed for being quiet or merely long). Agent jobs are confined engine runs, so
-// they get a week; shell jobs run unsandboxed on the daemon, so they keep a short default unless
-// the caller explicitly asks for more. Everything is clamped to the one-week ceiling.
+// (a run is never killed for being quiet or merely long). Agent jobs get a week; raw shell jobs
+// bypass the engine's own sandbox (normally inside the channel container, directly on the daemon
+// only for `/sudo`), so they keep a short default unless explicitly extended. Everything is
+// clamped to the one-week ceiling.
 const SHELL_DEFAULT_MAX_MS = 60 * 60 * 1000; // unsandboxed shell default (60 min)
 const AGENT_DEFAULT_MAX_MS = 7 * 24 * 60 * 60 * 1000; // confined agent default (1 week)
 const HARD_MAX_MS = 7 * 24 * 60 * 60 * 1000; // absolute ceiling for any background job
@@ -252,9 +255,9 @@ export class BackgroundJobs {
   //     and it is gated by the selected trust tier: Auto mode requires a gateway admin to approve
   //     the exact command via Slack buttons; Admin mode skips that second click only for an admin
   //     author, matching the foreground sandbox-off contract they explicitly selected. The Auto
-  //     approval exists because a shell job runs OUTSIDE every engine sandbox — plain bash on the
-  //     daemon account with unrestricted filesystem/network — so prompt-injected Auto turns must
-  //     never reach it on channel mode alone.
+  //     approval exists because a shell job runs OUTSIDE every engine sandbox — normally as plain
+  //     bash inside the resolved channel container, or on the daemon account for `/sudo` — so
+  //     prompt-injected Auto turns must never reach it on channel mode alone.
   //   - "agent": a full engine run (Claude or Codex via runMessage) on a FRESH session in this
   //     channel's folder — the durable form of a subagent. No extra gate: the run enforces the
   //     channel's own mode exactly like a foreground turn (permission prompts still surface as
@@ -291,10 +294,17 @@ export class BackgroundJobs {
 
     const entry = await getChannelEntry(channelId);
     if (!entry) return { ok: false, error: "This channel isn't registered." };
-    const meta = effectiveMeta(
+    let meta = effectiveMeta(
       (await getChannelMeta(entry.slug)) ??
         defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM })
     );
+    const sudoThread = await getThreadSudo(entry.slug, threadKey);
+    if (sudoThread) {
+      if (!(await isAdmin(authorId))) {
+        return { ok: false, error: "This is a sudo thread. Only organization admins can run background work here." };
+      }
+      meta = sudoModeMeta(meta);
+    }
 
     // WHERE this shell job runs. Agent jobs go through runMessage, which resolves its own target
     // per turn, so only the shell branch needs one here. Resolved BEFORE the approval gate because
@@ -584,6 +594,7 @@ export class BackgroundJobs {
       authorId: rec.authorId,
       text: prompt,
       threadKey: `${rec.threadKey}::agent-${rec.id}`,
+      sudoSourceThreadKey: rec.threadKey,
       origin: "background_agent", // daemon-triggered: structurally never escalates
       preferCold: true, // one-shot: don't leave a warm process idling after the agent finishes
       signal: controller.signal,

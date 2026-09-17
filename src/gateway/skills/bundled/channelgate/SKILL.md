@@ -2,7 +2,7 @@
 name: "channelgate"
 description: >-
   Configure, secure, explain, or troubleshoot ChannelGate conversations and deployments. Use for
-  channel containers and work folders, permissions/network access, Claude or Codex runtime and
+  channel containers, direct-host `/sudo` threads and work folders, permissions/network access, Claude or Codex runtime and
   login recovery, per-channel CLI credentials and device-login links, MCP identities, skill
   grants/templates/sources, channel memory, background work, schedules, attachments, or strict
   headless MCP configuration. Do not use for ordinary work merely performed through ChannelGate.
@@ -45,12 +45,14 @@ the product contracts and decision points; it does not replace either source.
 
 ## Invariants that apply everywhere
 
-- Every foreground turn, background agent, shell job, scheduled run, and memory review executes
-  inside that conversation's own rootless Podman container. Admin mode grants an admin author's
+- Every ordinary foreground turn, background agent, shell job, scheduled run, and memory review
+  executes inside that conversation's own rootless Podman container. Admin mode grants an admin author's
   tool bypass; it also qualifies the channel for the optional operator-home mount ONLY while the
   gateway-wide `containerFullAccessHome` switch is on. See the architecture/security reference and
-  the injected `gateway-usage` runtime note for the exact grant. Never run an engine on the host.
-- The container is the filesystem/process boundary. Its persistent HOME belongs to one
+  the injected `gateway-usage` runtime note for the exact grant. The only host-engine path is a
+  current organization admin's per-thread Slack `/sudo`, which rejects non-admin messages and must
+  be treated as direct daemon-account access.
+- The container is the default filesystem/process boundary. Its persistent HOME belongs to one
   conversation. Host visibility follows the resolved mounts: normally just this conversation's
   directories, or the operator's whole home when the explicit Full-access grant applies.
   The current bridge network has no domain filtering or enforced egress cut-off, so never claim

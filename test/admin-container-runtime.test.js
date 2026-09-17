@@ -170,11 +170,11 @@ test("the retired runtime pin is ignored by the meta and DM PUTs, and every chan
   // The one door the admin API and the MCP tools ask "where does this channel run?" through always
   // answers the container — for a plain channel AND for an admin-mode one (admin mode is the trust
   // the bind-mounted work folder carries, not a way onto the daemon's host).
-  assert.deepEqual(decideRuntimeBackend(await getChannelMeta(entry.slug)), { backend: "container", reason: "only-runtime" });
+  assert.deepEqual(decideRuntimeBackend(await getChannelMeta(entry.slug)), { backend: "container", reason: "default" });
   const admin = await request(`/channels/${CHANNEL}/meta`, { method: "PUT", body: { adminMode: true, profile: "custom" } });
   assert.equal(admin.status, 200);
   assert.equal(admin.json.meta.adminMode, true);
-  assert.deepEqual(decideRuntimeBackend(await getChannelMeta(entry.slug)), { backend: "container", reason: "only-runtime" });
+  assert.deepEqual(decideRuntimeBackend(await getChannelMeta(entry.slug)), { backend: "container", reason: "default" });
   await request(`/channels/${CHANNEL}/meta`, { method: "PUT", body: { adminMode: false } });
 
   const listed = (await request("/channels")).json.channels.find((c) => c.channelId === CHANNEL);

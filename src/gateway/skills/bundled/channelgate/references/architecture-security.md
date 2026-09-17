@@ -14,6 +14,13 @@ The operator HOME, gateway runtime root/database, daemon checkout, sibling conve
 credential stores are normally not mounted. An admin conversation may deliberately point its work folder at
 a host repository; that one directory is then visible read-write, but nothing beside it.
 
+The explicit boundary exception is a Slack thread whose current organization admin enabled typed
+`/sudo`. That thread resolves the registered host backend: engine and inherited background work
+run directly as the daemon OS user with the host filesystem, processes, native HOME, commands and
+network. It is not Admin channel mode and not a mount. Only current admins can toggle or message
+it; every ingress/run rechecks authority, non-admin messages are rejected before work starts, and
+stored channel metadata or run-API overrides cannot select it. `/sudo off` restores the container.
+
 One operator-chosen exception: with the gateway-wide **Full-access channels see the gateway home**
 switch on (`containerFullAccessHome`, Settings → Container runtime, off by default), every Full-access conversation's
 container also mounts the gateway user's whole home read-write at its identical path — every

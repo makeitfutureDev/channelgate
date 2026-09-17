@@ -1,8 +1,7 @@
 // The runtime layer's core facts (src/runtimes/): the fail-closed backend contract, the registry
-// that holds exactly one channel runtime — the container — and the resolver that hands every
-// channel turn to it. The daemon's OWN process spawner (src/runtimes/local.js) is covered here too,
-// precisely because it is NOT a channel runtime: it exists for the update smoke probe and the
-// direct-runner tests, and nothing a channel does can resolve to it.
+// that defaults every channel to its container and admits the direct host backend only for the
+// transient, admin-authenticated sudo-thread posture. The daemon's OWN local spawner remains
+// separate from both registered channel runtimes.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, renameSync } from "node:fs";
@@ -15,12 +14,14 @@ const { validateRuntimeBackend, runtimeSupports, runtimeCanCarry, newRunId, runI
 const { localRuntime } = await import("../src/runtimes/local.js");
 const { runtimeBackend, runtimeBackendOr, runtimeBackendIds, isRuntimeBackendId } = await import("../src/runtimes/registry.js");
 const { decideRuntimeBackend, resolveRuntime } = await import("../src/runtimes/resolve.js");
+const { sudoModeMeta } = await import("../src/gateway/modes.js");
 const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
 const { credentialError: containerCredentialError } = await import("../src/runtimes/container/credentials.js");
 const { installId, channelArtifactDir, runtimeSocketFile } = await import("../src/config/paths.js");
 const { getContainerRuntime } = await import("../src/config/settings.js");
 
 const container = runtimeBackend("container");
+const host = runtimeBackend("host");
 
 test("contract: a backend missing a method or capability fails closed", () => {
   assert.doesNotThrow(() => validateRuntimeBackend(container));
@@ -31,8 +32,7 @@ test("contract: a backend missing a method or capability fails closed", () => {
   const extraCap = { ...container, capabilities: { ...container.capabilities, superpowers: true } };
   assert.throws(() => validateRuntimeBackend(extraCap), /unknown capability/);
   assert.throws(() => validateRuntimeBackend({ ...container, id: "vm" }), /unknown id/);
-  // The host OS-sandbox backend is gone: a module that still calls itself "host" cannot load.
-  assert.throws(() => validateRuntimeBackend({ ...container, id: "host" }), /unknown id/);
+  assert.doesNotThrow(() => validateRuntimeBackend(host));
 });
 
 test("contract: an OPTIONAL method may be absent but may never be the wrong thing", () => {
@@ -62,37 +62,36 @@ test("contract: runtimeSupports reads declared capabilities and throws on unknow
   assert.throws(() => runtimeSupports(container, "teleport"), /unknown runtime capability/);
 });
 
-test("registry: the container backend is the only channel runtime, and every stored id resolves to it", () => {
-  assert.deepEqual([...RUNTIME_BACKEND_IDS], ["container"]);
+test("registry: host is registered for sudo while container remains the universal default", () => {
+  assert.deepEqual([...RUNTIME_BACKEND_IDS], ["host", "container"]);
   assert.equal(DEFAULT_RUNTIME_BACKEND, "container");
-  assert.deepEqual(runtimeBackendIds(), ["container"]);
+  assert.deepEqual(runtimeBackendIds(), ["host", "container"]);
   assert.equal(runtimeBackend("container").id, "container");
-  assert.throws(() => runtimeBackend("host"), /unknown runtime backend/);
+  assert.equal(runtimeBackend("host").id, "host");
   assert.throws(() => runtimeBackend("docker"), /unknown runtime backend/);
-  // Rows written before v0.8 name no backend; rows written while the host backend existed name
-  // "host". Both resolve to the one backend there is.
+  // Default/fallback lookup remains container; only an explicit valid host id resolves host.
   assert.equal(runtimeBackendOr("").id, "container");
-  assert.equal(runtimeBackendOr("host").id, "container");
+  assert.equal(runtimeBackendOr("host").id, "host");
   assert.equal(runtimeBackendOr("bogus").id, "container");
   assert.equal(isRuntimeBackendId("container"), true);
-  assert.equal(isRuntimeBackendId("host"), false);
+  assert.equal(isRuntimeBackendId("host"), true);
   assert.equal(isRuntimeBackendId("local"), false, "the daemon's own spawner is deliberately not registered");
 });
 
-test("resolve: every channel runs in the container — no kill switch, no pin, no admin-mode exception", () => {
-  for (const meta of [{}, { runtime: "host" }, { runtime: "container" }, { adminMode: true }, { cleanMode: true }, { runtime: "vm" }]) {
-    assert.deepEqual(decideRuntimeBackend(meta), { backend: "container", reason: "only-runtime" }, JSON.stringify(meta));
+test("resolve: only the authorized transient sudo posture selects host; stored fields and admin mode do not", () => {
+  for (const meta of [{}, { runtime: "host" }, { runtime: "container" }, { adminMode: true }, { cleanMode: true }, { runtime: "vm" }, { sudoMode: true }]) {
+    assert.deepEqual(decideRuntimeBackend(meta), { backend: "container", reason: "default" }, JSON.stringify(meta));
   }
-  // The pre-2026-09 signature (meta, settings) is tolerated and ignored: the answer never changes.
-  assert.deepEqual(decideRuntimeBackend({ runtime: "host" }, { enabled: false, defaultBackend: "host" }), { backend: "container", reason: "only-runtime" });
-  assert.deepEqual(decideRuntimeBackend(), { backend: "container", reason: "only-runtime" });
+  assert.deepEqual(decideRuntimeBackend(sudoModeMeta({})), { backend: "host", reason: "thread-sudo" });
+  assert.deepEqual(decideRuntimeBackend({ runtime: "host" }, { enabled: false, defaultBackend: "host" }), { backend: "container", reason: "default" });
+  assert.deepEqual(decideRuntimeBackend(), { backend: "container", reason: "default" });
 });
 
 test("resolve: the target carries cwd, durable workDir, clean workspace, the artifact dir and the backend object", () => {
   const meta = { platform: "slack", channelId: "C1", name: "#rt" };
   const target = resolveRuntime("rt-core", meta);
   assert.equal(target.backend, "container");
-  assert.equal(target.reason, "only-runtime");
+  assert.equal(target.reason, "default");
   assert.equal(target.runtime, container);
   assert.equal(target.cwd, target.workDir);
   assert.match(target.cleanWorkDir, /clean-workspaces[\\/]slack[\\/]rt-core$/);
@@ -111,6 +110,13 @@ test("resolve: the target carries cwd, durable workDir, clean workspace, the art
   const admin = resolveRuntime("rt-core", { ...meta, adminMode: true });
   assert.equal(admin.backend, "container", "admin mode runs in a container like every other channel");
   assert.equal(admin.cwd, target.cwd, "the same channel, the same working directory");
+
+  const sudo = resolveRuntime("rt-core", sudoModeMeta(meta));
+  assert.equal(sudo.backend, "host");
+  assert.equal(sudo.reason, "thread-sudo");
+  assert.equal(sudo.runtime, host);
+  assert.equal(sudo.artifactDir, null);
+  assert.equal(sudo.container, null);
 });
 
 test("local spawner: spawn tags the child, probe follows the pid, signal takes the group — and it is no channel runtime", async () => {
@@ -141,10 +147,10 @@ test("local spawner: spawn tags the child, probe follows the pid, signal takes t
   assert.equal(localRuntime.resumeCommand(target, { baseCommand: "claude --resume abc" }), "claude --resume abc");
   assert.deepEqual(await localRuntime.describe(target), { backend: "local", state: "local" });
   assert.deepEqual(await localRuntime.ensureUp(target), { created: false, started: false, warmupMs: 0 });
-  // The engine-side helpers (the gateway MCP bridge, the secret bridges, the Stop hook) are the
-  // image's baked bundle: a local child has none, and asking is a programming error, not a fallback.
-  assert.throws(() => localRuntime.helperCommand(target, "gateway-mcp"), /only available inside a channel container/);
-  assert.throws(() => localRuntime.helperCommand(target, "warp-drive"), /only available inside a channel container/);
+  // Engine-side helpers belong to registered runtimes (the image bundle or sudo-host checkout):
+  // a daemon-internal local child has none, and asking is a programming error, not a fallback.
+  assert.throws(() => localRuntime.helperCommand(target, "gateway-mcp"), /unavailable in the daemon-internal local runtime/);
+  assert.throws(() => localRuntime.helperCommand(target, "warp-drive"), /unavailable in the daemon-internal local runtime/);
   // It can never be registered as a channel runtime: the contract does not know its id.
   assert.throws(() => validateRuntimeBackend(localRuntime), /unknown id "local"/);
 });

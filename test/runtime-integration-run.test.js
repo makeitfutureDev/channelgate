@@ -38,7 +38,8 @@ const { saveSettings } = await import("../src/config/settings.js");
 const { runMessage, setRuntimeResolver, runArtifactRoot } = await import("../src/gateway/run.js");
 const { getSessionRuntime, getSession, getSessionEngine, saveSession } = await import("../src/gateway/sessions.js");
 const { readEvents } = await import("../src/util/logger.js");
-const { runTmpDir, claudeEngineHome } = await import("../src/config/paths.js");
+const { runTmpDir } = await import("../src/config/paths.js");
+const { hostClaudeStateDir } = await import("../src/engines/host-state.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
 const { createFakeRuntimeBackend, fakeContainerPath, fakeTarget, FAKE_IMAGE } = await import("./runtime-fake.js");
@@ -104,18 +105,15 @@ function useBackend(backend, { record = null } = {}) {
 }
 
 // A thread that last ran on the HOST — what every session row from before the container runtime
-// looks like, and the one case the carry-over exists for. There is no host backend to run the
-// first turn on any more, so the row is put into that state directly: the first turn runs through
-// a fake container (the only backend there is), its row is then re-stamped the way the host
-// backend used to write it, and the transcript is planted where a host turn's engine wrote it —
-// the daemon's own engine state dir.
+// looks like. The fixture stamps the state directly so this test can isolate host→container carry
+// from the sudo admission path, then plants the transcript where a direct host turn writes it.
 async function hostThread(channelId, threadKey, { entry, meta }) {
   useBackend(createFakeRuntimeBackend());
   const first = await runMessage({ channelId, authorId: "U_RT", text: "one", threadKey, origin: "slack_foreground", preferCold: true });
   await saveSession(entry.slug, threadKey, first.sessionId, "claude", null, JSON.stringify({ backend: "host", fingerprint: "host", image: "" }));
   assert.equal((await getSessionRuntime(entry.slug, threadKey)).backend, "host");
   const key = resolveRuntime(entry.slug, meta).cwd.replace(/[^a-zA-Z0-9]/g, "-");
-  const projects = path.join(claudeEngineHome(), ".claude", "projects", key);
+  const projects = path.join(hostClaudeStateDir(), "projects", key);
   await mkdir(path.join(projects, first.sessionId), { recursive: true });
   await writeFile(path.join(projects, `${first.sessionId}.jsonl`), "host transcript\n");
   await writeFile(path.join(projects, first.sessionId, "sub.jsonl"), "subagent\n");
@@ -164,7 +162,7 @@ test("a Claude turn relays the OPERATOR's login into the container — never a s
   // …and the child's config dir is the IMAGE's, never the daemon's synthetic engine home (which
   // is not mounted, and whose credentials copy is exactly the dead one above).
   assert.equal(spawned.env.CLAUDE_CONFIG_DIR, "/home/agent/.claude");
-  assert.ok(!spawned.env.CLAUDE_CONFIG_DIR.startsWith(claudeEngineHome()));
+  assert.notEqual(spawned.env.CLAUDE_CONFIG_DIR, hostClaudeStateDir());
 });
 
 test("a runtime that cannot start ends the turn with its own error, before the engine runs", async () => {
@@ -279,8 +277,7 @@ test("the session row and the run_config event both record where the turn ran", 
 
   const config = readEvents({ limit: 50 }).find((e) => e.event === "run_config" && e.slug === entry.slug);
   assert.equal(config.runtime, "container");
-  // There is exactly one backend, and the record says so rather than pretending a choice was made.
-  assert.equal(config.runtimeReason, "only-runtime");
+  assert.equal(config.runtimeReason, "default");
   // The compiled network policy is what the engine was TOLD, never a boundary anything applied:
   // the container is on the bridge network and no egress is policed per channel. Recorded next to
   // the mode so an operator reading the event after an incident cannot mistake `"off"` for "this

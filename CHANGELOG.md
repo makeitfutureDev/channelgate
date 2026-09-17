@@ -1,5 +1,12 @@
 # Changelog — ChannelGate
 
+- Add an organization-admin-only `/sudo` posture for individual Slack threads. While enabled,
+  admin messages and their background work execute directly on the gateway host as the daemon OS
+  user; non-admin messages are rejected as sudo-thread traffic before work starts. `/sudo off`
+  restores the normal per-conversation container, with Claude/Codex session state carried across
+  the boundary when possible. The host runtime cannot be selected through channel metadata or the
+  run API, and every turn rechecks current admin authority.
+
 - Render up to five public images referenced in an agent's Slack answer as native Block Kit image
   previews, while preserving clickable Markdown fallbacks and completed text delivery when Slack
   rejects a preview.

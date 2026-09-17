@@ -13,6 +13,7 @@ export const HELP_TEXT =
   "• *Gateway skills:* `gateway-usage` is installed automatically and teaches me chat tools, formatting, reminders, files, video understanding, and administration. `channel-memory` is automatic when channel memory is enabled—there is nothing to install.\n" +
   "• *Reminders and schedules:* ask naturally, for example `remind me in 2 hours to call the client` or `every Monday at 09:00 summarize new messages`. Reminders only post a nudge; scheduled tasks wake the agent to do work. Ask `list schedules` or `delete schedule <id>` to manage them.\n" +
   "• *Long-running work:* ask me to run it in the background. In an Auto/Full-access channel, the gateway keeps the job alive after the current turn and reports back in this thread when it finishes.\n" +
+  "• *Direct host work:* an organization admin can enable `/sudo` for one thread. Its admin messages run directly as the gateway daemon OS user, outside the channel container; non-admin messages to that thread are rejected. Use `/sudo off` to restore the normal container.\n" +
   "• *Useful checks:* `/status` shows active runs, background jobs, and schedules; `/pending` shows threads waiting on your decision; `/model` changes Claude/Codex, model, and effort; `/mode` shows the channel's tool-access mode.\n\n" +
   "*Commands* (this thread/channel)\n" +
   "• `/menu` — show only the Resume, Files, Secrets, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
@@ -26,6 +27,7 @@ export const HELP_TEXT =
   "• `/model` — choose channel/thread scope, Claude or Codex, model, and effort (access policy is set in Settings)\n" +
   "• `/compact` — compact this thread's history (Claude; Codex → use `/clear`)\n" +
   "• `/mode [read|bash|auto|admin]` — show or set this channel's mode (admin/manager permission required to change it)\n" +
+  "• `/sudo [on|off|status]` — typed in-thread, organization-admin-only direct host execution; use `@agent /sudo` in channels; `/sudo` means on\n" +
   "• `/next <message>` — queue after the current run without showing the steer-or-queue choice\n" +
   "• `/status` — show active work and schedules in this conversation (top-level Slack command)\n" +
   "• `/stop` — stop every active run in this conversation (top-level; for one thread use `@agent stop`, `stop` in a DM, or 🛑)\n" +

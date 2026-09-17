@@ -53,3 +53,11 @@ test("missing resolved facts stay unknown instead of inferring a mode or host is
   assert.match(note, /Network policy for this attempt is unknown/);
   assert.doesNotMatch(note, /runtime directory: \*\*(not )?mounted\*\*/);
 });
+
+test("a sudo-host target states that the container boundary is absent", () => {
+  const note = runtimeAccessPreamble({ backend: "host", container: null }, { clean: false, allowNetwork: true });
+  assert.match(note, /Direct host access.*enabled by `\/sudo`/s);
+  assert.match(note, /There is no channel-container boundary/);
+  assert.match(note, /runtime directory: \*\*directly accessible\*\*/);
+  assert.match(note, /Only organization-admin messages are admitted/);
+});

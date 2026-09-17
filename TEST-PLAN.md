@@ -1,5 +1,37 @@
 # ChannelGate — Test Plan
 
+## Admin-only sudo thread → direct host execution
+
+Automated regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,
+`test/session-carry.test.js`, `test/engine-runtime-isolated.test.js`,
+`test/codex-args.test.js`, `test/runtime-integration-run.test.js`, and
+`test/runtime-access-facts.test.js`.
+
+- [x] An organization admin's typed `/sudo` or `/sudo on` enables only the current Slack thread;
+      `/sudo status` is read-only, `/sudo off` clears the row, and invalid arguments are rejected.
+- [x] An approved non-admin cannot enable, disable, or query sudo. Once enabled, a non-admin
+      message is rejected with “This is a sudo thread” before hydration, attachment reads,
+      queueing, engine invocation, or process spawn.
+- [x] The run orchestrator independently reloads the sticky flag and current organization-admin
+      status. An untrusted API principal, stale author ID, demoted admin, or stored/channel runtime
+      field cannot select the host backend.
+- [x] Sudo resolves the registered host backend, uses the daemon OS account's native engine state,
+      scratch paths and helpers, and does not inject the container-only Codex Landlock setting.
+      Normal/admin-mode/clean runs continue to resolve the container backend.
+- [x] Background shell and agent work inherit the source thread's sudo posture only after a fresh
+      admin check. The background agent's synthetic thread cannot lose or manufacture that posture.
+- [x] Boundary changes are refused while work is running or queued and retire an idle warm process.
+      Session carry covers container→host and host→container; copy failure remains non-fatal and
+      uses the existing transcript-healing path.
+- [x] Every posture change and rejected non-admin attempt is audit logged without secret values.
+- [ ] Live: as an org admin, enable `/sudo` in a disposable Slack thread and verify `pwd`, `HOME`,
+      host process visibility and a harmless host command reflect the daemon account. Confirm an
+      ordinary thread still sees only its channel container, then disable sudo and verify return to
+      `/home/agent` plus native session continuity.
+- [ ] Live: while sudo is enabled, have an approved non-admin reply in that exact thread. Require
+      the explicit sudo-thread rejection and prove no progress card, attachment download, runtime
+      startup, usage row, or engine process was created.
+
 ## Browser acceptance runner
 
 Browser test files intentionally skip unless `CG_BROWSER_MODULE` points at a compatible Playwright

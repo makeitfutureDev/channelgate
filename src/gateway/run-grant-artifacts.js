@@ -3,6 +3,7 @@
 // to preserve safe warm sessions; user/library overlays and every Codex HOME are private per run.
 import { createHash, randomUUID } from "node:crypto";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { buildSettings, enableSkills } from "./folders.js";
 import { ensureRealDir } from "./safe-fs.js";
@@ -12,6 +13,8 @@ import { ENGINE_IDS, requireAdapter } from "../engines/registry.js";
 import { materializeSkill } from "./skills/materialize.js";
 import { hashSkillFiles, normalizeSkillFiles } from "./skills/files.js";
 import { openWorkspaceDirectory } from "./skills/workspace-backup.js";
+import { hostClaudeStateDir, hostCodexStateDir } from "../engines/host-state.js";
+import { channelArtifactDir } from "../config/paths.js";
 
 // ── Isolated-runtime engine homes ─────────────────────────────────────────────────────────────
 // Inside a container the engine's HOME is the channel's own persistent volume (plan §5/§8), so
@@ -24,6 +27,19 @@ export const CONTAINER_AGENT_HOME = "/home/agent";
 
 export function engineHomesFor(target = null) {
   if (!target) return null;
+  if (target.backend === "host") {
+    const home = os.homedir();
+    const claudeConfigDir = hostClaudeStateDir();
+    const codexHome = hostCodexStateDir();
+    return {
+      claudeHome: home,
+      claudeConfigDir,
+      claudeStateDir: claudeConfigDir,
+      codexUserHome: home,
+      codexHome,
+      codexStateDir: codexHome,
+    };
+  }
   const home = target?.container?.home || CONTAINER_AGENT_HOME;
   const claudeConfigDir = target?.container?.claudeConfigDir || path.posix.join(home, ".claude");
   const codexHome = target?.container?.codexHome || path.posix.join(home, ".codex");
@@ -44,7 +60,7 @@ export function engineHomesFor(target = null) {
 // Compatibility for callers refreshing artifacts after ensureUp: never publish a rootless
 // volume path as readable state. Usage inspection now follows the resolved RuntimeTarget.
 export function refreshRuntimeReadPaths(artifacts = {}, target = null) {
-  if (target) artifacts.codexStateDir = "";
+  if (target && target.backend !== "host") artifacts.codexStateDir = "";
   return artifacts;
 }
 
@@ -182,17 +198,18 @@ export async function createRunGrantArtifacts({
   // content-addressed layout, same cleanup. Fail loudly rather than quietly writing under the
   // gateway root: a containerized engine cannot open a path there, so falling back would produce
   // a run whose settings and MCP config silently do not exist on the side that has to read them.
-  if (!target?.artifactDir) {
+  const host = target?.backend === "host";
+  if (!host && !target?.artifactDir) {
     throw new Error("a runtime target must carry an artifactDir — a containerized engine has nowhere else to read this run's files from");
   }
   const containerHomes = engineHomesFor(target);
-  const artifactRoot = target.artifactDir;
+  const artifactRoot = host ? (target.artifactDir || channelArtifactDir(slug, meta?.platform)) : target.artifactDir;
   const runsRoot = path.join(artifactRoot, "runs");
   await mkdir(runsRoot, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(path.join(runsRoot, "grants-"));
   try {
-    // The engines' homes are the channel's own HOME volume inside the container; the daemon only
-    // names them in the child's environment and never creates or reads them (engineHomesFor).
+    // Container engines use the channel HOME volume, which the daemon only names. A direct host
+    // target uses the daemon account's native engine homes (engineHomesFor).
     const { claudeHome, claudeConfigDir, claudeStateDir, codexUserHome, codexHome, codexStateDir } = containerHomes;
     // Codex keeps its persistent HOME/auth/session roots. Personal grants use an explicit
     // per-turn catalog pointing at the same ephemeral skill files Claude receives as a plugin;

@@ -9,7 +9,8 @@ import { listEngineMcps, codexMcpPolicyFor } from "../gateway/mcp-discovery.js";
 import { commandHealth, validateEngineAdapter } from "./contract.js";
 import { runtimeTargetOr } from "./runtime-target.js";
 import { readCodexAuthState } from "./codex-auth.js";
-import { claudeEngineHome, codexEngineHome } from "../config/paths.js";
+import { codexEngineHome } from "../config/paths.js";
+import { hostClaudeStateDir, hostCodexStateDir } from "./host-state.js";
 import { discoverCodexModels } from "./model-discovery.js";
 import { requirePluginRuntime } from "../gateway/plugin-runtime.js";
 
@@ -75,10 +76,8 @@ const claude = validateEngineAdapter({
   modelBelongs: (m) => /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/.test(m),
   resumeCommand: (id) => `claude --resume ${id}`,
   sessionState: Object.freeze({
-    // CLAUDE_CONFIG_DIR on the host is the gateway's stable synthetic one (run-grant-artifacts.js
-    // plants `projects` in it as a symlink to the operator's real directory, which the copy
-    // follows as an ancestor).
-    hostDir: () => path.join(claudeEngineHome(), ".claude"),
+    // A direct `/sudo` turn uses the daemon account's native Claude config/state directory.
+    hostDir: () => hostClaudeStateDir(),
     containerDirKey: "claudeConfigDir",
     files: ({ cwd, sessionId }) => {
       const key = claudeProjectKey(cwd);
@@ -124,12 +123,12 @@ const claude = validateEngineAdapter({
       });
       // The warm process never learns the model it was started with; a provider failure it reports
       // still needs `requestedModel` for the same-engine model retry (see gateway/run.js).
-      return runPooled({ key: r.poolKey, cwd: ctx.cwd, args, env: buildClaudeEnv({ extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, oauthToken: claudeOauthToken }), idleMs, target, mcpConfigJson: r.mcpConfigFingerprint || r.mcpConfigJson, dangerouslySkip: r.dangerouslySkip, fingerprintExtra: `${r.model}|${r.effort}|${r.permissionPromptTool}|${isolationFingerprint}`, text: ctx.prompt, turnTimeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent }).catch((error) => {
+      return runPooled({ key: r.poolKey, cwd: ctx.cwd, args, env: buildClaudeEnv({ home: r.claudeHome, configDir: r.claudeConfigDir, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, oauthToken: claudeOauthToken }), idleMs, target, mcpConfigJson: r.mcpConfigFingerprint || r.mcpConfigJson, dangerouslySkip: r.dangerouslySkip, fingerprintExtra: `${r.model}|${r.effort}|${r.permissionPromptTool}|${isolationFingerprint}`, text: ctx.prompt, turnTimeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent }).catch((error) => {
         if (error?.details?.providerError === true && error.details.requestedModel === undefined) error.details.requestedModel = r.model;
         throw error;
       });
     }
-    return runClaude({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip, settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent, permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs, instructionFile: r.instructionFile, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, claudeOauthToken });
+    return runClaude({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip, settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent, permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs, instructionFile: r.instructionFile, home: r.claudeHome, configDir: r.claudeConfigDir, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, claudeOauthToken });
   },
   interrupt: ({ poolKey }) => abortPooled(poolKey),
   discoverMcps: () => listEngineMcps("claude"),
@@ -207,8 +206,8 @@ const codex = validateEngineAdapter({
   modelBelongs: (m) => /^(?:gpt-|o[0-9]|codex)/.test(m),
   resumeCommand: (id) => `codex exec resume ${id}`,
   sessionState: Object.freeze({
-    // codexEngineHome() already ends in `.codex`, and IS $CODEX_HOME for every gateway run.
-    hostDir: () => codexEngineHome(),
+    // A direct `/sudo` turn uses the daemon account's native CODEX_HOME.
+    hostDir: () => hostCodexStateDir(),
     containerDirKey: "codexHome",
     // A rollout is `sessions/YYYY/MM/DD/rollout-<timestamp>-<id>.jsonl`. The timestamp cannot be
     // recomputed, so the location is a PATTERN — and the date directories must survive the copy,

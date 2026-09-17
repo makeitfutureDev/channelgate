@@ -405,7 +405,9 @@ export const codexFirstOwnTaskIndex = firstOwnTaskIndex;
 let reducerSource;
 export function createCodexUsageReader(target, stateDir = "") {
   const read = async (operation, args = {}) => {
-    if (!target) return reduceCodexUsage({ operation, ...args, stateDir });
+    if (!target || target.backend === "host") {
+      return reduceCodexUsage({ operation, ...args, stateDir });
+    }
     if (typeof target.runtime?.inspectUsage !== "function") throw new Error("runtime cannot inspect Codex usage");
     reducerSource ||= readFile(new URL("./codex-usage.js", import.meta.url), "utf8");
     return target.runtime.inspectUsage(target, {

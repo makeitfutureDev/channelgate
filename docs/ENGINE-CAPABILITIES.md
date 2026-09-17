@@ -5,8 +5,8 @@ the Admin API/UI consume that registry.
 
 | Capability | Claude | Codex |
 | --- | --- | --- |
-| Filesystem confinement | Per-conversation container mounts; Claude permissions control tools | Same container boundary; Read-only mode adds a CLI read-only sandbox |
-| Network policy | Advisory off/on; container bridge networking, no domain filtering or egress firewall | Same container network boundary; CLI Read-only mode also restricts its own network access |
+| Filesystem confinement | Per-conversation container mounts by default; Claude permissions control tools. Admin-only Slack `/sudo` threads deliberately run on the host | Same default container boundary; Read-only mode adds a CLI read-only sandbox. `/sudo` deliberately runs on the host |
+| Network policy | Advisory off/on; container bridge networking by default, direct daemon-account network in `/sudo`; no domain filtering or egress firewall | Same resolved-runtime policy; CLI Read-only mode also restricts its own network access outside bypass |
 | Warm process / steer | yes | no; one-shot resume |
 | Session identity | gateway-minted UUID | CLI-minted thread ID, persisted after the turn |
 | Permission prompts | Interactive Slack tool approvals; automatic approval with Auto | Headless deny or eligible automatic review with Auto |

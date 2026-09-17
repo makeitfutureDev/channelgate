@@ -1,5 +1,29 @@
 # ChannelGate — Features
 
+## Admin-only direct-host sudo threads
+
+- An organization admin can type `/sudo` (or `/sudo on`) in a Slack thread to make that thread's
+  subsequent turns execute directly on the gateway host as the daemon OS user. `/sudo status`
+  reports the posture and `/sudo off` returns future turns to the channel container. The command
+  refuses to cross the boundary while that thread has running or queued work.
+- Sudo is scoped to one thread, not a channel setting. Only current organization admins may
+  activate, deactivate, message, or launch background work from it. Non-admin messages are rejected
+  before Slack hydration, queueing, attachment reads, or process spawn, and `runMessage` repeats the
+  admin check so alternate ingress, unattended work, stale rows and caller-supplied author IDs
+  cannot turn the stored flag into authority.
+- The registered host runtime uses the daemon account's native filesystem, process namespace,
+  HOME, installed commands and network. It is intentionally outside the rootless container
+  boundary. Per-run engine environments remain allowlisted, secrets remain redacted, and channel
+  grants/MCP policy are still compiled normally. Stored channel metadata and run-API overrides
+  cannot select this runtime.
+- Claude and Codex session files are carried container→host on enable and host→container on disable
+  when the backend supports it; an unavailable carry falls back to the existing transcript-healing
+  path. Idle warm processes from the previous boundary are retired when the flag changes.
+
+Regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,
+`test/session-carry.test.js`, `test/engine-runtime-isolated.test.js`,
+`test/codex-args.test.js`, and `test/runtime-access-facts.test.js`.
+
 ## Interactive Slack clarification questions
 
 Claude and Codex can ask for missing information through the shared `ask_questions` gateway tool.

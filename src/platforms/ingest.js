@@ -14,6 +14,7 @@ import { sessionKeyForMessage, rememberReplySession } from "./reply-sessions.js"
 import { saveInboundAttachments } from "./attachments.js";
 import path from "node:path";
 import { removeRegularFileWithin } from "../gateway/safe-fs.js";
+import { getThreadSudo } from "../gateway/thread-engine.js";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
@@ -88,6 +89,15 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     }
 
     const sessionKey = sessionKeyForMessage(message);
+    if (await getThreadSudo(entry.slug, sessionKey) && !authorIsAdmin) {
+      await connector.post({
+        conversationId: message.rawConversationId,
+        threadKey: message.threadKey,
+        text: "⛔ This is a sudo thread. Only organization admins can send messages or run work here.",
+      }).catch(() => {});
+      await logEvent("sudo_thread_message_rejected", { channel: message.conversationId, author: message.userId, slug: entry.slug, threadKey: sessionKey, platform: adapter.id });
+      return { skipped: "sudo-admin-only" };
+    }
     const rememberReply = (sent) => {
       if (message.kind === "group" && !message.threadKey && sent?.messageId) {
         rememberReplySession(message.conversationId, sent.messageId, sessionKey);

@@ -15,7 +15,7 @@ import { postModelWizard } from "./model-wizard.js";
 import { getSessionMap, clearSession, hasThreadSession, getSessionEngine, saveSession } from "../gateway/sessions.js";
 import { planSessionAdoption } from "../gateway/session-adopt.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
-import { setThreadEngine, getThreadEngine, resolveThreadEngine, setThreadClean, getThreadClean, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
+import { setThreadEngine, getThreadEngine, resolveThreadEngine, setThreadClean, getThreadClean, setThreadSudo, getThreadSudo, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
 import { abortPooled, pooledBusy, interruptPooled } from "../engines/session-pool.js";
 import { logEvent } from "../util/logger.js";
 import { removeRegularFileWithin } from "../gateway/safe-fs.js";
@@ -626,6 +626,19 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       });
       return;
     }
+    const threadKey = event.thread_ts ?? event.ts;
+    // Sudo is a THREAD trust boundary, stronger than the channel's ordinary admission policy.
+    // Reject before hydration, attachment reads, queueing, or any process spawn. The stored flag
+    // is never authority by itself: the sender's current organization-admin status is rechecked.
+    if (await getThreadSudo(entry.slug, threadKey) && !authorIsAdmin) {
+      await logEvent("sudo_thread_message_rejected", { channel: event.channel, author: event.user, slug: entry.slug, threadKey });
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts: threadKey,
+        text: "⛔ This is a sudo thread. Only organization admins can send messages or run work here.",
+      });
+      return;
+    }
     const mayUseSettings = true; // The message authorization gate above has passed.
 
     // Only an authorized trigger may spend Slack read/file API calls. Hydrate it from the exact
@@ -661,7 +674,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       return;
     }
 
-    const threadKey = event.thread_ts ?? event.ts;
     const runKey = `${entry.slug}::${threadKey}`;
     // Synthetic question event IDs are stable idempotency keys, not numeric Slack timestamps.
     // Keep them for run identity while using an actual cutoff for history/failover context.
@@ -872,6 +884,38 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await reply(
           `🚀 Update transaction \`${started.transaction.id}\` started. I’ll run preflight, snapshot, dependency audit/tests, restart, Slack + isolated Claude health checks, and automatic rollback if needed. I’ll report the final result here. Details: \`~/.channelgate/logs/update.log\`.`,
         );
+      } else if (sc.cmd === "sudo") {
+        if (!authorIsAdmin) {
+          await reply("Only organization admins can use `/sudo`.");
+          return;
+        }
+        const arg = (sc.arg || "on").trim().toLowerCase();
+        if (!["on", "off", "status"].includes(arg)) {
+          await reply("Use `/sudo`, `/sudo on`, `/sudo off`, or `/sudo status`.");
+          return;
+        }
+        const current = await getThreadSudo(entry.slug, threadKey);
+        if (arg === "status") {
+          await reply(current
+            ? "⚠️ Sudo is ON for this thread. Admin messages run directly on the gateway host as the daemon OS user; non-admin messages are rejected."
+            : "Sudo is OFF for this thread. Runs use the channel's normal container runtime.");
+          return;
+        }
+        const next = arg === "on";
+        if (current === next) {
+          await reply(next ? "⚠️ Sudo is already ON for this thread." : "Sudo is already OFF for this thread.");
+          return;
+        }
+        if (runQueue.count(runKey) > 0) {
+          await reply("This thread has running or queued work — stop it or wait for it to finish before changing `/sudo`.");
+          return;
+        }
+        await setThreadSudo(entry.slug, threadKey, next);
+        abortPooled(runKey); // retire an idle process created on the other side of the boundary
+        await logEvent("sudo_thread_changed", { channel: event.channel, author: event.user, slug: entry.slug, threadKey, enabled: next });
+        await reply(next
+          ? "⚠️ *Sudo enabled for this thread.* From the next message, the agent runs directly on the gateway host as the daemon OS user, with the host filesystem, processes, HOME, commands, and network available. There is no channel-container boundary. Only organization admins may message this thread; everyone else is rejected. Use `/sudo off` to return to the container."
+          : "✅ Sudo disabled for this thread. New turns return to the channel's normal container runtime. Only organization admins may have used the thread while sudo was enabled.");
       } else if (sc.cmd === "mode") {
         const rawMode = (sc.arg || "").trim().toLowerCase();
         const arg = rawMode === "bash" ? "worker" : rawMode;

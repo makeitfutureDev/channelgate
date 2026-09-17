@@ -1,12 +1,12 @@
 // Runtime backend registry — mirrors src/engines/registry.js and src/platforms/registry.js. Every
-// backend is validated against the contract at load time (fail closed). Since 2026-09-03 the
-// container backend is the ONLY channel runtime: the host OS-sandbox backend is gone, and the
-// daemon's own process spawner (./local.js) is deliberately not registered here.
+// backend is validated against the contract at load time (fail closed). Container is the default;
+// host is reachable only from the admin-authenticated per-thread `/sudo` decision in run.js.
 import { DEFAULT_RUNTIME_BACKEND, RUNTIME_BACKEND_IDS, validateRuntimeBackend } from "./contract.js";
+import { hostBackend } from "./host.js";
 import { containerBackend } from "./container/index.js";
 
 const BACKENDS = new Map();
-for (const backend of [containerBackend]) {
+for (const backend of [hostBackend, containerBackend]) {
   validateRuntimeBackend(backend);
   BACKENDS.set(backend.id, backend);
 }
@@ -23,8 +23,8 @@ export function runtimeBackend(id) {
   return backend;
 }
 
-// Stored records written before v0.8 name no backend at all, and rows written while the host
-// backend still existed name "host"; both resolve to the one backend there is.
+// Stored records written before v0.8 name no backend at all; the default remains container even
+// though old session rows may name host for carry-over.
 export function runtimeBackendOr(id, fallback = DEFAULT_RUNTIME_BACKEND) {
   return BACKENDS.get(id) || BACKENDS.get(fallback);
 }
