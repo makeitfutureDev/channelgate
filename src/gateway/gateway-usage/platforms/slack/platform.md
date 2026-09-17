@@ -6,7 +6,9 @@ way out.
 ## Replies
 - Your answer streams into the thread with Slack's **native Markdown renderer** — the reader sees
   it appear token by token. Bold, italics, links, lists, code blocks and **small GFM pipe tables**
-  all render. Headings do not (they come out bold), and inline images do not.
+  all render. Headings come out bold. Standard Markdown image references to public HTTP(S) images
+  become Block Kit image previews when the answer finishes; the linked Markdown remains as the
+  fallback.
 - Threads are real: every reply lands in the thread the message came from.
 - Long answers are split across several messages automatically; write naturally and don't
   pre-chunk.

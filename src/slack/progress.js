@@ -5,6 +5,7 @@
 import { mdToMrkdwn, chunkMrkdwn, resolveMentions, createMentionStream } from "./format.js";
 import { createTtlSet, isSlackInvalidBlocksError, postChunkedReply, MAX_SLACK_CHARS } from "./util.js";
 import { footerText, footerButtons, footerBlocks } from "./footer.js";
+import { answerImageBlocks } from "./images.js";
 import { modelLabel } from "../gateway/model-info.js";
 import { engineLabel } from "../engines/registry.js";
 import { describeSilence } from "../engines/watchdog.js";
@@ -1139,6 +1140,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       stopHeartbeat();
       await clearShimmer();
       const fullRaw = result?.content || "";
+      const imageBlocks = answerImageBlocks(fullRaw);
       // What is still OWED to this message. A gateway note (a substituted model) was streamed as
       // the head of the answer and the orchestrator also carries it on `content` for surfaces with
       // no stream — so it is subtracted here, and the sentence lands exactly once.
@@ -1202,9 +1204,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           if (hasOverflow) await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag);
           return true;
         };
+        const finalFooterBlocks = footerBlocks(result, { channel, threadTs, authorId, mayUseSettings });
         const stopWithFooter = () => answerStreamer.stop({
           ...terminalPayload,
-          blocks: footerBlocks(result, { channel, threadTs, authorId, mayUseSettings }),
+          blocks: [...imageBlocks, ...finalFooterBlocks],
         });
         try {
           if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
@@ -1226,13 +1229,20 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           } else if (isSlackInvalidBlocksError(error)) {
             try {
               // The SDK keeps buffered markdown after a rejected stopStream call. Retry the same
-              // terminal write without cosmetic footer blocks. Re-send the toolbox snapshot, which
-              // the helper does not retain, but do not append terminal markdown a second time: that
-              // text is still in ChatStreamer's buffer from the rejected request.
-              await answerStreamer.stop();
+              // terminal write without image previews first, so a bad/unreachable image cannot
+              // discard a healthy stats footer. Do not append terminal markdown a second time:
+              // that text is still in ChatStreamer's buffer from the rejected request.
+              await answerStreamer.stop(imageBlocks.length ? { blocks: finalFooterBlocks } : undefined);
               if (await sealDelivered()) return;
-            } catch {
-              // The text-only stop failed too; fall through to the normal full-answer fallback.
+            } catch (footerError) {
+              if (imageBlocks.length && isSlackInvalidBlocksError(footerError)) {
+                try {
+                  await answerStreamer.stop();
+                  if (await sealDelivered()) return;
+                } catch {
+                  // The text-only stop failed too; use the complete classic fallback below.
+                }
+              }
             }
           }
           failed = true;
@@ -1255,7 +1265,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           resolveMentions(mdToMrkdwn(fullRaw.trim()), dir).trim() + tag,
           footerText(result),
           footerButtons(result, { channel, threadTs, authorId, mayUseSettings }),
-          { footerBlocks: footerBlocks(result, { channel, threadTs, authorId, mayUseSettings }) },
+          {
+            footerBlocks: footerBlocks(result, { channel, threadTs, authorId, mayUseSettings }),
+            answerBlocks: imageBlocks,
+          },
         );
         await stopTimeline();
       } catch (error) {

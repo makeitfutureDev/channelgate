@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Render up to five public images referenced in an agent's Slack answer as native Block Kit image
+  previews, while preserving clickable Markdown fallbacks and completed text delivery when Slack
+  rejects a preview.
+
 - Highlight every conversation that shares its resolved working folder with another conversation
   in red in the Admin UI, and warn in red while browsing a folder that is already assigned elsewhere.
 

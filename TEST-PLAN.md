@@ -1942,6 +1942,19 @@ structural invariants are automated; rendered navigation and feature claims also
 - [ ] A small GFM pipe table written in the answer renders as a styled table in native
       `markdown_text` streaming (including inline code/bold cells); if streaming fails, the classic
       reply fallback preserves the same rows as an aligned monospace grid.
+- [x] Unit: standard Markdown references to public HTTP(S) images produce at most five unique Slack
+      `image` blocks, use plain bounded alt/title text, preserve balanced URL parentheses, and ignore
+      fenced examples plus local/data URLs. Native finalization puts previews before the run footer;
+      classic and unattended delivery can place them beside the answer; and `invalid_blocks`
+      preserves the complete text answer while native streaming retries with its healthy footer
+      (`test/slack-answer-images.test.js`).
+- [ ] Live (both engines): ask the agent to answer with
+      `![ChannelGate preview](https://avatars.githubusercontent.com/u/9919?s=200&v=4)` and one short
+      sentence. Require one completed answer whose final blocks contain a visible image preview
+      above the normal footer, with the Markdown link still usable. Repeat with a fenced image
+      example and require no preview; then run the same prompt through a background agent and
+      require the unattended reply to show the preview. An unreachable/non-image HTTP(S) URL may
+      omit the preview but must leave the text answer and link intact.
 - [x] Unit: stream progress receives a tool event and uses native `chatStream` +
       `assistant.threads.setStatus` without calling `chat.postMessage`/`chat.update` for the custom
       activity log; `loading_messages` puts the resolved model in the prominent
