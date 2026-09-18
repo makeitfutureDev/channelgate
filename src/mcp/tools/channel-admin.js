@@ -3,6 +3,7 @@
 // instructions + memory, the gateway updater, and the gateway-usage guide. Split out of
 // gateway-server.js — registered via register(server, ctx); the tool contracts are unchanged.
 import { z } from "zod";
+import { getChannelVpnStatus, setChannelVpnEnabled } from "../../gateway/channel-vpn-control.js";
 import { statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
@@ -226,6 +227,28 @@ export function register(server, ctx) {
       );
     }
   );
+
+  // A run can act only on its capability-bound channel. The daemon controls the host
+  // helper; no container gains a shell, Podman socket, NET_ADMIN or credential mount.
+  const vpnControl = ctx.vpnControl || { getStatus: getChannelVpnStatus, setEnabled: setChannelVpnEnabled };
+  const vpnAccess = async () => ctx.verifyCapability?.().ok === true && await ctx.requireChannelAccess?.();
+  server.registerTool("get_channel_vpn_status", {
+    description: "Read this channel's configured VPN status and missing secret names. Distinguishes connecting, connected, off and failed. Never returns secrets or profiles.",
+    inputSchema: {},
+  }, async () => {
+    if (!await vpnAccess()) return text("You no longer have access to this channel's VPN status.");
+    try { return text(JSON.stringify(await vpnControl.getStatus(channelId))); }
+    catch { return text("VPN status is unavailable. Ask an administrator to check the service."); }
+  });
+  server.registerTool("set_channel_vpn", {
+    description: "ADMINS / CHANNEL MANAGERS. Enable or disable this channel's already configured isolated VPN service, including automatic startup. Use when the user asks to turn VPN on/off. Does not configure profiles, change routes or grant container rights. A starting result is NOT a connected VPN; check get_channel_vpn_status for readiness and safe errors.",
+    inputSchema: { enabled: z.boolean() },
+  }, async ({ enabled }) => {
+    const authorize = async () => await vpnAccess() && await requireManage();
+    if (!await authorize()) return text("Only this channel's current managers or an administrator can control its VPN.");
+    try { return text(JSON.stringify(await vpnControl.setEnabled(channelId, enabled, { actor: createdBy, source: "mcp", authorize }))); }
+    catch (error) { return text(error.statusCode ? error.message : "VPN control failed. Refresh its status before retrying."); }
+  });
 
   // ── Channel working folder (admins only) ────────────────────────────────────────
   server.registerTool(

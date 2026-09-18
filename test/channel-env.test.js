@@ -70,7 +70,9 @@ test("the admin env form upper-cases the name it shows and sends", () => {
 // do not exist.
 test("the env card is exempt from the conversation card's unsaved-changes tracking", () => {
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
-  assert.match(client, /const SELF_SAVING_CONTROLS = "\.channel-env-card";/);
+  const selfSaving = client.match(/const SELF_SAVING_CONTROLS = "([^"]+)";/)?.[1].split(/,\s*/);
+  assert.ok(selfSaving?.includes(".channel-env-card"));
+  assert.ok(selfSaving?.includes(".ch-vpn-controls"));
   // Each of the three dirty-trackers (conversation card, DM/template card, Settings page) exempts it.
   assert.match(client, /\[data-pane="instructions"\], \[data-pane="memory"\], \.detail-savebar, \.checks-filter, \.skill-assignment-filters, \$\{SELF_SAVING_CONTROLS\}/);
   assert.match(client, /\.detail-savebar, \.checks-filter, \$\{SELF_SAVING_CONTROLS\}`\)\) mark\(\)/);

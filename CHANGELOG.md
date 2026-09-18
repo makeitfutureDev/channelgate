@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Control a prepared channel VPN through the agent, the web channel Network controls, and Slack
+  Settings → Network. Managers/admins can turn it on/off; status distinguishes connecting from
+  connected and reports safe certificate/authentication errors. Stopping also cleans up manual starts.
+
 - Move quiet-thread reminders from conversation settings to a personal user preference. Each
   reminder now follows and mentions the requester across channels and DMs; users can turn it on or
   off in Slack App Home, while admins can manage individual or organization-default choices.

@@ -55,7 +55,7 @@ function fixture({ workDir = "/home/operator/project", saveError } = {}) {
   const ch = { channelId: "C/FOLDER", slug: "folder-fixture", meta: { workDir, engine: "codex" } };
   const calls = [];
   const context = {
-    card, ch, meta: ch.meta, Event, detailDirty: false, SELF_SAVING_CONTROLS: ".channel-env-card",
+    card, ch, meta: ch.meta, Event, detailDirty: false, SELF_SAVING_CONTROLS: ".channel-env-card, .ch-vpn-controls",
     engineSelect: { value: "codex" }, usersBox: { dataset: { ready: "" } }, mcpsBox: {}, skillsPicker: null,
     makeToolboxKeyInput: control(".ch-make-toolbox-key"),
     makeToolboxUrlInput: control(".ch-make-toolbox-url"), makeToolboxState: new Control(),
@@ -63,7 +63,7 @@ function fixture({ workDir = "/home/operator/project", saveError } = {}) {
     tokenValue: () => "", selectedMcpEntries: () => [], checkedValues: () => [],
     explicitCheckedValues: () => [], channelGuestSavePatch: () => ({}),
     channelGuestAcceptedIds: () => null, reconcileChannelMeta,
-    attachReveal() {}, revealSecret() {}, paintModePill() {}, renderConvList() {}, async refreshConversationRows() { return true; }, setTimeout() {},
+    attachReveal() {}, revealSecret() {}, paintModePill() {}, renderConvList() {}, refreshVpn() {}, async refreshConversationRows() { return true; }, setTimeout() {},
     openFolderPicker() { throw new Error("Reset must not browse folders"); },
     async api(url, request) {
       calls.push({ url, method: request.method, body: JSON.parse(request.body) });

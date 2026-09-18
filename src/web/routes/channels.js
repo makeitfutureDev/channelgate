@@ -61,6 +61,8 @@ import { ADMIN_UI_ACTOR, logChannelPolicyChange } from "../../config/channel-aud
 // — which is precisely why they must not ride out on a spread of the whole record.
 import { stripDeadFields } from "../../config/dead-fields.js";
 import { cliEnvKeys, cliIntegrationIds } from "../../config/cli-catalog.js";
+import { getChannelVpnStatus, setChannelVpnEnabled } from "../../gateway/channel-vpn-control.js";
+import { isAuthenticated } from "../auth.js";
 
 const WEB_ADMIN_ACTOR = "admin UI";
 
@@ -100,8 +102,37 @@ export function maskChannelMeta(meta = {}) {
 export function createChannelsRouter({
   slack,
   testMakeToolbox = listMakeToolboxTools,
+  getVpnStatus = getChannelVpnStatus,
+  setVpnEnabled = setChannelVpnEnabled,
 } = {}) {
   const router = Router();
+
+  // The enclosing admin stack authenticates these routes. No profile, command, path or
+  // service metadata is accepted from the browser: only this registered conversation's switch.
+  router.get("/channels/:channelId/vpn", async (req, res, next) => {
+    try {
+      res.json(await getVpnStatus(req.params.channelId));
+    } catch (error) {
+      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+      next(error);
+    }
+  });
+  router.put("/channels/:channelId/vpn", async (req, res, next) => {
+    const body = req.body;
+    if (!body || typeof body.enabled !== "boolean" || Object.keys(body).some((key) => key !== "enabled")) {
+      return res.status(400).json({ error: "Send only enabled: true or false." });
+    }
+    try {
+      res.json(await setVpnEnabled(req.params.channelId, body.enabled, {
+        actor: ADMIN_UI_ACTOR,
+        source: "admin_ui",
+        authorize: async () => isAuthenticated(req),
+      }));
+    } catch (error) {
+      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+      next(error);
+    }
+  });
 
   const currentChannelRoster = async (channelId) => {
     const client = slack?.getClient?.();

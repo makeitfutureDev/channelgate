@@ -1118,7 +1118,16 @@
             <span class="switch"></span>
             <span class="t"><b>Network</b><small>tells the engine whether this channel is meant to use the network; the container itself stays on the bridge network until the egress proxy ships — editable by admins and channel managers in Slack Access settings</small></span>
           </label>
-          </label>
+          <div class="ch-vpn-controls" style="margin-top:12px">
+            <label class="togglerow">
+              <input type="checkbox" class="ch-vpn-enabled" disabled />
+              <span class="switch"></span>
+              <span class="t"><b>VPN</b><small>Start or stop this channel’s configured VPN service. Changes apply immediately.</small></span>
+            </label>
+            <p class="state ch-vpn-state" role="status" aria-live="polite">Loading VPN status…</p>
+            <p class="state ch-vpn-error" role="alert" hidden></p>
+            <button type="button" class="btn ch-vpn-refresh">Refresh VPN status</button>
+          </div>
 
           <p class="fldlab" style="margin-top:20px">Guest access — named users</p>
           <div class="ch-users checks"></div>

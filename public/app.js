@@ -61,10 +61,9 @@ let CONV_COSTS = null; // { byId: {channelId→cost}, bySlug: {slug→cost} }; n
 let convCostsFetched = false;
 let detailDirty = false; // whether the open conversation detail has unsaved edits (drives the savebar)
 // Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
-// The per-conversation environment secrets are the case that exists: write-only values stored the
-// moment "Save variable" is pressed (they must never round-trip through the card's Save), so typing
-// in them — or storing one — must not tell the admin the card has edits waiting.
-const SELF_SAVING_CONTROLS = ".channel-env-card";
+// Environment secrets and VPN control have independent writes and must never round-trip through
+// the card's Save or tell the admin the card has edits waiting.
+const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -1426,6 +1425,71 @@ function wireChecksTools(box, filterInput, countEl) {
   return refresh;
 }
 
+// Mount only for the selected conversation. Listing channels never probes their services.
+function mountChannelVpnControls(card, channelId) {
+  const toggle = card.querySelector(".ch-vpn-enabled");
+  const status = card.querySelector(".ch-vpn-state");
+  const errorBox = card.querySelector(".ch-vpn-error");
+  const refresh = card.querySelector(".ch-vpn-refresh");
+  const endpoint = `/api/channels/${encodeURIComponent(channelId)}/vpn`;
+  let snapshot = null;
+  let pending = false;
+  let timer;
+  const paint = () => {
+    const canStop = !!(snapshot?.enabled || snapshot?.running);
+    toggle.checked = canStop;
+    const cannotStart = !snapshot?.allowNetwork || !!snapshot?.missingSecrets?.length;
+    toggle.disabled = pending || !snapshot?.configured || !!snapshot?.busy
+      || snapshot.state === "unavailable" || (!canStop && cannotStart);
+    refresh.disabled = pending;
+    if (snapshot) {
+      const labels = { unconfigured: "Not configured", unavailable: "Unavailable", off: "Off", starting: "Starting", on: "Connected", stopping: "Stopping", failed: "Failed" };
+      const parts = [labels[snapshot.state] || "Unknown", snapshot.message];
+      if (!snapshot.configured) parts.push("An administrator must import the VPN profile and prepare the channel’s VPN service first.");
+      if (snapshot.missingSecrets?.length) parts.push(`Add in Environment: ${snapshot.missingSecrets.join(", ")}.`);
+      if (snapshot.configured && !snapshot.allowNetwork) parts.push("Enable Network and save the channel before starting VPN.");
+      status.textContent = parts.filter(Boolean).join(" · ");
+    }
+  };
+  const scheduleRefresh = () => {
+    clearTimeout(timer);
+    if (card.isConnected && ["starting", "stopping"].includes(snapshot?.state)) {
+      timer = setTimeout(() => { if (card.isConnected) void request(); }, 2000);
+    }
+  };
+  const request = async (enabled) => {
+    if (pending || !card.isConnected) return;
+    pending = true;
+    clearTimeout(timer);
+    errorBox.hidden = true;
+    paint();
+    try {
+      snapshot = await api(endpoint, typeof enabled === "boolean"
+        ? { method: "PUT", body: JSON.stringify({ enabled }) } : undefined);
+    } catch (error) {
+      errorBox.textContent = `VPN request failed: ${error.message}`;
+      errorBox.hidden = false;
+      if (typeof enabled === "boolean") {
+        // A lost response may follow an accepted write. Reconcile before offering another toggle.
+        try { snapshot = await api(endpoint); } catch { snapshot = null; }
+      } else {
+        snapshot = null;
+      }
+      if (!snapshot) {
+        status.textContent = "VPN status unavailable. Refresh to retry.";
+      }
+    } finally {
+      pending = false;
+      paint();
+      scheduleRefresh();
+    }
+  };
+  toggle.addEventListener("change", () => { void request(toggle.checked); });
+  refresh.addEventListener("click", () => { void request(); });
+  void request();
+  return request;
+}
+
 function renderChannelDetail(ch) {
   const detail = document.getElementById("channel-detail");
   detailDirty = false;
@@ -1866,6 +1930,7 @@ function renderChannelDetail(ch) {
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      void refreshVpn();
       skillsPicker?.update({ selected: ch.meta.skills || [] });
       const acceptedGuests = channelGuestAcceptedIds(
         usersBox.dataset.ready === "1",
@@ -2013,6 +2078,7 @@ function renderChannelDetail(ch) {
 
   detail.innerHTML = "";
   detail.appendChild(node);
+  const refreshVpn = mountChannelVpnControls(card, ch.channelId);
 }
 
 // ── Reusable config editor (Access Templates / custom DM) ────────────────────────
