@@ -79,6 +79,8 @@ export const GATEWAY_TOOL_NAMES = [
   "set_channel_admin_mode",
   "set_channel_bash",
   "set_channel_network",
+  "get_channel_vpn_status",
+  "set_channel_vpn",
   "set_channel_auto_mode",
   "get_channel_workdir",
   "set_channel_workdir",

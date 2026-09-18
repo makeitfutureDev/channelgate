@@ -3,8 +3,8 @@
 The optional operator helper provisions a dedicated rootless Podman OpenVPN service and an
 unprivileged MySQL verification/extractor container. Ordinary channel containers keep their existing
 capabilities, mounts, image and bridge network. There is no Docker/Podman socket inside either
-service container and no published port. This is an operator CLI, not an agent tool or a new Admin
-mode permission.
+service container and no published port. Provisioning is operator-only; a channel manager or
+organization admin can then switch the prepared service on/off through chat or settings.
 
 Only the VPN service has `/dev/net/tun` and `NET_ADMIN`. The extractor shares its network namespace,
 but has no network capabilities, TUN device, VPN keys, engine credentials, gateway socket or host
@@ -12,6 +12,31 @@ home mount. A firewall permits only the configured database IPv4 address and TCP
 `tun0`, blocks that database address outside the tunnel even during disconnects, rejects other
 tunnel traffic, and blocks tunnel IPv6. Public traffic retains the rootless interface/default route
 (`tap0` with slirp4netns on some hosts, `eth0` on others). No host routing/firewall changes occur.
+
+## Use from chat and settings
+
+After the operator completes setup below, use any of these controls:
+
+- Ask the channel agent to “turn VPN on”, “turn VPN off”, or “check VPN status”. Claude and Codex
+  use `set_channel_vpn({enabled:true|false})` and `get_channel_vpn_status` for the current channel.
+- In the admin web UI, open the channel and use **VPN** beside **Network**. Changes save immediately.
+- In Slack, open the channel's **Settings → Network** tab, then **Turn VPN on/off** or **Refresh**.
+
+Channel managers and organization admins may switch it; admitted members may read its status.
+Tool calls retain the gateway's normal control-plane approval policy. Every mutation rechecks
+current access at the effect boundary. The web interface requires an active admin session.
+Uploading an `.ovpn` file and adding Secrets alone does not perform the operator setup.
+
+ON enables automatic startup and starts connecting. **Starting** is not **Connected**: connected
+requires both containers, a working tunnel and database route. OFF disables automatic startup and
+removes the owned pair, including containers previously started manually. Network off or missing
+Secrets prevent startup but never prevent stopping. The supervisor also stops an active pair when
+Network is disabled. Status shows only fixed diagnostic messages and missing secret names;
+provider logs, profile keys and credential values never appear in these controls.
+
+A server certificate missing the required Key Usage extension is a provider configuration error.
+Correct the VPN server certificate; do not disable `remote-cert-tls server` to bypass verification.
+The tunnel serves only the dedicated database extractor, not the ordinary agent container.
 
 ## Configure and start
 
@@ -113,3 +138,6 @@ connectivity, extractor isolation and tunnel-loss blocking, then removes only th
 uses no customer credentials and does not claim that a real VPN authentication or MySQL login
 succeeded. A provider-backed `verify`, secret rotation, service restart and boot recovery remain
 separate live acceptance gates.
+
+After upgrading gateway code that changes the VPN helper, rerun `install-unit` for each configured
+channel to refresh its protected supervisor bundle. This does not enable or start the service.

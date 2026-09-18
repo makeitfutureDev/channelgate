@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { lstat, readdir } from "node:fs/promises";
 import { normalizeVpnProfile, validateVpnTarget } from "../src/gateway/vpn-profile.js";
 import { SECRET_REFS, serviceIdentity, selectedCredentials, serviceFingerprint, createVpnService,
-  plainPath, privateDirectory, readPrivate, writePrivate, runCommand } from "../src/gateway/vpn-service.js";
+  plainPath, privateDirectory, readPrivate, writePrivate, runCommand, vpnUnitStatus, vpnFailureMessage, disableVpnUnit } from "../src/gateway/vpn-service.js";
 
 const bundleRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
@@ -52,9 +52,9 @@ async function main() {
   if (!meta) throw new Error("Channel has no configuration.");
   const root = await plainPath(paths.gatewayRoot());
   const dir = path.join(root,"services","vpn",serviceIdentity(root,opts.channel,"service").owner);
-  const mutations = !["status","verify","enable","disable"].includes(action);
+  const mutations = !["status","verify"].includes(action);
   if (mutations) await privateDirectory(dir);
-  const lock = path.join(dir,"operation.lock");
+  const lock = path.join(dir,["enable","disable"].includes(action) ? "control.lock" : "operation.lock");
   if (mutations && process.env.CG_VPN_LOCK_HELD !== lock) {
     // A kernel lock covers the entire supervisor lifetime and is released even after a crash.
     // --no-fork lets the wrapper forward shutdown directly to the supervised Node process.
@@ -104,7 +104,13 @@ async function main() {
     const imageDir = path.join(bundleRoot,"services/vpn-image");
     const service = createVpnService({identity,serviceDir:dir,config});
     if (action === "status") {
-      console.log(JSON.stringify({...(await service.status()),credentials:inventory(meta,channelEnv,config.secrets),unit:identity.unit},null,2));
+      const runtime = await service.status();
+      if (runtime.vpn.state === "running" && runtime.extractor.state === "running") runtime.ready = await service.ready() && await service.routesReady();
+      let last = {};
+      try { last = JSON.parse(await readPrivate(path.join(dir,"status.json"),{maxBytes:4096})); } catch { /* absent/invalid status has no authority */ }
+      const unit = await runCommand("/usr/bin/systemctl",["--user","show",identity.unit,"--property=LoadState,ActiveState,UnitFileState"],{timeoutMs:10_000}).catch(() => ({code:1,stdout:""}));
+      const control = vpnUnitStatus(unit.stdout,runtime,last,unit.code === 0);
+      console.log(JSON.stringify({...runtime,credentials:inventory(meta,channelEnv,config.secrets),unit:identity.unit,control},null,2));
       return;
     }
     const info = await runCommand("/usr/bin/podman",["info","--format","{{.Host.Security.Rootless}}"]);
@@ -150,8 +156,13 @@ async function main() {
         const {missing} = selectedCredentials(await resolveSelected(meta,channelEnv,config.secrets),config.secrets);
         if (missing.length) throw new Error(`Missing channel Secrets: ${missing.join(", ")}. Service was not enabled.`);
       }
-      const result = await runCommand("/usr/bin/systemctl",["--user",action,"--now",identity.unit],{timeoutMs:210_000});
-      if (result.code !== 0) throw new Error(`Service ${action} failed; check its status.`);
+      if (action === "enable") {
+        const result = await runCommand("/usr/bin/systemctl",["--user","enable","--now",identity.unit],{timeoutMs:210_000});
+        if (result.code !== 0) throw new Error("Service enable failed; check its status.");
+      } else {
+        await disableVpnUnit({unit:identity.unit,stopArgs:[fileURLToPath(import.meta.url),"stop","--channel",opts.channel,"--gateway-source",source]});
+        await writePrivate(path.join(dir,"status.json"),JSON.stringify({state:"off"}));
+      }
       console.log(JSON.stringify({unit:identity.unit,enabled:action === "enable"})); return;
     }
     if (!meta.allowNetwork) throw new Error("Channel network policy is off; an administrator must enable it before starting the VPN.");
@@ -173,8 +184,10 @@ async function main() {
     if (createHash("sha256").update(profile).digest("hex") !== config.profileRevision) throw new Error("Protected profile revision changed; configure this service again.");
     const fingerprint = serviceFingerprint({config,profile},selected,imageId,salt);
     const runtime = createVpnService({identity,serviceDir:dir,config,imageId});
-    const result = await runtime.start({fingerprint,profile,signal:shutdown.signal,auth:`${selected.vpnUsername}\n${selected.vpnPassword}\n`,database:{username:selected.mysqlUsername,password:selected.mysqlPassword}});
+    await writePrivate(path.join(dir,"status.json"),JSON.stringify({state:"starting"}));
     try {
+      const result = await runtime.start({fingerprint,profile,signal:shutdown.signal,auth:`${selected.vpnUsername}\n${selected.vpnPassword}\n`,database:{username:selected.mysqlUsername,password:selected.mysqlPassword}});
+      await writePrivate(path.join(dir,"status.json"),JSON.stringify({state:"on"}));
       console.log(JSON.stringify({...result,...(await runtime.status())},null,2));
       if (action === "supervise") {
         while (!shutdown.signal.aborted) {
@@ -184,10 +197,15 @@ async function main() {
             shutdown.signal.addEventListener("abort",done,{once:true});
           });
           if (shutdown.signal.aborted) break;
+          const currentMeta = await store.getChannelMeta(entry.slug);
+          if (!currentMeta?.allowNetwork) throw Object.assign(new Error(vpnFailureMessage("network_disabled")),{vpnErrorClass:"network_disabled"});
           const state = await runtime.status();
-          if (state.vpn.state !== "running" || state.extractor.state !== "running" || !await runtime.routesReady()) throw new Error("VPN service lost its isolated route or container; stopped the pair. Check credentials/network and restart the service.");
+          if (state.vpn.state !== "running" || state.extractor.state !== "running" || !await runtime.routesReady() || !await runtime.ready()) throw Object.assign(new Error(vpnFailureMessage("connection_lost")),{vpnErrorClass:"connection_lost"});
         }
       }
+    } catch (error) {
+      await writePrivate(path.join(dir,"status.json"),JSON.stringify({state:"failed",errorClass:error.vpnErrorClass || "startup_failed"}));
+      throw error;
     } finally { if (action === "supervise") await runtime.stop(); }
   }
 }
