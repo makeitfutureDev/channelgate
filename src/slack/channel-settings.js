@@ -1,6 +1,7 @@
 // Channel Settings modal for Slack. It mirrors the web conversation editor's safe channel-level
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { ACCESS_EDIT_ACTION_ID, accessSummary } from "./access-settings.js";
 import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
@@ -30,8 +31,10 @@ export const CHANNEL_SETTINGS_SKILL_PAGE_PREFIX = "cg_channel_settings_skill_pag
 export const CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID = "cg_channel_settings_template_edit";
 export const CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID = "cg_channel_settings_template_form";
 export const CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID = "cg_channel_settings_secrets_manage";
+export const CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID = "cg_channel_settings_vpn_toggle";
+export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_refresh";
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "mcp", "skills", "secrets", "access"]);
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "mcp", "skills", "secrets", "network", "access"]);
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
@@ -319,8 +322,58 @@ function secretsBlocks(snapshot = {}, state = {}, { canEditSecrets = false } = {
   }).blocks;
 }
 
+// Bind privileged VPN actions to the view's channel, slug and owner. A restart intentionally
+// expires old VPN controls; the user can reopen Settings to obtain a fresh binding.
+const vpnActionKey = randomBytes(32);
+function vpnActionSignature(state, operation, enabled) {
+  return createHmac("sha256", vpnActionKey).update(JSON.stringify([
+    state.channelId, state.slug, state.ownerId, operation, enabled ?? null,
+  ])).digest("hex");
+}
+
+export function assertVpnActionBinding(state, command, actionId) {
+  const operation = actionId === CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID ? "vpn_toggle" : "vpn_refresh";
+  if (![CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID].includes(actionId)
+    || command.o !== operation || command.c !== state.channelId || command.u !== state.ownerId
+    || (operation === "vpn_toggle" && typeof command.enabled !== "boolean")) throw new Error(EXPIRED);
+  const actual = Buffer.from(String(command.signature || ""), "hex");
+  const expected = Buffer.from(vpnActionSignature(state, operation, command.enabled), "hex");
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error(EXPIRED);
+}
+
+function vpnButton(state, enabled) {
+  const toggle = typeof enabled === "boolean";
+  const operation = toggle ? "vpn_toggle" : "vpn_refresh";
+  return button(toggle ? CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID : CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
+    toggle ? (enabled ? "Turn VPN on" : "Turn VPN off") : "Refresh VPN status", state, operation,
+    { ...(toggle ? { enabled } : {}), signature: vpnActionSignature(state, operation, enabled) },
+    toggle && enabled ? { style: "primary" } : {});
+}
+
+function networkBlocks(snapshot, state, { canManageVpn }) {
+  const vpn = snapshot.vpn;
+  const labels = { unconfigured: "Not configured", unavailable: "Unavailable", off: "Off", starting: "Starting — not connected yet", on: "On — connected", stopping: "Stopping", failed: "Failed — not connected" };
+  const buttons = [vpnButton(state)];
+  // Stopping remains possible while a tunnel is starting or failed. A running control operation
+  // must settle before another one can be accepted by the service.
+  if (canManageVpn && vpn?.configured && !vpn.busy && vpn.state !== "unavailable") {
+    if (vpn.enabled || vpn.running || ["on", "starting"].includes(vpn.state)) buttons.unshift(vpnButton(state, false));
+    else if (vpn.state !== "stopping" && vpn.allowNetwork && !vpn.missingSecrets?.length) buttons.unshift(vpnButton(state, true));
+  }
+  return [
+    fieldBlock("Network use", snapshot.mode?.allowNetwork ? "Allowed" : "Off"),
+    { type: "context", elements: [mrkdwn("Network use is the engine's channel policy. Managers can change it under Access.")] },
+    fieldBlock("VPN", vpn ? (labels[vpn.state] || "Unknown") : "Checking status…"),
+    ...(vpn?.message ? [{ type: "section", text: mrkdwn(escapeMrkdwn(vpn.message)) }] : []),
+    ...(vpn?.missingSecrets?.length ? [fieldBlock("Missing channel secrets", vpn.missingSecrets.map(inlineCode).join(", "))] : []),
+    { type: "actions", elements: buttons },
+    { type: "context", elements: [mrkdwn("VPN connects the channel's dedicated VPN service and extractor. It does not route the ordinary agent container through the tunnel. Only admins and current channel managers can turn it on or off.")] },
+  ];
+}
+
 const TAB_LABELS = Object.freeze({
   access: "Access",
+  network: "Network",
   runtime: "Engine & model",
   mcp: "MCP",
   skills: "Skills",
@@ -349,6 +402,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   canEditSecrets = false,
   canManageCloudMcp = false,
   canEditAccess = false,
+  canManageVpn = false,
   notice = "",
 } = {}) {
   const requested = normalizeTab(tab);
@@ -358,6 +412,8 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
       { type: "section", text: mrkdwn(accessSummary(snapshot.access || {})) },
       { type: "actions", elements: [button(ACCESS_EDIT_ACTION_ID, "Change access settings", state, "access_edit", {}, { style: "primary" })] },
     ]
+    : active === "network"
+    ? networkBlocks(snapshot, state, { canManageVpn })
     : active === "mcp"
     ? mcpBlocks(snapshot, state, { canManageCloudMcp })
     : active === "skills"
@@ -372,7 +428,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     title: plain("Channel settings"),
     close: plain("Done"),
     blocks: [
-      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings require a channel manager or admin. Cloud MCP is admin-only.`)] },
+      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings and VPN controls require a channel manager or admin. Cloud MCP is admin-only.`)] },
       ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
       tabButtons(state, active, canEditAccess),
       { type: "divider" },

@@ -1,6 +1,29 @@
 # ChannelGate — Test Plan
 
-## Optional isolated VPN database service (operator-only, engine-independent)
+## VPN controls through agents, web and Slack
+
+- [x] `test/channel-vpn-control.test.js`: current-channel-only tools, fresh admission/management
+      checks, queued revocation, serialized toggles, secret-safe responses, start/connected
+      distinction, lost readiness and OFF cleanup of supervised/manual owned containers.
+- [x] `test/channel-vpn-web.test.js`: active admin session, CSRF and narrow boolean payload;
+      real Chromium channel switch, immediate save, missing setup/Secrets, Network off,
+      connecting/failure refresh, and manual-start OFF while Network is disabled.
+- [x] `test/slack-vpn-settings.test.js`: Network tab, signed owner/channel-bound actions,
+      current membership/manager revocation, stale views, status states and manual-start OFF.
+- [x] Live Claude and Codex fixture: ask each engine to read status, enable, read starting status,
+      and disable using the actual MCP handlers with an isolated injected service. Require tool
+      invocations bound to the fixture channel and no claim that starting means connected.
+      Passed 2026-09-18 with Claude CLI 2.1.265 and Codex CLI 0.153.4: real MCP handlers/controller,
+      injected service only, channel `C_VPN_LIVE_FIXTURE`; exact read → enable → read → disable →
+      revoked enable sequence returned off → starting → starting → off → denied. Both engines
+      executed exactly two allowed mutations, with no secret sentinel exposure. No provider or
+      Slack traffic was sent by this fixture.
+- [ ] Private installed-service acceptance: use web and Slack controls against the prepared unit;
+      require certificate failures to appear safely and OFF to leave no owned containers. Once the
+      provider certificate is fixed, require actual connection and database readiness. An isolated
+      engine/controller fixture cannot establish provider connection success.
+
+## Optional isolated VPN database service (operator provisioning, engine-independent)
 
 These cases do not invoke or depend on an engine. Run as the gateway's OS account against
 rootless Podman; never grant host runtime access to a chat agent for this fixture.
@@ -32,8 +55,10 @@ rootless Podman; never grant host runtime access to a chat agent for this fixtur
       and restart. Restart gateway separately and require no service reaping. Test user-manager
       boot recovery on an isolated host with linger already enabled.
 
-Provider-backed connection/restart gates remain unexecuted until the required channel Secrets
-are supplied. The kernel isolation fixture is not a substitute for those connection checks.
+Provider credentials are now present in the private acceptance fixture. Connection was attempted
+but is blocked by the VPN server certificate missing its required Key Usage extension. No SQL
+verification has run. Keep server verification enabled; provider connection/restart gates remain
+open. The kernel isolation fixture is not a substitute for those connection checks.
 
 ## System health — engine-independent acceptance
 

@@ -37,6 +37,7 @@ import { listSkills } from "../gateway/skills/catalog.js";
 import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
 import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
+import { getChannelVpnStatus, setChannelVpnEnabled } from "../gateway/channel-vpn-control.js";
 import { logChannelPolicyChange } from "../config/channel-audit.js";
 
 import { createTtlSet } from "./util.js";
@@ -54,7 +55,8 @@ import {
   buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
   buildConnectionsEditorView, buildRuntimeEditorView, buildTemplateEditorView, maskedCredential,
   parseActionValue as parseChannelSettingsActionValue, editorMetadata, parseEditorMetadata, parseSettingsMetadata,
-  readConnectionsForm, readRuntimeForm, readTemplateForm,
+  readConnectionsForm, readRuntimeForm, readTemplateForm, assertVpnActionBinding,
+  CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
@@ -562,6 +564,7 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
     canEditRuntime: true,
     canEditSecrets: true,
     canManageCloudMcp: Boolean(userIsAdmin),
+    canManageVpn: canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
     canEditAccess: !meta.isDM && canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
   };
 }
@@ -781,13 +784,78 @@ export async function saveAccessSettings(client, state, userId, form) {
   });
 }
 
-async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "" } = {}) {
-  return buildChannelSettingsView(channelSettingsSnapshot(meta), { ...state, tab }, {
+async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "", vpn } = {}) {
+  return buildChannelSettingsView({ ...channelSettingsSnapshot(meta), vpn }, { ...state, tab }, {
     channelName: entry.name,
     tab,
     notice,
     ...channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) }),
   });
+}
+
+// Membership is a live Slack request. Re-read both channel policy and global roles AFTER it
+// resolves, so revocation during that request cannot authorize a VPN mutation.
+export async function channelVpnSettingsContext(client, state, userId, { manage = false } = {}) {
+  if (!userId || state.ownerId !== userId) throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
+  await channelSettingsContext(client, { channelId: state.channelId, userId, expectedSlug: state.slug, verifyMembership: true });
+  const fresh = await channelSettingsContext(client, { channelId: state.channelId, userId, expectedSlug: state.slug });
+  if (manage && !canManage(fresh.meta, { authorId: userId, isAdminUser: fresh.userIsAdmin, isApprovedUser: fresh.userIsApproved })) {
+    throw new Error("Only admins and current channel managers can turn the VPN on or off.");
+  }
+  return fresh;
+}
+
+// Never spend a Slack trigger's lifetime on service subprocesses. Render first, then hydrate;
+// the returned view hash prevents a slow status response overwriting a newer tab selection.
+export async function hydrateChannelVpnSettings(client, view, state, {
+  status = getChannelVpnStatus, context = channelVpnSettingsContext, rootView = settingsRootView,
+} = {}) {
+  try {
+    await context(client, state, state.ownerId);
+    const vpn = await status(state.channelId);
+    const { entry, meta, userIsAdmin } = await context(client, state, state.ownerId);
+    await client.views.update({ view_id: view.id, ...(view.hash ? { hash: view.hash } : {}),
+      view: await rootView(entry, meta, { ...state, tab: "network" }, userIsAdmin, { vpn }),
+    });
+  } catch (error) {
+    // Hash conflicts mean the user already moved on; do not replace that newer view.
+    if (error?.data?.error === "hash_conflict") return;
+    await client.views.update({ view_id: view.id, ...(view.hash ? { hash: view.hash } : {}),
+      view: buildChannelSettingsErrorView(error.message || "Couldn't read VPN status. Reopen Settings and try again."),
+    }).catch(() => {});
+  }
+}
+
+export async function handleChannelVpnSettingsAction({ ack, body, action, client }, {
+  status = getChannelVpnStatus, setEnabled = setChannelVpnEnabled,
+  context = channelVpnSettingsContext, rootView = settingsRootView,
+} = {}) {
+  await ack();
+  try {
+    if (body?.view?.callback_id !== "cg_channel_settings_modal") throw new Error(SETTINGS_PURPOSE.expired);
+    const state = parseSettingsMetadata(body.view.private_metadata);
+    const userId = body?.user?.id;
+    if (!userId || state.ownerId !== userId) throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
+    const command = parseChannelSettingsActionValue(action?.value);
+    assertVpnActionBinding(state, command, action?.action_id);
+    const manage = action.action_id === CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID;
+    await context(client, state, userId, { manage });
+    const vpn = manage
+      ? await setEnabled(state.channelId, command.enabled, { actor: userId, source: "slack_settings", authorize: async () => {
+        await context(client, state, userId, { manage: true });
+        return true;
+      } })
+      : await status(state.channelId);
+    const { entry, meta, userIsAdmin } = await context(client, state, userId);
+    await client.views.update({ view_id: body.view.id, ...(body.view.hash ? { hash: body.view.hash } : {}),
+      view: await rootView(entry, meta, { ...state, tab: "network" }, userIsAdmin, { vpn }),
+    });
+  } catch (error) {
+    if (body?.view?.id && error?.data?.error !== "hash_conflict") await client.views.update({
+      view_id: body.view.id, ...(body.view.hash ? { hash: body.view.hash } : {}),
+      view: buildChannelSettingsErrorView(error.message || "Couldn't change the VPN. Reopen Settings to check its status."),
+    }).catch(() => {});
+  }
 }
 
 async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "runtime" } = {}) {
@@ -797,7 +865,7 @@ async function openChannelSettings(client, triggerId, { channelId, userId, threa
     verifyMembership: true,
   });
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId, tab };
-  await client.views.open({
+  const opened = await client.views.open({
     trigger_id: triggerId,
     view: buildChannelSettingsView(channelSettingsSnapshot(meta), state, {
       channelName: entry.name,
@@ -805,6 +873,7 @@ async function openChannelSettings(client, triggerId, { channelId, userId, threa
       ...channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) }),
     }),
   });
+  if (tab === "network" && opened.view?.id) await hydrateChannelVpnSettings(client, opened.view, state);
   await logEvent("channel_settings_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
@@ -1148,6 +1217,10 @@ async function connectAndWire(app) {
   });
 
   const handleChannelSettingsAction = async ({ ack, body, action, client }) => {
+    if ([CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID].includes(action?.action_id)) {
+      await handleChannelVpnSettingsAction({ ack, body, action, client });
+      return;
+    }
     await ack();
     const clicker = body?.user?.id;
     const command = parseChannelSettingsActionValue(action?.value);
@@ -1191,7 +1264,8 @@ async function connectAndWire(app) {
 
       if (command.o === "tab") {
         const tab = String(command.p || "runtime");
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
+        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
+        if (tab === "network" && updated.view?.id) await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
         return;
       }
 

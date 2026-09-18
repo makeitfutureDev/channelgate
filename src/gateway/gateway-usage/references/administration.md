@@ -102,6 +102,13 @@ Every run remains inside its channel container.
 - `set_channel_admin_mode` (admin) — for **admin authors**, every tool without prompts
   (`--dangerously-skip-permissions`). Non-admin authors get Worker with the selected Auto/Lean options. Still inside the
   container — see "Admin access & the container" below.
+- `get_channel_vpn_status` — read this channel's prepared VPN status without secrets.
+- `set_channel_vpn` (managers/admins) — `{enabled:true}` starts the prepared VPN and enables
+  automatic startup; `{enabled:false}` stops it and disables automatic startup. Use these tools
+  when asked to turn VPN on/off, then check status. “Starting” is not a successful connection.
+  Setup remains operator-only: an uploaded profile plus Secrets alone is insufficient. Report
+  the returned setup/certificate error; never bypass server verification or grant shell privileges.
+  This VPN connects only the dedicated database extractor, not the agent's ordinary container.
 - `set_channel_network` (admin) — record whether this channel is meant to have network access
   (needs Bash on to be useful) so `git`/`gh`/`curl` and deploy CLIs may be used; the engines are
   told the answer (Codex read mode refuses network on its own). There is no per-domain allow-list
