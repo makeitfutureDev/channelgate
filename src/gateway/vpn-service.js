@@ -9,6 +9,51 @@ import path from "node:path";
 export const SERVICE_LABEL = "cg.service.owner";
 export const SECRET_REFS = Object.freeze({ vpnUsername: "VPN_USERNAME", vpnPassword: "VPN_PASSWORD", mysqlUsername: "MYSQL_USERNAME", mysqlPassword: "MYSQL_PASSWORD" });
 
+// Only these fixed diagnostics may leave the host. Provider logs never ride status responses.
+const VPN_FAILURES = Object.freeze({
+  server_certificate_usage: "The VPN server certificate is missing the required Key Usage extension. Ask the VPN administrator to correct its certificate.",
+  server_certificate_invalid: "The VPN server certificate could not be verified. Check the server certificate and supplied profile.",
+  authentication_failed: "VPN authentication failed. Check this channel's VPN credentials.",
+  tls_failed: "VPN TLS negotiation failed. Check the server certificate and profile compatibility.",
+  network_disabled: "VPN stopped because Network is disabled for this channel.",
+  startup_failed: "VPN did not become ready. Check credentials, server compatibility and the database route.",
+  connection_lost: "VPN lost its route or service container and was stopped. Check the connection before restarting.",
+});
+export function vpnFailureMessage(code) {
+  return Object.hasOwn(VPN_FAILURES,code) ? VPN_FAILURES[code] : VPN_FAILURES.startup_failed;
+}
+export function classifyVpnFailure(logs = "") {
+  if (/VERIFY KU ERROR|Certificate does not have key usage extension/.test(logs)) return "server_certificate_usage";
+  if (/VERIFY ERROR|certificate verify failed/.test(logs)) return "server_certificate_invalid";
+  if (/AUTH_FAILED/.test(logs)) return "authentication_failed";
+  if (/TLS Error|TLS handshake failed/.test(logs)) return "tls_failed";
+  return "startup_failed";
+}
+export function vpnUnitStatus(stdout = "", runtime = {}, last = {}, available = true) {
+  const fields = Object.fromEntries(stdout.split(/\r?\n/).filter(line => line.includes("=")).map(line => {
+    const i = line.indexOf("="); return [line.slice(0,i),line.slice(i+1)];
+  }));
+  const installed = fields.LoadState === "loaded";
+  const enabled = ["enabled", "enabled-runtime"].includes(fields.UnitFileState);
+  let state = "off";
+  if (fields.ActiveState === "failed") state = "failed";
+  else if (fields.ActiveState === "deactivating") state = "stopping";
+  else if (["active","activating","reloading"].includes(fields.ActiveState)) {
+    state = runtime.vpn?.state === "running" && runtime.extractor?.state === "running" && runtime.ready === true ? "on" : last.state === "on" ? "failed" : "starting";
+  } else if (runtime.vpn?.state === "running" || runtime.extractor?.state === "running") state = "failed";
+  return { available, installed, enabled, running: [runtime.vpn, runtime.extractor].some(item => item?.state && item.state !== "absent"), state,
+    errorClass: state === "failed" && Object.hasOwn(VPN_FAILURES,last.errorClass) ? last.errorClass : state === "failed" ? last.state === "on" ? "connection_lost" : "startup_failed" : null };
+}
+
+// Stop the supervisor first, then acquire the ordinary operation lock through the helper.
+// This also removes a pair created by the supported manual `start` command.
+export async function disableVpnUnit({ unit, stopArgs, run = runCommand }) {
+  const disabled = await run("/usr/bin/systemctl", ["--user", "disable", "--now", unit], { timeoutMs: 210_000 });
+  if (disabled.code !== 0) throw new Error("Service disable failed; check its status.");
+  const stopped = await run(process.execPath, stopArgs, { timeoutMs: 120_000 });
+  if (stopped.code !== 0) throw new Error("VPN containers could not be stopped; refresh status before retrying.");
+}
+
 export function serviceIdentity(root, channelId, project) {
   if (!/^[a-z][a-z0-9-]{0,47}$/.test(project)) throw new Error("Project must be a lowercase name of at most 48 characters.");
   const owner = createHash("sha256").update(`${root}\0${channelId}`).digest("hex").slice(0,24);
@@ -191,7 +236,11 @@ export function createVpnService({ run = runCommand, bin = "/usr/bin/podman", id
         if (!state?.State?.Running) break;
         await wait(2000);
       }
-      if (!healthy) throw new Error("VPN did not become ready; check credentials, server compatibility and the database route. Extractor was not started.");
+      if (!healthy) {
+        const logs = await podman(["logs","--tail","80",identity.vpn]).catch(() => ({ stdout:"", stderr:"" }));
+        const errorClass = classifyVpnFailure(`${logs.stdout || ""}\n${logs.stderr || ""}`);
+        throw Object.assign(new Error(vpnFailureMessage(errorClass)), { vpnErrorClass:errorClass });
+      }
       const state = await inspect("vpn");
       const extracted = await podman(createArgs({ identity, config, serviceDir, imageId, fingerprint, vpnId: state.Id }, "extractor"));
       if (extracted.code !== 0) throw new Error("Isolated extractor could not start.");
@@ -214,5 +263,5 @@ export function createVpnService({ run = runCommand, bin = "/usr/bin/podman", id
     if (result.code !== 0) throw new Error("Read-only database verification failed; inspect the service status and credentials.");
     return JSON.parse(result.stdout);
   }
-  return { start, stop, status, verify, inspect, routesReady };
+  return { start, stop, status, verify, inspect, ready, routesReady };
 }

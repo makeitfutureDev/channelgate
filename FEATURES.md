@@ -12,10 +12,16 @@
 - A user systemd supervisor starts the pair after reboot/user-manager startup, monitors routing
   and stops both on failure. Kernel locking excludes concurrent changes. Operator controls cover
   configuration, build, status, start, stop, enable/disable and read-only `SELECT 1`/schema verification.
-- This is an operator-only service, independent of Claude/Codex. It does not expose an agent tool
-  or authorize arbitrary SQL extraction. See `docs/CHANNEL-VPN.md` for requirements and limitations.
+- After operator provisioning, channel managers/admins can turn VPN on/off through Claude or
+  Codex, the web channel Network controls, or Slack Settings → Network. Admitted members can read
+  status. All paths use the same fixed helper, current authorization and sanitized diagnostics.
+- Status distinguishes automatic startup, connecting, connected and failed; readiness is freshly
+  checked. OFF also cleans up manually started owned containers. Network off blocks startup and
+  stops a supervised pair. No arbitrary commands, profile import or SQL extraction are granted
+  through these controls. See `docs/CHANNEL-VPN.md` for setup and limitations.
 
-Regression: `test/vpn-profile.test.js`, `test/vpn-service.test.js`,
+Regression: `test/channel-vpn-control.test.js`, `test/channel-vpn-web.test.js`,
+`test/slack-vpn-settings.test.js`, `test/vpn-profile.test.js`, `test/vpn-service.test.js`,
 `services/vpn-image/test_checks.py`; live isolation: `services/vpn-image/live_acceptance.py`.
 
 ## Admin-only direct-host sudo threads
