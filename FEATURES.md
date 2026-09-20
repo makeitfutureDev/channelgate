@@ -2612,10 +2612,12 @@ are retired, bullet by bullet; everything else stands.
   sync): master enable, pasted key / key-file path, impersonate subject, interval, conflict policy,
   rclone binary path (absolute path sidesteps the service unit's minimal PATH). Dormant unless enabled + a
   key exists + rclone is installed. A per-channel **Test** button verifies the service account can
-  see the folder before the first sync (`rclone lsf`). The update flow (`scripts/update.sh`, shared
-  by the CLI / `/update` / admin button) auto-installs rclone when Drive sync is enabled and it's
-  missing — the official installer (the Homebrew branch retired 2026-09-03 — Linux only) — gated on
-  the setting, best-effort, and never aborting the update. The per-channel folder link can also be
+  see the folder before the first sync (`rclone lsf`). Fresh service deployments provision the
+  host-side binary; foreground installs use `~/.local/bin`. The update flow (`scripts/update.sh`,
+  shared by the CLI / `/update` / admin button) repairs a missing binary when Drive sync is enabled,
+  even when the checkout is already current. Downloads are checksum-verified, Linux-only,
+  best-effort, and never abort the install/update. Failed availability probes are retried so a live
+  install takes effect without restarting the daemon. The per-channel folder link can also be
   wired up **by asking the agent**
   (not only the admin UI): gateway control MCP tools `get_channel_drive_folder` (anyone — shows the
   link + whether sync is globally armed), `set_channel_drive_folder` (admins — validates/parses the

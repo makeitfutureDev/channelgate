@@ -72,7 +72,18 @@ if [ -f package-lock.json ]; then npm ci || npm install; else npm install; fi
 say "Voice transcription"
 node scripts/configure-whisper.mjs "${WHISPER_ARGS[@]}"
 
-# 7. channel container image ---------------------------------------------------------
+# 7. host-side Google Drive sync -----------------------------------------------------
+say "Google Drive sync"
+if [ "$NO_SERVICE" -eq 1 ]; then
+  if ! bash scripts/install-rclone.sh; then
+    echo "⚠️  rclone setup failed. The gateway still works, but Google Drive sync stays dormant."
+    echo "     Install it manually: https://rclone.org/install/"
+  fi
+else
+  echo "The system service installer provisions rclone for the host daemon."
+fi
+
+# 8. channel container image ---------------------------------------------------------
 # Every conversation runs inside this image, and the daemon fails a run closed without it. The
 # image is where the shared toolchain lives (engine CLIs, ffmpeg/ffprobe, OpenCV, faster-whisper and
 # its pre-cached speech model) — so building it IS part of the install, not a step to remember later.
@@ -98,7 +109,7 @@ else
   fi
 fi
 
-# 8. .env scaffold ----------------------------------------------------------------
+# 9. .env scaffold ----------------------------------------------------------------
 if [ ! -f .env ]; then
   cp .env.example .env
   echo "✅ created .env (tokens are optional here — you can set them in the admin UI)"
@@ -106,7 +117,7 @@ else
   echo "✅ .env already present"
 fi
 
-# 9. systemd service (needs root, so it is a separate step) ----------------------------
+# 10. systemd service (needs root, so it is a separate step) ---------------------------
 if [ "$NO_SERVICE" -eq 0 ]; then
   echo "ℹ️  Install the systemd service (starts at boot, restarts on failure):"
   echo "     sudo bash scripts/install-systemd.sh"
