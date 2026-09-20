@@ -2442,16 +2442,21 @@ structural invariants are automated; rendered navigation and feature claims also
       key produces a Drive auth error, not a spawn/ENOENT — confirming argv + service-account-file).
 - [x] `testChannelSync` creates its working dir before spawning (spawn ENOENTs on a missing cwd, so
       the Test button must not depend on the boot-time sweep having run first).
-- [x] Update provisions rclone (`scripts/update.sh` → `ensure_rclone`), verified across all branches
+- [x] Fresh setup/service deployment and update provision host-side rclone through one
+      checksum-verified installer. Foreground/user services use `~/.local/bin`; the hardened system
+      service installs globally and also includes its service user's `.local/bin` on PATH. Update
+      provisioning still gates installation on `driveSyncEnabled`, but now runs even when the
+      checkout is already current. Verified across all branches
       with the real functions: Drive sync off → skip; on + rclone on PATH → present; on + rclone off
-      PATH but a valid configured absolute path → present; on + missing → install (the official
-      installer, best-effort, never aborts the update; the brew/macOS branch retired 2026-09-03 —
-      Linux only); no settings file → skip.
+      PATH but a valid configured absolute path → present; on + missing → install (best-effort,
+      Linux only); no settings file → skip. Failed runtime probes are not cached, so installing
+      rclone after a Test-button miss takes effect without restarting the daemon.
       `read_setting` reads the right instance's `settings.json` (honors `CHANNELGATE_DIR`) via
       explicit-ESM node (stable under `"type":"module"`).
-- [ ] Manual: on a host without rclone, enable Drive sync, run `/update` (or `npm run …` update),
-      and confirm rclone gets installed and the Test button then connects. On Linux without
-      passwordless sudo, confirm the update still completes and logs the manual-install hint.
+- [ ] Manual (engine-independent): on a host without rclone, run fresh setup/service installation
+      and confirm the binary is installed. Remove it, enable Drive sync, run `/update` while the
+      checkout is already current, and confirm the daemon-user install succeeds without sudo and
+      the Test button retries the prior miss without a restart.
 - [x] Dormant by default: with the feature disabled / no key file / rclone missing, a sweep and the
       Test action no-op with a clear message and never throw (smoke-tested).
 - [ ] Manual (needs rclone + a Workspace service-account key): set the global key-file path +

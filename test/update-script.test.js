@@ -4,6 +4,9 @@ import { readFileSync } from "node:fs";
 
 const update = readFileSync(new URL("../scripts/update.sh", import.meta.url), "utf8");
 const provision = readFileSync(new URL("../scripts/update-provision.sh", import.meta.url), "utf8");
+const install = readFileSync(new URL("../scripts/install.sh", import.meta.url), "utf8");
+const installSystemd = readFileSync(new URL("../scripts/install-systemd.sh", import.meta.url), "utf8");
+const installRclone = readFileSync(new URL("../scripts/install-rclone.sh", import.meta.url), "utf8");
 const runner = readFileSync(new URL("../scripts/update-runner.mjs", import.meta.url), "utf8");
 
 test("update shell is a strict compatibility wrapper around the Node transaction runner", () => {
@@ -36,4 +39,14 @@ test("optional provisioning retains Whisper, workspace migration, and gated rclo
   assert.match(provision, /migrate-workspace\.mjs/);
   assert.match(provision, /driveSyncEnabled/);
   assert.match(provision, /install_rclone/);
+});
+
+test("fresh deployments and updates share a checksum-verified host rclone installer", () => {
+  assert.match(install, /scripts\/install-rclone\.sh/);
+  assert.match(installSystemd, /scripts\/install-rclone\.sh/);
+  assert.match(provision, /scripts\/install-rclone\.sh/);
+  assert.match(installSystemd, /SERVICE_HOME\/\.local\/bin/);
+  assert.match(installRclone, /SHA256SUMS/);
+  assert.match(installRclone, /sha256sum -c/);
+  assert.match(installRclone, /\.local\/bin/);
 });

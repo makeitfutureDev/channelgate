@@ -1,5 +1,10 @@
 # Changelog — ChannelGate
 
+- Provision the host-side `rclone` dependency during fresh deployments and repair it during an
+  update even when the checkout is already current. User services install it in `~/.local/bin`,
+  downloads are checksum-verified, and Google Drive connection tests retry an earlier missing-tool
+  result without requiring a daemon restart.
+
 - Control a prepared channel VPN through the agent, the web channel Network controls, and Slack
   Settings → Network. Managers/admins can turn it on/off; status distinguishes connecting from
   connected and reports safe certificate/authentication errors. Stopping also cleans up manual starts.

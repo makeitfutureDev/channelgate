@@ -537,6 +537,7 @@ test("a failed pin rebuild is retried on the next update even with an unchanged 
   const reserved = reserveUpdate({ root, source: "test", pidAlive: () => false });
   const state = await executeUpdateTransaction({ root, owner: reserved.owner, ops: {
     preflight: async () => context,
+    provision: async () => {},
     image: () => defaultImageBuild({ root, repoRoot, context, run: retry.run, log: () => {} }),
     verifyImage: async ({ context: received }) => { assert.deepEqual(received.smokeEngines, ["claude", "codex"]); verified = true; },
     checkout: () => assert.fail("must not change an up-to-date checkout"),
@@ -545,6 +546,22 @@ test("a failed pin rebuild is retried on the next update even with an unchanged 
   assert.equal(retry.built(), true);
   assert.equal(verified, true);
   assert.match(state.reason, /image rebuilt and verified/);
+});
+
+test("an up-to-date update still runs provisioning so optional host tools can be repaired", async () => {
+  const root = tempDir("cg-update-provision-repair-");
+  const calls = [];
+  const reserved = reserveUpdate({ root, source: "test", pidAlive: () => false });
+  const state = await executeUpdateTransaction({ root, owner: reserved.owner, ops: {
+    preflight: async () => ({ oldRevision: "same", targetRevision: "same" }),
+    provision: async () => calls.push("provision"),
+    image: async () => { calls.push("image"); return { built: false }; },
+    checkout: () => assert.fail("must not change an up-to-date checkout"),
+    restart: () => assert.fail("provision-only repair does not restart active turns"),
+  } });
+  assert.deepEqual(calls, ["provision", "image"]);
+  assert.equal(state.changed, false);
+  assert.match(state.reason, /Already up to date/);
 });
 
 test("a successful builder exit cannot claim a still-stale image was rebuilt", async () => {

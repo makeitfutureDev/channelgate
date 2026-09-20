@@ -16,14 +16,7 @@ read_setting() {
 }
 
 install_rclone() {
-  case "$(uname -s)" in
-    Linux)
-      if ! command -v curl >/dev/null 2>&1; then echo "⚠ curl not found — install rclone manually: https://rclone.org/install/"; return 1; fi
-      if [ "$(id -u)" = "0" ]; then curl -fsSL https://rclone.org/install.sh | bash
-      elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then curl -fsSL https://rclone.org/install.sh | sudo bash
-      else echo "⚠ Need root to install rclone — run: curl https://rclone.org/install.sh | sudo bash"; return 1; fi ;;
-    *) echo "⚠ Auto-install unsupported on $(uname -s) — see https://rclone.org/install/"; return 1 ;;
-  esac
+  bash "$APP_DIR/scripts/install-rclone.sh"
 }
 
 ensure_rclone() {
