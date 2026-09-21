@@ -9,6 +9,7 @@ import socket
 import stat
 import subprocess
 import sys
+import time
 
 
 class CheckFailed(Exception):
@@ -73,6 +74,36 @@ def check_tcp(host, port, connect=socket.create_connection):
             pass
     except OSError:
         raise CheckFailed("database_unreachable") from None
+
+
+def check_vpn3_status(
+    marker="/run/channelgate-vpn/openvpn3-required",
+    filename="/run/channelgate-vpn/status.json",
+    monotonic=time.monotonic,
+    process_signal=os.kill,
+):
+    """Require a fresh controller status only in the VPN container filesystem."""
+    if not os.path.exists(marker):
+        return
+    try:
+        fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "r", encoding="ascii") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size > 4096:
+                raise CheckFailed("vpn_not_connected")
+            value = json.loads(handle.read(4097))
+        if not isinstance(value, dict) or value.get("connected") is not True:
+            raise CheckFailed("vpn_not_connected")
+        pid = value.get("controllerPid")
+        checked = value.get("checkedAtMonotonic")
+        age = monotonic() - checked if isinstance(checked, (int, float)) else -1
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1 or not 0 <= age <= 10:
+            raise CheckFailed("vpn_not_connected")
+        process_signal(pid, 0)
+    except CheckFailed:
+        raise
+    except (OSError, ValueError, TypeError, UnicodeError):
+        raise CheckFailed("vpn_not_connected") from None
 
 
 def read_credentials(filename="/db/credentials.json"):
@@ -154,6 +185,7 @@ def main(argv=None):
         host, port = configuration(os.environ)
         result = {"ok": True}
         if args.action != "validate-env":
+            check_vpn3_status()
             check_routes(host)
             result["routes"] = "ready"
             if args.action == "health" and not args.no_connect:

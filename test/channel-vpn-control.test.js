@@ -89,6 +89,9 @@ test("raw subprocess errors and malformed status never disclose provider output"
 test("server errors reduce to fixed diagnostics; TLS verification is preserved",()=>{
   assert.equal(classifyVpnFailure('secret=PRIVATE\nVERIFY KU ERROR'),'server_certificate_usage');
   assert.match(vpnFailureMessage('server_certificate_usage'),/Key Usage/);
+  for (const errorClass of ['server_certificate_usage','server_certificate_invalid','tls_failed','authentication_failed']) {
+    assert.equal(classifyVpnFailure(JSON.stringify({event:'vpn_error',errorClass})),errorClass);
+  }
   assert.equal(classifyVpnFailure('AUTH_FAILED user=PRIVATE'),'authentication_failed');
   assert.doesNotMatch(vpnFailureMessage('PRIVATE'),/PRIVATE/);
   assert.equal(typeof vpnFailureMessage('__proto__'),'string');

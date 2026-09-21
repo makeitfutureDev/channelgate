@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+- Run prepared channel VPNs with OpenVPN 3 Linux and refresh their protected supervisors on ON.
+  Add channel-scoped, bounded read-only database operations for Claude and Codex, without granting
+  ordinary agent containers VPN privileges or exposing database credentials.
+
 - Provision the host-side `rclone` dependency during fresh deployments and repair it during an
   update even when the checkout is already current. User services install it in `~/.local/bin`,
   downloads are checksum-verified, and Google Drive connection tests retry an earlier missing-tool

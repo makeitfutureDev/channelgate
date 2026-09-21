@@ -108,6 +108,22 @@ const PROVIDERS = {
   },
 };
 
+const VPN_SERVICE_SECRET_DEFAULTS = Object.freeze({
+  vpnUsername: "VPN_USERNAME",
+  vpnPassword: "VPN_PASSWORD",
+  mysqlUsername: "MYSQL_USERNAME",
+  mysqlPassword: "MYSQL_PASSWORD",
+});
+
+function operatorServiceSecretNames(meta) {
+  if (meta?.vpnService?.version !== 1) return new Set();
+  const refs = meta.vpnService.secrets;
+  return new Set(Object.entries(VPN_SERVICE_SECRET_DEFAULTS).map(([role, fallback]) => {
+    const configured = refs && typeof refs === "object" && !Array.isArray(refs) ? refs[role] : "";
+    return typeof configured === "string" && CHANNEL_ENV_NAME_RE.test(configured) ? configured : fallback;
+  }));
+}
+
 // Tolerant read: the meta blob is hand-editable, so anything MALFORMED is dropped rather than
 // allowed to break a run. Writes go through the strict assert* helpers instead.
 //
@@ -188,8 +204,13 @@ export function removeChannelEnvVar(env, name) {
 // name → value, for the spawn sites. Async because a provider may have to fetch.
 export async function resolveChannelEnv(meta = {}) {
   const env = normalizeChannelEnv(meta.env);
+  // VPN/database credentials belong only to the host-side operator service. The full channel meta
+  // is passed by every engine/background spawn site, so configured refs are removed here before
+  // values are fetched. Operator code deliberately resolves a narrow `{ env }` projection instead.
+  const serviceSecrets = operatorServiceSecretNames(meta);
   const out = {};
   for (const [name, entry] of Object.entries(env)) {
+    if (serviceSecrets.has(name)) continue;
     const provider = PROVIDERS[entry.provider];
     // Loud, not silent: a variable this build cannot resolve fails the turn with its NAME in the
     // message. Resolving it to "" would hand the run a missing credential and let it report

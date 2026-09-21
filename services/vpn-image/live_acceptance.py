@@ -1,6 +1,6 @@
 """Isolated rootless acceptance, no customer profile, credentials or VPN traffic.
 
-Run as the account owning rootless Podman, after building localhost/channelgate/vpn:1.
+Run as the account owning rootless Podman, after building localhost/channelgate/vpn:2.
 Creates and removes only two uniquely named QA containers. No host routes change.
 """
 
@@ -10,7 +10,7 @@ import subprocess
 import uuid
 
 
-IMAGE = "localhost/channelgate/vpn:1"
+IMAGE = "localhost/channelgate/vpn:2"
 DB_HOST = "10.254.255.254"
 OTHER_HOST = "10.254.255.253"
 
