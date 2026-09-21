@@ -606,6 +606,11 @@ export async function executeUpdateTransaction({
       },
     });
     if (context.oldRevision === context.targetRevision) {
+      // Provisioning is also a repair operation. In particular, an operator may enable Drive sync
+      // after the last code update and then run Update to install rclone; an up-to-date checkout
+      // must not skip that repair path.
+      phase(root, owner, "provisioning");
+      await ops.provision?.({ context, owner });
       let imageResult;
       try {
         imageResult = await ops.image?.({ context, owner });

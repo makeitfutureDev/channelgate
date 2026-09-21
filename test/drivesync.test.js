@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { statSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, statSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
@@ -180,7 +180,7 @@ test("the resync sentinel is written only on a successful pass", () => {
   assert.ok(write > success && write < failure, "a failed --resync must leave the channel in first-run state");
 });
 
-test("rclone availability is cached per binary path, so correcting a wrong path takes effect", () => {
+test("rclone availability caches hits per path but retries misses after a live install", () => {
   assert.equal(rcloneAvailable(path.join(os.tmpdir(), "cg-absent-rclone-a")), false);
   assert.equal(rcloneAvailable(path.join(os.tmpdir(), "cg-absent-rclone-b")), false);
   if (process.platform !== "win32") {
@@ -188,7 +188,13 @@ test("rclone availability is cached per binary path, so correcting a wrong path 
     // path in Settings did nothing until the daemon restarted. `/bin/echo version` exits 0, which
     // is all the probe asks of a binary.
     assert.equal(rcloneAvailable("/bin/echo"), true);
-    assert.equal(rcloneAvailable(path.join(os.tmpdir(), "cg-absent-rclone-a")), false); // still remembered
+    const late = path.join(tempDir("cg-rclone-late-"), "rclone");
+    assert.equal(rcloneAvailable(late), false);
+    writeFileSync(late, "#!/bin/sh\nexit 0\n");
+    chmodSync(late, 0o755);
+    assert.equal(rcloneAvailable(late), true, "a previously missing binary becomes available without a daemon restart");
+    rmSync(late, { force: true });
+    assert.equal(rcloneAvailable(late), true, "successful probes remain cached for the same path");
     assert.equal(rcloneAvailable("/bin/echo"), true); // …and so is the hit
   }
 });

@@ -1,0 +1,159 @@
+// Qwen driven through the Claude Code CLI.
+//
+// QwenCloud publishes an ANTHROPIC-COMPATIBLE endpoint (`<base>/v1/messages`), so the `claude`
+// binary the image already ships is the harness: same stream-json protocol, same tool loop, same
+// `--mcp-config` / `--resume` / permission-prompt flags. This module owns the one thing that
+// differs — WHICH provider the CLI talks to and WITH WHAT credential — so that the Claude adapter
+// keeps its single meaning ("the operator's Anthropic login") and never learns about a second one.
+//
+// Why this is a separate ENGINE and not a per-channel environment override:
+//   • `ANTHROPIC_*` is a reserved prefix in config/channel-env.js precisely because a base-URL
+//     override is identity hijack. A channel secret must never be able to redirect a run.
+//   • The gateway relays the operator's Anthropic OAuth access token into every Claude run
+//     (gateway/claude-token-relay.js). Pointing that run at a third-party host would ship the
+//     operator's Anthropic credential to it. `qwenProviderEnv()` is applied through
+//     buildClaudeEnv's `providerEnv` channel, which DELETES every inherited Anthropic credential
+//     before setting the provider's own — see claude.js applyProviderEnv.
+//   • Model ids, cost semantics and failover all differ, and the runtime-identity preamble tells
+//     the model to quote its configured model exactly. Smuggling `qwen3.8-max` in under the
+//     `opus` alias would make that preamble lie.
+//
+// Settings live on the gateway (admin UI), never in a channel folder: `qwenApiKey` (write-only,
+// has*/last4 like every other credential) and `qwenBaseUrl`.
+
+// The Token Plan endpoint. Pay-as-you-go deployments override it in Settings.
+export const QWEN_DEFAULT_BASE_URL = "https://token-plan.maas.qwencloudapi.com/apps/anthropic";
+
+// The Anthropic-compatible path answers `/v1/messages` and NOTHING else — `/v1/models` is a
+// documented 404 ("Not support"). The OpenAI-compatible sibling on the same host does serve a
+// model list, and it is the only way to discover what an account may actually call, so the
+// discovery hook derives it from the configured base URL rather than asking for a second setting.
+export function qwenModelsUrl(baseUrl = QWEN_DEFAULT_BASE_URL) {
+  const base = String(baseUrl || QWEN_DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
+  if (!base) return "";
+  const swapped = base.replace(/\/apps\/anthropic$/, "/compatible-mode/v1");
+  // A base URL that does not follow the documented `/apps/anthropic` shape (a proxy, a gateway of
+  // the operator's own) gets the sibling appended rather than guessed at.
+  return `${swapped === base ? `${base}/compatible-mode/v1` : swapped}/models`;
+}
+
+// settings.js imports the engine registry, which imports the adapters, which import this file — a
+// static settings import would close that cycle. Same lazy pattern claude-login.js is read with.
+async function qwenSettings() {
+  const { getQwenConfig } = await import("../config/settings.js");
+  return getQwenConfig();
+}
+
+/**
+ * The resolved provider: `{ apiKey, baseUrl, configured, error }`. `configured` is the only thing
+ * callers should branch on; `apiKey` never appears in a log, a reply or a health payload.
+ */
+export async function resolveQwenProvider() {
+  const { apiKey = "", baseUrl = "" } = (await qwenSettings()) || {};
+  const url = String(baseUrl || QWEN_DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
+  if (!apiKey) {
+    return { apiKey: "", baseUrl: url, configured: false, error: "no QwenCloud API key is configured (Settings → Engines → Qwen)" };
+  }
+  return { apiKey: String(apiKey), baseUrl: url, configured: true, error: "" };
+}
+
+/**
+ * The environment that redirects the `claude` CLI at QwenCloud. Applied LAST and gateway-owned
+ * (claude.js), after every inherited Anthropic credential has been removed.
+ */
+export function qwenProviderEnv({ apiKey, baseUrl }) {
+  return {
+    ANTHROPIC_BASE_URL: String(baseUrl || QWEN_DEFAULT_BASE_URL),
+    // The CLI sends this verbatim as the bearer credential. QwenCloud keys start with `sk-sp-`.
+    ANTHROPIC_AUTH_TOKEN: String(apiKey || ""),
+  };
+}
+
+// Opaque, non-reversible, and stable for one (key, endpoint) pair: the warm pool retires a process
+// whose provider changed, and the orchestrator only ever COMPARES a credential fingerprint.
+export function qwenProviderFingerprint({ apiKey = "", baseUrl = "" } = {}) {
+  if (!apiKey) return "";
+  let h = 0x811c9dc5;
+  for (const ch of `${baseUrl}\u0000${apiKey}`) {
+    h ^= ch.codePointAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `qwen:${h.toString(16)}`;
+}
+
+// ── Model discovery ───────────────────────────────────────────────────────────────────────────
+// Text/tool models only. The same account also exposes image, video, audio and realtime families
+// (`wan2.7-image`, `qwen-audio-3.0-tts-plus`, …) which answer 400 on `/v1/messages` — offering one
+// in `/model` would pin a channel to a model that cannot hold a conversation.
+const NON_TEXT_RE = /(?:^wan|image|video|audio|tts|realtime|t2v|i2v|speech)/i;
+export const QWEN_MODEL_RE = /^(?:auto|qwen[0-9][a-z0-9._-]*|qwen-[a-z0-9._-]+|glm-[a-z0-9._-]+|deepseek-[a-z0-9._-]+|kimi-[a-z0-9._-]+|minimax-[a-z0-9._-]+)$/;
+
+export function isQwenTextModel(id) {
+  const value = String(id || "").trim().toLowerCase();
+  return Boolean(value) && QWEN_MODEL_RE.test(value) && !NON_TEXT_RE.test(value);
+}
+
+const VENDOR_LABELS = [[/^qwen/, "Qwen"], [/^glm-/, "GLM"], [/^deepseek-/, "DeepSeek"], [/^kimi-/, "Kimi"], [/^minimax-/, "MiniMax"]];
+
+export function qwenModelLabel(id) {
+  const value = String(id || "").trim();
+  if (value === "auto") return "Auto (provider routing)";
+  const vendor = VENDOR_LABELS.find(([re]) => re.test(value));
+  if (!vendor) return value;
+  const rest = value.slice(value.match(vendor[0])[0].length).replace(/^[-.]/, "");
+  const pretty = rest.split("-").filter(Boolean).map((part) => (/^[a-z]/.test(part) ? part[0].toUpperCase() + part.slice(1) : part)).join(" ");
+  return pretty ? `${vendor[1]} ${pretty}` : vendor[1];
+}
+
+// Shipped catalog: what a fresh install offers before (or when) discovery is unavailable. The live
+// list always wins — the registry's model catalog marks this one "fallback".
+export const QWEN_FALLBACK_MODELS = Object.freeze([
+  "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash",
+  "glm-5.3", "deepseek-v4-pro", "deepseek-v4.1-flash", "auto",
+].map((value) => Object.freeze({ label: qwenModelLabel(value), value, description: `QwenCloud ${value}.` })));
+
+// The model a Qwen run uses when neither the thread, the channel nor the gateway names one. The
+// `claude` CLI's own default is an Anthropic model id, which QwenCloud rejects ("Model not exist"),
+// so the adapter must never leave the choice to the CLI.
+export const QWEN_DEFAULT_MODEL = QWEN_FALLBACK_MODELS[0].value;
+
+/**
+ * The account's live model list, from the OpenAI-compatible `/models` endpoint. Returns the same
+ * `{ label, value, description }` shape every adapter's `models` uses; the registry normalizes it,
+ * keeps the previous catalog on failure, and never lets an empty result blank the picker.
+ */
+export async function discoverQwenModels({ fetchImpl = fetch, timeoutMs = 15_000 } = {}) {
+  const provider = await resolveQwenProvider();
+  if (!provider.configured) throw new Error(provider.error);
+  const url = qwenModelsUrl(provider.baseUrl);
+  if (!url) throw new Error("no QwenCloud model list URL could be derived from the configured base URL");
+  const response = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${provider.apiKey}`, accept: "application/json" },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw new Error(`QwenCloud model list returned HTTP ${response.status}`);
+  const payload = await response.json();
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  return rows
+    .map((row) => String(row?.id || "").trim())
+    .filter(isQwenTextModel)
+    .sort()
+    .map((value) => ({ label: qwenModelLabel(value), value, description: `QwenCloud ${value}.` }));
+}
+
+/**
+ * "Is this harness's credential usable right now, and is it the SAME one that failed?" — the
+ * optional adapter hook the orchestrator only ever compares. No network call: a reachability probe
+ * on every turn would bill the operator for asking whether they are signed in.
+ */
+export async function qwenCredentialState() {
+  const provider = await resolveQwenProvider();
+  return {
+    known: true,
+    authenticated: provider.configured,
+    method: provider.configured ? "api-key" : "none",
+    detail: provider.configured ? `QwenCloud API key · ${provider.baseUrl}` : provider.error,
+    source: provider.baseUrl,
+    fingerprint: qwenProviderFingerprint(provider),
+  };
+}

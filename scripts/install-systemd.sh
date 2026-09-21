@@ -34,12 +34,13 @@ UNIT_NAME="channelgate.service"
 NODE_BIN="$(command -v node)"
 
 # Engines run from the image. Only the daemon's Node/Podman tools need a host PATH.
-SERVICE_PATH="$(dirname "$NODE_BIN"):/usr/local/bin:/usr/bin:/bin"
+SERVICE_PATH="$SERVICE_HOME/.local/bin:$(dirname "$NODE_BIN"):/usr/local/bin:/usr/bin:/bin"
 # Values are embedded in a systemd unit, whose quoting/expansion rules differ from shell.
 case "$SERVICE_USER" in *[!a-zA-Z0-9_-]*|"") echo "Invalid service account name"; exit 1;; esac
 for value in "$APP_DIR" "$SERVICE_HOME" "$NODE_BIN"; do
   case "$value" in *[[:space:]%\"\\]*|[!/]*) echo "Service paths must be absolute and contain no whitespace, percent, quote or backslash"; exit 1;; esac
 done
+
 # Before provisioning an account or changing checkout ownership, prove the parent directories
 # are traversable. Do not widen an operator's private home ACL to make a service install work.
 relocation_remedy() {
@@ -127,6 +128,15 @@ run_as_service() (
     XDG_RUNTIME_DIR="$SERVICE_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="unix:path=$SERVICE_RUNTIME_DIR/bus" \
     PATH="$SERVICE_PATH" "$@"
 )
+
+# Drive synchronization is daemon-side, so rclone belongs on the host rather than in the channel
+# image. Provision it during a fresh service deployment; updates can later repair it in the service
+# user's ~/.local/bin without requiring passwordless sudo.
+echo "→ Checking rclone (Google Drive sync)…"
+if ! CG_RCLONE_INSTALL_DIR=/usr/local/bin bash "$APP_DIR/scripts/install-rclone.sh"; then
+  echo "⚠ rclone setup failed — the gateway can start, but Google Drive sync stays dormant."
+  echo "  Install it manually and set its absolute path under Settings → Google Drive sync."
+fi
 run_as_service podman info --format '{{.Host.Security.Rootless}}' | grep -qx true || {
   echo "Rootless Podman is not usable as $SERVICE_USER"; exit 1;
 }

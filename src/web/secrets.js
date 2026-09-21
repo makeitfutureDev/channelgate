@@ -40,6 +40,9 @@ const READERS = {
     // host). Same terms as the Slack tokens: listings carry has*/last4 only, and an admin who needs
     // the value back re-enters the admin password here.
     containerClaudeOauthToken: (s) => s.containerClaudeOauthToken,
+    // The QwenCloud API key the opt-in `qwen` harness authenticates with. Same terms as the rest:
+    // has*/last4 on listings, the value only here, behind a re-entered admin password.
+    qwenApiKey: (s) => s.qwenApiKey,
   },
   user: {
     composioToken: (u) => u.composioToken,

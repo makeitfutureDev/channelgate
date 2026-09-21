@@ -1,5 +1,5 @@
-// The provisioning half of the container runtime: what a channel folder and a run's engine-facing
-// artifacts look like now that every turn runs behind an OS boundary the daemon owns.
+// Runtime provisioning: ordinary channel turns keep all engine-facing artifacts behind the
+// container boundary, while the explicit sudo-host target uses native host homes and paths.
 //
 // Two rules are under test, and both cut both ways:
 //   1. the settings file carries POLICY only — no sandbox block, no host-path carve-outs and no host
@@ -21,7 +21,8 @@ process.env.CG_WORKSPACE_DIR ||= path.join(scratch, "workspace");
 const { buildSettings, ensureChannelFolder, subagentStopHooks, STOP_SUBAGENTS_HOOK } = await import("../src/gateway/folders.js");
 const { createRunGrantArtifacts, engineHomesFor, refreshRuntimeReadPaths, CONTAINER_AGENT_HOME } = await import("../src/gateway/run-grant-artifacts.js");
 const { channelFolder, gatewayRoot } = await import("../src/config/paths.js");
-const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
+const { hostClaudeStateDir, hostCodexStateDir } = await import("../src/engines/host-state.js");
+const { hostBackend } = await import("../src/runtimes/host.js");
 const { IMAGE_HELPERS } = await import("../src/runtimes/container/image-paths.js");
 const { createFakeRuntimeBackend, fakeTarget } = await import("./runtime-fake.js");
 
@@ -114,22 +115,31 @@ test("a run's engine-facing artifacts all live under the mounted artifact dir", 
   }
 });
 
-test("a caller with no artifact dir is refused instead of being served files from the gateway root", async () => {
+test("a non-isolated host caller receives run-private artifacts without requiring a mount", async () => {
   const meta = { platform: "slack", allowedMcps: [] };
   await ensureChannelFolder("rt-no-artifacts", meta);
-  // No target at all, and the daemon's own local target (which mounts nothing and so names no
-  // artifact dir): a containerized engine would silently find neither settings nor MCP config.
-  for (const target of [undefined, null, localRuntimeTarget(process.cwd())]) {
-    await assert.rejects(
-      createRunGrantArtifacts({ slug: "rt-no-artifacts", meta, needsClaudeSettings: true, target }),
-      /runtime target must carry an artifactDir/,
-    );
+  const target = hostBackend.prepareTarget({
+    slug: "rt-no-artifacts", platform: "slack", cwd: process.cwd(), workDir: process.cwd(),
+    cleanWorkDir: "", artifactDir: null, meta: { ...meta, sudoMode: true }, settings: {}, container: null,
+  });
+  const artifacts = await createRunGrantArtifacts({ slug: "rt-no-artifacts", meta, needsClaudeSettings: true, target });
+  try {
+    assert.ok(artifacts.settingsFile);
+    assert.equal(artifacts.claudeConfigDir, hostClaudeStateDir());
+    assert.equal(artifacts.codexHome, hostCodexStateDir());
+  } finally {
+    await artifacts.cleanup();
   }
 });
 
-test("engineHomesFor answers null for no target, and prefers what the backend declares", () => {
-  assert.equal(engineHomesFor(null), null);
-  assert.equal(engineHomesFor(undefined), null);
+test("engineHomesFor uses native host state only for the explicit host target and prefers container declarations", () => {
+  const host = hostBackend.prepareTarget({ cwd: process.cwd(), meta: { sudoMode: true } });
+  const homes = engineHomesFor(host);
+  assert.equal(homes.claudeHome, os.homedir());
+  assert.equal(homes.claudeConfigDir, hostClaudeStateDir());
+  assert.equal(homes.codexHome, hostCodexStateDir());
+  assert.equal(homes.codexStateDir, hostCodexStateDir());
+  assert.equal(engineHomesFor(null), null, "missing runtime facts never imply host access");
 
   const target = fakeTarget(backend, "rt-homes", { platform: "slack" });
   assert.deepEqual(engineHomesFor(target), {

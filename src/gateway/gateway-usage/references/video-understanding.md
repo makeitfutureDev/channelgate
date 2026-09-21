@@ -23,6 +23,18 @@ workflow from the transcript alone or from a few evenly spaced screenshots.
    evidence streams disagree. Prefer targeted extra frames over dense whole-video extraction.
 6. Answer while distinguishing directly visible facts, spoken statements, combined inferences,
    and unresolved ambiguity.
+7. After the evidence pack is complete and no more re-sampling is needed, remove the original only
+   when it is a gateway-downloaded regular file beneath the current channel's `uploads/` directory.
+   Use the bundled constrained cleanup helper, which resolves both paths and refuses symlinks or
+   paths outside `uploads/`:
+
+   ```bash
+   python3 .claude/skills/gateway-usage/scripts/cleanup_uploaded_media.py VIDEO_PATH
+   ```
+
+   Delete only the source video—not the evidence pack. Keep the original when decoding,
+   transcription, or analysis failed so the user can retry. Never auto-delete a video supplied
+   from a project or user-managed path.
 
 For screen recordings, prioritize UI labels, selected cells, cursor focus, typed values,
 before/after state, and exact errors. Repeated table rows usually represent duplicates unless the

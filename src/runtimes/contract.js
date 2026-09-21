@@ -16,14 +16,14 @@
 // capability key does not load, and readers must never assume a capability that is not declared.
 import { randomBytes } from "node:crypto";
 
-export const RUNTIME_BACKEND_IDS = Object.freeze(["container"]);
+export const RUNTIME_BACKEND_IDS = Object.freeze(["host", "container"]);
 export const DEFAULT_RUNTIME_BACKEND = "container";
 
 // Capability keys every backend MUST declare. The default is the least capable value.
 export const RUNTIME_CAPABILITY_SPEC = Object.freeze({
   // The engine runs behind an OS boundary the daemon owns, with its own sandbox switched off
-  // inside it (plan §6). The container backend is the only registered backend; the daemon-internal
-  // local runtime (update smoke, direct probes) declares false and never runs a channel turn.
+  // inside it. Container turns declare true; the explicit admin-only sudo host backend and the
+  // daemon-internal local runtime declare false.
   isolated: { default: false },
   // signal() reaches the run's whole process tree, not just the direct child.
   processGroups: { default: false },

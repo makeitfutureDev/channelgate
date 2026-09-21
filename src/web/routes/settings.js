@@ -11,7 +11,9 @@ import os from "node:os";
 import path from "node:path";
 import { allowedFsRoot, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
 import { listAvailableSkills } from "../../gateway/folders.js";
-import { requireAdapter } from "../../engines/registry.js";
+import { workspaceAssignmentsAtPath } from "../../gateway/workspace-assignments.js";
+import { listChannels } from "../../config/store.js";
+import { requireAdapter, modelBelongsToEngine } from "../../engines/registry.js";
 import {
   getAdminPassword,
   settingsForApi,
@@ -297,10 +299,17 @@ export function createSettingsRouter({
       if (typeof body.modelChangeAccess === "string" && MODEL_CHANGE_ACCESS_MODES.includes(body.modelChangeAccess)) patch.modelChangeAccess = body.modelChangeAccess;
       // Gateway default model per engine (blank clears → CLI default). Same isValidModel guard as
       // /model and the channel-meta routes — a typo'd id here would break EVERY defaulted run.
-      for (const key of ["defaultClaudeModel", "defaultCodexModel"]) {
+      // Keys come from the ADAPTERS, not a literal pair: a harness added later (Qwen) would
+      // otherwise have a default-model control in the UI that silently never saved.
+      for (const id of ENGINES) {
+        const key = requireAdapter(id).defaultModelKey;
         if (typeof body[key] !== "string") continue;
         const v = body[key].trim();
         if (v && !isValidModel(v)) return res.status(400).json({ error: `unrecognized model "${v}"` });
+        // …and that it belongs to THIS harness. The shape check alone would accept a QwenCloud
+        // image/audio model as a Qwen default, or a Codex id as Claude's — either one breaks every
+        // defaulted run in the deployment.
+        if (v && !modelBelongsToEngine(v, id)) return res.status(400).json({ error: `model "${v}" is not a ${requireAdapter(id).label} model` });
         patch[key] = v;
       }
       // Cross-engine failover. `codexFallback` is the pre-rename key an older UI still sends; both
@@ -346,6 +355,20 @@ export function createSettingsRouter({
       // The Claude subscription token for container runs (`claude setup-token` on the host). Same
       // write-only rule as every other credential: set on a value, cleared by an empty string or
       // the explicit flag, never echoed back by any listing.
+      // ── Qwen provider (the opt-in `qwen` harness) ───────────────────────────
+      // Write-only, exactly like the tokens above: the value is never echoed back on a listing,
+      // and `clearQwenApiKey` is how the UI removes one it cannot read.
+      if (typeof body.qwenApiKey === "string") patch.qwenApiKey = body.qwenApiKey.trim();
+      if (body.clearQwenApiKey === true) patch.qwenApiKey = "";
+      if (typeof body.qwenBaseUrl === "string") {
+        const url = body.qwenBaseUrl.trim();
+        // An endpoint the daemon will send a credential to: https only, and shape-checked here
+        // rather than at spawn time, where a bad value would fail every turn in the channel.
+        if (url && !/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[\w./-]*)?$/i.test(url)) {
+          return res.status(400).json({ error: "Qwen base URL must be an https:// endpoint" });
+        }
+        patch.qwenBaseUrl = url;
+      }
       if (typeof body.containerClaudeOauthToken === "string") patch.containerClaudeOauthToken = body.containerClaudeOauthToken.trim();
       if (body.clearContainerClaudeOauthToken === true) patch.containerClaudeOauthToken = "";
       if (typeof body.agentsFile === "boolean") patch.agentsFile = body.agentsFile;
@@ -407,7 +430,7 @@ export function createSettingsRouter({
       if (body.scheduleMinIntervalMinutes !== undefined && Number.isFinite(Number(body.scheduleMinIntervalMinutes)) && Number(body.scheduleMinIntervalMinutes) >= 1) patch.scheduleMinIntervalMinutes = Math.floor(Number(body.scheduleMinIntervalMinutes));
       if (body.scheduleMaxPerChannel !== undefined && Number.isFinite(Number(body.scheduleMaxPerChannel)) && Number(body.scheduleMaxPerChannel) >= 1) patch.scheduleMaxPerChannel = Math.floor(Number(body.scheduleMaxPerChannel));
       if (body.noResponseReminderHours !== undefined && Number.isFinite(Number(body.noResponseReminderHours)) && Number(body.noResponseReminderHours) >= 1) patch.noResponseReminderHours = Number(body.noResponseReminderHours);
-      // Org-default no-response nudge (on/off), captured onto new channels & DMs at join.
+      // Org-default no-response nudge (on/off), captured onto newly seen users.
       if (typeof body.defaultNudges === "boolean") patch.defaultNudges = body.defaultNudges;
       // Personal pending-response follow-up digests.
       if (typeof body.followupRemindersEnabled === "boolean") patch.followupRemindersEnabled = body.followupRemindersEnabled;
@@ -670,7 +693,8 @@ export function createSettingsRouter({
         .sort((a, b) => a.name.localeCompare(b.name));
       const parent = path.dirname(dir);
       const parentOk = parent !== dir && pathWithin(root, parent);
-      res.json({ path: dir, parent: parentOk ? parent : null, dirs, home: os.homedir() });
+      const assignedConversations = workspaceAssignmentsAtPath(await listChannels(), dir);
+      res.json({ path: dir, parent: parentOk ? parent : null, dirs, home: os.homedir(), assignedConversations });
     } catch (e) {
       res.status(400).json({ error: e.message });
     }

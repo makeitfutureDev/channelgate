@@ -5,6 +5,7 @@
 import { mdToMrkdwn, chunkMrkdwn, resolveMentions, createMentionStream } from "./format.js";
 import { createTtlSet, isSlackInvalidBlocksError, postChunkedReply, MAX_SLACK_CHARS } from "./util.js";
 import { footerText, footerButtons, footerBlocks } from "./footer.js";
+import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { modelLabel } from "../gateway/model-info.js";
 import { engineLabel } from "../engines/registry.js";
 import { describeSilence } from "../engines/watchdog.js";
@@ -622,7 +623,7 @@ function createTaskTimeline(push) {
 // All append/stop calls are serialized through a promise chain (the streamer's buffer is not
 // concurrency-safe). Any API failure flips `failed`, and finalize() falls back to a plain
 // postMessage so an answer is never lost if streaming is unavailable (missing scope / not enabled).
-function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, mayUseSettings = false, stopGraceMs = 1_000 }) {
+function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, mayUseSettings = false, stopGraceMs = 1_000, uploadFile }) {
   // Resolve "@Name" → "<@id>" as the answer streams in; the holdback buffer keeps a mention whole
   // even when it straddles two delta slices (flushed in finalize).
   const mentionStream = createMentionStream(dir);
@@ -1139,6 +1140,13 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       stopHeartbeat();
       await clearShimmer();
       const fullRaw = result?.content || "";
+      const imageBlocks = answerImageBlocks(fullRaw);
+      let imageFilesShared = false;
+      const shareImageFiles = async () => {
+        if (imageFilesShared) return;
+        imageFilesShared = true;
+        await shareAnswerImageFiles({ markdown: fullRaw, cwd: result?.cwd, channel, threadTs, uploadFile });
+      };
       // What is still OWED to this message. A gateway note (a substituted model) was streamed as
       // the head of the answer and the orchestrator also carries it on `content` for surfaces with
       // no stream — so it is subtracted here, and the sentence lands exactly once.
@@ -1200,11 +1208,13 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           await stopTimeline();
           await cleanupRetiredStreams();
           if (hasOverflow) await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag);
+          await shareImageFiles();
           return true;
         };
+        const finalFooterBlocks = footerBlocks(result, { channel, threadTs, authorId, mayUseSettings });
         const stopWithFooter = () => answerStreamer.stop({
           ...terminalPayload,
-          blocks: footerBlocks(result, { channel, threadTs, authorId, mayUseSettings }),
+          blocks: [...imageBlocks, ...finalFooterBlocks],
         });
         try {
           if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
@@ -1226,13 +1236,20 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           } else if (isSlackInvalidBlocksError(error)) {
             try {
               // The SDK keeps buffered markdown after a rejected stopStream call. Retry the same
-              // terminal write without cosmetic footer blocks. Re-send the toolbox snapshot, which
-              // the helper does not retain, but do not append terminal markdown a second time: that
-              // text is still in ChatStreamer's buffer from the rejected request.
-              await answerStreamer.stop();
+              // terminal write without image previews first, so a bad/unreachable image cannot
+              // discard a healthy stats footer. Do not append terminal markdown a second time:
+              // that text is still in ChatStreamer's buffer from the rejected request.
+              await answerStreamer.stop(imageBlocks.length ? { blocks: finalFooterBlocks } : undefined);
               if (await sealDelivered()) return;
-            } catch {
-              // The text-only stop failed too; fall through to the normal full-answer fallback.
+            } catch (footerError) {
+              if (imageBlocks.length && isSlackInvalidBlocksError(footerError)) {
+                try {
+                  await answerStreamer.stop();
+                  if (await sealDelivered()) return;
+                } catch {
+                  // The text-only stop failed too; use the complete classic fallback below.
+                }
+              }
             }
           }
           failed = true;
@@ -1255,9 +1272,13 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           resolveMentions(mdToMrkdwn(fullRaw.trim()), dir).trim() + tag,
           footerText(result),
           footerButtons(result, { channel, threadTs, authorId, mayUseSettings }),
-          { footerBlocks: footerBlocks(result, { channel, threadTs, authorId, mayUseSettings }) },
+          {
+            footerBlocks: footerBlocks(result, { channel, threadTs, authorId, mayUseSettings }),
+            answerBlocks: imageBlocks,
+          },
         );
         await stopTimeline();
+        await shareImageFiles();
       } catch (error) {
         // Both delivery surfaces failed. The outer run handler will call stop(), but this finalize
         // already owns the terminal state, so close and drain the Plan here before rethrowing.

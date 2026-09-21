@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import {
   MAX_TRANSCRIPT_CHARS,
   composeVoicePrompt,
@@ -131,6 +131,45 @@ test("audio batches serialize the daemon-wide Whisper work and preserve failures
   assert.deepEqual(two.transcripts, [{ name: "b.ogg", text: "b.ogg" }]);
 });
 
+test("completed local audio is cleaned while failed processing keeps its source for retry", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cg-whisper-cleanup-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const good = path.join(dir, "good.wav");
+  const bad = path.join(dir, "bad.wav");
+  await writeFile(good, "good audio");
+  await writeFile(bad, "bad audio");
+
+  const result = await transcribeAudioFiles([
+    { name: "good.wav", path: good },
+    { name: "bad.wav", path: bad },
+  ], {
+    transcribe: async (filePath) => {
+      if (filePath === bad) throw new Error("decode failed");
+      return "spoken text";
+    },
+    removeProcessed: async (file) => {
+      await rm(file.path);
+      return true;
+    },
+  });
+
+  assert.deepEqual(result.transcripts, [{ name: "good.wav", text: "spoken text" }]);
+  assert.equal(result.failed[0].name, "bad.wav");
+  assert.deepEqual(result.cleanupFailed, []);
+  await assert.rejects(readFile(good), { code: "ENOENT" });
+  assert.equal(await readFile(bad, "utf8"), "bad audio");
+});
+
+test("cleanup refusal is observable without discarding a successful transcript", async () => {
+  const result = await transcribeAudioFiles([{ name: "voice.wav", path: "/tmp/voice.wav" }], {
+    transcribe: async () => "spoken text",
+    removeProcessed: async () => false,
+  });
+  assert.deepEqual(result.transcripts, [{ name: "voice.wav", text: "spoken text" }]);
+  assert.equal(result.failed.length, 0);
+  assert.match(result.cleanupFailed[0].reason, /no longer a managed regular upload/i);
+});
+
 test("Slack WebVTT parsing removes cue metadata but keeps complete spoken text", () => {
   assert.equal(
     parseWebVtt("WEBVTT\n\n00:00:00.579 --> 00:00:01.700\n- How are you?\n\n00:00:02.000 --> 00:00:03.000\nSecond line."),
@@ -210,6 +249,7 @@ test("disabled local Whisper never downloads audio and uses Slack transcripts in
 
 test("local failures fall back to Slack while local successes stay local", async () => {
   let slackCalls = 0;
+  const removed = [];
   const result = await resolveAudioTranscripts([
     { id: "GOOD", name: "good.m4a" },
     { id: "BAD", name: "bad.m4a" },
@@ -223,8 +263,25 @@ test("local failures fall back to Slack while local successes stay local", async
       slackCalls += 1;
       return { transcripts: [{ name: files[0].name, text: "Slack text" }], failed: [] };
     },
+    removeProcessed: async (file) => { removed.push(file.id); return true; },
   });
   assert.equal(slackCalls, 1);
   assert.deepEqual(result.transcripts.map((item) => item.text), ["local text", "Slack text"]);
   assert.equal(result.localFailed[0].name, "bad.m4a");
+  assert.deepEqual(removed, ["GOOD", "BAD"]);
+  assert.deepEqual(result.cleanupFailed, []);
+});
+
+test("an audio source is retained when neither local nor Slack processing succeeds", async () => {
+  let removals = 0;
+  const result = await resolveAudioTranscripts([{ id: "BAD", name: "bad.m4a" }], {
+    localEnabled: true,
+    downloadLocal: async (file) => ({ ...file, path: "/tmp/BAD.m4a" }),
+    localTranscriber: async () => ({ transcripts: [], failed: [{ name: "bad.m4a", reason: "Whisper failed" }] }),
+    slackTranscriber: async () => ({ transcripts: [], failed: [{ name: "bad.m4a", reason: "Slack failed" }] }),
+    removeProcessed: async () => { removals += 1; return true; },
+  });
+  assert.equal(result.transcripts.length, 0);
+  assert.equal(result.failed.length, 1);
+  assert.equal(removals, 0);
 });

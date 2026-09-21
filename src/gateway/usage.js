@@ -9,7 +9,7 @@ import { getDb } from "../db/index.js";
 import { getSettings, getCodexModelRates } from "../config/settings.js";
 import { countDrop } from "../util/drops.js";
 import { resolveCurrentModel } from "./model-info.js";
-import { engineSupports } from "../engines/registry.js";
+import { engineSupports, engineCostRateKey } from "../engines/registry.js";
 import { normalizeCodexTokenUsage } from "../engines/codex-usage.js";
 
 // Codex reports no dollar cost — derive an ESTIMATE from the per-model $/1M rates in Settings
@@ -18,13 +18,16 @@ import { normalizeCodexTokenUsage } from "../engines/codex-usage.js";
 // exact key → official dated-snapshot prefix. Empty/`codex` is a CLI sentinel, not an official API
 // model id, so it stays unpriced until the runtime model is resolved. The legacy blended rate is
 // retained only as an explicit admin fallback for an unknown non-empty runtime model.
-const LONG_CONTEXT_RATE_KEYS = new Set(["gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"]);
+export const CODEX_PRICING_BASIS = "openai-standard-effective-dates-2026-09-14";
+const LONG_CONTEXT_RATE_KEYS = new Set(["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"]);
 function codexRateKey(rates, model) {
   const m = String(model || "").toLowerCase();
   if (!m || m === "codex") return "";
   if (rates[m]) return m;
   return Object.keys(rates)
-    .filter((key) => m.startsWith(`${key}-`))
+    // Only inherit a base rate for an official dated snapshot. A named sibling such as
+    // gpt-5.3-codex-spark is a different model and stays unpriced until OpenAI publishes its rate.
+    .filter((key) => m.startsWith(`${key}-`) && /^\d{4}(?:-\d{2}){1,2}$/.test(m.slice(key.length + 1)))
     .sort((a, b) => b.length - a.length)[0] || "";
 }
 
@@ -47,8 +50,7 @@ function priceCodexRequest(rawUsage, model, rates, { allowLongContext = true } =
   ) / 1_000_000;
 }
 
-export function estimateCodexCost(u = {}, model = "", requests = []) {
-  const rates = getCodexModelRates();
+export function estimateCodexCost(u = {}, model = "", requests = [], { rates = getCodexModelRates() } = {}) {
   const detailed = Array.isArray(requests) ? requests.filter((request) => request?.usage) : [];
   if (detailed.length) {
     let cost = 0;
@@ -89,6 +91,10 @@ export function normalizeUsage(result = {}) {
   // Engines that report a real dollar cost use it as-is; only estimate for those that do not.
   // A `!== "codex"` test here would have handed a third engine Claude's cost semantics silently.
   if (engineSupports(result.engine, "realCost")) return { inTok, outTok, cachedTok, cacheWriteTok, costUSD: null, estimated: false };
+  // Neither a real cost NOR a configured rate of its own (the Qwen harness, whose adapter drops
+  // the Anthropic-priced figure its CLI reports): record the tokens and no dollar figure. Falling
+  // through to the Codex estimator here would price QwenCloud usage with OpenAI's rate table.
+  if (!engineCostRateKey(result.engine)) return { inTok, outTok, cachedTok, cacheWriteTok, costUSD: null, estimated: false };
   const est = estimateCodexCost(u, resolveCurrentModel(result), result.usageRequests);
   return { inTok, outTok, cachedTok, cacheWriteTok, costUSD: est.costUSD, estimated: est.estimated };
 }
@@ -132,7 +138,7 @@ export function componentRow(accounting, { sourceKind = "root", parentSourceId =
     requests,
     costUSD: estimate.costUSD,
     costEstimated: estimate.estimated,
-    pricingBasis: estimate.estimated ? "openai-standard-2026-08-16" : "unpriced",
+    pricingBasis: estimate.estimated ? CODEX_PRICING_BASIS : "unpriced",
     provenance: accounting?.provenance || (sourceKind === "root" ? "codex-rollout-root-delta" : "codex-rollout-fork-delta"),
     confidence: accounting?.exactRequests === false ? "verified-total" : "verified-requests",
     durationMs: accounting?.durationMs ?? durationMs,

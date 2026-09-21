@@ -3,8 +3,8 @@
 // host-shaped fact — the daemon's HOME and PATH, the toolchain launcher dir, the permission
 // profiles compiled against host paths, the gateway root — is either replaced by the image's
 // equivalent or left out entirely. The only non-container spawn left is the daemon's OWN local
-// turn (the update smoke probe): Claude still serves it with the host layout, unchanged, and Codex
-// — which has no daemon-own turn — refuses it outright.
+// turn (the update smoke probe): Claude still serves it with the host layout, unchanged. Codex's
+// non-isolated path is used by the explicitly admitted sudo-host runtime.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -149,7 +149,7 @@ test("a containerized Claude turn passes the argv it was given, and nothing host
   await pending;
 });
 
-test("Codex env inside a container points at the image's HOME, CODEX_HOME and tmpfs", () => {
+test("Codex env follows the container inside isolation and the host on a sudo runtime", () => {
   const rt = createFakeRuntime();
   const target = rt.target();
   const env = buildCodexEnv({
@@ -165,10 +165,11 @@ test("Codex env inside a container points at the image's HOME, CODEX_HOME and tm
   assert.equal(env.NODE_USE_ENV_PROXY, "1");
   assert.equal(env.XDG_RUNTIME_DIR, undefined, "host locations are dropped, not carried into the image");
 
-  // There is no host layout for Codex any more: the builder refuses to produce one rather than
-  // hand a container-less child the daemon's HOME and CODEX_HOME.
-  assert.throws(() => buildCodexEnv({ extraEnv: { VERCEL_TOKEN: "vt_live" } }, SOURCE), /Codex runs only inside a channel container/);
-  assert.throws(() => buildCodexEnv({ target: localRuntimeTarget("/work") }, SOURCE), /Codex runs only inside a channel container/);
+  const host = buildCodexEnv({ extraEnv: { VERCEL_TOKEN: "vt_live" }, target: localRuntimeTarget("/work") }, SOURCE);
+  assert.equal(host.HOME, SOURCE.HOME);
+  assert.equal(host.PATH, SOURCE.PATH);
+  assert.equal(host.TMPDIR, SOURCE.TMPDIR);
+  assert.equal(host.VERCEL_TOKEN, "vt_live");
 });
 
 test("Codex in a container states a sandbox MODE and compiles no host permission profile", () => {
@@ -257,22 +258,24 @@ test("Codex MCP entries in a container are composed from the runtime's helper co
   assert.ok(!args.some((arg) => arg.includes(gatewayRoot())), "no daemon-root path anywhere in the argv");
 });
 
-test("Codex has no local path: the daemon's own spawner is refused before any argv names a checkout script", async () => {
-  // Before 2026-09-03 a host run composed its MCP entries from this checkout, run by this node.
-  // That path is gone with the host backend, and the refusal is the same for the args builder,
-  // the env builder and the runner — nothing partial is ever produced.
-  const base = { prompt: "go", sessionId: "t-1", isNewSession: true, cwd: "/work", outFile: "/gw/out.txt", secretBundlePath: "/gw/run-tmp/bundle.json", gatewayCapability: "signed-cap", gatewayFsRoot: "/gw", gatewayWorkspaceRoot: "/work" };
-  assert.throws(() => buildCodexArgs({ ...base, target: localRuntimeTarget("/work") }), /Codex runs only inside a channel container/);
-  assert.throws(() => buildCodexArgs(base), /Codex runs only inside a channel container/);
-  await assert.rejects(
-    runCodex({ cwd: "/work", prompt: "go", sessionId: "", isNewSession: true, target: localRuntimeTarget("/work"), timeoutMs: 5_000 }),
-    (error) => {
-      assert.match(error.message, /Codex runs only inside a channel container/);
-      assert.equal(error.details?.engine, "codex");
-      assert.equal(error.details?.providerError, false, "a runtime refusal, not a provider failure");
-      return true;
-    },
-  );
+test("a sudo-host Codex turn uses host scratch/auth state and crosses the runtime seam", async (t) => {
+  const rt = createFakeRuntime({ id: "host", isolated: false, fingerprint: "host" });
+  const codexHome = tempDir("cg-codex-host-");
+  writeFileSync(path.join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: "present" } }));
+  t.after(() => rmSync(codexHome, { recursive: true, force: true }));
+  const target = rt.target({ artifactDir: null, container: null, cwd: "/work" });
+  const pending = runCodex({ cwd: "/work", prompt: "go", sessionId: "", isNewSession: true, dangerouslySkip: true, clean: true, codexStateDir: codexHome, target, timeoutMs: 60_000 });
+  await waitUntil(() => rt.spawns.length === 1);
+  const spec = rt.spawns[0];
+  assert.ok(spec.args.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.ok(spec.args[spec.args.indexOf("-o") + 1].startsWith(path.join(gatewayRoot(), "tmp")));
+  assert.equal(spec.env.HOME, process.env.HOME);
+  writeFileSync(spec.args[spec.args.indexOf("-o") + 1], "host answer");
+  rt.children[0].stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: "host-thread" })}\n`);
+  rt.children[0].stdout.write(`${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } })}\n`);
+  rt.children[0].emit("close", 0, null);
+  const result = await pending;
+  assert.equal(result.content, "host answer");
 });
 
 test("a containerized Codex turn writes its answer file and secret bundle into the mounted artifact dir", async (t) => {

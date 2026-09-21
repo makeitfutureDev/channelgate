@@ -106,3 +106,18 @@ export async function getThreadClean(slug, threadKey) {
 export async function setThreadClean(slug, threadKey, on) {
   setOverride(slug, threadKey, "clean", on ? "1" : "");
 }
+
+// ── Per-thread SUDO override (typed `/sudo`) ────────────────────────────────────────────────
+// A sudo thread is the one explicit escape hatch from the per-channel container boundary. The
+// flag only records the thread's requested posture; every ingress and run still re-checks that the
+// current author is an organization admin before it may resolve the host backend. Keeping the
+// authorization decision out of this generic store prevents an old row from becoming authority
+// after an admin is demoted.
+
+export async function getThreadSudo(slug, threadKey) {
+  return Boolean(getOverride(slug, threadKey, "sudo"));
+}
+
+export async function setThreadSudo(slug, threadKey, on) {
+  setOverride(slug, threadKey, "sudo", on ? "1" : "");
+}

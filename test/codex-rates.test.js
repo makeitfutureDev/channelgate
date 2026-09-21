@@ -12,7 +12,8 @@ const { DEFAULT_CODEX_RATES, getCodexModelRates, saveSettings } = await import("
 test("default rates cover exactly the fixed model list", () => {
   const rates = getCodexModelRates();
   assert.deepEqual(Object.keys(rates).sort(), Object.keys(DEFAULT_CODEX_RATES).sort());
-  assert.equal(rates["gpt-5.6-sol"].input, 5);
+  assert.deepEqual(rates["gpt-6-astra"], { input: 10, cachedInput: 1, output: 50 });
+  assert.deepEqual(rates["gpt-5.6-sol"], { input: 4, cachedInput: 0.4, output: 20 });
   assert.equal(rates["gpt-5.6-terra"].output, 12);
   assert.equal(rates["gpt-5.6-luna"].cachedInput, 0.02);
   assert.equal(rates["gpt-5.5"].input, 5);
@@ -41,12 +42,13 @@ test("matches official model variants by boundary and leaves an unresolved CLI s
 
 test("applies long-context rates per request, never to a turn aggregate", () => {
   const aggregate = { input_tokens: 400_000, cached_input_tokens: 200_000, output_tokens: 10_000 };
-  assert.equal(estimateCodexCost(aggregate, "gpt-5.6-sol").costUSD, 1.4);
-  assert.equal(estimateCodexCost(aggregate, "gpt-5.6-sol", [{ usage: aggregate }]).costUSD, 2.65);
+  assert.equal(estimateCodexCost(aggregate, "gpt-5.6-sol").costUSD, 1.08);
+  assert.equal(estimateCodexCost(aggregate, "gpt-5.6-sol", [{ usage: aggregate }]).costUSD, 2.06);
   const atThreshold = { input_tokens: 272_000, output_tokens: 0 };
   const overThreshold = { input_tokens: 272_001, output_tokens: 0 };
-  assert.equal(estimateCodexCost(atThreshold, "gpt-5.6-sol", [{ usage: atThreshold }]).costUSD, 1.36);
-  assert.equal(estimateCodexCost(overThreshold, "gpt-5.6-sol", [{ usage: overThreshold }]).costUSD, 2.72001);
+  assert.equal(estimateCodexCost(atThreshold, "gpt-5.6-sol", [{ usage: atThreshold }]).costUSD, 1.088);
+  assert.equal(estimateCodexCost(overThreshold, "gpt-5.6-sol", [{ usage: overThreshold }]).costUSD, 2.176008);
+  assert.equal(estimateCodexCost(overThreshold, "gpt-6-astra", [{ usage: overThreshold }]).costUSD, 5.44002);
 });
 
 test("supports nested cached/cache-write details and clamps malformed subsets", () => {
@@ -55,10 +57,10 @@ test("supports nested cached/cache-write details and clamps malformed subsets", 
     input_tokens_details: { cached_tokens: 400_000, cache_write_tokens: 100_000 },
     output_tokens: 0,
   };
-  // 500k full × $5 + 400k cached × $.50 + 100k write × $6.25 = $3.325.
-  assert.equal(estimateCodexCost(usage, "gpt-5.6-sol").costUSD, 3.325);
+  // 500k full × $4 + 400k cached × $.40 + 100k write × $5 = $2.66.
+  assert.equal(estimateCodexCost(usage, "gpt-5.6-sol").costUSD, 2.66);
   const malformed = { input_tokens: 10, input_tokens_details: { cached_tokens: 20, cache_write_tokens: 20 } };
-  assert.equal(estimateCodexCost(malformed, "gpt-5.6-sol").costUSD, 0.000005);
+  assert.equal(estimateCodexCost(malformed, "gpt-5.6-sol").costUSD, 0.000004);
 });
 
 test("normalizeUsage estimates only for codex; claude without cost stays null", () => {
@@ -76,13 +78,21 @@ test("normalizeUsage estimates only for codex; claude without cost stays null", 
 
 test("retired full-table defaults migrate while genuine admin overrides survive", () => {
   saveSettings({ codexModelRates: {
+    "gpt-5.6-sol": { input: 5, cachedInput: 0.5, output: 30 },
+    "gpt-5.6": { input: 5, cachedInput: 0.5, output: 30 },
     "gpt-5.6-terra": { input: 2.5, cachedInput: 0.25, output: 15 },
     "gpt-5.6-luna": { input: 1, cachedInput: 0.1, output: 6 },
   } });
+  assert.deepEqual(getCodexModelRates()["gpt-5.6-sol"], { input: 4, cachedInput: 0.4, output: 20 });
+  assert.deepEqual(getCodexModelRates()["gpt-5.6"], { input: 4, cachedInput: 0.4, output: 20 });
   assert.deepEqual(getCodexModelRates()["gpt-5.6-terra"], { input: 2, cachedInput: 0.2, output: 12 });
   assert.deepEqual(getCodexModelRates()["gpt-5.6-luna"], { input: 0.2, cachedInput: 0.02, output: 1.2 });
   saveSettings({ codexModelRates: {
     "gpt-5.6-terra": { input: 3, cachedInput: 0.3, output: 18 },
   } });
   assert.deepEqual(getCodexModelRates()["gpt-5.6-terra"], { input: 3, cachedInput: 0.3, output: 18 });
+});
+
+test("keeps CLI-only models without published API rates explicitly unpriced", () => {
+  assert.equal(estimateCodexCost({ input_tokens: 1_000_000 }, "gpt-5.3-codex-spark").costUSD, null);
 });

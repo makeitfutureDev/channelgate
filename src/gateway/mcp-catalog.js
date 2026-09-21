@@ -72,6 +72,7 @@ export const GATEWAY_TOOL_NAMES = [
   "run_in_background",
   "run_agent_in_background",
   "request_approval",
+  "ask_questions",
   "list_available_mcps",
   "list_channel_mcps",
   "add_channel_mcps",

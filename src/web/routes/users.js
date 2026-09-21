@@ -1,7 +1,10 @@
-// User admin routes: the masked user list and per-user save (approval/admin flags + write-only
-// personal tokens). Split from admin.js; mounted by createAdminRouter so every URL is unchanged.
+// User admin routes: the masked user list and per-user save (approval/admin flags, personal
+// preferences, and write-only tokens). Split from admin.js; mounted by createAdminRouter so every
+// URL is unchanged.
 import { Router } from "express";
 import { getUsers, setUser } from "../../config/store.js";
+import { getDefaultNudges, userNudgesEnabled } from "../../config/settings.js";
+import { logEvent } from "../../util/logger.js";
 import { cleanAccessGrants } from "./helpers.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
@@ -18,6 +21,7 @@ function maskUsers(users) {
       name: u.name || "",
       isAdmin: Boolean(u.isAdmin),
       approved: Boolean(u.approved),
+      nudges: userNudgesEnabled(u),
       hasComposioToken: Boolean(token),
       composioTokenLast4: token ? token.slice(-4) : "",
       composioTokenLabel: u.composioTokenLabel || "",
@@ -51,7 +55,8 @@ export function filterUsersForSearch(users, query) {
       user.hasToolboxToken ? "toolbox t token configured set" : "",
       !user.hasComposioToken && !user.hasToolboxToken ? "no tokens" : "",
     ];
-    const haystack = foldSearch([user.name, id, role, ...tokens].join(" "));
+    const reminders = user.nudges ? "reminders on enabled" : "reminders off disabled";
+    const haystack = foldSearch([user.name, id, role, reminders, ...tokens].join(" "));
     return terms.every((term) => haystack.includes(term));
   }));
 }
@@ -73,6 +78,24 @@ export function createUsersRouter() {
     }
   });
 
+  // Push the organization default onto every existing user. New users capture the same setting
+  // at first sight; this bulk action intentionally replaces personal overrides.
+  router.post("/users/reset-nudges", async (_req, res, next) => {
+    try {
+      const nudges = getDefaultNudges();
+      const users = await getUsers();
+      let reset = 0;
+      for (const userId of Object.keys(users)) {
+        await setUser(userId, { nudges });
+        reset++;
+      }
+      await logEvent("users_nudges_reset", { count: reset, nudges });
+      res.json({ ok: true, count: reset, nudges });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.put("/users/:userId", async (req, res, next) => {
     try {
       const { userId } = req.params;
@@ -81,6 +104,7 @@ export function createUsersRouter() {
       if (typeof body.name === "string") patch.name = body.name;
       if (typeof body.isAdmin === "boolean") patch.isAdmin = body.isAdmin;
       if (typeof body.approved === "boolean") patch.approved = body.approved;
+      if (typeof body.nudges === "boolean") patch.nudges = body.nudges;
       // Only overwrite tokens when a non-empty value is sent (write-only fields).
       if (typeof body.composioToken === "string" && body.composioToken.length > 0)
         patch.composioToken = body.composioToken;
@@ -102,6 +126,7 @@ export function createUsersRouter() {
           name: saved.name,
           isAdmin: saved.isAdmin,
           approved: saved.approved,
+          nudges: userNudgesEnabled(saved),
           hasComposioToken: Boolean(saved.composioToken),
           hasToolboxToken: Boolean(saved.toolboxToken),
           ...cleanAccessGrants(saved),

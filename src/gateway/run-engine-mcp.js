@@ -18,18 +18,23 @@ const CAPABILITY_FINGERPRINT_BUCKET_MS = 5 * 60 * 60 * 1000;
 export async function buildEngineMcpRuntime({ clean = false, engine = "claude", target = null, allowedMcps = [], pluginRuntime = null, fingerprintNow = Date.now(), ...identity } = {}) {
   if (clean) {
     const mcpConfigJson = JSON.stringify({ mcpServers: {} });
-    return { mcpConfigJson, mcpConfigFingerprint: mcpConfigJson, gatewayCapability: "" };
+    return { mcpConfigJson, mcpConfigFingerprint: mcpConfigJson, gatewayCapability: "", rejectedMcps: [] };
   }
+  // Every engine's resolver answers { servers, rejected }: an optional selection it cannot admit
+  // safely is dropped here rather than ending the turn, and `rejectedMcps` is what the caller
+  // reports in the thread so the drop is visible to the admin who has to fix the selection.
   const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps) || {};
+  const optionalServers = optional.servers || {};
+  const rejectedMcps = Array.isArray(optional.rejected) ? optional.rejected : [];
   const parsed = JSON.parse(await buildMcpConfig({ ...identity, engine, target }));
-  for (const [name, definition] of Object.entries(optional)) {
+  for (const [name, definition] of Object.entries(optionalServers)) {
     if (Object.hasOwn(parsed.mcpServers, name)) throw new Error("Selected MCP server conflicts with a built-in identity.");
     parsed.mcpServers[name] = definition;
   }
   const pluginServers = [];
   for (const server of requirePluginRuntime(pluginRuntime, engine).servers) {
     if (Object.hasOwn(parsed.mcpServers, server.name)) throw new Error("Plugin MCP server conflicts with a selected connection");
-    const definition = server.definition || safeCodexMcpDefinition(optional[server.sourceName]);
+    const definition = server.definition || safeCodexMcpDefinition(optionalServers[server.sourceName]);
     if (!definition) throw new Error(`Plugin ${server.plugin}: MCP ${server.sourceName} needs a separately selected, supported connection; source credentials are not imported`);
     parsed.mcpServers[server.name] = definition.transport === "http"
       ? { type: "http", url: definition.url }
@@ -59,5 +64,6 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
     mcpConfigFingerprint: JSON.stringify(fingerprintView),
     gatewayCapability,
     pluginServers,
+    rejectedMcps,
   };
 }

@@ -21,6 +21,7 @@ const [{ BackgroundJobs, backgroundCompletionNotice }, { getDb, fromJson }, { up
   import("../src/db/index.js"),
   import("../src/config/store.js"),
 ]);
+const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 
 test("completion notices explain outcomes instead of exposing process codes", () => {
   const success = backgroundCompletionNotice({
@@ -53,6 +54,34 @@ test("agent jobs validate task/context before any spawn", async () => {
   // Unknown channel is refused before anything runs (agent kind has no auto-mode gate, but the
   // channel must exist).
   assert.match((await jobs.start({ kind: "agent", task: "do X", channelId: "C-nope", threadKey: "t" })).error, /isn't registered/);
+});
+
+test("sudo background work rechecks the author and passes only the admin host posture to resolution", async () => {
+  const channelId = "C-bg-sudo";
+  const threadKey = "sudo-thread";
+  const entry = await upsertChannelEntry(channelId, { name: "bg-sudo", type: "channel", isDM: false });
+  await saveChannelMeta(entry.slug, { channelId, autoMode: false, adminMode: false });
+  await setUser("U-bg-sudo-admin", { name: "Sudo Admin", approved: true, isAdmin: true });
+  await setUser("U-bg-sudo-member", { name: "Sudo Member", approved: true, isAdmin: false });
+  await setThreadSudo(entry.slug, threadKey, true);
+
+  let resolvedMeta = null;
+  const jobs = new BackgroundJobs({
+    resolveTarget: (slug, meta) => {
+      resolvedMeta = meta;
+      throw new Error("intentional resolution stop");
+    },
+  });
+  const admin = await jobs.start({ channelId, authorId: "U-bg-sudo-admin", threadKey, command: "true" });
+  assert.match(admin.error, /could not resolve.*intentional resolution stop/i);
+  assert.equal(resolvedMeta.sudoMode, true);
+  assert.equal(resolvedMeta.adminMode, true);
+  assert.equal(resolvedMeta.autoMode, true);
+
+  resolvedMeta = null;
+  const member = await jobs.start({ channelId, authorId: "U-bg-sudo-member", threadKey, command: "true" });
+  assert.match(member.error, /sudo thread.*organization admins/i);
+  assert.equal(resolvedMeta, null, "a non-admin sudo job is rejected before runtime resolution");
 });
 
 // the 2026-08 update plan (internal repo) A1: shell jobs run OUTSIDE the engine sandbox (plain bash on the daemon

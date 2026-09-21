@@ -39,6 +39,8 @@ import { conciseProcessDiagnostic, embeddedJsonObject, plainFailureText, process
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.js";
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
+import { gatewayRoot, runTmpDir } from "../config/paths.js";
+import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 const MAX_RETAINED = 64_000; // stdout/stderr/delta kept for error context — tail only, never unbounded
@@ -226,7 +228,14 @@ export function codexTurnError(event) {
   const message = plainFailureText(reported, 600) || reported;
   const providerType = String(raw?.type || raw?.code || nested?.type || nested?.code || body?.type || "").trim();
   const status = Number(event?.status ?? raw?.status ?? body?.status ?? nested?.status ?? 0) || 0;
-  const providerError = Boolean(raw && typeof raw === "object") || event?.type === "error" || Boolean(body);
+  // Recent Codex builds sometimes report a provider refusal as
+  // `{ type: "turn.failed", error: "Selected model is at capacity…" }`: the error is a plain
+  // string rather than the object older builds emitted. `turn.failed` is still the CLI's terminal
+  // provider verdict. Treat the event shape as authoritative so the message reaches the normal
+  // classifier; an unrecognized sentence remains unclassified and therefore cannot authorize a
+  // replay on its own.
+  const providerError = event?.type === "turn.failed" || event?.type === "error"
+    || Boolean(raw && typeof raw === "object") || Boolean(body);
   return {
     message,
     details: {
@@ -614,9 +623,7 @@ export function codexPluginSkillPrefix(skills) {
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
 export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
-  // The CONTAINER is the confinement boundary, so Codex's own sandbox is switched off: no
-  // permission profiles, no network_proxy — egress is the container's network mode.
-  if (!isIsolatedTarget(runtimeTarget)) throw new Error("Codex runs only inside a channel container");
+  const isolated = isIsolatedTarget(runtimeTarget);
   const helper = (name) => runtimeTarget.runtime.helperCommand(runtimeTarget, name);
   if (!["off", "on"].includes(networkMode)) throw new Error(`Unknown Codex network mode: ${networkMode}`);
   const resuming = !isNewSession;
@@ -656,16 +663,16 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     const sandbox = writable ? "danger-full-access" : "read-only";
     if (resuming) args.push("-c", `sandbox_mode=${tomlString(sandbox)}`);
     else args.push("--sandbox", sandbox);
-    // The sandbox also has to be a MECHANISM that can start in here. Codex's default is
+    // Inside the container the sandbox also has to be a MECHANISM that can start in here. Codex's default is
     // bubblewrap, which refuses under the container's `--cap-drop ALL` + no-new-privileges
     // ("bwrap: Unexpected capabilities but not setuid") and fails EVERY command — which left Read
     // mode inoperative, reads included. Landlock is the mechanism that works under those caps:
-    // reads succeed, writes get "Permission denied". Codex runs only inside a container (asserted
-    // above), so this is unconditional wherever Codex's own sandbox is in use — never on the admin
+    // reads succeed, writes get "Permission denied". Select it only for isolated container runs;
+    // a sudo-host turn uses the host CLI's native sandbox mechanism. It never applies to the admin
     // bypass, which has no sandbox to pick a mechanism for. `use_legacy_landlock` is
     // DEPRECATED-but-functional in the pinned CLI (containers/versions.json): re-check it on every
     // Codex CLI bump.
-    args.push("-c", "features.use_legacy_landlock=true");
+    if (isolated) args.push("-c", "features.use_legacy_landlock=true");
   }
 
   // Optional host/runtime MCP policy. OpenAI injects `codex_apps` AFTER config parsing, so treating
@@ -721,6 +728,12 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     args.push("-c", `mcp_servers.gateway.command=${JSON.stringify(bridge.command)}`);
     args.push("-c", `mcp_servers.gateway.args=${JSON.stringify([...(bridge.args || []), secretBundlePath, "gatewayCapability", "CG_GATEWAY_CAPABILITY", ...helperScriptArgv(helper("gateway-mcp"))])}`);
     args.push("-c", `mcp_servers.gateway.env.CG_ENGINE="codex"`);
+    if (!isolated) {
+      args.push("-c", `mcp_servers.gateway.env.CG_FS_ROOT=${tomlString(gatewayFsRoot || cwd)}`);
+      args.push("-c", `mcp_servers.gateway.env.CG_WORKSPACE_DIR=${tomlString(gatewayWorkspaceRoot || cwd)}`);
+      args.push("-c", `mcp_servers.gateway.env.CHANNELGATE_DIR=${tomlString(gatewayRoot())}`);
+      args.push("-c", `mcp_servers.gateway.env.PATH=${tomlString(process.env.PATH || "")}`);
+    }
     if (progressReport) args.push("-c", `mcp_servers.gateway.env.CG_PROGRESS_REPORT="1"`);
     // This server is the gateway's own control plane (schedules/reminders/background/channel admin).
     // It already enforces channel/admin policy inside the tool handlers, so Codex should not add an
@@ -759,6 +772,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
       const sdk = helper("composio-sdk-bridge");
       args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(sdk.command)}`);
       args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(sdk.args || []), endpoint.url])}`);
+      if (!isolated) args.push("-c", `mcp_servers.${name}.env.CHANNELGATE_DIR=${tomlString(gatewayRoot())}`);
       args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
       args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
       return;
@@ -818,7 +832,11 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       PATH: image.path,
     };
   }
-  throw new Error("Codex runs only inside a channel container");
+  return buildChildEnv({
+    ...safeSpawnEnv(extraEnv),
+    ...browserSpawnEnv(browserNamespace),
+    NODE_USE_ENV_PROXY: "1",
+  }, source);
 }
 
 function commandError(message, details = {}) {
@@ -858,7 +876,7 @@ export async function runCodex({
   personalSkills = null,
   pluginSkills = null,
   attachments = [],
-  // Where this turn runs (src/runtimes/): the channel's container.
+  // Where this turn runs (src/runtimes/): normally the channel container; a sudo thread uses host.
   target = null,
   // Per-run ENGINE-FACING files (the -o answer file, the secret bundle) for an isolated target:
   // a host directory bind-mounted at the IDENTICAL absolute path, so both sides name it the same
@@ -879,12 +897,19 @@ export async function runCodex({
   // before any work exists to lose, so the orchestrator diverts it to the other harness with a
   // visible reason. The probe fails OPEN: only a positively absent/empty credential lands here.
   const runtime = runtimeTargetOr(target, cwd);
-  if (!isIsolatedTarget(runtime) || !artifactDir) {
-    throw commandError("Codex runs only inside a channel container", { engine: "codex", providerError: false });
+  const isolated = isIsolatedTarget(runtime);
+  if (isolated && !artifactDir) {
+    throw commandError("Codex container runs require an artifact directory", { engine: "codex", providerError: false });
   }
-  // The BACKEND answers "is this runtime's Codex signed in?" (it owns the container's codex home).
-  // An optional hook — a backend that cannot tell says nothing and the turn proceeds.
-  const credentialFailure = typeof runtime.runtime.credentialError === "function" ? await runtime.runtime.credentialError(runtime, "codex") : null;
+  // The container backend owns its copied login. A direct host run reads the exact CODEX_HOME the
+  // CLI will use, preserving the same fail-open credential semantics as every other probe.
+  let credentialFailure = null;
+  if (isolated && typeof runtime.runtime.credentialError === "function") {
+    credentialFailure = await runtime.runtime.credentialError(runtime, "codex");
+  } else if (!isolated) {
+    const state = await readCodexAuthState({ codexHome: codexStateDir });
+    if (state.known && !state.authenticated) credentialFailure = describeCodexAuth(state);
+  }
   // A backend may answer with an Error or with the sentence itself; both mean the same thing here.
   const authDetail = typeof credentialFailure === "string" ? credentialFailure : String(credentialFailure?.message || "");
   if (authDetail) {
@@ -905,7 +930,7 @@ export async function runCodex({
   // branches. Fresh locally minted ids are already stable within their gateway thread.
   const releaseSession = await acquireKeyedLock("codex-session", sessionId || `fresh:${cwd}`, { signal });
   const accountingStartedAt = Date.now();
-  const usageReader = createCodexUsageReader(runtime);
+  const usageReader = createCodexUsageReader(runtime, codexStateDir);
   try {
   const usageSnapshot = isNewSession
     ? { file: "", offset: 0, total: {}, model: "" }
@@ -914,11 +939,11 @@ export async function runCodex({
   // writes the answer to the -o file and the secret bridges read the bundle, so both live in the
   // run's artifact dir — bind-mounted at the identical absolute path — never under the gateway
   // root, which a container is deliberately denied.
-  const scratchBase = path.join(artifactDir, "tmp");
+  const scratchBase = artifactDir ? path.join(artifactDir, "tmp") : path.join(gatewayRoot(), "tmp");
   await mkdir(scratchBase, { recursive: true, mode: 0o700 });
   const scratchDir = await mkdtemp(path.join(scratchBase, "run-"));
   const outFile = path.join(scratchDir, `cg-codex-${randomUUID()}.txt`);
-  const secretDir = path.join(artifactDir, "run");
+  const secretDir = artifactDir ? path.join(artifactDir, "run") : runTmpDir();
   const secretBundlePath = !clean && [gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey].some(Boolean)
     ? path.join(secretDir, `cg-codex-secrets-${randomUUID()}.json`)
     : "";

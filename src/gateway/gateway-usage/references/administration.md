@@ -95,7 +95,8 @@ options beside the mode picker in the web editor and under the Slack reply's Set
 Auto approves tool requests for every authorized author. Lean runs without optional skills and
 connectors; in Admin mode it applies to non-admins while admins keep full context. Switching
 Worker/Admin preserves these options. Choosing Read-only clears Auto; enabling Auto selects Worker.
-Every run remains inside its channel container.
+These channel modes do not leave the container. The separate organization-admin-only Slack
+`/sudo` thread control described below deliberately does.
 - `set_channel_bash` (managers) — Bash + file-edit tools in the working folder.
 - `set_channel_auto_mode` (managers) — autonomous: permission prompts auto-approved, folder
   writable. Needed for `run_in_background`.
@@ -125,7 +126,16 @@ Every run remains inside its channel container.
   working around it. The current value is in the gateway-managed block at the top of this
   conversation's instruction file.
 
-## Admin access & the container (read this before diagnosing "file not found")
+## Admin access, the container, and `/sudo` (read this before diagnosing "file not found")
+
+**First read this attempt's resolved access note.** An ordinary turn runs in the channel container.
+A Slack thread whose current organization admin enabled `/sudo` runs directly as the gateway
+daemon OS user instead: host filesystem, process namespace, native HOME, installed commands and
+network are available, and there is no channel-container boundary. Only current organization
+admins may message that thread; a non-admin receives an explicit sudo-thread rejection. `/sudo
+status` reports the state and `/sudo off` restores the container for later turns. Treat host mode
+as full authority of the daemon account, not as a broader mount. Never infer sudo from Admin mode,
+the operator-home grant, a prior turn, or the existence of a host-looking path.
 
 **Verify the actual target before claiming host access.** Parent directories can exist solely
 to hold a permitted nested mount: seeing `/home/management` or a gateway-root-shaped directory
@@ -136,7 +146,7 @@ is not evidence that the gateway's database is exposed. Compare the exact target
 attempt's resolved mount facts; if its location is unknown, report that uncertainty instead of
 identifying an unrelated file as runtime data. Do not save an unverified access claim as memory.
 
-**Every turn runs inside this channel's container — Admin/Full-access mode included.** By default,
+**Every non-sudo turn runs inside this channel's container — Admin/Full-access mode included.** By default,
 the host directory mounts are this channel's working folder, clean workspace and artifact folder
 (also backing `/tmp` and `/var/tmp`). The container also has its own home volume (`/home/agent`),
 the image's toolchain and a read-only control socket. A host directory chosen as the working folder
@@ -160,10 +170,10 @@ runtime's operator-home mount. If that note has no resolved target, verify curre
 before asserting access. Diagnose only paths this runtime actually mounts: an absent host path
 does not prove that it was deleted, and a mounted path must not be described as impossible.
 
-**`$HOME` is this channel's home, not the operator's account home.** `~` is `/home/agent` inside
+**On non-sudo turns, `$HOME` is this channel's home, not the operator's account home.** `~` is `/home/agent` inside
 the container and belongs to this channel alone: a login you make there (`gh auth login`,
 `vercel login`) or a tool you install stays for this channel's next turns and is invisible to
-every other channel.
+every other channel. In a `/sudo` turn, HOME is the daemon user's native host HOME instead.
 
 **Never copy secrets into the working folder.** The folder is often a git checkout and may sync
 elsewhere; a credential pasted there can end up committed. A credential this channel should have

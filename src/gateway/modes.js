@@ -1,5 +1,6 @@
 import { adapterFor } from "../engines/registry.js";
 import { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
+import { authorizeSudoRuntime } from "../runtimes/sudo-authority.js";
 
 // A channel's capability "mode" is a friendly name over the underlying flags (adminMode,
 // allowBash, autoMode). One mode = one canonical flag combination. `allowNetwork` is orthogonal
@@ -37,6 +38,21 @@ export function authorModeMeta(meta, { isAdminAuthor = false, untrustedPrincipal
   return normalized.adminMode && isAdminAuthor && !untrustedPrincipal
     ? { ...normalized, cleanMode: false }
     : normalized;
+}
+
+// Transient per-run posture for an admin-authenticated `/sudo` thread. This is never persisted in
+// channel metadata: the sticky thread bit is only a request, and run.js must re-establish current
+// admin authority before adding this capability bundle on every turn.
+export function sudoModeMeta(meta = {}) {
+  return authorizeSudoRuntime({
+    ...meta,
+    sudoMode: true,
+    adminMode: true,
+    allowBash: true,
+    autoMode: true,
+    cleanMode: false,
+    allowNetwork: true,
+  });
 }
 
 // Called inside the atomic settings update; changing a base mode preserves Lean and Auto.

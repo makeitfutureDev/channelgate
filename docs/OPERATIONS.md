@@ -466,14 +466,30 @@ in a venv); `pipx` handles this for itself. If a CLI installs but the shell cann
 container is running an image built before spec 1.1.0 widened the PATH — rebuild with
 `npm run build:image`; the daemon logs that mismatch at boot.
 
-**One runtime, one home for a thread's history.** A thread's engine-native history (Claude's
-`projects/<cwd-key>/<id>.jsonl` plus its `<id>/` subagent directory, Codex's
-`sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`) lives in the channel's HOME volume and is never moved:
-stopping, starting or recreating the container loses nothing, and there is no other backend for a
-thread to change to. A thread whose last turn ran on the host before the container-only switch has
-no session on the container side, so its next message falls back to the existing heal — a fresh
-engine session with the chat transcript replayed, which keeps the conversation readable but not the
-engine's own working state (compaction summaries, tool results, subagent transcripts).
+**Thread `/sudo`: deliberate direct-host execution.** An organization admin may send the typed
+message `@agent /sudo` or `@agent /sudo on` in a Slack channel thread (`/sudo` as message text in a
+DM). This is an in-thread bot control, not the conversation-top-level Slack slash-command surface.
+Subsequent messages in that thread run the selected engine directly
+as the daemon OS user, with its host filesystem, process namespace, native HOME, installed commands
+and network—not inside the channel container. Only current organization admins can change or use
+the thread while sudo is enabled; other senders receive an explicit rejection before work starts.
+Use `/sudo status` to inspect it and `/sudo off` to return to the normal container. Boundary changes
+are refused while the thread has running or queued work. This is intentionally more powerful than
+Admin channel mode or the operator-home mount: it removes the container process/filesystem boundary.
+Treat it as root-equivalent to the daemon account and use it only in trusted operational threads.
+
+The stored sudo flag is not authority. Slack ingress, the run orchestrator, and background launches
+recheck current admin status; the run API and channel metadata cannot select the host runtime.
+Host child environments still use ChannelGate's reviewed allowlist rather than blindly copying all
+daemon secrets, but a process running as the daemon user can access anything that OS account can.
+
+**A thread's history follows `/sudo` boundary changes.** Claude history
+(`projects/<cwd-key>/<id>.jsonl` plus its `<id>/` subagent directory) and Codex rollouts
+(`sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`) normally live in the channel HOME volume. When sudo is
+enabled, ChannelGate carries the active session container→host; when disabled, it carries it back.
+If a copy is unavailable or fails, the existing transcript-healing path starts a fresh native
+session while replaying the visible conversation. Stopping, starting or recreating a container
+still preserves its HOME volume.
 
 **Inspect and debug.**
 

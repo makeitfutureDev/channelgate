@@ -811,4 +811,23 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 26,
+    up(db) {
+      db.exec(`
+        CREATE TABLE question_requests (
+          id TEXT PRIMARY KEY,
+          channel_id TEXT NOT NULL,
+          thread_key TEXT NOT NULL,
+          author_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          updated_ms INTEGER NOT NULL,
+          data TEXT NOT NULL
+        );
+        CREATE INDEX idx_question_requests_pending ON question_requests(channel_id, thread_key, author_id, status);
+        CREATE UNIQUE INDEX idx_question_requests_one_pending ON question_requests(channel_id, thread_key, author_id) WHERE status = 'pending';
+      `);
+    },
+  },
 ];

@@ -34,6 +34,49 @@ Regression: `test/channel-database.test.js`, `services/vpn-image/test_query.py`,
 `test/slack-vpn-settings.test.js`, `test/vpn-profile.test.js`, `test/vpn-service.test.js`,
 `services/vpn-image/test_checks.py`; live isolation: `services/vpn-image/live_acceptance.py`.
 
+## Admin-only direct-host sudo threads
+
+- An organization admin can type `/sudo` (or `/sudo on`) in a Slack thread to make that thread's
+  subsequent turns execute directly on the gateway host as the daemon OS user. `/sudo status`
+  reports the posture and `/sudo off` returns future turns to the channel container. The command
+  refuses to cross the boundary while that thread has running or queued work.
+- Sudo is scoped to one thread, not a channel setting. Only current organization admins may
+  activate, deactivate, message, or launch background work from it. Non-admin messages are rejected
+  before Slack hydration, queueing, attachment reads, or process spawn, and `runMessage` repeats the
+  admin check so alternate ingress, unattended work, stale rows and caller-supplied author IDs
+  cannot turn the stored flag into authority.
+- The registered host runtime uses the daemon account's native filesystem, process namespace,
+  HOME, installed commands and network. It is intentionally outside the rootless container
+  boundary. Per-run engine environments remain allowlisted, secrets remain redacted, and channel
+  grants/MCP policy are still compiled normally. Stored channel metadata and run-API overrides
+  cannot select this runtime.
+- Claude and Codex session files are carried container→host on enable and host→container on disable
+  when the backend supports it; an unavailable carry falls back to the existing transcript-healing
+  path. Idle warm processes from the previous boundary are retired when the flag changes.
+
+Regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,
+`test/session-carry.test.js`, `test/engine-runtime-isolated.test.js`,
+`test/codex-args.test.js`, and `test/runtime-access-facts.test.js`.
+
+## Interactive Slack clarification questions
+
+Claude and Codex can ask for missing information through the shared `ask_questions` gateway tool.
+Short question sets appear in the thread; longer sets open a paged modal from **Answer questions**.
+Each request accepts 1–20 questions: single choice with up to four custom-labeled options (including
+Yes/No), multiple choice with up to ten options, or written text. Choice questions can also accept
+custom answers. Required and custom-answer settings default to true. Automatic presentation uses
+the message for at most four non-text questions and a modal launcher otherwise; the caller can
+explicitly choose message (at most four questions) or modal presentation.
+
+Custom text replaces a single choice or supplements multiple choices. Choices remain drafts until
+final submission. Only the requester can answer; stale forms and
+duplicate submissions cannot replace a completed answer. Requests and saved drafts persist through
+daemon restarts, while stop/clear cancels pending requests. Submission queues the answers into the
+same author's thread for continuation. The tool itself returns promptly with the pending request,
+so agents can finish independent work without occupying a waiting turn. Clarification never replaces
+the existing approval mechanism. The bundled guide teaches both engines when to use the tool and
+falls back to ordinary questions when it is unavailable. Live acceptance gates: `TEST-PLAN.md`.
+
 ## System health
 
 The last admin navigation item, **System health** (`/system-health`), shows daemon-side Linux
@@ -462,7 +505,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Downloadable audio is transcribed locally with the shared Whisper setting and cancellation;
   the portable path never calls Slack transcript APIs. Raw audio paths are withheld from the
   engine, ordinary files remain available, failed audio alone produces an explanation without an
-  engine turn, and typed text can continue with a visible missing-transcript note. Progress starts
+  engine turn, and typed text can continue with a visible missing-transcript note. A successfully
+  transcribed gateway-downloaded audio source is removed immediately; failed sources remain for a
+  retry, and symlinks or paths outside the managed `uploads/` root are refused. Progress starts
   before download/transcription. Every attachment intake has a unique storage directory so
   simultaneous same-name files or later edits cannot overwrite bytes another turn is reading.
 - The branch's Slack parity inventory and remaining surface-specific work live in
@@ -528,12 +573,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Claude pooling and Codex execution/MCP policy run behind adapters; fallback routing is a directed
   registry graph, and every registered CLI receives a boot version/readiness probe.
 - Slack and Admin selectors consume registry manifests. Codex optional MCPs under
-  `--ignore-user-config` receive complete credential-safe definitions.
+  `--ignore-user-config` receive complete credential-safe definitions; a selection without one is
+  dropped from the launch with a reason, the same contract Claude's resolver uses.
 - OpenCode proves the third-engine contract without orchestrator or UI conditionals. Its adapter is
   deliberately restricted to workspace read/glob/grep/list with model-tool network off: shell,
   edits, external directories, plugins, MCP, and bypass modes fail closed because OpenCode
   permissions are not an OS sandbox. JSON streaming, session resume, cancellation, usage/cost, and
   health/version are supported. See `docs/OPENCODE-ADAPTER.md`. → TEST-PLAN: OpenCode proof adapter.
+- **Qwen (Claude Code)** proves the kernel a second way: a full-capability harness that reuses the
+  `claude` CLI against QwenCloud's Anthropic-compatible endpoint, added as an adapter with no
+  orchestrator or UI conditionals. → TEST-PLAN: Qwen harness.
 
 ## Public website
 - The marketing / early-access site (and its lead-routing contract) lives in its own
@@ -558,6 +607,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a sentence. A shared queue preserves creation order, each stream rolls independently before
   Slack's age limit, and answer footer/fallback behavior stays on the answer only. Text-only turns
   keep their single-message shape. → TEST-PLAN: Observability (Slice 6).
+- Native Slack answer image previews: up to five unique image files referenced from the channel
+  workspace with standard Markdown image syntax are realpath-confined and uploaded into the thread
+  as native Slack files after the answer, giving them Slack's thumbnail, download and full-preview
+  UI. Public HTTP(S) references remain Block Kit image blocks. Fenced examples, missing/non-image
+  files, escaping symlinks and duplicates are ignored; upload/preview failure never costs the
+  completed text answer. Native streaming, classic recovery and unattended delivery use the same
+  bounded behavior. → TEST-PLAN: Observability (Slice 6).
 - Mention gating: DM = no mention; channel/group/private = require `@bot`. → TEST-PLAN: Slack gateway.
 - Thread-scoped Claude sessions — new thread = new session, replies resume. → TEST-PLAN: Foundation.
 - Subagent completion contract (mechanical) — every generated channel settings file installs a
@@ -656,7 +712,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Slack's completed full VTT transcript; absent transcripts prompt the user to click **Generate
   transcript** and re-trigger. Fresh installers ask whether to provision Whisper, updates honor the
   stored setting, and disabled mode never downloads raw audio. Typed text remains instructions and
-  raw audio is excluded from Claude/Codex. → TEST-PLAN: Voice prompts.
+  raw audio is excluded from Claude/Codex. Successfully resolved downloaded audio is removed from
+  the channel's `uploads/` folder, including when Slack transcript fallback completes after a local
+  failure; unresolved audio is retained for retry. → TEST-PLAN: Voice prompts.
 - Native Slack **channel file explorer**: the 📂 reply button opens a Block Kit modal rooted at the channel's
   effective working folder. Its title identifies the authoritative stored Slack channel name, and
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
@@ -1081,11 +1139,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Pending acks persist in `config/acks.json` so the chain survives a daemon restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
-- Opt-in no-response nudge: a channel can have the bot post one gentle reminder in a thread that has
-  gone quiet past a window (default 24h). Strictly single-thread; never scans other channels. An
-  org-level default (Settings → Schedules & nudges, `defaultNudges`) decides whether NEW channels &
-  DMs start with it on; a "Apply to all existing channels & DMs" button pushes the current default
-  onto every existing conversation at once.
+- Personal no-response nudge: each user chooses whether the bot posts one gentle reminder addressed
+  to them when their last agent reply has gone quiet past a window (default 24h). The live user
+  preference follows them across channels and DMs and is self-service in Slack App Home; admins can
+  also edit it in Users. Strictly single-thread; never scans other channels. An org-level default
+  (Settings → Schedules & nudges, `defaultNudges`) is captured for newly seen users, and an "Apply
+  to all existing users" button intentionally replaces every existing personal choice.
 - "AI is waiting on you" digests: the bot passively observes the channels it's in (every message,
   mention or not) and tracks, per thread, who took part and who spoke last. It reminds about **one
   thing only** — threads where the **AI is waiting for your decision**: a genuine AI thread (the bot
@@ -1165,6 +1224,47 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
     or `mcp__composio-agent__*` for the agent's own account. Slack enforces the selected account's
     visibility. There is **no** separate hosted Slack MCP and no per-user `connect_slack` OAuth.
 
+## Qwen harness (opt-in, Claude Code CLI against QwenCloud)
+
+- A third full-capability engine, **`qwen` — "Qwen (Claude Code)"**: the same `claude` binary the
+  image already ships, pointed at QwenCloud's Anthropic-compatible endpoint. It therefore keeps the
+  CLI's whole feature set — stream-json progress, the tool loop, Slack approval cards
+  (`--permission-prompt-tool`), `--mcp-config` connectors, `CLAUDE.md`, `.claude/skills`, plugin
+  dirs, cold session resume — while everything the PROVIDER owns is its own.
+- **Opt-in, never implicit.** Unlike every other harness, a missing `engineEnabled` entry means
+  OFF: pulling this release does not add a harness to any picker, and the "never lock every
+  harness out" rescue restores the default harnesses only. Settings → Engine & runtime → *Harnesses
+  the gateway may use* turns it on; it then appears in the admin engine selectors, the Slack
+  channel Settings → *Change engine & model* modal, and the `/model` wizard, and `qwen` works as a
+  per-thread engine directive. Turning it off removes it from all of them.
+- **Gateway-level credential, never a channel secret.** Settings → Engine & runtime holds the
+  QwenCloud API key (write-only: `has*`/`last4` on listings, the value only through the audited
+  `POST /api/secrets/reveal`) and the base URL (Token Plan or pay-as-you-go). `ANTHROPIC_*` stays a
+  reserved prefix for per-channel secrets, so a conversation can never redirect its own provider.
+- **The Anthropic credential never leaves with it.** A Qwen spawn drops the whole Anthropic family
+  — an inherited `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` and the relayed
+  `CLAUDE_CODE_OAUTH_TOKEN` — before applying the provider's own values last. With no key
+  configured, or a rejected one, the turn fails closed naming the remedy; it never falls back to
+  the operator's Anthropic account, and its errors say "Qwen", not "Claude".
+- **Live model catalog.** The Anthropic-compatible path serves no `/v1/models`, so the discovery
+  hook reads the account's own list from the sibling `/compatible-mode/v1/models` endpoint derived
+  from the configured base URL, filtered to text/tool models (the image, video, audio and realtime
+  families cannot hold a conversation and are excluded). Settings and `/model` therefore offer what
+  the account can actually call, and a model QwenCloud adds needs no release. A shipped fallback
+  list covers a fresh install or an unreadable account, and the Settings card says which one is in
+  use.
+- **No invented cost.** Claude Code prices every turn with Anthropic's table, which is fiction for
+  QwenCloud tokens, so the adapter drops that figure at the boundary and the harness declares no
+  rate of its own: Qwen turns are recorded with real tokens and NO dollar amount (never Codex's
+  configured rate either).
+- **Outside the failover graph, both directions.** A Qwen limit must not spend the Anthropic quota,
+  and a Claude limit must not spend a QwenCloud balance. Cold runs only — a warm process holds the
+  environment it launched with, and the pool key carries no engine, so a rotated provider key or a
+  mid-thread harness switch could otherwise be served by a stale credential.
+- One **Cloud MCP** selection serves Claude and Qwen (same CLI, same file transport, same catalog),
+  so switching a channel's harness between them never silently drops its connectors.
+  → TEST-PLAN: Qwen harness.
+
 ## Engines (Claude + Codex)
 - Two CLI engines: **Claude** (default — warm sessions, exact cost, skills, `/compact`) and **Codex**
   (OpenAI Codex CLI — one-shot per message, MCP via `-c` overrides + an HTTP bridge). Selection
@@ -1235,7 +1335,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   failure like print mode does, so the retry covers the default Slack path. Which failure kinds an
   engine may replay is its adapter fact (`transientKinds`, `src/engines/adapters.js`): Codex's
   `transient` (`classifyCodexFailure` — status codes, the CLI's underscore error codes, or outage
-  wording in the error EVENT; never its stderr, which can quote a retry it recovered from), Claude's
+  wording in the error EVENT, including a plain-text `turn.failed` capacity refusal; never its
+  stderr, which can quote a retry it recovered from), Claude's
   `availability` / `connection` (an overload, a 5xx, a `server_error` label, a dropped connection —
   never the catch-all `provider` kind or the bare "API Error:" prefix a rejected request also
   carries). The knobs are read per turn, so `.env` / settings values count without a restart.
@@ -1435,7 +1536,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   operator configuration bytes at run admission. Its strict MCP payload contains only explicitly
   selected, credential-free definitions plus the scoped built-ins; user/project setting sources
   remain disabled. Missing, stale-URL, reserved-name, auth-dependent or unsupported definitions
-  fail closed with an admin remedy. Changes and revocations alter the warm-process fingerprint.
+  never reach the payload: each one is DROPPED from that run with a category reason instead of
+  ending the turn, on both the primary and the failover engine. The turn completes on its
+  remaining connections, the answer is prefixed with which selections were skipped and why, and a
+  `run_mcp_dropped` event records the names and reasons for the admin (never a path, config value
+  or definition). An unreadable operator configuration drops every selection rather than bricking
+  the channel. Changes and revocations alter the warm-process fingerprint.
   Codex queries the active app-server inventory and exposes
   each runtime app family (Boost.space, GitHub, Sites, Skill Library, etc.) plus each configured
   server as its own checkbox. Codex launches default-deny optional apps, explicitly enable only
@@ -1481,7 +1587,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Codex value is estimated, not billed spend: Settings exposes OpenAI Standard API-equivalent
   per-model `$/1M` rates. Root turns are priced from request-level rollout deltas and native child
   sessions are included without charging their copied fork prefix; Claude retains provider-reported
-  cost. The actual runtime model wins when a configured Claude model falls back to Codex.
+  cost. The actual runtime model wins when a configured Claude model falls back to Codex. The
+  fallback picker mirrors the current authenticated CLI catalog (`gpt-6-astra`, the GPT-5.6
+  family, GPT-5.5 and CLI-only `gpt-5.3-codex-spark`); live discovery still wins. Spark remains
+  explicitly unpriced because OpenAI publishes no Standard API rate for that distinct model.
 - Session recovery: Codex auth/session state uses a stable, grant-free `CODEX_HOME` while private
   skills remain per-run under synthetic `HOME/.agents/skills`, so Codex 0.147+'s persisted rollout
   paths survive cleanup without leaking grants. Resuming a session that no longer exists (including
@@ -2223,7 +2332,10 @@ are retired, bullet by bullet; everything else stands.
   image includes `ffmpeg`/`ffprobe`, pinned `opencv-python-headless` + `faster-whisper`, and a
   root-owned pre-cached Whisper `small` model. The always-present `gateway-usage` skill owns the
   video workflow, sampling guidance, dependency diagnostics, and analyzer script, so it can extract representative frames, build contact sheets and transcribe timestamped
-  speech without a per-channel install or first-use model download. `npm run setup` builds the
+  speech without a per-channel install or first-use model download. After successful analysis and
+  any needed re-sampling, the workflow removes only gateway-downloaded regular video files beneath
+  the channel's `uploads/` directory; failures and user-managed project files remain untouched.
+  `npm run setup` builds the
   image as part of a fresh install (`--skip-image` / `CG_BUILD_IMAGE=no` defers it and names
   `npm run build:image` as the remedy; a failed build never aborts the install), so a new gateway
   never reaches its first message without the toolchain. The former standalone catalog skill is
@@ -2336,7 +2448,7 @@ are retired, bullet by bullet; everything else stands.
   admin-tagged; Custom reveals the raw flags), the two access dropdowns with live help, the network
   switch and the guest-user checklist; Tools holds filterable MCP/skills checklists with
   "N of M enabled" counts + channel tokens; Runtime holds engine/model/effort, working folder,
-  memory/nudges/org-token toggles. Edits are saved by ONE sticky dirty-state save bar
+  memory/org-token toggles. Edits are saved by ONE sticky dirty-state save bar
   (Discard / Save changes) — Instructions & Memory are visibly file editors with their own Save.
   → TEST-PLAN: Admin UI (redesign).
 - **Authoritative Admin save reconciliation**: successful channel saves merge the complete
@@ -2560,10 +2672,12 @@ are retired, bullet by bullet; everything else stands.
   sync): master enable, pasted key / key-file path, impersonate subject, interval, conflict policy,
   rclone binary path (absolute path sidesteps the service unit's minimal PATH). Dormant unless enabled + a
   key exists + rclone is installed. A per-channel **Test** button verifies the service account can
-  see the folder before the first sync (`rclone lsf`). The update flow (`scripts/update.sh`, shared
-  by the CLI / `/update` / admin button) auto-installs rclone when Drive sync is enabled and it's
-  missing — the official installer (the Homebrew branch retired 2026-09-03 — Linux only) — gated on
-  the setting, best-effort, and never aborting the update. The per-channel folder link can also be
+  see the folder before the first sync (`rclone lsf`). Fresh service deployments provision the
+  host-side binary; foreground installs use `~/.local/bin`. The update flow (`scripts/update.sh`,
+  shared by the CLI / `/update` / admin button) repairs a missing binary when Drive sync is enabled,
+  even when the checkout is already current. Downloads are checksum-verified, Linux-only,
+  best-effort, and never abort the install/update. Failed availability probes are retried so a live
+  install takes effect without restarting the daemon. The per-channel folder link can also be
   wired up **by asking the agent**
   (not only the admin UI): gateway control MCP tools `get_channel_drive_folder` (anyone — shows the
   link + whether sync is globally armed), `set_channel_drive_folder` (admins — validates/parses the
@@ -2874,15 +2988,21 @@ are retired, bullet by bullet; everything else stands.
   no manual command.
 - **Per-model Codex Standard API-equivalent rates** (Settings → Behavior): Codex reports no dollar
   cost, so the ledger and reply footer estimate attribution value from an editable $/1M table —
-  input / cached-input / output per model (gpt-5.6-sol / gpt-5.6 alias / gpt-5.6-terra /
+  input / cached-input / output per model (gpt-6-astra, gpt-5.6-sol / gpt-5.6 alias / gpt-5.6-terra /
   gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.3-codex; defaults =
-  OpenAI's Standard pricing verified 2026-08-16). Cached reads are a subset of input and never
+  OpenAI's Standard pricing verified 2026-09-13). Cached reads are a subset of input and never
   double-counted; cache writes use 1.25× input, and eligible requests above 272K input use 2×
   input/cache plus 1.5× output. The threshold is evaluated per request, never against a turn
   aggregate. Official aliases/snapshots match on model boundaries; an unresolved CLI model remains
-  unpriced instead of being guessed. Retired full-table Terra/Luna defaults migrate to current rates
-  while genuine admin overrides survive. Claude runs are never priced with OpenAI rates. Legacy
-  blended rate remains a hidden last-resort fallback for explicitly unknown models.
+  unpriced instead of being guessed. Retired full-table GPT-5.6/Terra/Luna defaults migrate to
+  current rates while genuine admin overrides survive. On the first boot after this pricing basis
+  ships, the daemon backs up SQLite and reprices every request/component and its parent run since
+  2026-07-13, after legacy accounting repair, so upgraded instances do not retain stale dashboard
+  history. Historical pricing follows official effective dates: GPT-5.6 Sol retains
+  $5/$0.50/$30 before 2026-08-21 and uses $4/$0.40/$20 from that date. The basis marker makes later
+  boots no-ops. `npm run usage:reprice` previews the exact
+  rows/model deltas and `--apply` runs the same path manually. Claude runs are never priced with
+  OpenAI rates. Legacy blended rate remains a hidden last-resort fallback for explicitly unknown models.
   → TEST-PLAN: Observability.
 - Audit admin tab: monthly totals, per-channel rollups, and a recent-runs feed over the ledger +
   event log (`GET /api/audit`, `GET /api/audit/events`). No spend cap — visibility only.
@@ -3067,6 +3187,11 @@ are retired, bullet by bullet; everything else stands.
 - Skills admin saves refresh existing workspaces immediately. Boot and a five-second daemon
   reconciliation pass refresh changed catalog/template/grant state, including MCP changes. Failed
   writes are reported and retried; conflicting selections for a shared folder are reported.
+- The Admin UI makes shared-folder assignments visible before they break a run. Every channel or
+  DM whose effective working folder is assigned to another conversation gets a red warning row in
+  Conversations. The working-folder browser shows a red, named warning whenever the directory being
+  viewed is already assigned elsewhere, before **Use this folder** can create another shared
+  assignment. Both views use the runtime's resolved path logic rather than raw string comparison.
 - Runtime settings provide **Reset to default** beside **Browse**. It clears only the custom
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.

@@ -12,8 +12,8 @@
 
 **Bring Claude into Slack — isolated per channel, governed by you.**
 
-Mention the bot in a channel or just DM it. It runs a real, headless Claude Code session inside a
-per-conversation container, with each teammate's own tools and tokens, and posts back in the thread.
+Mention the bot in a channel or just DM it. It normally runs a real, headless Claude Code session
+inside a per-conversation container, with each teammate's own tools and tokens, and posts back in the thread.
 Self-hosted. No data leaves your machine except the model calls you already make.
 
 A local daemon that turns Claude Code (and optionally OpenAI Codex) into a Slack agent — with the
@@ -23,9 +23,11 @@ isolation, observability, and governance a team actually needs.
 
 Most "AI in Slack" bots are a thin proxy to a hosted assistant. ChannelGate runs **the real
 Claude Code agent** — tools, skills, MCP, multi-step work, background jobs — on **your own
-infrastructure**, with a hard **confinement boundary around every conversation**. Confinement is
-the product: each channel is its own container with its own folder and an explicit tool allowlist,
-so what happens in one channel can't read or write another.
+infrastructure**, with a hard **default confinement boundary around every conversation**.
+Confinement is the product: each channel is its own container with its own folder and an explicit
+tool allowlist, so ordinary work in one channel cannot read or write another. A current organization
+admin can deliberately waive that boundary for one Slack thread with `/sudo`; the thread then runs
+as the daemon account and rejects every non-admin sender until `/sudo off`.
 
 ### The one-sentence pitch
 
@@ -41,7 +43,7 @@ context-aware suggested prompts. Replies stream into the thread and land as clea
 messages with a time · tokens · cost footer.
 
 **Real work, not just chat.** It uses tools and skills, reads attached images and files, edits
-code, and runs shell commands — all inside the channel's container. **Background jobs** hand
+code, and runs shell commands — normally inside the channel's container. **Background jobs** hand
 long-running work (builds, transcriptions, test suites) to the daemon, which continues the thread
 automatically when the job finishes — and **survives a restart**: an interrupted job still reports
 back instead of vanishing.
@@ -158,7 +160,7 @@ team already uses — no new tool to adopt, no context lost to a separate app.
 
 ### 3.2 Confinement is the product, not a feature
 
-Every Slack conversation runs inside its **own container** with only its own folder mounted, an
+Every Slack conversation normally runs inside its **own container** with only its own folder mounted, an
 explicit MCP tool allowlist, and the harness's global persistent memory switched off. What happens
 in a client channel physically cannot read or write the finance channel's files.
 Channel memory exists (`MEMORY.md`), but it is folder-scoped by design — no cross-channel bleed.
@@ -166,7 +168,8 @@ Channel memory exists (`MEMORY.md`), but it is folder-scoped by design — no cr
 **Benefit to the organization:** you can safely give an autonomous agent to *many teams and
 clients at once*. The blast radius of any one conversation — a bad prompt, a confused agent, a
 malicious message — is one folder. This is the property that makes org-wide rollout defensible to
-a security review.
+a security review. The explicit exception is an admin-only `/sudo` thread: it trades that isolation
+for direct daemon-account host execution, is isolated to one thread, and refuses non-admin replies.
 
 ### 3.3 Credentials are personal, access is governed
 
@@ -431,11 +434,12 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **Reason:** running a full agent session to say "submit your timesheet" was pure waste; and a
   reminder nobody acknowledges is indistinguishable from no reminder at all.
 
-#### Opt-in no-response nudges
-- **What:** per-channel opt-in: the bot posts one gentle follow-up in a thread quiet past a
-  window (default 24h). Strictly single-thread.
+#### Personal no-response nudges
+- **What:** each user can opt in or out in Slack App Home; the bot posts one gentle follow-up that
+  mentions that user when their agent thread is quiet past a window (default 24h). The preference
+  follows the person across channels and DMs. Strictly single-thread.
 - **Value:** dropped threads resurface themselves instead of dying in scrollback.
-- **Reason:** deliberately narrow (opt-in, one nudge, no cross-channel scanning) because an
+- **Reason:** deliberately narrow (personal opt-in, one nudge, no cross-channel scanning) because an
   over-eager nagging bot is worse than none.
 
 #### Personal pending-response digests
