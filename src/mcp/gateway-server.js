@@ -30,6 +30,7 @@ import { register as registerChannelAdmin, registerMemoryTool } from "./tools/ch
 import { register as registerTokens } from "./tools/tokens.js";
 import { register as registerSlackNative } from "./tools/slack-native.js";
 import { register as registerLicense } from "./tools/license.js";
+import { register as registerChannelDatabase } from "./tools/channel-database.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
 import { register as registerQuestions } from "./tools/questions.js";
@@ -391,6 +392,7 @@ export function createGatewayMcpServer(ctx) {
     registerSchedules(server, ctx);
     registerBackground(server, ctx);
     registerChannelAdmin(server, ctx);
+    registerChannelDatabase(server, ctx);
     registerTokens(server, ctx);
     registerSlackNative(server, ctx);
     registerLicense(server, ctx);

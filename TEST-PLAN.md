@@ -19,8 +19,8 @@
       executed exactly two allowed mutations, with no secret sentinel exposure. No provider or
       Slack traffic was sent by this fixture.
 - [ ] Private installed-service acceptance: use web and Slack controls against the prepared unit;
-      require certificate failures to appear safely and OFF to leave no owned containers. Once the
-      provider certificate is fixed, require actual connection and database readiness. An isolated
+      require connection failures to appear safely and OFF to leave no owned containers.
+      Require actual OpenVPN 3 connection and database readiness. An isolated
       engine/controller fixture cannot establish provider connection success.
 
 ## Optional isolated VPN database service (operator provisioning, engine-independent)
@@ -36,7 +36,7 @@ rootless Podman; never grant host runtime access to a chat agent for this fixtur
       selection, symlink imports, readiness failure and credential rotation are exercised.
 - [x] `python3 -B services/vpn-image/test_checks.py`: route/default validation, read-only SQL and
       sanitized errors; protected credential-file and permission checks.
-- [x] Real rootless fixture: build `localhost/channelgate/vpn:1` with `--format docker`, then run
+- [x] Real rootless fixture: build `localhost/channelgate/vpn:2` with `--format docker`, then run
       `python3 -B services/vpn-image/live_acceptance.py`. Require real TUN creation, firewall counter
       evidence for rejected non-tunnel DB traffic/wrong tunnel destinations/ports, accepted DB SYN,
       working public TCP, zero extractor capabilities/no VPN credentials and blocked DB after TUN
@@ -55,10 +55,36 @@ rootless Podman; never grant host runtime access to a chat agent for this fixtur
       and restart. Restart gateway separately and require no service reaping. Test user-manager
       boot recovery on an isolated host with linger already enabled.
 
-Provider credentials are now present in the private acceptance fixture. Connection was attempted
-but is blocked by the VPN server certificate missing its required Key Usage extension. No SQL
-verification has run. Keep server verification enabled; provider connection/restart gates remain
-open. The kernel isolation fixture is not a substitute for those connection checks.
+The OpenVPN 3 prototype connected successfully with the private provider profile and reached the
+database TCP endpoint on 2026-09-21, retaining server verification. The production runtime and
+SQL acceptance gates below remain separate from that prototype result.
+
+## OpenVPN 3 runtime and restricted database reads
+
+- [x] Production image builds with OpenVPN 3 Linux 27.1 / Core 3.11.7, a pinned repository key,
+      and a source-digest label. Stale image contracts are refused before startup.
+- [x] The real rootless kernel fixture passes on image version 2: database-only tunnel rules,
+      public route preservation, extractor capability/credential separation and fail-closed TUN loss.
+- [x] `test/channel-database.test.js`: structured operations, explicit columns, no arbitrary SQL,
+      channel binding, bounded queue, admission/VPN/Network checks before and after execution,
+      fixed safe failures, response bounds and secret-safe field selection.
+- [x] `test/vpn-service.test.js`: pinned owned extractor, matching namespace/fingerprint/version,
+      bounded input/output/execution and final pre-effect policy recheck.
+- [ ] Configured service secret isolation: default/custom VPN references excluded from agent
+      launches, unrelated variables retained, operator-only resolution and output redaction preserved.
+- [ ] Production provider session: actual readiness, metadata-only SQL, stability beyond idle
+      timeouts, unchanged host routes and complete OFF cleanup.
+- [x] Real Claude and Codex MCP fixture: list databases, inspect synthetic table, read selected
+      columns with a bound, then deny a read after admission revocation. Passed 2026-09-21 with
+      actual handlers/controller, an injected database and `C_DATABASE_LIVE_FIXTURE`. Both engines
+      made exactly four allowed reads followed by one denied read; secret sentinel stayed filtered.
+      No provider rows or Slack messages involved.
+- [x] `python3 -B services/vpn-image/live_database_acceptance.py`: rootless MariaDB 11.4 fixture
+      passes read-only INSERT rejection even with a writer account, server statement timeout,
+      list/describe/typed select, injection text as data, and TEXT/BLOB truncation. Its network and
+      containers are removed. MySQL timeout setup is unit-tested; live evidence here is MariaDB.
+- [ ] Installed-unit upgrade: immutable refreshed supervisor, stale-image refusal, idempotent ON,
+      old-runtime replacement and OFF cleanup. Record exact private QA fixtures for both engines.
 
 ## Admin-only sudo thread → direct host execution
 
