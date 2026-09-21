@@ -18,10 +18,13 @@
       revoked enable sequence returned off → starting → starting → off → denied. Both engines
       executed exactly two allowed mutations, with no secret sentinel exposure. No provider or
       Slack traffic was sent by this fixture.
-- [ ] Private installed-service acceptance: use web and Slack controls against the prepared unit;
+- [x] Private installed-service acceptance: use web and Slack controls against the prepared unit;
       require connection failures to appear safely and OFF to leave no owned containers.
       Require actual OpenVPN 3 connection and database readiness. An isolated
-      engine/controller fixture cannot establish provider connection success.
+      engine/controller fixture cannot establish provider connection success. Passed 2026-09-21
+      with real authenticated web PUT → installed unit → connected, then a signed Slack modal
+      action → the same real control/helper → OFF and pair removal. This used a temporary fixture
+      runtime; no live Slack message or production gateway setting was changed.
 
 ## Optional isolated VPN database service (operator provisioning, engine-independent)
 
@@ -44,10 +47,10 @@ rootless Podman; never grant host runtime access to a chat agent for this fixtur
 - [x] Private provider profile: import into selected channel, require mode 0600 and immutable
       revision selection, then call start with channel Secrets absent. Require named missing
       variables and no service containers created; no provider authentication attempted.
-- [ ] Provider-backed fixture: add VPN and read-only MySQL credentials through that channel's
+- [x] Provider-backed fixture: add VPN and MySQL credentials through that channel's
       Secrets panel; enable unit, require VPN readiness and verify returning successful SELECT 1
       plus accessible schema names. Require database route via tun0 and public route via the
-      original eth0/tap0 interface, unchanged host routes/public IP and no unrelated container in
+      original eth0/tap0 interface, unchanged host routes and no unrelated container in
       the service namespace. Never run SQL writes or dump credential/profile content.
 - [ ] Rotate credentials, restart the unit and require both containers to be recreated together
       with updated protected files; old credentials must not remain mounted. Stop the VPN
@@ -55,9 +58,10 @@ rootless Podman; never grant host runtime access to a chat agent for this fixtur
       and restart. Restart gateway separately and require no service reaping. Test user-manager
       boot recovery on an isolated host with linger already enabled.
 
-The OpenVPN 3 prototype connected successfully with the private provider profile and reached the
-database TCP endpoint on 2026-09-21, retaining server verification. The production runtime and
-SQL acceptance gates below remain separate from that prototype result.
+The production OpenVPN 3 fixture connected successfully with the private provider profile on
+2026-09-21, retained server verification, passed SELECT 1 and schema listing, and preserved host
+routes. A temporary installed unit also passed ON/refresh/OFF with the same protected credentials.
+Only metadata was queried. Host-reboot recovery remains a separate operator acceptance gate.
 
 ## OpenVPN 3 runtime and restricted database reads
 
@@ -70,10 +74,13 @@ SQL acceptance gates below remain separate from that prototype result.
       fixed safe failures, response bounds and secret-safe field selection.
 - [x] `test/vpn-service.test.js`: pinned owned extractor, matching namespace/fingerprint/version,
       bounded input/output/execution and final pre-effect policy recheck.
-- [ ] Configured service secret isolation: default/custom VPN references excluded from agent
+- [x] Configured service secret isolation: default/custom VPN references excluded from agent
       launches, unrelated variables retained, operator-only resolution and output redaction preserved.
-- [ ] Production provider session: actual readiness, metadata-only SQL, stability beyond idle
-      timeouts, unchanged host routes and complete OFF cleanup.
+      Real Claude and Codex shell tools verified all four service variables absent and the unrelated
+      synthetic variable present on 2026-09-21; active turns retain their launch environment.
+- [x] Production provider session on 2026-09-21: actual readiness, metadata-only SQL, 70-second
+      idle survival, unchanged host routes and complete cleanup. A separate wrong-CA profile failed
+      closed as `server_certificate_invalid`, with no ready tunnel or extractor.
 - [x] Real Claude and Codex MCP fixture: list databases, inspect synthetic table, read selected
       columns with a bound, then deny a read after admission revocation. Passed 2026-09-21 with
       actual handlers/controller, an injected database and `C_DATABASE_LIVE_FIXTURE`. Both engines
@@ -83,8 +90,12 @@ SQL acceptance gates below remain separate from that prototype result.
       passes read-only INSERT rejection even with a writer account, server statement timeout,
       list/describe/typed select, injection text as data, and TEXT/BLOB truncation. Its network and
       containers are removed. MySQL timeout setup is unit-tested; live evidence here is MariaDB.
-- [ ] Installed-unit upgrade: immutable refreshed supervisor, stale-image refusal, idempotent ON,
-      old-runtime replacement and OFF cleanup. Record exact private QA fixtures for both engines.
+- [x] Installed-unit upgrade on 2026-09-21: immutable refreshed supervisor, unchanged repeated
+      installation, idempotent ON, changed HMAC fingerprint recreation, metadata query and OFF cleanup.
+      Used a temporary registered fixture unit with provider credentials kept in private files; the
+      fixture unit and all private data were removed. Stale-image refusal is also unit-tested.
+- [ ] Publish prepared private QA cases and engine-specific run evidence through the requester’s
+      selected personal Airtable connection; account selection is pending.
 
 ## System health — engine-independent acceptance
 
