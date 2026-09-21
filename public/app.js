@@ -3039,6 +3039,11 @@ function addChipValues(container, text) {
   if (added) { serializeChips(container); markSettingsDirty(); }
 }
 
+// Whether an opt-in harness's own provider credential is configured, by engine id. Filled from the
+// settings payload; used only to annotate the toggle, never to gate it (an admin may legitimately
+// switch a harness on and paste its key in the same save).
+const SETTINGS_HAVE_PROVIDER_KEY = {};
+
 // One checkbox per known harness. Re-rendered (not patched) on every change so the engine pickers
 // and the "last one standing" lock stay derived from a single source: ENGINE_ENABLED.
 function paintEngineToggles() {
@@ -3070,6 +3075,15 @@ function paintEngineToggles() {
       markSettingsDirty();
     });
     label.append(input, document.createTextNode(` ${m.label}`));
+    // An OPT-IN harness needs a provider credential of its own, so say where that lives. Without
+    // this the checkbox reads like every other one and the admin only discovers the missing key
+    // when a run fails in Slack.
+    if (m.optIn && !SETTINGS_HAVE_PROVIDER_KEY[m.id]) {
+      const hint = document.createElement("em");
+      hint.className = "state";
+      hint.textContent = " · needs an API key below";
+      label.append(hint);
+    }
     return label;
   }));
 }
@@ -3181,6 +3195,8 @@ function readSettingsForm() {
 function paintSettings(s) {
   applyEngineManifests(s.engines);
   ENGINE_ENABLED = { ...(s.engineEnabled || {}) };
+  // Before the toggles paint: they annotate an opt-in harness whose provider key is still missing.
+  SETTINGS_HAVE_PROVIDER_KEY.qwen = s.hasQwenApiKey === true;
   paintEngineToggles();
   const orgGrantsHost = document.getElementById("org-grants-editor");
   orgGrantsEditor = buildAccessGrantsEditor(s.accessGrants || {}, { tier: "organization" });

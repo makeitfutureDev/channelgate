@@ -555,22 +555,6 @@
                     <span>Default Codex model</span>
                     <select id="set-default-codex-model"></select>
                   </label>
-                  <label class="field">
-                    <span>Default Qwen model</span>
-                    <select id="set-default-qwen-model"></select>
-                    <em class="state" id="qwen-model-catalog">The list is read from the QwenCloud account itself. Save a key, then reload this page to refresh it.</em>
-                  </label>
-                  <label class="field">
-                    <span>QwenCloud API key <em class="state" id="qwen-key-state"></em></span>
-                    <input id="set-qwen-api-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-qwen-api-key">clear</button></div>
-                    <em class="state">Enables the <strong>Qwen (Claude Code)</strong> harness: the same Claude Code CLI, pointed at QwenCloud&rsquo;s Anthropic-compatible endpoint. The key is gateway-wide and write-only &mdash; a channel cannot set or read it. Turn the harness on above; without a key its runs fail closed rather than falling back to your Anthropic account. QwenCloud reports no usable dollar cost, so Qwen turns are recorded with tokens only.</em>
-                  </label>
-                  <label class="field">
-                    <span>QwenCloud base URL</span>
-                    <input id="set-qwen-base-url" type="text" placeholder="https://token-plan.maas.qwencloudapi.com/apps/anthropic" />
-                    <em class="state">The Anthropic-compatible endpoint. Token Plan keys use <code>token-plan.maas.qwencloudapi.com</code>; pay-as-you-go keys use <code>maas.qwencloudapi.com</code>. The model list is read from the matching <code>/compatible-mode/v1/models</code> endpoint.</em>
-                  </label>
                   <div class="dz-row">
                     <span class="t">Reset all channels to these gateway defaults<small>Clears every channel's engine and model overrides. Access, effort, tools, tokens and DM templates stay unchanged. Existing threads keep their current engine session; new threads inherit these defaults. Can't be undone.</small></span>
                     <button type="button" id="reset-channel-runtime" class="dz-btn">Reset all…</button>
@@ -593,6 +577,26 @@
                   <label class="field">
                     <span>Model context window (tokens) — used for the “ctx %” in replies</span>
                     <input id="set-ctxwindow" type="number" min="1000" step="1000" placeholder="200000" />
+                  </label>
+                </div>
+                <div class="setcard">
+                  <h4>Qwen (Claude Code)</h4>
+                  <p class="desc">An optional third harness: the same Claude Code CLI, pointed at QwenCloud&rsquo;s Anthropic-compatible endpoint, so it keeps the CLI&rsquo;s tool loop, approval cards, connectors and skills. It is <strong>off until you switch it on</strong> under <em>Engine &amp; runtime &rarr; Harnesses the gateway may use</em>. Your Anthropic login is never sent to QwenCloud, this harness is never used as an automatic failover target in either direction, and because QwenCloud reports no usable dollar cost its turns are recorded with tokens only.</p>
+                  <label class="field">
+                    <span>QwenCloud API key <em class="state" id="qwen-key-state"></em></span>
+                    <input id="set-qwen-api-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
+                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-qwen-api-key">clear</button></div>
+                    <em class="state">Gateway-wide and write-only &mdash; a channel cannot set or read it. Without a key the harness fails closed instead of falling back to your Anthropic account.</em>
+                  </label>
+                  <label class="field">
+                    <span>QwenCloud base URL</span>
+                    <input id="set-qwen-base-url" type="text" placeholder="https://token-plan.maas.qwencloudapi.com/apps/anthropic" />
+                    <em class="state">The Anthropic-compatible endpoint. Token Plan keys use <code>token-plan.maas.qwencloudapi.com</code>; pay-as-you-go keys use <code>maas.qwencloudapi.com</code>.</em>
+                  </label>
+                  <label class="field">
+                    <span>Default Qwen model</span>
+                    <select id="set-default-qwen-model"></select>
+                    <em class="state" id="qwen-model-catalog">The list is read from the QwenCloud account itself. Save a key, then reload this page to refresh it.</em>
                   </label>
                 </div>
                 <div class="setcard">
