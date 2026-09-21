@@ -3,7 +3,7 @@
 // policy/stores as Slack. Interactive approval escalation remains deliberately unavailable here.
 import { upsertChannelEntry, getChannelMeta, saveChannelMeta, defaultChannelMeta, getUser, setUser, isAdmin, isApproved } from "../config/store.js";
 import { getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges } from "../config/settings.js";
-import { ensureChannelFolder } from "../gateway/folders.js";
+import { effectiveWorkDir, ensureChannelFolder } from "../gateway/folders.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { runMessage } from "../gateway/run.js";
 import { createUsageBank } from "../gateway/usage.js";
@@ -12,6 +12,9 @@ import { platformOr, platformSupports } from "./registry.js";
 import { postFormatted } from "./connector.js";
 import { sessionKeyForMessage, rememberReplySession } from "./reply-sessions.js";
 import { saveInboundAttachments } from "./attachments.js";
+import path from "node:path";
+import { removeRegularFileWithin } from "../gateway/safe-fs.js";
+import { getThreadSudo } from "../gateway/thread-engine.js";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
@@ -36,7 +39,6 @@ export async function ensureConversation(message) {
   if (!meta) {
     meta = applyChannelTemplate(defaultChannelMeta({ channelId: message.conversationId, ...info }));
     if (!info.isDM) meta.access = getDefaultChannelAccess();
-    meta.nudges = getDefaultNudges();
     if (info.isDM) meta.dmUserId = message.userId;
     await saveChannelMeta(entry.slug, meta);
   }
@@ -47,8 +49,15 @@ export async function ensureConversation(message) {
 // First sighting of an author: record them so an admin has someone to approve in the Users page.
 // Unlike Slack there is no directory call to make — the display name rides the message.
 async function ensureUserKnown(message) {
-  if (await getUser(message.userId)) return;
-  await setUser(message.userId, { name: message.userName || message.userEmail || message.userId });
+  const existing = await getUser(message.userId);
+  if (existing) {
+    if (typeof existing.nudges !== "boolean") await setUser(message.userId, { nudges: getDefaultNudges() });
+    return;
+  }
+  await setUser(message.userId, {
+    name: message.userName || message.userEmail || message.userId,
+    nudges: getDefaultNudges(),
+  });
 }
 
 export function createIngest({ connector, log = console, run = runMessage, onCommand = null, voice = prepareVoiceAttachments } = {}) {
@@ -86,6 +95,15 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     }
 
     const sessionKey = sessionKeyForMessage(message);
+    if (await getThreadSudo(entry.slug, sessionKey) && !authorIsAdmin) {
+      await connector.post({
+        conversationId: message.rawConversationId,
+        threadKey: message.threadKey,
+        text: "⛔ This is a sudo thread. Only organization admins can send messages or run work here.",
+      }).catch(() => {});
+      await logEvent("sudo_thread_message_rejected", { channel: message.conversationId, author: message.userId, slug: entry.slug, threadKey: sessionKey, platform: adapter.id });
+      return { skipped: "sudo-admin-only" };
+    }
     const rememberReply = (sent) => {
       if (message.kind === "group" && !message.threadKey && sent?.messageId) {
         rememberReplySession(message.conversationId, sent.messageId, sessionKey);
@@ -121,7 +139,22 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       skipped = saved.skipped;
       signal.throwIfAborted();
       if (hasVoiceAttachments(message)) progress.phase('Transcribing voice locally');
-      prepared = await voice(message, saved.paths, { signal });
+      prepared = await voice(message, saved.paths, {
+        signal,
+        removeProcessed: (file) => removeRegularFileWithin(
+          path.join(effectiveWorkDir(entry.slug, meta), "uploads"),
+          file.path,
+        ),
+      });
+      if (prepared.cleanupFailed?.length) {
+        await logEvent("attachment_cleanup_failed", {
+          channel: message.conversationId,
+          author: message.userId,
+          slug: entry.slug,
+          platform: adapter.id,
+          reasons: prepared.cleanupFailed.map((item) => `${item.name}: ${item.reason}`).join("; ").slice(0, 1000),
+        });
+      }
       if (prepared.hasVoice && !prepared.hasPrompt && !prepared.paths.length) {
         await progress.stop();
         await deliver(connector, message, placeholder, prepared.failureNotice || 'Could not transcribe this audio. Please send text or ask an administrator to check local Whisper.', rememberReply);

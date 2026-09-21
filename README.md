@@ -83,7 +83,7 @@ catalog, including edge cases and links to regression coverage.
 - **Threaded sessions:** start a fresh session in a new thread and resume context in replies.
   Choose an engine and model for a thread, channel or gateway default.
 - **Claude Code and OpenAI Codex:** use either engine with the same channel authorization,
-  container boundary and personal/shared connector separation.
+  default container boundary and personal/shared connector separation.
 - **Model and reasoning controls:** select models and effort using Codex's live model catalog and
   Claude's rolling aliases.
   Explicit thread/run pins are respected; a pinned engine failure reports its own error.
@@ -102,8 +102,13 @@ catalog, including edge cases and links to regression coverage.
 
 ### Permissions, isolation and credentials
 
-- **A container per conversation:** every engine run, including scheduled and background agents,
-  executes inside that conversation's rootless Podman container with its own persistent home.
+- **A container per conversation:** ordinary engine runs, including scheduled and background agents,
+  execute inside that conversation's rootless Podman container with its own persistent home.
+- **Admin-only sudo threads:** in Slack, an organization admin can send the typed in-thread command
+  `@agent /sudo` (`/sudo` in a DM message) to
+  run subsequent admin messages directly on the gateway host as the daemon OS user. The thread is
+  admin-only until `/sudo off`; other senders are rejected before work starts. This deliberately
+  removes the container boundary for that thread, so use it only for trusted host operations.
 - **Read-only, Worker and Admin modes:** choose the base permission level. Auto review and Lean
   context are separate options; permission bypass requires both an admin author and Admin mode.
 - **Approval controls:** interactive approvals and automatic review apply according to mode;

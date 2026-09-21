@@ -3,18 +3,25 @@
 The executable source of truth is the validated manifest in `src/engines/adapters.js`; Slack and
 the Admin API/UI consume that registry.
 
-| Capability | Claude | Codex |
-| --- | --- | --- |
-| Filesystem confinement | Per-conversation container mounts; Claude permissions control tools | Same container boundary; Read-only mode adds a CLI read-only sandbox |
-| Network policy | Advisory off/on; container bridge networking, no domain filtering or egress firewall | Same container network boundary; CLI Read-only mode also restricts its own network access |
-| Warm process / steer | yes | no; one-shot resume |
-| Session identity | gateway-minted UUID | CLI-minted thread ID, persisted after the turn |
-| Permission prompts | Interactive Slack tool approvals; automatic approval with Auto | Headless deny or eligible automatic review with Auto |
-| MCP transport | Protected per-run configuration; HTTP/stdio servers and the gateway socket bridge | Per-run `-c` definitions; native HTTP with a credential helper for managed remote connections, stdio bridges for gateway/SDK |
-| Optional MCPs | Explicitly selected server definitions | Selected runtime apps and complete credential-free stdio/HTTP definitions; managed credentialed integrations use separate protected paths |
-| Skills | Organization/channel repository skills plus per-author grants | Native organization/channel repository skills plus a per-run personal skill catalog; personal delivery does not register slash commands |
-| Usage/cost | provider-reported cost | token usage with configured rate estimate |
-| Health | adapter-owned `--version` boot probe | adapter-owned `--version` boot probe |
+| Capability | Claude | Codex | Qwen (Claude Code) |
+| --- | --- | --- | --- |
+| Filesystem confinement | Per-conversation container mounts by default; Claude permissions control tools. Admin-only Slack `/sudo` threads deliberately run on the host | Same default container boundary; Read-only mode adds a CLI read-only sandbox. `/sudo` deliberately runs on the host | Identical to Claude — same CLI, same lockdown file, same resolved runtime |
+| Network policy | Advisory off/on; container bridge networking by default, direct daemon-account network in `/sudo`; no domain filtering or egress firewall | Same resolved-runtime policy; CLI Read-only mode also restricts its own network access outside bypass | Same advisory off/on as Claude |
+| Warm process / steer | yes | no; one-shot resume | no; cold runs only, so a rotated provider key can never be served by a warm process |
+| Session identity | gateway-minted UUID | CLI-minted thread ID, persisted after the turn | gateway-minted UUID (same CLI, same transcript layout, so session carry works unchanged) |
+| Permission prompts | Interactive Slack tool approvals; automatic approval with Auto | Headless deny or eligible automatic review with Auto | Interactive Slack tool approvals, as Claude |
+| MCP transport | Protected per-run configuration; HTTP/stdio servers and the gateway socket bridge | Per-run `-c` definitions; native HTTP with a credential helper for managed remote connections, stdio bridges for gateway/SDK | Identical to Claude, and shares Claude's per-channel selection key |
+| Optional MCPs | Explicitly selected server definitions | Selected runtime apps and complete credential-free stdio/HTTP definitions; managed credentialed integrations use separate protected paths | Explicitly selected server definitions (the same selection Claude uses) |
+| Skills | Organization/channel repository skills plus per-author grants | Native organization/channel repository skills plus a per-run personal skill catalog; personal delivery does not register slash commands | Same as Claude (`CLAUDE.md`, `.claude/skills`, plugin dirs) |
+| Usage/cost | provider-reported cost | token usage with configured rate estimate | token usage only — the CLI's Anthropic-priced figure is dropped and no rate is inferred |
+| Health | adapter-owned `--version` boot probe | adapter-owned `--version` boot probe | adapter-owned `--version` boot probe plus "is a QwenCloud key configured" |
+
+Qwen is **opt-in**: a missing `engineEnabled` entry means OFF, it is terminal in the failover
+graph in both directions, and its provider credential (`qwenApiKey` / `qwenBaseUrl`) is gateway
+configuration — never a per-channel environment secret, because `ANTHROPIC_*` is reserved there
+precisely so a conversation cannot redirect its own provider. A Qwen spawn removes the whole
+Anthropic credential family before applying its own, so the operator's login never leaves with it.
+OpenCode is omitted from the table above; see `docs/OPENCODE-ADAPTER.md`.
 
 ## Engine-literal exceptions
 

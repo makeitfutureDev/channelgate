@@ -174,12 +174,12 @@ export function resolveDriveSyncKeyFile() {
   return file && existsSync(file) ? file : "";
 }
 
-// Is the rclone binary runnable? Probed once PER BINARY PATH — a single global boolean meant that
-// correcting a wrong path in Settings had no effect until the daemon restarted. An absolute path
-// from settings sidesteps the service unit's minimal PATH.
+// Is the rclone binary runnable? Successful probes are cached per binary path. Misses are retried:
+// setup/update may install rclone while the daemon is already running, and that repair must take
+// effect without requiring a restart. An absolute path still sidesteps a minimal service PATH.
 export function rcloneAvailable(bin) {
   const key = String(bin || "");
-  if (rcloneChecked.has(key)) return rcloneChecked.get(key);
+  if (rcloneChecked.get(key) === true) return true;
   let ok;
   try {
     const r = spawnSync(key, ["version"], { env: buildChildEnv(), stdio: "ignore" });
@@ -187,7 +187,8 @@ export function rcloneAvailable(bin) {
   } catch {
     ok = false;
   }
-  rcloneChecked.set(key, ok);
+  if (ok) rcloneChecked.set(key, true);
+  else rcloneChecked.delete(key);
   return ok;
 }
 

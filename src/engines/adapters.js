@@ -3,13 +3,15 @@ import { resolveClaudeMcpConfig } from "./claude-mcp.js";
 import { runClaude, buildClaudeEnv, buildPersistentArgs, canUseClaudeWarmPool } from "./claude.js";
 import { runCodex } from "./codex.js";
 import { runOpenCode } from "./opencode.js";
+import { discoverQwenModels, qwenCredentialState, qwenProviderEnv, QWEN_FALLBACK_MODELS, isQwenTextModel, resolveQwenProvider } from "./qwen.js";
 import { runPooled, abortPooled } from "./session-pool.js";
 import { compileNetworkPolicy } from "./network-policy.js";
 import { listEngineMcps, codexMcpPolicyFor } from "../gateway/mcp-discovery.js";
 import { commandHealth, validateEngineAdapter } from "./contract.js";
 import { runtimeTargetOr } from "./runtime-target.js";
 import { readCodexAuthState } from "./codex-auth.js";
-import { claudeEngineHome, codexEngineHome } from "../config/paths.js";
+import { codexEngineHome } from "../config/paths.js";
+import { hostClaudeStateDir, hostCodexStateDir } from "./host-state.js";
 import { discoverCodexModels } from "./model-discovery.js";
 import { requirePluginRuntime } from "../gateway/plugin-runtime.js";
 
@@ -46,6 +48,9 @@ function claudeProjectKey(cwd) {
 // declared modes into the compiler, so supports.networkModes is the single source of truth.
 const FULL_NETWORK_MODES = Object.freeze(["off", "on"]);
 
+// Category-only, like claude-mcp.js REJECTION: this text is posted into the channel.
+const CODEX_MCP_UNSAFE_REASON = "has no complete credential-free launch definition in the host Codex configuration";
+
 const baseCompile = (engine, request = {}, supportedModes = ["off"]) => {
   const network = compileNetworkPolicy({ engine, allowNetwork: Boolean(request.allowNetwork), supportedModes });
   return { supported: network.supported, reason: network.reason || "", network, writable: Boolean(request.writable), bypass: Boolean(request.dangerouslySkip) };
@@ -75,10 +80,8 @@ const claude = validateEngineAdapter({
   modelBelongs: (m) => /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/.test(m),
   resumeCommand: (id) => `claude --resume ${id}`,
   sessionState: Object.freeze({
-    // CLAUDE_CONFIG_DIR on the host is the gateway's stable synthetic one (run-grant-artifacts.js
-    // plants `projects` in it as a symlink to the operator's real directory, which the copy
-    // follows as an ancestor).
-    hostDir: () => path.join(claudeEngineHome(), ".claude"),
+    // A direct `/sudo` turn uses the daemon account's native Claude config/state directory.
+    hostDir: () => hostClaudeStateDir(),
     containerDirKey: "claudeConfigDir",
     files: ({ cwd, sessionId }) => {
       const key = claudeProjectKey(cwd);
@@ -124,12 +127,12 @@ const claude = validateEngineAdapter({
       });
       // The warm process never learns the model it was started with; a provider failure it reports
       // still needs `requestedModel` for the same-engine model retry (see gateway/run.js).
-      return runPooled({ key: r.poolKey, cwd: ctx.cwd, args, env: buildClaudeEnv({ extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, oauthToken: claudeOauthToken }), idleMs, target, mcpConfigJson: r.mcpConfigFingerprint || r.mcpConfigJson, dangerouslySkip: r.dangerouslySkip, fingerprintExtra: `${r.model}|${r.effort}|${r.permissionPromptTool}|${isolationFingerprint}`, text: ctx.prompt, turnTimeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent }).catch((error) => {
+      return runPooled({ key: r.poolKey, cwd: ctx.cwd, args, env: buildClaudeEnv({ home: r.claudeHome, configDir: r.claudeConfigDir, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, oauthToken: claudeOauthToken }), idleMs, target, mcpConfigJson: r.mcpConfigFingerprint || r.mcpConfigJson, dangerouslySkip: r.dangerouslySkip, fingerprintExtra: `${r.model}|${r.effort}|${r.permissionPromptTool}|${isolationFingerprint}`, text: ctx.prompt, turnTimeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent }).catch((error) => {
         if (error?.details?.providerError === true && error.details.requestedModel === undefined) error.details.requestedModel = r.model;
         throw error;
       });
     }
-    return runClaude({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip, settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent, permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs, instructionFile: r.instructionFile, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, claudeOauthToken });
+    return runClaude({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip, settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent, permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs, instructionFile: r.instructionFile, home: r.claudeHome, configDir: r.claudeConfigDir, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target, claudeOauthToken });
   },
   interrupt: ({ poolKey }) => abortPooled(poolKey),
   discoverMcps: () => listEngineMcps("claude"),
@@ -185,21 +188,130 @@ const claude = validateEngineAdapter({
   },
 });
 
+// Qwen, driven through the SAME `claude` binary against QwenCloud's Anthropic-compatible endpoint
+// (src/engines/qwen.js explains why this is an engine and not a per-channel env override).
+// Everything the CLI owns — stream protocol, tool loop, permission prompt, MCP file transport,
+// CLAUDE.md, `.claude/skills`, cold resume — is therefore literally Claude's. Everything the
+// PROVIDER owns is different and is declared here rather than inherited:
+//   • `optIn` — never enabled implicitly. A gateway that pulls this release must not suddenly
+//     offer a harness nobody configured (and whose every turn would fail for want of a key).
+//   • no fallback edge (see FALLBACK_GRAPH) — a Qwen usage limit must not silently spend the
+//     operator's Anthropic quota, and Claude's must not silently spend their QwenCloud one.
+//   • `realCost: false` + the cost the CLI reports is DROPPED. Claude Code prices every turn with
+//     Anthropic's own table: a trivial qwen3.8-flash turn came back as $0.0286 with
+//     `costBasis: "unknown"`. Recording that would put fiction in the usage ledger.
+//   • `warmPool: false` — a warm process holds the environment it launched with, and the pool key
+//     (slug::threadKey) carries no engine, so a rotated provider key or a mid-thread harness
+//     switch would be served by a process still holding the old credential. Cold runs only, which
+//     is how Codex has always run.
+const qwen = validateEngineAdapter({
+  pluginCapabilities: { manifest: "claude", components: ["skills", "commands", "agents", "hooks", "mcpServers"] },
+  resolveOptionalMcpConfig: resolveClaudeMcpConfig,
+  id: "qwen", label: "Qwen (Claude Code)", cli: "claude", defaultModelKey: "defaultQwenModel",
+  // Deliberately the SAME channel-meta key as Claude: same CLI, same file transport, same catalog
+  // entries. One "Cloud MCP" selection serves both, so switching a channel's harness never
+  // silently drops its connectors.
+  mcpMetaKey: "allowedMcps",
+  instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
+  efforts: ["low", "medium", "high", "xhigh"],
+  models: QWEN_FALLBACK_MODELS,
+  // Shipped list until the account's own is read; `discoverModels` below replaces it with the live
+  // one, so a model QwenCloud adds tomorrow is selectable without a release.
+  modelCatalogSource: "fallback",
+  mintsOwnSessionId: false,
+  optIn: true,
+  transientKinds: Object.freeze(["availability", "connection"]),
+  supports: { warmPool: false, interruptSteer: false, permissionPrompt: true, compact: true, realCost: false, usageLimitFallback: false, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
+  modelBelongs: (m) => isQwenTextModel(m),
+  resumeCommand: (id) => `claude --resume ${id}`,
+  // Identical to Claude's: the same binary, writing the same transcripts, keyed by the same
+  // project-directory rule into the same config dir.
+  sessionState: Object.freeze({
+    hostDir: () => hostClaudeStateDir(),
+    containerDirKey: "claudeConfigDir",
+    files: ({ cwd, sessionId }) => {
+      const key = claudeProjectKey(cwd);
+      return [
+        { rel: `projects/${key}/${sessionId}.jsonl`, kind: "file" },
+        { rel: `projects/${key}/${sessionId}`, kind: "dir" },
+      ];
+    },
+  }),
+  compileConfinement: (request) => baseCompile("qwen", request, FULL_NETWORK_MODES),
+  async run(ctx) {
+    const r = ctx.runtime;
+    requirePluginRuntime(r.pluginRuntime, this.id);
+    const target = runtimeTargetOr(ctx.target, ctx.cwd);
+    const provider = await resolveQwenProvider();
+    // Fail closed and name the remedy. Never fall through to the ambient Anthropic credential:
+    // that would answer a Qwen-pinned thread with Claude, on the operator's Anthropic quota.
+    if (!provider.configured) {
+      throw Object.assign(new Error(`The Qwen harness is selected, but ${provider.error}.`), {
+        details: { runtimeCredential: true, runtime: target.backend, engine: this.id },
+      });
+    }
+    const result = await runClaude({
+      cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh,
+      mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip,
+      settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs,
+      maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent,
+      permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs,
+      instructionFile: r.instructionFile, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace,
+      target, engineId: this.id,
+      // No Anthropic login of any kind reaches this child — buildClaudeEnv strips the family.
+      claudeOauthToken: "", providerEnv: qwenProviderEnv(provider),
+    });
+    // The CLI's `total_cost_usd` is Anthropic pricing applied to QwenCloud tokens. Tokens are real
+    // and are kept; the dollar figure is not this provider's and is dropped at the boundary rather
+    // than filtered later, so nothing downstream can mistake it for a reported cost.
+    return { ...result, costUSD: null };
+  },
+  interrupt: () => false,
+  // The same catalog Claude sees: identical CLI, identical MCP transport.
+  discoverMcps: () => listEngineMcps("claude"),
+  discoverModels: () => discoverQwenModels(),
+  credentialState: () => qwenCredentialState(),
+  // `claude --version` answers "is the CLI installed" — true even with no QwenCloud key at all —
+  // so the configured provider is reported beside it. Like the other adapters it never flips
+  // `ready`: the run path fails closed with the remedy, and the admin rail says "not configured"
+  // instead of leaving that to be inferred from turns that die.
+  async health(options) {
+    const base = await commandHealth("claude", options);
+    const auth = await qwenCredentialState().catch((error) => ({
+      known: false, authenticated: false, method: "", detail: String(error?.message || error), source: "",
+    }));
+    return { ...base, auth: { known: auth.known, authenticated: auth.authenticated, method: auth.method, detail: auth.detail } };
+  },
+});
+
 const codex = validateEngineAdapter({
   pluginCapabilities: { sourceManifest: "codex", manifest: "", components: ["skills", "mcpServers"] },
+  // Same contract as Claude's resolver: { servers, rejected }. A selected server the runtime can
+  // only launch with host credentials is dropped with a reason, never fatal — see claude-mcp.js.
   async resolveOptionalMcpConfig(allowed) {
-    if (!Array.isArray(allowed) || !allowed.length) return {};
+    const servers = {};
+    const rejected = [];
+    if (!Array.isArray(allowed) || !allowed.length) return { servers, rejected };
     const policy = codexMcpPolicyFor(await listEngineMcps("codex"), allowed);
-    return Object.fromEntries(policy.servers.filter((server) => server.enabled).map((server) => {
-      const definition = server.definition;
-      if (!definition) throw new Error(`Optional MCP ${server.name} has no complete credential-safe definition; refusing Codex run`);
-      return [server.name, definition.transport === "http" ? { type: "http", url: definition.url } : { command: definition.command, args: definition.args || [] }];
-    }));
+    for (const server of policy.servers) {
+      if (!server.enabled) continue;
+      if (!server.definition) {
+        rejected.push({ name: server.name, reason: CODEX_MCP_UNSAFE_REASON });
+        continue;
+      }
+      servers[server.name] = server.definition.transport === "http"
+        ? { type: "http", url: server.definition.url }
+        : { command: server.definition.command, args: server.definition.args || [] };
+    }
+    return { servers, rejected };
   },
   id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", mcpMetaKey: "allowedCodexMcps",
+  // Codex reports no dollar cost, so the ledger prices it from this configured rate (Settings →
+  // Audit). Declared here so no other engine inherits OpenAI's rates by falling through.
+  costRateKey: "codexRatePer1MTokens",
   instructionFile: "AGENTS.md", skillsDir: ".agents/skills", mcpTransport: "argv", contextWindow: 272_000,
   efforts: ["none", "low", "medium", "high", "xhigh", "max", "ultra"], models: [
-    ...["codex", "gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"].map((value) => ({ label: value === "codex" ? "Codex" : value.toUpperCase().replace("GPT-", "GPT-"), value, description: `${value} model.` })),
+    ...["codex", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.3-codex-spark"].map((value) => ({ label: value === "codex" ? "Codex" : value.toUpperCase().replace("GPT-", "GPT-"), value, description: `${value} model.` })),
   ], mintsOwnSessionId: true,
   // The runner's own "the provider did not answer" kind (classifyCodexFailure), replayable in place.
   transientKinds: Object.freeze(["transient"]),
@@ -207,8 +319,8 @@ const codex = validateEngineAdapter({
   modelBelongs: (m) => /^(?:gpt-|o[0-9]|codex)/.test(m),
   resumeCommand: (id) => `codex exec resume ${id}`,
   sessionState: Object.freeze({
-    // codexEngineHome() already ends in `.codex`, and IS $CODEX_HOME for every gateway run.
-    hostDir: () => codexEngineHome(),
+    // A direct `/sudo` turn uses the daemon account's native CODEX_HOME.
+    hostDir: () => hostCodexStateDir(),
     containerDirKey: "codexHome",
     // A rollout is `sessions/YYYY/MM/DD/rollout-<timestamp>-<id>.jsonl`. The timestamp cannot be
     // recomputed, so the location is a PATTERN — and the date directories must survive the copy,
@@ -223,8 +335,12 @@ const codex = validateEngineAdapter({
     const catalog = await listEngineMcps("codex").catch(() => []);
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
     codexMcpPolicy.servers.push(...(r.pluginMcpServers || []));
-    const unsafe = codexMcpPolicy.servers.find((server) => server.enabled && !server.definition);
-    if (unsafe) throw new Error(`Optional MCP ${unsafe.name} has no complete credential-safe definition; refusing Codex run`);
+    // Mirrors the drop resolveOptionalMcpConfig already recorded for the payload: a selected server
+    // with no credential-safe definition is disabled for this launch instead of failing the turn.
+    // Plugin-provided servers arrive with their definition already proven by run-engine-mcp.js.
+    for (const server of codexMcpPolicy.servers) {
+      if (server.enabled && !server.definition) server.enabled = false;
+    }
     return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, toolboxToken: r.toolboxToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexStateDir: r.codexStateDir, personalSkills: r.personalSkillCatalog, pluginSkills: requirePluginRuntime(r.pluginRuntime, this.id).skills, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent, onSessionResolved: r.onSessionResolved });
   },
   interrupt: () => false,
@@ -290,4 +406,4 @@ const opencode = validateEngineAdapter({
   health: (options) => commandHealth("opencode", options),
 });
 
-export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, opencode]);
+export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, qwen, opencode]);

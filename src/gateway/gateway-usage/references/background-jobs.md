@@ -49,8 +49,9 @@ Use for long-running commands — builds, transcription/ASR, test suites, data j
 
 The channel must be in **auto mode**, or in **admin mode with an admin author**. In Auto mode the
 daemon posts a durable approval with the exact command, and a gateway **admin** must click **Run
-it** before the job starts (anyone may Deny) — the job runs inside this channel's container, in
-this folder, like everything else. In Admin mode, an admin author's job starts directly without
+it** before the job starts (anyone may Deny) — the job runs inside this channel's resolved runtime,
+normally its container. In a `/sudo` thread it instead runs directly as the daemon OS user and is
+available only to current organization admins. In Admin mode, an admin author's job starts directly without
 that second approval because the live turn already runs with the admin bypass. Non-admin authors
 never inherit that bypass. The Auto-mode approval is
 single-use, remains valid across daemon/engine restarts, and starts only the displayed command.

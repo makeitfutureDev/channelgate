@@ -5,7 +5,7 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv(); // nudges.js imports the store chain — keep any DB access on the scratch file
 
-const { pruneExpired } = await import("../src/gateway/nudges.js");
+const { noteBotReply, pruneExpired, sweepNudges } = await import("../src/gateway/nudges.js");
 
 const DAY = 24 * 60 * 60 * 1000;
 const rec = (lastBotTs, extra = {}) => ({ channelId: "C1", slug: "s", threadKey: "t", lastBotTs, awaitingUser: true, reminded: false, ...extra });
@@ -37,4 +37,29 @@ test("a custom ttl is honored", () => {
   ]);
   pruneExpired(map, now, 5_000);
   assert.deepEqual([...map.keys()], ["b"]);
+});
+
+test("a due reminder follows the requesting user's live preference and mentions that user", async () => {
+  const map = new Map();
+  noteBotReply("C1", "s", "thread-on", "U_ON", { map, nowMs: 1_000 });
+  noteBotReply("C1", "s", "thread-off", "U_OFF", { map, nowMs: 1_000 });
+  const posted = [];
+  const logged = [];
+  const slack = { snapshot: () => ({ connected: true }), getClient: () => ({}) };
+
+  await sweepNudges(slack, {
+    map,
+    nowMs: 2_000,
+    thresholdMs: 500,
+    loadUser: async (userId) => ({ nudges: userId === "U_ON" }),
+    post: async (_client, notice) => posted.push(notice),
+    log: async (event, data) => logged.push({ event, data }),
+  });
+
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].threadKey, "thread-on");
+  assert.match(posted[0].text, /<@U_ON>/, "the personal reminder addresses its owner");
+  assert.equal(map.get("s::thread-on").reminded, true);
+  assert.equal(map.get("s::thread-off").reminded, false, "an opted-out user remains unnotified");
+  assert.deepEqual(logged, [{ event: "nudge_sent", data: { slug: "s", channel: "C1", author: "U_ON" } }]);
 });

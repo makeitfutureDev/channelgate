@@ -153,6 +153,32 @@ export async function createExclusive(file, content, { mode = 0o644 } = {}) {
   }
 }
 
+// Remove one gateway-managed regular file only when its resolved path remains beneath a trusted
+// root. Attachment folders are agent-writable between turns, so a path that has been replaced by
+// a symlink or moved outside the upload root is refused instead of followed. Missing files are
+// already clean and therefore return false without failing the completed media operation.
+export async function removeRegularFileWithin(root, file) {
+  try {
+    const resolvedRoot = await realpath(root);
+    const candidate = path.resolve(String(file || ""));
+    const resolvedParent = await realpath(path.dirname(candidate));
+    const parentRelative = path.relative(resolvedRoot, resolvedParent);
+    if (parentRelative === ".." || parentRelative.startsWith(`..${path.sep}`) || path.isAbsolute(parentRelative)) return false;
+
+    const info = await lstat(candidate);
+    if (!info.isFile() || info.isSymbolicLink()) return false;
+    const resolvedCandidate = await realpath(candidate);
+    const fileRelative = path.relative(resolvedRoot, resolvedCandidate);
+    if (fileRelative === ".." || fileRelative.startsWith(`..${path.sep}`) || path.isAbsolute(fileRelative)) return false;
+
+    await rm(candidate);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 // A symlink is tolerable at a managed path ONLY when it points at a real directory that still
 // lives inside the trusted root. Returns that resolved directory, or null for a dangling link, a
 // link to a non-directory, or one that escapes the root — all of which the caller removes.

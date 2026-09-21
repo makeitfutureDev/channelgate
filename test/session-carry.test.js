@@ -15,7 +15,8 @@ ensureTestEnv();
 const { engineSessionFiles, engineSessionState, engineStateDir } = await import("../src/engines/registry.js");
 const { copyCarryEntries, expandCarryEntry, walkFiles } = await import("../src/runtimes/copy.js");
 const { buildCarryEntries, carrySession, storedRuntimeBackend, CARRY_DIRECTIONS } = await import("../src/gateway/session-carry.js");
-const { claudeEngineHome, codexEngineHome } = await import("../src/config/paths.js");
+const { hostClaudeStateDir, hostCodexStateDir } = await import("../src/engines/host-state.js");
+const { hostBackend } = await import("../src/runtimes/host.js");
 
 const SESSION = "9f3ab7c2-1111-4000-8000-abcdefabcdef";
 
@@ -48,8 +49,8 @@ test("engine facts: a Codex rollout is a PATTERN whose date directories must sur
 });
 
 test("engine facts: state dirs come from the target, and an engine that declares none never carries", () => {
-  assert.equal(engineStateDir("claude", null), path.join(claudeEngineHome(), ".claude"));
-  assert.equal(engineStateDir("codex", null), codexEngineHome());
+  assert.equal(engineStateDir("claude", null), hostClaudeStateDir());
+  assert.equal(engineStateDir("codex", null), hostCodexStateDir());
   const containerTarget = { container: { claudeConfigDir: "/home/agent/.claude", codexHome: "/home/agent/.codex" } };
   assert.equal(engineStateDir("claude", containerTarget), "/home/agent/.claude");
   assert.equal(engineStateDir("codex", containerTarget), "/home/agent/.codex");
@@ -162,11 +163,10 @@ function carryHarness(name) {
   return { root, ctrDir, calls, containerTarget, logs, log: (m) => logs.push(m) };
 }
 
-// The claude host state dir is claudeEngineHome()/.claude, which the scratch env pins; a test that
-// wants its own directory writes there instead of guessing.
+// The direct host backend uses the native CLI state dir, which the scratch env pins.
 function claudeHostFile(sessionId, cwd) {
   const key = String(cwd).replace(/[^a-zA-Z0-9]/g, "-");
-  return path.join(claudeEngineHome(), ".claude", "projects", key, `${sessionId}.jsonl`);
+  return path.join(hostClaudeStateDir(), "projects", key, `${sessionId}.jsonl`);
 }
 
 test("carry: same backend on both sides is a no-op — a recreated container still has its volume", async () => {
@@ -208,11 +208,10 @@ test("carry: host→container copies the session in, leases the runtime, and rep
   assert.equal(existsSync(claudeHostFile(SESSION, cwd)), true);
 });
 
-// There is no container→host direction any more: every channel runs in a container, so a row
-// that already names one has nothing to move and nowhere else to go.
-test("carry: the only direction is host→container, and a container row is never copied anywhere", async () => {
-  assert.deepEqual(Object.keys(CARRY_DIRECTIONS), ["IN"]);
+test("carry: container→host copies session history out for a sudo turn", async () => {
+  assert.deepEqual(Object.keys(CARRY_DIRECTIONS), ["IN", "OUT"]);
   assert.equal(CARRY_DIRECTIONS.IN, "host→container");
+  assert.equal(CARRY_DIRECTIONS.OUT, "container→host");
 
   const h = carryHarness("out");
   const cwd = "/w/out";
@@ -220,18 +219,23 @@ test("carry: the only direction is host→container, and a container row is neve
   const key = cwd.replace(/[^a-zA-Z0-9]/g, "-");
   write(path.join(h.ctrDir, ".claude", "projects", key, `${sessionId}.jsonl`), "in-container\n");
 
+  const hostTarget = hostBackend.prepareTarget({
+    slug: "out", platform: "slack", meta: { platform: "slack", sudoMode: true },
+    cwd, workDir: cwd, cleanWorkDir: "", settings: {}, artifactDir: null,
+  });
   const result = await carrySession({
     engine: "claude", sessionId, cwd,
     storedRuntime: JSON.stringify({ backend: "container", image: "channelgate/runtime:test" }),
-    target: h.containerTarget, slug: "out", threadKey: "1.2", log: h.log,
+    target: hostTarget, slug: "out", threadKey: "1.2", log: h.log,
+    resolveFor: () => h.containerTarget,
   });
 
-  assert.equal(result, null);
-  assert.equal(h.calls.copyOut.length, 0);
+  assert.deepEqual(result, { direction: CARRY_DIRECTIONS.OUT, files: 1 });
+  assert.equal(h.calls.copyOut.length, 1);
   assert.equal(h.calls.copyIn.length, 0);
-  assert.equal(h.calls.leases.length, 0, "nothing to copy, so nothing to hold the container up for");
-  assert.equal(existsSync(claudeHostFile(sessionId, cwd)), false, "the host state dir is never written to");
-  assert.deepEqual(h.logs, []);
+  assert.equal(h.calls.leases.length, 1, "the source container stays leased while state is copied out");
+  assert.equal(readFileSync(claudeHostFile(sessionId, cwd), "utf8"), "in-container\n");
+  assert.match(h.logs.join("\n"), /container→host \(1 file\)/);
 });
 
 test("carry: no files to carry is silent, and the resume simply falls back to the heal", async () => {

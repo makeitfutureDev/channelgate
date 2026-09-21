@@ -15,6 +15,7 @@ test("message controls normalize case, spacing, and trailing punctuation", () =>
   assert.equal(isPendingCommand("My Follow-Ups?"), true);
   assert.equal(isPendingCommand("pending review my PR"), false);
   assert.deepEqual(parseSlashCommand(" /MODEL high "), { cmd: "model", arg: "high" });
+  assert.deepEqual(parseSlashCommand(" /SUDO off "), { cmd: "sudo", arg: "off" });
   assert.equal(parseSlashCommand("/unknown"), null);
 });
 

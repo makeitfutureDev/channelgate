@@ -159,7 +159,11 @@ const MODEL_OPTIONS = {
 // isn't in the curated list (hand-edited config, a full id like claude-opus-4-8) should survive as
 // an extra option (same engine: keep so Save round-trips it) or be dropped (other engine).
 function modelMatchesEngine(model, engine) {
-  return engine === "codex" ? /^(?:gpt-|o[0-9]|codex)/i.test(model) : /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/i.test(model);
+  if (engine === "codex") return /^(?:gpt-|o[0-9]|codex)/i.test(model);
+  // Mirrors isQwenTextModel (src/engines/qwen.js): the QwenCloud families, minus the image/audio
+  // ones that cannot hold a conversation.
+  if (engine === "qwen") return /^(?:auto|qwen[0-9][\w.-]*|qwen-[\w.-]+|glm-[\w.-]+|deepseek-[\w.-]+|kimi-[\w.-]+|minimax-[\w.-]+)$/i.test(model) && !/(?:^wan|image|video|audio|tts|realtime|t2v|i2v|speech)/i.test(model);
+  return /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/i.test(model);
 }
 
 // Fill a model <select> for an engine. `engine` pins the list (the Settings per-engine defaults);
@@ -990,6 +994,18 @@ async function openActiveSessions() {
 }
 
 // ── Conversations (master–detail): templates + channels + DMs in one list ─────────
+async function refreshConversationRows() {
+  try {
+    const [{ channels }, { dms }] = await Promise.all([api("/api/channels"), api("/api/dms")]);
+    CHANNELS = channels;
+    DMS = dms;
+    renderConvList();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function loadConversations() {
   const [{ channels }, { dms }, s] = await Promise.all([api("/api/channels"), api("/api/dms"), api("/api/settings")]);
   CHANNELS = channels;
@@ -1045,16 +1061,29 @@ function conversationExists(key) {
   return false;
 }
 
-function convRow(key, color, name, sub, cost) {
+function workDirConflictSummary(conflict) {
+  const others = Array.isArray(conflict?.conversations) ? conflict.conversations : [];
+  if (!others.length) return "";
+  const names = others.map((item) => item.isDM || item.type === "im"
+    ? (item.name || item.slug)
+    : hashName(item.name || item.slug));
+  return `Working folder is also assigned to ${names.join(", ")}`;
+}
+
+function convRow(key, color, name, sub, cost, conflict = null) {
   const el = document.createElement("a");
-  el.className = "list-item conv-item" + (selectedConv === key ? " active" : "");
+  const conflictText = workDirConflictSummary(conflict);
+  el.className = "list-item conv-item" + (conflictText ? " workdir-conflict" : "") + (selectedConv === key ? " active" : "");
   el.href = conversationPathForKey(key);
+  if (conflictText) el.title = conflictText;
   // Compact whole-dollar 30-day cost (skip sub-$1 rows so the list stays quiet).
   const dollars = cost == null ? null : Math.round(cost);
   const costHtml = dollars && dollars >= 1 ? `<span class="conv-cost">$${escapeHtml(dollars.toLocaleString())}</span>` : "";
+  const conflictHtml = conflictText ? '<span class="conv-conflict-mark" aria-label="Working folder conflict">!</span>' : "";
   el.innerHTML =
     `<span class="capdot" style="background:${color}"></span>` +
-    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}</span>` +
+    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}${conflictText ? '<small class="conv-conflict-text">Shared working folder</small>' : ""}</span>` +
+    conflictHtml +
     costHtml;
   el.addEventListener("click", (e) => {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -1089,7 +1118,7 @@ function renderConvList() {
       e.textContent = CHANNELS.length ? "No channels match." : "No channels yet — invite the bot and send a message.";
       list.appendChild(e);
     } else {
-      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), hashName(c.name || c.slug), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug)));
+      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), hashName(c.name || c.slug), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
     }
   }
 
@@ -1111,7 +1140,7 @@ function renderConvList() {
       for (const d of dmItems) {
         const tplName = d.template === "admin" ? "Admin template" : d.template === "custom" ? "Custom" : "User template";
         const capMeta = d.template === "custom" ? d.meta || {} : DM_TEMPLATES[d.template] || {};
-        list.appendChild(convRow("dm:" + d.channelId, capColorOf(capMeta), d.userName || d.slug, tplName, costFor(d.channelId, d.slug)));
+        list.appendChild(convRow("dm:" + d.channelId, capColorOf(capMeta), d.userName || d.slug, tplName, costFor(d.channelId, d.slug), d.workDirConflict));
       }
     }
   }
@@ -1629,7 +1658,6 @@ function renderChannelDetail(ch) {
   manageSel.addEventListener("change", applyManageUI);
 
   card.querySelector(".ch-memory").checked = meta.memory !== false; // default on (global default is on)
-  card.querySelector(".ch-nudges").checked = !!meta.nudges;
   card.querySelector(".ch-nodefaulttokens").checked = !!meta.noDefaultTokens;
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
@@ -1887,7 +1915,6 @@ function renderChannelDetail(ch) {
           autoMode: card.querySelector(".ch-auto").checked,
           cleanMode: card.querySelector(".ch-clean").checked,
           memory: card.querySelector(".ch-memory").checked,
-          nudges: card.querySelector(".ch-nudges").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
           workDir: card.querySelector(".ch-workdir").value,
@@ -1925,7 +1952,9 @@ function renderChannelDetail(ch) {
       makeToolboxState.textContent = ch.meta.hasMakeToolboxKey ? "saved" : "not configured";
       clearMakeToolbox = false;
       paintModePill(ch.meta);
-      renderConvList();
+      // A work-folder save can add or remove warnings on several rows at once. Refresh both
+      // conversation collections from the authoritative server rather than repainting stale flags.
+      if (!(await refreshConversationRows())) renderConvList();
       detailDirty = false;
       savebarMsg.textContent = "Saved";
       savebarMsg.classList.add("clean");
@@ -2623,11 +2652,12 @@ function renderUsersTable() {
       <td class="mono">${escapeHtml(id)}</td>
       <td>${role}</td>
       <td class="user-skills-count" title="Skills enabled for this user (personal grants)">${accessGrantSkillOptions([], u.skills || []).length}</td>
+      <td>${u.nudges ? "On" : "Off"}</td>
       <td>${tok}</td>
     </tr>`;
   }).join("");
   wrap.innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Slack ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Tokens</th></tr></thead>
+    <thead><tr><th>Name</th><th>Slack ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Reminders</th><th>Tokens</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   for (const tr of wrap.querySelectorAll("tbody tr[data-id]")) tr.addEventListener("click", () => openUserDrawer(tr.dataset.id));
 }
@@ -2651,6 +2681,7 @@ function openUserDrawer(id) {
   node.querySelector(".ud-name").value = u.name || "";
   node.querySelector(".ud-approved").checked = !!u.approved;
   node.querySelector(".ud-admin").checked = !!u.isAdmin;
+  node.querySelector(".ud-nudges").checked = !!u.nudges;
   const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user" });
   const userGrantsHost = node.querySelector(".ud-grants");
   userGrantsHost.innerHTML = `<label class="field"><span>Grant tier</span><select class="ud-grant-tier"><option value="organization">Organization — applies everywhere</option><option value="channel">Channel</option><option value="user" selected>This user</option></select><em class="state">The effective run gets the live union of all three tiers.</em></label>`;
@@ -2688,6 +2719,7 @@ function openUserDrawer(id) {
           name: drawer.querySelector(".ud-name").value,
           isAdmin: drawer.querySelector(".ud-admin").checked,
           approved: drawer.querySelector(".ud-approved").checked,
+          nudges: drawer.querySelector(".ud-nudges").checked,
           ...(token ? { composioToken: token } : {}),
           ...(toolboxToken ? { toolboxToken } : {}),
           composioTokenLabel,
@@ -3007,6 +3039,11 @@ function addChipValues(container, text) {
   if (added) { serializeChips(container); markSettingsDirty(); }
 }
 
+// Whether an opt-in harness's own provider credential is configured, by engine id. Filled from the
+// settings payload; used only to annotate the toggle, never to gate it (an admin may legitimately
+// switch a harness on and paste its key in the same save).
+const SETTINGS_HAVE_PROVIDER_KEY = {};
+
 // One checkbox per known harness. Re-rendered (not patched) on every change so the engine pickers
 // and the "last one standing" lock stay derived from a single source: ENGINE_ENABLED.
 function paintEngineToggles() {
@@ -3038,6 +3075,15 @@ function paintEngineToggles() {
       markSettingsDirty();
     });
     label.append(input, document.createTextNode(` ${m.label}`));
+    // An OPT-IN harness needs a provider credential of its own, so say where that lives. Without
+    // this the checkbox reads like every other one and the admin only discovers the missing key
+    // when a run fails in Slack.
+    if (m.optIn && !SETTINGS_HAVE_PROVIDER_KEY[m.id]) {
+      const hint = document.createElement("em");
+      hint.className = "state";
+      hint.textContent = " · needs an API key below";
+      label.append(hint);
+    }
     return label;
   }));
 }
@@ -3092,6 +3138,10 @@ function readSettingsForm() {
     engine: document.getElementById("set-engine").value,
     defaultClaudeModel: document.getElementById("set-default-claude-model").value,
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
+    defaultQwenModel: document.getElementById("set-default-qwen-model").value,
+    qwenBaseUrl: document.getElementById("set-qwen-base-url").value,
+    ...(tokenValue(document.getElementById("set-qwen-api-key")) ? { qwenApiKey: tokenValue(document.getElementById("set-qwen-api-key")) } : {}),
+    ...(document.getElementById("clear-qwen-api-key").classList.contains("armed") ? { clearQwenApiKey: true } : {}),
     modelChangeAccess: document.getElementById("set-model-change-access").value,
     engineEnabled: { ...ENGINE_ENABLED },
     engineFallback: document.getElementById("set-engine-fallback").checked,
@@ -3145,6 +3195,8 @@ function readSettingsForm() {
 function paintSettings(s) {
   applyEngineManifests(s.engines);
   ENGINE_ENABLED = { ...(s.engineEnabled || {}) };
+  // Before the toggles paint: they annotate an opt-in harness whose provider key is still missing.
+  SETTINGS_HAVE_PROVIDER_KEY.qwen = s.hasQwenApiKey === true;
   paintEngineToggles();
   const orgGrantsHost = document.getElementById("org-grants-editor");
   orgGrantsEditor = buildAccessGrantsEditor(s.accessGrants || {}, { tier: "organization" });
@@ -3214,6 +3266,23 @@ function paintSettings(s) {
   GLOBAL_ENGINE = s.engine || "claude";
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
+  syncModelOptions({ modelSelect: document.getElementById("set-default-qwen-model"), engine: "qwen", value: s.defaultQwenModel || "", blankLabel: "provider default" });
+  document.getElementById("set-qwen-base-url").value = s.qwenBaseUrl || "";
+  document.getElementById("qwen-key-state").textContent = tokenState(s.hasQwenApiKey, s.qwenApiKeyLast4);
+  attachReveal(document.getElementById("set-qwen-api-key"), { has: s.hasQwenApiKey, last4: s.qwenApiKeyLast4 || "", fetch: revealSecret("settings", "qwenApiKey") });
+  // Say WHERE the Qwen list came from: a stale fallback list and a live one look identical in a
+  // <select>, and an admin picking a model the account cannot call would only find out in Slack.
+  {
+    const qwenCatalog = ENGINE_MANIFESTS.find((m) => m.id === "qwen")?.modelCatalog;
+    const note = document.getElementById("qwen-model-catalog");
+    if (note) {
+      note.textContent = qwenCatalog?.source === "live"
+        ? `Read from the QwenCloud account${qwenCatalog.refreshedAt ? ` · refreshed ${new Date(qwenCatalog.refreshedAt).toLocaleString()}` : ""}.`
+        : (s.hasQwenApiKey
+          ? "Built-in list — the account's own model list could not be read. Check the key and base URL."
+          : "Built-in list. Save a QwenCloud API key to read the account's own models.");
+    }
+  }
   document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
   document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";
@@ -3427,7 +3496,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-qwen-api-key"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -3533,18 +3602,18 @@ function bindSettings() {
     const saved = document.getElementById("reset-nudges-saved");
     const on = document.getElementById("set-default-nudges").checked;
     const ok = await confirmDialog({
-      title: `Turn no-response reminders ${on ? "ON" : "OFF"} everywhere?`,
-      body: `Every existing channel & DM will be set to the current default (${on ? "on" : "off"}). Per-conversation overrides are lost. Save the setting first if you just changed it. This can't be undone.`,
+      title: `Turn no-response reminders ${on ? "ON" : "OFF"} for every user?`,
+      body: `Every existing user will be set to the current default (${on ? "on" : "off"}). Personal choices are lost. Save the setting first if you just changed it. This can't be undone.`,
       confirmLabel: on ? "Enable on all" : "Disable on all",
       danger: true,
     });
     if (!ok) return;
     saved.textContent = "applying…";
     try {
-      const r = await api("/api/channels/reset-nudges", { method: "POST", body: JSON.stringify({}) });
-      saved.textContent = `✓ applied to ${r.count} conversation(s)`;
-      await loadConversations();
-      await infoDialog({ title: "Nudges applied", body: `Set no-response reminders ${r.nudges ? "on" : "off"} on ${r.count} conversation(s).` });
+      const r = await api("/api/users/reset-nudges", { method: "POST", body: JSON.stringify({}) });
+      saved.textContent = `✓ applied to ${r.count} user(s)`;
+      await loadUsers();
+      await infoDialog({ title: "Reminders applied", body: `Set no-response reminders ${r.nudges ? "on" : "off"} for ${r.count} user(s).` });
       setTimeout(() => (saved.textContent = ""), 4000);
     } catch (e) {
       saved.textContent = "✗ " + e.message;
@@ -3584,7 +3653,7 @@ function bindSettings() {
       // Reset only the write-only password box; the token fields are repainted (masked) by the
       // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
       document.getElementById("set-adminpw").value = "";
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-qwen-api-key"]) disarmClearTok(document.getElementById(id));
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.
       loadLicense().catch(() => { /* the save itself succeeded — the card refreshes on reload */ });
@@ -3690,6 +3759,19 @@ async function fsBrowse(p) {
   const data = await api(`/api/fs/list${p ? `?path=${encodeURIComponent(p)}` : ""}`);
   fsCurrentPath = data.path;
   document.getElementById("fs-current").textContent = data.path;
+  const conflict = document.getElementById("fs-conflict");
+  const otherAssignments = (Array.isArray(data.assignedConversations) ? data.assignedConversations : [])
+    .filter((item) => `${item.isDM || item.type === "im" ? "dm" : "ch"}:${item.channelId}` !== selectedConv);
+  if (otherAssignments.length) {
+    const names = otherAssignments.map((item) => item.isDM || item.type === "im"
+      ? (item.name || item.slug)
+      : hashName(item.name || item.slug));
+    conflict.textContent = `Already assigned to ${names.join(", ")}. Selecting it here will share one working folder between conversations.`;
+    conflict.hidden = false;
+  } else {
+    conflict.textContent = "";
+    conflict.hidden = true;
+  }
   document.getElementById("fs-up").disabled = !data.parent;
   document.getElementById("fs-up").dataset.parent = data.parent || "";
   const list = document.getElementById("fs-list");

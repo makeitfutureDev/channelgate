@@ -9,7 +9,7 @@ export function hasVoiceAttachments(message) {
 }
 
 export async function prepareVoiceAttachments(message, paths, {
-  signal, enabled = getWhisperEnabled(), transcribe = transcribeAudioFiles,
+  signal, enabled = getWhisperEnabled(), transcribe = transcribeAudioFiles, removeProcessed = null,
 } = {}) {
   signal?.throwIfAborted();
   const pending = new Map(paths.map((file) => [path.basename(file), file]));
@@ -30,11 +30,13 @@ export async function prepareVoiceAttachments(message, paths, {
     else audio.push({ name, path: saved });
   }
   let transcripts = [];
+  let cleanupFailed = [];
   if (audio.length) {
     try {
-      const result = await transcribe(audio, { signal });
+      const result = await transcribe(audio, { signal, removeProcessed });
       transcripts = (result.transcripts || []).filter((item) => String(item.text || '').trim());
       failed.push(...(result.failed || []));
+      cleanupFailed = result.cleanupFailed || [];
       for (const file of audio) if (!transcripts.some((item) => item.name === file.name) && !failed.some((item) => item.name === file.name)) failed.push({ name: file.name, reason: 'Local Whisper detected no speech.' });
     } catch (error) {
       signal?.throwIfAborted();
@@ -49,5 +51,6 @@ export async function prepareVoiceAttachments(message, paths, {
     hasPrompt: Boolean(String(message.text || '').trim() || transcripts.length),
     failed,
     failureNotice: failed.length ? composeVoicePrompt({ failed }) : '',
+    cleanupFailed,
   };
 }

@@ -33,6 +33,7 @@ import { register as registerLicense } from "./tools/license.js";
 import { register as registerChannelDatabase } from "./tools/channel-database.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
+import { register as registerQuestions } from "./tools/questions.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 
 export const text = (t) => ({ content: [{ type: "text", text: t }] });
@@ -396,6 +397,7 @@ export function createGatewayMcpServer(ctx) {
     registerSlackNative(server, ctx);
     registerLicense(server, ctx);
     registerSkills(server, ctx);
+    registerQuestions(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }

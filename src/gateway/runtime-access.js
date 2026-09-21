@@ -28,6 +28,9 @@ function hostPathMounted(mounts, hostPath) {
 }
 
 export function gatewayStoreAccessNote(target) {
+  if (target?.backend === "host") {
+    return "Host gateway runtime directory: **directly accessible**. Host gateway database: **directly accessible**. This is a sudo-host run under the daemon OS account, not a container mount. Never print credentials or database contents as proof.";
+  }
   const mounts = target?.container?.mounts;
   const state = Array.isArray(mounts)
     ? `Host gateway runtime directory: **${hostPathMounted(mounts, gatewayRoot()) ? "mounted" : "not mounted"}**. Host gateway database: **${hostPathMounted(mounts, dbFile()) ? "mounted" : "not mounted"}**.`
@@ -45,17 +48,23 @@ function cleanModeNote(clean) {
   return "Clean mode for this attempt is unknown because the resolved run mode was not supplied. Do not infer it from missing tools alone.";
 }
 
-function networkPolicyNote(allowNetwork) {
+function networkPolicyNote(allowNetwork, { host = false } = {}) {
   if (typeof allowNetwork !== "boolean") {
     return "Network policy for this attempt is unknown because the resolved policy was not supplied. Do not infer network permission from earlier turns or successful requests.";
   }
   const policy = allowNetwork
     ? "Outbound requests are permitted by the channel network switch, subject to this attempt's other tool permissions and the user's requested scope. There is no per-domain allow-list."
     : "Do not make outbound requests. When a request needs the network, explain that the current policy is off and that no fresh request was made. Do not present an earlier response as a fresh network result.";
-  return `Network policy for THIS attempt: **${allowNetwork ? "on" : "off"}**. This current network policy supersedes earlier turns and cached results. ${policy} The switch is advisory, not container egress enforcement: the container remains on the bridge network, and an engine may impose its own additional restrictions. An off policy does not prove that a connection is technically blocked.`;
+  const enforcement = host
+    ? "This direct host process has the daemon account's ordinary network reachability; the switch is an instruction to the engine, not an OS-level egress filter."
+    : "The switch is advisory, not container egress enforcement: the container remains on the bridge network, and an engine may impose its own additional restrictions.";
+  return `Network policy for THIS attempt: **${allowNetwork ? "on" : "off"}**. This current network policy supersedes earlier turns and cached results. ${policy} ${enforcement} An off policy does not prove that a connection is technically blocked.`;
 }
 
 export function containerAccessNote(target) {
+  if (target?.backend === "host") {
+    return "**Direct host access for this run:** **enabled by `/sudo`**. The engine process runs as the gateway daemon's OS user with the host filesystem, processes, HOME, installed commands, and network directly available. There is no channel-container boundary for this attempt. Only organization-admin messages are admitted to this sudo thread.";
+  }
   if (!Array.isArray(target?.container?.mounts)) {
     return "**Container access:** no resolved runtime target was supplied at prompt/guide construction. Do not infer host access from the author's role; check the current runtime before claiming a path is mounted or absent.";
   }
@@ -75,7 +84,7 @@ export function runtimeAccessPreamble(target, { clean, allowNetwork } = {}) {
     + gatewayStoreAccessNote(target) + "\n"
     + "Respect the user's requested scope when checking access. For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only. Do not read file contents or create, modify, or delete probe files, even temporarily. If metadata cannot establish write access, report it as unverified; do not upgrade an access-check request into a write test.\n"
     + cleanModeNote(clean) + "\n"
-    + networkPolicyNote(allowNetwork) + "\n"
+    + networkPolicyNote(allowNetwork, { host: target?.backend === "host" }) + "\n"
     + "Environment secrets, when injected into a run, are usable by its process and CLI. Write-only means masked listing/reveal surfaces and redacted outputs; it does not mean the process cannot read its environment. Do not print secret values.\n"
     + "[End gateway container access]\n\n";
 }

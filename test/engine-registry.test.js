@@ -17,7 +17,7 @@ const {
 const UNKNOWN = "future-engine";
 
 test("all shipped engines are registered with the facts callers depend on", () => {
-  assert.deepEqual([...ENGINE_IDS], ["claude", "codex", "opencode"]);
+  assert.deepEqual([...ENGINE_IDS], ["claude", "codex", "qwen", "opencode"]);
   for (const id of ENGINE_IDS) {
     const a = adapterFor(id);
     assert.equal(a.id, id);
@@ -27,6 +27,12 @@ test("all shipped engines are registered with the facts callers depend on", () =
     assert.equal(typeof a.contextWindow, "number");
     assert.ok(Array.isArray(a.efforts) && a.efforts.length);
   }
+});
+
+test("Codex fallback models match the current selectable CLI catalog", () => {
+  assert.deepEqual(adapterFor("codex").models.map((model) => model.value), [
+    "codex", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.3-codex-spark",
+  ]);
 });
 
 test("an unregistered engine is detectable rather than silently treated as Claude", () => {

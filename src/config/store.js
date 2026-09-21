@@ -20,6 +20,17 @@ import { stripDeadFields } from "./dead-fields.js";
 import { DEFAULT_PLATFORM, isPlatformId, platformFolderNames } from "../platforms/registry.js";
 const PLATFORM_FOLDER_NAMES = new Set(platformFolderNames());
 
+// `nudges` moved from conversation metadata to user records. Retire this shape-specific key only
+// at the channel boundary; unlike stripDeadFields(), this is also safe on internal reads because it
+// is not a secret-retirement policy (some tests intentionally prove old secrets survive until a
+// write while listing maskers still hide them).
+function stripRetiredChannelFields(meta) {
+  const record = meta;
+  if (!record || !Object.hasOwn(record, "nudges")) return record;
+  const { nudges: _retired, ...rest } = record;
+  return rest;
+}
+
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 // Create the runtime dirs and open/migrate the database. Idempotent: safe every boot.
 export async function ensureRoot() {
@@ -31,8 +42,8 @@ export async function ensureRoot() {
 }
 
 // ── Users (global) ────────────────────────────────────────────────────────────
-// Shape: { "<slackUserId>": { name, composioToken, toolboxToken, isAdmin, approved,
-//          skills[], allowedMcps[], allowedCodexMcps[] } }
+// Shape: { "<platformUserId>": { name, composioToken, toolboxToken, isAdmin, approved,
+//          nudges, skills[], allowedMcps[], allowedCodexMcps[] } }
 export async function getUsers() {
   const rows = getDb().prepare("SELECT user_id, data FROM users").all();
   const out = {};
@@ -196,7 +207,6 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     autoMode: false, // autonomous: auto-approve permission prompts (no Slack buttons); still sandboxed
     cleanMode: false, // run bare: no MCP servers (gateway/composio/skills), no skills, no favorites block
     noDefaultTokens: false, // refuse the org-default token fallback here (channel/user tokens still apply)
-    nudges: false, // opt-in: stall + 24h no-response thread reminders
     memory: undefined, // folder-scoped MEMORY.md: undefined = use the gateway default; true/false to override
     engine: "", // per-channel engine: "" = use the global default, or "claude" / "codex"
     approvedTools: [], // tool names "approved forever" here — auto-approved without a prompt
@@ -215,11 +225,11 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
 
 export async function getChannelMeta(slug) {
   const row = getDb().prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
-  return row ? fromJson(row.data, null) : null;
+  return row ? stripRetiredChannelFields(fromJson(row.data, null)) : null;
 }
 
 export async function saveChannelMeta(slug, meta) {
-  const record = stripDeadFields(meta);
+  const record = stripDeadFields(stripRetiredChannelFields(meta));
   getDb()
     .prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
     .run(slug, toJson(record));
@@ -240,13 +250,13 @@ export async function patchChannelMeta(slug, patch) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
-    const current = row ? fromJson(row.data, {}) : null;
+    const current = row ? stripRetiredChannelFields(fromJson(row.data, {})) : null;
     const partial = typeof patch === "function" ? patch(current) : patch;
     if (partial == null) {
       db.exec("ROLLBACK");
       return null;
     }
-    const next = stripDeadFields({ ...(current || {}), ...partial });
+    const next = stripDeadFields(stripRetiredChannelFields({ ...(current || {}), ...partial }));
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data").run(slug, toJson(next));
     db.exec("COMMIT");
     return next;

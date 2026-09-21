@@ -29,8 +29,8 @@ import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineE
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
-import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort } from "./thread-engine.js";
-import { PROFILE_FLAGS, canManage, normalizeModeMeta, authorModeMeta } from "./modes.js";
+import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
+import { PROFILE_FLAGS, canManage, normalizeModeMeta, authorModeMeta, sudoModeMeta } from "./modes.js";
 import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
@@ -722,7 +722,7 @@ function assertRuntimeCanStart() {
   }
 }
 
-export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, sessionId: presetSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "" }) {
+export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, sessionId: presetSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -766,7 +766,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // admin credential (web/auth.js), and `authorId` on that path is caller-supplied, so allowing
   // `mode:"full"` to set adminMode would let any key holder name an admin and get an unsandboxed
   // --dangerously-skip-permissions run. The channel's own stored adminMode still stands.
-  meta = authorModeMeta(meta, { isAdminAuthor: !untrustedPrincipal && await isAdmin(authorId), untrustedPrincipal });
+  const trustedAdminAuthor = !untrustedPrincipal && await isAdmin(authorId);
+  meta = authorModeMeta(meta, { isAdminAuthor: trustedAdminAuthor, untrustedPrincipal });
   meta = applyRunOverrides(meta, overrides);
 
   // Per-thread clean override (the "/clean" directive): this thread runs with channel-cleanMode
@@ -774,6 +775,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // so folder provisioning, MCP config, and skills all see the same effective meta — and so
   // scheduler/background/recovery turns that land in a clean thread stay clean too.
   if (!meta.cleanMode && (await getThreadClean(entry.slug, threadKey))) meta = { ...meta, cleanMode: true };
+
+  // `/sudo` is sticky to one thread but authority is deliberately NOT sticky: an organization
+  // admin must still be an admin on every turn. Background agents may inherit the launching
+  // thread's flag through sudoSourceThreadKey, but the same author check applies.
+  const sudoKey = sudoSourceThreadKey || threadKey;
+  const sudoThread = Boolean(sudoKey && await getThreadSudo(entry.slug, sudoKey));
+  if (sudoThread && trustedAdminAuthor) meta = sudoModeMeta(meta);
 
   // Engine: an explicit per-run API override is the most specific ask and beats everything
   // (matching the model/effort override precedence below); otherwise the per-thread override (a
@@ -792,6 +800,29 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // its own reasons: did a PERSON name this harness for this thread/run? It decides whether
   // automatic cross-engine failover is allowed to answer as the other harness (see below).
   const enginePinnedByUser = engineExplicit;
+
+  // A sudo thread is admin-only even if the channel itself admits this author. Return a normal
+  // result instead of throwing: unattended delivery and non-Slack surfaces can present the same
+  // explicit denial without starting diagnosis or provisioning any runtime state.
+  if (sudoThread && !trustedAdminAuthor) {
+    await logEvent("sudo_thread_message_rejected", {
+      channel: channelId, slug: entry.slug, author: authorId, threadKey: sudoKey, origin,
+    });
+    return {
+      slug: entry.slug,
+      cwd: "",
+      model: "",
+      engine,
+      content: "⛔ This is a sudo thread. Only organization admins can send messages or run work here.",
+      accessRefused: true,
+      sudoThread: true,
+      sessionId: null,
+      isNew: false,
+      usage: {},
+      costUSD: 0,
+      durationMs: 0,
+    };
+  }
 
   // An admin turned this harness OFF in Settings. Every stored pointer to it — the global default,
   // a channel override, a thread's own "/codex" directive — becomes stale the moment that switch
@@ -879,7 +910,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // Fail closed: inside a container there is no other way in, so no token is a configuration
   // error the operator must see.
   const claudeCredentialFor = async (forEngine) => {
-    if (forEngine !== "claude") return null;
+    if (forEngine !== "claude" || !isolatedRuntime) return null;
     const relay = await claudeRelayOnce();
     if (relay.token || relay.source === "api-key") return relay;
     throw Object.assign(new Error(`This channel runs in a container, but ${relay.error}.`), {
@@ -1192,8 +1223,32 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   let mcpConfigFingerprint = "";
   let gatewayCapability = "";
   let pluginMcpServers = [];
+  // A selected optional MCP the engine cannot admit safely (missing from the host config, needs a
+  // host credential, stale transport) is DROPPED from the payload by the engine's resolver instead
+  // of failing the run — an optional connector is never worth the turn, and refusing to relay the
+  // credential is the property that actually matters. The drop is announced, not silent: it is
+  // logged as an event for the admin and prefixed to the answer the author is already getting.
+  let mcpDropNote = "";
+  const reportRejectedMcps = async (rejected, forEngine) => {
+    if (!Array.isArray(rejected) || !rejected.length) return "";
+    await logEvent("run_mcp_dropped", {
+      channel: channelId,
+      slug: entry.slug,
+      author: authorId,
+      threadKey,
+      origin,
+      engine: forEngine,
+      // Names and category reasons only — the resolvers never emit a path, a config value or a
+      // definition, and this payload is readable in the admin observability view.
+      dropped: rejected.map(({ name, reason }) => ({ name: String(name || ""), reason: String(reason || "") })),
+    });
+    const list = rejected.map(({ name, reason }) => `\`${String(name || "")}\` — ${String(reason || "unavailable")}`).join("; ");
+    return `⚠️ _Skipped ${rejected.length === 1 ? "MCP connection" : "MCP connections"}: ${list}. The rest of this turn ran normally; an admin can fix the selection in the channel's Cloud MCP settings._\n\n`;
+  };
   const mintGatewayMcpRuntime = async () => {
-    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, pluginServers: pluginMcpServers = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    let rejectedMcps = [];
+    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, pluginServers: pluginMcpServers = [], rejectedMcps = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    mcpDropNote = await reportRejectedMcps(rejectedMcps, engine);
   };
 
   // Every granted definition is explicit in the per-run payload. Keep ambient MCPs disabled
@@ -1277,6 +1332,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     isNewSession: isNew,
     clean,
     adminMode: Boolean(meta.adminMode),
+    sudoThread,
     autoMode: Boolean(meta.autoMode),
     allowBash: Boolean(meta.allowBash),
     allowNetwork: Boolean(meta.allowNetwork),
@@ -1367,8 +1423,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
       origin, cwd, prompt, session: { id: sid, fresh }, policy: confinement,
       // WHERE the runner spawns: it calls target.runtime.spawn/probe/signal instead of
-      // child_process + kill(pid), and reads the container-only credential/artifact facts beside
-      // it. Mirrored into the runtime bag below so an adapter can read either shape.
+      // child_process + kill(pid), and reads that runtime's credential/artifact facts beside it.
+      // Mirrored into the runtime bag below so an adapter can read either shape.
       target, claudeOauthToken, artifactDir: target.artifactDir,
       runtime: {
         target, claudeOauthToken, claudeTokenFingerprint: claudeTokenFp, artifactDir: target.artifactDir,
@@ -1544,6 +1600,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // claim to choose allowedCodexMcps vs allowedMcps for mutations; reusing the failed engine's
     // token would cross that authority boundary even though a different runner executes.
     const fallbackMcpRuntime = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine: fallbackEngine, target, allowedMcps: meta[fallbackAdapter.mcpMetaKey] || [] });
+    // The fallback resolves the OTHER engine's own selections, so it reports its own drops. The
+    // primary engine's note is not carried over: this answer came from the fallback.
+    const fbMcpDropNote = await reportRejectedMcps(fallbackMcpRuntime.rejectedMcps, fallbackEngine);
     const fbKey = `${threadKey}::${fallbackEngine}-fallback`;
     const prior = await getSession(entry.slug, fbKey);
     // A FRESH fallback session can't resume the failed engine's conversation, so without help it
@@ -1665,7 +1724,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
     const fallbackResult = {
       ...baseMeta, ...cx,
-      content: redactSecretValues(licenseWarning + (note || "") + fallbackModelNote + (cx.content || ""), outputSecrets),
+      content: redactSecretValues(licenseWarning + (note || "") + fbMcpDropNote + fallbackModelNote + (cx.content || ""), outputSecrets),
       sessionId: cx.sessionId ?? null,
       engine: fallbackEngine,
       isNew: !prior,
@@ -1768,8 +1827,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // not at the head of a queue this turn may have sat in for hours) and materialize the
     // token-bearing config file built around it (see above). From here on the session row is the
     // engine's: a later failure keeps it (resume-heal, failover and /clear own that story).
-    engineStarted = true;
+    // Minted BEFORE `engineStarted` flips: a failure in here is still a turn whose engine never
+    // spawned, so the session row this turn minted must not survive it (see dropUnusedSession).
     await mintGatewayMcpRuntime();
+    engineStarted = true;
     if (mcpConfigFile) {
       await mkdir(path.dirname(mcpConfigFile), { recursive: true, mode: 0o700 });
       await writeFile(mcpConfigFile, mcpConfigJson, { mode: 0o600 });
@@ -2019,7 +2080,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // `runtimeModel` keeps the CLI-reported truth for context-window math and Codex cost rates.
     return {
       ...redactSecretFields(finalResult, outputSecrets),
-      content: redactSecretValues(licenseWarning + (finalResult.content || ""), outputSecrets),
+      content: redactSecretValues(licenseWarning + mcpDropNote + (finalResult.content || ""), outputSecrets),
       loopWakeup,
       runtimeModel: resolveCurrentModel(finalResult),
       model: model || resolveCurrentModel(finalResult),

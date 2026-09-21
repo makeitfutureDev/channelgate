@@ -1,9 +1,6 @@
-// The daemon's OWN process spawner. NOT a channel runtime backend: since 2026-09-03 every channel
-// turn runs in the container backend (src/runtimes/container/), and this module exists only for the
-// few processes the daemon itself runs on its own host — the transactional updater's Claude smoke
-// probe and the direct-runner tests. It is deliberately not registered in ./registry.js, so no
-// channel can ever resolve to it, and it declares `isolated: false` so a runner that receives it
-// knows there is no container boundary around the child.
+// The daemon's internal process spawner. This is NOT the registered `/sudo` host backend: it exists
+// for the transactional updater's Claude smoke probe and direct-runner tests, has no engine helper
+// catalog, and cannot be selected by a channel turn. Direct host turns use ./host.js instead.
 import { spawn } from "node:child_process";
 import { killTree } from "../util/proc.js";
 import { pidAlive } from "../engines/watchdog.js";
@@ -62,7 +59,7 @@ export const localRuntime = Object.freeze({
   },
 
   helperCommand(target, name) {
-    throw new TypeError(`runtime helper "${name}" is only available inside a channel container`);
+    throw new TypeError(`runtime helper "${name}" is unavailable in the daemon-internal local runtime`);
   },
 
   // Both carry directions are a copy on the daemon's own filesystem here; they exist so a caller

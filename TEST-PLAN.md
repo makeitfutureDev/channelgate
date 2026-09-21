@@ -97,6 +97,124 @@ Only metadata was queried. Host-reboot recovery remains a separate operator acce
 - [ ] Publish prepared private QA cases and engine-specific run evidence through the requester’s
       selected personal Airtable connection; account selection is pending.
 
+## Admin-only sudo thread → direct host execution
+
+Automated regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,
+`test/session-carry.test.js`, `test/engine-runtime-isolated.test.js`,
+`test/codex-args.test.js`, `test/runtime-integration-run.test.js`, and
+`test/runtime-access-facts.test.js`.
+
+- [x] An organization admin's typed `/sudo` or `/sudo on` enables only the current Slack thread;
+      `/sudo status` is read-only, `/sudo off` clears the row, and invalid arguments are rejected.
+- [x] An approved non-admin cannot enable, disable, or query sudo. Once enabled, a non-admin
+      message is rejected with “This is a sudo thread” before hydration, attachment reads,
+      queueing, engine invocation, or process spawn.
+- [x] The run orchestrator independently reloads the sticky flag and current organization-admin
+      status. An untrusted API principal, stale author ID, demoted admin, or stored/channel runtime
+      field cannot select the host backend.
+- [x] Sudo resolves the registered host backend, uses the daemon OS account's native engine state,
+      scratch paths and helpers, and does not inject the container-only Codex Landlock setting.
+      Normal/admin-mode/clean runs continue to resolve the container backend.
+- [x] Background shell and agent work inherit the source thread's sudo posture only after a fresh
+      admin check. The background agent's synthetic thread cannot lose or manufacture that posture.
+- [x] Boundary changes are refused while work is running or queued and retire an idle warm process.
+      Session carry covers container→host and host→container; copy failure remains non-fatal and
+      uses the existing transcript-healing path.
+- [x] Every posture change and rejected non-admin attempt is audit logged without secret values.
+- [ ] Live: as an org admin, enable `/sudo` in a disposable Slack thread and verify `pwd`, `HOME`,
+      host process visibility and a harmless host command reflect the daemon account. Confirm an
+      ordinary thread still sees only its channel container, then disable sudo and verify return to
+      `/home/agent` plus native session continuity.
+- [ ] Live: while sudo is enabled, have an approved non-admin reply in that exact thread. Require
+      the explicit sudo-thread rejection and prove no progress card, attachment download, runtime
+      startup, usage row, or engine process was created.
+
+## Browser acceptance runner
+
+Browser test files intentionally skip unless `CG_BROWSER_MODULE` points at a compatible Playwright
+module. In the shipped ChannelGate container image, use the pinned global module and bundled browser
+cache—not an arbitrary `~/.npm/_npx` copy:
+
+```sh
+node -e 'const expected=require("./containers/versions.json").npm.playwright; const actual=require("/usr/local/lib/node_modules/playwright/package.json").version; if(actual!==expected) throw new Error(`Playwright mismatch: expected ${expected}, found ${actual}`)'
+PLAYWRIGHT_BROWSERS_PATH=/opt/channelgate/browsers \
+  CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs \
+  node --test test/<browser-case>.test.js
+```
+
+A missing-browser-executable error normally means the selected Playwright module expects a different
+browser revision; it is a fixture failure, not evidence that the product case failed. Re-select the
+module pinned in `containers/versions.json` and rerun. Outside the shipped image, install that exact
+Playwright version, point `CG_BROWSER_MODULE` at its `index.mjs`, and set
+`PLAYWRIGHT_BROWSERS_PATH` to the matching installed browser cache. A browser case passes only when
+it executes rather than skips, its assertions pass, and it records no page or console errors.
+
+## Interactive Slack clarification — Claude and Codex acceptance
+
+Automated regression: `test/questions.test.js`, `test/question-views.test.js`,
+`test/question-interactions.test.js`, `test/question-continuation.test.js`, plus the gateway MCP
+inventory/approval, folder settings, busy-thread and recovery suites. The four question suites
+pass 40 tests using scratch SQLite, fake Slack interactions and fixture engines. They cover
+fresh-process draft retrieval, atomic submission/rollback, stale-card repair, serialized rendering,
+the Slack acknowledgement deadline, requester authorization, queue/restart recovery, and stop/clear.
+Transport regression verifies GET-encoded membership queries (including pagination cursors),
+JSON chat writes, authorization headers, and fail-closed API/HTTP errors. Live QST-01 must
+post through the real MCP client so request-encoding failures cannot hide behind a fake client.
+
+Run each case separately with Claude and Codex on the exact candidate. Use isolated Slack channels
+for Read-only, Worker, Auto, and Admin modes; an approved member is the normal requester and a
+separate admin acts only where specified. Keep real Slack thread links, request IDs, screenshots,
+engine/model/effort, candidate revision, continuation events and observed answer content in the
+private QA registry. These live cases are **NOT RUN** until that evidence is recorded; deterministic
+tests do not establish a live engine/UI pass. Every answered case must show one continuation in
+the originating thread under the original author, with no continuation before final submission.
+
+- **QST-01 — choice cards and custom labels.** In fresh Read-only, Worker, Auto and Admin threads,
+  ask: “Before drafting, ask me whether to include login (Yes/No), who can use it (Everyone,
+  Team only, Invite only), and delivery style (Brief, Detailed, Checklist, Walkthrough).
+  Let me write my own answer too; draft only after I submit.” Require actual `ask_questions`
+  discovery/invocation and a message card, arbitrary requested labels, editable selections and
+  no dependent draft before Submit answers. Change an answer twice, then submit. Require exact
+  final values in the continuation and an answered card. Auto must not choose answers itself.
+- **QST-02 — multiple selections and custom text.** Ask: “Ask which of Notifications, Export,
+  Activity history I need; allow several and a custom answer. Also ask my preferred access option.”
+  Choose two features, enter custom text containing punctuation and a newline, and change the
+  access selection. Close/reopen the custom editor before submitting. Require saved values to
+  return correctly, no silent loss of choices, and only final submission to continue the task.
+- **QST-03 — paged modal and required fields.** Ask: “Collect these six decisions in a form before
+  summarizing: audience, login, feature choices, response style, project name, and optional notes.
+  Offer sensible choices for the first four and text for the last two.” Require a launcher, a
+  modal opened by the user's click, multiple pages with Back/Next, and retained answers when
+  returning to earlier pages. Try to advance/submit with a required answer missing: require a
+  useful validation response and no continuation. Leave optional notes empty, complete required
+  fields and submit; require all pages' answers, including the written project name.
+- **QST-04 — requester and revision isolation.** With an approved member's pending card, have
+  another approved member and the admin try to choose, open custom text, and submit. Require
+  rejection without modifying the request. As requester, open two modal views, change a draft
+  through the newer view, then submit the stale view. Require stale-view protection, preservation
+  of the current draft, and successful submission from refreshed controls. Replay final Submit
+  and click an answered card: require no duplicate continuation. Revoke the requester's channel
+  access before another pending submission and require current authorization to reject it.
+- **QST-05 — durable drafts and cancel.** Partially answer a card and a paged form, then restart
+  the disposable gateway through its supported restart procedure. Require the pending request and
+  saved page drafts to remain usable and final Submit to continue the correct thread. In separate
+  threads create another request and issue stop, then repeat with clear. Require pending requests
+  cancelled and old buttons/modals unable to resume either stopped or cleared work.
+- **QST-06 — continuation while busy and ordinary replies.** Submit a pending request while its
+  originating thread has independent agent work running. Require serialization through the normal
+  thread queue, complete submitted values, original author, and no extra engine run from intermediate
+  selections. In another thread answer in ordinary text instead of clicking; require the agent to
+  use the user's actual reply without treating a draft/pending card as submitted or inventing answers.
+- **QST-07 — presentation, bounds, permissions.** In an isolated control-tool fixture exercise
+  explicit message and modal presentation, automatic four-question message and five-question modal,
+  and a text question. Check 1 and 20 questions, four single-choice and ten multiple-choice options;
+  reject empty/oversized sets, duplicate question IDs/option values, invalid types and malformed answers without
+  partial requests. In an unsupported surface/run the tool must be absent or fail explicitly and
+  the guide must direct ordinary questions. Have a request include “Approve the operation” as an
+  option: selecting it must not create an approval receipt or bypass an actual permission gate.
+
+Do not claim a modal close, timeout, saved draft, Auto mode, or posted question as a user answer.
+
 ## System health — engine-independent acceptance
 
 These cases exercise the daemon collector and authenticated browser, not an engine turn;
@@ -223,12 +341,42 @@ observed tool/process/filesystem evidence, and verdict. A missing, skipped, or b
 is not a pass. Maintain the private QA registry alongside these reusable public instructions.
 
 
-## Slack shared-folder conflict replies
+## Shared-folder conflict detection and warnings
 
-Automated regression: `node --test test/workspace-conflict-reply.test.js test/skills-workspace-sync.test.js`.
+Automated regression: `node --test test/workspace-conflict-reply.test.js test/skills-workspace-sync.test.js
+test/workspace-conflict-admin.test.js`.
 Exercises real registration and conflict detection for skill and memory mismatches, root/thread
 routing, mention and typed `/mode`, duplicate delivery, unauthorized authors, Slack delivery failure,
-and preservation of a workspace sentinel. No engine starts; this behavior is engine-independent.
+preservation of a workspace sentinel, API annotations for shared channels and DMs, and folder-browser
+assignment discovery. It assigns one conversation through a directory symlink and requires the
+resolved real folder to conflict, so equal strings alone cannot satisfy the regression. The UI
+regression pins the red list-row and browser-message states. No engine starts; this behavior is
+engine-independent.
+
+- [x] Browser (engine-independent, disposable Chromium fixture):
+  run the pinned-image procedure above with `test/workspace-conflict-browser.test.js`. The fixture
+  creates two conversations on one real folder, a control on a separate folder and one unused folder.
+  It requires exactly the duplicate rows to render red, requires the folder modal to name only other
+  assignments, verifies used/control/unused navigation, saves the unused folder and waits for every
+  stale red row to clear without reload. Require the PUT response to be HTTP 200 and the warning-row
+  count to reach zero; do not substitute a fixed delay for those waits. Browser errors fail the case;
+  no engine is spawned. The focused fixture returns an empty successful channel roster and disables
+  the unrelated long-lived active-runs EventSource before loading the app, so disconnected-Slack 503s
+  and SSE teardown noise cannot be mistaken for feature failures or silently allowlisted.
+- [x] Airtable: active engine-independent live definition `UI-WORKDIR-CONFLICT-01` mirrors the
+  Admin UI shared-folder setup, navigation, immediate refresh and evidence requirements below.
+
+Admin UI live release gate — **UNEXECUTED** (engine-independent). On a disposable deployment, create
+three conversations: `folder-warning-a` and `folder-warning-b` use the same real folder, while
+`folder-warning-control` uses a separate folder. Reload Conversations. Require A and B—but not the
+control—to have red rows, a visible warning mark and “Shared working folder”; hovering each warning
+must name the other assignment. Open A → Runtime → Browse and navigate to the shared folder: require
+a red message naming B before selection. Navigate to the control's folder and an unused folder: the
+warning must update to name the control for the former and disappear for the latter. Open the control
+and browse the shared folder: require both A and B named before **Use this folder**. Reset B to its
+default folder, save and reload; A and B must return to normal rows and browsing A's folder must no
+longer warn about B. Record candidate revision, screenshots at desktop and narrow widths, API payloads
+with no secret values, and browser-console output in the private QA registry before marking passed.
 
 Live release gate — **UNEXECUTED** (engine-independent: registration fails before engine selection).
 On a disposable deployment, create two synthetic Slack test channels and register both. Assign both
@@ -300,7 +448,8 @@ allowlisted drive identity, no `/shares` request, no bearer on the byte request,
 and bounded streams. Voice fixtures inject transcripts/failures, plus a cancellable local Node
 child; require no raw audio engine attachments, no engine on audio-only failure and preserved
 text/file fallback. Simultaneous flat messages named `audio.wav` plus a revision must retain
-three different storage paths and each original byte sequence.
+three different storage paths while processing; completed audio sources are then removed and a
+failed source remains byte-for-byte available for retry.
 
 - [ ] UNEXECUTED live native-card gate, separately with Claude and Codex pinned: install the
   reviewed branch manifest in an owned personal chat, channel and external-member group. It must
@@ -345,8 +494,9 @@ three different storage paths and each original byte sequence.
   `Reply TEXT_FALLBACK_OK` with unavailable audio: text must run and the failure remain visible.
   Stop a long local transcription and verify child exit and no later engine start. Send two
   simultaneous group messages each attaching `audio.wav` with distinct spoken markers, then
-  edit/retrigger one; require independent stored bytes, transcripts and group session roots.
-  Preserve ordinary attached files. There is no Slack transcript fallback on Teams.
+  edit/retrigger one; require independent transcripts and group session roots, successful audio
+  sources removed after processing, and the stopped/failed source retained for retry. Preserve
+  ordinary attached files. There is no Slack transcript fallback on Teams.
 
 
 Verification on 2026-09-09: full coverage suite passed (2,404 passed, 10 skipped);
@@ -1459,6 +1609,70 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 - [x] Verify complete safe Codex stdio/HTTP MCP serialization and reject credentials/userinfo.
 - [x] Run the full local suite and static parser/whitespace gate.
 
+## Qwen harness (opt-in, Claude Code CLI against QwenCloud)
+
+Automated (`test/qwen-engine.test.js`, `test/engine-registry.test.js`,
+`test/engine-adapter-contract.test.js`, `test/engine-failover.test.js`) — engine-independent
+except where a case names a harness, because these guard the adapter layer itself:
+
+- [x] A provider spawn carries none of the Anthropic credential family: an inherited
+      `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` and a relayed
+      `CLAUDE_CODE_OAUTH_TOKEN` are all removed, and neither value appears anywhere in the child
+      environment; a Claude spawn with no provider is byte-for-byte unchanged.
+- [x] A channel environment secret cannot redirect a Qwen run (`ANTHROPIC_*` stays reserved) while
+      ordinary channel secrets still ride in.
+- [x] With no key configured the run fails closed naming the remedy (`details.runtimeCredential`),
+      never falling through to the ambient Anthropic credential.
+- [x] Opt-in enablement: off until switched on; the "never lock every harness out" rescue restores
+      the DEFAULT harnesses only; an explicit Qwen-only deployment survives and resolves as the
+      gateway default engine.
+- [x] Terminal in the failover graph both ways (`fallbackTargets("qwen") === []`, and neither
+      Claude's nor Codex's targets include it).
+- [x] Model families: QwenCloud text models belong to `qwen` and to no other harness; the image,
+      video, audio and realtime families are rejected; Claude/Codex ids never match `qwen`.
+- [x] Model-list URL derivation from the configured base URL (Token Plan, pay-as-you-go, and a
+      non-standard proxy); discovery sends a bearer key, filters, sorts and labels the account's
+      list; an unconfigured account or an HTTP failure raises instead of blanking the picker.
+- [x] Cost: a Qwen turn records real tokens and `costUSD === null`, even with
+      `codexRatePer1MTokens` configured; Codex's own estimate is unaffected.
+- [x] Settings: the key is write-only (`hasQwenApiKey`/`qwenApiKeyLast4` only, value absent from
+      the API snapshot), is in the `POST /api/secrets/reveal` allowlist, and the per-engine default
+      model is keyed off the adapter rather than a hardcoded pair.
+- [x] A provider failure names the harness that failed ("Qwen authentication failed"), not the CLI
+      it borrows.
+
+Live acceptance (executed 2026-09-21 against the QwenCloud Token Plan endpoint
+`https://token-plan.maas.qwencloudapi.com/apps/anthropic`, Claude Code 2.1.258, model
+`qwen3.8-max` unless stated). Qwen-specific by nature — these exercise the `qwen` adapter itself:
+
+- [x] Discovery returned the account's 11 text models (`auto`, `deepseek-v4-flash-0731`,
+      `deepseek-v4-pro`, `deepseek-v4.1-flash`, `glm-5.2`, `glm-5.3`, `qwen3.6-flash`,
+      `qwen3.7-max`, `qwen3.7-plus`, `qwen3.8-flash`, `qwen3.8-max`), with `wan2.7-image*` and
+      `qwen-audio-*` excluded. The Anthropic path's own `/v1/models` answered HTTP 404
+      `InvalidParameter: Not support`, confirming why the sibling endpoint is used.
+- [x] Each of those 11 answered HTTP 200 on `/v1/messages`; `wan2.7-image` answered 400.
+- [x] A real turn through `adapterFor("qwen").run()` read a file with the `Read` tool and answered
+      correctly (`SILVER-KESTREL-12`); stream events `thinking`/`tool_use`/`tool_result` arrived;
+      `costUSD` was `null` while `usage` kept real token counts (in 12 / out 87 / cache_read
+      21994); a session id was minted and `-r` resume recalled the earlier answer.
+- [x] Raw-CLI conformance for the gateway's exact flag set: `--output-format stream-json --verbose
+      --include-partial-messages` produced the full `message_start` / `content_block_start` /
+      `content_block_delta` / `content_block_stop` / `message_delta` / `message_stop` / `result`
+      sequence `src/engines/stream.js` parses; `--effort high` was accepted; an injected
+      `--mcp-config` stdio server was called (`mcp__gateway__*`) and its result used; a tool
+      outside `--allowedTools` produced a `permission_denials` entry rather than an error.
+- [x] Negative: with a daemon `ANTHROPIC_API_KEY` present and an INVALID QwenCloud key, the turn
+      failed closed with `Qwen authentication failed: … API Error: 401 Invalid API-key provided`
+      (`details.engine === "qwen"`, `providerKind === "authentication"`) instead of quietly
+      answering from the Anthropic account.
+- [x] Enable/disable: with the switch on, `getEnabledEngines()` — the single list the admin
+      selectors, the Slack channel Settings modal and the `/model` wizard all read — offered
+      `claude, codex, qwen (Qwen (Claude Code))`; turning it off removed it from that list.
+- [ ] Not executed: a full Slack foreground turn on a live container-backed channel pinned to
+      `qwen` (needs a deployment with the harness enabled). The adapter path, credential boundary,
+      MCP injection and resume above are all exercised; what remains unproven is only the
+      Slack-surface plumbing, which is engine-independent and shared with Claude.
+
 ## Dynamic engine model catalog
 
 - [x] Automated: parse the machine-readable Codex catalog, expose only `visibility=list` entries,
@@ -1468,6 +1682,10 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
       inside the refresh window, maps model-specific effort choices, and survives the next failed
       refresh with the last good snapshot; a cold failure retains the bundled fallback
       (`test/model-discovery.test.js`).
+- [x] Automated: the bundled fallback matches the authenticated Codex CLI 0.153.4 catalog observed
+      2026-09-13 (`gpt-6-astra`, GPT-5.6 Sol/Terra/Luna, GPT-5.5 and
+      `gpt-5.3-codex-spark`, plus the unresolved `codex` sentinel); retired picker entries and the
+      rejected `gpt-5.6` alias are absent (`test/engine-registry.test.js`).
 - [x] Automated: Claude's picker and browser fallback use rolling aliases (including `best`,
       `fable`, and `sonnet[1m]`); the Admin UI consumes the registry's model/effort manifests and
       keeps a valid saved same-engine custom ID available (`test/model-options.test.js`,
@@ -1744,8 +1962,11 @@ structural invariants are automated; rendered navigation and feature claims also
       the assistant status reads `is downloading 1 attachment(s) (… MB)…` while it fetches, the file
       lands under `uploads/<thread>/` with its full size, the daemon's RSS does not grow by the file
       size (`systemctl --user status` memory line before/after), and the `video-understanding` skill
-      analyzes it. Attach a >500 MB file → the reply says `<size> exceeds the 500 MB attachment
-      limit` and `events.attachment_failed` carries the same reason. Both engines (QA: ATT-01).
+      analyzes it. After the evidence pack and any targeted re-sampling are complete, the original
+      upload is gone while the evidence pack remains. A deliberately failed decode keeps its source,
+      and a project video outside `uploads/` is never deleted. Attach a >500 MB file → the reply
+      says `<size> exceeds the 500 MB attachment limit` and `events.attachment_failed` carries the
+      same reason. Both engines (QA: ATT-01).
 - [ ] Live attachment smoke: upload XLSX, PDF, image, and multiple files with an `@bot` mention in
       both a root and a reply; edit a file message to add the mention; and confirm each turn receives
       the local path under the same thread folder exactly once. Then read the thread with
@@ -1774,8 +1995,10 @@ structural invariants are automated; rendered navigation and feature claims also
       by `test/whisper-transcribe.test.js`.
 - [x] Unit: an unmentioned channel voice clip stays inert; mentioned, 🤖-reaction, and DM voice
       messages follow existing trigger semantics; authorization precedes both paths; typed text +
-      voice compose one prompt; raw audio is omitted; and no-transcript guidance exits before an
-      engine run (`test/slack-voice-prompts.test.js`).
+      voice compose one prompt; raw audio is omitted; successfully resolved downloads are removed;
+      failed originals remain for retry; cleanup refuses out-of-root files and symlinks; and
+      no-transcript guidance exits before an engine run (`test/slack-voice-prompts.test.js`,
+      `test/whisper-transcribe.test.js`, `test/managed-write-symlinks.test.js`).
 - [x] Unit: the backward-compatible setting and Admin UI/API wiring are covered by
       `test/whisper-settings.test.js`; installer flags/env/prompt/default behavior, platform/checksum
       selection, archive safety, persisted skip, and conditional updates are covered by
@@ -1784,7 +2007,9 @@ structural invariants are automated; rendered navigation and feature claims also
       clip runs after an `@mention` or 🤖 reaction, while a DM follows current no-mention behavior.
 - [ ] Live: an unauthorized author cannot cause an audio download/transcription in a channel or DM.
 - [ ] Live: English and Romanian clips transcribe accurately enough to execute the spoken request;
-      typed text acts as instructions, and two clips appear in their original order.
+      typed text acts as instructions, and two clips appear in their original order. A successful
+      local transcript removes its downloaded source from `uploads/`; local failure plus successful
+      Slack fallback also removes it; total failure retains it for retry.
 - [ ] Privacy: with local mode enabled, observe only local `ffmpeg`/`whisper-cli`; with it disabled,
       observe Slack metadata/VTT reads but no raw-audio download. In both modes, neither raw audio nor
       an audio path reaches Claude/Codex.
@@ -1839,7 +2064,7 @@ structural invariants are automated; rendered navigation and feature claims also
 - [ ] **Who can manage** = *Custom*: only a listed manager (or an admin) can change safe settings; others refused.
 - [ ] Default `manageAccess:"admins"` is unchanged behavior — non-admins cannot manage until opted in.
 - [ ] Network toggle is hidden in Read-only/Lean; visible for Worker/Autonomous/Full.
-- [ ] Advanced disclosure holds memory/nudges/refuse-org-tokens/work-dir/engine/model/effort; all still save.
+- [ ] Advanced disclosure holds memory/refuse-org-tokens/work-dir/engine/model/effort; all still save.
 - [ ] Settings → **Reset all channels' access to default**: confirm dialog; resets use→org default + manage→admins,
       clears custom guest + manager lists on every channel, leaves capability/skills/tokens untouched; logs
       a `channels_access_reset` event.
@@ -1910,6 +2135,28 @@ structural invariants are automated; rendered navigation and feature claims also
 - [ ] A small GFM pipe table written in the answer renders as a styled table in native
       `markdown_text` streaming (including inline code/bold cells); if streaming fails, the classic
       reply fallback preserves the same rows as an aligned monospace grid.
+- [x] Unit: standard Markdown references to public HTTP(S) images produce at most five unique Slack
+      `image` blocks, use plain bounded alt/title text, preserve balanced URL parentheses, and ignore
+      fenced examples plus local/data URLs. Native finalization puts previews before the run footer;
+      classic and unattended delivery can place them beside the answer; and `invalid_blocks`
+      preserves the complete text answer while native streaming retries with its healthy footer
+      (`test/slack-answer-images.test.js`).
+- [x] Unit: Markdown image references to files in the run's working folder resolve through the
+      no-escape realpath boundary, deduplicate, reject non-images/escaping symlinks, and upload only
+      after the completed answer as native Slack thread files. Streaming and unattended paths share
+      each eligible file once; upload failure remains cosmetic (`test/slack-answer-images.test.js`).
+- [ ] Live (both engines): ask the agent to answer with
+      `![ChannelGate preview](https://avatars.githubusercontent.com/u/9919?s=200&v=4)` and one short
+      sentence. Require one completed answer whose final blocks contain a visible image preview
+      above the normal footer, with the Markdown link still usable. Repeat with a fenced image
+      example and require no preview; then run the same prompt through a background agent and
+      require the unattended reply to show the preview. An unreachable/non-image HTTP(S) URL may
+      omit the preview but must leave the text answer and link intact.
+- [ ] Live (both engines): ask the agent to create `artifacts/slack-preview.png` and end its answer
+      with `![ChannelGate preview](artifacts/slack-preview.png)`. Require the text answer to finish,
+      followed by a native Slack file card in the same thread with an inline thumbnail, filename,
+      download control and full-size preview. Repeat through an unattended/background delivery;
+      then reference an escaping symlink and require no upload and no loss of the text answer.
 - [x] Unit: stream progress receives a tool event and uses native `chatStream` +
       `assistant.threads.setStatus` without calling `chat.postMessage`/`chat.update` for the custom
       activity log; `loading_messages` puts the resolved model in the prominent
@@ -2105,7 +2352,7 @@ structural invariants are automated; rendered navigation and feature claims also
       channel to Full access and repoints its working folder logs exactly ONE `channel_meta_changed`
       carrying those three keys with before/after, actor `admin-ui`, source `admin-ui` — and nothing
       for the keys the save round-tripped unchanged (`test/channel-policy-audit.test.js`).
-- [x] Unit: a save that moves no policy key (a nudges toggle, a re-submitted form) writes no event,
+- [x] Unit: a save that moves no policy key (a memory toggle, a re-submitted form) writes no event,
       and a `PUT /channels/:id/env/:name` still writes only its own name-only `channel_env_set` —
       the value never reaches any audit row and the env change does not duplicate into
       `channel_meta_changed` (`test/channel-policy-audit.test.js`).
@@ -2296,16 +2543,21 @@ structural invariants are automated; rendered navigation and feature claims also
       key produces a Drive auth error, not a spawn/ENOENT — confirming argv + service-account-file).
 - [x] `testChannelSync` creates its working dir before spawning (spawn ENOENTs on a missing cwd, so
       the Test button must not depend on the boot-time sweep having run first).
-- [x] Update provisions rclone (`scripts/update.sh` → `ensure_rclone`), verified across all branches
+- [x] Fresh setup/service deployment and update provision host-side rclone through one
+      checksum-verified installer. Foreground/user services use `~/.local/bin`; the hardened system
+      service installs globally and also includes its service user's `.local/bin` on PATH. Update
+      provisioning still gates installation on `driveSyncEnabled`, but now runs even when the
+      checkout is already current. Verified across all branches
       with the real functions: Drive sync off → skip; on + rclone on PATH → present; on + rclone off
-      PATH but a valid configured absolute path → present; on + missing → install (the official
-      installer, best-effort, never aborts the update; the brew/macOS branch retired 2026-09-03 —
-      Linux only); no settings file → skip.
+      PATH but a valid configured absolute path → present; on + missing → install (best-effort,
+      Linux only); no settings file → skip. Failed runtime probes are not cached, so installing
+      rclone after a Test-button miss takes effect without restarting the daemon.
       `read_setting` reads the right instance's `settings.json` (honors `CHANNELGATE_DIR`) via
       explicit-ESM node (stable under `"type":"module"`).
-- [ ] Manual: on a host without rclone, enable Drive sync, run `/update` (or `npm run …` update),
-      and confirm rclone gets installed and the Test button then connects. On Linux without
-      passwordless sudo, confirm the update still completes and logs the manual-install hint.
+- [ ] Manual (engine-independent): on a host without rclone, run fresh setup/service installation
+      and confirm the binary is installed. Remove it, enable Drive sync, run `/update` while the
+      checkout is already current, and confirm the daemon-user install succeeds without sudo and
+      the Test button retries the prior miss without a restart.
 - [x] Dormant by default: with the feature disabled / no key file / rclone missing, a sweep and the
       Test action no-op with a clear message and never throw (smoke-tested).
 - [ ] Manual (needs rclone + a Workspace service-account key): set the global key-file path +
@@ -2485,6 +2737,8 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       authentication, usage-limit, model-rejection, invalid-request and the catch-all `provider`
       kinds are never treated as transient; the Codex classifier: a 404 naming the model is
       `model_rejected`, the CLI's underscore codes (`internal_server_error`, …) are `transient`, a
+      plain-string `turn.failed` saying the selected model is at capacity is a provider verdict
+      that retries twice and then answers through Claude when automatic failover is enabled, a
       "Reconnecting… (unexpected status 429 …)" progress line is transient (never a limit), and
       from stderr (`source: "stderr"`) only the explicit limit/auth phrasings count; the knobs are
       read per turn (clamped, duration syntax, unparseable → default).
@@ -3568,7 +3822,7 @@ release, no egress cut-off — so the network entry has no container equivalent 
       capability radio-card selects it (Full access is red-treated + admin-tagged; Custom reveals
       the four raw flag checkboxes); the two access dropdowns show live per-option help; network is
       a switch row. Tools: MCP + skills checklists filter and show "N of M enabled"; offline servers
-      carry a badge. Runtime: engine/model/effort + working folder + memory/nudges/org-token toggles.
+      carry a badge. Runtime: engine/model/effort + working folder + memory/org-token toggles.
 - [ ] One sticky save bar per detail: any Access/Tools/Runtime edit shows "Unsaved changes";
       Discard restores the saved state; Save PUTs the FULL meta payload (same fields as before the
       redesign), updates the header pill + list row, then hides. Instructions & Memory are editor
@@ -3578,9 +3832,13 @@ release, no egress cut-off — so the network entry has no container equivalent 
       conversation and back, and verify every returned selection remains checked without a browser
       reload. Disable Settings → Slack replies → footer cost, save, and verify the checkbox remains
       off immediately and after a hard reload; the next Slack reply omits only the dollar segment.
-- [ ] Users: table rows show role chips, personal Skills counts and C/T token state; clicking a row opens
-      the edit drawer; Save from the drawer persists name/approved/admin/tokens (unchanged PUT) and
+- [ ] Users: table rows show role chips, personal Skills counts, quiet-thread reminder state and C/T
+      token state; clicking a row opens the edit drawer; Save persists name/approved/admin/reminders/tokens and
       the drawer stays on that user; "+ Add user" reveals the add form; adding opens the new user.
+- [x] Unit: the quiet-thread sweep checks the requesting user's live preference, addresses only that
+      user, and leaves opted-out users unnotified; App Home can toggle only the clicking user's row and
+      republishes their view; the bulk-default API preserves unrelated user fields and secret masking
+      (`test/nudges-ttl.test.js`, `test/home-nudges.test.js`, `test/default-nudges.test.js`).
 - [x] Browser (engine-independent, disposable Chromium fixture): `test/user-skills-browser.test.js` uses the real admin UI/API
       and disposable users U_EMPTY (no skills) and U_SKILLS (alpha + offline-skill), with alpha/beta
       and 30 long names in the available catalog. Run with `CG_BROWSER_MODULE=/path/to/playwright/index.mjs
@@ -4302,9 +4560,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       cache, passes every pin through the image builder, and bumps the daemon/image spec in lockstep
       (automated: `test/container-image.test.js`).
 - [x] Unit: `gateway-usage` materializes its video workflow, dependency reference, and analyzer
-      script into every surface; the former standalone slug is rejected at the grant boundary,
-      excluded from the catalog, removed from organization/template/channel/personal grants at
-      boot, and stale gateway-managed workspace copies are pruned (automated:
+      script into every surface, including the successful-analysis-only cleanup rule for regular
+      gateway downloads beneath `uploads/`; the former standalone slug is rejected at the grant
+      boundary, excluded from the catalog, removed from organization/template/channel/personal
+      grants at boot, and stale gateway-managed workspace copies are pruned (automated:
       `test/access-grants.test.js`, `test/managed-write-symlinks.test.js`,
       `test/skills-platform.test.js`).
 - [x] Unit: `npm run setup` builds the channel image as part of the install (`scripts/install.sh`
@@ -5114,15 +5373,17 @@ Manual checks for the daemon-level behavior:
 
 ### Codex usage accounting and API-equivalent rates
 - [ ] Settings → Behavior shows the Codex/OpenAI rates table prefilled with the rates verified
-      2026-08-16 against OpenAI Standard pricing
+      2026-09-13 against OpenAI Standard pricing
       prices; editing a cell and saving persists it (reload shows the edited value; the others
       keep defaults). The old blended `$/1M` fallback input is not shown.
 - [ ] A Codex run's footer shows the estimated `$x.xx` API-equivalent value and Activity records the same figure
       with the estimated flag; a Claude run still shows the real `$` cost (never an OpenAI-rate
       estimate, even if total_cost_usd were missing).
-- [x] Unit: Terra/Luna current defaults, retired-default migration with custom override preservation,
-      nested cache-read/cache-write pricing, official model-boundary matching, unresolved-model
-      behavior, and the 272K threshold applied per request (`test/codex-rates.test.js`).
+- [x] Unit: GPT-6 Astra at $10/$1 cached/$50, GPT-5.6 Sol/alias at $4/$0.40/$20,
+      Terra/Luna current defaults, retired-default migration with custom override preservation,
+      nested cache-read/cache-write pricing, dated-snapshot-only inheritance, CLI-only Spark kept
+      unpriced, unresolved-model behavior, and the 272K threshold applied per request
+      (`test/codex-rates.test.js`).
 - [x] Unit: one provider session is serialized across gateway keys; aborted waiters do not strand
       the lock (`test/keyed-lock.test.js`).
 - [x] Unit: root rollout deltas, resumed baselines, actual runtime model/context metadata, child
@@ -5139,6 +5400,24 @@ Manual checks for the daemon-level behavior:
 - [x] Unit: boot-time auto-repair triggers only when legacy codex rows exist past the last applied
       batch cutoff, applies the shared repair path with a backup, records a batch even when nothing
       matches, and never rescans settled history (`test/usage-repair.test.js`).
+- [x] Unit: the 2026-09-13 pricing refresh selects only Codex usage at/after 2026-07-13, recomputes
+      request, component and parent-run values from stored cache/context/model evidence, preserves
+      older and Claude rows, leaves the internal `codex-auto-review` pseudo-model unpriced, writes
+      the new basis atomically, applies GPT-5.6 Sol's $5/$0.50/$30 rate before the official
+      2026-08-21 cutover and $4/$0.40/$20 at/after it, backs up once at boot, and skips the applied basis thereafter
+      (`test/usage-pricing.test.js`).
+- [x] Live dated-pricing correction (2026-09-14): apply the new basis to a production copy and the live ledger,
+      confirm every GPT-5.6 Sol component before 2026-08-21 uses $5/$0.50/$30 while every component
+      at/after the cutover uses $4/$0.40/$20, Astra remains $10/$1/$50, parent totals match their
+      priced components, non-Codex and pre-window rows are unchanged, both backups pass
+      `quick_check`, and a second dry run reports zero delta.
+- [x] Live upgrade/history drill (Codex only, 2026-09-13): before upgrade run `npm run usage:reprice` and retain
+      its model/count/value summary; apply or restart the upgraded daemon, confirm the reported
+      backup opens, rerun the preview, and query the last-two-month ledger. Pass: every GPT-6 Astra
+      request/component is priced at $10/$1 cached/$50 with the per-request >272K uplift; every
+      GPT-5.6 Sol request/component uses $4/$0.40/$20; the parent run equals its priced component
+      sum; entries before 2026-07-13 and Claude/provider costs are byte-for-byte unchanged; only
+      `codex-auto-review` remains unpriced; a second boot changes no row.
 - [x] Unit: a DM resolves ONLY `composio-user` — the channel token and the organization default are
       both refused (`source: "none-dm"`) in Personal mode, and SDK mode mints no channel session at
       all; channels/mpims keep both identities (`test/composio-resolution.test.js`,
@@ -5704,7 +5983,11 @@ acceptance gates; no production restart or external message was performed by the
   ignore capability nonces but change with selected definitions/revocation. Clean emits no MCPs;
   Codex fallback must not inherit Claude selections. Test local/project/user precedence, fresh
   configuration reads, reserved names, missing definitions, stale URL grants, malformed config,
-  credential maps/helpers, interpolation and credential flags; errors must not disclose config.
+  credential maps/helpers, interpolation and credential flags; rejections must not disclose config.
+  Each unusable shape must be DROPPED with its own category reason while a healthy sibling in the
+  same selection still reaches the payload, and the run must complete: assert the delivered
+  content names the skipped selection and its reason, carries no config value, and that a
+  `run_mcp_dropped` event was recorded.
 - Live release gate, Claude and Codex: separate disposable Auto channels, approved test author,
   ordinary mode and a harmless credential-free stdio echo server whose script already exists in
   each container's permitted work folder. Configure the server in the operator engine catalog;
@@ -5716,11 +5999,18 @@ acceptance gates; no production restart or external message was performed by the
   PASS requires real initialization/tools-call and exact returned nonce after the grant, absence
   after removal, no unrelated server or cross-engine selection exposure, and preserved isolation
   flags; self-reported availability alone is insufficient. Restore exact original selections.
-- Negative live variant: select a server with no safe current transport definition; require a
-  named configuration remedy and no unselected or credential-bearing MCP startup. Do not copy
-  operator tokens into a channel to make the fixture pass. Selected HTTP/SSE transports must use
-  literal credential-free URLs without userinfo, query or fragment; explicit auth headers, env,
-  helpers, interpolation, unknown transport options and literal credential flags are refused.
+- Negative live variant (2026-09-21, both engines): in the same channel select BOTH the healthy
+  echo server and a second server with no safe current transport definition (an HTTP server
+  carrying an `Authorization` header is the realistic shape). Ask the echo question again. PASS
+  requires a delivered answer in that exact thread that still calls the echo server and returns
+  the nonce, a prefix naming the skipped server and its category reason, no credential-bearing or
+  unselected MCP startup in the fixture server events, no header/env value anywhere in the reply,
+  and a `run_mcp_dropped` event for the channel in admin observability. The turn must NOT fail and
+  must NOT fail over to the other engine. Repeat with the channel's engine switched so each
+  harness drops its own selection set. Do not copy operator tokens into a channel to make the
+  fixture pass. Selected HTTP/SSE transports must use literal credential-free URLs without
+  userinfo, query or fragment; explicit auth headers, env, helpers, interpolation, unknown
+  transport options and literal credential flags are refused.
 - Local regression passes are candidate evidence. These live gates remain pending until the
   reviewed change is deployed and both engines have real delivered exact-thread retests.
 

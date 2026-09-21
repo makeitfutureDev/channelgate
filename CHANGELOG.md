@@ -1,16 +1,81 @@
 # Changelog — ChannelGate
 
+- Stop an unusable Cloud MCP selection from failing a conversation. A selected optional MCP server
+  that is missing from the host configuration, needs a host credential, or no longer matches the
+  transport it was selected with is now dropped from that run — for Claude, Qwen and Codex, on the
+  primary and the failover engine alike — instead of ending the turn. The answer is prefixed with
+  which connections were skipped and why, and the drop is recorded as an event for admins. Host
+  credentials are still never relayed into a channel container, and a corrupt operator
+  configuration no longer blocks every channel that selected anything.
+
+- Add an optional **Qwen (Claude Code)** harness: the same Claude Code CLI driven against
+  QwenCloud's Anthropic-compatible endpoint, with its own gateway-level API key and base URL, and
+  a model list read live from the account. It is off until an admin turns it on, after which it
+  appears in the admin engine selectors, the Slack channel settings modal and `/model`. No
+  Anthropic credential ever reaches a Qwen run, it is outside the automatic failover in both
+  directions, and its turns are recorded with real tokens and no invented dollar cost.
+
 - Run prepared channel VPNs with OpenVPN 3 Linux and refresh their protected supervisors on ON.
   Add channel-scoped, bounded read-only database operations for Claude and Codex, without granting
   ordinary agent containers VPN privileges or exposing database credentials.
+
+- Provision the host-side `rclone` dependency during fresh deployments and repair it during an
+  update even when the checkout is already current. User services install it in `~/.local/bin`,
+  downloads are checksum-verified, and Google Drive connection tests retry an earlier missing-tool
+  result without requiring a daemon restart.
 
 - Control a prepared channel VPN through the agent, the web channel Network controls, and Slack
   Settings → Network. Managers/admins can turn it on/off; status distinguishes connecting from
   connected and reports safe certificate/authentication errors. Stopping also cleans up manual starts.
 
+- Move quiet-thread reminders from conversation settings to a personal user preference. Each
+  reminder now follows and mentions the requester across channels and DMs; users can turn it on or
+  off in Slack App Home, while admins can manage individual or organization-default choices.
+
 - Add an optional operator-managed OpenVPN/MySQL service per channel, with dedicated tunnel
   privileges, database-only routing/firewall, protected channel-secret references, a persistent
   user service and read-only verification. Ordinary chat containers retain their existing rights.
+
+- Fix Codex capacity refusals delivered as plain-text `turn.failed` events. They are now classified
+  as transient provider failures, retried in place, and automatically handed to the other enabled
+  harness when capacity remains unavailable.
+
+- Add an organization-admin-only `/sudo` posture for individual Slack threads. While enabled,
+  admin messages and their background work execute directly on the gateway host as the daemon OS
+  user; non-admin messages are rejected as sudo-thread traffic before work starts. `/sudo off`
+  restores the normal per-conversation container, with Claude/Codex session state carried across
+  the boundary when possible. The host runtime cannot be selected through channel metadata or the
+  run API, and every turn rechecks current admin authority.
+
+- Render up to five public images referenced in an agent's Slack answer as native Block Kit image
+  previews, while preserving clickable Markdown fallbacks and completed text delivery when Slack
+  rejects a preview. Images referenced from the channel workspace are now uploaded into the thread
+  as native Slack files instead, so they get the same inline thumbnail, download control and full
+  preview as a human attachment.
+
+- Highlight every conversation that shares its resolved working folder with another conversation
+  in red in the Admin UI, and warn in red while browsing a folder that is already assigned elsewhere.
+
+- Remove gateway-downloaded audio after a successful local or Slack-fallback transcript, while
+  retaining failed inputs for retry and refusing symlinks or paths outside managed uploads. Teach
+  the built-in video-understanding workflow to remove only successfully processed uploaded source
+  videos after all required re-sampling, never project files or failed inputs.
+
+- Correct Codex history repricing to honor OpenAI's effective date for GPT-5.6 Sol: retain the
+  original $5 / $0.50 cached / $30 rate before 2026-08-21 and apply $4 / $0.40 / $20 from that
+  date onward. Upgraded instances rerun the backup-first correction under a new pricing basis.
+
+- Refresh Codex Standard API-equivalent pricing from official OpenAI documentation: add
+  GPT-6 Astra at $10 / $1 cached / $50 per million tokens and reduce GPT-5.6 Sol (plus its
+  `gpt-5.6` alias) to $4 / $0.40 / $20. Keep the fallback picker aligned with the current Codex
+  CLI catalog, leave CLI-only Spark explicitly unpriced until an official rate exists, and
+  automatically back up and reprice component/request history since 2026-07-13 once on upgrade.
+
+- Fix Slack question-card posting by encoding channel membership checks as GET query parameters.
+
+- Let agents ask clarification questions with Slack cards and paged forms: custom option buttons,
+  Yes/No, multiple selections, and written answers. Save drafts until submission, retain pending
+  questions across restarts, and continue the requester's thread after they submit.
 
 - Keep sidebar update messages inside the rail, wrapping long details and showing a short commit
   revision with the full hash on hover.

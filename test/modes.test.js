@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage, modeSettingsPatch, normalizeModeMeta, authorModeMeta } =
+const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage, modeSettingsPatch, normalizeModeMeta, authorModeMeta, sudoModeMeta } =
   await import("../src/gateway/modes.js");
 const { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } = await import("../src/engines/network-policy.js");
+const { hasSudoRuntimeAuthority } = await import("../src/runtimes/sudo-authority.js");
 
 // modes.js is the mode/profile → capability-flag mapping plus the "who may manage a channel"
 // authz check. Both feed directly into what a spawned engine is allowed to do, so the exact
@@ -103,6 +104,23 @@ test("Admin gives non-admins Worker plus modifiers and trusted admins full conte
   }
   assert.equal(authorModeMeta(legacy, { isAdminAuthor: true, untrustedPrincipal: true }).cleanMode, true);
   assert.equal(authorModeMeta({ cleanMode: true }, { isAdminAuthor: true }).cleanMode, true);
+});
+
+test("sudo posture is a transient full host-work bundle without mutating stored metadata", () => {
+  const stored = { allowBash: false, autoMode: false, cleanMode: true, allowNetwork: false, marker: "kept" };
+  const sudo = sudoModeMeta(stored);
+  assert.deepEqual(Object.fromEntries(Object.entries(sudo)), {
+    allowBash: true,
+    autoMode: true,
+    cleanMode: false,
+    allowNetwork: true,
+    adminMode: true,
+    sudoMode: true,
+    marker: "kept",
+  });
+  assert.equal(hasSudoRuntimeAuthority(sudo), true);
+  assert.equal(hasSudoRuntimeAuthority(JSON.parse(JSON.stringify(sudo))), false, "serialization cannot persist host authority");
+  assert.deepEqual(stored, { allowBash: false, autoMode: false, cleanMode: true, allowNetwork: false, marker: "kept" });
 });
 
 test("canManage: admins always; default policy is admins-only", () => {

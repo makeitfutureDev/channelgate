@@ -29,7 +29,7 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../gateway/skills/authoring.js";
@@ -94,10 +94,12 @@ import { setAssistantStatus, startProgress } from "./progress.js";
 export { buildResumeCommand, resumeButton, filesButton, secretsButton, settingsButton, footerButtons, footerText, footerBlocks };
 export { setAssistantStatus, startProgress };
 import { processMessageEvent, runQueue, stopRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
+import { registerQuestionActions } from "./questions.js";
 import { appContextForMessage, appContextObservedAt, appContextUserId, createAppContextStore } from "./app-context.js";
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
+import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { buildStatusReport } from "./status-controller.js";
 // Re-exported for existing importers (tests) — moved to slack/message-pipeline.js.
@@ -1706,6 +1708,7 @@ async function connectAndWire(app) {
   });
   for (const a of APPROVAL_ACTIONS) app.action(a, handleApprovalClick);
   registerBusyThreadChoiceActions(app, processMessageEvent);
+  registerQuestionActions(app, processMessageEvent, { botUserId, teamId });
   registerEngineSwitchChoiceActions(app, processMessageEvent);
   // Indexed ids (`cg_model_pick_2`) are the per-choice buttons; the bare id is the retired
   // static_select, still clickable in Slack history. One pattern covers both.
@@ -2127,6 +2130,7 @@ async function connectAndWire(app) {
     const admin = await isAdmin(userId);
     const approved = await isApproved(userId);
     const role = admin ? "an *admin*" : approved ? "an *approved* user" : "*not yet approved* (an admin can approve you)";
+    const homeUser = (await getUsers())[userId] || {};
 
     // Connection status distinguishes personal Composio from the shared org fallback. Only
     // ✅/⚪/❌ is ever rendered — never a token value. A channel token may replace the org source
@@ -2165,7 +2169,6 @@ async function connectAndWire(app) {
 
     // Your skills: the personal tier of the grant union (skills only your own runs carry) plus the
     // organization tier everyone gets. Channel grants are per conversation and not knowable here.
-    const homeUser = (await getUsers())[userId] || {};
     const personalSkills = Array.isArray(homeUser.skills) ? homeUser.skills : [];
     const orgSkills = Array.isArray(getOrgAccessGrants().skills) ? getOrgAccessGrants().skills : [];
     let favLines = personalSkills.length
@@ -2174,7 +2177,7 @@ async function connectAndWire(app) {
     if (orgSkills.length) favLines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
 
     // In-thread commands + the active engine / how to switch models.
-    const commands = "`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/update` _(admin)_";
+    const commands = "`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/sudo` _(admin, typed in-thread)_ · `/update` _(admin)_";
     const engineInfo =
       `• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n` +
       "• Switch runtime: `/model` — channel or one thread → harness (Claude/Codex) → model → effort _(channel access set in Settings)_";
@@ -2203,6 +2206,7 @@ async function connectAndWire(app) {
       { type: "header", text: { type: "plain_text", text: "ChannelGate", emoji: true } },
       { type: "section", text: { type: "mrkdwn", text: `Hi <@${userId}> — you're ${role} on this gateway.` } },
       { type: "section", text: { type: "mrkdwn", text: "I'm Claude, running self-hosted in per-channel sandboxes. *DM me* (no mention needed) or *@mention me* in a channel. Use `/status` to see what a channel is working on, `/pending` for the threads I'm waiting on you for, or `/help` for all commands." } },
+      ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
       { type: "divider" },
       { type: "section", text: { type: "mrkdwn", text: `*Your connections* — the MCP tools you get when you run me\n${conns}` } },
       // Personal Composio key, set from a modal — the value never becomes a Slack message. Absent
@@ -2249,6 +2253,7 @@ async function connectAndWire(app) {
   });
 
   registerComposioHomeActions(app, { publishHome: publishHomeTab });
+  registerNudgeHomeActions(app, { publishHome: publishHomeTab });
 
   // Removing a ✅ re-opens that thread in the reactor's follow-up digest (the inverse of marking
   // it done). Other removed reactions are acknowledged as no-ops.
@@ -2343,7 +2348,6 @@ async function connectAndWire(app) {
           if (current) return {};
           const fresh = applyChannelTemplate(defaultChannelMeta({ channelId: event.channel, ...info }));
           if (!fresh.isDM) fresh.access = getDefaultChannelAccess();
-          fresh.nudges = getDefaultNudges(); // capture the org-default nudge at join
           return fresh;
         });
         await ensureChannelFolder(entry.slug, meta);

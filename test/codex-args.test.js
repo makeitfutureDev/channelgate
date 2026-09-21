@@ -13,7 +13,8 @@ import { createFakeRuntime } from "./fixtures/fake-runtime-backend.js";
 
 const scratch = ensureTestEnv();
 const { buildCodexArgs, buildCodexEnv, createCodexProgressState, headerHelperPath, headerHelperSource, progressFromCodexEvent } = await import("../src/engines/codex.js");
-const { CONTAINER_HOME, CONTAINER_PATH, localRuntimeTarget } = await import("../src/engines/runtime-target.js");
+const { CONTAINER_HOME, CONTAINER_PATH } = await import("../src/engines/runtime-target.js");
+const { hostBackend } = await import("../src/runtimes/host.js");
 const { workspaceRoot } = await import("../src/config/paths.js");
 const { allowedFsRoot } = await import("../src/web/security.js");
 
@@ -112,11 +113,19 @@ test("the network switch is validated but compiles to nothing in argv — egress
   assert.throws(() => argsFor({ networkMode: "unrestricted" }), /Unknown Codex network mode/);
 });
 
-test("Codex has no host path any more: no target, or the daemon's own local spawner, is refused before any argv exists", () => {
-  assert.throws(() => argsFor({ target: null }), /Codex runs only inside a channel container/);
-  assert.throws(() => argsFor({ target: localRuntimeTarget(target.cwd) }), /Codex runs only inside a channel container/);
-  assert.throws(() => buildCodexEnv({}, { PATH: "/usr/bin" }), /Codex runs only inside a channel container/);
-  assert.throws(() => buildCodexEnv({ target: localRuntimeTarget("/work") }, { PATH: "/usr/bin" }), /Codex runs only inside a channel container/);
+test("sudo-host Codex uses host helpers and the direct host environment", () => {
+  const host = hostBackend.prepareTarget({ slug: "sudo", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} });
+  const args = argsFor({ target: host, cwd: "/work", outFile: "/tmp/out.txt", dangerouslySkip: true, gatewayFsRoot: "/", gatewayWorkspaceRoot: "/work", secretBundlePath: "/tmp/bundle.json" });
+  assert.ok(args.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.ok(args.some((value) => value.includes("src/mcp/secret-env-bridge.js")), "host helper comes from this checkout");
+  assert.ok(cfgValues(args).some((value) => value.startsWith("mcp_servers.gateway.env.CHANNELGATE_DIR=")));
+  assert.ok(!cfgValues(args).includes("features.use_legacy_landlock=true"), "the container-only sandbox mechanism is absent");
+
+  const env = buildCodexEnv({ target: host }, { HOME: "/home/operator", CODEX_HOME: "/home/operator/.codex", PATH: "/usr/bin", SLACK_BOT_TOKEN: "never" });
+  assert.equal(env.HOME, "/home/operator");
+  assert.equal(env.CODEX_HOME, "/home/operator/.codex");
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.SLACK_BOT_TOKEN, undefined, "direct host execution still does not leak daemon secrets");
 });
 
 test("autonomous Codex runs use auto-review instead of invisible approval cancellation", () => {

@@ -84,7 +84,10 @@ sudo bash scripts/install-systemd.sh      # = npm run service:install, run as ro
 ```
 
 It provisions the final service user's subordinate UID/GID ranges, user runtime and cgroup
-delegation, then builds/probes the image in that user's own rootless Podman store. It writes
+delegation, installs the host-side `rclone` binary used by Google Drive synchronization, then
+builds/probes the image in that user's own rootless Podman store. A foreground `--no-service`
+setup installs `rclone` into `~/.local/bin` instead. Downloads are checked against the release
+checksum; a failed optional install leaves Drive sync dormant and prints a manual remedy. It writes
 `/etc/systemd/system/channelgate.service`, with `ProtectSystem=strict`, `ProtectHome=read-only`
 and private `/tmp`. The daemon must permit Podman's setuid namespace helpers; every channel
 container still uses no-new-privileges and dropped capabilities. API credentials belong in the

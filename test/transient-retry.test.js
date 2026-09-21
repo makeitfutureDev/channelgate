@@ -279,6 +279,23 @@ test("Codex: with failover ON, a failure that outlives every attempt is answered
   assert.equal(retryEvents(entry.slug).length, 2, "Codex was not re-probed during the cooldown");
 });
 
+test("Codex: a plain-text turn.failed capacity refusal retries, then falls back", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_CAPACITY", { name: "Capacity Failover", approved: true, isAdmin: false });
+  const entry = await channel("D_TR_CAPACITY", "transient-capacity", "codex");
+
+  const result = await turn("D_TR_CAPACITY", "U_TR_CAPACITY", "CODEX_STUB_CAPACITY_PLAIN", "1903.012");
+  assert.equal(result.engine, "claude");
+  assert.equal(result.fellBack, true);
+  assert.equal(result.fallbackFrom, "codex");
+  assert.match(result.content, /Codex hit a temporary provider error — retried 2× before giving up — using Claude/);
+  assert.match(result.content, /Stub engine reply/);
+  const events = retryEvents(entry.slug);
+  assert.equal(events.length, 2);
+  assert.ok(events.every((event) => event.kind === "transient" && /model is at capacity/i.test(event.error)));
+});
+
 test("ask mode: the exhausted failure is handed back as a choice — no switch, no cooldown", async () => {
   resetEngineCooldowns();
   saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });

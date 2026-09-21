@@ -22,6 +22,7 @@ import { modelLabel } from "./model-info.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { isForceStopping } from "./shutdown.js";
 import { postNotice } from "../platforms/notify.js";
+import { assertQuestionAccess } from "./question-access.js";
 
 
 // In-process change signal for the admin dashboard's SSE feed. The database remains the source of
@@ -57,6 +58,35 @@ export function recordActiveRun(id, rec) {
     announceChange();
   } catch {
     /* best-effort */
+  }
+}
+
+// A typed reply can answer pending questions too. Preserve their exact context in the durable
+// continuation before retiring the forms, in one transaction rather than a best-effort write
+// followed by cancellation. Failure leaves every form available and refuses the new launch.
+export function acceptQuestionReply(records, runId, rec) {
+  const db = getDb();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const retired = records.map((snapshot) => {
+      const row = db.prepare("SELECT data FROM question_requests WHERE id = ?").get(snapshot.id);
+      const current = row ? fromJson(row.data, null) : null;
+      if (!current || current.status !== "pending" || current.revision !== snapshot.revision) throw new Error("The pending questions changed before your reply was accepted. Please reply again.");
+      if (current.authorId !== rec.authorId || current.channelId !== rec.channelId || current.slug !== rec.slug || current.threadKey !== rec.threadKey) throw new Error("Question reply identity mismatch.");
+      const next = { ...current, status: "cancelled", answeredInThread: true, runId,
+        revision: current.revision + 1, updatedAt: Date.now() };
+      db.prepare("UPDATE question_requests SET status=?,revision=?,updated_ms=?,data=? WHERE id=?")
+        .run(next.status, next.revision, next.updatedAt, toJson(next), next.id);
+      return next;
+    });
+    db.prepare("INSERT INTO active_runs(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data")
+      .run(runId, toJson({ ...rec, id: runId }));
+    db.exec("COMMIT");
+    announceChange();
+    return retired;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* transaction already closed */ }
+    throw error;
   }
 }
 
@@ -431,6 +461,21 @@ export async function recoverRuns(stale, {
       status?.onEvent?.({ kind: "engine_note", text: "waiting to resume after gateway restart" });
       const queueError = await acquired;
       if (queueError) throw queueError;
+      // Submitting a form authenticates the requester at that instant. A restart (or its queue
+      // wait) can outlive that grant, so never replay their answers under stale access rights.
+      if (rec.questionSubmissionId) {
+        try {
+          await assertQuestionAccess(rec, client);
+        } catch {
+          markTerminal();
+          await postNotice(client, {
+            conversationId: rec.channelId,
+            threadKey: rec.threadKey,
+            text: "The submitted answers were not resumed because the requester no longer has access or access could not be verified.",
+          }).catch(() => {});
+          return;
+        }
+      }
       if (handle.aborted) { markTerminal(); return; }
       if (handle.controller.signal.aborted) { markTerminal(); return; }
       if (forceStopping()) return;

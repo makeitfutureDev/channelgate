@@ -8,6 +8,9 @@ import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
+// Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
+// direction carries no cycle.
+import { QWEN_DEFAULT_BASE_URL } from "../engines/qwen.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
@@ -260,13 +263,22 @@ export const ENGINES = ENGINE_IDS;
 // later) keeps working without a migration.
 // Fails OPEN: a stored map that disables everything would brick the gateway, so the getter treats
 // "all engines off" as "all engines on" (the API route also refuses to save that state).
+// An OPT-IN harness (adapter fact `optIn`) inverts the default: it is available only where the
+// admin explicitly switched it on. Qwen is the first — it needs a QwenCloud key nobody has by
+// default, so inheriting "missing key means enabled" would put a harness in every picker whose
+// every turn fails, and would make `git pull` change which provider a deployment can reach.
+const engineIsOptIn = (id) => Boolean(adapterOr(id).optIn);
 export function isEngineEnabled(engine) {
   const id = String(engine || "");
   if (!ENGINES.includes(id)) return false;
   const map = getSettings().engineEnabled;
-  if (!map || typeof map !== "object") return true;
-  if (!ENGINES.some((e) => map[e] !== false)) return true; // never lock every harness out
-  return map[id] !== false;
+  if (!map || typeof map !== "object") return !engineIsOptIn(id);
+  const on = (e) => (engineIsOptIn(e) ? map[e] === true : map[e] !== false);
+  // Never lock every harness out — but the rescue restores the DEFAULT harnesses only. An opt-in
+  // engine must never be switched on by a fallback, and a deployment that deliberately runs ONLY
+  // an opt-in harness must not have the others silently restored underneath it.
+  if (!ENGINES.some(on)) return !engineIsOptIn(id);
+  return on(id);
 }
 export function getEnabledEngines() {
   return ENGINES.filter(isEngineEnabled);
@@ -376,6 +388,22 @@ export function getContainerRuntime() {
     fullAccessHome: s.containerFullAccessHome === true,
   };
 }
+// ── Qwen provider (the `qwen` engine — src/engines/qwen.js) ───────────────────────────────────
+// A gateway-level credential, deliberately NOT a per-channel environment secret: `ANTHROPIC_*` is
+// a reserved prefix in channel-env.js because redirecting a run's provider is identity hijack.
+// Write-only from the API like every other token here — has*/last4 on listings, the value only
+// through POST /api/secrets/reveal.
+export function getQwenConfig() {
+  const s = getSettings();
+  return {
+    apiKey: typeof s.qwenApiKey === "string" ? s.qwenApiKey.trim() : "",
+    baseUrl: typeof s.qwenBaseUrl === "string" && s.qwenBaseUrl.trim() ? s.qwenBaseUrl.trim() : QWEN_DEFAULT_BASE_URL,
+  };
+}
+export function hasQwenApiKey() {
+  return Boolean(getQwenConfig().apiKey);
+}
+
 // The long-lived subscription token from `claude setup-token`, injected as CLAUDE_CODE_OAUTH_TOKEN
 // into container runs (plan §11 item 1). Never listed; write-only from the API like the other tokens.
 export function getContainerClaudeOauthToken() {
@@ -487,13 +515,14 @@ export function getCodexRatePer1MTokens() {
 }
 
 // Per-model Codex $/1M-token rates for the cost ESTIMATE (input / cached-input / output).
-// Defaults verified against OpenAI's STANDARD API pricing table on 2026-08-16; admins can adjust
+// Defaults verified against OpenAI's STANDARD API pricing table on 2026-09-13; admins can adjust
 // them in Settings → Integrations. `cachedInput` prices the cached_input_tokens subset of input.
 // Editable values are merged OVER these defaults, so a pricing change only needs the changed cell;
 // the model list itself is fixed and intentionally small.
 export const DEFAULT_CODEX_RATES = {
-  "gpt-5.6-sol": { input: 5, cachedInput: 0.5, output: 30 },
-  "gpt-5.6": { input: 5, cachedInput: 0.5, output: 30 }, // alias for gpt-5.6-sol
+  "gpt-6-astra": { input: 10, cachedInput: 1, output: 50 },
+  "gpt-5.6-sol": { input: 4, cachedInput: 0.4, output: 20 },
+  "gpt-5.6": { input: 4, cachedInput: 0.4, output: 20 }, // alias for gpt-5.6-sol
   "gpt-5.6-terra": { input: 2, cachedInput: 0.2, output: 12 },
   "gpt-5.6-luna": { input: 0.2, cachedInput: 0.02, output: 1.2 },
   "gpt-5.5": { input: 5, cachedInput: 0.5, output: 30 },
@@ -505,9 +534,11 @@ export const DEFAULT_CODEX_RATES = {
 
 // The admin UI historically saved the complete displayed table, including untouched defaults.
 // When OpenAI changes a default, an old full snapshot would therefore shadow the corrected code
-// forever. Treat only the two exact retired defaults as inherited values; genuinely customized
+// forever. Treat only the exact retired defaults as inherited values; genuinely customized
 // cells (anything else) remain authoritative. A subsequent Settings save persists the new table.
 const RETIRED_CODEX_DEFAULTS = {
+  "gpt-5.6-sol": { input: 5, cachedInput: 0.5, output: 30 },
+  "gpt-5.6": { input: 5, cachedInput: 0.5, output: 30 },
   "gpt-5.6-terra": { input: 2.5, cachedInput: 0.25, output: 15 },
   "gpt-5.6-luna": { input: 1, cachedInput: 0.1, output: 6 },
 };
@@ -666,18 +697,24 @@ export function getScheduleMaxPerChannel() {
   return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 20;
 }
 
-// Hours of silence before an opt-in channel's thread gets a single "no-response" nudge. Default 24.
+// Hours of silence before an opted-in user's thread gets a single "no-response" nudge. Default 24.
 export function getNoResponseReminderHours() {
   const v = Number(getSettings().noResponseReminderHours);
   return Number.isFinite(v) && v >= 1 ? v : 24;
 }
 
-// Org-level default for the no-response nudge, captured onto a channel's/DM's meta.nudges when the
-// bot first registers it (so changing this later only affects conversations added afterward; the
-// "reset all" button pushes it onto existing ones). Default off — nudges stay opt-in unless an
-// admin turns this on.
+// Org-level default for the no-response nudge, captured onto a user's record when the bot first
+// sees them (so changing this later only affects new users; the "apply to all" button pushes it
+// onto existing ones). Default off — nudges stay opt-in unless an admin turns this on.
 export function getDefaultNudges() {
   return Boolean(getSettings().defaultNudges);
+}
+
+// Old user rows predate the personal preference. Until first sight/backfill, interpret an absent
+// value through the current organization default instead of silently opting somebody in or out.
+export function userNudgesEnabled(user) {
+  if (!user || typeof user !== "object") return false;
+  return typeof user?.nudges === "boolean" ? user.nudges : getDefaultNudges();
 }
 
 // Personal "pending-response" follow-up digests. When on (default), each approved user gets a DM
@@ -854,6 +891,12 @@ export function settingsForApi() {
     engine: getEngine(),
     defaultClaudeModel: getDefaultModel("claude"),
     defaultCodexModel: getDefaultModel("codex"),
+    defaultQwenModel: getDefaultModel("qwen"),
+    // The Qwen provider: presence and endpoint only. The key itself is fetched one at a time from
+    // POST /api/secrets/reveal, like every other credential on this snapshot.
+    hasQwenApiKey: hasQwenApiKey(),
+    qwenApiKeyLast4: last4(getQwenConfig().apiKey),
+    qwenBaseUrl: getQwenConfig().baseUrl,
     modelChangeAccess: getModelChangeAccess(),
     engineEnabled: getEngineEnabledMap(),
     engineFallback: getEngineFallback(),

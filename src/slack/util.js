@@ -24,8 +24,9 @@ const MAX_REPLY_CHUNKS = 6;
 // Slack's hard limit on one section block's text. A chunk longer than this cannot carry the footer
 // in the same message and keeps the separate trailer below it.
 const MAX_SECTION_CHARS = 3000;
-export async function postChunkedReply(client, channel, threadTs, md, footer = "", buttonOrButtons = null, { footerBlocks = null } = {}) {
+export async function postChunkedReply(client, channel, threadTs, md, footer = "", buttonOrButtons = null, { footerBlocks = null, answerBlocks = null } = {}) {
   const buttons = (Array.isArray(buttonOrButtons) ? buttonOrButtons : [buttonOrButtons]).filter(Boolean);
+  let previews = (Array.isArray(answerBlocks) ? answerBlocks : []).filter(Boolean);
   let chunks = chunkMrkdwn(md || "", MAX_SLACK_CHARS).filter((c) => c.trim());
   if (!chunks.length) chunks = ["_(no output)_"];
   if (chunks.length > MAX_REPLY_CHUNKS) {
@@ -39,19 +40,30 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
     // carries nothing but stats and buttons. One Slack message renders either `text` or `blocks`,
     // so the chunk becomes a section block — possible only while it fits the section limit; a
     // longer answer keeps the plain chunk and the trailer below it.
-    if (last && footerBlocks?.length && chunks[i].length <= MAX_SECTION_CHARS) {
+    if (last && (footerBlocks?.length || previews.length) && chunks[i].length <= MAX_SECTION_CHARS) {
+      const inlineFooter = footer && !buttons.length && !footerBlocks?.length
+        ? [{ type: "context", elements: [{ type: "mrkdwn", text: footer.slice(0, MAX_SECTION_CHARS) }] }]
+        : [];
       try {
         await client.chat.postMessage({
           channel,
           thread_ts: threadTs,
           text: chunks[i],
-          blocks: [{ type: "section", text: { type: "mrkdwn", text: chunks[i] } }, ...footerBlocks],
+          blocks: [
+            { type: "section", text: { type: "mrkdwn", text: chunks[i] } },
+            ...previews,
+            ...(footerBlocks || []),
+            ...inlineFooter,
+          ],
         });
-        return;
+        previews = [];
+        if (footerBlocks?.length || inlineFooter.length) return;
+        continue;
       } catch (error) {
         // Cosmetic Block Kit trouble must never cost a completed answer: post the chunk plainly
         // and let the trailer below carry the stats.
         if (!isSlackInvalidBlocksError(error)) throw error;
+        previews = [];
       }
     }
     await client.chat.postMessage({
@@ -59,6 +71,20 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
       thread_ts: threadTs,
       text: last && footer && !buttons.length ? `${chunks[i]}\n\n${footer}` : chunks[i],
     });
+  }
+  // A long final chunk cannot become a section block (Slack caps one at 3,000 characters). Keep
+  // the answer as ordinary unfurled text, then attach its native previews in one compact message.
+  if (previews.length) {
+    try {
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: previews.length === 1 ? "Image preview" : "Image previews",
+        blocks: previews,
+      });
+    } catch (error) {
+      if (!isSlackInvalidBlocksError(error)) throw error;
+    }
   }
   // With controls, the footer moves to its own compact trailer message. One control fits as a
   // section accessory; multiple controls need an actions row because Slack sections allow only one
@@ -275,8 +301,10 @@ export function neutralizeSentinels(s) {
 // ── /model validation ─────────────────────────────────────────────────────────────────────────
 // The /model value flows straight into the engine's --model / -m flag; a typo'd or arbitrary
 // string breaks every later turn in the channel. Accept only the engine aliases and the known
-// model-id families (Claude: opus/sonnet/haiku aliases + claude-*; Codex: gpt-*, o<n>*, codex*).
-const MODEL_RE = /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\]|claude-[a-z0-9][a-z0-9.[\]-]*|gpt-[a-z0-9][a-z0-9.-]*|o[0-9][a-z0-9.-]*|codex(?:-[a-z0-9.-]+)?|[a-z0-9._-]+\/[a-z0-9._:/-]+)$/;
+// model-id families (Claude: opus/sonnet/haiku aliases + claude-*; Codex: gpt-*, o<n>*, codex*;
+// Qwen: the QwenCloud catalog's own families — qwen*/glm-*/deepseek-*/kimi-*/minimax-*/auto, which
+// a live `/models` fetch can extend at any time, so the shape is a family match, not a fixed list).
+const MODEL_RE = /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\]|claude-[a-z0-9][a-z0-9.[\]-]*|gpt-[a-z0-9][a-z0-9.-]*|o[0-9][a-z0-9.-]*|codex(?:-[a-z0-9.-]+)?|auto|qwen[0-9][a-z0-9._-]*|qwen-[a-z0-9._-]+|glm-[a-z0-9._-]+|deepseek-[a-z0-9._-]+|kimi-[a-z0-9._-]+|minimax-[a-z0-9._-]+|[a-z0-9._-]+\/[a-z0-9._:/-]+)$/;
 export function isValidModel(value) {
   const v = String(value || "").trim().toLowerCase();
   if (!v || v.length > 64 || /\s/.test(v)) return false;
