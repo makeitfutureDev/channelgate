@@ -323,15 +323,18 @@ export function createGatewayMcpServer(ctx) {
   server.registerTool = (name, def, handler) => {
     const gate = CONTROL_PLANE.get(name);
     return realRegisterTool(name, def, async (args, extra) => {
+      // Claude Code parses permission_prompt's reply as an allow/deny decision, so a refusal
+      // there must keep that shape — plain text reads as "invalid permission result" to the CLI.
+      const refuse = (message) => name === "permission_prompt" ? text(JSON.stringify({ behavior: "deny", message })) : text(message);
       const capability = ctx.verifyCapability();
       if (!capability.ok) {
-        return text(`🚫 Gateway capability rejected (${capability.reason}). Start a fresh run and try again.`);
+        return refuse(`🚫 Gateway capability rejected (${capability.reason}). Start a fresh run and try again.`);
       }
       // The HTTP run API authenticates a daemon key, not the caller-supplied Slack author id. Its
       // signed capability deliberately retains that id only for attribution; it must never become
       // authority inside this user/channel control plane (including read-only admin tools).
       if (capability.claims.principalTrusted !== true) {
-        return text("🚫 Gateway tools require a trusted Slack principal; this run was authenticated only as a daemon/API caller.");
+        return refuse("🚫 Gateway tools require a trusted Slack principal; this run was authenticated only as a daemon/API caller.");
       }
       let humanApproved = false;
       if (gate) {

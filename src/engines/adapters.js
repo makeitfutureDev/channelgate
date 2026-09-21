@@ -3,7 +3,7 @@ import { resolveClaudeMcpConfig } from "./claude-mcp.js";
 import { runClaude, buildClaudeEnv, buildPersistentArgs, canUseClaudeWarmPool } from "./claude.js";
 import { runCodex } from "./codex.js";
 import { runOpenCode } from "./opencode.js";
-import { discoverQwenModels, qwenCredentialState, qwenProviderEnv, QWEN_FALLBACK_MODELS, isQwenTextModel, resolveQwenProvider } from "./qwen.js";
+import { discoverQwenModels, qwenCredentialState, qwenProviderEnv, QWEN_FALLBACK_MODELS, QWEN_DEFAULT_MODEL, isQwenTextModel, resolveQwenProvider } from "./qwen.js";
 import { runPooled, abortPooled } from "./session-pool.js";
 import { compileNetworkPolicy } from "./network-policy.js";
 import { listEngineMcps, codexMcpPolicyFor } from "../gateway/mcp-discovery.js";
@@ -253,7 +253,7 @@ const qwen = validateEngineAdapter({
     const result = await runClaude({
       cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh,
       mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip,
-      settingsFile: r.settingsFile, model: r.model, effort: r.effort, timeoutMs: r.timeoutMs,
+      settingsFile: r.settingsFile, model: r.model || QWEN_DEFAULT_MODEL, effort: r.effort, timeoutMs: r.timeoutMs,
       maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent,
       permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs,
       instructionFile: r.instructionFile, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace,

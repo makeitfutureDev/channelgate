@@ -74,6 +74,36 @@ test("the run fails closed, naming the remedy, when no key is configured", async
   );
 });
 
+test("with no model configured anywhere, a Qwen run asks for a Qwen model, never the CLI default", async () => {
+  // The CLI's own default is an Anthropic id; QwenCloud answers it with 400 "Model not exist".
+  const { mkdtempSync, writeFileSync, chmodSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "cg-qwen-model-"));
+  writeFileSync(join(dir, "claude"), `#!/usr/bin/env node
+const i = process.argv.indexOf("--model");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", session_id: "s",
+  result: "model=" + (i >= 0 ? process.argv[i + 1] : "<none>"), usage: { input_tokens: 1, output_tokens: 1 } }) + "\\n");
+`);
+  chmodSync(join(dir, "claude"), 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${dir}:${oldPath}`;
+  try {
+    reset();
+    saveSettings({ qwenApiKey: "sk-sp-TEST" });
+    const result = await adapterFor("qwen").run({
+      cwd: dir, prompt: "hi", session: { id: "s", fresh: true },
+      policy: { network: { mode: "on" } }, runtime: { pluginRuntime: null, model: "" },
+    });
+    assert.equal(result.text ?? result.content ?? result.result, `model=${qwen.QWEN_DEFAULT_MODEL}`);
+    assert.ok(modelBelongsToEngine(qwen.QWEN_DEFAULT_MODEL, "qwen"));
+  } finally {
+    process.env.PATH = oldPath;
+    rmSync(dir, { recursive: true, force: true });
+    reset();
+  }
+});
+
 // ── Opt-in enablement ─────────────────────────────────────────────────────────────────────────
 
 test("Qwen is off until an admin turns it on, and is never enabled by a fallback", () => {
