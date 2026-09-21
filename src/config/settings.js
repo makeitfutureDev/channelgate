@@ -8,6 +8,9 @@ import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
+// Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
+// direction carries no cycle.
+import { QWEN_DEFAULT_BASE_URL } from "../engines/qwen.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
@@ -260,13 +263,22 @@ export const ENGINES = ENGINE_IDS;
 // later) keeps working without a migration.
 // Fails OPEN: a stored map that disables everything would brick the gateway, so the getter treats
 // "all engines off" as "all engines on" (the API route also refuses to save that state).
+// An OPT-IN harness (adapter fact `optIn`) inverts the default: it is available only where the
+// admin explicitly switched it on. Qwen is the first — it needs a QwenCloud key nobody has by
+// default, so inheriting "missing key means enabled" would put a harness in every picker whose
+// every turn fails, and would make `git pull` change which provider a deployment can reach.
+const engineIsOptIn = (id) => Boolean(adapterOr(id).optIn);
 export function isEngineEnabled(engine) {
   const id = String(engine || "");
   if (!ENGINES.includes(id)) return false;
   const map = getSettings().engineEnabled;
-  if (!map || typeof map !== "object") return true;
-  if (!ENGINES.some((e) => map[e] !== false)) return true; // never lock every harness out
-  return map[id] !== false;
+  if (!map || typeof map !== "object") return !engineIsOptIn(id);
+  const on = (e) => (engineIsOptIn(e) ? map[e] === true : map[e] !== false);
+  // Never lock every harness out — but the rescue restores the DEFAULT harnesses only. An opt-in
+  // engine must never be switched on by a fallback, and a deployment that deliberately runs ONLY
+  // an opt-in harness must not have the others silently restored underneath it.
+  if (!ENGINES.some(on)) return !engineIsOptIn(id);
+  return on(id);
 }
 export function getEnabledEngines() {
   return ENGINES.filter(isEngineEnabled);
@@ -376,6 +388,22 @@ export function getContainerRuntime() {
     fullAccessHome: s.containerFullAccessHome === true,
   };
 }
+// ── Qwen provider (the `qwen` engine — src/engines/qwen.js) ───────────────────────────────────
+// A gateway-level credential, deliberately NOT a per-channel environment secret: `ANTHROPIC_*` is
+// a reserved prefix in channel-env.js because redirecting a run's provider is identity hijack.
+// Write-only from the API like every other token here — has*/last4 on listings, the value only
+// through POST /api/secrets/reveal.
+export function getQwenConfig() {
+  const s = getSettings();
+  return {
+    apiKey: typeof s.qwenApiKey === "string" ? s.qwenApiKey.trim() : "",
+    baseUrl: typeof s.qwenBaseUrl === "string" && s.qwenBaseUrl.trim() ? s.qwenBaseUrl.trim() : QWEN_DEFAULT_BASE_URL,
+  };
+}
+export function hasQwenApiKey() {
+  return Boolean(getQwenConfig().apiKey);
+}
+
 // The long-lived subscription token from `claude setup-token`, injected as CLAUDE_CODE_OAUTH_TOKEN
 // into container runs (plan §11 item 1). Never listed; write-only from the API like the other tokens.
 export function getContainerClaudeOauthToken() {
@@ -863,6 +891,12 @@ export function settingsForApi() {
     engine: getEngine(),
     defaultClaudeModel: getDefaultModel("claude"),
     defaultCodexModel: getDefaultModel("codex"),
+    defaultQwenModel: getDefaultModel("qwen"),
+    // The Qwen provider: presence and endpoint only. The key itself is fetched one at a time from
+    // POST /api/secrets/reveal, like every other credential on this snapshot.
+    hasQwenApiKey: hasQwenApiKey(),
+    qwenApiKeyLast4: last4(getQwenConfig().apiKey),
+    qwenBaseUrl: getQwenConfig().baseUrl,
     modelChangeAccess: getModelChangeAccess(),
     engineEnabled: getEngineEnabledMap(),
     engineFallback: getEngineFallback(),

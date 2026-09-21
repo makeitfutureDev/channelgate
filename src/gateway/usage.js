@@ -9,7 +9,7 @@ import { getDb } from "../db/index.js";
 import { getSettings, getCodexModelRates } from "../config/settings.js";
 import { countDrop } from "../util/drops.js";
 import { resolveCurrentModel } from "./model-info.js";
-import { engineSupports } from "../engines/registry.js";
+import { engineSupports, engineCostRateKey } from "../engines/registry.js";
 import { normalizeCodexTokenUsage } from "../engines/codex-usage.js";
 
 // Codex reports no dollar cost — derive an ESTIMATE from the per-model $/1M rates in Settings
@@ -91,6 +91,10 @@ export function normalizeUsage(result = {}) {
   // Engines that report a real dollar cost use it as-is; only estimate for those that do not.
   // A `!== "codex"` test here would have handed a third engine Claude's cost semantics silently.
   if (engineSupports(result.engine, "realCost")) return { inTok, outTok, cachedTok, cacheWriteTok, costUSD: null, estimated: false };
+  // Neither a real cost NOR a configured rate of its own (the Qwen harness, whose adapter drops
+  // the Anthropic-priced figure its CLI reports): record the tokens and no dollar figure. Falling
+  // through to the Codex estimator here would price QwenCloud usage with OpenAI's rate table.
+  if (!engineCostRateKey(result.engine)) return { inTok, outTok, cachedTok, cacheWriteTok, costUSD: null, estimated: false };
   const est = estimateCodexCost(u, resolveCurrentModel(result), result.usageRequests);
   return { inTok, outTok, cachedTok, cacheWriteTok, costUSD: est.costUSD, estimated: est.estimated };
 }

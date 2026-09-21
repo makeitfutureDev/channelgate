@@ -579,6 +579,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   edits, external directories, plugins, MCP, and bypass modes fail closed because OpenCode
   permissions are not an OS sandbox. JSON streaming, session resume, cancellation, usage/cost, and
   health/version are supported. See `docs/OPENCODE-ADAPTER.md`. → TEST-PLAN: OpenCode proof adapter.
+- **Qwen (Claude Code)** proves the kernel a second way: a full-capability harness that reuses the
+  `claude` CLI against QwenCloud's Anthropic-compatible endpoint, added as an adapter with no
+  orchestrator or UI conditionals. → TEST-PLAN: Qwen harness.
 
 ## Public website
 - The marketing / early-access site (and its lead-routing contract) lives in its own
@@ -1219,6 +1222,47 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
     using the explicitly selected identity: `mcp__composio-user__*` for the active author's account
     or `mcp__composio-agent__*` for the agent's own account. Slack enforces the selected account's
     visibility. There is **no** separate hosted Slack MCP and no per-user `connect_slack` OAuth.
+
+## Qwen harness (opt-in, Claude Code CLI against QwenCloud)
+
+- A third full-capability engine, **`qwen` — "Qwen (Claude Code)"**: the same `claude` binary the
+  image already ships, pointed at QwenCloud's Anthropic-compatible endpoint. It therefore keeps the
+  CLI's whole feature set — stream-json progress, the tool loop, Slack approval cards
+  (`--permission-prompt-tool`), `--mcp-config` connectors, `CLAUDE.md`, `.claude/skills`, plugin
+  dirs, cold session resume — while everything the PROVIDER owns is its own.
+- **Opt-in, never implicit.** Unlike every other harness, a missing `engineEnabled` entry means
+  OFF: pulling this release does not add a harness to any picker, and the "never lock every
+  harness out" rescue restores the default harnesses only. Settings → Engine & runtime → *Harnesses
+  the gateway may use* turns it on; it then appears in the admin engine selectors, the Slack
+  channel Settings → *Change engine & model* modal, and the `/model` wizard, and `qwen` works as a
+  per-thread engine directive. Turning it off removes it from all of them.
+- **Gateway-level credential, never a channel secret.** Settings → Engine & runtime holds the
+  QwenCloud API key (write-only: `has*`/`last4` on listings, the value only through the audited
+  `POST /api/secrets/reveal`) and the base URL (Token Plan or pay-as-you-go). `ANTHROPIC_*` stays a
+  reserved prefix for per-channel secrets, so a conversation can never redirect its own provider.
+- **The Anthropic credential never leaves with it.** A Qwen spawn drops the whole Anthropic family
+  — an inherited `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` and the relayed
+  `CLAUDE_CODE_OAUTH_TOKEN` — before applying the provider's own values last. With no key
+  configured, or a rejected one, the turn fails closed naming the remedy; it never falls back to
+  the operator's Anthropic account, and its errors say "Qwen", not "Claude".
+- **Live model catalog.** The Anthropic-compatible path serves no `/v1/models`, so the discovery
+  hook reads the account's own list from the sibling `/compatible-mode/v1/models` endpoint derived
+  from the configured base URL, filtered to text/tool models (the image, video, audio and realtime
+  families cannot hold a conversation and are excluded). Settings and `/model` therefore offer what
+  the account can actually call, and a model QwenCloud adds needs no release. A shipped fallback
+  list covers a fresh install or an unreadable account, and the Settings card says which one is in
+  use.
+- **No invented cost.** Claude Code prices every turn with Anthropic's table, which is fiction for
+  QwenCloud tokens, so the adapter drops that figure at the boundary and the harness declares no
+  rate of its own: Qwen turns are recorded with real tokens and NO dollar amount (never Codex's
+  configured rate either).
+- **Outside the failover graph, both directions.** A Qwen limit must not spend the Anthropic quota,
+  and a Claude limit must not spend a QwenCloud balance. Cold runs only — a warm process holds the
+  environment it launched with, and the pool key carries no engine, so a rotated provider key or a
+  mid-thread harness switch could otherwise be served by a stale credential.
+- One **Cloud MCP** selection serves Claude and Qwen (same CLI, same file transport, same catalog),
+  so switching a channel's harness between them never silently drops its connectors.
+  → TEST-PLAN: Qwen harness.
 
 ## Engines (Claude + Codex)
 - Two CLI engines: **Claude** (default — warm sessions, exact cost, skills, `/compact`) and **Codex**

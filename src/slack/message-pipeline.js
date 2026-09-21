@@ -1049,13 +1049,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // It sticks until changed; the rest of the message is the task.
     if (files.length === 0) {
       const trimmed = prompt.trim();
-      const anchored = /^(claude|codex|opencode)\b[\s:,.;–—-]*([\s\S]*)$/i.exec(trimmed);
+      const anchored = new RegExp(`^(${ENGINE_IDS.join("|")})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
       // Only a switch INTENT near the START counts (index ≤ 12, allowing a short lead like
       // "ok "/"please "), so a long message that merely mentions switching ("explain how to
       // switch to codex in a script") doesn't flip the thread or get mangled.
       let phrase = null;
       if (!anchored) {
-        const m = /\b(?:switch(?:ing)?\s+to|use|using|try(?:\s+again)?(?:\s+with)?|retry(?:\s+with)?|run\s+(?:it|this|that)?\s*(?:with|on|in))\s+(claude|codex|opencode)\b/i.exec(trimmed);
+        const m = new RegExp(`\\b(?:switch(?:ing)?\\s+to|use|using|try(?:\\s+again)?(?:\\s+with)?|retry(?:\\s+with)?|run\\s+(?:it|this|that)?\\s*(?:with|on|in))\\s+(${ENGINE_IDS.join("|")})\\b`, "i").exec(trimmed);
         if (m && m.index <= 12) phrase = m;
       }
       if (anchored || phrase) {

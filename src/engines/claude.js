@@ -19,11 +19,35 @@ import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from ".
 const MAX_LOG_CHARS = 8_000;
 const MAX_RETAINED = 64_000; // stdout/stderr kept for error context — tail only, never unbounded
 
+// Harness id → the name its provider failures use. Kept here rather than read from the engine
+// registry: this module sits BELOW the registry in the import graph (the registry imports the
+// adapters, which import this file), so a registry lookup would close a cycle.
+const HARNESS_LABELS = { qwen: "Qwen" };
+
 // Plugin skill bodies may be loaded lazily after process startup. A run-private plugin directory
 // is deleted when the turn settles, so such a process must be cold (and therefore gone before
 // cleanup) rather than retained in the warm pool with dangling plugin paths.
 export function canUseClaudeWarmPool(runtime = {}) {
   return !runtime.preferCold && !runtime.claudePluginEphemeral;
+}
+
+// Every name that authenticates this CLI against ANTHROPIC. A run pointed at a different provider
+// (the Qwen adapter — src/engines/qwen.js) must carry NONE of them: an inherited ANTHROPIC_API_KEY
+// would race the provider's own token for precedence, and a relayed CLAUDE_CODE_OAUTH_TOKEN would
+// send the OPERATOR's Anthropic credential to a third-party host.
+const ANTHROPIC_CREDENTIAL_NAMES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"];
+
+// `providerEnv` redirects this CLI at an Anthropic-COMPATIBLE endpoint. Gateway-owned and applied
+// dead last — after the channel secrets, after HOME, after the login relay — and it clears the
+// whole Anthropic credential family first, so the redirect can never be half-applied.
+function applyProviderEnv(env, providerEnv) {
+  if (!providerEnv) return env;
+  for (const name of ANTHROPIC_CREDENTIAL_NAMES) delete env[name];
+  for (const [name, value] of Object.entries(providerEnv)) {
+    if (value === undefined || value === null || value === "") continue;
+    env[name] = String(value);
+  }
+  return env;
 }
 
 // `extraEnv` is the channel's own environment secrets (config/channel-env.js). Two independent
@@ -33,7 +57,7 @@ export function canUseClaudeWarmPool(runtime = {}) {
 // so they win outright. `browserNamespace` is gateway-owned for the same reason and sits in the
 // same last group: it decides which channel's browser daemon a browser MCP child attaches to
 // (gateway/browser-env.js), so a channel secret must not be able to name it.
-export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, browserNamespace = "", target = null, oauthToken = "" } = {}, source = process.env) {
+export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, browserNamespace = "", target = null, oauthToken = "", providerEnv = null } = {}, source = process.env) {
   // Apply at every spawn (cold, warm, background and reviewer), preserving an operator override.
   // Channel secrets cannot override this reserved name; never mutate the shared source object.
   source = { ...source, MCP_TIMEOUT: source.MCP_TIMEOUT || String(MCP_STARTUP_TIMEOUT_SECONDS * 1000) };
@@ -46,16 +70,16 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
   if (isIsolatedTarget(target)) {
     const image = containerPaths(target);
     const base = buildChildEnv({ ...safeSpawnEnv(extraEnv), ...browserSpawnEnv(browserNamespace) }, source);
-    return {
+    return applyProviderEnv({
       ...dropHostLocationEnv(base),
       HOME: image.home,
       CLAUDE_CONFIG_DIR: image.claudeConfigDir,
       PATH: image.path,
       TMPDIR: image.tmpDir,
       ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
-    };
+    }, providerEnv);
   }
-  return buildChildEnv({
+  return applyProviderEnv(buildChildEnv({
     ...safeSpawnEnv(extraEnv),
     ...browserSpawnEnv(browserNamespace),
     ...(home ? { HOME: home } : {}),
@@ -64,7 +88,7 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
     // the resolved login the same way. Same last group as HOME — gateway-owned, so a channel
     // secret can never displace it — and absent when there is nothing to relay.
     ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
-  }, source);
+  }, source), providerEnv);
 }
 
 function truncate(v) {
@@ -196,6 +220,13 @@ export async function runClaude({
   // claude-token-relay.js). Used on BOTH backends: a container has no login of its own, and a host
   // child no longer has a credentials file planted in its synthetic config dir.
   claudeOauthToken = "",
+  // Present only for an adapter that drives this CLI against an Anthropic-COMPATIBLE provider
+  // (src/engines/qwen.js). See applyProviderEnv.
+  providerEnv = null,
+  // Which ADAPTER is driving this CLI. Only labels (process registry, error details): the Qwen
+  // adapter runs the same binary, and a hard-coded "claude" here would file its turns and its
+  // failures under the wrong harness in /status and in the audit trail.
+  engineId = "claude",
   runId = "",
   timeoutMs = 10 * 60 * 1000,
   maxSilenceMs = null,
@@ -205,6 +236,10 @@ export async function runClaude({
 }) {
   const args = buildClaudeArgs({ prompt, sessionId, isNewSession, mcpConfig, strictMcp, dangerouslySkip, settingsFile, model, effort, permissionPromptTool, pluginDirs, instructionFile, disallowedTools });
   const runtime = runtimeTargetOr(target, cwd);
+  // What a provider failure calls itself in the thread. "Claude" is the CLI; the harness may be
+  // another provider driving it (src/engines/qwen.js), and the person reading the error has to
+  // know which account to go and look at.
+  const harnessLabel = engineId === "claude" ? "Claude" : HARNESS_LABELS[engineId] || engineId;
 
   return new Promise((resolve, reject) => {
     // Minimal allowlisted env — the sandbox can't hide the child's own environment (see child-env.js).
@@ -213,12 +248,12 @@ export async function runClaude({
       cmd: "claude",
       args,
       cwd,
-      env: buildClaudeEnv({ home, configDir, extraEnv, browserNamespace, target: runtime, oauthToken: claudeOauthToken }),
+      env: buildClaudeEnv({ home, configDir, extraEnv, browserNamespace, target: runtime, oauthToken: claudeOauthToken, providerEnv }),
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
       runId: runId || newRunId("run"),
       kind: "turn",
-    }), { engine: "claude", kind: "cold" });
+    }), { engine: engineId, kind: "cold" });
 
     let stdout = "";
     let stderr = "";
@@ -281,7 +316,7 @@ export async function runClaude({
       if (!p) return;
       // The LAST provider error wins: an earlier one the CLI recovered from must not label the
       // failure that actually ended the turn.
-      providerError = claudeProviderError(p) || providerError;
+      providerError = claudeProviderError(p, harnessLabel) || providerError;
       stream.consume(p);
       if (p.type === "result") result = p;
     };
@@ -320,7 +355,7 @@ export async function runClaude({
       if (trailing) handleLine(trailing);
 
       if (aborted) {
-        reject(commandError("Claude run was stopped before it finished.", { stdout: truncate(stdout), stderr: truncate(stderr), exitCode: code, signal: exitSignal || null, engine: "claude", runtime: runtime.backend, explicitStop: true }));
+        reject(commandError("Claude run was stopped before it finished.", { stdout: truncate(stdout), stderr: truncate(stderr), exitCode: code, signal: exitSignal || null, engine: engineId, runtime: runtime.backend, explicitStop: true }));
         return;
       }
       if (timedOut) {
@@ -333,7 +368,7 @@ export async function runClaude({
           stderr: truncate(stderr),
           exitCode: code,
           signal: exitSignal || null,
-          engine: "claude",
+          engine: engineId,
           runtime: runtime.backend,
           processEnded: true,
           providerError: Boolean(providerError),

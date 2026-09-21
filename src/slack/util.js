@@ -301,8 +301,10 @@ export function neutralizeSentinels(s) {
 // ── /model validation ─────────────────────────────────────────────────────────────────────────
 // The /model value flows straight into the engine's --model / -m flag; a typo'd or arbitrary
 // string breaks every later turn in the channel. Accept only the engine aliases and the known
-// model-id families (Claude: opus/sonnet/haiku aliases + claude-*; Codex: gpt-*, o<n>*, codex*).
-const MODEL_RE = /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\]|claude-[a-z0-9][a-z0-9.[\]-]*|gpt-[a-z0-9][a-z0-9.-]*|o[0-9][a-z0-9.-]*|codex(?:-[a-z0-9.-]+)?|[a-z0-9._-]+\/[a-z0-9._:/-]+)$/;
+// model-id families (Claude: opus/sonnet/haiku aliases + claude-*; Codex: gpt-*, o<n>*, codex*;
+// Qwen: the QwenCloud catalog's own families — qwen*/glm-*/deepseek-*/kimi-*/minimax-*/auto, which
+// a live `/models` fetch can extend at any time, so the shape is a family match, not a fixed list).
+const MODEL_RE = /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\]|claude-[a-z0-9][a-z0-9.[\]-]*|gpt-[a-z0-9][a-z0-9.-]*|o[0-9][a-z0-9.-]*|codex(?:-[a-z0-9.-]+)?|auto|qwen[0-9][a-z0-9._-]*|qwen-[a-z0-9._-]+|glm-[a-z0-9._-]+|deepseek-[a-z0-9._-]+|kimi-[a-z0-9._-]+|minimax-[a-z0-9._-]+|[a-z0-9._-]+\/[a-z0-9._:/-]+)$/;
 export function isValidModel(value) {
   const v = String(value || "").trim().toLowerCase();
   if (!v || v.length > 64 || /\s/.test(v)) return false;

@@ -16,6 +16,11 @@ export function engineLabel(engine) { return adapterFor(engine)?.label ?? String
 // only kinds the orchestrator replays in place (src/gateway/run.js withTransientRetry). An engine
 // that declares none is simply never retried that way.
 export function engineTransientKinds(engine) { return adapterFor(engine)?.transientKinds || []; }
+// The SETTINGS key holding this engine's configured $/1M token rate, for harnesses that report no
+// real dollar cost and can therefore only be estimated. An engine that declares none is recorded
+// with tokens and NO cost: inventing one from another provider's rate table would put a number in
+// the ledger that no invoice will ever match.
+export function engineCostRateKey(engine) { return adapterFor(engine)?.costRateKey || ""; }
 // The command a human types to pick this session up by hand. The engine owns the command itself;
 // the RUNTIME owns how you reach the engine — a container run has to be entered first, so the
 // backend wraps the base command (`<cli> exec -it -w <cwd> <name> <baseCommand>`). Called without

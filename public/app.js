@@ -159,7 +159,11 @@ const MODEL_OPTIONS = {
 // isn't in the curated list (hand-edited config, a full id like claude-opus-4-8) should survive as
 // an extra option (same engine: keep so Save round-trips it) or be dropped (other engine).
 function modelMatchesEngine(model, engine) {
-  return engine === "codex" ? /^(?:gpt-|o[0-9]|codex)/i.test(model) : /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/i.test(model);
+  if (engine === "codex") return /^(?:gpt-|o[0-9]|codex)/i.test(model);
+  // Mirrors isQwenTextModel (src/engines/qwen.js): the QwenCloud families, minus the image/audio
+  // ones that cannot hold a conversation.
+  if (engine === "qwen") return /^(?:auto|qwen[0-9][\w.-]*|qwen-[\w.-]+|glm-[\w.-]+|deepseek-[\w.-]+|kimi-[\w.-]+|minimax-[\w.-]+)$/i.test(model) && !/(?:^wan|image|video|audio|tts|realtime|t2v|i2v|speech)/i.test(model);
+  return /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/i.test(model);
 }
 
 // Fill a model <select> for an engine. `engine` pins the list (the Settings per-engine defaults);
@@ -3120,6 +3124,10 @@ function readSettingsForm() {
     engine: document.getElementById("set-engine").value,
     defaultClaudeModel: document.getElementById("set-default-claude-model").value,
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
+    defaultQwenModel: document.getElementById("set-default-qwen-model").value,
+    qwenBaseUrl: document.getElementById("set-qwen-base-url").value,
+    ...(tokenValue(document.getElementById("set-qwen-api-key")) ? { qwenApiKey: tokenValue(document.getElementById("set-qwen-api-key")) } : {}),
+    ...(document.getElementById("clear-qwen-api-key").classList.contains("armed") ? { clearQwenApiKey: true } : {}),
     modelChangeAccess: document.getElementById("set-model-change-access").value,
     engineEnabled: { ...ENGINE_ENABLED },
     engineFallback: document.getElementById("set-engine-fallback").checked,
@@ -3242,6 +3250,23 @@ function paintSettings(s) {
   GLOBAL_ENGINE = s.engine || "claude";
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
+  syncModelOptions({ modelSelect: document.getElementById("set-default-qwen-model"), engine: "qwen", value: s.defaultQwenModel || "", blankLabel: "provider default" });
+  document.getElementById("set-qwen-base-url").value = s.qwenBaseUrl || "";
+  document.getElementById("qwen-key-state").textContent = tokenState(s.hasQwenApiKey, s.qwenApiKeyLast4);
+  attachReveal(document.getElementById("set-qwen-api-key"), { has: s.hasQwenApiKey, last4: s.qwenApiKeyLast4 || "", fetch: revealSecret("settings", "qwenApiKey") });
+  // Say WHERE the Qwen list came from: a stale fallback list and a live one look identical in a
+  // <select>, and an admin picking a model the account cannot call would only find out in Slack.
+  {
+    const qwenCatalog = ENGINE_MANIFESTS.find((m) => m.id === "qwen")?.modelCatalog;
+    const note = document.getElementById("qwen-model-catalog");
+    if (note) {
+      note.textContent = qwenCatalog?.source === "live"
+        ? `Read from the QwenCloud account${qwenCatalog.refreshedAt ? ` · refreshed ${new Date(qwenCatalog.refreshedAt).toLocaleString()}` : ""}.`
+        : (s.hasQwenApiKey
+          ? "Built-in list — the account's own model list could not be read. Check the key and base URL."
+          : "Built-in list. Save a QwenCloud API key to read the account's own models.");
+    }
+  }
   document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
   document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";
@@ -3455,7 +3480,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-qwen-api-key"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -3612,7 +3637,7 @@ function bindSettings() {
       // Reset only the write-only password box; the token fields are repainted (masked) by the
       // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
       document.getElementById("set-adminpw").value = "";
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-qwen-api-key"]) disarmClearTok(document.getElementById(id));
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.
       loadLicense().catch(() => { /* the save itself succeeded — the card refreshes on reload */ });
