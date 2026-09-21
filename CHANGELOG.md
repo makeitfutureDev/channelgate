@@ -1,5 +1,13 @@
 # Changelog — ChannelGate
 
+- Run prepared channel VPNs with OpenVPN 3 Linux and refresh their protected supervisors on ON.
+  Add channel-scoped, bounded read-only database operations for Claude and Codex, without granting
+  ordinary agent containers VPN privileges or exposing database credentials.
+
+- Control a prepared channel VPN through the agent, the web channel Network controls, and Slack
+  Settings → Network. Managers/admins can turn it on/off; status distinguishes connecting from
+  connected and reports safe certificate/authentication errors. Stopping also cleans up manual starts.
+
 - Add an optional operator-managed OpenVPN/MySQL service per channel, with dedicated tunnel
   privileges, database-only routing/firewall, protected channel-secret references, a persistent
   user service and read-only verification. Ordinary chat containers retain their existing rights.

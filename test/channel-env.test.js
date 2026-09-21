@@ -70,7 +70,9 @@ test("the admin env form upper-cases the name it shows and sends", () => {
 // do not exist.
 test("the env card is exempt from the conversation card's unsaved-changes tracking", () => {
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
-  assert.match(client, /const SELF_SAVING_CONTROLS = "\.channel-env-card";/);
+  const selfSaving = client.match(/const SELF_SAVING_CONTROLS = "([^"]+)";/)?.[1].split(/,\s*/);
+  assert.ok(selfSaving?.includes(".channel-env-card"));
+  assert.ok(selfSaving?.includes(".ch-vpn-controls"));
   // Each of the three dirty-trackers (conversation card, DM/template card, Settings page) exempts it.
   assert.match(client, /\[data-pane="instructions"\], \[data-pane="memory"\], \.detail-savebar, \.checks-filter, \.skill-assignment-filters, \$\{SELF_SAVING_CONTROLS\}/);
   assert.match(client, /\.detail-savebar, \.checks-filter, \$\{SELF_SAVING_CONTROLS\}`\)\) mark\(\)/);
@@ -158,6 +160,32 @@ test("a channel with nothing set resolves to nothing at all", async () => {
   assert.deepEqual(listChannelEnv({}), []);
   assert.deepEqual(await resolveChannelEnv({}), {});
   assert.deepEqual(await resolveChannelEnv({ env: null }), {});
+});
+
+test("configured operator VPN credentials are excluded from engine env while unrelated channel variables remain", async () => {
+  const env = {
+    VPN_USERNAME: localVar("vpn-user-secret"),
+    VPN_PASSWORD: localVar("vpn-password-secret"),
+    MYSQL_USERNAME: localVar("mysql-user-secret"),
+    MYSQL_PASSWORD: localVar("mysql-password-secret"),
+    CUSTOM_VPN_USER: localVar("custom-vpn-user-secret"),
+    SUPABASE_ACCESS_TOKEN: localVar("ordinary-channel-secret"),
+  };
+  const defaults = {env,vpnService:{version:1,secrets:{}}};
+  assert.deepEqual(await resolveChannelEnv(defaults),{
+    CUSTOM_VPN_USER:"custom-vpn-user-secret",
+    SUPABASE_ACCESS_TOKEN:"ordinary-channel-secret",
+  });
+
+  const custom = {env,vpnService:{version:1,secrets:{vpnUsername:"CUSTOM_VPN_USER"}}};
+  assert.deepEqual(await resolveChannelEnv(custom),{
+    VPN_USERNAME:"vpn-user-secret",
+    SUPABASE_ACCESS_TOKEN:"ordinary-channel-secret",
+  },"a custom ref replaces only that role's default name");
+
+  const operatorProjection = await resolveChannelEnv({env});
+  assert.equal(operatorProjection.CUSTOM_VPN_USER,"custom-vpn-user-secret","the host-side service can still resolve its selected projection");
+  assert.equal(listChannelEnv(custom).length,Object.keys(env).length,"write-only inventory still lists configured service entries");
 });
 
 // ── Write-only ──────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getChannelMeta, isAdmin, isApproved } from "../config/store.js";
-import { canManage } from "../gateway/modes.js";
+import { canManage, isAuthorized } from "../gateway/modes.js";
 import { getEngine as getDefaultEngine } from "../config/settings.js";
 import { gatewayRoot } from "../config/paths.js";
 import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
@@ -30,6 +30,7 @@ import { register as registerChannelAdmin, registerMemoryTool } from "./tools/ch
 import { register as registerTokens } from "./tools/tokens.js";
 import { register as registerSlackNative } from "./tools/slack-native.js";
 import { register as registerLicense } from "./tools/license.js";
+import { register as registerChannelDatabase } from "./tools/channel-database.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
@@ -139,6 +140,14 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     });
   };
 
+  const requireChannelAccess = async () => {
+    if (!principalTrusted || !createdBy) return false;
+    const meta = await loadMeta();
+    return Boolean(meta) && isAuthorized(meta, createdBy, meta.isDM, {
+      isAdminUser: await isAdmin(createdBy), isApprovedUser: await isApproved(createdBy),
+    });
+  };
+
   return {
     channelId,
     slug,
@@ -163,6 +172,7 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     text,
     requireAdmin,
     requireManage,
+    requireChannelAccess,
     loadMeta,
   };
 }
@@ -197,6 +207,7 @@ const onOff = (v) => (v ? "ON" : "OFF");
 export function buildControlPlane({ loadMeta }) {
   return new Map([
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
+    ["set_channel_vpn", { authz: "manage", details: ({ enabled }) => `Turn the configured isolated VPN service ${onOff(enabled)} for this channel. This also changes automatic startup.` }],
     ["set_channel_network", { authz: "admin", details: ({ enabled }) => `Turn network access ${onOff(enabled)} for this channel.` }],
     ["set_channel_bash", { authz: "manage", details: ({ enabled }) => `Turn shell access (Bash + file edits) ${onOff(enabled)} for this channel.` }],
     ["set_channel_auto_mode", { authz: "manage", details: ({ enabled }) => `Turn AUTO MODE (tools auto-approved) ${onOff(enabled)} for this channel.` }],
@@ -380,6 +391,7 @@ export function createGatewayMcpServer(ctx) {
     registerSchedules(server, ctx);
     registerBackground(server, ctx);
     registerChannelAdmin(server, ctx);
+    registerChannelDatabase(server, ctx);
     registerTokens(server, ctx);
     registerSlackNative(server, ctx);
     registerLicense(server, ctx);

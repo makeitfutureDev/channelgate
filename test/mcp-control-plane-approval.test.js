@@ -352,7 +352,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   // omission. This inventory forces the classification to be a reviewed decision: an
   // unclassified tool fails here until it is added to exactly one of these lists.
   const GATED = new Set([
-    "set_channel_admin_mode", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
+    "set_channel_vpn", "set_channel_admin_mode", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
     "add_channel_mcps", "remove_channel_mcps", "update_channel_instructions",
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
@@ -367,7 +367,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   ]);
   const OPEN = new Set([
     // read-only
-    "list_available_mcps", "list_channel_mcps", "list_schedules", "list_folders",
+    "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "list_folders",
     "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
     "workspace_list", "workspace_read", "workspace_search",
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
