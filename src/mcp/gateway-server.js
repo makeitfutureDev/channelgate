@@ -39,10 +39,11 @@ import { prepareInstructionApproval } from "../gateway/instruction-approvals.js"
 export const text = (t) => ({ content: [{ type: "text", text: t }] });
 
 // ── Daemon IPC ────────────────────────────────────────────────────────────────────────────────
-// Three daemon-side effects a tool can ask for: start background work, ask a human in Slack, queue
-// a safe restart. `kind` is also the /internal/<kind> route name, so the two transports stay in
+// Four daemon-side effects a tool can ask for: start background work, ask a human in Slack, queue
+// a safe restart, start/inspect a channel's Google Drive sync pass (the pass must run in the daemon
+// so it shares the per-channel in-flight guard and outlives the turn). `kind` is also the /internal/<kind> route name, so the two transports stay in
 // lockstep. A tool never learns which one it is using.
-export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart"]);
+export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync"]);
 
 // Daemon-IPC credentials for the CHILD-PROCESS transport (the /internal/* endpoints). The Claude
 // path forwards CG_APPROVAL_SECRET/CG_PORT via the --mcp-config env; the Codex path can't — its

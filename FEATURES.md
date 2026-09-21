@@ -2684,6 +2684,23 @@ are retired, bullet by bullet; everything else stands.
   link, saves it, runs the same read-only connection test, and reports the SA `client_email` to share
   the folder with), and `clear_channel_drive_folder` (admins — unlink/turn off). `src/gateway/drivesync.js`,
   `src/mcp/gateway-server.js`. → TEST-PLAN: Google Drive sync.
+- **Google Drive sync on demand**: a pass no longer has to wait for the interval. The channel page
+  (Conversations → the channel) has **Sync now** next to **Test**: it runs that one channel's saved
+  link immediately (an unsaved edit is refused) and polls until the pass ends, showing ✓ synced /
+  ✗ the concise failure reason. Settings → Google Drive sync has **Sync all now**: one sweep over
+  every linked channel, then a per-channel outcome summary. In chat, asking the agent to "sync
+  Drive now" calls the `sync_channel_drive` gateway tool (anyone allowed in the channel; no approval
+  card — it runs the already-linked sync early, THIS channel only, never another). The tool goes
+  through daemon IPC (`drivesync` kind) so the pass runs in the daemon on both MCP transports,
+  shares the per-channel in-flight guard and outlives the turn; it waits ~40 s for the outcome and
+  otherwise says the pass is still running. `get_channel_drive_folder` now also reports the last
+  pass (time, ok/failed, first-resync, reason). Manual passes obey the same global switch, key and
+  rclone checks as the schedule; a pass already running for a channel is never doubled, and a
+  manual sweep never stacks on the scheduled one. Status surfaces show a concise diagnostic, never
+  the raw rclone tail. Admin API: `POST /api/channels/:id/sync-now`, `GET
+  /api/channels/:id/sync-status`, `POST /api/drive-sync/sync-all`, `GET /api/drive-sync/status`
+  (admin session); UI-started passes are logged as `drivesync_manual` events and every pass's
+  `drivesync_run`/`drivesync_error` event carries its trigger. → TEST-PLAN: Google Drive sync.
 
 ## Skills platform (Core) — the local skill catalog
 

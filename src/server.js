@@ -34,7 +34,7 @@ import { recoverApiRuns } from "./gateway/api-runs.js";
 import { startNudgeSweep } from "./gateway/nudges.js";
 import { startClaudeLoginWatch } from "./gateway/login-watch.js";
 import { startFollowupDigest } from "./gateway/followups.js";
-import { startDriveSync } from "./gateway/drivesync.js";
+import { startDriveSync, handleDriveSyncIpc } from "./gateway/drivesync.js";
 import { configDir } from "./config/paths.js";
 import { hardenRuntimeFiles, ensureAdminPasswordOnFirstBoot, isOperatorConfigured, assertRuntimeHardening } from "./config/harden.js";
 import { acquireSingletonLock } from "./util/singleton.js";
@@ -278,6 +278,7 @@ async function main() {
     background: (body) => backgroundJobs.start(body),
     approval: (body) => requestApproval(slack, body),
     restart: (body) => restartCoordinator.request(body),
+    drivesync: (body) => handleDriveSyncIpc(body),
   });
   const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth });
   const server = app.listen(PORT, HOST);

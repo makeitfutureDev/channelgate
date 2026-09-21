@@ -33,7 +33,7 @@ import {
   CHANNEL_ACCESS_MODES,
   getDefaultChannelAccess,
 } from "../../config/settings.js";
-import { testChannelSync } from "../../gateway/drivesync.js";
+import { testChannelSync, syncChannelNow, driveSyncStatus } from "../../gateway/drivesync.js";
 import { PROFILE_FLAGS, BASE_MODE_FLAGS, modeSettingsPatch } from "../../gateway/modes.js";
 // Two forms on purpose. normalizeStoredDomains is TOLERANT and belongs on the read/spawn path (a
 // hand-edited config must degrade to "no extras", never break run startup). An admin SAVE is the
@@ -470,6 +470,30 @@ export function createChannelsRouter({
         : (await getChannelMeta(entry.slug))?.syncDriveFolder || "";
       const result = await testChannelSync({ syncDriveFolder: link });
       res.json(result);
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Run this channel's SAVED Drive link's bisync pass now, outside the schedule. Returns at once
+  // ({ ok, started, busy, error, status }); the pass keeps running in the daemon — poll sync-status.
+  router.post("/channels/:channelId/sync-now", async (req, res, next) => {
+    try {
+      const entry = (await getChannelsIndex())[req.params.channelId];
+      if (!entry) return res.status(404).json({ error: "unknown channel" });
+      const result = await syncChannelNow(entry.slug, { trigger: "admin-ui" });
+      if (result.started) await logEvent("drivesync_manual", { slug: entry.slug, channel: req.params.channelId, scope: "channel", source: "admin-ui" });
+      res.json(result);
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.get("/channels/:channelId/sync-status", async (req, res, next) => {
+    try {
+      const entry = (await getChannelsIndex())[req.params.channelId];
+      if (!entry) return res.status(404).json({ error: "unknown channel" });
+      res.json(driveSyncStatus(entry.slug));
     } catch (e) {
       next(e);
     }

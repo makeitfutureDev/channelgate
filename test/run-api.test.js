@@ -244,6 +244,30 @@ test("POST /internal/restart requires loopback IPC auth and queues the safe coor
   assert.deepEqual(restartRequests, [{ channelId: "C1", threadKey: "1.0", requestedBy: "U1", reason: "safe test" }]);
 });
 
+test("POST /internal/drivesync requires loopback IPC auth and needs the bound channel", async () => {
+  const missing = await post("/internal/drivesync", { action: "status", slug: "any" });
+  assert.equal(missing.status, 403);
+  const response = await post("/internal/drivesync", { action: "sync" }, { "x-cg-secret": "internal-test-secret" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: false, error: "missing channel" });
+});
+
+test("Drive Sync now / Sync all now admin endpoints sit behind the admin session", async () => {
+  assert.equal((await post("/api/drive-sync/sync-all", {}, { "x-cg-request": "1" })).status, 401);
+  assert.equal((await get("/api/drive-sync/status")).status, 401);
+  assert.equal((await post("/api/channels/C_ANY/sync-now", {}, { "x-cg-request": "1" })).status, 401);
+  const login = await post("/api/login", { password: "test-admin-pw" });
+  const cookie = login.headers.get("set-cookie").split(";", 1)[0];
+  const status = await get("/api/drive-sync/status", { cookie });
+  assert.equal(status.status, 200);
+  assert.equal(typeof (await status.json()).sweeping, "boolean");
+  const all = await post("/api/drive-sync/sync-all", {}, { cookie, "x-cg-request": "1" });
+  assert.equal(all.status, 200);
+  assert.equal((await all.json()).started, false, "the dormant feature starts nothing");
+  assert.equal((await post("/api/channels/C_UNKNOWN_DS/sync-now", {}, { cookie, "x-cg-request": "1" })).status, 404);
+  assert.equal((await get("/api/channels/C_UNKNOWN_DS/sync-status", { cookie })).status, 404);
+});
+
 test("admin restart endpoint queues and reports safe restart status", async () => {
   const login = await post("/api/login", { password: "test-admin-pw" });
   const cookie = login.headers.get("set-cookie").split(";", 1)[0];

@@ -2588,6 +2588,33 @@ structural invariants are automated; rendered navigation and feature claims also
       to share with, runs the connection test, and reports the global armed/not-armed state;
       "unlink drive" / "stop syncing" → `clear_channel_drive_folder`. A non-admin author is refused.
 
+- [x] On-demand sync (`test/drivesync-manual.test.js`, fake rclone): manual passes refuse with the
+      schedule's own reasons (switch off / no key / rclone missing) and run nothing; an unlinked or
+      unknown channel is refused; **Sync now** runs exactly that channel's pass, records ok +
+      trigger, and carries `--resync` only on the first pass; a second request while a pass runs
+      returns `busy` and starts nothing; a failed pass records a concise reason (never the raw
+      tail); the agent IPC requires the bound channel, rejects unknown actions and records trigger
+      `agent`; **Sync all now** runs one pass per linked channel and a second request while the
+      sweep runs returns `busy`. `test/run-api.test.js`: `/internal/drivesync` refuses callers
+      without the loopback IPC secret; the four admin endpoints return 401 without an admin session,
+      404 for an unknown channel, and a dormant feature starts nothing.
+      `test/mcp-control-plane-approval.test.js` classifies `sync_channel_drive` as open (no card).
+- [ ] Manual (engine-independent — the pass runs in the daemon, not the engine; setup: Drive sync
+      enabled, key saved, a test channel linked to a Drive folder shared with the service account
+      and holding one file): on the channel's admin page click **Sync now** → "⏳ Syncing…" then
+      "✓ Synced at …"; the file is in `<channel working folder>/Drive/`. Edit the link without
+      saving and click **Sync now** → "Save the changed Drive link first". Settings → **Sync all
+      now** → "✓ Synced N channel(s)". Turn the switch off, save, click either → "Google Drive sync
+      is turned off". Pass: every message appears as stated, and `events` has `drivesync_manual`
+      plus `drivesync_run` rows with trigger `admin-ui` / `manual`.
+- [ ] Manual, **Claude and Codex** (same setup, one thread per engine): ask "@bot sync the Drive
+      folder now" → the agent calls `sync_channel_drive` (no approval card) and replies that the
+      sync succeeded (or is still running); drop a new file into the Drive folder first and it
+      appears under `Drive/`. Ask "@bot when did Drive last sync?" → `get_channel_drive_folder`
+      reports the last pass time and outcome. Ask it to sync a different channel → it explains it
+      can only sync this channel. Pass: a `drivesync_run` event with trigger `agent` for each engine
+      and no second pass started while one runs.
+
 ### Performance (clean mode)
 - [ ] Enable "Clean mode" on a channel and send `hi`: `claude mcp list` inside the run shows NO
       servers (not even `gateway`), and the token footer drops to ~the base prompt (no MCP schemas /
