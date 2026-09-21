@@ -1,5 +1,23 @@
 # Changelog — ChannelGate
 
+ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original
+wording. All notable changes to the gateway, newest first. Dates are when the work landed.
+This project brings Claude Code (and optionally OpenAI Codex) into Slack as a self-hosted,
+per-channel-sandboxed agent. See `FEATURES.md` for the living catalog and `docs/WHY.md` for the
+product overview.
+
+> **Publication dates.** Every public release entry below carries the date the Licensor published
+> it. Entries for work that never left the private repository are not publications. No version is
+> relicensed automatically (license v1.2 removed the former Change Date before first publication).
+>
+> | License version | Effective | Published |
+> | --- | --- | --- |
+> | Makeitfuture Sustainable Use License 1.2 | 2026-08-25 | 2026-09-06 (with ChannelGate 0.5.0) |
+> | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
+> | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
+
+## 0.5.1 — 2026-09-21
+
 - Fix two release-smoke defects. A Qwen run with no model configured now asks QwenCloud for a
   Qwen model instead of the CLI's Anthropic default (which failed every such turn with "Model not
   exist"). A tool request from an HTTP run-API turn is now refused with a readable reason instead
@@ -134,24 +152,6 @@
   and retry pending recoveries on reconnection without requiring another daemon restart.
 
 - Fix one-time automation edits shifting by the browser/daemon timezone difference and potentially firing future tasks immediately.
-
-ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original
-wording. All notable changes to the gateway, newest first. Dates are when the work landed.
-This project brings Claude Code (and optionally OpenAI Codex) into Slack as a self-hosted,
-per-channel-sandboxed agent. See `FEATURES.md` for the living catalog and `docs/WHY.md` for the
-product overview.
-
-> **Publication dates.** Every public release entry below carries the date the Licensor published
-> it. Entries for work that never left the private repository are not publications. No version is
-> relicensed automatically (license v1.2 removed the former Change Date before first publication).
->
-> | License version | Effective | Published |
-> | --- | --- | --- |
-> | Makeitfuture Sustainable Use License 1.2 | 2026-08-25 | 2026-09-06 (with ChannelGate 0.5.0) |
-> | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
-> | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
-
-## 0.5.1 — Unreleased
 
 - Manage plugin packages through existing skill sources, review, templates and channel grants.
   Compile native Claude hooks as an inline event map so SessionStart hooks execute correctly;
