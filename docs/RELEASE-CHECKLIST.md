@@ -2,9 +2,10 @@
 
 > 0.5.0 was published on 2026-09-06 by decision of the Licensor. Items still unticked below stay
 > tracked for the next release.
-> Next release: **0.5.1**, draft in development on `beta`, pending full testing and explicit
-> owner approval of the exact candidate before promotion to `main`.
-> The deferred QA gate is not waived.
+> 0.5.1 was published on 2026-09-21 by explicit owner decision after the full automated gate and
+> CI passed on the exact candidate and a live smoke ran for Claude and Qwen. The owner released it
+> without Codex live acceptance (the Codex account was usage-limited until 2026-09-24) and without
+> the full live campaign; both remain open for the next release, see RELEASE-ACCEPTANCE.md.
 
 - [x] Authorized owner selected and documented the Makeitfuture Sustainable Use License; the
       bundled Poppins OFL notice is present and third-party components retain upstream terms.

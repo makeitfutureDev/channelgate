@@ -1,5 +1,12 @@
 # Release acceptance packet
 
+0.5.1 live evidence (2026-09-21, owner-approved release without the full campaign): on the exact
+candidate tree, a live Claude turn used the Read tool and returned the probe file's bytes; a live
+Qwen turn with no model configured answered from QwenCloud with real tokens and no dollar cost.
+The live smoke found and fixed two defects before release (Qwen's CLI-default model, the
+run-API permission refusal shape). Codex live acceptance was NOT run (account usage-limited until
+2026-09-24) and the RR rows below remain unexecuted for this version.
+
 Status: **prepared; full live QA deferred to the planned campaign** (owner instruction,
 2026-09-08). Next release: **0.5.1** (development on `beta`). These are reproducible definitions, not claimed
 passes. Use disposable private fixtures only. Record the actual channel IDs, host/image revision,
