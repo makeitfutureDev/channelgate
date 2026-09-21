@@ -30,7 +30,10 @@ function claudeEventText(event) {
 // line. Preserve that actionable provider message so the runner does not collapse it into the
 // opaque numeric process failure. A normal assistant answer never has the top-level error
 // marker, so merely discussing limits in prose cannot be mistaken for an engine failure.
-export function claudeProviderError(event) {
+// The HARNESS name in a user-facing provider error. The Qwen adapter drives this same CLI and the
+// same stream, so a hard-coded "Claude" here would tell a Slack thread that Claude hit a limit
+// when QwenCloud did — and would send someone to check the wrong account.
+export function claudeProviderError(event, harnessLabel = "Claude") {
   const raw = event?.error ?? event?.message?.error;
   const code = typeof raw === "string"
     ? raw.trim()
@@ -66,16 +69,17 @@ export function claudeProviderError(event) {
               : /network|connection|timeout/i.test(combined)
                 ? "connection"
                 : "provider";
+  const who = String(harnessLabel || "Claude");
   const label = {
-    usage_limit: "Claude usage limit reached",
-    model_rejected: "Claude provider rejected the model",
-    authentication: "Claude authentication failed",
-    permission: "Claude provider denied the request",
-    invalid_request: "Claude provider rejected the request",
-    availability: "Claude provider is temporarily unavailable",
-    billing: "Claude billing or credit issue",
-    connection: "Claude provider connection failed",
-    provider: "Claude provider returned an error",
+    usage_limit: `${who} usage limit reached`,
+    model_rejected: `${who} provider rejected the model`,
+    authentication: `${who} authentication failed`,
+    permission: `${who} provider denied the request`,
+    invalid_request: `${who} provider rejected the request`,
+    availability: `${who} provider is temporarily unavailable`,
+    billing: `${who} billing or credit issue`,
+    connection: `${who} provider connection failed`,
+    provider: `${who} provider returned an error`,
   }[kind];
   return { code, kind, detail, message: detail ? `${label}: ${detail}` : label };
 }

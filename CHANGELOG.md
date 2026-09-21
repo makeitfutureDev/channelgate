@@ -1,5 +1,12 @@
 # Changelog — ChannelGate
 
+- Add an optional **Qwen (Claude Code)** harness: the same Claude Code CLI driven against
+  QwenCloud's Anthropic-compatible endpoint, with its own gateway-level API key and base URL, and
+  a model list read live from the account. It is off until an admin turns it on, after which it
+  appears in the admin engine selectors, the Slack channel settings modal and `/model`. No
+  Anthropic credential ever reaches a Qwen run, it is outside the automatic failover in both
+  directions, and its turns are recorded with real tokens and no invented dollar cost.
+
 - Run prepared channel VPNs with OpenVPN 3 Linux and refresh their protected supervisors on ON.
   Add channel-scoped, bounded read-only database operations for Claude and Codex, without granting
   ordinary agent containers VPN privileges or exposing database credentials.

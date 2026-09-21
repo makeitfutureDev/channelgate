@@ -124,10 +124,14 @@ test("engines are enabled by default and the map round-trips through settings", 
   assert.equal(isEngineEnabled("codex"), true);
   assert.equal(isEngineEnabled("nope"), false, "an unknown id is never enabled");
 
+  // …except an OPT-IN harness (Qwen), which needs a provider credential nobody has by default and
+  // is therefore available only where an admin explicitly switched it on.
+  assert.equal(isEngineEnabled("qwen"), false, "an opt-in harness is not enabled by a missing key");
+
   saveSettings({ engineEnabled: { claude: true, codex: false, opencode: false } });
   assert.equal(isEngineEnabled("codex"), false);
   assert.deepEqual(getEnabledEngines(), ["claude"]);
-  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, opencode: false });
+  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, qwen: false, opencode: false });
   assert.equal(settingsForApi().engineEnabled.codex, false);
 });
 

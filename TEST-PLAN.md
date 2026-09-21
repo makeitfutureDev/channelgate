@@ -1609,6 +1609,70 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 - [x] Verify complete safe Codex stdio/HTTP MCP serialization and reject credentials/userinfo.
 - [x] Run the full local suite and static parser/whitespace gate.
 
+## Qwen harness (opt-in, Claude Code CLI against QwenCloud)
+
+Automated (`test/qwen-engine.test.js`, `test/engine-registry.test.js`,
+`test/engine-adapter-contract.test.js`, `test/engine-failover.test.js`) — engine-independent
+except where a case names a harness, because these guard the adapter layer itself:
+
+- [x] A provider spawn carries none of the Anthropic credential family: an inherited
+      `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` and a relayed
+      `CLAUDE_CODE_OAUTH_TOKEN` are all removed, and neither value appears anywhere in the child
+      environment; a Claude spawn with no provider is byte-for-byte unchanged.
+- [x] A channel environment secret cannot redirect a Qwen run (`ANTHROPIC_*` stays reserved) while
+      ordinary channel secrets still ride in.
+- [x] With no key configured the run fails closed naming the remedy (`details.runtimeCredential`),
+      never falling through to the ambient Anthropic credential.
+- [x] Opt-in enablement: off until switched on; the "never lock every harness out" rescue restores
+      the DEFAULT harnesses only; an explicit Qwen-only deployment survives and resolves as the
+      gateway default engine.
+- [x] Terminal in the failover graph both ways (`fallbackTargets("qwen") === []`, and neither
+      Claude's nor Codex's targets include it).
+- [x] Model families: QwenCloud text models belong to `qwen` and to no other harness; the image,
+      video, audio and realtime families are rejected; Claude/Codex ids never match `qwen`.
+- [x] Model-list URL derivation from the configured base URL (Token Plan, pay-as-you-go, and a
+      non-standard proxy); discovery sends a bearer key, filters, sorts and labels the account's
+      list; an unconfigured account or an HTTP failure raises instead of blanking the picker.
+- [x] Cost: a Qwen turn records real tokens and `costUSD === null`, even with
+      `codexRatePer1MTokens` configured; Codex's own estimate is unaffected.
+- [x] Settings: the key is write-only (`hasQwenApiKey`/`qwenApiKeyLast4` only, value absent from
+      the API snapshot), is in the `POST /api/secrets/reveal` allowlist, and the per-engine default
+      model is keyed off the adapter rather than a hardcoded pair.
+- [x] A provider failure names the harness that failed ("Qwen authentication failed"), not the CLI
+      it borrows.
+
+Live acceptance (executed 2026-09-21 against the QwenCloud Token Plan endpoint
+`https://token-plan.maas.qwencloudapi.com/apps/anthropic`, Claude Code 2.1.258, model
+`qwen3.8-max` unless stated). Qwen-specific by nature — these exercise the `qwen` adapter itself:
+
+- [x] Discovery returned the account's 11 text models (`auto`, `deepseek-v4-flash-0731`,
+      `deepseek-v4-pro`, `deepseek-v4.1-flash`, `glm-5.2`, `glm-5.3`, `qwen3.6-flash`,
+      `qwen3.7-max`, `qwen3.7-plus`, `qwen3.8-flash`, `qwen3.8-max`), with `wan2.7-image*` and
+      `qwen-audio-*` excluded. The Anthropic path's own `/v1/models` answered HTTP 404
+      `InvalidParameter: Not support`, confirming why the sibling endpoint is used.
+- [x] Each of those 11 answered HTTP 200 on `/v1/messages`; `wan2.7-image` answered 400.
+- [x] A real turn through `adapterFor("qwen").run()` read a file with the `Read` tool and answered
+      correctly (`SILVER-KESTREL-12`); stream events `thinking`/`tool_use`/`tool_result` arrived;
+      `costUSD` was `null` while `usage` kept real token counts (in 12 / out 87 / cache_read
+      21994); a session id was minted and `-r` resume recalled the earlier answer.
+- [x] Raw-CLI conformance for the gateway's exact flag set: `--output-format stream-json --verbose
+      --include-partial-messages` produced the full `message_start` / `content_block_start` /
+      `content_block_delta` / `content_block_stop` / `message_delta` / `message_stop` / `result`
+      sequence `src/engines/stream.js` parses; `--effort high` was accepted; an injected
+      `--mcp-config` stdio server was called (`mcp__gateway__*`) and its result used; a tool
+      outside `--allowedTools` produced a `permission_denials` entry rather than an error.
+- [x] Negative: with a daemon `ANTHROPIC_API_KEY` present and an INVALID QwenCloud key, the turn
+      failed closed with `Qwen authentication failed: … API Error: 401 Invalid API-key provided`
+      (`details.engine === "qwen"`, `providerKind === "authentication"`) instead of quietly
+      answering from the Anthropic account.
+- [x] Enable/disable: with the switch on, `getEnabledEngines()` — the single list the admin
+      selectors, the Slack channel Settings modal and the `/model` wizard all read — offered
+      `claude, codex, qwen (Qwen (Claude Code))`; turning it off removed it from that list.
+- [ ] Not executed: a full Slack foreground turn on a live container-backed channel pinned to
+      `qwen` (needs a deployment with the harness enabled). The adapter path, credential boundary,
+      MCP injection and resume above are all exercised; what remains unproven is only the
+      Slack-surface plumbing, which is engine-independent and shared with Claude.
+
 ## Dynamic engine model catalog
 
 - [x] Automated: parse the machine-readable Codex catalog, expose only `visibility=list` entries,
