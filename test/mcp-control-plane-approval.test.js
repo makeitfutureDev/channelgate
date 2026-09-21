@@ -391,6 +391,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
     // self-service like starring in a skill library — reversible, affects nobody else, no card.
     "add_my_skills", "remove_my_skills",
+    // runs this channel's ALREADY-linked Drive sync early — the same pass the schedule runs anyway,
+    // this channel only, obeying the admin's global switch; linking/unlinking stays gated
+    "sync_channel_drive",
   ]);
   await withGateway({}, async (client) => {
     const { tools } = await client.listTools();

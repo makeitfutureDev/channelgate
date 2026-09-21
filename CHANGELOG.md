@@ -5,6 +5,12 @@
   exist"). A tool request from an HTTP run-API turn is now refused with a readable reason instead
   of Claude Code's "invalid permission result" error; the request stays denied either way.
 
+- Sync Google Drive on demand. A channel's admin page has **Sync now** beside **Test**, Settings →
+  Google Drive sync has **Sync all now**, and asking the agent to sync Drive runs the channel's
+  linked folder immediately through the new `sync_channel_drive` tool. Each shows when the pass
+  finished or why it failed, and `get_channel_drive_folder` now reports the last sync. Manual
+  syncs obey the same enable switch and never double a pass already running.
+
 - Stop an unusable Cloud MCP selection from failing a conversation. A selected optional MCP server
   that is missing from the host configuration, needs a host credential, or no longer matches the
   transport it was selected with is now dropped from that run — for Claude, Qwen and Codex, on the

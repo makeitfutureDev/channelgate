@@ -185,6 +185,12 @@ is a `/secrets` variable (below) — use its injected environment value, not a p
 - `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir`.
 - `get_channel_drive_folder` / `set_channel_drive_folder` (admin) / `clear_channel_drive_folder`
   (admin) — two-way-sync a Google Drive folder into the channel folder's `Drive/` subfolder.
+  `get_channel_drive_folder` also reports the last sync pass (time, ok/failed, the reason).
+- `sync_channel_drive` — when someone asks to sync Drive now, run THIS channel's linked folder's
+  sync immediately instead of waiting for the next sweep. It waits ~40s for the outcome; a longer
+  pass keeps running in the gateway, so say it is still running and check later with
+  `get_channel_drive_folder`. It cannot target another channel — to sync a different channel, the
+  user asks in that channel or clicks **Sync now** on its admin-UI page.
 
 ## This channel's own environment secrets (its own CLI logins)
 “Write-only” describes the UI/API listing and reveal contract. A secret injected into a run is

@@ -15,6 +15,9 @@
 //
 // Dormant by default: nothing runs unless the global `driveSyncEnabled` switch is on AND rclone is
 // installed AND a key file is configured. Missing any of those → a logged skip, never a throw.
+// Besides the timer, a pass can be started on demand: one channel (the admin UI's per-channel
+// "Sync now" and the `sync_channel_drive` agent tool) or every linked channel (Settings → "Sync all
+// now"). Manual passes obey the same switch and share the per-channel in-flight guard.
 
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -125,7 +128,9 @@ export function selectSyncChannels(channels) {
 // ── Runtime state (in-memory) ──────────────────────────────────────────────────────────────────
 
 const inFlight = new Set(); // slugs currently syncing — never overlap two passes on one channel
-const lastResult = new Map(); // slug -> { ok, at, tail } for status/debug
+const startedAt = new Map(); // slug -> { at, trigger } for the pass currently running
+const lastResult = new Map(); // slug -> { ok, at, trigger, firstRun, tail, summary } for status/debug
+let sweeping = false; // one sweep at a time, scheduled or manual
 const rcloneChecked = new Map(); // binary path -> "is rclone runnable" probe result
 
 function driveSyncDir() {
@@ -230,10 +235,12 @@ function runRclone(bin, args, cwd) {
   });
 }
 
-// Sync one channel. Assumes the caller resolved config + eligibility. Serialized per-slug.
-async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subject, conflict }) {
-  if (inFlight.has(slug)) return; // previous pass still running — skip this tick
+// Sync one channel. Assumes the caller resolved config + eligibility. Serialized per-slug: a pass
+// that is already running (scheduled or manual) is never doubled — the caller gets `busy`.
+async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subject, conflict, trigger = "schedule" }) {
+  if (inFlight.has(slug)) return { busy: true }; // previous pass still running — skip this one
   inFlight.add(slug);
+  startedAt.set(slug, { at: Date.now(), trigger });
   try {
     const workDir = effectiveWorkDir(slug, meta || {}); // the channel's real folder (honors a custom workDir)
     const localPath = syncSubdir(workDir);
@@ -243,44 +250,142 @@ async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subj
     mkdirSync(stateDir, { recursive: true });
     const args = buildBisyncArgs({ localPath, folderId, keyFile, subject, workDir: stateDir, conflict, firstRun });
     const res = await runRclone(bin, args, workDir);
-    lastResult.set(slug, { ok: res.ok, at: Date.now(), tail: res.tail });
+    lastResult.set(slug, {
+      ok: res.ok,
+      at: Date.now(),
+      trigger,
+      firstRun,
+      tail: res.tail,
+      summary: res.ok ? "" : (conciseProcessDiagnostic(res.tail, 300) || res.outcome?.summary || "failed before it completed"),
+    });
     if (res.ok) {
       // Only a COMPLETED --resync earns the sentinel; until it exists every tick retries the resync.
       if (firstRun) {
         try { writeFileSync(resyncSentinel(stateDir), `${new Date().toISOString()}\n`, { mode: 0o600 }); } catch {}
       }
-      await logEvent("drivesync_run", { slug, channel: channelId, firstRun });
+      await logEvent("drivesync_run", { slug, channel: channelId, firstRun, trigger });
     } else {
       // A failed first run must retry --resync next tick against a clean slate, so drop the
       // (now-stale) listing state. No sentinel was written, so the retry stays a first run either
       // way — this only removes a half-built baseline rclone would otherwise read.
       if (firstRun) { try { rmSync(stateDir, { recursive: true, force: true }); } catch {} }
-      await logEvent("drivesync_error", { slug, channel: channelId, code: res.code, signal: res.signal, outcome: res.outcome?.kind, tail: res.tail.slice(-800) });
+      await logEvent("drivesync_error", { slug, channel: channelId, trigger, code: res.code, signal: res.signal, outcome: res.outcome?.kind, tail: res.tail.slice(-800) });
       const detail = conciseProcessDiagnostic(res.tail, 300);
       console.error(`[drivesync] ${slug} bisync ${res.outcome?.summary || "failed before it completed"}${detail ? `: ${detail}` : ""}`);
     }
+    return { ok: res.ok };
   } finally {
     inFlight.delete(slug);
+    startedAt.delete(slug);
   }
 }
 
-// One sweep: resolve config, then sync every eligible channel. Errors are contained per-channel.
-async function sweep() {
-  if (!getDriveSyncEnabled()) return;
+// Everything a pass needs, or the one plain reason it can't run. Shared by the timer and the
+// manual "Sync now" paths so both refuse for the same reasons: the global switch is the admin's
+// off switch for the WHOLE feature, manual runs included.
+export function resolveSyncConfig() {
+  if (!getDriveSyncEnabled()) return { ok: false, error: "Google Drive sync is turned off (Settings → Google Drive sync → Enable)." };
   const keyFile = resolveDriveSyncKeyFile();
-  if (!keyFile) return; // no key (pasted JSON or on-host file) yet — dormant
+  if (!keyFile) return { ok: false, error: "No service-account key configured (Settings → Google Drive sync)." };
   const bin = getDriveSyncRclonePath();
-  if (!rcloneAvailable(bin)) return; // rclone not installed — dormant (logged once at start)
-  const subject = getDriveSyncSubject();
-  const conflict = getDriveSyncConflict();
+  if (!rcloneAvailable(bin)) return { ok: false, error: `rclone not found (${bin}). Install it and/or set an absolute path in Settings.` };
+  return { ok: true, bin, keyFile, subject: getDriveSyncSubject(), conflict: getDriveSyncConflict() };
+}
+
+// One sweep: resolve config, then sync every eligible channel. Errors are contained per-channel.
+async function sweep(trigger = "schedule") {
+  const cfg = resolveSyncConfig();
+  if (!cfg.ok) return; // dormant — switch off, no key, or no rclone
   const eligible = selectSyncChannels(await listChannels());
   for (const ch of eligible) {
     try {
-      await syncOne(ch, { bin, keyFile, subject, conflict });
+      await syncOne(ch, { ...cfg, trigger });
     } catch (e) {
       console.error(`[drivesync] ${ch.slug} sweep error:`, e?.message || e);
     }
   }
+}
+
+// Serialized sweep: the timer and "Sync all now" share one guard, so a manual sweep never stacks
+// on a scheduled one (and vice versa). Resolves false when a sweep was already running.
+async function runSweep(trigger) {
+  if (sweeping) return false;
+  sweeping = true;
+  try {
+    await sweep(trigger);
+  } catch (e) {
+    console.error("[drivesync] sweep error:", e?.message || e);
+  } finally {
+    sweeping = false;
+  }
+  return true;
+}
+
+// ── Manual "Sync now" (admin UI buttons + the sync_channel_drive agent tool) ─────────────────────
+
+// A channel's sync state, safe to show anyone who may see the channel: timestamps, ok/failed and a
+// concise diagnostic. Never the raw rclone tail (it names local paths and file names at length).
+export function driveSyncStatus(slug) {
+  const running = startedAt.get(slug) || null;
+  const last = lastResult.get(slug) || null;
+  return {
+    running: Boolean(running),
+    runningSince: running ? running.at : null,
+    runningTrigger: running ? running.trigger : "",
+    last: last ? { ok: last.ok, at: last.at, trigger: last.trigger, firstRun: last.firstRun, summary: last.summary } : null,
+  };
+}
+
+// Status for every channel with a Drive link — the Settings page's "Sync all now" view.
+export async function driveSyncStatusAll() {
+  const eligible = selectSyncChannels(await listChannels());
+  return {
+    sweeping,
+    channels: eligible.map((ch) => ({ slug: ch.slug, channelId: ch.channelId, name: ch.name, ...driveSyncStatus(ch.slug) })),
+  };
+}
+
+const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); });
+
+// Start one channel's bisync pass now, outside the schedule. The pass runs in the daemon and
+// outlives the caller; `waitMs` lets a caller (the agent tool) wait a bounded time for the outcome.
+// Returns { ok, started, busy, done, error, status } — never throws.
+export async function syncChannelNow(slug, { waitMs = 0, trigger = "manual" } = {}) {
+  const cfg = resolveSyncConfig();
+  if (!cfg.ok) return { ok: false, started: false, error: cfg.error, status: driveSyncStatus(slug) };
+  const ch = (await listChannels()).find((c) => c.slug === slug);
+  if (!ch) return { ok: false, started: false, error: "Unknown channel.", status: driveSyncStatus(slug) };
+  const [target] = selectSyncChannels([ch]);
+  if (!target) return { ok: false, started: false, error: "No Google Drive folder is linked to this channel (or the saved link isn't a Drive folder link).", status: driveSyncStatus(slug) };
+  if (inFlight.has(slug)) return { ok: true, started: false, busy: true, status: driveSyncStatus(slug) };
+  const pass = syncOne(target, { ...cfg, trigger }).catch((e) => {
+    console.error(`[drivesync] ${slug} manual sync error:`, e?.message || e);
+    return { ok: false };
+  });
+  let done = false;
+  if (waitMs > 0) done = await Promise.race([pass.then(() => true), delay(waitMs).then(() => false)]);
+  return { ok: true, started: true, done, status: driveSyncStatus(slug) };
+}
+
+// Start a full sweep of every linked channel now. Returns immediately; poll driveSyncStatusAll().
+export async function syncAllNow() {
+  const cfg = resolveSyncConfig();
+  if (!cfg.ok) return { ok: false, started: false, error: cfg.error };
+  const channels = selectSyncChannels(await listChannels());
+  if (!channels.length) return { ok: false, started: false, error: "No channel has a Google Drive folder linked." };
+  if (sweeping) return { ok: true, started: false, busy: true, channels: channels.length };
+  runSweep("manual"); // fire and forget — per-channel results land in driveSyncStatus
+  return { ok: true, started: true, channels: channels.length };
+}
+
+// Daemon IPC entry for the gateway MCP tool (both transports). `slug` comes from the tool's
+// capability-verified context, never from model input.
+export async function handleDriveSyncIpc({ action, slug, waitMs } = {}) {
+  const s = String(slug || "");
+  if (!s) return { ok: false, error: "missing channel" };
+  if (action === "status") return { ok: true, status: driveSyncStatus(s) };
+  if (action === "sync") return syncChannelNow(s, { waitMs: Math.min(Math.max(Number(waitMs) || 0, 0), 45_000), trigger: "agent" });
+  return { ok: false, error: `unknown drive sync action "${action}"` };
 }
 
 // One-off connection test for the admin UI: does the service account authenticate + see the folder?
@@ -308,18 +413,7 @@ export function driveSyncResultOutput(result = {}) {
 // restart. Returns the timer. A single sweep is non-overlapping via the per-slug inFlight guard.
 export function startDriveSync() {
   mkdirSync(driveSyncDir(), { recursive: true });
-  let ticking = false;
-  const tick = async () => {
-    if (ticking) return; // don't stack sweeps if one runs long
-    ticking = true;
-    try {
-      await sweep();
-    } catch (e) {
-      console.error("[drivesync] sweep error:", e?.message || e);
-    } finally {
-      ticking = false;
-    }
-  };
+  const tick = () => runSweep("schedule"); // don't stack sweeps if one runs long
   // Re-read the interval each fire by scheduling the next tick from within (a fixed setInterval
   // couldn't honor a changed setting). Kick off on a short first delay so boot isn't blocked.
   let timer;

@@ -34,6 +34,7 @@ import { runUpdateSmoke } from "../gateway/update-smoke.js";
 import { runningRevision, startUpdate } from "../gateway/updater.js";
 import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js";
 import { renderShell } from "./assets.js";
+import { handleDriveSyncIpc } from "../gateway/drivesync.js";
 
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -115,6 +116,17 @@ export function createWebApp({
     try {
       const result = restartCoordinator.request(req.body || {});
       res.status(result.conflict ? 409 : 202).json(result);
+    } catch (e) {
+      res.json({ ok: false, error: e.message });
+    }
+  });
+
+  // The gateway MCP server's sync_channel_drive tool: start (or report) one channel's Drive sync
+  // pass in the daemon. The channel comes from the tool's capability-verified context.
+  app.post("/internal/drivesync", async (req, res) => {
+    if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
+    try {
+      res.json(await handleDriveSyncIpc(req.body || {}));
     } catch (e) {
       res.json({ ok: false, error: e.message });
     }

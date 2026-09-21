@@ -19,6 +19,19 @@ import { persistedSelectionForEngine, selectionFieldForEngine } from "../../gate
 import { engineLabel, requireAdapter } from "../../engines/registry.js";
 import { getDriveSyncEnabled, getDriveSyncKeyJson, getDriveSyncKeyFile, getDriveSyncKeyEmail } from "../../config/settings.js";
 import { parseDriveFolderId, testChannelSync } from "../../gateway/drivesync.js";
+
+// Human wording for a daemon drive-sync status ({ running, runningSince, last }).
+function describeDriveSyncStatus(status) {
+  if (!status) return "";
+  const when = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
+  if (status.running) return `⏳ A sync pass is running now (started ${when(status.runningSince)}).`;
+  const last = status.last;
+  if (!last) return "No sync pass has run since the gateway last started.";
+  const first = last.firstRun ? " (first full resync)" : "";
+  return last.ok
+    ? `✔️ Last sync succeeded at ${when(last.at)}${first}.`
+    : `⚠️ Last sync failed at ${when(last.at)}${first}: ${last.summary || "unknown error"}`;
+}
 import { allowedFsRoot, resolveWithinRoot } from "../../web/security.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
 import { updateGatewayGuide, resetGatewayGuide, readGatewayGuide } from "../../gateway/guide.js";
@@ -364,7 +377,38 @@ export function register(server, ctx) {
       const link = (meta?.syncDriveFolder || "").trim();
       if (!link) return text(`No Google Drive folder is linked to this channel (sync off).\n${driveSyncStatusLine()}`);
       const id = parseDriveFolderId(link);
-      return text(`This channel syncs with: ${link}${id ? ` (folder id ${id})` : ""}\nSynced into the channel folder's Drive/ subfolder.\n${driveSyncStatusLine()}`);
+      let last = "";
+      try {
+        if (daemon.available("drivesync")) last = describeDriveSyncStatus((await daemon.call("drivesync", { action: "status", slug }))?.status);
+      } catch {}
+      return text(`This channel syncs with: ${link}${id ? ` (folder id ${id})` : ""}\nSynced into the channel folder's Drive/ subfolder.\n${driveSyncStatusLine()}${last ? `\n${last}` : ""}`);
+    }
+  );
+
+  server.registerTool(
+    "sync_channel_drive",
+    {
+      description:
+        "Sync THIS channel's linked Google Drive folder NOW (two-way rclone bisync into the channel " +
+        "folder's Drive/ subfolder) instead of waiting for the next scheduled sweep. Use when someone " +
+        "asks to 'sync Drive', 'pull the latest from Drive' or 'push my files to Drive'. Only syncs the " +
+        "folder already linked to this channel (see get_channel_drive_folder); it cannot target another " +
+        "channel. Waits up to ~40s for the result; a longer pass keeps running in the gateway — check it " +
+        "later with get_channel_drive_folder. Needs Drive sync enabled and a service-account key in Settings.",
+      inputSchema: {},
+    },
+    async () => {
+      if (!daemon.available("drivesync")) return text("Drive sync can't be started from this run (the gateway daemon isn't reachable).");
+      let result;
+      try {
+        result = await daemon.call("drivesync", { action: "sync", slug, waitMs: 40_000 }, { timeoutMs: 60_000 });
+      } catch (e) {
+        return text(`Couldn't start the Drive sync: ${e.message}`);
+      }
+      if (!result?.ok) return text(`⚠️ Drive sync not started: ${result?.error || "unknown error"}`);
+      if (result.busy) return text(`A sync pass for this channel is already running — no second one was started.\n${describeDriveSyncStatus(result.status)}`);
+      if (!result.done) return text("⏳ Drive sync started and is still running in the gateway (large folders or the first full resync can take minutes). Check the outcome later with get_channel_drive_folder.");
+      return text(describeDriveSyncStatus(result.status) || "Drive sync finished.");
     }
   );
 

@@ -1494,6 +1494,22 @@ function mountChannelVpnControls(card, channelId) {
   return request;
 }
 
+// Drive "Sync now": poll a channel's sync-status until its pass finishes (or the card closes).
+function describeDriveSyncResult(last) {
+  if (!last) return "";
+  const when = new Date(last.at).toLocaleTimeString();
+  return last.ok ? `✓ Synced at ${when}${last.firstRun ? " (first full resync)" : ""}.` : `✗ Sync failed at ${when}: ${last.summary || "unknown error"}`;
+}
+async function pollDriveSync(channelId, resultEl, stillOpen) {
+  const started = Date.now();
+  while (stillOpen()) {
+    const s = await api(`/api/channels/${encodeURIComponent(channelId)}/sync-status`);
+    if (!s.running) { resultEl.textContent = describeDriveSyncResult(s.last) || "Sync finished."; return; }
+    resultEl.textContent = `⏳ Syncing… ${Math.round((Date.now() - started) / 1000)}s`;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+}
+
 function renderChannelDetail(ch) {
   const detail = document.getElementById("channel-detail");
   detailDirty = false;
@@ -1680,6 +1696,25 @@ function renderChannelDetail(ch) {
       result.textContent = r.ok ? "✓ Connected — service account can see the folder." : `✗ ${r.output || "connection failed"}`;
     } catch (e) {
       result.textContent = "✗ " + e.message;
+    }
+  });
+  card.querySelector(".ch-syncnow").addEventListener("click", async () => {
+    const result = card.querySelector(".ch-synctest-result");
+    const saved = (meta.syncDriveFolder || "").trim();
+    if (!saved) { result.textContent = "Save a Drive folder link first."; return; }
+    if (card.querySelector(".ch-syncdrive").value.trim() !== saved) { result.textContent = "Save the changed Drive link first — Sync now uses the saved one."; return; }
+    const button = card.querySelector(".ch-syncnow");
+    button.disabled = true;
+    result.textContent = "Starting sync…";
+    try {
+      const r = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/sync-now`, { method: "POST", body: "{}" });
+      if (!r.ok) { result.textContent = `✗ ${r.error || "sync not started"}`; return; }
+      if (r.busy) result.textContent = "A sync pass is already running — waiting for it…";
+      await pollDriveSync(ch.channelId, result, () => card.isConnected);
+    } catch (e) {
+      result.textContent = "✗ " + e.message;
+    } finally {
+      button.disabled = false;
     }
   });
 
@@ -4050,6 +4085,35 @@ document.getElementById("schedule-modal-prompt").addEventListener("input", () =>
   document.getElementById("schedule-modal-error").hidden = true;
 });
 document.getElementById("schedule-search").addEventListener("input", renderSchedules);
+
+// Settings → Google Drive sync → "Sync all now": one pass over every linked channel, then poll.
+document.getElementById("drivesync-sync-all").addEventListener("click", async () => {
+  const button = document.getElementById("drivesync-sync-all");
+  const result = document.getElementById("drivesync-sync-all-result");
+  if (settingsDirty) { result.textContent = "Save your changes first — Sync all now uses the saved settings."; return; }
+  button.disabled = true;
+  result.textContent = "Starting…";
+  try {
+    const r = await api("/api/drive-sync/sync-all", { method: "POST", body: "{}" });
+    if (!r.ok) { result.textContent = `✗ ${r.error || "sync not started"}`; return; }
+    const started = Date.now();
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const s = await api("/api/drive-sync/status");
+      const busy = s.sweeping || s.channels.some((c) => c.running);
+      if (busy) { result.textContent = `⏳ Syncing ${s.channels.length} channel(s)… ${Math.round((Date.now() - started) / 1000)}s`; continue; }
+      const failed = s.channels.filter((c) => c.last && !c.last.ok);
+      result.textContent = failed.length
+        ? `✗ ${failed.length} of ${s.channels.length} failed: ${failed.map((c) => `${c.name || c.slug} — ${c.last.summary || "unknown error"}`).join("; ")}`
+        : `✓ Synced ${s.channels.length} channel(s) at ${new Date().toLocaleTimeString()}.`;
+      return;
+    }
+  } catch (e) {
+    result.textContent = "✗ " + e.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 // Same clear affordance as the users search: the × shows once there is a query, Escape clears.
 {
   const search = document.getElementById("schedule-search");
