@@ -48,6 +48,9 @@ function claudeProjectKey(cwd) {
 // declared modes into the compiler, so supports.networkModes is the single source of truth.
 const FULL_NETWORK_MODES = Object.freeze(["off", "on"]);
 
+// Category-only, like claude-mcp.js REJECTION: this text is posted into the channel.
+const CODEX_MCP_UNSAFE_REASON = "has no complete credential-free launch definition in the host Codex configuration";
+
 const baseCompile = (engine, request = {}, supportedModes = ["off"]) => {
   const network = compileNetworkPolicy({ engine, allowNetwork: Boolean(request.allowNetwork), supportedModes });
   return { supported: network.supported, reason: network.reason || "", network, writable: Boolean(request.writable), bypass: Boolean(request.dangerouslySkip) };
@@ -283,14 +286,24 @@ const qwen = validateEngineAdapter({
 
 const codex = validateEngineAdapter({
   pluginCapabilities: { sourceManifest: "codex", manifest: "", components: ["skills", "mcpServers"] },
+  // Same contract as Claude's resolver: { servers, rejected }. A selected server the runtime can
+  // only launch with host credentials is dropped with a reason, never fatal — see claude-mcp.js.
   async resolveOptionalMcpConfig(allowed) {
-    if (!Array.isArray(allowed) || !allowed.length) return {};
+    const servers = {};
+    const rejected = [];
+    if (!Array.isArray(allowed) || !allowed.length) return { servers, rejected };
     const policy = codexMcpPolicyFor(await listEngineMcps("codex"), allowed);
-    return Object.fromEntries(policy.servers.filter((server) => server.enabled).map((server) => {
-      const definition = server.definition;
-      if (!definition) throw new Error(`Optional MCP ${server.name} has no complete credential-safe definition; refusing Codex run`);
-      return [server.name, definition.transport === "http" ? { type: "http", url: definition.url } : { command: definition.command, args: definition.args || [] }];
-    }));
+    for (const server of policy.servers) {
+      if (!server.enabled) continue;
+      if (!server.definition) {
+        rejected.push({ name: server.name, reason: CODEX_MCP_UNSAFE_REASON });
+        continue;
+      }
+      servers[server.name] = server.definition.transport === "http"
+        ? { type: "http", url: server.definition.url }
+        : { command: server.definition.command, args: server.definition.args || [] };
+    }
+    return { servers, rejected };
   },
   id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", mcpMetaKey: "allowedCodexMcps",
   // Codex reports no dollar cost, so the ledger prices it from this configured rate (Settings →
@@ -322,8 +335,12 @@ const codex = validateEngineAdapter({
     const catalog = await listEngineMcps("codex").catch(() => []);
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
     codexMcpPolicy.servers.push(...(r.pluginMcpServers || []));
-    const unsafe = codexMcpPolicy.servers.find((server) => server.enabled && !server.definition);
-    if (unsafe) throw new Error(`Optional MCP ${unsafe.name} has no complete credential-safe definition; refusing Codex run`);
+    // Mirrors the drop resolveOptionalMcpConfig already recorded for the payload: a selected server
+    // with no credential-safe definition is disabled for this launch instead of failing the turn.
+    // Plugin-provided servers arrive with their definition already proven by run-engine-mcp.js.
+    for (const server of codexMcpPolicy.servers) {
+      if (server.enabled && !server.definition) server.enabled = false;
+    }
     return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, toolboxToken: r.toolboxToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexStateDir: r.codexStateDir, personalSkills: r.personalSkillCatalog, pluginSkills: requirePluginRuntime(r.pluginRuntime, this.id).skills, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent, onSessionResolved: r.onSessionResolved });
   },
   interrupt: () => false,

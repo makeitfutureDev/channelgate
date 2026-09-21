@@ -2,6 +2,9 @@
 // therefore carry explicit transport definitions; enabling ambient config would also import
 // unrelated MCPs, hooks and credentials. Resolve fresh bytes at admission, never a UI cache or a
 // shell-split `mcp list` display string. Only transport data leaves this module.
+// A selection that fails any of those checks is DROPPED from the payload with a category
+// reason, not thrown: refusing to relay the host credential is the security property, and the
+// turn itself never depended on an optional connector.
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -46,40 +49,82 @@ async function readConfig(file) {
   } catch (error) {
     if (error.code === "ENOENT") return {};
     // Never include raw parser errors, file contents, or private config paths in a chat error.
-    throw new Error("Selected Claude MCP configuration could not be read safely. Ask an admin to check the configured server.");
+    throw new Error("unreadable");
   }
 }
 
+// Why a selection was not admitted. Category only — never a path, a parser error, a config value
+// or the offending definition, because this text is posted into the channel.
+const REJECTION = {
+  unreadable: "could not be read from the gateway host's Claude MCP configuration",
+  missing: "is not defined in the gateway host's Claude MCP configuration",
+  unsafe: "needs host credentials (env/headers/auth helper) or uses an unsupported transport",
+  stale: "no longer matches the transport it was selected with",
+  namespace: "does not match its own tool namespace",
+  name: "uses a reserved or invalid server name",
+};
+
+function namespaceOf(name) {
+  return "mcp__" + name.replace(/[^a-zA-Z0-9]+/g, "_");
+}
+
+// Returns { servers, rejected }. An optional connector that cannot be admitted is DROPPED with a
+// reason, never fatal: refusing to relay a host credential into the container is the security
+// property, and dropping the server keeps it whole — failing the whole turn only adds downtime for
+// a conversation that may not even use the connector. The caller reports `rejected` in the thread
+// so a dropped server is loud without being terminal.
 export async function resolveClaudeMcpConfig(allowedMcps = [], {
   configFile = process.env.CLAUDE_CONFIG_DIR
     ? path.join(process.env.CLAUDE_CONFIG_DIR, ".claude.json")
     : path.join(os.homedir(), ".claude.json"),
   discoveryCwd = process.cwd(),
 } = {}) {
-  if (!Array.isArray(allowedMcps) || !allowedMcps.length) return {};
-  const selected = allowedMcps.map((entry) => {
+  const servers = {};
+  const rejected = [];
+  if (!Array.isArray(allowedMcps) || !allowedMcps.length) return { servers, rejected };
+  const selected = [];
+  for (const entry of allowedMcps) {
     const name = entry?.name;
+    // A reserved or malformed name cannot come from the picker (sanitizeMcps +
+    // persistedSelectionForEngine), so it means the stored record was hand-edited or tampered
+    // with. It is still only dropped — never injected, so it can never shadow a built-in identity
+    // — and the caller's event/notice is what makes it visible.
     if (typeof name !== "string" || !NAME.test(name) || RESERVED.has(name) || /composio/i.test(name)) {
-      throw new Error("Selected Claude MCP server name is invalid or reserved.");
+      rejected.push({ name: typeof name === "string" ? name.slice(0, 160) : "(unnamed)", reason: REJECTION.name });
+      continue;
     }
-    return entry;
-  });
+    selected.push(entry);
+  }
+  if (!selected.length) return { servers, rejected };
   // These are the same scopes `claude mcp list` in the daemon cwd discovers. Local project
   // overrides beat project .mcp.json, which beats user scope. The channel workdir is never a
   // config source: its members cannot replace an operator-selected definition with their own.
-  const user = await readConfig(configFile);
-  const project = await readConfig(path.join(discoveryCwd, ".mcp.json"));
+  let user;
+  let project;
+  try {
+    user = await readConfig(configFile);
+    project = await readConfig(path.join(discoveryCwd, ".mcp.json"));
+  } catch {
+    // A corrupt or unreadable operator config must not brick every channel that selected anything.
+    for (const entry of selected) rejected.push({ name: entry.name, reason: REJECTION.unreadable });
+    return { servers, rejected };
+  }
   const localServers = own(own(own(user, "projects"), path.resolve(discoveryCwd)), "mcpServers");
-  const servers = {};
   for (const entry of selected) {
     const scope = [localServers, own(project, "mcpServers"), own(user, "mcpServers")].find((servers) => OBJECT(servers) && Object.hasOwn(servers, entry.name));
     const source = own(scope, entry.name);
     const definition = safeClaudeMcpDefinition(source);
     const expectedMatch = definition?.type === "stdio" ? entry.match?.serverName === entry.name : entry.match?.serverUrl === definition?.url;
-    if (!definition || !expectedMatch || entry.namespace !== "mcp__" + entry.name.replace(/[^a-zA-Z0-9]+/g, "_")) {
-      throw new Error(`Selected Claude MCP server "${entry.name}" has no safe matching transport definition. Ask an admin to configure a credential-free server reachable inside the channel container and select it again.`);
+    const reason = source === undefined ? REJECTION.missing
+      : !definition ? REJECTION.unsafe
+      : !expectedMatch ? REJECTION.stale
+      : entry.namespace !== namespaceOf(entry.name) ? REJECTION.namespace
+      : "";
+    if (reason) {
+      rejected.push({ name: entry.name, reason });
+      continue;
     }
     servers[entry.name] = definition;
   }
-  return servers;
+  return { servers, rejected };
 }

@@ -1223,8 +1223,32 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   let mcpConfigFingerprint = "";
   let gatewayCapability = "";
   let pluginMcpServers = [];
+  // A selected optional MCP the engine cannot admit safely (missing from the host config, needs a
+  // host credential, stale transport) is DROPPED from the payload by the engine's resolver instead
+  // of failing the run — an optional connector is never worth the turn, and refusing to relay the
+  // credential is the property that actually matters. The drop is announced, not silent: it is
+  // logged as an event for the admin and prefixed to the answer the author is already getting.
+  let mcpDropNote = "";
+  const reportRejectedMcps = async (rejected, forEngine) => {
+    if (!Array.isArray(rejected) || !rejected.length) return "";
+    await logEvent("run_mcp_dropped", {
+      channel: channelId,
+      slug: entry.slug,
+      author: authorId,
+      threadKey,
+      origin,
+      engine: forEngine,
+      // Names and category reasons only — the resolvers never emit a path, a config value or a
+      // definition, and this payload is readable in the admin observability view.
+      dropped: rejected.map(({ name, reason }) => ({ name: String(name || ""), reason: String(reason || "") })),
+    });
+    const list = rejected.map(({ name, reason }) => `\`${String(name || "")}\` — ${String(reason || "unavailable")}`).join("; ");
+    return `⚠️ _Skipped ${rejected.length === 1 ? "MCP connection" : "MCP connections"}: ${list}. The rest of this turn ran normally; an admin can fix the selection in the channel's Cloud MCP settings._\n\n`;
+  };
   const mintGatewayMcpRuntime = async () => {
-    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, pluginServers: pluginMcpServers = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    let rejectedMcps = [];
+    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, pluginServers: pluginMcpServers = [], rejectedMcps = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    mcpDropNote = await reportRejectedMcps(rejectedMcps, engine);
   };
 
   // Every granted definition is explicit in the per-run payload. Keep ambient MCPs disabled
@@ -1576,6 +1600,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // claim to choose allowedCodexMcps vs allowedMcps for mutations; reusing the failed engine's
     // token would cross that authority boundary even though a different runner executes.
     const fallbackMcpRuntime = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine: fallbackEngine, target, allowedMcps: meta[fallbackAdapter.mcpMetaKey] || [] });
+    // The fallback resolves the OTHER engine's own selections, so it reports its own drops. The
+    // primary engine's note is not carried over: this answer came from the fallback.
+    const fbMcpDropNote = await reportRejectedMcps(fallbackMcpRuntime.rejectedMcps, fallbackEngine);
     const fbKey = `${threadKey}::${fallbackEngine}-fallback`;
     const prior = await getSession(entry.slug, fbKey);
     // A FRESH fallback session can't resume the failed engine's conversation, so without help it
@@ -1697,7 +1724,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
     const fallbackResult = {
       ...baseMeta, ...cx,
-      content: redactSecretValues(licenseWarning + (note || "") + fallbackModelNote + (cx.content || ""), outputSecrets),
+      content: redactSecretValues(licenseWarning + (note || "") + fbMcpDropNote + fallbackModelNote + (cx.content || ""), outputSecrets),
       sessionId: cx.sessionId ?? null,
       engine: fallbackEngine,
       isNew: !prior,
@@ -1800,8 +1827,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // not at the head of a queue this turn may have sat in for hours) and materialize the
     // token-bearing config file built around it (see above). From here on the session row is the
     // engine's: a later failure keeps it (resume-heal, failover and /clear own that story).
-    engineStarted = true;
+    // Minted BEFORE `engineStarted` flips: a failure in here is still a turn whose engine never
+    // spawned, so the session row this turn minted must not survive it (see dropUnusedSession).
     await mintGatewayMcpRuntime();
+    engineStarted = true;
     if (mcpConfigFile) {
       await mkdir(path.dirname(mcpConfigFile), { recursive: true, mode: 0o700 });
       await writeFile(mcpConfigFile, mcpConfigJson, { mode: 0o600 });
@@ -2051,7 +2080,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // `runtimeModel` keeps the CLI-reported truth for context-window math and Codex cost rates.
     return {
       ...redactSecretFields(finalResult, outputSecrets),
-      content: redactSecretValues(licenseWarning + (finalResult.content || ""), outputSecrets),
+      content: redactSecretValues(licenseWarning + mcpDropNote + (finalResult.content || ""), outputSecrets),
       loopWakeup,
       runtimeModel: resolveCurrentModel(finalResult),
       model: model || resolveCurrentModel(finalResult),

@@ -5983,7 +5983,11 @@ acceptance gates; no production restart or external message was performed by the
   ignore capability nonces but change with selected definitions/revocation. Clean emits no MCPs;
   Codex fallback must not inherit Claude selections. Test local/project/user precedence, fresh
   configuration reads, reserved names, missing definitions, stale URL grants, malformed config,
-  credential maps/helpers, interpolation and credential flags; errors must not disclose config.
+  credential maps/helpers, interpolation and credential flags; rejections must not disclose config.
+  Each unusable shape must be DROPPED with its own category reason while a healthy sibling in the
+  same selection still reaches the payload, and the run must complete: assert the delivered
+  content names the skipped selection and its reason, carries no config value, and that a
+  `run_mcp_dropped` event was recorded.
 - Live release gate, Claude and Codex: separate disposable Auto channels, approved test author,
   ordinary mode and a harmless credential-free stdio echo server whose script already exists in
   each container's permitted work folder. Configure the server in the operator engine catalog;
@@ -5995,11 +5999,18 @@ acceptance gates; no production restart or external message was performed by the
   PASS requires real initialization/tools-call and exact returned nonce after the grant, absence
   after removal, no unrelated server or cross-engine selection exposure, and preserved isolation
   flags; self-reported availability alone is insufficient. Restore exact original selections.
-- Negative live variant: select a server with no safe current transport definition; require a
-  named configuration remedy and no unselected or credential-bearing MCP startup. Do not copy
-  operator tokens into a channel to make the fixture pass. Selected HTTP/SSE transports must use
-  literal credential-free URLs without userinfo, query or fragment; explicit auth headers, env,
-  helpers, interpolation, unknown transport options and literal credential flags are refused.
+- Negative live variant (2026-09-21, both engines): in the same channel select BOTH the healthy
+  echo server and a second server with no safe current transport definition (an HTTP server
+  carrying an `Authorization` header is the realistic shape). Ask the echo question again. PASS
+  requires a delivered answer in that exact thread that still calls the echo server and returns
+  the nonce, a prefix naming the skipped server and its category reason, no credential-bearing or
+  unselected MCP startup in the fixture server events, no header/env value anywhere in the reply,
+  and a `run_mcp_dropped` event for the channel in admin observability. The turn must NOT fail and
+  must NOT fail over to the other engine. Repeat with the channel's engine switched so each
+  harness drops its own selection set. Do not copy operator tokens into a channel to make the
+  fixture pass. Selected HTTP/SSE transports must use literal credential-free URLs without
+  userinfo, query or fragment; explicit auth headers, env, helpers, interpolation, unknown
+  transport options and literal credential flags are refused.
 - Local regression passes are candidate evidence. These live gates remain pending until the
   reviewed change is deployed and both engines have real delivered exact-thread retests.
 

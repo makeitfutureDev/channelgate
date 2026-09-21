@@ -1,5 +1,13 @@
 # Changelog — ChannelGate
 
+- Stop an unusable Cloud MCP selection from failing a conversation. A selected optional MCP server
+  that is missing from the host configuration, needs a host credential, or no longer matches the
+  transport it was selected with is now dropped from that run — for Claude, Qwen and Codex, on the
+  primary and the failover engine alike — instead of ending the turn. The answer is prefixed with
+  which connections were skipped and why, and the drop is recorded as an event for admins. Host
+  credentials are still never relayed into a channel container, and a corrupt operator
+  configuration no longer blocks every channel that selected anything.
+
 - Add an optional **Qwen (Claude Code)** harness: the same Claude Code CLI driven against
   QwenCloud's Anthropic-compatible endpoint, with its own gateway-level API key and base URL, and
   a model list read live from the account. It is off until an admin turns it on, after which it
