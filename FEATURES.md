@@ -573,7 +573,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Claude pooling and Codex execution/MCP policy run behind adapters; fallback routing is a directed
   registry graph, and every registered CLI receives a boot version/readiness probe.
 - Slack and Admin selectors consume registry manifests. Codex optional MCPs under
-  `--ignore-user-config` receive complete credential-safe definitions.
+  `--ignore-user-config` receive complete credential-safe definitions; a selection without one is
+  dropped from the launch with a reason, the same contract Claude's resolver uses.
 - OpenCode proves the third-engine contract without orchestrator or UI conditionals. Its adapter is
   deliberately restricted to workspace read/glob/grep/list with model-tool network off: shell,
   edits, external directories, plugins, MCP, and bypass modes fail closed because OpenCode
@@ -1535,7 +1536,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   operator configuration bytes at run admission. Its strict MCP payload contains only explicitly
   selected, credential-free definitions plus the scoped built-ins; user/project setting sources
   remain disabled. Missing, stale-URL, reserved-name, auth-dependent or unsupported definitions
-  fail closed with an admin remedy. Changes and revocations alter the warm-process fingerprint.
+  never reach the payload: each one is DROPPED from that run with a category reason instead of
+  ending the turn, on both the primary and the failover engine. The turn completes on its
+  remaining connections, the answer is prefixed with which selections were skipped and why, and a
+  `run_mcp_dropped` event records the names and reasons for the admin (never a path, config value
+  or definition). An unreadable operator configuration drops every selection rather than bricking
+  the channel. Changes and revocations alter the warm-process fingerprint.
   Codex queries the active app-server inventory and exposes
   each runtime app family (Boost.space, GitHub, Sites, Skill Library, etc.) plus each configured
   server as its own checkbox. Codex launches default-deny optional apps, explicitly enable only

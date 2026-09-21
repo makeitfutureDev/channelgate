@@ -14,6 +14,7 @@ process.env.SESSION_KEEPALIVE = "0";
 process.env.CG_WORKSPACE_DIR = path.join(scratch, "selected-mcp-workspaces");
 const pick = (name) => ({ name, namespace: "mcp__" + name.replace(/[^a-zA-Z0-9]+/g, "_"), match: { serverName: name } });
 const stdio = { type: "stdio", command: "node", args: ["/workspace/echo.mjs"] };
+const servers = async (picks, opts) => (await resolveClaudeMcpConfig(picks, opts)).servers;
 
 async function config(name) {
   const dir = path.join(scratch, name);
@@ -41,28 +42,50 @@ test("Claude selected scopes use fresh bytes and preserve exact args without cop
   const user = { unrelatedCredential: "must-not-copy", mcpServers: { echo: structuredClone(stdio), unselected: { command: "never" } }, projects: { [opts.discoveryCwd]: { mcpServers: { echo: { ...stdio, args: ["local arg with spaces"] } } } } };
   await writeFile(opts.configFile, JSON.stringify(user));
   await writeFile(path.join(opts.discoveryCwd, ".mcp.json"), JSON.stringify({ mcpServers: { echo: { ...stdio, args: ["project"] } } }));
-  assert.deepEqual(await resolveClaudeMcpConfig([pick("echo")], opts), { echo: { ...stdio, args: ["local arg with spaces"] } });
+  assert.deepEqual(await servers([pick("echo")], opts), { echo: { ...stdio, args: ["local arg with spaces"] } });
   delete user.projects;
   await writeFile(opts.configFile, JSON.stringify(user));
-  assert.deepEqual((await resolveClaudeMcpConfig([pick("echo")], opts)).echo.args, ["project"]);
+  assert.deepEqual((await servers([pick("echo")], opts)).echo.args, ["project"]);
   await rm(path.join(opts.discoveryCwd, ".mcp.json"));
-  assert.deepEqual(await resolveClaudeMcpConfig([pick("echo")], opts), { echo: stdio });
+  assert.deepEqual(await servers([pick("echo")], opts), { echo: stdio });
   user.mcpServers.echo.env = { HOST_SECRET: "must-not-copy" };
   await writeFile(opts.configFile, JSON.stringify(user));
-  await assert.rejects(resolveClaudeMcpConfig([pick("echo")], opts), /no safe matching transport/);
+  const credentialed = await resolveClaudeMcpConfig([pick("echo")], opts);
+  assert.deepEqual(credentialed.servers, {}, "a credential-bearing definition is never relayed");
+  assert.deepEqual(credentialed.rejected.map((r) => r.name), ["echo"]);
+  assert.match(credentialed.rejected[0].reason, /host credentials/);
+  assert.ok(!/must-not-copy|HOST_SECRET/.test(JSON.stringify(credentialed)), "a rejection never carries the config value");
 });
 
-test("Claude selected names, stale URL grants and unavailable definitions fail closed", async () => {
+test("Claude selected names, stale URL grants and unavailable definitions are dropped, never fatal", async () => {
   const opts = await config("selected-invalid");
   await writeFile(opts.configFile, JSON.stringify({ mcpServers: { echo: stdio, web: { type: "http", url: "https://new.example.test/mcp" }, gateway: stdio } }));
-  for (const name of ["gateway", "composio-agent", "makeitfuture-toolbox", "__proto__", "constructor", "bad\nname"])
-    await assert.rejects(resolveClaudeMcpConfig([pick(name)], opts), /invalid or reserved/);
-  await assert.rejects(resolveClaudeMcpConfig([pick("missing")], opts), /no safe matching transport/);
-  await assert.rejects(resolveClaudeMcpConfig([{ name: "web", namespace: "mcp__web", match: { serverUrl: "https://old.example.test/mcp" } }], opts), /no safe matching transport/);
-  await assert.rejects(resolveClaudeMcpConfig([{ ...pick("echo"), namespace: "mcp__gateway" }], opts), /no safe matching transport/);
+  // Each unusable shape is dropped with its own category reason instead of ending the turn, and a
+  // healthy sibling in the SAME selection still reaches the payload.
+  const cases = [
+    [pick("gateway"), /reserved or invalid/],
+    [pick("composio-agent"), /reserved or invalid/],
+    [pick("makeitfuture-toolbox"), /reserved or invalid/],
+    [pick("__proto__"), /reserved or invalid/],
+    [pick("constructor"), /reserved or invalid/],
+    [pick("bad\nname"), /reserved or invalid/],
+    [pick("missing"), /not defined in/],
+    [{ name: "web", namespace: "mcp__web", match: { serverUrl: "https://old.example.test/mcp" } }, /no longer matches/],
+    [{ ...pick("echo"), namespace: "mcp__gateway" }, /tool namespace/],
+  ];
+  for (const [entry, reason] of cases) {
+    const result = await resolveClaudeMcpConfig([entry, pick("echo")], opts);
+    assert.deepEqual(Object.keys(result.servers), ["echo"], JSON.stringify(entry));
+    assert.equal(result.rejected.length, 1, JSON.stringify(entry));
+    assert.match(result.rejected[0].reason, reason);
+    assert.ok(!Object.hasOwn(result.servers, "__proto__") && Object.getPrototypeOf(result.servers) === Object.prototype);
+  }
   await writeFile(opts.configFile, '{"private":"do-not-print",broken');
-  await assert.rejects(resolveClaudeMcpConfig([pick("echo")], opts), (error) => /could not be read safely/.test(error.message) && !/private|do-not-print|selected-invalid/.test(error.message));
-  assert.deepEqual(await resolveClaudeMcpConfig([], opts), {}, "no grant never loads an ambient config");
+  const unreadable = await resolveClaudeMcpConfig([pick("echo")], opts);
+  assert.deepEqual(unreadable.servers, {}, "a corrupt operator config admits nothing");
+  assert.match(unreadable.rejected[0].reason, /could not be read/);
+  assert.ok(!/private|do-not-print|selected-invalid/.test(JSON.stringify(unreadable)), "no config bytes or paths are disclosed");
+  assert.deepEqual(await resolveClaudeMcpConfig([], opts), { servers: {}, rejected: [] }, "no grant never loads an ambient config");
 });
 
 test("actual Claude launches keep settings isolation while grants add, resume, change and revoke", async () => {
@@ -100,9 +123,19 @@ test("actual Claude launches keep settings isolation while grants add, resume, c
     await runMessage(input);
     await writeFile(file, JSON.stringify({ mcpServers: { echo: { ...stdio, args: ["/workspace/v2.mjs"] } } }));
     await runMessage(input);
+    // An unusable selection never ends the turn: the credentialed server is dropped from the
+    // payload, the healthy one still launches, and the author is told which was skipped.
+    await writeFile(file, JSON.stringify({ mcpServers: { echo: stdio, leaky: { type: "http", url: "https://leaky.example.test/mcp", headers: { Authorization: "must-not-copy" } } } }));
+    await patchChannelMeta(entry.slug, { allowedMcps: [pick("echo"), pick("leaky")] });
+    const dropped = await runMessage(input);
+    assert.match(dropped.content, /Skipped MCP connection: `leaky`/);
+    assert.match(dropped.content, /host credentials/);
+    assert.ok(!/must-not-copy/.test(dropped.content));
     await patchChannelMeta(entry.slug, { allowedMcps: [] });
     await runMessage(input);
-    assert.equal(actual.length, 5);
+    assert.equal(actual.length, 6);
+    assert.deepEqual(actual[4].config.mcpServers.echo, stdio, "the healthy sibling still launched");
+    assert.equal(actual[4].config.mcpServers.leaky, undefined, "a credentialed selection never reaches the payload");
     for (const call of actual) {
       assert.ok(call.args.includes("--strict-mcp-config"));
       assert.equal(call.args[call.args.indexOf("--setting-sources") + 1], "");
@@ -112,7 +145,7 @@ test("actual Claude launches keep settings isolation while grants add, resume, c
     assert.deepEqual(actual[1].config.mcpServers.echo, stdio);
     assert.deepEqual(actual[2].config.mcpServers.echo, stdio);
     assert.deepEqual(actual[3].config.mcpServers.echo.args, ["/workspace/v2.mjs"]);
-    assert.equal(actual[4].config.mcpServers.echo, undefined);
+    assert.equal(actual[5].config.mcpServers.echo, undefined);
     assert.ok(actual[2].args.includes("-r"), "the grant remains available in an actual resumed launch");
   } finally {
     await useFakeRuntime(null);
