@@ -127,6 +127,21 @@ test("API-spoofed admin ids cannot use any user/channel gateway authority", asyn
   });
 });
 
+test("an untrusted principal's permission prompt is refused in the shape Claude Code parses", async () => {
+  // Plain text here surfaces as "The permission prompt tool returned an invalid permission result".
+  const capability = mintGatewayCapability({
+    secret: "authz-test-secret", channelId: "C_MCP_CURRENT", slug: "mcp-authz-test",
+    authorId: "U_MCP_API_SPOOF", threadKey: "1.000", origin: "api_foreground", engine: "claude",
+    principalTrusted: false,
+  });
+  await withGateway({ author: "U_MCP_API_SPOOF", capability }, async (client) => {
+    const result = await client.callTool({ name: "permission_prompt", arguments: { tool_name: "Bash", input: { command: "true" } } });
+    const decision = JSON.parse(resultText(result));
+    assert.equal(decision.behavior, "deny");
+    assert.match(decision.message, /trusted Slack principal/i);
+  });
+});
+
 test("set_my_composio_token writes only the signed principal's record", async () => {
   await setUser("U_MCP_CALLER", { name: "Caller", composioToken: "caller-old" });
   await setUser("U_MCP_OTHER", { name: "Other", composioToken: "other-unchanged" });

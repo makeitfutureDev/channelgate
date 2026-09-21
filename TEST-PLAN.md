@@ -1376,6 +1376,11 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 - [x] The registered search and read MCP handlers return formatted content through their injected
       response helper (regression: neither can fail with `text is not defined`).
 - [x] Untrusted/API-spoofed principals cannot call memory retrieval tools.
+- [x] Unit: an untrusted (API-key) principal's `permission_prompt` call is refused as
+      `{ "behavior": "deny", "message": … }` — the shape Claude Code parses — rather than plain text,
+      which the CLI reported as "The permission prompt tool returned an invalid permission result"
+      (`test/gateway-mcp-authz.test.js`). Live: an API run in a non-Auto channel that asks for Bash
+      gets a clean denial naming the trusted-principal reason.
 - [x] The channel editor exposes Access, MCP Connections, Cloud MCP, Environment tokens, Skills,
       Runtime, Instructions, and Memory as first-class pages in that order, with no nested Tools
       navigation or channel Grant Tier selector; enabled skills appear first and one shared save
@@ -1640,6 +1645,11 @@ except where a case names a harness, because these guard the adapter layer itsel
       model is keyed off the adapter rather than a hardcoded pair.
 - [x] A provider failure names the harness that failed ("Qwen authentication failed"), not the CLI
       it borrows.
+- [x] Model default: with no Qwen model set on the thread, channel or gateway, the run passes
+      `--model qwen3.8-max` (the first shipped model) instead of leaving the CLI to request its
+      own Anthropic default, which QwenCloud rejects with `400 Model not exist`
+      (`test/qwen-engine.test.js`, a stub `claude` echoing its `--model`). Live: a `qwen` API run on
+      a gateway with no `defaultQwenModel` must answer rather than fail with "Model not exist".
 
 Live acceptance (executed 2026-09-21 against the QwenCloud Token Plan endpoint
 `https://token-plan.maas.qwencloudapi.com/apps/anthropic`, Claude Code 2.1.258, model

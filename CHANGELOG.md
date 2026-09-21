@@ -1,5 +1,10 @@
 # Changelog — ChannelGate
 
+- Fix two release-smoke defects. A Qwen run with no model configured now asks QwenCloud for a
+  Qwen model instead of the CLI's Anthropic default (which failed every such turn with "Model not
+  exist"). A tool request from an HTTP run-API turn is now refused with a readable reason instead
+  of Claude Code's "invalid permission result" error; the request stays denied either way.
+
 - Stop an unusable Cloud MCP selection from failing a conversation. A selected optional MCP server
   that is missing from the host configuration, needs a host credential, or no longer matches the
   transport it was selected with is now dropped from that run — for Claude, Qwen and Codex, on the
