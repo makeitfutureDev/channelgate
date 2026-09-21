@@ -964,7 +964,10 @@ export class BackgroundJobs {
       // through the streaming redactor — the channel's secrets are blanked when the tail is READ,
       // and after a restart the values have to be resolved again to do that.
       try {
-        rec.secretValues = [...Object.values(safeSpawnEnv(await resolveChannelEnv(meta))), ...serviceSecretValues()];
+        // Recovery may attach to a job launched before this build stopped injecting operator VPN
+        // credentials. Resolve a value-only projection so those former environment values remain
+        // covered by output redaction without making them available to new jobs.
+        rec.secretValues = [...Object.values(safeSpawnEnv(await resolveChannelEnv({env:meta.env}))), ...serviceSecretValues()];
       } catch {
         rec.secretValues = serviceSecretValues();
       }

@@ -367,7 +367,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   ]);
   const OPEN = new Set([
     // read-only
-    "get_channel_vpn_status", "list_available_mcps", "list_channel_mcps", "list_schedules", "list_folders",
+    "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "list_folders",
     "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
     "workspace_list", "workspace_read", "workspace_search",
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval

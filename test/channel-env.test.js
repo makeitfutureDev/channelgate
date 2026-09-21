@@ -162,6 +162,32 @@ test("a channel with nothing set resolves to nothing at all", async () => {
   assert.deepEqual(await resolveChannelEnv({ env: null }), {});
 });
 
+test("configured operator VPN credentials are excluded from engine env while unrelated channel variables remain", async () => {
+  const env = {
+    VPN_USERNAME: localVar("vpn-user-secret"),
+    VPN_PASSWORD: localVar("vpn-password-secret"),
+    MYSQL_USERNAME: localVar("mysql-user-secret"),
+    MYSQL_PASSWORD: localVar("mysql-password-secret"),
+    CUSTOM_VPN_USER: localVar("custom-vpn-user-secret"),
+    SUPABASE_ACCESS_TOKEN: localVar("ordinary-channel-secret"),
+  };
+  const defaults = {env,vpnService:{version:1,secrets:{}}};
+  assert.deepEqual(await resolveChannelEnv(defaults),{
+    CUSTOM_VPN_USER:"custom-vpn-user-secret",
+    SUPABASE_ACCESS_TOKEN:"ordinary-channel-secret",
+  });
+
+  const custom = {env,vpnService:{version:1,secrets:{vpnUsername:"CUSTOM_VPN_USER"}}};
+  assert.deepEqual(await resolveChannelEnv(custom),{
+    VPN_USERNAME:"vpn-user-secret",
+    SUPABASE_ACCESS_TOKEN:"ordinary-channel-secret",
+  },"a custom ref replaces only that role's default name");
+
+  const operatorProjection = await resolveChannelEnv({env});
+  assert.equal(operatorProjection.CUSTOM_VPN_USER,"custom-vpn-user-secret","the host-side service can still resolve its selected projection");
+  assert.equal(listChannelEnv(custom).length,Object.keys(env).length,"write-only inventory still lists configured service entries");
+});
+
 // ── Write-only ──────────────────────────────────────────────────────────────
 test("the listing shape carries no value, and no tail for a short one", () => {
   const meta = metaWith({

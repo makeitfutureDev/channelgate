@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, symlink, stat, rm, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createArgs, createVpnService, SERVICE_LABEL, serviceIdentity, selectedCredentials, serviceFingerprint, privateDirectory, readPrivate, writePrivate, runCommand } from "../src/gateway/vpn-service.js";
+import { createArgs, createVpnService, SERVICE_LABEL, serviceIdentity, selectedCredentials, serviceFingerprint, vpnEnableRestartRequired, privateDirectory, readPrivate, writePrivate, runCommand, vpnImageDigest, requireVpnImage, VPN_SERVICE_VERSION } from "../src/gateway/vpn-service.js";
 
 const identity = serviceIdentity("/private/gateway","C-TEST","test-database");
 const config = {dbHost:"10.20.30.40",dbPort:3306};
 const id = "a".repeat(64);
 const fingerprint = "reviewed";
-const owned = (role,running = true) => ({Id:role === "vpn" ? id : "b".repeat(64),Config:{Labels:{[SERVICE_LABEL]:identity.owner,"cg.service.role":role,"cg.service.fingerprint":fingerprint}},State:{Running:running,Status:running?"running":"exited"},HostConfig:{NetworkMode:`container:${id}`}});
+const owned = (role,running = true) => ({Id:role === "vpn" ? id : "b".repeat(64),Config:{Labels:{[SERVICE_LABEL]:identity.owner,"cg.service.role":role,"cg.service.version":VPN_SERVICE_VERSION,"cg.service.fingerprint":fingerprint}},State:{Running:running,Status:running?"running":"exited"},HostConfig:{NetworkMode:`container:${id}`}});
 function fake({foreign=false,healthy=true,existing=false} = {}) {
   const calls = [], containers = new Map(existing ? [[identity.vpn,owned("vpn")],[identity.extractor,owned("extractor")]] : []);
   if(foreign)containers.set(identity.extractor,{...owned("extractor"),Config:{Labels:{}}});
@@ -38,7 +38,7 @@ test("privilege and secret separation: only VPN receives TUN/NET_ADMIN; no host 
     assert.ok(args.includes("--cap-drop=ALL"));assert.ok(args.includes("--read-only"));
     assert.doesNotMatch(args.join(" "),/cg\.install=|docker\.sock|podman\.sock|--privileged|--publish|--network=host/);
   }
-  assert.doesNotMatch(extractor.join(" "),/NET_ADMIN|\/dev\/net\/tun|client.ovpn|\/vpn\/auth/);
+  assert.doesNotMatch(extractor.join(" "),/--cap-add|\/dev\/net\/tun|client.ovpn|\/vpn\/auth/);
   assert.doesNotMatch(vpn.join(" "),/credentials.json/);
 });
 
@@ -64,6 +64,25 @@ test("healthy unchanged service is reused without rewriting mounted credential f
   const service=createVpnService({...f,identity,config,serviceDir:"/unused",imageId:id});
   assert.deepEqual(await service.start({fingerprint}),{reused:true});
   assert.equal(f.calls.filter(args=>["rm","run"].includes(args[0])).length,0);
+});
+
+test("enable refreshes only an active unit whose protected runtime pair is stale or incomplete",()=>{
+  const current={
+    vpn:{state:"running",version:VPN_SERVICE_VERSION,imageId:id,fingerprint},
+    extractor:{state:"running",version:VPN_SERVICE_VERSION,imageId:id,fingerprint},
+  };
+  assert.equal(vpnEnableRestartRequired(current,{fingerprint,imageId:id,unitWasActive:true}),false);
+  assert.equal(vpnEnableRestartRequired(current,{fingerprint,imageId:id,unitWasActive:true,unitChanged:true}),true);
+  assert.equal(vpnEnableRestartRequired(current,{fingerprint:"rotated",imageId:id,unitWasActive:true}),true);
+  assert.equal(vpnEnableRestartRequired({...current,extractor:{state:"absent"}},{fingerprint,imageId:id,unitWasActive:true}),true);
+  assert.equal(vpnEnableRestartRequired(current,{fingerprint:"rotated",imageId:id,unitWasActive:false}),false);
+});
+
+test("status exposes the opaque service fingerprint used for refresh decisions",async()=>{
+  const f=fake({existing:true});
+  const status=await createVpnService({...f,identity,config,serviceDir:"/unused",imageId:id}).status();
+  assert.equal(status.vpn.fingerprint,fingerprint);
+  assert.equal(status.extractor.fingerprint,fingerprint);
 });
 
 test("VPN readiness failure never starts an extractor and removes only owned service containers",async()=>{
@@ -121,4 +140,50 @@ test("command timeout forcibly ends a process that ignores SIGTERM", { timeout: 
     assert.equal(result.code, null, "the child must end by a signal, not a successful exit");
     assert.equal(await readFile(marker, "utf8"), "term-ignored", "SIGTERM was handled before SIGKILL ended the process");
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+
+test("database bridge pins the owned extractor and bounds stdin, output and execution",async()=>{
+  const f=fake({existing:true}); const executions=[];
+  let queryResult={code:0,stdout:'{"ok":true,"databases":["fixture"]}'};
+  const run=async(bin,args,options)=>{
+    if(args.includes("/usr/local/bin/cg-vpn-query")){
+      executions.push({args,options});return queryResult;
+    }
+    return f.run(bin,args,options);
+  };
+  const service=createVpnService({run,identity,config,serviceDir:"/unused",imageId:id});
+  assert.deepEqual(await service.query({operation:"list_databases"}),{ok:true,databases:["fixture"]});
+  assert.deepEqual(executions[0].args,["exec","-i","b".repeat(64),"/usr/bin/timeout","--signal=TERM","--kill-after=2s","20s","/usr/local/bin/cg-vpn-query"]);
+  assert.equal(executions[0].options.input,'{"operation":"list_databases"}');
+  assert.equal(executions[0].options.maxOutputBytes,263168);
+  queryResult={code:1,stdout:'{"ok":false,"errorClass":"statement_timeout_unavailable"}'};
+  assert.deepEqual(await service.query({operation:"list_databases"}),{ok:false,errorClass:"statement_timeout_unavailable"});
+  queryResult={code:1,stdout:'{"ok":false,"errorClass":"PRIVATE","detail":"must-not-leak"}'};
+  await assert.rejects(service.query({operation:"list_databases"}),error=>/Database query failed/.test(error.message)&&!/PRIVATE|must-not-leak/.test(error.message));
+  queryResult={code:0,stdout:'{"ok":false,"errorClass":"query_timed_out"}'};
+  await assert.rejects(service.query({operation:"list_databases"}),/Database query failed/);
+  await assert.rejects(service.query({operation:"list_databases"},{beforeExecute:async()=>false}),/no longer allowed/);
+  assert.equal(executions.length,4);
+  f.containers.get(identity.extractor).HostConfig.NetworkMode="bridge";
+  await assert.rejects(service.query({operation:"list_databases"}),/must both be ready/);
+  assert.equal(executions.length,4);
+});
+
+test("stale OpenVPN image is refused and test files do not change its build contract",async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),"cg-vpn-image-"));
+  try {
+    await writePrivate(path.join(dir,"Containerfile"),"FROM fixture");
+    const digest=await vpnImageDigest(dir);
+    await writePrivate(path.join(dir,"test_probe.py"),"fixture");
+    assert.equal(await vpnImageDigest(dir),digest);
+    const run=async()=>({code:0,stdout:JSON.stringify([{Id:id,Config:{Labels:{"cg.vpn.version":VPN_SERVICE_VERSION,"cg.vpn.digest":digest}}}])});
+    assert.equal(await requireVpnImage(dir,run),id);
+    await writePrivate(path.join(dir,"Containerfile"),"FROM changed");
+    await assert.rejects(requireVpnImage(dir,run),/Build the current OpenVPN 3/);
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
+
+test("oversized command output fails without exposing partial content",async()=>{
+  await assert.rejects(runCommand(process.execPath,["-e","process.stdout.write('x'.repeat(4096))"],{maxOutputBytes:100}),/output limit/);
 });
