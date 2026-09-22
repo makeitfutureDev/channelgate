@@ -521,6 +521,14 @@ same—only this channel's mounts exist, there is no `sudo`, and no gateway data
 other channel is exposed. Per-channel environment secrets remain write-only and are not exported
 to the editor terminal.
 
+**Let developers SSH into a channel container** (`docs/SSH-ACCESS.md`). Unlike the operator's
+local VS Code attach, this is for people WITHOUT a host account: a one-time root installer
+(`scripts/install-ssh-access.sh`) creates a no-shell login account whose forced command hands
+each connection to the daemon, which authorizes the registered key against the channel's SSH
+grant list and runs an unprivileged `sshd -i` inside the container on that stream. Keys and grants
+are managed from chat (`add_my_ssh_key`, `grant_channel_ssh`, `show_channel_ssh`); a container
+with a live session is never idle-stopped; sessions and refusals are in the Audit feed.
+
 ```bash
 podman ps --filter label=channelgate=1                 # every ChannelGate container on this host
 podman ps -a --filter label=cg.install=<install id>    # only THIS gateway's (see /api/health)

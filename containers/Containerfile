@@ -43,9 +43,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # PID 1, postgresql-client for the Supabase workflows, and python3 WITH pip/venv/pipx — after npm,
 # python packaging is the most common "install a CLI" path, and everything it installs lands in
 # ~/.local, which is inside the per-channel HOME volume and therefore permanent.
+# openssh-server is NOT a listening service: cg-sshd runs `sshd -i` on stdio, unprivileged, for one
+# gateway-brokered SSH attach session at a time (docs/SSH-ACCESS.md). The container never listens.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl ffmpeg git jq less openssh-client pipx postgresql-client procps python3 python3-pip python3-venv ripgrep tini unzip \
+      ca-certificates curl ffmpeg git jq less openssh-client openssh-server pipx postgresql-client procps python3 python3-pip python3-venv ripgrep tini unzip \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
@@ -64,6 +66,8 @@ RUN set -eux; \
       old="$(getent passwd "${UID}" | cut -d: -f1)"; \
       usermod -l agent -g "${GID}" -d /home/agent -m -s /bin/bash "$old"; \
     else useradd -u "${UID}" -g "${GID}" -m -d /home/agent -s /bin/bash agent; fi; \
+    # "!" (useradd's default) makes sshd refuse the account as locked; "*" is Debian's key-only marker.
+    usermod -p '*' agent; \
     install -d -o agent -g agent -m 0755 /home/agent; \
     install -d -o agent -g agent -m 0700 /home/agent/.claude /home/agent/.codex /home/agent/.npm-global /home/agent/.cache /home/agent/.config /home/agent/.local/bin /home/agent/bin
 

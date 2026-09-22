@@ -4587,6 +4587,57 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] LIVE (Codex): repeat with `cg-testing-codex-bash`; verify `codex exec 'Reply with exactly
       VSCODE-CODEX-OK'` succeeds without another login, a marker written in `/home/agent` is visible
       to the next chat turn, and closing VS Code releases the editor lease without removing HOME.
+- [x] Unit: SSH access (`docs/SSH-ACCESS.md`) — public keys parse to the exact `ssh-keygen -lf`
+      fingerprint (ed25519, ecdsa, RSA 2048), while private-key text, DSA, RSA 1024, bad base64, a
+      blob whose embedded type differs from the label and multi-line pastes are refused with a
+      readable reason; the registry keeps keys per person (idempotent re-add, another account's key
+      refused, only your own removable, capped at five); grants are a deduped `sshUsers` list on
+      channel meta, on `POLICY_KEYS`, diffed as a sorted list; the home-grant block agrees with
+      `operatorHomeGranted()` for every combination; the host export is `restrict,command="<attach>
+      <id>"` on EVERY line (malformed ids and unsupported types dropped, never emitted bare), 0640,
+      and a no-op until `endpoint.json` exists; the in-container `sshd_config` is key-only, PAM-off,
+      `AllowUsers agent`, forwarding on, agent forwarding off, `ClientAlive` 60×3, files 0700/0600;
+      sessions open/close/orphan-close; the six MCP tools sit on the permission list with the right
+      control-plane gates, a person registers only their own key, unapproved users and private
+      keys are refused, grants need a manager and an approved grantee and leave a
+      `channel_meta_changed` row naming `sshUsers`, `show_channel_ssh` hands the ProxyCommand block
+      only when the host is set up and names the Admin + `containerFullAccessHome` block
+      (automated: `test/ssh-access.test.js`).
+- [x] Unit: the SSH broker — does not bind before the host is set up and never throws; a granted
+      developer's connection is authorized, takes a `ssh:` lease BEFORE `ensureUp` (and tells
+      `ensureUp` about it), writes only granted users' keys into `<artifacts>/ssh`, installs the
+      Claude relay, spawns the exec, answers one JSON status line and then pipes bytes both ways;
+      with the session open the REAL reaper reports one lease and `tick()` stops nothing 11 minutes
+      past the idle window; hanging up SIGTERMs the exec, releases the lease, closes the
+      `ssh_sessions` row with "client disconnected" and the next tick stops the container; every
+      refusal (invalid key, unregistered key, no grant, unapproved account, closed channel, unknown
+      channel, operator-home grant, malformed header) names the remedy and leaves no lease, row or
+      exec behind; exec args follow the keep-id/uid rule; `scripts/cg-ssh-attach.mjs` speaks the
+      protocol end to end with ONLY the raw stream on stdout and reports refusals on stderr with
+      exit 1 (2 for a missing channel); stopping the broker ends live sessions, releases leases,
+      unlinks the socket, and a restart closes orphaned rows (automated: `test/ssh-broker.test.js`).
+- [x] Unit: the image ships `cg-sshd` (POSIX sh clean) and the spec is 1.4.0 in both
+      `containers/versions.json` and `image-paths.js` (automated: `test/container-image.test.js`,
+      `test/container-durability.test.js`).
+- [ ] LIVE (engine-independent, Airtable CTR-31): on the gateway host run `npm run build:image`, then `sudo
+      CG_SSH_HOST=<host> bash scripts/install-ssh-access.sh`; within a minute the daemon log shows
+      `[ssh] attach socket`. As Apps, in `cg-testing-claude-bash`, send "add my SSH key <Apps'
+      ed25519 .pub line>" and verify the fingerprint reply matches `ssh-keygen -lf`; as Contact
+      say "grant SSH access to @Apps"; as Apps say "show SSH access" and paste the block into a
+      laptop `~/.ssh/config`. `ssh cg-testing-claude-bash 'id; pwd'` prints `uid=…(agent)` and the
+      channel's mounted work folder; `ssh -L 3000:localhost:3000` forwards into the container; VS
+      Code Remote-SSH opens the folder. While the session is open, `/api/health` shows the
+      container leased and it survives 11+ idle minutes; closing the session releases the lease
+      and the reaper stops it after the idle window. Pass: every step as stated, `ssh_session_start`
+      / `ssh_session_end` rows in the Audit feed, `show SSH access` listed the live session.
+- [ ] LIVE (Claude, Airtable CTR-32): inside that SSH session, `claude -p 'Reply with exactly SSH-CLAUDE-OK'`
+      answers on the gateway operator's relayed login without any `claude login`.
+- [ ] LIVE (Codex, Airtable CTR-33): repeat in `cg-testing-codex-bash`; `codex exec 'Reply with exactly
+      SSH-CODEX-OK'` answers on the shared sign-in without another login.
+- [ ] LIVE (engine-independent, refusals, Airtable CTR-34): an ungranted user's `ssh` prints "you have no SSH grant";
+      after "revoke SSH access to @Apps" a new connection is refused at once while the open one
+      keeps working; switching the channel to Admin while `containerFullAccessHome` is on makes a
+      new connection print the `containerFullAccessHome` refusal.
 - [x] Unit: credential modes and their remedies — a configured token is mode `token` with nothing
       copied or mounted; no token and no login anywhere is `missing`; a readable login settles to
       `relay` whether it is the OPERATOR's own `~/.claude` or one signed in to the gateway's engine

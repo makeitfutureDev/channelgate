@@ -2130,6 +2130,31 @@ are retired, bullet by bullet; everything else stands.
   a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
   The lease record itself lives in daemon-owned metadata under the gateway root, never in the
   agent-writable artifact directory. → TEST-PLAN: Container runtime (v0.8 P1).
+- **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
+  registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,
+  fingerprinted like `ssh-keygen -lf`, private keys and DSA refused, RSA under 2048 bits refused);
+  a channel manager grants that person SSH on a channel (`grant_channel_ssh` / `revoke_channel_ssh`,
+  audited as the `sshUsers` policy key, never admitting anyone `isAuthorized()` would refuse);
+  `show_channel_ssh` prints the `~/.ssh/config` block. The connection goes to a dedicated,
+  unprivileged login account on the gateway host whose sshd Match block forces the
+  `cg-ssh-attach` wrapper (no pty, no forwarding, no shell; every exported key line is
+  `restrict,command=` by construction); the wrapper hands the byte stream to the daemon's attach
+  socket; the daemon authorizes key → user → channel → grant → not operator-home-mounted, takes a
+  container LEASE for the session's whole life, writes the in-container `sshd_config` +
+  `authorized_keys` into the artifact dir, refreshes the same Claude access-token relay VS Code
+  attach uses, and runs `exec -i <container> cg-sshd` — an unprivileged inetd-mode sshd on that
+  stream, inside the container, with which the developer's own client completes a second
+  handshake. So the pty, the shell, sftp, VS Code Remote-SSH and port forwards all live in the
+  container's namespaces; no container and no extra host port ever listens; the channel is named
+  in the ProxyCommand, so one key reaches several channels at once. A container with a live
+  session is never idle-stopped or evicted, and a rebuild waits for it like for a run; a dead peer
+  is reaped by `ClientAlive` in about three minutes. Sessions are `ssh_sessions` rows and
+  `ssh_session_start`/`ssh_session_end` events; refusals are `ssh_attach_refused` with the reason
+  the developer saw. The image ships `openssh-server` (spec 1.4.0) and marks the `agent` account
+  key-only (`*`, not useradd's locked `!`). The root installer `scripts/install-ssh-access.sh`
+  creates the account, the group-shared attach directory (`/var/lib/channelgate-ssh`, overridable
+  with `CHANNELGATE_SSH_DIR`) and the sshd drop-in; the daemon binds its socket the minute the
+  directory exists, no restart needed. → TEST-PLAN: Container runtime (v0.8 P1).
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch

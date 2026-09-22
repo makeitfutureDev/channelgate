@@ -27,6 +27,7 @@ import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
+import { startSshBroker, stopSshBroker } from "./gateway/ssh-broker.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
 import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
@@ -140,6 +141,11 @@ async function stopRuntimeServices(reason) {
     /* best effort */
   }
   try {
+    await stopSshBroker();
+  } catch {
+    /* best effort */
+  }
+  try {
     const mod = await containerRuntimeModule();
     await mod.stopContainerRuntime?.({ reason });
   } catch {
@@ -248,6 +254,9 @@ async function main() {
   // below (a container cannot connect before its first run, long after boot).
   const daemonHandlers = {};
   await startMcpSocketServer({ handlers: daemonHandlers, log: console });
+  // SSH access to channel containers (src/gateway/ssh-broker.js): binds its attach socket only when
+  // the root installer has set the host up, and re-checks by itself otherwise — never fails the boot.
+  await startSshBroker({ log: console });
 
   // Daemon-owned background jobs: the run_in_background MCP tool hands long shell work here; on
   // completion we re-inject a turn into the originating thread so the agent continues on its own.

@@ -78,7 +78,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   the changed keys), `dead-fields.js` (retired fields stripped on every write).
 - `src/db/` — `index.js` (the one lazy `node:sqlite` connection: WAL, `busy_timeout`,
   `foreign_keys`, migrations on open, the one-time legacy JSON import behind `_meta` flags),
-  `migrations.js` (versioned on `PRAGMA user_version`, currently 26 — append, never edit),
+  `migrations.js` (versioned on `PRAGMA user_version`, currently 27 — append, never edit),
   `import-legacy.js`, `fts.js` (the optional FTS5 `channel_memory_fts` index; without FTS5 memory
   search degrades to a scan).
 - `src/gateway/run.js` — the run orchestrator: engine adapter selection and precedence (per-run
@@ -166,6 +166,16 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   `channel_instructions`) that never expire and re-post after a restart, and signed single-use
   browser links (`/approve/<token>`: GET decides nothing, POST decides exactly once and re-checks
   authority) for surfaces without Block Kit and for automation.
+- `src/gateway/ssh-access.js` + `ssh-broker.js` + `src/mcp/tools/ssh-access.js` — SSH access to
+  channel containers (`docs/SSH-ACCESS.md`): the per-person key registry (`ssh_keys`), the
+  per-channel `sshUsers` grant list, the host `authorized_keys` export (every line
+  `restrict,command=`), the in-container sshd files, the session records (`ssh_sessions`), and the
+  daemon's attach socket under `/var/lib/channelgate-ssh` (`CHANNELGATE_SSH_DIR`) — bound only
+  once `scripts/install-ssh-access.sh` has set the host up. A session authorizes key → user →
+  channel → grant → not operator-home-mounted, holds a container lease for its whole life, and
+  pipes the developer's SSH stream into `exec -i <container> cg-sshd` (an unprivileged inetd-mode
+  sshd in the image). `scripts/cg-ssh-attach.mjs` is the host wrapper (self-contained, copied
+  root-owned by the installer). Nothing listens on a port anywhere.
 - `src/gateway/{updater,update-state,update-smoke,restart}.js` + `scripts/update-*` — the
   transactional self-update (the automatic path is an Enterprise entitlement; `scripts/update.sh`
   stays available to every operator): one durable transaction and lock, a detached built-ins-only
@@ -273,7 +283,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   (process-group kills), `process-outcome.js` (human descriptions of exits), `logger.js` (the
   `events` table), `timezone.js` (daemon-local time vs UTC containers), `cron.js`, `keyed-lock.js`,
   `singleton.js`, `drops.js`, `tail.js`.
-- `scripts/` — install and service (`install.sh`, `install-systemd.sh`, `install-whisper.mjs`),
+- `scripts/` — install and service (`install.sh`, `install-systemd.sh`, `install-ssh-access.sh` +
+  `cg-ssh-attach.mjs` + `cg-ssh-authorized-keys`, `install-whisper.mjs`),
   updates (`update.sh` → `update-runner.mjs`), backup and restore (`backup-config.sh`,
   `restore-config.sh`, `restore-drill.sh`, `runtime-maintenance.mjs`), the image
   (`build-image.mjs`), the checks (`run-tests.mjs`, `static-check.mjs`, `secret-scan.mjs`,
@@ -311,7 +322,8 @@ through the control MCP.
   `thread_overrides`, `conversation_reply_sessions`, `active_runs`, `stopped_turns`,
   `inbound_events`, `teams_graph_subscriptions`); automation (`schedules`, `acks`,
   `followup_threads`, `followup_done`, `followup_digest_messages`, `bg_jobs`, `api_jobs`);
-  approvals and questions (`approval_requests`, `approval_link_tokens`, `question_requests`); skills (`skills`, `skill_revisions`,
+  approvals and questions (`approval_requests`, `approval_link_tokens`, `question_requests`); SSH
+  access (`ssh_keys`, `ssh_sessions`); skills (`skills`, `skill_revisions`,
   `skill_revision_files`, `skill_sources`, `skill_templates`, `skill_usage`, `skill_proposals`,
   `skill_access_tokens`); Composio SDK (`composio_sessions`); licensing (`license_usage`);
   dashboard data (`usage`, `usage_components`, `usage_requests`, `usage_repair_batches`,

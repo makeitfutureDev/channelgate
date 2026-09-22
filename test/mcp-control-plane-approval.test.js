@@ -359,6 +359,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     "set_my_composio_token", "clear_my_composio_token",
     "set_my_toolbox_token", "clear_my_toolbox_token",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
+    // SSH access (src/gateway/ssh-access.js): a registered key is what a grant turns into a shell
+    // inside a container, and a grant IS that shell — persistent, and never on the model's word alone.
+    "add_my_ssh_key", "remove_my_ssh_key", "grant_channel_ssh", "revoke_channel_ssh",
     // skills platform: grants, templates, catalog writes and admin decisions are persistent state
     "add_channel_skills", "remove_channel_skills", "set_channel_skill_template",
     "create_skill", "update_skill", "decide_skill_proposal", "sync_skill_sources",
@@ -388,6 +391,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "list_skills", "show_channel_skills", "list_skill_templates", "preview_skill_template",
     "get_skill_file", "get_skill_info", "propose_skill_change", "list_skill_proposals", "skill_usage_report",
     "list_skill_sources", // admin read
+    "list_my_ssh_keys", "show_channel_ssh", // the requester's own keys; this channel's SSH state and the connection block
     // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
     // self-service like starring in a skill library — reversible, affects nobody else, no card.
     "add_my_skills", "remove_my_skills",
