@@ -1369,11 +1369,34 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // the cooldown reroute is decided — so a token file never sits on disk during a semaphore queue
   // wait or for a turn that ends up on Codex. runArtifactRoot(target) resolves the dir for every
   // target (the daemon-internal local runtime gets the gateway run-tmp dir).
-  const mcpConfigFile = usesMcpConfigFile(engine) ? path.join(runArtifactRoot(target), `cg-mcp-${randomUUID()}.json`) : "";
+  //
+  // Materialized per EXECUTING engine, not once for the primary: a cross-engine failover runs a
+  // different harness, with a different MCP transport and its own resolved payload, so it needs its
+  // OWN file. Deriving one path from the primary engine meant a Codex→Claude failover (Codex is
+  // argv-transport, so the path was "") spawned Claude with no --mcp-config at all — no gateway
+  // control server, no Composio, no catalog MCPs. Every file this turn writes is tracked here so
+  // the `finally` sweep removes them all.
+  const mcpConfigFiles = [];
+  const materializeMcpConfig = async (forEngine, json) => {
+    if (!usesMcpConfigFile(forEngine)) return "";
+    const file = path.join(runArtifactRoot(target), `cg-mcp-${randomUUID()}.json`);
+    await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    await writeFile(file, json, { mode: 0o600 });
+    mcpConfigFiles.push(file);
+    return file;
+  };
+  let mcpConfigFile = "";
 
   // Every Claude run gets a private settings copy because its explicit skill plugin lives under
   // the otherwise read-denied runtime root and needs one narrow read allowance.
-  const needsClaudeSettings = engineSupports(engine, "settingsFile");
+  //
+  // Provisioned for the whole FAILOVER ROUTE rather than just the primary engine, for the same
+  // reason as the MCP config above: the fallback harness is chosen long after this point, and
+  // Codex declares no settings file at all — so a Codex-primary turn that fell over to Claude used
+  // to spawn with no --settings, losing the channel lockdown and the plugin read allowance. The
+  // file is content-addressed and shared, so provisioning one this turn never uses costs nothing.
+  const needsClaudeSettings = [engine, ...fallbackTargets(engine).filter(isEngineEnabled)]
+    .some((id) => engineSupports(id, "settingsFile"));
   const grantArtifacts = await createRunGrantArtifacts({
     slug: entry.slug,
     meta,
@@ -1636,6 +1659,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     const fallbackRelay = await claudeCredentialFor(fallbackEngine);
     const fallbackClaudeToken = fallbackEngine === "claude" ? fallbackRelay?.token || "" : claudeOauthToken;
     const fallbackClaudeTokenFp = fallbackEngine === "claude" ? claudeTokenFingerprint(fallbackRelay) : claudeTokenFp;
+    // The fallback harness gets its OWN config file, from the payload reminted for it above. Same
+    // lazy placement as the primary's: past every fail-closed check, immediately before the spawn,
+    // so a token file never lands on disk for a fallback that was refused. A file-transport engine
+    // (Claude, Qwen) reads it via --mcp-config; an argv-transport one (Codex) returns "" and builds
+    // its servers from the runtime bag instead.
+    const fallbackMcpConfigFile = await materializeMcpConfig(fallbackEngine, fallbackMcpRuntime.mcpConfigJson);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
       assertRuntimeCanStart();
       return fallbackAdapter.run(validateRunContext({
@@ -1649,6 +1678,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         target, claudeOauthToken: fallbackClaudeToken, artifactDir: target.artifactDir,
         runtime: { target, claudeOauthToken: fallbackClaudeToken, claudeTokenFingerprint: fallbackClaudeTokenFp, artifactDir: target.artifactDir,
           preferCold: true, keepAliveMs: 0, poolKey: `${entry.slug}::${fbKey}`, dangerouslySkip,
+          // The same spawn contract the primary engine gets (see the primary runtime bag above).
+          // Omitting these left the fallback harness with no MCP payload, no channel lockdown and
+          // no approval route — it answered tool-less and silently denied everything it asked for.
+          mcpConfigFile: fallbackMcpConfigFile, mcpConfigJson: fallbackMcpRuntime.mcpConfigJson,
+          mcpConfigFingerprint: fallbackMcpRuntime.mcpConfigFingerprint, strictMcp,
+          settingsFile: runSettingsFile, permissionPromptTool,
           writable: codexWritable, autoApprove: codexAutoApprove, clean, composioUserEndpoint, composioEndpoint,
           composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey,
           gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort: "",
@@ -1831,10 +1866,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // spawned, so the session row this turn minted must not survive it (see dropUnusedSession).
     await mintGatewayMcpRuntime();
     engineStarted = true;
-    if (mcpConfigFile) {
-      await mkdir(path.dirname(mcpConfigFile), { recursive: true, mode: 0o700 });
-      await writeFile(mcpConfigFile, mcpConfigJson, { mode: 0o600 });
-    }
+    mcpConfigFile = await materializeMcpConfig(engine, mcpConfigJson);
 
     // Resume by default; if the thread's stored session no longer exists, mint a fresh one and retry
     // once — so a deleted/expired session never hard-fails, it just starts a new conversation.
@@ -2120,8 +2152,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     try { runtimeLease?.release(); } catch { /* a lease that cannot be released must not mask the turn's outcome */ }
     releaseRunSlot?.();
     // Best-effort: the config file only matters at spawn time. A leftover from a daemon crash
-    // sits 0600 under the (read-denied) gateway root until the next boot sweeps it.
-    if (mcpConfigFile) await rm(mcpConfigFile, { force: true }).catch(() => {});
+    // sits 0600 under the (read-denied) gateway root until the next boot sweeps it. A turn that
+    // failed over wrote two — the primary engine's and the fallback's — so sweep every one.
+    for (const file of mcpConfigFiles) await rm(file, { force: true }).catch(() => {});
     await grantArtifacts.cleanup().catch(() => {});
   }
 }

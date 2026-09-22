@@ -18,6 +18,15 @@ product overview.
 
 ## Unreleased
 
+- Give a conversation its tools back when one engine runs out of quota. A channel whose engine had
+  hit its usage limit was answered by the other harness, as designed — but when the fallback was
+  Claude it started with no MCP servers at all: no gateway tools (channel memory, schedules,
+  Slack history, approval prompts), no Composio, no Cloud MCP selections, and no channel
+  permission lockdown. Tool requests were denied with no approval card instead of asking. The turn
+  still replied, so the only visible symptom was the agent reporting that Composio and its own
+  gateway tools were missing. Every fallback turn now spawns with the same MCP payload, lockdown
+  and approval route a normal turn gets. Clean mode still injects nothing.
+
 - Stop the channel VPN's health check from getting the database address blocked. Every 30 seconds
   it opened a MySQL connection and dropped it before logging in; MySQL counts that as a failed
   connection and, after about 100 of them, refused the tunnel outright (error 1129, "host

@@ -575,6 +575,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   engines, unsupported network policy, or adapters without confinement and health compilers.
 - Claude pooling and Codex execution/MCP policy run behind adapters; fallback routing is a directed
   registry graph, and every registered CLI receives a boot version/readiness probe.
+- A cross-engine failover spawns the fallback harness under the same contract the primary would
+  have received: its own reminted MCP payload materialized for its own transport (a file for
+  Claude/Qwen, argv overrides for Codex), the channel permission lockdown, and the approval-prompt
+  route. Per-run settings and MCP config files are provisioned for the whole failover route, so an
+  engine that declares neither (Codex) cannot leave the harness it fails over to without them.
+  Clean mode still injects an explicitly empty payload in both directions.
+  → TEST-PLAN: Cross-engine failover spawn contract.
 - Slack and Admin selectors consume registry manifests. Codex optional MCPs under
   `--ignore-user-config` receive complete credential-safe definitions; a selection without one is
   dropped from the launch with a reason, the same contract Claude's resolver uses.

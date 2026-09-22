@@ -8,10 +8,17 @@ resume=no; mcp=no; cancel=no; fail=no; auth_fail=no; limit_fail=no; limit_answer
 # authenticated the way a real turn would be.
 oauth=no; [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && oauth=yes
 transient_times=0; transient_after_text=no; session_id=""; model=""; reject_model=no; reject_all_models=no; stream_text=no
+# The rest of the gateway spawn contract, reported the same way as --mcp-config above: the
+# channel lockdown (--settings) and the approval route (--permission-prompt-tool). A turn that
+# reaches the CLI without them runs with no tool policy and silently denies what it asks for,
+# which is invisible in the reply unless the stub says so.
+settings=no; permprompt=no
 for arg in "$@"; do
   case "$arg" in
     -r) resume=yes ;;
     --mcp-config) mcp=yes ;;
+    --settings) settings=yes ;;
+    --permission-prompt-tool) permprompt=yes ;;
     *CLAUDE_STUB_WAIT_FOR_CANCEL*) cancel=yes ;;
     *CLAUDE_STUB_FAIL_GENERIC*) fail=yes ;;
     *CLAUDE_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
@@ -124,6 +131,6 @@ fi
 # gateway returns is then the concatenation of what already streamed into the Slack message, which
 # is what makes "the delivered answer" and "result.content" two different things.
 if [ "$stream_text" = "yes" ]; then
-  printf '%s\n' "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Stub engine reply (resume=$resume; mcp=$mcp; oauth=$oauth; model=$model)\"}}}"
+  printf '%s\n' "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Stub engine reply (resume=$resume; mcp=$mcp; settings=$settings; permprompt=$permprompt; oauth=$oauth; model=$model)\"}}}"
 fi
-printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Stub engine reply (resume=$resume; mcp=$mcp; oauth=$oauth; model=$model)\",\"session_id\":\"stub-session\",\"usage\":{\"input_tokens\":12,\"output_tokens\":4},\"total_cost_usd\":0.001}"
+printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Stub engine reply (resume=$resume; mcp=$mcp; settings=$settings; permprompt=$permprompt; oauth=$oauth; model=$model)\",\"session_id\":\"stub-session\",\"usage\":{\"input_tokens\":12,\"output_tokens\":4},\"total_cost_usd\":0.001}"
