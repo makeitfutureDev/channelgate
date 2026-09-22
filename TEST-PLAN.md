@@ -38,7 +38,12 @@ rootless Podman; never grant host runtime access to a chat agent for this fixtur
       gets TUN/NET_ADMIN; credentials stay out of argv and the other service; missing/unsafe secret
       selection, symlink imports, readiness failure and credential rotation are exercised.
 - [x] `python3 -B services/vpn-image/test_checks.py`: route/default validation, read-only SQL and
-      sanitized errors; protected credential-file and permission checks.
+      sanitized errors; protected credential-file and permission checks. `health` (with or without
+      `--no-connect`) passes on tunnel + route checks alone and opens no database socket.
+- [ ] Live, provider-backed (engine-independent): after `FLUSH HOSTS` on the provider's MySQL,
+      rebuild the VPN image, turn the channel's VPN off and on, and leave it running for at least
+      2 hours. Pass: `npm run vpn -- verify --channel <id>` succeeds at the start and at the end,
+      and never reports MySQL error 1129 (host blocked).
 - [x] Real rootless fixture: build `localhost/channelgate/vpn:2` with `--format docker`, then run
       `python3 -B services/vpn-image/live_acceptance.py`. Require real TUN creation, firewall counter
       evidence for rejected non-tunnel DB traffic/wrong tunnel destinations/ports, accepted DB SYN,
