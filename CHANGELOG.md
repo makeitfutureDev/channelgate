@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Stop the channel VPN's health check from getting the database address blocked. Every 30 seconds
+  it opened a MySQL connection and dropped it before logging in; MySQL counts that as a failed
+  connection and, after about 100 of them, refused the tunnel outright (error 1129, "host
+  blocked"), so database reads failed within an hour. The check now verifies only the tunnel and
+  its route. Rebuild the VPN image (`npm run vpn -- build --channel ID`) and turn the VPN off and
+  on; a database that already blocked the address still needs `FLUSH HOSTS` once.
 - Sync Google Drive on demand. A channel's admin page has **Sync now** beside **Test**, Settings →
   Google Drive sync has **Sync all now**, and asking the agent to sync Drive runs the channel's
   linked folder immediately through the new `sync_channel_drive` tool. Each shows when the pass

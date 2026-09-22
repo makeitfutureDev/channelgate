@@ -22,6 +22,9 @@
   checked. OFF also cleans up manually started owned containers. Network off blocks startup and
   stops a supervised pair. No arbitrary commands, profile import or SQL extraction are granted
   through these controls. See `docs/CHANNEL-VPN.md` for setup and limitations.
+- The 30-second VPN health check verifies only the tunnel and its route. It never opens a
+  database connection, so it cannot run up MySQL's connect-error count and get the tunnel address
+  blocked (error 1129).
 - Admitted channel users can ask either engine to list databases/tables, describe a table, or read
   bounded matching rows using `query_channel_database`. The channel-bound extractor enforces fixed
   read operations, a read-only transaction, row/byte/time limits, fresh authorization and Network

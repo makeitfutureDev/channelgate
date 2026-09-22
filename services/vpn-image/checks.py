@@ -5,7 +5,6 @@ import ipaddress
 import json
 import os
 import re
-import socket
 import stat
 import subprocess
 import sys
@@ -66,14 +65,6 @@ def check_routes(host, runner=subprocess.run):
             continue
         if any(route.get("dev") != public_device for route in route_data(["get", public_ip], runner)):
             raise CheckFailed("public_default_route_changed")
-
-
-def check_tcp(host, port, connect=socket.create_connection):
-    try:
-        with connect((host, port), timeout=5):
-            pass
-    except OSError:
-        raise CheckFailed("database_unreachable") from None
 
 
 def check_vpn3_status(
@@ -188,10 +179,11 @@ def main(argv=None):
             check_vpn3_status()
             check_routes(host)
             result["routes"] = "ready"
-            if args.action == "health" and not args.no_connect:
-                check_tcp(host, port)
-                result["tcp"] = "ready"
-            elif args.action == "verify":
+            # Health never opens a database socket. MySQL counts every connection that closes
+            # before its handshake as a connect error and, past max_connect_errors, blocks the
+            # tunnel address (error 1129) — a 30-second probe did exactly that in under an hour.
+            # --no-connect stays accepted so older callers keep working.
+            if args.action == "verify":
                 if args.no_connect:
                     raise CheckFailed("invalid_check_options")
                 result.update(check_database(host, port, read_credentials()))

@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import socket
 from pathlib import Path
 import subprocess
 import tempfile
@@ -49,13 +50,6 @@ class ChecksTests(unittest.TestCase):
         for output in ("[]", "{}", "[1]", "broken"):
             with self.subTest(output=output), self.assertRaises(checks.CheckFailed):
                 checks.route_data(["get", "10.0.0.2"], lambda *a, **k: subprocess.CompletedProcess([], 0, stdout=output))
-
-    def test_tcp_error_is_sanitized(self):
-        def unavailable(*args, **kwargs):
-            raise OSError("secret test value")
-        with self.assertRaises(checks.CheckFailed) as failure:
-            checks.check_tcp("10.0.0.2", 3306, unavailable)
-        self.assertEqual(failure.exception.error_class, "database_unreachable")
 
     def test_credentials_accept_private_regular_file_and_reject_symlink_or_public_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -109,12 +103,29 @@ class ChecksTests(unittest.TestCase):
         output = io.StringIO()
         with patch.dict(os.environ, {"DB_HOST": "10.0.0.2", "DB_PORT": "3306"}), \
                 patch.object(checks, "check_routes"), \
-                patch.object(checks, "check_tcp", side_effect=AssertionError("must not connect")), \
+                patch.object(socket, "create_connection", side_effect=AssertionError("must not connect")), \
                 patch.object(checks, "read_credentials", side_effect=AssertionError("must not read")), \
                 contextlib.redirect_stdout(output):
             self.assertEqual(checks.main(["health", "--no-connect"]), 0)
         self.assertEqual(json.loads(output.getvalue()), {"ok": True, "routes": "ready"})
 
+
+    def test_health_never_opens_a_database_socket(self):
+        # A TCP probe that closes before the MySQL handshake is a connect error on the server;
+        # enough of them block the tunnel address (MySQL error 1129).
+        for argv in (["health"], ["health", "--no-connect"]):
+            output = io.StringIO()
+            with self.subTest(argv=argv), \
+                    patch.dict(os.environ, {"DB_HOST": "10.0.0.2", "DB_PORT": "3306"}), \
+                    patch.object(checks, "check_vpn3_status"), \
+                    patch.object(checks, "check_routes"), \
+                    patch.object(socket, "create_connection", side_effect=AssertionError("must not connect")), \
+                    patch.object(socket.socket, "connect", side_effect=AssertionError("must not connect")), \
+                    patch.object(checks, "check_database", side_effect=AssertionError("must not query")), \
+                    patch.object(checks, "read_credentials", side_effect=AssertionError("must not read")), \
+                    contextlib.redirect_stdout(output):
+                self.assertEqual(checks.main(argv), 0)
+            self.assertEqual(json.loads(output.getvalue()), {"ok": True, "routes": "ready"})
 
 if __name__ == "__main__":
     unittest.main()
