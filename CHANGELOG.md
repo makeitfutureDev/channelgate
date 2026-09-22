@@ -16,7 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## 0.5.2 — 2026-09-22
 
 - Give a conversation its tools back when one engine runs out of quota. A channel whose engine had
   hit its usage limit was answered by the other harness, as designed — but when the fallback was
