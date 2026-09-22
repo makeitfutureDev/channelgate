@@ -6,6 +6,13 @@
 > CI passed on the exact candidate and a live smoke ran for Claude and Qwen. The owner released it
 > without Codex live acceptance (the Codex account was usage-limited until 2026-09-24) and without
 > the full live campaign; both remain open for the next release, see RELEASE-ACCEPTANCE.md.
+> 0.6.0 was published on 2026-09-22 by explicit owner decision after the full automated gate
+> passed on the exact candidate. It carries the cross-engine failover spawn-contract fix, the VPN
+> health-check fix and on-demand Google Drive sync. The owner again released it without Codex
+> live acceptance — the same account was still usage-limited until 2026-09-24, which is the
+> condition the failover fix addresses and therefore could not be exercised live — and without
+> the full live campaign. The failover live gates in `TEST-PLAN.md` (both directions) and the
+> items still unticked below remain open for the next release; see RELEASE-ACCEPTANCE.md.
 
 - [x] Authorized owner selected and documented the Makeitfuture Sustainable Use License; the
       bundled Poppins OFL notice is present and third-party components retain upstream terms.
