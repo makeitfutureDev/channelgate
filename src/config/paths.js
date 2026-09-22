@@ -150,6 +150,16 @@ export function runtimeSocketDir() {
 export function runtimeSocketFile() {
   return path.join(runtimeSocketDir(), "mcp.sock");
 }
+// SSH access to channel containers (docs/SSH-ACCESS.md). Deliberately OUTSIDE the gateway root:
+// the root is 0700 and the forced command of the host's dedicated SSH login account — a different,
+// unprivileged OS user — has to reach the attach socket and sshd has to read the exported
+// authorized_keys. The root installer (scripts/install-ssh-access.sh) creates it group-owned by that
+// account; the daemon only ever writes into it when it exists.
+export const DEFAULT_SSH_ACCESS_DIR = "/var/lib/channelgate-ssh";
+export function sshAccessDir() {
+  const dir = process.env.CHANNELGATE_SSH_DIR;
+  return dir ? path.resolve(dir) : DEFAULT_SSH_ACCESS_DIR;
+}
 // Stable identity of THIS install: two gateways can share one host under different users (and one
 // container daemon), so container/volume names carry it. sha256 of the runtime root's real path —
 // no new persisted state, and unlike the per-boot instanceId (randomUUID) it survives restarts.

@@ -1,0 +1,7 @@
+#!/bin/sh
+# cg-ssh-authorized-keys — sshd's AuthorizedKeysCommand for the ChannelGate SSH login account
+# (docs/SSH-ACCESS.md). sshd insists this file is root-owned and that an AuthorizedKeysFile is
+# owned by the login user or root; the daemon owns the exported keys, so this root-owned one-liner
+# reads them on sshd's behalf. Installed by scripts/install-ssh-access.sh, which rewrites the path
+# when CG_SSH_DIR is not the default. The fingerprint argument (%f) is ignored: the file is small.
+exec cat /var/lib/channelgate-ssh/authorized_keys 2>/dev/null

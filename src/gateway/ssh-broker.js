@@ -1,0 +1,380 @@
+// The SSH attach broker (docs/SSH-ACCESS.md): a unix socket the host's dedicated SSH login
+// account reaches through its forced command. Per connection the daemon authorizes the presented
+// key against the registry and the channel's grant list, resolves the channel's container target,
+// holds a container LEASE for the whole session (so the idle reaper and the max-running eviction
+// never stop a box someone is inside), prepares the in-container sshd files, refreshes the Claude
+// login relay the way the VS Code attach does, and runs `<cli> exec -i <container> cg-sshd` with
+// the developer's SSH byte stream piped straight through. The developer's own ssh client then
+// completes a second handshake with THAT sshd — inside the container's namespaces — so pty,
+// shell, sftp and port forwards all land in the box. Nothing listens on a port anywhere.
+//
+// Trust: the wrapper's claims (which key, which channel) are believed because nothing but the
+// forced command can run as the login account (sshd_config Match + `restrict,command=` on every
+// key line); the socket is group-writable for that account only. The daemon still verifies the
+// key exists, the user is approved, the channel admits them and the grant is present — so a
+// forged header from that account could at most name a key it cannot use anyway.
+import net from "node:net";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { spawn as spawnProcess } from "node:child_process";
+import { chmodSync, rmSync } from "node:fs";
+import { sshAccessDir } from "../config/paths.js";
+import { getContainerRuntime } from "../config/settings.js";
+import { getChannelMeta, getUser, listChannels } from "../config/store.js";
+import { isAuthorized } from "./modes.js";
+import { isShuttingDown } from "./shutdown.js";
+import { logEvent } from "../util/logger.js";
+import { resolveRuntime } from "../runtimes/resolve.js";
+import { cliEnv } from "../runtimes/container/cli.js";
+import { containerRuntimeStatus } from "../runtimes/container/index.js";
+import { installVscodeClaudeRelay } from "../runtimes/container/vscode.js";
+import {
+  closeOrphanSshSessions, closeSshSession, containerSshDir, exportHostAuthorizedKeys, findSshKeyByFingerprint, findSshKeyById,
+  keysForUsers, materializeContainerSshFiles, openSshSession, parsePublicKey, sshAccessState, sshBlockedByHomeGrant, sshUsersOf, touchSshKey,
+} from "./ssh-access.js";
+
+export const SSH_ATTACH_SOCKET = "attach.sock";
+export const HEADER_LIMIT_BYTES = 32 * 1024;
+export const HEADER_TIMEOUT_MS = 10_000;
+export const RELAY_REFRESH_MS = 20 * 60_000;
+export const KILL_GRACE_MS = 5_000;
+const MAX_SOCKET_PATH_BYTES = 100;
+
+function refuse(error) {
+  return { ok: false, error };
+}
+
+// Which channel did the developer name? Exact match on slug, conversation id or name (case
+// folded), and it has to be unique — "acme" matching two channels is an error, not a guess.
+export async function findSshChannel(selector) {
+  const wanted = String(selector || "").trim().toLowerCase().replace(/^#/, "");
+  if (!wanted) return { ok: false, error: "name the channel to attach to (its slug, as shown by “show SSH access” in Slack)" };
+  const channels = await listChannels();
+  const matches = channels.filter((entry) => [entry.slug, entry.channelId, entry.name].some((value) => String(value || "").toLowerCase() === wanted));
+  if (matches.length === 1) return { ok: true, entry: matches[0] };
+  if (matches.length > 1) return { ok: false, error: `"${selector}" matches more than one channel — use its slug` };
+  return { ok: false, error: `no channel is called "${selector}"` };
+}
+
+async function defaultResolveMeta(entry) {
+  // effectiveMeta overlays a DM's org template (which can carry adminMode); run.js is imported
+  // lazily because it is the heaviest module in the daemon and the broker must stay importable
+  // from the tool layer's tests.
+  const { effectiveMeta } = await import("./run.js");
+  const meta = entry.meta || (await getChannelMeta(entry.slug)) || {};
+  return effectiveMeta(meta);
+}
+
+/**
+ * key → user → channel → grant → not blocked. Every refusal names the remedy in words a developer
+ * reads in their terminal; none of them leaks which of the earlier steps another key would pass.
+ */
+export async function authorizeSshAttach(header, { settings = getContainerRuntime(), resolveMeta = defaultResolveMeta, findChannel = findSshChannel } = {}) {
+  if (isShuttingDown()) return refuse("the gateway is restarting — reconnect in a moment");
+  const keyText = String(header?.key || "").trim();
+  const keyId = String(header?.keyId || "").trim();
+  let key = null;
+  if (keyText) {
+    let parsed;
+    try {
+      parsed = parsePublicKey(keyText);
+    } catch {
+      return refuse("the presented key is not a valid public key");
+    }
+    key = await findSshKeyByFingerprint(parsed.fingerprint);
+  } else if (keyId) {
+    key = await findSshKeyById(keyId);
+  }
+  if (!key) return refuse("this SSH key is not registered with the gateway — in Slack, tell the assistant “add my SSH key <paste your .pub line>”");
+  const user = await getUser(key.userId);
+  const admin = Boolean(user?.isAdmin);
+  const approved = Boolean(user?.approved || admin);
+  if (!approved) return refuse("your gateway account is not approved");
+  const found = await findChannel(header?.channel);
+  if (!found.ok) return refuse(found.error);
+  const meta = await resolveMeta(found.entry);
+  if (!isAuthorized(meta, key.userId, meta.isDM, { isAdminUser: admin, isApprovedUser: approved })) return refuse(`you are not allowed in ${found.entry.slug}`);
+  if (!sshUsersOf(meta).includes(key.userId)) return refuse(`you have no SSH grant on ${found.entry.slug} — ask one of its managers to say “grant SSH access to @you” there`);
+  if (sshBlockedByHomeGrant(meta, settings)) {
+    return refuse(`SSH into ${found.entry.slug} is refused while the channel is in Admin mode and the gateway's containerFullAccessHome switch is on: that container would expose the operator's whole home. Turn one of them off.`);
+  }
+  return { ok: true, key, user: { id: key.userId, admin, approved, name: String(user?.name || "") }, entry: found.entry, meta };
+}
+
+async function defaultCliBin(target) {
+  const status = await containerRuntimeStatus(target.settings);
+  if (!status.cli?.ok) throw new Error(status.cli?.reason || "the container CLI is unavailable");
+  return status.cli.bin;
+}
+
+// `exec -i` with stdin attached, the same uid rule as exec.js, and the ssh dir named in plain env
+// (it is a path, not a secret). cg-sshd does the rest inside.
+export function sshExecArgs(target) {
+  const c = target.container;
+  const args = ["exec", "-i"];
+  if (c.uidStrategy !== "keep-id" && c.uid != null) args.push("--user", `${c.uid}:${c.gid}`);
+  args.push("-e", `CG_SSH_DIR=${containerSshDir(target)}`, c.name, "cg-sshd");
+  return args;
+}
+
+function defaultSpawnExec(target, cliBin) {
+  return spawnProcess(cliBin, sshExecArgs(target), { stdio: ["pipe", "pipe", "pipe"], env: cliEnv() });
+}
+
+function writeLine(socket, payload) {
+  try {
+    socket.write(`${JSON.stringify(payload)}\n`);
+  } catch {
+    /* peer gone */
+  }
+}
+
+// One brokered session, from an already-parsed header to the last byte.
+async function runSession(socket, header, leftover, state) {
+  const { deps, log } = state;
+  const auth = await deps.authorize(header);
+  const client = String(header?.client || "").slice(0, 120);
+  if (!auth.ok) {
+    writeLine(socket, { ok: false, error: auth.error });
+    socket.end();
+    void logEvent("ssh_attach_refused", { reason: auth.error, channel: String(header?.channel || "").slice(0, 80), client });
+    return;
+  }
+  const { key, user, entry, meta } = auth;
+  const id = randomUUID();
+  const target = deps.resolveTarget(entry.slug, meta);
+  if (!target?.container?.name) {
+    writeLine(socket, { ok: false, error: "this channel does not run in a container" });
+    socket.end();
+    return;
+  }
+  // The lease comes FIRST — before ensureUp, like run.js — so the reaper cannot stop the container
+  // between "it is up" and "sshd is inside".
+  const lease = target.runtime.acquireLease(target, { kind: "ssh", id });
+  const session = {
+    id, slug: entry.slug, channelId: entry.channelId, userId: user.id, userName: user.name, fingerprint: key.fingerprint, client,
+    container: target.container.name, startedAt: Date.now(), finish: null,
+  };
+  state.sessions.set(id, session);
+  let child = null;
+  let timer = null;
+  let done = false;
+  const stderrTail = [];
+  const finish = async (reason) => {
+    if (done) return;
+    done = true;
+    if (timer) clearInterval(timer);
+    state.sessions.delete(id);
+    lease.release();
+    closeSshSession(id, { reason });
+    try { socket.destroy(); } catch { /* already gone */ }
+    if (child && child.exitCode == null && child.signalCode == null) {
+      try { child.kill("SIGTERM"); } catch { /* gone */ }
+      const hard = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } }, KILL_GRACE_MS);
+      hard.unref?.();
+    }
+    const durationMs = Date.now() - session.startedAt;
+    log.log?.(`[ssh] session ${id.slice(0, 8)} ended for ${user.id} on ${entry.slug} after ${Math.round(durationMs / 1000)}s (${reason})`);
+    await logEvent("ssh_session_end", { slug: entry.slug, channel: entry.channelId, author: user.id, session: id, durationMs, reason, stderr: stderrTail.slice(-5).join(" | ").slice(0, 500) });
+  };
+  session.finish = finish;
+  try {
+    await target.runtime.ensureUp(target, { announce() {}, lease });
+    const keys = await keysForUsers(sshUsersOf(meta));
+    materializeContainerSshFiles(target, keys);
+    const cliBin = await deps.cliBin(target);
+    let claude = { relayed: false, reason: "" };
+    const refresh = async () => {
+      try {
+        const relay = await deps.installRelay(target, cliBin);
+        claude = { relayed: true, source: relay?.source || "", reason: "" };
+      } catch (error) {
+        claude = { relayed: false, reason: String(error?.message || error) };
+        log.warn?.(`[ssh] Claude relay for ${entry.slug}: ${claude.reason}`);
+      }
+    };
+    await refresh();
+    child = deps.spawnExec(target, cliBin);
+    touchSshKey(key.id);
+    openSshSession({ id, userId: user.id, slug: entry.slug, channelId: entry.channelId, fingerprint: key.fingerprint, client, container: target.container.name });
+    child.stderr?.on("data", (chunk) => {
+      for (const line of String(chunk).split("\n")) if (line.trim()) stderrTail.push(line.trim().slice(0, 200));
+      if (stderrTail.length > 20) stderrTail.splice(0, stderrTail.length - 20);
+    });
+    child.once("error", (error) => { void finish(`exec failed: ${error?.message || error}`); });
+    child.once("exit", (code, signal) => { void finish(`sshd exited (${signal || code})`); });
+    socket.once("close", () => { void finish("client disconnected"); });
+    socket.once("error", () => { void finish("client connection error"); });
+    writeLine(socket, { ok: true, session: id, channel: entry.slug, container: target.container.name, claude });
+    if (leftover?.length) child.stdin.write(leftover);
+    socket.pipe(child.stdin);
+    child.stdout.pipe(socket);
+    child.stdin.on("error", () => { /* sshd went away first; exit handles it */ });
+    timer = setInterval(() => { void refresh(); }, state.relayRefreshMs);
+    timer.unref?.();
+    log.log?.(`[ssh] session ${id.slice(0, 8)}: ${user.id} → ${entry.slug} (${target.container.name})${client ? ` from ${client}` : ""}`);
+    await logEvent("ssh_session_start", { slug: entry.slug, channel: entry.channelId, author: user.id, session: id, fingerprint: key.fingerprint, client, claudeRelayed: claude.relayed });
+  } catch (error) {
+    writeLine(socket, { ok: false, error: `could not attach: ${String(error?.message || error)}` });
+    await finish(`failed: ${String(error?.message || error).slice(0, 200)}`);
+  }
+}
+
+// Read one JSON header line (bounded, with a deadline), then hand the rest of the stream over.
+function acceptConnection(socket, state) {
+  const chunks = [];
+  let size = 0;
+  let settled = false;
+  const deadline = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    writeLine(socket, { ok: false, error: "attach header timed out" });
+    socket.destroy();
+  }, state.headerTimeoutMs);
+  deadline.unref?.();
+  const onData = (chunk) => {
+    if (settled) return;
+    size += chunk.length;
+    if (size > HEADER_LIMIT_BYTES) {
+      settled = true;
+      clearTimeout(deadline);
+      writeLine(socket, { ok: false, error: "attach header too large" });
+      socket.destroy();
+      return;
+    }
+    const nl = chunk.indexOf(0x0a);
+    if (nl === -1) {
+      chunks.push(chunk);
+      return;
+    }
+    settled = true;
+    clearTimeout(deadline);
+    socket.removeListener("data", onData);
+    chunks.push(chunk.subarray(0, nl));
+    const leftover = chunk.subarray(nl + 1);
+    let header;
+    try {
+      header = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      if (!header || typeof header !== "object") throw new Error("not an object");
+    } catch {
+      writeLine(socket, { ok: false, error: "malformed attach header" });
+      socket.destroy();
+      return;
+    }
+    socket.pause();
+    runSession(socket, header, leftover, state)
+      .then(() => socket.resume())
+      .catch((error) => {
+        state.log.warn?.(`[ssh] session failed: ${error?.message || error}`);
+        writeLine(socket, { ok: false, error: "internal error" });
+        socket.destroy();
+      });
+  };
+  socket.on("data", onData);
+  socket.once("error", () => { clearTimeout(deadline); });
+}
+
+let active = null;
+
+/**
+ * Bind the attach socket when the host is set up (scripts/install-ssh-access.sh); otherwise say
+ * so once and re-check periodically, so enabling SSH access never needs a daemon restart. Never
+ * throws and never fails the boot.
+ */
+export async function startSshBroker({ dir = sshAccessDir(), log = console, retryMs = 60_000, relayRefreshMs = RELAY_REFRESH_MS, headerTimeoutMs = HEADER_TIMEOUT_MS, ...overrides } = {}) {
+  if (active?.server) return active;
+  if (!active) {
+    active = {
+      server: null, dir, path: path.join(dir, SSH_ATTACH_SOCKET), sessions: new Map(), log, retryTimer: null, warned: false, conns: new Set(),
+      relayRefreshMs, headerTimeoutMs,
+      deps: {
+        authorize: (header) => authorizeSshAttach(header, overrides.authorizeOptions || {}),
+        resolveTarget: resolveRuntime,
+        cliBin: defaultCliBin,
+        installRelay: (target, cliBin) => installVscodeClaudeRelay(target, cliBin),
+        spawnExec: defaultSpawnExec,
+        ...(overrides.deps || {}),
+      },
+    };
+  }
+  const state = active;
+  const scheduleRetry = () => {
+    if (retryMs <= 0 || state.retryTimer) return;
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+      startSshBroker({ dir, log, retryMs, relayRefreshMs, headerTimeoutMs, ...overrides }).catch(() => {});
+    }, retryMs);
+    state.retryTimer.unref?.();
+  };
+  const setup = sshAccessState(dir);
+  if (!setup.configured) {
+    if (!state.warned) {
+      log.log?.(`[ssh] SSH access to channel containers is not set up (${setup.reason}); enable it with \`sudo bash scripts/install-ssh-access.sh\``);
+      state.warned = true;
+    }
+    scheduleRetry();
+    return state;
+  }
+  try {
+    if (Buffer.byteLength(state.path) > MAX_SOCKET_PATH_BYTES) throw new Error(`${state.path} exceeds the unix socket path limit`);
+    const orphaned = closeOrphanSshSessions("daemon restart");
+    if (orphaned) log.log?.(`[ssh] ${orphaned} session record(s) from before the restart closed`);
+    const exported = exportHostAuthorizedKeys({ dir });
+    rmSync(state.path, { force: true });
+    const server = net.createServer((socket) => {
+      state.conns.add(socket);
+      socket.once("close", () => state.conns.delete(socket));
+      if (isShuttingDown()) {
+        writeLine(socket, { ok: false, error: "the gateway is restarting — reconnect in a moment" });
+        socket.destroy();
+        return;
+      }
+      acceptConnection(socket, state);
+    });
+    server.on("error", (error) => log.warn?.(`[ssh] attach socket error: ${error?.message || error}`));
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(state.path, resolve);
+    });
+    chmodSync(state.path, 0o660); // the login account is in the directory's group
+    state.server = server;
+    state.warned = false;
+    log.log?.(`[ssh] attach socket ${state.path} — ${exported.count} key(s) exported; developers connect through ${setup.endpoint.user}@${setup.endpoint.host}${setup.endpoint.port !== 22 ? `:${setup.endpoint.port}` : ""}`);
+  } catch (error) {
+    if (!state.warned) {
+      log.warn?.(`[ssh] attach socket unavailable (${error?.message || error}) — SSH access stays off until it can bind`);
+      state.warned = true;
+    }
+    scheduleRetry();
+  }
+  return state;
+}
+
+export function sshBrokerStatus() {
+  return {
+    listening: Boolean(active?.server),
+    path: active?.path || "",
+    sessions: active ? [...active.sessions.values()].map(({ finish, ...rest }) => ({ ...rest })) : [],
+  };
+}
+
+/** Which brokered sessions are inside a channel right now (daemon-local view; the DB view is listSshSessions). */
+export function liveSshSessions({ slug = "" } = {}) {
+  return sshBrokerStatus().sessions.filter((session) => !slug || session.slug === slug);
+}
+
+// Shutdown must not wait on a developer's open terminal: every session is ended (its container
+// lease released, its row closed) and the socket is unlinked. A daemon restart is a reconnect.
+export async function stopSshBroker() {
+  if (!active) return;
+  const state = active;
+  active = null;
+  if (state.retryTimer) clearTimeout(state.retryTimer);
+  for (const session of [...state.sessions.values()]) {
+    try { await session.finish?.("daemon shutdown"); } catch { /* best effort */ }
+  }
+  for (const socket of state.conns) socket.destroy();
+  state.conns.clear();
+  if (state.server) await new Promise((resolve) => state.server.close(resolve));
+  try { rmSync(state.path, { force: true }); } catch { /* best effort */ }
+}

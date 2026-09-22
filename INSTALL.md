@@ -100,6 +100,10 @@ sudo journalctl -u channelgate -f
 sudo bash scripts/uninstall-systemd.sh    # = npm run service:uninstall — removes the unit, keeps the runtime root
 ```
 
+To let developers SSH straight into channel containers (one key per person, granted per channel
+from chat, nothing listening on a port), run the one-time `sudo CG_SSH_HOST=<host> bash
+scripts/install-ssh-access.sh` after the image is built — see `docs/SSH-ACCESS.md`.
+
 `npm run setup -- --no-service` only skips the reminder; `npm start` runs the daemon in the
 foreground without a service. The service identities, the engine credentials of the login-less
 account and the user-scope alternative (`~/.config/systemd/user/channelgate.service`) are in

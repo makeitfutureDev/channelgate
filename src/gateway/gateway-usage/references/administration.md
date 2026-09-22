@@ -179,6 +179,24 @@ every other channel. In a `/sudo` turn, HOME is the daemon user's native host HO
 elsewhere; a credential pasted there can end up committed. A credential this channel should have
 is a `/secrets` variable (below) — use its injected environment value, not a project `.env` file.
 
+## SSH into this channel's container (developers)
+A person can open a real SSH session — terminal, VS Code Remote-SSH, sftp, port forwards — inside
+THIS channel's container, the same box you work in. One key per person, granted per channel.
+- `add_my_ssh_key` — the requester registers their OWN public key (the `.pub` line) once, for every
+  channel. Refuse to accept a private key; if one was pasted, say it is now compromised. Never
+  repeat key material back; quote the fingerprint the tool returns.
+- `list_my_ssh_keys` / `remove_my_ssh_key` — the requester's own keys only.
+- `grant_channel_ssh` / `revoke_channel_ssh` (managers) — who may SSH into this channel's
+  container. Granting is handing someone a shell as the channel (its files, its CLI logins, Claude
+  and Codex): say so, and never grant on the requester's word alone when they are not a manager.
+- `show_channel_ssh` — whether the host is set up, who is granted, live sessions, and the
+  `~/.ssh/config` block to paste (the channel rides in the ProxyCommand; one key reaches several
+  channels). Use it for "how do I SSH in", "who has SSH here", "give me the connection info".
+A container with a live SSH session is never idle-stopped. SSH is refused while this channel is
+in Admin mode and the gateway's `containerFullAccessHome` switch is on, because that container
+would expose the operator's home; `show_channel_ssh` says so. If the host is not set up, the
+operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) — no tool can.
+
 ## Working folder & Drive
 - `get_channel_workdir` / `set_channel_workdir` (admin) / `clear_channel_workdir` (admin) — run
   the channel's agent in a real project directory instead of the default folder.

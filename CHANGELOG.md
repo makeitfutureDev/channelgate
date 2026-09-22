@@ -16,6 +16,20 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- Developers can SSH into a channel's container instead of the gateway host (`docs/SSH-ACCESS.md`).
+  A person registers one public key once from chat, a channel manager grants them access per
+  channel, and `show_channel_ssh` hands out an `~/.ssh/config` block; the connection reaches a
+  dedicated no-shell login account on the host whose forced command hands it to the daemon, which
+  authorizes the key, the user and the grant and runs an unprivileged inetd-mode sshd inside the
+  container on that stream — pty, VS Code Remote-SSH, sftp and port forwards all land in the box,
+  nothing listens on a port anywhere, and a container with a live session is never idle-stopped.
+  New: `scripts/install-ssh-access.sh` (root, once), image spec 1.4.0 (`openssh-server`,
+  `cg-sshd`; rebuild with `npm run build:image`), migration 27 (`ssh_keys`, `ssh_sessions`), the
+  `sshUsers` channel policy key, and six gateway tools (`add_my_ssh_key`, `list_my_ssh_keys`,
+  `remove_my_ssh_key`, `grant_channel_ssh`, `revoke_channel_ssh`, `show_channel_ssh`).
+
 ## 0.5.2 — 2026-09-22
 
 - Give a conversation its tools back when one engine runs out of quota. A channel whose engine had

@@ -34,6 +34,7 @@ import { register as registerChannelDatabase } from "./tools/channel-database.js
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
 import { register as registerQuestions } from "./tools/questions.js";
+import { register as registerSshAccess } from "./tools/ssh-access.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 
 export const text = (t) => ({ content: [{ type: "text", text: t }] });
@@ -272,6 +273,13 @@ export function buildControlPlane({ loadMeta }) {
     ["clear_my_composio_token", { authz: "any", details: () => "Remove YOUR Composio token." }],
     ["set_my_toolbox_token", { authz: "any", details: () => "Set YOUR Toolbox token (value hidden)." }],
     ["clear_my_toolbox_token", { authz: "any", details: () => "Remove YOUR Toolbox token." }],
+    // SSH access to channel containers (src/gateway/ssh-access.js): a registered key is what a
+    // later grant turns into a shell inside a container, and a grant IS that shell. Never echo the
+    // key material in the card — the fingerprint is computed after approval.
+    ["add_my_ssh_key", { authz: "any", details: ({ label }) => `Register an SSH public key for YOUR account${label ? ` (${summarize(label)})` : ""} — a channel manager can then grant it a shell inside channel containers.` }],
+    ["remove_my_ssh_key", { authz: "any", details: ({ key }) => `Remove YOUR SSH key ${summarize(key)} — every channel grant using it stops working.` }],
+    ["grant_channel_ssh", { authz: "manage", details: ({ user }) => `Grant ${summarize(user)} SSH access into THIS channel's container: a full shell as the channel, with its files and CLI logins.` }],
+    ["revoke_channel_ssh", { authz: "manage", details: ({ user }) => `Revoke ${summarize(user)}'s SSH access into this channel's container.` }],
     // The deployment's license key: gateway-wide, persistent, and the thing that decides how many
     // conversations and messages this install may serve. `get_license_status` is read-only and stays
     // un-gated. Never echo the key value in the card.
@@ -402,6 +410,7 @@ export function createGatewayMcpServer(ctx) {
     registerLicense(server, ctx);
     registerSkills(server, ctx);
     registerQuestions(server, ctx);
+    registerSshAccess(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }

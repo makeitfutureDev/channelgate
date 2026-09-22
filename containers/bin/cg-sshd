@@ -1,0 +1,30 @@
+#!/bin/sh
+# cg-sshd — ONE inetd-mode sshd session on stdio, for a gateway-brokered SSH attach
+# (docs/SSH-ACCESS.md). The daemon runs `<cli> exec -i <container> cg-sshd` with the developer's
+# SSH byte stream on stdin/stdout; sshd completes the developer's own handshake inside the
+# container, so the pty, the shell, sftp and port forwards all live in this container's namespaces.
+# Nothing here listens on a port, and sshd runs as the unprivileged agent user: it can only ever
+# log in the one account it runs as (AllowUsers agent in the generated config).
+#
+# The daemon writes sshd_config and authorized_keys into the channel's artifact dir before every
+# session (CG_SSH_DIR, bind-mounted at the identical path). The host key is generated HERE on first
+# use so it persists with the channel and never has to cross from the host; a mkdir lock keeps two
+# first sessions from racing over it.
+set -u
+dir="${CG_SSH_DIR:-${CG_ARTIFACT_DIR:-/tmp}/ssh}"
+[ -f "$dir/sshd_config" ] || { echo "cg-sshd: $dir/sshd_config is missing — the gateway did not prepare this session" >&2; exit 78; }
+key="$dir/host_key"
+if [ ! -f "$key" ]; then
+  if mkdir "$dir/.host_key.lock" 2>/dev/null; then
+    if ssh-keygen -q -N '' -t ed25519 -C "channelgate-${CG_CHANNEL:-channel}" -f "$key.new" >/dev/null 2>&1; then
+      mv "$key.new.pub" "$key.pub" && mv "$key.new" "$key"
+    fi
+    rm -f "$key.new" "$key.new.pub" 2>/dev/null
+    rmdir "$dir/.host_key.lock" 2>/dev/null
+  else
+    n=0
+    while [ ! -f "$key" ] && [ "$n" -lt 30 ]; do sleep 1; n=$((n + 1)); done
+  fi
+fi
+[ -f "$key" ] || { echo "cg-sshd: could not create the channel host key in $dir" >&2; exit 78; }
+exec /usr/sbin/sshd -i -e -f "$dir/sshd_config" -h "$key"

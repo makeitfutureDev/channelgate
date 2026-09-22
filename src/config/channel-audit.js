@@ -46,6 +46,7 @@ export const POLICY_KEYS = Object.freeze([
   "manageAccess", // who may MANAGE it
   "managers",
   "allowedUsers",
+  "sshUsers", // who may open an SSH session into this channel's container
   "allowedMcps",
   "allowedCodexMcps",
   "template", // DM org template (user|admin|custom)
@@ -55,7 +56,7 @@ export const POLICY_KEYS = Object.freeze([
 
 // Keys whose value is a list. Reported as a sorted array of plain strings so a reordered list is
 // not a "change" and an MCP selection object never drags its transport/config fields into the row.
-const LIST_KEYS = new Set(["managers", "allowedUsers", "allowedMcps", "allowedCodexMcps"]);
+const LIST_KEYS = new Set(["managers", "allowedUsers", "sshUsers", "allowedMcps", "allowedCodexMcps"]);
 
 // A whole row's `changes` blob stays bounded: a 400-member allowedUsers list must not turn one
 // audit event into a document. Over the cap, list values collapse to their counts.

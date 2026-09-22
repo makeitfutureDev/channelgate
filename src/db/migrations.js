@@ -830,4 +830,38 @@ export const migrations = [
       `);
     },
   },
+  {
+    // SSH access to channel containers (docs/SSH-ACCESS.md): one public key per person, bound to the
+    // chat identity that registered it, and the audit of every brokered session. The per-channel
+    // grant list lives in channel_meta (`sshUsers`) like the other access lists.
+    version: 27,
+    up(db) {
+      db.exec(`
+        CREATE TABLE ssh_keys (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          fingerprint TEXT NOT NULL UNIQUE,
+          key_type TEXT NOT NULL,
+          public_key TEXT NOT NULL,
+          label TEXT NOT NULL DEFAULT '',
+          created_ms INTEGER NOT NULL,
+          last_used_ms INTEGER
+        );
+        CREATE INDEX idx_ssh_keys_user ON ssh_keys(user_id);
+        CREATE TABLE ssh_sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          client TEXT NOT NULL DEFAULT '',
+          container TEXT NOT NULL DEFAULT '',
+          started_ms INTEGER NOT NULL,
+          ended_ms INTEGER,
+          end_reason TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX idx_ssh_sessions_slug ON ssh_sessions(slug, started_ms);
+      `);
+    },
+  },
 ];

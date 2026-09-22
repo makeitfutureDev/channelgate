@@ -174,7 +174,7 @@ test("the Containerfile bakes in exactly the paths the backend declares", () => 
 test("the container-side helper scripts are present, executable and POSIX-sh clean", async () => {
   const { spawnSync } = await import("node:child_process");
   const binDir = path.join(repoRoot, "containers", "bin");
-  const expected = ["cg-exec", "cg-probe", "cg-signal", "cg-sweep", "cg-init", "cg-mcp-bridge"];
+  const expected = ["cg-exec", "cg-probe", "cg-signal", "cg-sweep", "cg-init", "cg-mcp-bridge", "cg-sshd"];
   for (const name of expected) {
     const file = path.join(binDir, name);
     assert.ok(existsSync(file), `containers/bin/${name} is missing`);
