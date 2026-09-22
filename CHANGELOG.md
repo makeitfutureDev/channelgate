@@ -16,6 +16,29 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## 0.5.2 — 2026-09-22
+
+- Give a conversation its tools back when one engine runs out of quota. A channel whose engine had
+  hit its usage limit was answered by the other harness, as designed — but when the fallback was
+  Claude it started with no MCP servers at all: no gateway tools (channel memory, schedules,
+  Slack history, approval prompts), no Composio, no Cloud MCP selections, and no channel
+  permission lockdown. Tool requests were denied with no approval card instead of asking. The turn
+  still replied, so the only visible symptom was the agent reporting that Composio and its own
+  gateway tools were missing. Every fallback turn now spawns with the same MCP payload, lockdown
+  and approval route a normal turn gets. Clean mode still injects nothing.
+
+- Stop the channel VPN's health check from getting the database address blocked. Every 30 seconds
+  it opened a MySQL connection and dropped it before logging in; MySQL counts that as a failed
+  connection and, after about 100 of them, refused the tunnel outright (error 1129, "host
+  blocked"), so database reads failed within an hour. The check now verifies only the tunnel and
+  its route. Rebuild the VPN image (`npm run vpn -- build --channel ID`) and turn the VPN off and
+  on; a database that already blocked the address still needs `FLUSH HOSTS` once.
+- Sync Google Drive on demand. A channel's admin page has **Sync now** beside **Test**, Settings →
+  Google Drive sync has **Sync all now**, and asking the agent to sync Drive runs the channel's
+  linked folder immediately through the new `sync_channel_drive` tool. Each shows when the pass
+  finished or why it failed, and `get_channel_drive_folder` now reports the last sync. Manual
+  syncs obey the same enable switch and never double a pass already running.
+
 ## 0.5.1 — 2026-09-21
 
 - Fix two release-smoke defects. A Qwen run with no model configured now asks QwenCloud for a

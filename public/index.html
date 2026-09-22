@@ -690,7 +690,10 @@
                     <span>rclone binary path (blank = find on PATH; set an absolute path if the daemon runs as a systemd service with a minimal PATH)</span>
                     <input id="set-drivesync-rclone" type="text" placeholder="rclone" />
                   </label>
-                </div>
+                  <div class="row" style="margin-top:8px">
+                    <button type="button" id="drivesync-sync-all" class="ghost" title="Run one sync pass for every channel with a Drive folder linked, now (uses the saved settings)">Sync all now</button>
+                    <span id="drivesync-sync-all-result" class="hint"></span>
+                  </div>
               </section>
 
               <!-- ── Access Templates ────────────────────────────────────── -->
@@ -1266,6 +1269,7 @@
             <div class="row">
               <input class="ch-syncdrive" type="text" placeholder="https://drive.google.com/drive/folders/…" />
               <button type="button" class="ch-synctest ghost">Test</button>
+              <button type="button" class="ch-syncnow ghost" title="Run this channel's two-way sync now instead of waiting for the next scheduled sweep (uses the saved link)">Sync now</button>
             </div>
             <span class="hint ch-synctest-result"></span>
           </label>

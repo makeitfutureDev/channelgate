@@ -22,6 +22,9 @@
   checked. OFF also cleans up manually started owned containers. Network off blocks startup and
   stops a supervised pair. No arbitrary commands, profile import or SQL extraction are granted
   through these controls. See `docs/CHANNEL-VPN.md` for setup and limitations.
+- The 30-second VPN health check verifies only the tunnel and its route. It never opens a
+  database connection, so it cannot run up MySQL's connect-error count and get the tunnel address
+  blocked (error 1129).
 - Admitted channel users can ask either engine to list databases/tables, describe a table, or read
   bounded matching rows using `query_channel_database`. The channel-bound extractor enforces fixed
   read operations, a read-only transaction, row/byte/time limits, fresh authorization and Network
@@ -572,6 +575,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   engines, unsupported network policy, or adapters without confinement and health compilers.
 - Claude pooling and Codex execution/MCP policy run behind adapters; fallback routing is a directed
   registry graph, and every registered CLI receives a boot version/readiness probe.
+- A cross-engine failover spawns the fallback harness under the same contract the primary would
+  have received: its own reminted MCP payload materialized for its own transport (a file for
+  Claude/Qwen, argv overrides for Codex), the channel permission lockdown, and the approval-prompt
+  route. Per-run settings and MCP config files are provisioned for the whole failover route, so an
+  engine that declares neither (Codex) cannot leave the harness it fails over to without them.
+  Clean mode still injects an explicitly empty payload in both directions.
+  → TEST-PLAN: Cross-engine failover spawn contract.
 - Slack and Admin selectors consume registry manifests. Codex optional MCPs under
   `--ignore-user-config` receive complete credential-safe definitions; a selection without one is
   dropped from the launch with a reason, the same contract Claude's resolver uses.
@@ -2684,6 +2694,23 @@ are retired, bullet by bullet; everything else stands.
   link, saves it, runs the same read-only connection test, and reports the SA `client_email` to share
   the folder with), and `clear_channel_drive_folder` (admins — unlink/turn off). `src/gateway/drivesync.js`,
   `src/mcp/gateway-server.js`. → TEST-PLAN: Google Drive sync.
+- **Google Drive sync on demand**: a pass no longer has to wait for the interval. The channel page
+  (Conversations → the channel) has **Sync now** next to **Test**: it runs that one channel's saved
+  link immediately (an unsaved edit is refused) and polls until the pass ends, showing ✓ synced /
+  ✗ the concise failure reason. Settings → Google Drive sync has **Sync all now**: one sweep over
+  every linked channel, then a per-channel outcome summary. In chat, asking the agent to "sync
+  Drive now" calls the `sync_channel_drive` gateway tool (anyone allowed in the channel; no approval
+  card — it runs the already-linked sync early, THIS channel only, never another). The tool goes
+  through daemon IPC (`drivesync` kind) so the pass runs in the daemon on both MCP transports,
+  shares the per-channel in-flight guard and outlives the turn; it waits ~40 s for the outcome and
+  otherwise says the pass is still running. `get_channel_drive_folder` now also reports the last
+  pass (time, ok/failed, first-resync, reason). Manual passes obey the same global switch, key and
+  rclone checks as the schedule; a pass already running for a channel is never doubled, and a
+  manual sweep never stacks on the scheduled one. Status surfaces show a concise diagnostic, never
+  the raw rclone tail. Admin API: `POST /api/channels/:id/sync-now`, `GET
+  /api/channels/:id/sync-status`, `POST /api/drive-sync/sync-all`, `GET /api/drive-sync/status`
+  (admin session); UI-started passes are logged as `drivesync_manual` events and every pass's
+  `drivesync_run`/`drivesync_error` event carries its trigger. → TEST-PLAN: Google Drive sync.
 
 ## Skills platform (Core) — the local skill catalog
 

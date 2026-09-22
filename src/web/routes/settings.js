@@ -45,7 +45,7 @@ import {
   CONTAINER_CPUS_RE,
 } from "../../config/settings.js";
 import { platformUiManifest } from "../../platforms/registry.js";
-import { isServiceAccountJson } from "../../gateway/drivesync.js";
+import { isServiceAccountJson, syncAllNow, driveSyncStatusAll } from "../../gateway/drivesync.js";
 import { parseServiceAccount } from "../../platforms/googlechat/auth.js";
 import { isSubscriptionName } from "../../platforms/googlechat/pubsub.js";
 import { logEvent } from "../../util/logger.js";
@@ -97,6 +97,26 @@ export function createSettingsRouter({
   });
 
   // ── Settings (Slack tokens + daemon options) ─────────────────────────────────
+  // Settings → Google Drive sync → "Sync all now": start one sweep over every linked channel now.
+  // Returns at once; the page polls /drive-sync/status for per-channel outcomes.
+  router.post("/drive-sync/sync-all", async (_req, res, next) => {
+    try {
+      const result = await syncAllNow();
+      if (result.started) await logEvent("drivesync_manual", { scope: "all", channels: result.channels, source: "admin-ui" });
+      res.json(result);
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.get("/drive-sync/status", async (_req, res, next) => {
+    try {
+      res.json(await driveSyncStatusAll());
+    } catch (e) {
+      next(e);
+    }
+  });
+
   router.get("/settings", async (_req, res, next) => {
     try {
       await refreshEngineModels();

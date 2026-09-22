@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Cross-engine failover spawn contract
+
+- [x] `test/fallback-spawn-contract.test.js` drives the real orchestrator against the stub CLIs on
+      PATH in NON-clean DMs (the existing failover E2Es are all clean-mode, where an empty MCP
+      payload is correct — which is why none of them caught this). A Codex→Claude failover must
+      spawn `claude` with `--mcp-config`, `--settings` and `--permission-prompt-tool`, asserted
+      from the argv the stub actually received, and the copied per-run config must contain the
+      `gateway` control server. The Claude→Codex direction must still report `gateway_mcp=yes`.
+      A clean-mode failover must still hand over an explicitly empty server list and no approval
+      tool. Engine-independent: the defect is in the orchestrator's spawn bag, not in any harness.
+- [x] Reproduced red before the fix: with `src/gateway/run.js` at the pre-fix revision the
+      Codex→Claude case fails on `mcp=no` and the clean case fails because no config file was
+      written at all; the Claude→Codex guard passes either way.
+- [ ] Live acceptance, both directions: in a private non-clean fixture channel whose engine is
+      Codex, exhaust or simulate the Codex usage limit so the turn fails over to Claude, then ask
+      the agent to list its available `mcp__gateway__*` tools and to run `search_channel_memory`.
+      Require the gateway toolset to be present, Composio to resolve for the author's own identity,
+      and a tool request outside the allowlist to raise an approval card rather than being denied
+      silently. Repeat with the channel engine set to Claude failing over to Codex. Record the
+      answering engine from the footer and the matching `run_config`/fallback audit events.
+
+Private QA registry: append these as new failover cases; the automated pass does not close the
+unchecked live gate above.
+
 ## VPN controls through agents, web and Slack
 
 - [x] `test/channel-vpn-control.test.js`: current-channel-only tools, fresh admission/management
@@ -38,7 +62,12 @@ rootless Podman; never grant host runtime access to a chat agent for this fixtur
       gets TUN/NET_ADMIN; credentials stay out of argv and the other service; missing/unsafe secret
       selection, symlink imports, readiness failure and credential rotation are exercised.
 - [x] `python3 -B services/vpn-image/test_checks.py`: route/default validation, read-only SQL and
-      sanitized errors; protected credential-file and permission checks.
+      sanitized errors; protected credential-file and permission checks. `health` (with or without
+      `--no-connect`) passes on tunnel + route checks alone and opens no database socket.
+- [ ] Live, provider-backed (engine-independent): after `FLUSH HOSTS` on the provider's MySQL,
+      rebuild the VPN image, turn the channel's VPN off and on, and leave it running for at least
+      2 hours. Pass: `npm run vpn -- verify --channel <id>` succeeds at the start and at the end,
+      and never reports MySQL error 1129 (host blocked).
 - [x] Real rootless fixture: build `localhost/channelgate/vpn:2` with `--format docker`, then run
       `python3 -B services/vpn-image/live_acceptance.py`. Require real TUN creation, firewall counter
       evidence for rejected non-tunnel DB traffic/wrong tunnel destinations/ports, accepted DB SYN,
@@ -2587,6 +2616,33 @@ structural invariants are automated; rendered navigation and feature claims also
       URL>" → `set_channel_drive_folder` saves the link, echoes the folder id + the SA `client_email`
       to share with, runs the connection test, and reports the global armed/not-armed state;
       "unlink drive" / "stop syncing" → `clear_channel_drive_folder`. A non-admin author is refused.
+
+- [x] On-demand sync (`test/drivesync-manual.test.js`, fake rclone): manual passes refuse with the
+      schedule's own reasons (switch off / no key / rclone missing) and run nothing; an unlinked or
+      unknown channel is refused; **Sync now** runs exactly that channel's pass, records ok +
+      trigger, and carries `--resync` only on the first pass; a second request while a pass runs
+      returns `busy` and starts nothing; a failed pass records a concise reason (never the raw
+      tail); the agent IPC requires the bound channel, rejects unknown actions and records trigger
+      `agent`; **Sync all now** runs one pass per linked channel and a second request while the
+      sweep runs returns `busy`. `test/run-api.test.js`: `/internal/drivesync` refuses callers
+      without the loopback IPC secret; the four admin endpoints return 401 without an admin session,
+      404 for an unknown channel, and a dormant feature starts nothing.
+      `test/mcp-control-plane-approval.test.js` classifies `sync_channel_drive` as open (no card).
+- [ ] Manual (engine-independent — the pass runs in the daemon, not the engine; setup: Drive sync
+      enabled, key saved, a test channel linked to a Drive folder shared with the service account
+      and holding one file): on the channel's admin page click **Sync now** → "⏳ Syncing…" then
+      "✓ Synced at …"; the file is in `<channel working folder>/Drive/`. Edit the link without
+      saving and click **Sync now** → "Save the changed Drive link first". Settings → **Sync all
+      now** → "✓ Synced N channel(s)". Turn the switch off, save, click either → "Google Drive sync
+      is turned off". Pass: every message appears as stated, and `events` has `drivesync_manual`
+      plus `drivesync_run` rows with trigger `admin-ui` / `manual`.
+- [ ] Manual, **Claude and Codex** (same setup, one thread per engine): ask "@bot sync the Drive
+      folder now" → the agent calls `sync_channel_drive` (no approval card) and replies that the
+      sync succeeded (or is still running); drop a new file into the Drive folder first and it
+      appears under `Drive/`. Ask "@bot when did Drive last sync?" → `get_channel_drive_folder`
+      reports the last pass time and outcome. Ask it to sync a different channel → it explains it
+      can only sync this channel. Pass: a `drivesync_run` event with trigger `agent` for each engine
+      and no second pass started while one runs.
 
 ### Performance (clean mode)
 - [ ] Enable "Clean mode" on a channel and send `hi`: `claude mcp list` inside the run shows NO
