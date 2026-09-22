@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Cross-engine failover spawn contract
+
+- [x] `test/fallback-spawn-contract.test.js` drives the real orchestrator against the stub CLIs on
+      PATH in NON-clean DMs (the existing failover E2Es are all clean-mode, where an empty MCP
+      payload is correct — which is why none of them caught this). A Codex→Claude failover must
+      spawn `claude` with `--mcp-config`, `--settings` and `--permission-prompt-tool`, asserted
+      from the argv the stub actually received, and the copied per-run config must contain the
+      `gateway` control server. The Claude→Codex direction must still report `gateway_mcp=yes`.
+      A clean-mode failover must still hand over an explicitly empty server list and no approval
+      tool. Engine-independent: the defect is in the orchestrator's spawn bag, not in any harness.
+- [x] Reproduced red before the fix: with `src/gateway/run.js` at the pre-fix revision the
+      Codex→Claude case fails on `mcp=no` and the clean case fails because no config file was
+      written at all; the Claude→Codex guard passes either way.
+- [ ] Live acceptance, both directions: in a private non-clean fixture channel whose engine is
+      Codex, exhaust or simulate the Codex usage limit so the turn fails over to Claude, then ask
+      the agent to list its available `mcp__gateway__*` tools and to run `search_channel_memory`.
+      Require the gateway toolset to be present, Composio to resolve for the author's own identity,
+      and a tool request outside the allowlist to raise an approval card rather than being denied
+      silently. Repeat with the channel engine set to Claude failing over to Codex. Record the
+      answering engine from the footer and the matching `run_config`/fallback audit events.
+
+Private QA registry: append these as new failover cases; the automated pass does not close the
+unchecked live gate above.
+
 ## VPN controls through agents, web and Slack
 
 - [x] `test/channel-vpn-control.test.js`: current-channel-only tools, fresh admission/management
