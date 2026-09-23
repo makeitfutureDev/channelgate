@@ -401,6 +401,7 @@ export function createSettingsRouter({
       if (typeof body.memoryReviewNotify === "boolean") patch.memoryReviewNotify = body.memoryReviewNotify;
       // Scheduled Google Drive sync. Key file / subject are plain strings (a path + an email, not
       // secrets); interval floors at 1 minute; conflict policy is an enum.
+      if (typeof body.publicFileLinksEnabled === "boolean") patch.publicFileLinksEnabled = body.publicFileLinksEnabled;
       if (typeof body.driveSyncEnabled === "boolean") patch.driveSyncEnabled = body.driveSyncEnabled;
       if (typeof body.driveSyncKeyFile === "string") patch.driveSyncKeyFile = body.driveSyncKeyFile.trim();
       // Pasted service-account key JSON (write-only). Validate it's a real SA key before storing; a

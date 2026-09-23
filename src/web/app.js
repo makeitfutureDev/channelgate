@@ -19,6 +19,7 @@ import { platformOfConversation } from "../platforms/ids.js";
 import { platformOr } from "../platforms/registry.js";
 import { createFileEditorRouter } from "./file-editor.js";
 import { createFileDownloadRouter } from "./file-download.js";
+import { createPublicFileRouter } from "./public-files.js";
 import { createApprovalLinkRouter } from "./routes/approve.js";
 import { createFileUploadRouter } from "./file-upload.js";
 import { poolStats } from "../engines/session-pool.js";
@@ -79,7 +80,7 @@ export function createWebApp({
   mountSkillsPublicRoutes(app, { triggerSync: (id) => triggerSourceSync(id) });
 
   const jsonParser = express.json({ limit: "1mb" });
-  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-download") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") || req.path.startsWith("/approve/") || req.path === "/api/skills/webhook/github" || req.path === "/mcp/skills" ? next() : jsonParser(req, res, next)));
+  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-download") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") || req.path.startsWith("/approve/") || req.path.startsWith("/f/") || req.path === "/api/skills/webhook/github" || req.path === "/mcp/skills" ? next() : jsonParser(req, res, next)));
 
   // Auth: login/logout are always reachable; everything else is gated when ADMIN_PASSWORD is set.
   app.post("/api/login", handleLogin);
@@ -264,6 +265,13 @@ export function createWebApp({
   // approval's own authorization on every POST. GET renders a confirmation page and changes
   // nothing — link unfurlers, preview services and scanning proxies fetch these URLs, so a GET
   // with a side effect would let the unfurler decide the request before the human saw it.
+  // Temporary public file links. Like /approve this is public by design and sits outside the admin
+  // login — the fetcher is a third-party ingest service or someone's browser, so the token in the
+  // URL is the whole credential. Unlike /approve it serves BYTES, so it stays dormant until an
+  // operator turns the feature on, re-checks that switch on every request, and re-resolves the
+  // file inside the channel's working folder before streaming a single one.
+  app.use("/f", createPublicFileRouter());
+
   app.use("/approve", createApprovalLinkRouter({ slack }));
 
   // DNS-rebinding guard: refuse API requests whose Host/Origin isn't an address we recognise, so

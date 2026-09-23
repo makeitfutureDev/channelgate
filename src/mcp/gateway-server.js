@@ -35,6 +35,7 @@ import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
 import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
+import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 
 export const text = (t) => ({ content: [{ type: "text", text: t }] });
@@ -247,6 +248,18 @@ export function buildControlPlane({ loadMeta }) {
     ["remove_skill_source", { authz: "admin", details: ({ id }) => `REMOVE skill source #${Number(id) || "?"} and tombstone its skills.` }],
     ["set_skill_excluded", { authz: "admin", details: ({ skill, excluded }) => `${excluded ? "EXCLUDE" : "Include"} skill \`${summarize(skill)}\` in the catalog.` }],
     ["set_skill_governance", { authz: "admin", details: ({ skill, enabled, discoverable, mandatory }) => `Change skill governance for \`${summarize(skill)}\`: enabled=${enabled ?? "unchanged"}, discoverable=${discoverable ?? "unchanged"}, mandatory=${mandatory ?? "unchanged"}.` }],
+    // Publishing bytes: `create_public_file_link` with purpose "share" puts a channel file at an
+    // unauthenticated URL for up to 48 hours, which is outward-facing and cannot be taken back
+    // once fetched — so it carries a card naming the file and the duration. The "upload" purpose
+    // returns null (no card): it lives minutes, is spent by the machine the turn is already
+    // talking to, and gating it would stall the very step the user asked for. Staging into
+    // Composio publishes nothing and is not gated at all.
+    ["create_public_file_link", { authz: "any", details: ({ path: p, purpose, minutes }) => {
+      if (purpose !== "share") return null;
+      const value = Number(minutes);
+      const duration = Number.isFinite(value) && value > 0 ? describeDuration(Math.ceil(value)) : "an unspecified duration (the call will be rejected)";
+      return `Publish \`${summarize(p)}\` at a PUBLIC download URL for ${duration}. Anyone holding the link can download the file with no login, from anywhere.`;
+    } }],
     ["update_channel_instructions", { authz: "any", details: ({ mode, text: t }) => `${mode === "replace" ? "REPLACE" : "Append to"} this channel's standing instructions:\n${t}` }],
     ["update_gateway", {
       authz: "admin",
@@ -411,6 +424,7 @@ export function createGatewayMcpServer(ctx) {
     registerSkills(server, ctx);
     registerQuestions(server, ctx);
     registerSshAccess(server, ctx);
+    registerFileSharing(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }

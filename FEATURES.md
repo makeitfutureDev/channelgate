@@ -1663,6 +1663,46 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   root-cause and PROPOSE a fix (never apply). 30-min global cooldown; a diagnosis thread's own
   failures are never re-diagnosed. → TEST-PLAN: Engines.
 
+## Getting files out of a channel folder
+
+- **Composio file staging (`stage_file_for_composio`).** Composio's file-taking tools
+  (`GOOGLEDRIVE_UPLOAD_FILE`, `GMAIL_SEND_EMAIL` attachments, `SLACK_UPLOAD_FILE`, …) accept
+  neither a path nor base64 — only a `FileUploadable` (`{name, mimetype, s3key}`) naming bytes
+  already inside Composio's own storage — and the MCP surface exposes no way to produce one. A run
+  that generated a deliverable in its container therefore could not hand it over at all. The
+  gateway now performs Composio's documented three-step upload daemon-side (`POST
+  /api/v3.1/files/upload/request` → presigned `PUT` → the returned key) and gives the model the
+  object to pass straight through. The caller names which identity will run the destination tool
+  (`user` → `composio-user`, `agent` → `composio-agent`) and the key resolved for THAT identity is
+  the one spent, through the same precedence the MCP config uses; a named identity with no key is
+  reported rather than silently replaced by the other one. The key never enters the container,
+  never reaches the model, and never appears in an error message. Nothing is published.
+  → TEST-PLAN: Composio file staging.
+- **Temporary public file links (`create_public_file_link`).** For destinations that ingest by URL
+  rather than by body, and for a person who simply wants a link. One file from the channel's own
+  working folder is served at `GET /f/<token>` — public by design, mounted outside the admin login,
+  like `/approve`. Two purposes with different rules: `upload` (5 minutes default, 15 maximum, 5
+  fetches, meant for a machine and explicitly not to be posted into the conversation) and `share`
+  (duration **required** — the model asks the person first — capped at **48 hours**, unlimited
+  fetches, and additionally gated by a human Approve card naming the file and the duration).
+  `list_public_file_links` and `revoke_public_file_link` make live links inspectable and killable.
+  → TEST-PLAN: Temporary public file links.
+- **What keeps it narrow.** The bearer token is 32 random bytes and only its SHA-256 is stored, so
+  the table yields no working link. A link records a channel and a RELATIVE path, re-resolved
+  inside that channel's working folder on every fetch through the shared confined open
+  (`src/gateway/confined-file.js`, now also used by the Slack file-download router): a path that
+  escapes the root, a symlink at the final component, or a file that has moved simply stops
+  working — so a channel whose container mounts the operator home can read that home with its file
+  tools but can never publish from it. Expiry, revocation and the fetch cap are one atomic claim.
+  `HEAD` probes (which ingest services send first) spend no download. Every failure returns one
+  identical 404, so a stranger learns nothing about which tokens were real. Every mint, fetch
+  (with IP and user agent) and revocation is audited in `events`.
+- **Off by default, and killable at once.** The whole public-link capability is dormant until an
+  admin enables it in Settings → Public file links, and it also requires the gateway's Public URL.
+  The switch is re-read on every request, not at mint time, so turning it off kills every
+  outstanding link immediately. Composio staging is unaffected by the switch — it publishes
+  nothing.
+
 ## Per-channel environment secrets
 - **A channel's own CLI logins.** Each conversation can hold its own credentials — its own Supabase
   project, its own Vercel account — instead of every channel sharing whatever login the gateway

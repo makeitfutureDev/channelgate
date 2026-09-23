@@ -460,6 +460,15 @@ export function getMemoryReviewNotify() {
   return v === undefined ? true : Boolean(v);
 }
 
+// Temporary public download links for one channel file (see gateway/public-file-links.js). OFF by
+// default and deliberately so: it is the only capability that serves channel bytes to a caller
+// with no gateway session, so an operator has to turn it on knowingly. Re-read on every fetch, so
+// switching it off kills every outstanding link at once rather than at its next expiry. Needs
+// `publicUrl` as well — without an address there is nothing to hand out.
+export function getPublicFileLinksEnabled() {
+  return Boolean(getSettings().publicFileLinksEnabled);
+}
+
 // Scheduled two-way Google Drive sync (see gateway/drivesync.js). Dormant unless enabled AND a
 // service-account key file is set AND rclone is installed. Auth is a Workspace service account; the
 // key file is a PATH (not a secret) and the subject is an email — neither is masked.
@@ -929,6 +938,7 @@ export function settingsForApi() {
     memoryReviewEvery: getMemoryReviewEvery(),
     memoryReviewModel: getMemoryReviewModel(),
     memoryReviewNotify: getMemoryReviewNotify(),
+    publicFileLinksEnabled: getPublicFileLinksEnabled(),
     driveSyncEnabled: getDriveSyncEnabled(),
     driveSyncKeyFile: getDriveSyncKeyFile(),
     hasDriveSyncKeyJson: Boolean(getDriveSyncKeyJson()), // the raw key is NEVER returned to the client

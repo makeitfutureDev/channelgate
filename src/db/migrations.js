@@ -864,4 +864,28 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 28,
+    up(db) {
+      db.exec(`
+        CREATE TABLE public_file_links (
+          id TEXT PRIMARY KEY,
+          token_hash TEXT NOT NULL UNIQUE,
+          channel_id TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          relative TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          purpose TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_ms INTEGER NOT NULL,
+          expires_ms INTEGER NOT NULL,
+          max_downloads INTEGER NOT NULL,
+          downloads INTEGER NOT NULL DEFAULT 0,
+          revoked_ms INTEGER NOT NULL DEFAULT 0,
+          last_download_ms INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_public_file_links_channel ON public_file_links(channel_id, expires_ms);
+      `);
+    },
+  },
 ];
