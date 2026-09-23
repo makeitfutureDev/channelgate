@@ -18,6 +18,16 @@ product overview.
 
 ## Unreleased
 
+- Fix `scripts/install-ssh-access.sh` dying silently under `sudo` when Node is a per-user install:
+  root's `secure_path` hid it, and a failing command substitution inside an assignment under
+  `set -e` exited before the "node is required" line could print. The installer now looks in the
+  invoking user's and the service account's `~/.local`, nvm, volta and fnm trees and the system
+  locations (`CG_NODE_BIN` overrides), keeps a root-owned copy of the binary beside the attach
+  wrapper so the no-home login account can execute it, proves that before touching sshd, and
+  reports the failing line on any abort. It also probes `CG_SSH_HOST:CG_SSH_PORT` and compares the
+  answering host key with this machine's: a different key aborts (that address is another server),
+  no answer warns that a web hostname behind an HTTP proxy such as Cloudflare never carries SSH.
+
 - **The 💻 button is gone from reply footers; the resume command moved into Settings.** Slack
   replies now end with 📂 Files, 🔑 Secrets, ⚙️ Settings (and any 📄 review-file buttons) — the
   resume control no longer rides under every answer. Channel Settings gained a **Resume Session**
