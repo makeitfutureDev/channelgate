@@ -1429,6 +1429,29 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       authorization and Slack membership before every mutation. Cloud MCP is hidden from non-admins
       and its controls reject revoked admin status; all authorized users can edit runtime and secrets
       in every channel mode regardless of manager policy.
+- [x] Automated Engine & model tab: the tab carries no submit button and no `input` block (Slack
+      rejects that combination), and renders six dispatching dropdowns — the channel default and
+      this thread's pins — each preselecting its stored value or the label of what it inherits.
+      Thread controls disappear entirely when Settings was opened outside a thread, so no control
+      can widen a channel default into a pin on a thread the view cannot name. A thread's model
+      catalog follows the harness the THREAD resolves to; an unpinned thread whose live session was
+      minted by the other harness reports it; an explicit pin does not. A model stored outside the
+      current catalog stays visible instead of reading as the default, and a DM following an org
+      template labels and validates against the TEMPLATE's runtime, not the gateway's. One pick
+      changes one field and drops only the dependents its new value invalidates. A thread pick is
+      validated against the harness whose catalog the dropdown offered — picking a model offered for
+      the live session's harness sticks without pinning the harness, rather than being silently
+      discarded as foreign to the channel's — and a thread control with no thread in the view
+      refuses instead of widening to the channel (`test/channel-settings-modal.test.js`).
+- [ ] Live Claude+Codex Engine & model tab, in a disposable channel with both engines enabled:
+      open **⚙️ Settings** from a reply inside a thread. Pass when the tab shows Channel default and
+      This thread side by side; picking a channel model saves in place with a confirmation notice
+      and no second modal; reopening Slack and the web conversation editor agree on the new value;
+      pinning This thread → the other harness makes the next message in THAT thread run there
+      (footer/`/status`) while a new thread in the channel still runs the channel default; **Follow
+      channel default** clears all three pins and the next turn in the thread returns to the channel
+      harness/model. Confirm the channel record is audited and the thread pin is not, and that
+      rapid successive picks each land instead of producing an expired-view card.
 - [x] Automated Access: ordinary authorized users cannot see/forge the fifth tab; admins,
       approved members under Members policy and named managers under Custom policy can edit it.
       DMs keep four tabs. Independent base-mode/Auto/Lean/network flags round-trip; preset

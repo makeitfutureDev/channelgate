@@ -11,10 +11,15 @@ export const CHANNEL_SETTINGS_MODE_PREFIX = "cg_channel_settings_mode_";
 export const CHANNEL_SETTINGS_OPTION_PREFIX = "cg_channel_settings_option_";
 export const CHANNEL_SETTINGS_ACTION_ID = "cg_channel_settings";
 export const CHANNEL_SETTINGS_TAB_PREFIX = "cg_channel_settings_tab_";
+// Kept only so a Settings modal opened before the inline dropdowns shipped still has a live
+// control: the handler repaints the runtime tab instead of pushing the retired editor.
 export const CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID = "cg_channel_settings_runtime_edit";
 export const CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID = "cg_channel_settings_runtime_engine";
 export const CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID = "cg_channel_settings_runtime_model";
-export const CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID = "cg_channel_settings_runtime_form";
+export const CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID = "cg_channel_settings_thread_engine";
+export const CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID = "cg_channel_settings_thread_model";
+export const CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID = "cg_channel_settings_thread_effort";
+export const CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID = "cg_channel_settings_thread_reset";
 export const CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID = "cg_channel_settings_connections_edit";
 export const CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID = "cg_channel_settings_connections_form";
 export const CHANNEL_SETTINGS_FALLBACK_ACTION_ID = "cg_channel_settings_connections_fallback";
@@ -38,10 +43,33 @@ export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "mcp", "skills", 
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
-export const RUNTIME_ENGINE_BLOCK_ID = "settings_runtime_engine";
-export const RUNTIME_MODEL_BLOCK_ID = "settings_runtime_model";
-export const RUNTIME_EFFORT_BLOCK_ID = "settings_runtime_effort";
 export const RUNTIME_EFFORT_ACTION_ID = "cg_channel_settings_runtime_effort";
+// The two runtime scopes the Engine & model tab edits in place. Declaring the ids once keeps the
+// renderer and the controller from drifting over which dropdown writes which scope and field.
+export const RUNTIME_SELECT_ACTION_IDS = Object.freeze({
+  channel: Object.freeze({
+    engine: CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID,
+    model: CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID,
+    effort: RUNTIME_EFFORT_ACTION_ID,
+  }),
+  thread: Object.freeze({
+    engine: CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID,
+    model: CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID,
+    effort: CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID,
+  }),
+});
+export const RUNTIME_SCOPES = Object.freeze(Object.keys(RUNTIME_SELECT_ACTION_IDS));
+export const RUNTIME_FIELDS = Object.freeze(["engine", "model", "effort"]);
+
+// Which scope and field a dispatched dropdown writes, or null when the action isn't one of them.
+export function runtimeSelectTarget(actionId) {
+  for (const scope of RUNTIME_SCOPES) {
+    for (const field of RUNTIME_FIELDS) {
+      if (RUNTIME_SELECT_ACTION_IDS[scope][field] === actionId) return { scope, field };
+    }
+  }
+  return null;
+}
 export const CONNECTION_COMPOSIO_BLOCK_ID = "settings_composio_token";
 export const CONNECTION_COMPOSIO_ACTION_ID = "cg_channel_settings_composio_token";
 export const CONNECTION_COMPOSIO_LABEL_BLOCK_ID = "settings_composio_label";
@@ -181,15 +209,27 @@ function destructiveConfirm(title, text, confirm = "Remove") {
   };
 }
 
+// One scope's three rows. A stored value renders as itself; an empty one renders as the label of
+// whatever it inherits, so "nothing set here" never shows up as a blank the reader has to decode.
+// `options` carries the catalogs the app layer resolved for the engine THIS scope actually runs.
+function runtimeScopeRows(scope, { values = {}, inherited = {}, options = {} } = {}, { editable = true } = {}) {
+  const ids = RUNTIME_SELECT_ACTION_IDS[scope];
+  const lists = { engine: options.engines || [], model: options.models || [], effort: options.efforts || [] };
+  const labels = { engine: "Engine", model: "Model", effort: "Reasoning effort" };
+  return RUNTIME_FIELDS.map((field) => (editable
+    ? selectRow({
+      label: labels[field],
+      actionId: ids[field],
+      options: [{ label: inherited[field] || "Inherited default", value: SETTINGS_DEFAULT_VALUE }, ...lists[field]],
+      initialValue: values[field] || SETTINGS_DEFAULT_VALUE,
+    })
+    : fieldBlock(labels[field], values[field] ? inlineCode(values[field]) : `_${escapeMrkdwn(inherited[field] || "inherited default")}_`)));
+}
+
 function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false } = {}) {
   const runtime = snapshot.runtime || {};
-  const configuredEngine = runtime.configuredEngine
-    ? inlineCode(runtime.configuredEngine)
-    : `_inherits gateway default (${inlineCode(runtime.effectiveEngine || "unknown")})_`;
-  const configuredModel = runtime.configuredModel
-    ? inlineCode(runtime.configuredModel)
-    : `_inherits ${runtime.gatewayModel ? `gateway default (${inlineCode(runtime.gatewayModel)})` : "the CLI default"}_`;
-  const effort = runtime.configuredEffort ? inlineCode(runtime.configuredEffort) : "_engine default_";
+  const scopes = runtime.scopes || {};
+  const thread = scopes.thread || null;
   const mode = snapshot.mode || {};
   const selected = channelMode(mode);
   const blocks = [
@@ -205,16 +245,29 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
     { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option shared by all admitted members, not host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
     { type: "divider" },
     ] : []),
-    fieldBlock("Engine", configuredEngine),
-    fieldBlock("Model", configuredModel),
-    fieldBlock("Reasoning effort", effort),
+    { type: "section", text: mrkdwn("*Channel default*") },
+    ...runtimeScopeRows("channel", scopes.channel, { editable: canEditRuntime }),
+    { type: "context", elements: [mrkdwn("Applies to every thread here that has no pin of its own. Each change saves immediately and takes effect on the next turn.")] },
+    { type: "divider" },
+    { type: "section", text: mrkdwn("*This thread*") },
   ];
-  if (canEditRuntime) {
-    blocks.push({
-      type: "actions",
-      elements: [button(CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, "Change engine & model", state, "runtime_edit", {}, { style: "primary" })],
-    });
+  if (!thread) {
+    blocks.push({ type: "context", elements: [mrkdwn("_Open Settings from a reply inside a thread to pin that thread's engine, model or effort._")] });
   } else {
+    blocks.push(
+      ...runtimeScopeRows("thread", thread, { editable: canEditRuntime }),
+      ...(canEditRuntime && thread.pinned
+        ? [{ type: "actions", elements: [button(CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID, "Follow channel default", state, "thread_reset", {}, {
+          confirm: destructiveConfirm("Clear this thread's pins?", "The thread goes back to the channel's engine, model and effort.", "Clear"),
+        })] }]
+        : []),
+      { type: "context", elements: [mrkdwn("A pin here beats the channel default for this thread only, and stops cross-engine failover from answering on the other harness.")] },
+      ...(thread.sessionEngineLabel
+        ? [{ type: "context", elements: [mrkdwn(`_This thread's live session was started by *${escapeMrkdwn(thread.sessionEngineLabel)}*, so it keeps running there until you pin an engine above or clear the session with \`/clear\`._`)] }]
+        : []),
+    );
+  }
+  if (!canEditRuntime) {
     blocks.push({ type: "context", elements: [mrkdwn("_Your gateway's runtime-change policy limits this control to administrators._")] });
   }
   return blocks;
@@ -478,70 +531,30 @@ export function parseEditorMetadata(raw) {
   };
 }
 
-function inputSelect({ blockId, actionId, label, options, initialValue, dispatch = false }) {
-  const current = options.find((entry) => entry.value === initialValue);
-  const prioritized = current ? [current, ...options.filter((entry) => entry !== current)] : options;
-  const normalized = prioritized.slice(0, 100).map((entry) => option(entry.label, entry.value, entry.description));
+// A labelled dropdown that saves on pick. It has to be a SECTION accessory rather than an `input`
+// block: Slack rejects a modal carrying input blocks without a submit button, and this tab has
+// only "Done". A section accessory dispatches block_actions the moment a value is chosen, which is
+// what lets the runtime tab persist each field in place instead of pushing a form.
+// A stored value outside the catalog (a hand-set model, a model the CLI stopped listing) is
+// appended rather than silently falling back to the first option, so the control never shows a
+// value the channel is not actually running.
+function selectRow({ label, actionId, options, initialValue }) {
+  const known = options.some((entry) => entry.value === initialValue);
+  const list = known || !initialValue
+    ? options
+    : [...options, { label: String(initialValue).slice(0, 60), value: initialValue, description: "Set outside the current catalog" }];
+  const normalized = list.slice(0, 100).map((entry) => option(entry.label, entry.value, entry.description));
   return {
-    type: "input",
-    block_id: blockId,
-    label: plain(label),
-    ...(dispatch ? { dispatch_action: true } : {}),
-    element: {
+    type: "section",
+    block_id: `${actionId}_row`,
+    text: mrkdwn(`*${label}*`),
+    accessory: {
       type: "static_select",
       action_id: actionId,
+      placeholder: plain(label),
       options: normalized,
       initial_option: selected(normalized, initialValue),
     },
-  };
-}
-
-export function buildRuntimeEditorView(runtime = {}, state = {}, {
-  channelName = "",
-  engines = [],
-  models = [],
-  efforts = [],
-  engineChoice = runtime.configuredEngineId || SETTINGS_DEFAULT_VALUE,
-  modelChoice = runtime.configuredModel || SETTINGS_DEFAULT_VALUE,
-} = {}) {
-  const engineOptions = [
-    { label: `Gateway default (${runtime.gatewayEngineLabel || runtime.effectiveEngine || "current"})`, value: SETTINGS_DEFAULT_VALUE },
-    ...engines,
-  ];
-  const modelOptions = [
-    { label: runtime.gatewayModel ? `Gateway default (${runtime.gatewayModel})` : "Engine default", value: SETTINGS_DEFAULT_VALUE },
-    ...models,
-  ];
-  const effortOptions = [
-    { label: "Engine default", value: SETTINGS_DEFAULT_VALUE },
-    ...efforts,
-  ];
-  const selectedEffort = efforts.some((entry) => entry.value === runtime.configuredEffort)
-    ? runtime.configuredEffort
-    : SETTINGS_DEFAULT_VALUE;
-  return {
-    type: "modal",
-    callback_id: CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID,
-    private_metadata: editorMetadata(state, { view: "runtime", engine: engineChoice, model: modelChoice }),
-    title: plain("Engine & model"),
-    submit: plain("Save"),
-    close: plain("Cancel"),
-    blocks: [
-      { type: "context", elements: [mrkdwn(`Change the default runtime for *#${escapeMrkdwn(channelName || "this channel")}*. Existing per-thread overrides are unchanged.`)] },
-      inputSelect({ blockId: RUNTIME_ENGINE_BLOCK_ID, actionId: CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID, label: "Engine", options: engineOptions, initialValue: engineChoice, dispatch: true }),
-      inputSelect({ blockId: RUNTIME_MODEL_BLOCK_ID, actionId: CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID, label: "Model", options: modelOptions, initialValue: modelChoice, dispatch: true }),
-      inputSelect({ blockId: RUNTIME_EFFORT_BLOCK_ID, actionId: RUNTIME_EFFORT_ACTION_ID, label: "Reasoning effort", options: effortOptions, initialValue: selectedEffort }),
-    ],
-  };
-}
-
-export function readRuntimeForm(view = {}) {
-  const values = view?.state?.values || {};
-  const pick = (blockId, actionId) => String(values[blockId]?.[actionId]?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
-  return {
-    engine: pick(RUNTIME_ENGINE_BLOCK_ID, CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID),
-    model: pick(RUNTIME_MODEL_BLOCK_ID, CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID),
-    effort: pick(RUNTIME_EFFORT_BLOCK_ID, RUNTIME_EFFORT_ACTION_ID),
   };
 }
 

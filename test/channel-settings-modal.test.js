@@ -8,22 +8,23 @@ import {
   buildCatalogManagerView,
   buildChannelSettingsView,
   buildConnectionsEditorView,
-  buildRuntimeEditorView,
   buildTemplateEditorView,
   maskedCredential,
   parseActionValue,
   parseEditorMetadata,
   parseSettingsMetadata,
   readConnectionsForm,
-  readRuntimeForm,
   readTemplateForm,
   CHANNEL_SETTINGS_ACTION_ID,
   CHANNEL_SETTINGS_ACTION_PATTERN,
   CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
   CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID,
-  CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID,
   CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID,
   CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID,
+  CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID,
+  CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID,
+  CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID,
+  CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
   CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_TABS,
   CONNECTION_COMPOSIO_ACTION_ID,
@@ -37,9 +38,7 @@ import {
   CONNECTION_TOOLBOX_ACTION_ID,
   CONNECTION_TOOLBOX_BLOCK_ID,
   RUNTIME_EFFORT_ACTION_ID,
-  RUNTIME_EFFORT_BLOCK_ID,
-  RUNTIME_ENGINE_BLOCK_ID,
-  RUNTIME_MODEL_BLOCK_ID,
+  runtimeSelectTarget,
   SETTINGS_DEFAULT_VALUE,
   SETTINGS_NONE_VALUE,
   TEMPLATE_ACTION_ID,
@@ -47,7 +46,7 @@ import {
 } from "../src/slack/channel-settings.js";
 import { footerButtons, settingsButton } from "../src/slack/footer.js";
 
-const [{ channelSettingsContext, channelSettingsEditOptions, secretsContext, cloudSelectionsAfterToggle, connectionSettingsPatch, runtimeSettingsPatch }, store] = await Promise.all([
+const [{ channelSettingsContext, channelSettingsEditOptions, secretsContext, cloudSelectionsAfterToggle, connectionSettingsPatch, runtimeSettingsPatch, nextRuntimeTriple, runtimeScopes, applyThreadRuntimeSelection }, store] = await Promise.all([
   import("../src/slack/app.js"),
   import("../src/config/store.js"),
 ]);
@@ -70,6 +69,28 @@ const snapshot = {
     configuredModel: "claude-opus-4-8",
     gatewayModel: "claude-sonnet-4-6",
     configuredEffort: "high",
+    scopes: {
+      channel: {
+        values: { engine: "", model: "claude-opus-4-8", effort: "high" },
+        inherited: { engine: "Inherited default (Claude)", model: "Inherited default (claude-sonnet-4-6)", effort: "Engine default" },
+        options: {
+          engines: [{ label: "Claude", value: "claude" }, { label: "Codex", value: "codex" }],
+          models: [{ label: "Opus 4.8", value: "claude-opus-4-8" }],
+          efforts: [{ label: "High", value: "high" }],
+        },
+      },
+      thread: {
+        values: { engine: "codex", model: "", effort: "" },
+        pinned: true,
+        sessionEngineLabel: "",
+        inherited: { engine: "Follow channel (Claude)", model: "Follow channel (gpt-5.6-sol)", effort: "Follow channel (engine default)" },
+        options: {
+          engines: [{ label: "Claude", value: "claude" }, { label: "Codex", value: "codex" }],
+          models: [{ label: "GPT-5.6", value: "gpt-5.6-sol" }],
+          efforts: [{ label: "High", value: "high" }],
+        },
+      },
+    },
   },
   connections: {
     composioMode: "personal",
@@ -96,6 +117,7 @@ const snapshot = {
 };
 
 const allButtons = (view) => view.blocks.flatMap((block) => block.elements || []).filter((item) => item.type === "button");
+const selects = (view) => view.blocks.filter((block) => block.accessory?.type === "static_select");
 const rendered = (view) => JSON.stringify(view);
 
 test("Settings footer button is authorized-user-only and requester-bound", () => {
@@ -140,7 +162,7 @@ test("Channel Settings modal renders all working tabs for managers with one acti
 test("each Settings tab renders its channel setup snapshot", () => {
   const runtime = buildChannelSettingsView(snapshot, state, { tab: "runtime", canEditRuntime: true });
   assert.match(rendered(runtime), /claude-opus-4-8/);
-  assert.ok(allButtons(runtime).some((button) => button.action_id === "cg_channel_settings_runtime_edit"));
+  assert.equal(selects(runtime).length, 6);
   const skills = buildChannelSettingsView(snapshot, state, { tab: "skills" });
   assert.match(rendered(skills), /Development/);
   assert.ok(allButtons(skills).some((button) => button.action_id === CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID));
@@ -161,29 +183,73 @@ test("each Settings tab renders its channel setup snapshot", () => {
   assert.ok(allButtons(mcp).some((button) => button.action_id === CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID));
 });
 
-test("runtime editor rebuilds valid engine/model/effort controls and parses a submission", () => {
-  const view = buildRuntimeEditorView(snapshot.runtime, state, {
-    channelName: "project-alpha",
-    engines: [{ label: "Claude", value: "claude" }, { label: "Codex", value: "codex" }],
-    models: [{ label: "Opus", value: "opus", description: "Best Claude model" }],
-    efforts: [{ label: "High", value: "high" }],
-    engineChoice: "claude",
-    modelChoice: "opus",
-  });
-  assert.equal(view.callback_id, CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID);
-  assert.equal(parseEditorMetadata(view.private_metadata).engine, "claude");
-  assert.equal(view.blocks.find((block) => block.block_id === RUNTIME_ENGINE_BLOCK_ID).element.initial_option.value, "claude");
-  assert.equal(view.blocks.find((block) => block.block_id === RUNTIME_MODEL_BLOCK_ID).element.initial_option.value, "opus");
-  assert.equal(view.blocks.find((block) => block.block_id === RUNTIME_EFFORT_BLOCK_ID).dispatch_action, undefined);
+test("runtime tab edits the channel default and the thread pin in place, with no submit button", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "runtime", canEditRuntime: true });
+  // Slack rejects `input` blocks in a modal without a submit; every control has to dispatch itself.
+  assert.equal(view.submit, undefined);
+  assert.equal(view.blocks.some((block) => block.type === "input"), false);
 
-  const submitted = {
-    state: { values: {
-      [RUNTIME_ENGINE_BLOCK_ID]: { [CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID]: { selected_option: { value: "codex" } } },
-      [RUNTIME_MODEL_BLOCK_ID]: { [CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID]: { selected_option: { value: "gpt-5.6-sol" } } },
-      [RUNTIME_EFFORT_BLOCK_ID]: { [RUNTIME_EFFORT_ACTION_ID]: { selected_option: { value: "high" } } },
-    } },
-  };
-  assert.deepEqual(readRuntimeForm(submitted), { engine: "codex", model: "gpt-5.6-sol", effort: "high" });
+  const byAction = Object.fromEntries(selects(view).map((block) => [block.accessory.action_id, block.accessory]));
+  assert.deepEqual(Object.keys(byAction).sort(), [
+    CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID, RUNTIME_EFFORT_ACTION_ID,
+    CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID, CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID, CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID,
+  ].sort());
+
+  // Stored values preselect themselves; an unset field preselects the label of what it inherits.
+  assert.equal(byAction[CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID].initial_option.value, "claude-opus-4-8");
+  assert.equal(byAction[CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID].initial_option.value, SETTINGS_DEFAULT_VALUE);
+  assert.equal(byAction[CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID].initial_option.text.text, "Inherited default (Claude)");
+  assert.equal(byAction[CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID].initial_option.value, "codex");
+  assert.equal(byAction[CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID].initial_option.text.text, "Follow channel (gpt-5.6-sol)");
+  // The thread's model catalog follows the harness the THREAD runs, not the channel's.
+  assert.deepEqual(byAction[CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID].options.map((item) => item.value), [SETTINGS_DEFAULT_VALUE, "gpt-5.6-sol"]);
+  assert.ok(allButtons(view).some((button) => button.action_id === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID));
+
+  for (const [actionId, expected] of [
+    [CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID, { scope: "channel", field: "engine" }],
+    [RUNTIME_EFFORT_ACTION_ID, { scope: "channel", field: "effort" }],
+    [CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID, { scope: "thread", field: "model" }],
+  ]) assert.deepEqual(runtimeSelectTarget(actionId), expected);
+  assert.equal(runtimeSelectTarget(CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID), null);
+});
+
+test("runtime tab hides the thread scope until Settings is opened from a thread", () => {
+  const withoutThread = { ...snapshot, runtime: { ...snapshot.runtime, scopes: { ...snapshot.runtime.scopes, thread: null } } };
+  const view = buildChannelSettingsView(withoutThread, state, { tab: "runtime", canEditRuntime: true });
+  assert.equal(selects(view).length, 3);
+  assert.match(rendered(view), /Open Settings from a reply inside a thread/);
+  assert.equal(allButtons(view).some((button) => button.action_id === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID), false);
+});
+
+test("a stored value outside the engine catalog stays visible instead of silently reading as the default", () => {
+  const retired = { ...snapshot, runtime: { ...snapshot.runtime, scopes: {
+    ...snapshot.runtime.scopes,
+    channel: { ...snapshot.runtime.scopes.channel, values: { engine: "", model: "claude-opus-4-1-retired", effort: "" } },
+  } } };
+  const model = selects(buildChannelSettingsView(retired, state, { tab: "runtime", canEditRuntime: true }))
+    .find((block) => block.accessory.action_id === CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID).accessory;
+  assert.equal(model.initial_option.value, "claude-opus-4-1-retired");
+  assert.equal(model.initial_option.text.text, "claude-opus-4-1-retired");
+});
+
+test("one runtime dropdown at a time, dropping only the dependents its new value invalidates", () => {
+  // A model names one specific harness, so a harness change always drops it; an effort survives
+  // only while the harness the thread moved to still offers it for the model it now runs.
+  assert.deepEqual(
+    nextRuntimeTriple({ engine: "codex", model: "gpt-5.6-sol", effort: "ultra" }, "engine", "claude", "claude"),
+    { engine: "claude", model: "", effort: "" },
+  );
+  assert.deepEqual(
+    nextRuntimeTriple({ engine: "claude", model: "claude-opus-4-8", effort: "high" }, "engine", "codex", "claude"),
+    { engine: "codex", model: "", effort: "high" },
+  );
+  // Choosing a model on the same harness keeps the engine untouched.
+  assert.equal(nextRuntimeTriple({ engine: "codex", model: "", effort: "" }, "model", "gpt-5.6-sol", "claude").engine, "codex");
+  // The inherit sentinel clears the field, and an empty engine falls back to the scope's parent.
+  assert.deepEqual(
+    nextRuntimeTriple({ engine: "", model: "claude-opus-4-8", effort: "" }, "engine", SETTINGS_DEFAULT_VALUE, "codex"),
+    { engine: "", model: "", effort: "" },
+  );
 });
 
 test("connection editor never prefills saved credentials and parses only newly submitted values", () => {
@@ -418,4 +484,95 @@ test("non-admin Settings hides Cloud MCP while keeping connection editing", () =
   assert.doesNotMatch(rendered(view), /github|figma/);
   const adminView = buildChannelSettingsView(snapshot, state, { tab: "mcp", ...channelSettingsEditOptions({}, true) });
   assert.ok(allButtons(adminView).some((button) => button.action_id === "cg_channel_settings_cloud_manage"));
+});
+
+test("the runtime tab's thread scope reports the pins in force and the catalogs they imply", async () => {
+  const { setThreadEngine, setThreadModel, setThreadEffort } = await import("../src/gateway/thread-engine.js");
+  const { saveSession } = await import("../src/gateway/sessions.js");
+  const slug = "runtime-scope-channel";
+  const thread = "1700000000.000900";
+  const meta = { engine: "claude", model: "claude-opus-4-8", effort: "high" };
+  const base = { runtime: { ...snapshot.runtime, configuredEngineId: "claude", configuredModel: "claude-opus-4-8", configuredEffort: "high", effectiveEngineId: "claude" } };
+
+  // No thread context at all: only the channel scope exists, so no control can widen a channel
+  // default into a pin on a thread the view cannot name.
+  assert.equal((await runtimeScopes(slug, meta, base, "")).thread, null);
+
+  // An unpinned thread inherits everything, and says so rather than showing three blanks.
+  const clean = await runtimeScopes(slug, meta, base, thread);
+  assert.deepEqual(clean.thread.values, { engine: "", model: "", effort: "" });
+  assert.equal(clean.thread.pinned, false);
+  assert.equal(clean.thread.inherited.engine, "Follow channel (Claude)");
+  assert.equal(clean.thread.inherited.model, "Follow channel (claude-opus-4-8)");
+
+  // An unpinned thread whose live session was minted by the other harness keeps running there —
+  // the tab names it instead of promising the channel's engine.
+  await saveSession(slug, thread, "sess-codex-1", "codex");
+  const minted = await runtimeScopes(slug, meta, base, thread);
+  assert.equal(minted.thread.sessionEngineLabel, "Codex");
+  assert.ok(minted.thread.options.models.every((item) => item.value !== "claude-opus-4-8"));
+
+  // A pinned harness cannot inherit the channel's model: it is a flag for the other CLI.
+  await setThreadEngine(slug, thread, "codex");
+  await setThreadModel(slug, thread, "gpt-5.6-sol");
+  await setThreadEffort(slug, thread, "low");
+  const pinned = await runtimeScopes(slug, meta, base, thread);
+  assert.deepEqual(pinned.thread.values, { engine: "codex", model: "gpt-5.6-sol", effort: "low" });
+  assert.equal(pinned.thread.pinned, true);
+  assert.equal(pinned.thread.sessionEngineLabel, "", "an explicit pin needs no explanation");
+  assert.notEqual(pinned.thread.inherited.model, "Follow channel (claude-opus-4-8)");
+  assert.equal(pinned.thread.inherited.engine, "Follow channel (Claude)", "the inherit option still names the CHANNEL's engine");
+  // The channel scope is untouched by any of it.
+  assert.deepEqual(pinned.channel.values, { engine: "claude", model: "claude-opus-4-8", effort: "high" });
+});
+
+test("a DM following an org template inherits that template's runtime, not the gateway's", async () => {
+  const { saveSettings, getSettings, getEngine } = await import("../src/config/settings.js");
+  const before = getSettings();
+  try {
+    await saveSettings({ ...before, engine: "claude", dmTemplates: { ...(before.dmTemplates || {}), user: { engine: "codex", model: "gpt-5.6-sol", effort: "low" } } });
+    assert.equal(getEngine(), "claude", "the gateway default is the OTHER harness");
+    const meta = { isDM: true, template: "user", engine: "", model: "", effort: "" };
+    const scopes = await runtimeScopes("dm-template-channel", meta, { runtime: { ...snapshot.runtime, configuredEngineId: "codex", configuredModel: "gpt-5.6-sol", configuredEffort: "low", effectiveEngineId: "codex" } }, "");
+    // The empty-value label has to name what this DM actually falls back to. Saying "Claude" here
+    // would also mean a Codex model pick got validated against Claude and refused.
+    assert.equal(scopes.channel.inherited.engine, "Inherited default (Codex)");
+    assert.equal(scopes.channel.inherited.model, "Inherited default (gpt-5.6-sol)");
+    assert.equal(scopes.channel.inherited.effort, "Inherited default (low)");
+  } finally {
+    await saveSettings(before);
+  }
+});
+
+test("a thread pick is validated against the harness the dropdown offered, not the channel's", async () => {
+  const { saveSession } = await import("../src/gateway/sessions.js");
+  const { getThreadEngine, getThreadModel, getThreadEffort } = await import("../src/gateway/thread-engine.js");
+  const slug = "offered-model-channel";
+  const thread = "1700000000.000700";
+  const entry = { slug, channelId: "C_OFFERED", name: "offered" };
+  const state = { channelId: "C_OFFERED", slug, threadTs: thread, ownerId: "U_MANAGER" };
+  const meta = { engine: "claude", model: "claude-opus-4-8", effort: "" };
+  // Unpinned thread, Claude channel, but the live session belongs to Codex — so the tab offers
+  // Codex models. Picking one has to stick: validating it against the CHANNEL's Claude would have
+  // dropped it as foreign and turned the click into a silent no-op.
+  await saveSession(slug, thread, "sess-offered-1", "codex");
+  const offered = (await runtimeScopes(slug, meta, { runtime: { configuredEngineId: "claude", configuredModel: "claude-opus-4-8", configuredEffort: "", effectiveEngineId: "claude" } }, thread)).thread;
+  assert.equal(offered.sessionEngineLabel, "Codex");
+  const chosen = offered.options.models[0].value;
+
+  await applyThreadRuntimeSelection({ entry, meta, state, actorId: "U_MANAGER", field: "model", value: chosen });
+  assert.equal(await getThreadModel(slug, thread), chosen);
+  assert.equal(await getThreadEngine(slug, thread), "", "changing only the model must not pin the harness");
+
+  // Clearing goes back to inheriting, and clears the dependents it invalidates with it.
+  await applyThreadRuntimeSelection({ entry, meta, state, actorId: "U_MANAGER", field: "engine", value: "claude" });
+  assert.equal(await getThreadEngine(slug, thread), "claude");
+  assert.equal(await getThreadModel(slug, thread), "", "a Codex model is not a Claude flag");
+  assert.equal(await getThreadEffort(slug, thread), "");
+
+  // A thread scope with no thread in the view refuses rather than widening to the channel.
+  await assert.rejects(
+    () => applyThreadRuntimeSelection({ entry, meta, state: { ...state, threadTs: "" }, actorId: "U_MANAGER", field: "engine", value: "codex" }),
+    /inside the thread/i,
+  );
 });

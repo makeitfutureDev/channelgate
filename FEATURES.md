@@ -359,7 +359,23 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Grant Tier switch is gone.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
-  setup concepts: Engine & model can be changed by every authorized user in this console; MCP Connections
+  setup concepts: **Engine & model** edits in place — six dropdowns, no nested form, each saving the
+  moment it is picked. The tab shows and edits BOTH scopes: the **channel default** (written to the
+  channel record and audited like any policy change) and, when Settings was opened from a reply
+  inside a thread, **that thread's own pins** (the per-thread overrides the `/model` wizard's "just
+  this thread" scope and the `claude`/`codex` directive write, which beat the channel at run time).
+  An unset field preselects the label of what it inherits — the gateway default, an org DM
+  template's value, or "Follow channel (…)" for a thread — so nothing reads as a blank; each
+  scope's model and effort lists follow the harness THAT scope resolves to, so a Codex-pinned
+  thread inside a Claude channel offers Codex models. Changing one field drops only the dependents
+  it invalidates (a harness change always clears the model, and the effort when the new harness
+  stops offering it), a value stored outside the current catalog stays visible instead of silently
+  reading as the default, and a pinned thread gets a **Follow channel default** button that clears
+  all three. An unpinned thread whose live session was minted by the other harness is named in the
+  tab (it keeps running there until an engine is pinned or the session is cleared) rather than
+  being moved silently — the deliberate difference from `/model` → *This channel*, which does move
+  it, because here both scopes are on screen together. Engine & model can be changed by every
+  authorized user in this console; MCP Connections
   rotates/removes the write-only Composio, Toolbox and Make MCP credentials plus inherited-token
   policy, and edits the Composio account label shared with the web setup form. Labels are shown
   in the summary and prefilled for editing; changing or clearing a label preserves the token.
@@ -1251,7 +1267,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   OFF: pulling this release does not add a harness to any picker, and the "never lock every
   harness out" rescue restores the default harnesses only. Settings → Engine & runtime → *Harnesses
   the gateway may use* turns it on; it then appears in the admin engine selectors, the Slack
-  channel Settings → *Change engine & model* modal, and the `/model` wizard, and `qwen` works as a
+  channel Settings → *Engine & model* tab, and the `/model` wizard, and `qwen` works as a
   per-thread engine directive. Turning it off removes it from all of them.
 - **Gateway-level credential, never a channel secret.** Settings → Engine & runtime holds the
   QwenCloud API key (write-only: `has*`/`last4` on listings, the value only through the audited

@@ -18,6 +18,16 @@ product overview.
 
 ## Unreleased
 
+- Slack **⚙️ Settings → Engine & model** now edits the runtime in place instead of opening a second
+  modal, and covers both scopes: the channel default AND, when Settings was opened from a reply
+  inside a thread, that thread's own engine/model/effort pins. Six dropdowns save the moment they
+  are picked; an unset field preselects the label of what it inherits (gateway default, org DM
+  template, or "Follow channel (…)"), each scope's model and effort lists follow the harness that
+  scope resolves to, and a pinned thread gets a **Follow channel default** button that clears all
+  three. An unpinned thread whose live session belongs to the other harness is named rather than
+  moved silently. The old "Change engine & model" form is gone; a Settings view left open from
+  before the change repaints to the new tab instead of pushing it.
+
 - `/model` → **This channel** now changes the thread it was run in, not just threads opened later.
   The pick drops that thread's own engine/model/effort overrides so the new channel values apply
   immediately, and when the thread's live session belongs to the other harness it also pins the

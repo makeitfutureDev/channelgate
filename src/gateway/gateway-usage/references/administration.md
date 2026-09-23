@@ -264,7 +264,12 @@ override the channel's tool permissions or *Allow network* policy.
 
 The Slack **Settings** reply button is available to every authorized agent user, including channel
 guests. It allows editing engine/model/effort, channel skills and templates, MCP connection tokens
-and labels, and write-only secrets. Cloud MCP is visible and editable only by current admins.
+and labels, and write-only secrets. Its **Engine & model** tab edits both scopes in place, with no
+nested form: the channel default, and — when Settings was opened from a reply inside a thread —
+that thread's own engine/model/effort pins (the same per-thread overrides `/model` → *just this
+thread* and a `claude`/`codex` directive write). Each dropdown saves on pick and applies to the
+next turn; an unset field shows what it inherits, and a pinned thread has a **Follow channel
+default** button. Cloud MCP is visible and editable only by current admins.
 A separate **Access** tab is visible only to admins and current channel managers. It edits mode,
 Admin/full access, Auto, Lean, network, who may use/manage the channel, and named guests/managers. Manager
 policy applies to this entire page; changing Full access still leaves run-time bypass admin-author-only.
