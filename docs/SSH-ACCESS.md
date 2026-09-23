@@ -38,8 +38,16 @@ image rebuilt at spec 1.4.0 or later (`npm run build:image` — it now ships `op
 `cg-sshd` helper; containers are recreated on their next turn).
 
 ```bash
-sudo CG_SSH_HOST=gateway.example.com bash scripts/install-ssh-access.sh
+sudo CG_SSH_HOST=ssh.example.com CG_SSH_PORT=22 bash scripts/install-ssh-access.sh
 ```
+
+`CG_SSH_HOST`/`CG_SSH_PORT` are the address and port at which developers reach **this machine's
+sshd** — a NAT-forwarded port on the office router, a VPN name, a bare IP. They are NOT the
+gateway's web URL: a hostname behind an HTTP proxy such as Cloudflare never carries SSH, and the
+connection block would simply hang. The installer probes the address and compares the answering
+host key with this machine's own; a different key aborts, no answer is a warning (NAT hairpin
+often refuses a self-connection). The recorded values live in `endpoint.json` and go straight
+into every `show_channel_ssh` block, so fix them by rerunning the installer.
 
 The installer is idempotent and creates:
 
