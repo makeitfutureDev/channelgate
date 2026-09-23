@@ -8,7 +8,7 @@
 // pins the two together. The daemon COMPARES it at boot: an image built from an older spec still
 // runs, but the operator is told to rebuild rather than left wondering why a channel is missing
 // this build's toolchain.
-export const IMAGE_SPEC_VERSION = "1.4.0";
+export const IMAGE_SPEC_VERSION = "1.5.0";
 
 export const CONTAINER_HOME = "/home/agent";
 // Where a channel's OWN installs land, in precedence order, ahead of the image's root-owned
@@ -33,6 +33,9 @@ export const CONTAINER_BUNDLE_ROOT = "/opt/channelgate";
 export const CONTAINER_BROWSERS_DIR = "/opt/channelgate/browsers";
 export const CONTAINER_CHROMIUM = "/opt/channelgate/browsers/bin/chromium";
 export const CONTAINER_BIN_DIR = "/opt/channelgate/bin";
+// VS Code servers shared by every channel (spec 1.5.0): <dir>/<commit>/{server,cli/code}, root-owned,
+// linked into ~/.vscode-server by cg-init so the per-channel volume holds links, not ~650 MB copies.
+export const CONTAINER_VSCODE_SERVER_DIR = "/opt/channelgate/vscode-server";
 export const CONTAINER_SOCKET_DIR = "/run/channelgate";
 export const CONTAINER_SOCKET_FILE = "/run/channelgate/mcp.sock";
 

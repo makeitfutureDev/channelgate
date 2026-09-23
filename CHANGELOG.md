@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- Share one VS Code server between every channel instead of storing one per channel. Opening VS Code
+  on a channel — attach or Remote-SSH — used to download about 650 MB into that channel's home
+  volume, per editor version, and nothing ever reclaimed it. The channel image (spec 1.5.0) now
+  carries the servers for VS Code 1.139.0 and 1.138.0 once, read-only, and every container start
+  links them into the channel, so attaching costs a few kilobytes. Other editor versions still work
+  and download their own as before. The build checks each download against VS Code's published
+  SHA-256. Rebuild the image (`npm run build:image`) and restart.
+
 - Make rerunning the SSH access installer safe. Without `CG_SSH_HOST`/`CG_SSH_PORT` it used to fall
   back to this machine's hostname and port 22 every time, so a plain rerun — the documented fix
   for several problems — silently replaced a corrected endpoint with the gateway's web hostname
