@@ -1729,6 +1729,19 @@ Live acceptance (executed 2026-09-21 against the QwenCloud Token Plan endpoint
       `fable`, and `sonnet[1m]`); the Admin UI consumes the registry's model/effort manifests and
       keeps a valid saved same-engine custom ID available (`test/model-options.test.js`,
       `test/model-wizard-buttons.test.js`).
+- [x] Automated: the `/model` wizard's **This channel** scope applies to the thread it was clicked
+      in. Same-harness: the thread's stale engine/model/effort overrides are cleared and the next
+      turn resolves the channel's new model/effort. Cross-harness: the thread's Claude session gets
+      the channel's new harness pinned so `decideThreadEngine` switches it (model/effort still
+      follow the channel), and the done card announces the fresh session. A thread with no session
+      is never pinned (`test/model-wizard-channel-scope-thread.test.js`).
+- [ ] Live Claude→Codex, engine-independent for the model half: in an admin channel, run one turn
+      in a thread (Claude), then `@bot /model` in that SAME thread → *This channel* → *Codex* →
+      a model → an effort. Expected: the done card reports the channel update and the line about a
+      fresh Codex session; the next message in that thread runs on Codex with the chosen model
+      (footer/`/status`) and answers with the thread's earlier messages as context; a NEW thread in
+      the channel also runs on Codex. Repeat picking the SAME harness with a different model:
+      the current thread's next turn uses the new model without losing its session.
 - [ ] Live Codex: in the Codex Auto fixture, open `/model`, choose Codex, and verify the buttons
       match the authenticated CLI's current visible catalog, include `gpt-6-astra`, and show
       Astra's reported efforts through `ultra`; select Astra and complete one ordinary turn.

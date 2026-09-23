@@ -10,7 +10,9 @@
 // taken. Steps 2-4 also carry a "← Back" button (and the done card a "Change again"), which walks
 // the same message to an earlier step so a mis-click is corrected by re-picking rather than by
 // re-running /model. Channel scope writes meta.engine/model/effort (what the old pickers did); thread scope
-// writes the per-thread overrides (thread-engine.js), which beat the channel at run time. Wizard
+// writes the per-thread overrides (thread-engine.js), which beat the channel at run time. A channel
+// pick made from inside a thread applies to THAT thread as well — see applyChannelRuntimeToThread;
+// "this channel" is not "every thread except the one you are standing in". Wizard
 // state ({s: scope, t: threadTs}) rides inside every button/option value as compact JSON, because
 // the registered-slash-command variant is an ephemeral message with no body.message to read a
 // thread from on the next click.
@@ -23,6 +25,9 @@ import { getEngine, canChangeChannelRuntime, getEnabledEngines } from "../config
 import { effectiveMeta } from "../gateway/run.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { setThreadEngine, getThreadEngine, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
+// Which harness MINTED the thread's live session. A channel-scope pick made inside a thread has
+// to know that before it can move the thread — see applyChannelRuntimeToThread below.
+import { getSessionEngine } from "../gateway/sessions.js";
 import { ENGINE_IDS, adapterFor, requireAdapter, modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel, effortsForModel, modelsForEngine, refreshEngineModels } from "../engines/registry.js";
 import { isValidModel } from "./util.js";
 
@@ -164,7 +169,7 @@ export function modelWizardScopeBlocks({ threadTs, meta }) {
       elements: [
         {
           type: "mrkdwn",
-          text: `Step 1 of 4 — scope, then harness (${ENGINE_LABELS()}), model, effort.` + (threadTs ? "" : " To change a single thread, run `/model` inside that thread."),
+          text: `Step 1 of 4 — scope, then harness (${ENGINE_LABELS()}), model, effort.` + (threadTs ? " *This channel* covers this thread too." : " To change a single thread, run `/model` inside that thread."),
         },
       ],
     },
@@ -235,11 +240,17 @@ export function modelWizardEffortBlocks({ scope, threadTs, engine, model, curren
   });
 }
 
-function modelWizardDoneBlocks({ scope, threadTs, isDM, engine, model, effort, reset = false }) {
+function modelWizardDoneBlocks({ scope, threadTs, isDM, engine, model, effort, reset = false, movedThread = false }) {
   const where = wizardScopeLabel(scope, isDM);
+  // A channel pick applies to the thread it was made in as well. Say so only when that cost
+  // something: the thread was on the other harness, so it restarts there with its earlier
+  // messages replayed instead of resuming its own session.
+  const moved = movedThread
+    ? `\n_This thread was on another harness — your next message here starts a fresh ${requireAdapter(engine).label} session, with the thread's earlier messages replayed as context._`
+    : "";
   const text = reset
     ? `✅ Cleared — ${where} now follows the ${scope === "thread" ? "channel's" : "gateway's"} default harness, model, and effort.`
-    : `✅ Runtime updated for ${where}\nHarness: *${requireAdapter(engine).label}* · Model: \`${model || "default"}\` · Effort: \`${effort || "default"}\``;
+    : `✅ Runtime updated for ${where}\nHarness: *${requireAdapter(engine).label}* · Model: \`${model || "default"}\` · Effort: \`${effort || "default"}\`${moved}`;
   return [
     { type: "section", text: { type: "mrkdwn", text } },
     // The last click ends the wizard, so a wrong final pick would otherwise cost a fresh `/model`.
@@ -334,6 +345,34 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       await setThreadModel(entry.slug, threadTs, "");
       await setThreadEffort(entry.slug, threadTs, "");
     };
+    // Model/effort half of the above. The harness pin (when there is one) has to survive a later
+    // step: steps 3 and 4 re-clear the values they are about to let the channel supply, they do
+    // not undo the thread move step 2 made.
+    const clearThreadModelEffort = async () => {
+      await setThreadModel(entry.slug, threadTs, "");
+      await setThreadEffort(entry.slug, threadTs, "");
+    };
+    // "This channel" clicked from INSIDE a thread means this thread too — not only the threads
+    // opened after it. Two halves:
+    //   • drop the thread's own engine/model/effort overrides, so nothing shadows the channel
+    //     values just written (an earlier "claude"/"codex" directive, an earlier thread-scope run);
+    //   • move a live session the OTHER harness minted. run.js deliberately keeps such a thread on
+    //     its own engine when a channel/global DEFAULT changes (decideThreadEngine): a session id
+    //     cannot resume cross-engine, so a flipped default must never reset live conversations.
+    //     Clicking the wizard inside the thread is not a default though — it is an explicit ask for
+    //     HERE, so the thread is pinned to the chosen harness exactly as an in-thread
+    //     "claude"/"codex" directive pins it, and run.js starts a fresh session while the pipeline
+    //     replays the thread's earlier messages into it. Without the pin the chosen model is lost
+    //     too: run.js drops a model that doesn't belong to the engine the turn actually runs on,
+    //     so the thread would answer on its old harness's default model.
+    //     The pin is written ONLY when the session really is on the other harness — a thread whose
+    //     session already matches (or has none yet) stays unpinned, so it keeps following the
+    //     channel and keeps its cross-engine failover.
+    const applyChannelRuntimeToThread = async (engine) => {
+      const minted = await getSessionEngine(entry.slug, threadTs).catch(() => "");
+      await clearThreadOverrides();
+      if (minted && minted !== engine) await setThreadEngine(entry.slug, threadTs, engine);
+    };
 
     // "← Back" / "Change again": repaint an EARLIER step in this same message. Nothing is written
     // or unwritten here — each step already persisted when it was clicked, and re-picking there
@@ -396,9 +435,8 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         if (!effortBelongsToEngine(meta.effort, engine)) patch.effort = "";
         const next = await patchChannelRuntime(patch);
         current = next.model || "";
-        // The channel choice should govern this thread too — drop any thread-level overrides here
-        // (engine set by a "claude"/"codex" prefix, model/effort by an earlier thread-scoped run).
-        if (threadTs) await clearThreadOverrides();
+        // The channel choice governs the thread it was made in, not just threads opened later.
+        if (threadTs) await applyChannelRuntimeToThread(engine);
       }
       // The authenticated CLI is the source of truth for selectable Codex models. Refresh only
       // when its bounded cache is stale; failure keeps the last known-good/static catalog.
@@ -435,6 +473,9 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         const patch = { model: val };
         if (!effortBelongsToModel(meta.effort, engine, val)) patch.effort = "";
         effortCurrent = (await patchChannelRuntime(patch)).effort || "";
+        // Also for the thread this was clicked in: step 2 already cleared these, but the step is
+        // reachable on its own (← Back, or a pre-wizard dropdown still sitting in Slack history).
+        if (threadTs) await clearThreadModelEffort();
       }
       await repaint(modelWizardEffortBlocks({ scope, threadTs, engine, model: val, current: effortCurrent, isDM }));
       return;
@@ -455,14 +496,19 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         model = await getThreadModel(entry.slug, threadTs);
       } else {
         model = (await patchChannelRuntime({ effort: val })).model || "";
+        if (threadTs) await clearThreadModelEffort();
       }
+      // A harness pin on a channel-scope pick only exists because step 2 MOVED this thread onto
+      // the chosen harness (applyChannelRuntimeToThread) — report that, since the move costs the
+      // thread its current engine session.
+      const movedThread = Boolean(scope === "channel" && threadTs && (await getThreadEngine(entry.slug, threadTs)));
       await updateRuntimePickerMessage({
         client,
         respond,
         channel,
         ts,
         text: `Runtime updated for ${wizardScopeLabel(scope, isDM)}. Harness: ${engine}. Model: ${model || "default"}. Effort: ${val || "default"}.`,
-        blocks: modelWizardDoneBlocks({ scope, threadTs, isDM, engine, model, effort: val }),
+        blocks: modelWizardDoneBlocks({ scope, threadTs, isDM, engine, model, effort: val, movedThread }),
       });
     }
   } catch (e) {

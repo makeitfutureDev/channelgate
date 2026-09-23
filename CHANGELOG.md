@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- `/model` → **This channel** now changes the thread it was run in, not just threads opened later.
+  The pick drops that thread's own engine/model/effort overrides so the new channel values apply
+  immediately, and when the thread's live session belongs to the other harness it also pins the
+  thread to the chosen one — otherwise the thread stayed on its session's engine and the newly
+  chosen model was dropped as foreign to it. The done card says when a thread moves, since the
+  move restarts it on the new harness with its earlier messages replayed as context. A thread
+  already on the chosen harness (or without a session) is left unpinned and keeps following the
+  channel and its cross-engine failover.
 - Developers can SSH into a channel's container instead of the gateway host (`docs/SSH-ACCESS.md`).
   A person registers one public key once from chat, a channel manager grants them access per
   channel, and `show_channel_ssh` hands out an `~/.ssh/config` block; the connection reaches a

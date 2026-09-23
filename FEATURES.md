@@ -1009,7 +1009,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   them and the final card carries **Change again**, both repainting the SAME message (walking back
   writes nothing and undoes nothing — the re-pick overwrites what the wrong click stored, and the
   repainted step shows what is actually in force). Thread scope
-  writes per-thread engine/model/effort overrides that beat the channel at run time; Settings →
+  writes per-thread engine/model/effort overrides that beat the channel at run time; channel scope
+  applies to the thread it was clicked in as well as to later ones — it drops that thread's own
+  engine/model/effort overrides so nothing shadows the new channel values, and when the thread's
+  live session belongs to the OTHER harness it pins the thread to the chosen one so the switch
+  actually reaches it (the done card then says the thread restarts there with its earlier messages
+  replayed). A thread already on the chosen harness, or one with no session yet, is left unpinned
+  and keeps following the channel; Settings →
   Access & security chooses whether channel changes are admin-only (default) or available to every
   authorized channel user, while anyone approved may customize their DM; typed `@bot /model` is the command — no manifest slash command is
   registered (a thread-aware Bolt handler answers if one is ever added);
@@ -1289,7 +1295,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Per-thread engine directive: a message starting with `claude` or `codex` (e.g. "@bot codex build
   the feature") switches that thread's engine; it sticks until changed (persisted per channel).
   The `/model` wizard's "just this thread" scope sets the same override (plus per-thread model +
-  effort). An explicit switch — directive, per-thread wizard scope, or per-run API override — is
+  effort), and its "this channel" scope sets it too when clicked inside a thread whose live session
+  belongs to the other harness — "this channel" includes the thread you are standing in. An
+  explicit switch — directive, either wizard scope, or per-run API override — is
   the ONLY thing that moves an existing thread to the other engine: it drops thread model/effort
   overrides that don't belong to the new engine, starts a fresh session (the new engine can't
   resume the old one's conversation), and replays the Slack thread context into it so the new
