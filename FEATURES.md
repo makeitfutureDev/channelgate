@@ -22,6 +22,11 @@
   checked. OFF also cleans up manually started owned containers. Network off blocks startup and
   stops a supervised pair. No arbitrary commands, profile import or SQL extraction are granted
   through these controls. See `docs/CHANNEL-VPN.md` for setup and limitations.
+- The `gateway-usage` chat manual carries `references/channel-vpn.md`: roles, the host-operator
+  provisioning runbook (`npm run vpn` configure → build → install-unit → enable → status →
+  verify), the profile allowlist, failure classes and who fixes each, rotation and retirement.
+  Asked to set up a VPN from a channel container, the agent hands over the filled-in runbook
+  instead of attempting it, and never asks for a profile or password in chat.
 - The 30-second VPN health check verifies only the tunnel and its route. It never opens a
   database connection, so it cannot run up MySQL's connect-error count and get the tunnel address
   blocked (error 1129).

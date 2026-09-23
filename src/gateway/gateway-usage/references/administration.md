@@ -117,6 +117,9 @@ These channel modes do not leave the container. The separate organization-admin-
   Setup remains operator-only: an uploaded profile plus Secrets alone is insufficient. Report
   the returned setup/certificate error; never bypass server verification or grant shell privileges.
   This VPN connects only the dedicated database extractor, not the agent's ordinary container.
+  Provisioning a VPN for THIS or any OTHER channel (profile import, image build, user unit,
+  secrets, failure classes, rotation and retirement): `references/channel-vpn.md`. Those steps run
+  on the gateway host as the operator account — a channel container cannot perform them.
 - `set_channel_network` (admin) — record whether this channel is meant to have network access
   (needs Bash on to be useful) so `git`/`gh`/`curl` and deploy CLIs may be used; the engines are
   told the answer (Codex read mode refuses network on its own). There is no per-domain allow-list

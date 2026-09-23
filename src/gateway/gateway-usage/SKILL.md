@@ -177,6 +177,7 @@ credential or connection is needed, without exposing its value.
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |
 | Register an SSH key, grant/revoke SSH into this channel's container, get the connection block | `references/administration.md` | `gateway` → `add_my_ssh_key`, `grant_channel_ssh`, `revoke_channel_ssh`, `show_channel_ssh` |
 | Check disk space, stale containers or old runtime images | `references/administration.md` | Host `/sudo` thread: `npm run runtime:storage` (reports, changes nothing). **Never run or suggest `podman system prune`, `podman system reset`, `podman volume prune`, `podman image prune -a` or `docker system prune`** — they can delete channel HOME volumes (engine sessions, CLI logins) or the runtime image. Report and ask; remove only via `-- --apply` when an admin says so |
+| Turn a channel's VPN on/off, read its private database, or set one up for another channel | `references/channel-vpn.md` | `gateway` → `get_channel_vpn_status`, `set_channel_vpn`, `query_channel_database`; provisioning is a host-operator runbook |
 
 ## Tool identities: the bot, YOUR account, and the requester's account
 
