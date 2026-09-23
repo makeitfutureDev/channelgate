@@ -94,6 +94,29 @@
 - [ ] Live acceptance, negative: in an Admin channel whose container mounts the operator home, ask
       for a public link to a file under that mounted home (outside the channel's working folder).
       Require a refusal, and require `list_public_file_links` to show nothing new.
+## SSH installer admits the login account
+
+- [x] `test/ssh-installer-access.test.js` (static half, always runs): the installer queries sshd's
+      effective lists with `sshd -T -C user=<login>,host=localhost,addr=127.0.0.1` for all four of
+      `allowusers`/`allowgroups`/`denyusers`/`denygroups`; appends only when a list is non-empty and
+      excludes the account; writes the line into its own `channelgate.conf` above the Match block and
+      never rewrites the operator's sshd files; treats a deny match as fatal; stops instead of looping
+      when an appended line does not take effect; reports an sshd that cannot be queried.
+- [x] Live half (`CG_LIVE_CONTAINER=1`, included in `npm run test:live-container`): the REAL
+      installer runs twice as root in a throwaway runtime-image container, then sshd itself reports
+      what it enforces. Six operator configs: this host's `AllowUsers tby management
+      channelgate-testing` (account appended, every existing user still admitted, one line after a
+      rerun); no allow-list (no line added, nobody restricted); `AllowGroups` only; `AllowUsers` plus
+      `AllowGroups` (both appended); an existing `channelgate-*` glob (nothing added); `DenyUsers` of
+      the account (exit 1, names the grep). Reproduced red against the pre-fix installer: the
+      AllowUsers, AllowGroups and deny cases fail, the two "nothing to add" cases pass either way.
+      Engine-independent: host sshd configuration, no engine involved.
+- [ ] Live on the gateway host: with `AllowUsers` excluding the login account, rerun the installer
+      and require `→ sshd's AllowUsers did not include channelgate-ssh; appended it`, then connect
+      with the developer block from `show_channel_ssh` and require a shell inside the channel
+      container (`hostname` is the container's, `whoami` is `agent`). Also require that a person
+      already in `AllowUsers` can still log in to the host normally.
+
 ## Host container-storage housekeeping guidance
 
 - [x] `test/host-housekeeping-guide.test.js`: the materialized guide for every platform routes
