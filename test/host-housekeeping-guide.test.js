@@ -60,3 +60,10 @@ test("it refuses to retire a running container and tells the reader where to run
   assert.match(admin, /there is no `podman` inside a channel\s+container/);
   assert.match(admin, /admin `\/sudo` thread/);
 });
+
+test("the guide sends the agent to the gateway's own report first, and to --apply only on request", async () => {
+  const admin = await readFile(new URL("../src/gateway/gateway-usage/references/administration.md", import.meta.url), "utf8");
+  assert.match(admin, /npm run runtime:storage\s+# report only/);
+  assert.match(admin, /Only if they ask, run `npm run runtime:storage -- --apply`/);
+  assert.match(admin, /schedule `--apply` only when they say so/);
+});

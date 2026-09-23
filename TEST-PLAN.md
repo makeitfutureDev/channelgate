@@ -94,6 +94,31 @@
 - [ ] Live acceptance, negative: in an Admin channel whose container mounts the operator home, ask
       for a public link to a file under that mounted home (outside the channel's working folder).
       Require a refusal, and require `list_public_file_links` to show nothing new.
+## Container storage report
+
+- [x] `test/runtime-storage-report.test.js`: this gateway's running containers are kept even on an
+      old image, stopped ones on a superseded image are reclaimable, stopped ones on the current
+      image are kept; the incident replay — 84 `Up` containers of an install whose mounted folders
+      are all gone are reclaimable with their volumes, while a container of an install whose folders
+      exist is kept, as is one with only some folders gone; a channel's HOME volume is kept even when
+      its container is removed; attached volumes stay, unused anonymous ones go, unknown names are
+      out of scope; the current, rollback (`keepPreviousSpecs`), in-use and non-runtime images are
+      kept while older unused runtime images and untagged leftovers go, and an image whose only user
+      is being removed becomes reclaimable; reclaimable space counts each content-addressed layer
+      once (150, where summed sizes claim 1350 and per-image unique sizes 50) and reports an upper
+      bound when layer data is missing; the command defaults to report, removes only under
+      `--apply`, lists top-level images only, removes containers with `rm -v` and never runs a
+      blanket prune. The guide test requires the report first and `--apply` only on request.
+- [x] Live report on the gateway host (read-only): the first run listed 77 "reclaimable" images —
+      intermediate build layers from `images -a` at full virtual size — which is what the top-level
+      listing and layer accounting fix; the corrected run reports 7 images, 0 reclaimable (1.3.0 kept
+      as the rollback while 1.4.0 is current) and all 33 channel HOME volumes kept.
+      Engine-independent: host container storage, no engine involved.
+- [ ] Live `--apply` on the gateway host after an image promotion: require that only lines the
+      report marked `remove` disappear, that every channel still starts (a removed container is
+      recreated on the current image with its HOME volume), and that the printed free space matches
+      `df`.
+
 ## Shared VS Code servers
 
 - [x] `test/container-image.test.js` (always runs): every `vscodeServers` entry has a semver

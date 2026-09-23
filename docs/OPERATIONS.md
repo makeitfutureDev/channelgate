@@ -520,6 +520,27 @@ A channel opts out with `touch ~/.vscode-server/.cg-no-shared-server` inside its
 client downloaded into a volume before this are left where they are — they show up in the storage
 report as reclaimable, and nothing deletes them automatically.
 
+### Container storage
+
+Nothing reclaims container storage automatically, on purpose: every image build keeps the previous
+runtime image, the idle reaper stops a channel's container without removing it, and a stopped
+container keeps the image it was created from. Check it with the report, which changes nothing:
+
+```bash
+npm run runtime:storage              # what could be reclaimed, and why each item is kept or not
+npm run runtime:storage -- --json    # the same report as JSON
+npm run runtime:storage -- --apply   # remove exactly the lines the report marks `remove`
+```
+
+Run it as the gateway's own OS user (rootless container storage is per user). It removes a stopped
+channel container only when it was created from a superseded image (the channel gets a fresh one
+on the current image next time), never a running one; runtime images other than the current one,
+the previous spec (`--keep-previous <n>`, default 1) and any still in use; untagged leftovers; and
+anything named for another install **only** when every folder that install's containers mounted is
+gone — a finished test run, not a second live gateway sharing this account. A channel's home volume
+is never removed by it. The space estimate counts image layers once each. To make it routine,
+schedule the report and read it; schedule `--apply` only if you have decided to.
+
 Codex uses the same shared login file already mounted for chat turns. Claude's rotating credential
 file is still never copied or mounted: the helper refreshes the gateway's normal subscription
 access-token relay every 20 minutes and exposes only that access token to interactive `claude`

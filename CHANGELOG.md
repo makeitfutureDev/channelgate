@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- Add `npm run runtime:storage`, a report of what container storage could be reclaimed. It lists
+  every channel container, runtime image and volume as keep or remove with the reason, and counts
+  the space layer by layer so layers shared between images are not counted twice. It changes
+  nothing unless run with `-- --apply`, and it never removes a running container, a channel's home
+  volume, the current or previous runtime image, or anything belonging to another gateway install
+  whose folders still exist — only leftovers whose folders are gone, such as finished test runs.
+  Nothing runs it automatically; run it by hand or schedule the report.
+
 - Share one VS Code server between every channel instead of storing one per channel. Opening VS Code
   on a channel — attach or Remote-SSH — used to download about 650 MB into that channel's home
   volume, per editor version, and nothing ever reclaimed it. The channel image (spec 1.5.0) now
