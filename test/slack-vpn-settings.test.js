@@ -12,6 +12,27 @@ const buttons = (view) => view.blocks.flatMap((b) => b.elements || []).filter((e
 const render = (vpn, canManageVpn = true, actorState = state) => buildChannelSettingsView({ mode: { allowNetwork: true }, vpn }, actorState, { tab: "network", canManageVpn });
 const actionFor = (vpn, actorState = state) => buttons(render(vpn, true, actorState)).find((b) => b.action_id === TOGGLE);
 
+// The VPN row now shares General Settings with the engine, mode and access controls, so every
+// Settings open would reach the status helper if nothing stopped it. A conversation with no
+// provisioned service is answered from metadata alone, and only a provisioned one is left saying
+// "Checking status…" for the hydration pass to replace.
+test("an unprovisioned VPN is answered without the status helper; a provisioned one is hydrated", async () => {
+  const { channelVpnConfigured, unconfiguredChannelVpnStatus } = await import("../src/gateway/channel-vpn-control.js");
+  assert.equal(channelVpnConfigured({ vpnService: { version: 1 } }), true);
+  for (const meta of [{}, null, { vpnService: {} }, { vpnService: { version: 2 } }]) {
+    assert.equal(channelVpnConfigured(meta), false);
+    const status = unconfiguredChannelVpnStatus(meta);
+    assert.equal(status.state, "unconfigured");
+    assert.equal(status.configured, false);
+    assert.match(JSON.stringify(render(status)), /Not configured/);
+    assert.doesNotMatch(JSON.stringify(render(status)), /Checking status/);
+  }
+  assert.equal(unconfiguredChannelVpnStatus({ vpnService: { version: 1 } }), null);
+  assert.equal(unconfiguredChannelVpnStatus({ allowNetwork: true }).allowNetwork, true);
+  // Nothing was resolved for a provisioned channel, so its row still asks to be filled in.
+  assert.match(JSON.stringify(render(undefined)), /Checking status/);
+});
+
 // User-visible states must distinguish starting a service from an established VPN, including
 // failures with autostart still enabled. No button may silently change the channel network policy.
 test("Network shows honest state, missing credentials and scoped manager controls", () => {

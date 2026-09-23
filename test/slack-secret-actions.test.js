@@ -35,7 +35,7 @@ test("Settings removal persists only the selected deletion and refreshes the sam
   const f = await fixture("REMOVE");
   const meta = await store.getChannelMeta(f.entry.slug);
   const view = buildChannelSettingsView({ secrets: listChannelEnv(meta) }, f.state, { tab: "secrets", canEditSecrets: true });
-  const action = view.blocks.find((b) => b.accessory?.value.includes("REMOVE_ME")).accessory;
+  const action = view.blocks.find((b) => b.accessory?.value?.includes("REMOVE_ME")).accessory;
   assert.equal(action.confirm.confirm.text, "Remove");
   assert.equal(action.confirm.deny.text, "Keep");
   await handleSecretsAction({ ...f, action, body: { user: { id: ownerId }, view: { ...view, id: "V_SETTINGS", hash: "hash-1" } } });
@@ -46,7 +46,7 @@ test("Settings removal persists only the selected deletion and refreshes the sam
   assert.equal(f.updates[0].hash, "hash-1");
   assert.equal(f.updates[0].view.callback_id, "cg_channel_settings_modal");
   assert.equal(JSON.parse(f.updates[0].view.private_metadata).p, "secrets");
-  assert.ok(!f.updates[0].view.blocks.some((b) => b.accessory?.value.includes("REMOVE_ME")));
+  assert.ok(!f.updates[0].view.blocks.some((b) => b.accessory?.value?.includes("REMOVE_ME")));
   const saved = await store.getChannelMeta(f.entry.slug);
   assert.deepEqual(Object.keys(saved.env), ["KEEP_ME"]);
   assert.equal(saved.model, "preserve-model");
@@ -99,7 +99,7 @@ test("standalone secrets form refreshes its own manager and removal keeps that s
   const parent = f.updates.at(-1).view;
   assert.equal(parent.callback_id, "cg_channel_secrets_modal");
   assert.equal(f.updates.at(-1).view_id, "V_SECRETS");
-  const action = parent.blocks.find((b) => b.accessory?.value.includes("NEW_ONE")).accessory;
+  const action = parent.blocks.find((b) => b.accessory?.value?.includes("NEW_ONE")).accessory;
   await handleSecretsAction({ ...f, action, body: { user: { id: ownerId }, view: { ...parent, id: "V_SECRETS" } } });
   assert.equal(f.updates.at(-1).view.callback_id, "cg_channel_secrets_modal");
   assert.equal(Object.hasOwn((await store.getChannelMeta(f.entry.slug)).env, "NEW_ONE"), false);
@@ -109,7 +109,7 @@ test("wrong owner, revoked access, and mismatched channel slug cannot remove a s
   const f = await fixture("DENIED");
   const original = await store.getChannelMeta(f.entry.slug);
   const view = buildSecretsView(listChannelEnv(original), f.state, { mayEdit: true });
-  const action = view.blocks.find((b) => b.accessory?.value.includes("REMOVE_ME")).accessory;
+  const action = view.blocks.find((b) => b.accessory?.value?.includes("REMOVE_ME")).accessory;
   for (const variant of ["owner", "access", "slug"]) {
     await store.setUser(ownerId, { approved: variant !== "access" });
     await handleSecretsAction({ ...f, action, body: {
@@ -124,7 +124,8 @@ test("wrong owner, revoked access, and mismatched channel slug cannot remove a s
 test("all 32 supported secrets have inline removal controls, with no extra manager page", () => {
   const secrets = Array.from({ length: 32 }, (_, i) => ({ name: `VAR_${i}`, last4: "1234" }));
   const view = buildChannelSettingsView({ secrets }, {}, { tab: "secrets", canEditSecrets: true });
-  assert.equal(view.blocks.filter((b) => b.accessory?.text.text === "Remove").length, 32);
+  // The page dropdown is an accessory too, and carries no `text` of its own.
+  assert.equal(view.blocks.filter((b) => b.accessory?.text?.text === "Remove").length, 32);
   assert.ok(view.blocks.length < 100);
   assert.doesNotMatch(JSON.stringify(view), /secrets_manage/);
 });

@@ -11,6 +11,7 @@ import { runCommand, SECRET_REFS, vpnFailureMessage } from "./vpn-service.js";
 
 const helper = fileURLToPath(new URL("../../scripts/channel-vpn.mjs", import.meta.url));
 const states = new Set(["off", "starting", "on", "stopping", "failed"]);
+const UNCONFIGURED = "VPN is not configured. An administrator must import the profile and prepare the service first.";
 const fail = (message, statusCode = 409) => Object.assign(new Error(message), { statusCode });
 
 function helperEnv() {
@@ -48,7 +49,7 @@ export function createChannelVpnControl({
 
   async function readStatus(channelId) {
     const { base } = await context(channelId);
-    if (!base.configured) return { ...base, state: "unconfigured", message: "VPN is not configured. An administrator must import the profile and prepare the service first." };
+    if (!base.configured) return { ...base, state: "unconfigured", message: UNCONFIGURED };
     let raw;
     try {
       const result = await execute("status", channelId);
@@ -103,6 +104,31 @@ export function createChannelVpnControl({
     } finally { pending.delete(channelId); release(); }
   }
   return { getStatus, setEnabled };
+}
+
+// Whether this conversation has a provisioned VPN service at all. Asking costs one metadata read
+// and no subprocess, which is what lets a surface render the VPN row immediately for the vast
+// majority of conversations instead of scheduling a status refresh that could only ever repeat
+// what this predicate already knows.
+export function channelVpnConfigured(meta) {
+  return meta?.vpnService?.version === 1;
+}
+
+// The status a conversation without a provisioned service always has, built without touching the
+// helper — the same shape and wording readStatus returns for it. null for a configured channel,
+// whose real state only the helper can answer.
+export function unconfiguredChannelVpnStatus(meta) {
+  if (channelVpnConfigured(meta)) return null;
+  return {
+    configured: false,
+    allowNetwork: meta?.allowNetwork === true,
+    missingSecrets: [],
+    enabled: false,
+    running: false,
+    busy: false,
+    state: "unconfigured",
+    message: UNCONFIGURED,
+  };
 }
 
 const controls = createChannelVpnControl();
