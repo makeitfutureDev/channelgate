@@ -354,6 +354,18 @@ These commands need the **host**, not a channel container: there is no `podman` 
 container. Run them from an admin `/sudo` thread.
 
 ### Check
+Start with the gateway's own report. It applies every rule in this section for you and changes
+nothing unless told to:
+```sh
+cd <the gateway checkout> && npm run runtime:storage        # report only
+npm run runtime:storage -- --json                           # the same, as JSON
+```
+It lists every container, image and volume as `remove` or `keep` with the reason, and counts the
+space removing the images would free layer by layer (shared layers are not double-counted). Show
+the admin that report. Only if they ask, run `npm run runtime:storage -- --apply`, which removes
+exactly the lines marked `remove` and prints the free space before and after. An admin may schedule
+the report; schedule `--apply` only when they say so. The raw commands below are for when the
+report itself needs explaining.
 ```sh
 df -h /                 # free space on the filesystem holding the runtime root
 podman system df        # images / containers / volumes, with a reclaimable column

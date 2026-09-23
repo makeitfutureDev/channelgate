@@ -615,7 +615,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   container counts, distinguishing a live runtime root from test leftovers, and the tag-versus-image-ID
   and dangling-HOME-volume traps. It is diagnosis-only by contract — the assistant reports what is
   reclaimable and never deletes without an explicit request or an admin-configured schedule.
-  → TEST-PLAN: Host container-storage housekeeping guidance.
+  `npm run runtime:storage` produces that report (`--json` for machines) and removes only with
+  `--apply`: stopped channel containers created from a superseded image (never a running one),
+  runtime images other than the current, the previous spec (`--keep-previous`) and any in use,
+  untagged top-level leftovers, and another install's containers and volumes only when every
+  folder it mounted is gone — never a channel's HOME volume, never a second live gateway sharing
+  the account's store. Reclaimable space is counted per content-addressed layer, so shared layers
+  are not double-counted. → TEST-PLAN: Host container-storage housekeeping guidance.
 
 ## Engine adapter kernel
 
