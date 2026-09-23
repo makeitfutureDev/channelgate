@@ -122,3 +122,41 @@ test("live: DenyUsers cannot be overridden, so the install stops and names the f
   assert.match(r.out, /a deny list wins over every allow list/);
   assert.match(r.out, /grep -rn 'DenyUsers'/);
 });
+
+// A rerun must not undo a corrected endpoint. With only hostname/22 as defaults, a bare rerun —
+// which the troubleshooting guide itself recommends — re-advertised the gateway's web hostname
+// (behind Cloudflare, no SSH), and every developer connection hung again.
+test("a rerun keeps the configured endpoint unless CG_SSH_HOST/CG_SSH_PORT say otherwise", () => {
+  assert.match(installer, /SSH_HOST="\$\{CG_SSH_HOST:-\}"/, "no hostname default at the top any more");
+  assert.match(installer, /-r "\$SSH_DIR\/endpoint\.json"/);
+  assert.match(installer, /keeping the configured endpoint host/);
+  assert.match(installer, /SSH_HOST="\$\{SSH_HOST:-\$\(hostname -f/, "hostname applies only when nothing was configured");
+});
+
+const ENDPOINT_HARNESS = String.raw`
+set -u
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+mkdir -p /run/sshd /etc/ssh/sshd_config.d; ssh-keygen -A >/dev/null 2>&1
+grep -q '^Include /etc/ssh/sshd_config.d/\*\.conf' /etc/ssh/sshd_config || sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
+useradd -m svc
+base() { env CG_SERVICE_USER=svc CG_NODE_BIN="$(command -v node)" "$@" bash /app/scripts/install-ssh-access.sh >/tmp/out 2>&1; echo "code=$?"; }
+ep() { node -e 'const e=require("/var/lib/channelgate-ssh/endpoint.json"); console.log(e.host+":"+e.port)'; }
+echo "FIRST $(base CG_SSH_HOST=org.example.dev CG_SSH_PORT=2222) $(ep)"
+echo "BARE  $(base) $(ep)"
+grep -c 'keeping the configured endpoint' /tmp/out | sed 's/^/KEPT_LINES /'
+echo "PORT  $(base CG_SSH_PORT=2200) $(ep)"
+rm -f /var/lib/channelgate-ssh/endpoint.json
+echo "FRESH $(base) $(ep)"
+echo "HOSTNAME $(hostname -f 2>/dev/null || hostname)"
+`;
+
+test("live: first install, bare rerun, and an explicit override resolve the endpoint correctly", { skip: !live, timeout: 240_000 }, () => {
+  const result = spawnSync("podman", ["run", "--rm", "--user", "root", "-v", `${repo}:/app:ro`, "--entrypoint", "bash", image, "-c", ENDPOINT_HARNESS], { encoding: "utf8", timeout: 230_000 });
+  const out = `${result.stdout}${result.stderr}`;
+  const line = (tag) => (new RegExp(`^${tag}\\s+(.*)$`, "m").exec(out)?.[1] || "").trim();
+  assert.equal(line("FIRST"), "code=0 org.example.dev:2222", out);
+  assert.equal(line("BARE"), "code=0 org.example.dev:2222", `a bare rerun keeps the corrected endpoint\n${out}`);
+  assert.equal(line("KEPT_LINES"), "2", "it says so, for both host and port");
+  assert.equal(line("PORT"), "code=0 org.example.dev:2200", "an explicit port wins and the host is kept");
+  assert.equal(line("FRESH"), `code=0 ${line("HOSTNAME")}:22`, "only a first install falls back to hostname:22");
+});

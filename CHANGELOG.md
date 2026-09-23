@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Make rerunning the SSH access installer safe. Without `CG_SSH_HOST`/`CG_SSH_PORT` it used to fall
+  back to this machine's hostname and port 22 every time, so a plain rerun — the documented fix
+  for several problems — silently replaced a corrected endpoint with the gateway's web hostname
+  and put developers back to connections that hang. An unset value now keeps what the previous run
+  recorded (and says so); the hostname and port 22 apply only to a first install.
+
 - Stop a second gateway on the same host from silently switching SSH access off. The attach
   socket lives in one directory per host, so a gateway under another runtime directory — a second
   install, or a test daemon started from a worktree — reaches the same path. The daemon used to
