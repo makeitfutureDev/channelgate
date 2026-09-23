@@ -759,7 +759,8 @@ test("completed-run footer carries authorized-user Settings beside Files and Sec
   const stop = calls.find((call) => call[0] === "stopStream");
   assert.deepEqual(stop[1].blocks.map((block) => block.type), ["context", "actions"]);
   const buttons = stop[1].blocks[1].elements;
-  assert.deepEqual(buttons.map((button) => button.text.text), ["💻", "📂", "🔑", "⚙️ Settings"]);
+  // No 💻 control: the resume command lives in Settings → Resume Session, not on every reply.
+  assert.deepEqual(buttons.map((button) => button.text.text), ["📂", "🔑", "⚙️ Settings"]);
   const settings = buttons.find((button) => button.action_id === "cg_channel_settings");
   assert.deepEqual(JSON.parse(settings.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
   const files = buttons.find((button) => button.text.text === "📂");

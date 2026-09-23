@@ -114,6 +114,13 @@ const snapshot = {
     effective: ["gateway-usage", "development", "pdf"],
   },
   secrets: [{ name: "SUPABASE_ACCESS_TOKEN", last4: "beef", setBy: "<@U_MANAGER>", setAt: Date.UTC(2026, 8, 7), provider: "local", resolvable: true }],
+  resume: {
+    inThread: true,
+    sessionId: "994f6108-b405-4bbe-b96d-1641051df2fa",
+    engine: "claude",
+    workDir: "/home/agent/ChannelGate/slack/settings-channel",
+    command: 'cd "/home/agent/ChannelGate/slack/settings-channel" && claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+  },
 };
 
 const allButtons = (view) => view.blocks.flatMap((block) => block.elements || []).filter((item) => item.type === "button");
@@ -135,7 +142,9 @@ test("authorized user reply footer adds Settings after the existing workspace co
     { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
     { channel: "C1", threadTs: "1.1", authorId: "U1", mayUseSettings: true },
   );
-  assert.deepEqual(buttons.map((button) => button.text.text), ["💻", "📂", "🔑", "⚙️ Settings"]);
+  // The 💻 resume control moved into Settings → Resume Session; footers no longer carry it.
+  assert.deepEqual(buttons.map((button) => button.text.text), ["📂", "🔑", "⚙️ Settings"]);
+  assert.equal(buttons.some((button) => button.action_id === "resume_cmd_modal"), false);
 
   const ordinary = footerButtons(
     { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
@@ -181,6 +190,25 @@ test("each Settings tab renders its channel setup snapshot", () => {
   assert.doesNotMatch(secrets, /Add, update, or remove secrets/);
   const mcp = buildChannelSettingsView(snapshot, state, { tab: "mcp" });
   assert.ok(allButtons(mcp).some((button) => button.action_id === CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID));
+});
+
+test("Resume Session tab shows this thread's copyable command, and says why when there is none", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "resume" });
+  const text = rendered(view);
+  // The command is escaped like every other value in this modal, so a channel-configurable work
+  // folder can never smuggle Slack control markup into the card.
+  assert.match(text, /```cd .*settings-channel.* &amp;&amp; claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa```/);
+  assert.match(text, /\/resume <command>/);
+  assert.match(text, /994f6108-b405-4bbe-b96d-1641051df2fa/);
+  assert.equal(parseSettingsMetadata(view.private_metadata).tab, "resume");
+  assert.ok(allButtons(view).some((button) => button.action_id === `cg_channel_settings_tab_resume`), "the tab has its own button");
+
+  const noSession = rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: true, command: "" } }, state, { tab: "resume" }));
+  assert.match(noSession, /No session in this thread yet/);
+  assert.doesNotMatch(noSession, /--resume/);
+
+  const outsideThread = rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: false, command: "" } }, state, { tab: "resume" }));
+  assert.match(outsideThread, /inside a thread/);
 });
 
 test("runtime tab edits the channel default and the thread pin in place, with no submit button", () => {
@@ -376,6 +404,31 @@ test("Cloud MCP toggles replace one matching selection without duplicating other
   const github = { id: "github", name: "GitHub", kind: "tool-group", serverName: "codex_apps", toolPrefix: "github" };
   assert.deepEqual(cloudSelectionsAfterToggle(current, "codex", "tool-group:github", { activate: false }), [current[1]]);
   assert.deepEqual(cloudSelectionsAfterToggle([current[1]], "codex", "tool-group:github", { activate: true, selection: github }), [current[1], github]);
+});
+
+test("the Resume Session tab renders the live session resolved from the store", async () => {
+  const { resolveResumeSession } = await import("../src/slack/resume-session.js");
+  const { saveSession, clearSession } = await import("../src/gateway/sessions.js");
+  await store.ensureRoot();
+  const entry = await store.upsertChannelEntry("C_SETTINGS_RESUME", { name: "settings-resume", type: "channel", isDM: false });
+  await store.saveChannelMeta(entry.slug, store.defaultChannelMeta({ channelId: "C_SETTINGS_RESUME", name: "settings-resume", type: "channel", isDM: false }));
+  const meta = await store.getChannelMeta(entry.slug);
+
+  // A session minted by Codex must be printed as a Codex resume line even though the channel
+  // default is Claude: a session id belongs to exactly one harness.
+  await saveSession(entry.slug, "1700000000.000100", "resume-session-id", "codex");
+  const resume = await resolveResumeSession({ entry, meta }, "1700000000.000100");
+  assert.equal(resume.sessionId, "resume-session-id");
+  assert.equal(resume.engine, "codex");
+  assert.match(resume.command, /resume-session-id/);
+  const view = rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "resume" }));
+  assert.match(view, /resume-session-id/);
+  assert.match(view, /Run this on the gateway machine/);
+
+  // A cleared session leaves no command behind, and no thread means nothing to resume at all.
+  await clearSession(entry.slug, "1700000000.000100");
+  assert.equal((await resolveResumeSession({ entry, meta }, "1700000000.000100")).command, "");
+  assert.deepEqual(await resolveResumeSession({ entry, meta }, ""), { inThread: false, sessionId: "", engine: "", workDir: "", command: "" });
 });
 
 test("credential snapshots retain only a safe tail", () => {

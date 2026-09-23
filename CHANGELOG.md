@@ -18,6 +18,16 @@ product overview.
 
 ## Unreleased
 
+- **The 💻 button is gone from reply footers; the resume command moved into Settings.** Slack
+  replies now end with 📂 Files, 🔑 Secrets, ⚙️ Settings (and any 📄 review-file buttons) — the
+  resume control no longer rides under every answer. Channel Settings gained a **Resume Session**
+  tab that shows the same copyable `cd "…" && claude --resume <id>` line (the container `exec`
+  form for a containerized channel), plus the session id and the folder it belongs to. It is
+  resolved from the live session when the tab is rendered, so a Settings view left open cannot
+  hand out a cleared session's id, and it names the harness that MINTED the session rather than
+  the channel default. `/resume`, `/menu`'s 💻 Resume button and the 💻 control on "🛑 Stopped."
+  messages are unchanged.
+
 - Slack **⚙️ Settings → Engine & model** now edits the runtime in place instead of opening a second
   modal, and covers both scopes: the channel default AND, when Settings was opened from a reply
   inside a thread, that thread's own engine/model/effort pins. Six dropdowns save the moment they

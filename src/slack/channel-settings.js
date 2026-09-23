@@ -39,7 +39,7 @@ export const CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID = "cg_channel_settings_se
 export const CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID = "cg_channel_settings_vpn_toggle";
 export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_refresh";
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "mcp", "skills", "secrets", "network", "access"]);
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "resume", "mcp", "skills", "secrets", "network", "access"]);
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
@@ -424,10 +424,38 @@ function networkBlocks(snapshot, state, { canManageVpn }) {
   ];
 }
 
+// The terminal command that reopens this thread's engine session, resolved by the app layer
+// (slack/resume-session.js) at render time. It replaced the 💻 control that used to ride under
+// every reply: the command is only wanted occasionally, and Settings is already the per-thread
+// place to look. Pins are per THREAD, so this tab — like the runtime tab's "This thread" scope —
+// only has something to show when Settings was opened from a reply inside a thread.
+function resumeBlocks(snapshot = {}) {
+  const resume = snapshot.resume || {};
+  if (!resume.inThread) {
+    return [{ type: "context", elements: [mrkdwn("_Open Settings from a reply inside a thread to get that thread's resume command._")] }];
+  }
+  if (!resume.command) {
+    return [
+      { type: "section", text: mrkdwn("No session in this thread yet — send a message first, then open this tab again.") },
+      { type: "context", elements: [mrkdwn("To continue a session you started elsewhere, post `/resume <command or session id>` in this thread.")] },
+    ];
+  }
+  return [
+    { type: "section", text: mrkdwn("Run this on the gateway machine to open this thread's session in your terminal:") },
+    // Escaped like every other value in this modal: a work-folder path is channel-configurable,
+    // and Slack parses control sequences inside a code block too.
+    { type: "section", text: mrkdwn("```" + escapeMrkdwn(resume.command) + "```") },
+    { type: "context", elements: [mrkdwn("Paste the same line back as `/resume <command>` in this channel to continue that session from a Slack thread.")] },
+    ...(resume.sessionId ? [fieldBlock("Session id", inlineCode(resume.sessionId))] : []),
+    ...(resume.workDir ? [fieldBlock("Folder", inlineCode(resume.workDir))] : []),
+  ];
+}
+
 const TAB_LABELS = Object.freeze({
   access: "Access",
   network: "Network",
   runtime: "Engine & model",
+  resume: "Resume Session",
   mcp: "MCP",
   skills: "Skills",
   secrets: "Secrets",
@@ -465,6 +493,8 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
       { type: "section", text: mrkdwn(accessSummary(snapshot.access || {})) },
       { type: "actions", elements: [button(ACCESS_EDIT_ACTION_ID, "Change access settings", state, "access_edit", {}, { style: "primary" })] },
     ]
+    : active === "resume"
+    ? resumeBlocks(snapshot)
     : active === "network"
     ? networkBlocks(snapshot, state, { canManageVpn })
     : active === "mcp"

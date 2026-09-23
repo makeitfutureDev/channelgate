@@ -1452,9 +1452,29 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       channel default** clears all three pins and the next turn in the thread returns to the channel
       harness/model. Confirm the channel record is audited and the thread pin is not, and that
       rapid successive picks each land instead of producing an expired-view card.
-- [x] Automated Access: ordinary authorized users cannot see/forge the fifth tab; admins,
+- [x] Automated Resume Session tab: the Settings modal renders a **Resume Session** tab button and,
+      for a thread with a live session, the copyable resume command, the session id and the folder —
+      with the command escaped the way every other value in that modal is, so a channel-configurable
+      work folder cannot smuggle Slack control markup into the card. A thread with no session says
+      so and shows no command; opening Settings outside a thread says the command needs a thread.
+      The shared resolver reads the session at render time: a cleared session yields no command, and
+      a session minted by Codex prints a Codex resume line even when the channel default is Claude
+      (`test/channel-settings-modal.test.js`, `test/menu.test.js`).
+- [x] Automated footers: a completed interactive reply's controls are exactly 📂 / 🔑 / ⚙️ Settings
+      (plus any 📄 review-file buttons) with no `resume_cmd_modal` control, and an unattended
+      `deliverResult` footer posts run stats with no control at all
+      (`test/slack-progress.test.js`, `test/channel-settings-modal.test.js`, `test/deliver.test.js`).
+- [ ] Live resume round trip (engine-independent Slack UI case, run once per harness where the
+      session is minted by that harness): in a disposable channel, send a message, then open
+      **⚙️ Settings → Resume Session** from a reply inside that thread. Pass when the tab shows the
+      thread's command (the `exec` form for a containerized channel), the reply footer shows NO 💻
+      button, running the shown command on the gateway machine reopens that conversation, and
+      pasting the same line back as `/resume <command>` continues it from the thread. Then `/clear`
+      the thread and reopen the tab: it must say there is no session rather than offering the
+      cleared id.
+- [x] Automated Access: ordinary authorized users cannot see/forge the Access tab; admins,
       approved members under Members policy and named managers under Custom policy can edit it.
-      DMs keep four tabs. Independent base-mode/Auto/Lean/network flags round-trip; preset
+      DMs keep every tab except Access. Independent base-mode/Auto/Lean/network flags round-trip; preset
       flags and stored profile agree. Unknown fields cannot change workDir, credentials or roles.
       Real store saves preserve unrelated settings and audit only policy. Departed actors,
       outsiders/bots in named lists, revoked channel grants and global role revocation during the

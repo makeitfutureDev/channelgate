@@ -100,6 +100,7 @@ import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
 import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
+import { resolveResumeSession } from "./resume-session.js";
 import { buildStatusReport } from "./status-controller.js";
 // Re-exported for existing importers (tests) — moved to slack/message-pipeline.js.
 export { stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages };
@@ -887,11 +888,20 @@ export async function saveAccessSettings(client, state, userId, form) {
   });
 }
 
-// The one builder for the Settings modal's root view. Thread pins are a store read, so the runtime
-// tab's two scopes are resolved here rather than inside the synchronous snapshot.
+// The one builder for the Settings modal's root view. Thread pins and this thread's session are
+// store reads, so the runtime tab's two scopes and the Resume Session tab's command are resolved
+// here rather than inside the synchronous snapshot. A resume lookup that fails must not take the
+// other six tabs down with it — the tab then reads as "no session" instead of an error card.
 async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "", vpn } = {}) {
   const snapshot = channelSettingsSnapshot(meta);
-  snapshot.runtime.scopes = await runtimeScopes(entry.slug, meta, snapshot, state.threadTs || "");
+  const threadTs = state.threadTs || "";
+  const [scopes, resume] = await Promise.all([
+    runtimeScopes(entry.slug, meta, snapshot, threadTs),
+    resolveResumeSession({ entry, meta: effectiveMeta(meta) }, threadTs)
+      .catch(() => ({ inThread: Boolean(threadTs), sessionId: "", engine: "", workDir: "", command: "" })),
+  ]);
+  snapshot.runtime.scopes = scopes;
+  snapshot.resume = resume;
   return buildChannelSettingsView({ ...snapshot, vpn }, { ...state, tab }, {
     channelName: entry.name,
     tab,

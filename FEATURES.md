@@ -394,12 +394,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   so historic controls cannot retain revoked access. Cloud MCP actions additionally re-check admin
   status. Secrets can be edited in every channel mode, including through `/secrets`; file-edit
   permissions and the separate `/model` command policy are unchanged.
-  **Access** is a fifth tab, visible only to current admins/channel managers. They can edit the
+  **Access** is a manager-only tab, visible only to current admins/channel managers. They can edit the
   base mode (including Admin/full access), Auto, Lean, network, use/manage policy and named guest/manager lists. Selecting
   Full access does not grant anyone an administrator role; bypass still requires an admin author.
   Saves acknowledge immediately with a progress view, validate named users against live human
   channel membership, re-check management and roles at the write boundary, and audit policy changes.
-  DMs keep the existing four tabs. Work-dir and gateway-wide settings are not exposed here.
+  **Resume Session** is a tab of its own, open to every authorized user: it renders THIS thread's
+  copyable `cd "…" && <engine> --resume <id>` terminal command (the container `exec` form for a
+  containerized channel), resolved from the session at render time so a stale Settings view cannot
+  hand out a cleared session's id, plus the session id and the folder it belongs to. Opened outside
+  a thread, or in a thread that has not run a turn yet, the tab says so instead of showing a
+  command. It replaces the 💻 reply-footer button, which is gone from run footers.
+  DMs keep every tab except Access. Work-dir and gateway-wide settings are not exposed here.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
   admins are selected and locked, while explicit guest grants remain independently editable.
@@ -745,7 +751,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   effective working folder. Its title identifies the authoritative stored Slack channel name, and
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
   *Browse channel files* message shortcut opens it for a selected thread, and every interactive run footer carries a
-  requester-bound `📂` button beside `💻` for one-click access; managers also receive the
+  requester-bound `📂` button for one-click access; managers also receive the
   requester-bound **⚙️ Settings** snapshot button described above, and gateway admins may open a
   control attached to another user's bot reply. When an agent names up to five
   existing files inside its effective working folder for review, the same footer adds deduplicated
@@ -994,7 +1000,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `/clear` (drop the thread's session — next
   message starts fresh), `/context` (token usage + % of the context window from the last turn),
   `/resume` (the copyable `cd "…" && claude --resume <id>` terminal command for this thread's
-  session — kept out of reply footers; also behind the 💻 button on "🛑 Stopped." messages → modal.
+  session — kept out of reply footers; the same command is a tab in Slack Settings → **Resume
+  Session** and behind the 💻 buttons on `/menu` and on "🛑 Stopped." messages → modal.
   `/resume <command or session id>` runs the same trip in REVERSE: paste that line back and the
   thread adopts the existing local session, so a conversation started in a terminal on the gateway
   machine (or left behind by a cleared thread) continues in Slack. Accepts the full pasted command,
@@ -3011,8 +3018,10 @@ are retired, bullet by bullet; everything else stands.
   times too small),
   other Claude models 200k, Codex prefers the rollout's runtime-reported usable window (with the
   engine declaration as fallback), unknown models fall back to Settings →
-  contextWindow; no icons/unit labels). The 💻 Resume button sits on the same row (section
-  accessory). Model = the configured cascade that governed the turn (thread override → channel/DM
+  contextWindow; no icons/unit labels). The reply footer's controls are 📂 Files, 🔑 Secrets,
+  ⚙️ Settings and any 📄 review-file buttons; a single control uses the section accessory and
+  several share an actions row under the stats context. The resume command is NOT one of them —
+  it lives in Settings → **Resume Session**, `/menu` and `/resume`. Model = the configured cascade that governed the turn (thread override → channel/DM
   model → gateway default) → CLI-reported runtime model (when nothing is configured) → engine name;
   context% and Codex cost rates still key on the CLI-reported runtime model, where multi-model
   Claude `modelUsage` maps use the model with dominant output tokens, and a reported
