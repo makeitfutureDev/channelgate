@@ -225,5 +225,11 @@ test("a model the fallback harness rejects is substituted and announced there to
   ]);
   assert.match(result.content, /hit its usage limit before any tool call — using Codex/i);
   assert.match(result.content, /gpt-5\.6 was rejected before the turn started — using gateway default gpt-5\.6-sol/i);
-  assert.deepEqual(notes, ["⚠️ _gpt-5.6 was rejected before the turn started — using gateway default gpt-5.6-sol._\n\n"]);
+  // The failover itself is announced first — the reader has to know Codex is answering — then the
+  // model the fallback substituted. Same order as `content`, so the streamed answer and a
+  // non-streaming surface say the same two things.
+  assert.deepEqual(notes, [
+    "⚠️ _Claude hit its usage limit before any tool call — using Codex._\n\n",
+    "⚠️ _gpt-5.6 was rejected before the turn started — using gateway default gpt-5.6-sol._\n\n",
+  ]);
 });

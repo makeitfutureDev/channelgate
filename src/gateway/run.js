@@ -1680,6 +1680,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // (Claude, Qwen) reads it via --mcp-config; an argv-transport one (Codex) returns "" and builds
     // its servers from the runtime bag instead.
     const fallbackMcpConfigFile = await materializeMcpConfig(fallbackEngine, fallbackMcpRuntime.mcpConfigJson);
+    // Say so in the answer the reader keeps. This was the gap users saw: a failover turn streamed
+    // Claude's words under nothing at all, because the note lived only on the finished `content`,
+    // and a streamed answer is written from the stream. Announced here — after every check that
+    // could still refuse the fallback — so it never promises an engine that then does not run.
+    if (note) announceAnswerNote(note);
+    if (fbMcpDropNote) announceAnswerNote(fbMcpDropNote);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
       assertRuntimeCanStart();
       return fallbackAdapter.run(validateRunContext({
@@ -1853,6 +1859,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     assertRuntimeCredentials(target, engine);
     runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
     await bringRuntimeUp();
+    // Every gateway note below is part of `content` for surfaces with no stream — and ANNOUNCED, so a
+    // surface that writes its answer from the live stream delivers it too (see announceAnswerNote).
+    // The license warning leads: it applies to this turn whichever engine answers it.
+    if (licenseWarning) announceAnswerNote(licenseWarning);
 
     // If THIS engine was recently limited in THIS channel (or its credential failed gateway-wide),
     // skip it and use the fallback harness for the cooldown window instead of re-probing it.
@@ -1880,6 +1890,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Minted BEFORE `engineStarted` flips: a failure in here is still a turn whose engine never
     // spawned, so the session row this turn minted must not survive it (see dropUnusedSession).
     await mintGatewayMcpRuntime();
+    if (mcpDropNote) announceAnswerNote(mcpDropNote);
     engineStarted = true;
     mcpConfigFile = await materializeMcpConfig(engine, mcpConfigJson);
 

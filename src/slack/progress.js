@@ -669,7 +669,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // substituted model). It is part of the delivered answer but not part of what the engine
   // streamed, and the orchestrator also carries it on the final content — so finalize() subtracts
   // it there rather than delivering the same sentence twice.
-  let preface = "";
+  // Kept one by one, so finalize() can subtract each wherever `content` carries it: the
+  // orchestrator assembles `content` in its own order (the license warning, then the failover note,
+  // for instance), and a note announced by one engine attempt may not be in another's content.
+  const prefaceParts = [];
   let truncated = false; // the live stream hit the length cap — the rest arrives as follow-up messages
   let failed = false;
   let stopped = false;
@@ -1097,7 +1100,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           timeline.notice(e.text);
           return;
         }
-        preface += e.text;
+        prefaceParts.push(e.text);
         enqueue(() => appendCurrent({ markdown_text: e.text }));
       } else if (e.kind === "notice") {
         // Durable row, not just a status blip: the stop-hook safety valve says work is being
@@ -1150,7 +1153,13 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       // What is still OWED to this message. A gateway note (a substituted model) was streamed as
       // the head of the answer and the orchestrator also carries it on `content` for surfaces with
       // no stream — so it is subtracted here, and the sentence lands exactly once.
-      const pending = preface && fullRaw.startsWith(preface) ? fullRaw.slice(preface.length) : fullRaw;
+      // Each streamed note is removed once, wherever it sits; a note the content does not carry is
+      // simply not there to remove. Removing only an exact whole-preface PREFIX delivered a note
+      // twice whenever content ordered the notes differently from the stream.
+      const pending = prefaceParts.reduce((owed, part) => {
+        const at = owed.indexOf(part);
+        return at === -1 ? owed : owed.slice(0, at) + owed.slice(at + part.length);
+      }, fullRaw);
       const full = pending.trim();
       // Release any "@name" the holdback buffer was still waiting on (already counted in rawLen).
       const remainder = mentionStream.flush();

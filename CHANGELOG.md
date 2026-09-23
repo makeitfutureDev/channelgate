@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- Show the gateway's own notices in streamed Slack answers. When a turn failed over to the other
+  engine, the "Codex hit its usage limit — using Claude" line, the license allowance warning and
+  the "Skipped MCP connection" notice were attached only to the finished reply, but Slack writes a
+  streamed answer from the live stream — so none of them were ever shown and people could not tell
+  which engine had answered. They now lead the answer, and each appears exactly once however the
+  reply is delivered.
+
 - Stop the assistant recommending a cleanup command that deletes channel data. Asked whether the
   gateway was running out of disk, it correctly said it could not measure containers from inside
   one — and then suggested `podman system prune -a --volumes`, which removes every stopped
