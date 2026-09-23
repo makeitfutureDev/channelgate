@@ -13,6 +13,7 @@
 #   * /etc/ssh/sshd_config.d/channelgate.conf, then `sshd -t` and a reload.
 # The daemon notices the directory within a minute and needs no restart.
 set -euo pipefail
+trap 'echo "❌ install-ssh-access.sh failed at line $LINENO — nothing is half-configured (every step is idempotent); fix the cause and rerun" >&2' ERR
 [ "$(uname -s)" = "Linux" ] || { echo "SSH access setup is Linux-only"; exit 2; }
 [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo bash scripts/install-ssh-access.sh"; exit 1; }
 for required in sshd useradd install; do
@@ -39,8 +40,34 @@ SSH_DIR="${CG_SSH_DIR:-/var/lib/channelgate-ssh}"
 SSH_HOST="${CG_SSH_HOST:-$(hostname -f 2>/dev/null || hostname)}"
 SSH_PORT="${CG_SSH_PORT:-22}"
 LIB_DIR="/usr/local/lib/channelgate"
-NODE_BIN="${CG_NODE_BIN:-$(command -v node)}"
-[ -x "$NODE_BIN" ] || { echo "node is required on PATH (or set CG_NODE_BIN)"; exit 1; }
+# Node for the attach wrapper. Root's sudo PATH (secure_path) rarely contains a per-user Node
+# install, so look where the daemon actually finds it: the invoking user's and the service
+# account's ~/.local, nvm, volta and fnm trees, then the system locations. Never `$(command -v
+# node)` inside an assignment under `set -e` — a miss there exits the script with no message.
+find_node() {
+  [ -n "${CG_NODE_BIN:-}" ] && { echo "$CG_NODE_BIN"; return; }
+  local candidate home
+  candidate="$(command -v node 2>/dev/null || true)"
+  [ -n "$candidate" ] && { echo "$candidate"; return; }
+  for home in "${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)}" "$(getent passwd "$SERVICE_USER" | cut -d: -f6)" /root; do
+    [ -n "$home" ] || continue
+    for candidate in "$home/.local/bin/node" "$home/.local/node/bin/node" "$home"/.nvm/versions/node/*/bin/node "$home/.volta/bin/node" "$home"/.local/share/fnm/node-versions/*/installation/bin/node; do
+      [ -x "$candidate" ] && { echo "$candidate"; return; }
+    done
+  done
+  for candidate in /usr/local/bin/node /usr/bin/node /opt/node/bin/node /snap/bin/node; do
+    [ -x "$candidate" ] && { echo "$candidate"; return; }
+  done
+  echo ""
+}
+NODE_SRC="$(find_node)"
+[ -n "$NODE_SRC" ] && [ -x "$NODE_SRC" ] || { echo "❌ node was not found (root's PATH is $PATH). Pass it explicitly: sudo CG_NODE_BIN=\"\$(command -v node)\" CG_SSH_HOST=… bash scripts/install-ssh-access.sh"; exit 1; }
+NODE_SRC="$(readlink -f "$NODE_SRC")"
+# The login account must be able to EXECUTE node, and a per-user install usually sits under a
+# 0700 home it cannot traverse. Node is a self-contained binary, so the installer keeps a
+# root-owned copy beside the wrapper; rerun the installer after upgrading Node to refresh it.
+NODE_BIN="$LIB_DIR/node"
+echo "→ node: $NODE_SRC → $NODE_BIN"
 case "$SSH_USER" in *[!a-zA-Z0-9_-]*|"") echo "Invalid login account name"; exit 1;; esac
 case "$SSH_HOST" in *[!a-zA-Z0-9_.:-]*|"") echo "Invalid CG_SSH_HOST"; exit 1;; esac
 case "$SSH_PORT" in *[!0-9]*|"") echo "Invalid CG_SSH_PORT"; exit 1;; esac
@@ -61,11 +88,18 @@ install -d -m 0755 -o root -g root "$SSH_DIR/home"
 # Root-owned copies: sshd refuses an AuthorizedKeysCommand that is not root-owned, and the login
 # account cannot read the checkout anyway.
 install -d -m 0755 -o root -g root "$LIB_DIR"
+install -m 0755 -o root -g root "$NODE_SRC" "$NODE_BIN"
 install -m 0755 -o root -g root "$APP_DIR/scripts/cg-ssh-attach.mjs" "$LIB_DIR/cg-ssh-attach.mjs"
 sed "s|/var/lib/channelgate-ssh/authorized_keys|$SSH_DIR/authorized_keys|" "$APP_DIR/scripts/cg-ssh-authorized-keys" > "$LIB_DIR/cg-ssh-authorized-keys.tmp"
 install -m 0755 -o root -g root "$LIB_DIR/cg-ssh-authorized-keys.tmp" "$LIB_DIR/cg-ssh-authorized-keys"
 rm -f "$LIB_DIR/cg-ssh-authorized-keys.tmp"
 ATTACH_COMMAND="$NODE_BIN $LIB_DIR/cg-ssh-attach.mjs"
+# Prove the login account can run the wrapper's interpreter before sshd is pointed at it — the
+# failure mode otherwise is every developer seeing a bare "exit 127".
+if ! runuser -u "$SSH_USER" -- "$NODE_BIN" -e "process.exit(0)" 2>/dev/null; then
+  echo "❌ $SSH_USER cannot execute $NODE_BIN — check that $LIB_DIR is world-readable and the binary is not on a noexec mount"
+  exit 1
+fi
 
 # What the daemon tells developers, and the command it restricts every key to.
 umask 022
