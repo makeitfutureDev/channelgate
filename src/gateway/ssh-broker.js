@@ -281,11 +281,41 @@ let active = null;
  * so once and re-check periodically, so enabling SSH access never needs a daemon restart. Never
  * throws and never fails the boot.
  */
+// Is anything LISTENING at this unix socket path right now? The attach directory is one per HOST,
+// not one per runtime root: a second gateway under another CHANNELGATE_DIR (a test daemon from a
+// worktree, a second install) reaches the same path. Deleting whatever sits there before binding —
+// what this used to do unconditionally — silently took SSH access away from the daemon that owned
+// it: its listener survived on an unlinked inode, so every developer's attach got ENOENT while
+// `ss -xl` still showed it listening. So look first, and only ever remove a file nobody serves.
+//   "live"    a peer accepted the connection — leave it alone
+//   "stale"   the file exists but nothing listens (ECONNREFUSED: its owner died) — safe to replace
+//   "absent"  there is no file (ENOENT)
+//   "unknown" anything else (EACCES, a timeout) — never a licence to delete
+// A probe that closes without a header costs the owner nothing: its header deadline drops it,
+// with no refusal event and no log line.
+export function probeUnixSocket(file, { timeoutMs = 1_000 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const socket = net.connect(file);
+    const done = (state) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(state);
+    };
+    const timer = setTimeout(() => done("unknown"), timeoutMs);
+    timer.unref?.();
+    socket.once("connect", () => done("live"));
+    socket.once("error", (error) => done(error?.code === "ECONNREFUSED" ? "stale" : error?.code === "ENOENT" ? "absent" : "unknown"));
+  });
+}
+
 export async function startSshBroker({ dir = sshAccessDir(), log = console, retryMs = 60_000, relayRefreshMs = RELAY_REFRESH_MS, headerTimeoutMs = HEADER_TIMEOUT_MS, ...overrides } = {}) {
   if (active?.server) return active;
   if (!active) {
     active = {
-      server: null, dir, path: path.join(dir, SSH_ATTACH_SOCKET), sessions: new Map(), log, retryTimer: null, warned: false, conns: new Set(),
+      server: null, dir, path: path.join(dir, SSH_ATTACH_SOCKET), sessions: new Map(), log, retryTimer: null, warned: false, warnedOwner: false, conns: new Set(),
       relayRefreshMs, headerTimeoutMs,
       deps: {
         authorize: (header) => authorizeSshAttach(header, overrides.authorizeOptions || {}),
@@ -319,8 +349,22 @@ export async function startSshBroker({ dir = sshAccessDir(), log = console, retr
     if (Buffer.byteLength(state.path) > MAX_SOCKET_PATH_BYTES) throw new Error(`${state.path} exceeds the unix socket path limit`);
     const orphaned = closeOrphanSshSessions("daemon restart");
     if (orphaned) log.log?.(`[ssh] ${orphaned} session record(s) from before the restart closed`);
+    // Before touching anything this daemon shares with other processes — the exported keys, the
+    // socket path — make sure nobody else is already serving it (see probeUnixSocket).
+    const existing = await probeUnixSocket(state.path);
+    if (existing === "live" || existing === "unknown") {
+      if (!state.warnedOwner) {
+        log.warn?.(existing === "live"
+          ? `[ssh] ${state.path} is already served by another process — a second gateway on this host, or a test daemon sharing the attach directory. Leaving it alone: SSH access stays with that process, and this daemon takes over within a minute of it going away.`
+          : `[ssh] could not tell whether ${state.path} is in use — leaving it alone and retrying; SSH access stays off here until it can be checked.`);
+        state.warnedOwner = true;
+      }
+      scheduleRetry();
+      return state;
+    }
+    state.warnedOwner = false;
     const exported = exportHostAuthorizedKeys({ dir });
-    rmSync(state.path, { force: true });
+    if (existing === "stale") rmSync(state.path, { force: true });
     const server = net.createServer((socket) => {
       state.conns.add(socket);
       socket.once("close", () => state.conns.delete(socket));
@@ -375,6 +419,8 @@ export async function stopSshBroker() {
   }
   for (const socket of state.conns) socket.destroy();
   state.conns.clear();
+  // Closing a listening unix server removes its own socket file. There is deliberately no
+  // unlink here: a daemon that never bound the path — setup not done, or another process already
+  // serving it — used to delete that process's live socket on its way out.
   if (state.server) await new Promise((resolve) => state.server.close(resolve));
-  try { rmSync(state.path, { force: true }); } catch { /* best effort */ }
 }

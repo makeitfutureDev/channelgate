@@ -18,6 +18,16 @@ product overview.
 
 ## Unreleased
 
+- Stop a second gateway on the same host from silently switching SSH access off. The attach
+  socket lives in one directory per host, so a gateway under another runtime directory — a second
+  install, or a test daemon started from a worktree — reaches the same path. The daemon used to
+  delete whatever was there before binding, and to delete the path again on shutdown even when it
+  had never bound it; either way the daemon that owned the socket kept listening on a file that no
+  longer existed, so every developer's connection failed while it still looked healthy. It now
+  checks the path first and leaves a socket another process is serving alone, replaces only a
+  file nobody listens on, takes over within a minute if the other process goes away, and no
+  longer removes anything on shutdown except its own socket.
+
 - Stop a hardened host from silently locking every developer out of SSH access. sshd checks
   `AllowUsers`/`AllowGroups`/`DenyUsers`/`DenyGroups` before it looks at any key, and a refusal
   there reads `Permission denied (publickey)` — the same as a wrong key, with nothing in the gateway
