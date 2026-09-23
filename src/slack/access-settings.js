@@ -1,11 +1,14 @@
 // Channel access editor. Personal admin status and gateway-wide settings are never writable here.
-import { canManage, isAuthorized, modeSettingsPatch, channelMode, channelProfile } from "../gateway/modes.js";
+import { canManage, isAuthorized, modeSettingsPatch, channelMode } from "../gateway/modes.js";
 
+// Retained only for a Settings view opened before the access controls moved onto the page itself:
+// the button repaints instead of pushing an editor, and a form left open answers with where its
+// controls went. Nothing builds either of them any more.
 export const ACCESS_EDIT_ACTION_ID = "cg_channel_settings_access_edit";
 export const ACCESS_CALLBACK_ID = "cg_channel_settings_access_form";
-export const ACCESS_MODE_BLOCK_ID = "settings_access_mode";
-const text = (value) => ({ type: "plain_text", text: value });
-const option = (label, value) => ({ text: text(label), value });
+// Every access control now lives on General Settings and saves on its own, so each one needs an
+// action id the settings handler can route (CHANNEL_SETTINGS_ACTION_PATTERN matches the prefix).
+export const ACCESS_FIELD_PREFIX = "cg_channel_settings_access_field_";
 const selects = {
   mode: [["Read-only", "read"], ["Worker", "worker"], ["Admin (full access)", "admin"]],
   access: [["Approved members", "approved"], ["Admins only", "admins"], ["Locked — named users only", "none"]],
@@ -13,6 +16,49 @@ const selects = {
 };
 const labels = { mode: "Mode", access: "Who can use it here", manageAccess: "Who can manage this channel" };
 const flags = [["Auto — automatically approve tool requests", "autoMode"], ["Lean — bare model without skills or connectors", "cleanMode"], ["Network — tell the engine network use is allowed", "allowNetwork"]];
+const userLists = [["allowedUsers", "Guest access — named users"], ["managers", "Named managers (when selected above)"]];
+
+// The catalogs the Settings page renders its rows from. Exported rather than duplicated there so
+// the options a user is offered and the values accessSettingsPatch accepts can never drift.
+export const ACCESS_SELECTS = Object.freeze(Object.fromEntries(
+  Object.entries(selects).map(([field, choices]) => [field, Object.freeze(choices.map(([label, value]) => Object.freeze({ label, value })))]),
+));
+export const ACCESS_FLAGS = Object.freeze(flags.map(([label, key]) => Object.freeze({ label, key })));
+export const ACCESS_USER_LISTS = Object.freeze(userLists.map(([field, label]) => Object.freeze({ field, label })));
+export const ACCESS_LABELS = Object.freeze({ ...labels });
+export const ACCESS_FIELDS = Object.freeze([...Object.keys(selects), "flags", ...userLists.map(([field]) => field)]);
+
+// Which access control dispatched, or "" for anything else on the page.
+export function accessFieldTarget(actionId) {
+  const id = String(actionId || "");
+  if (!id.startsWith(ACCESS_FIELD_PREFIX)) return "";
+  const field = id.slice(ACCESS_FIELD_PREFIX.length);
+  return ACCESS_FIELDS.includes(field) ? field : "";
+}
+
+// One control's payload as the form fragment accessSettingsPatch validates. Only the field that
+// dispatched is read: the rest of the form comes from the stored record, so a control repainted
+// from a stale view cannot resubmit its own stale neighbours. The checkbox group reports its WHOLE
+// selection, which is what makes an unchecked box a false rather than a missing key.
+export function readAccessFieldValue(field, action = {}) {
+  if (Object.hasOwn(selects, field)) {
+    const value = action?.selected_option?.value;
+    if (!selects[field].some(([, choice]) => choice === value)) throw new Error(`Invalid ${labels[field]}.`);
+    return { [field]: value };
+  }
+  if (field === "flags") {
+    const chosen = action?.selected_options;
+    if (!Array.isArray(chosen)) throw new Error("Access option is incomplete. Reopen Settings and try again.");
+    if (chosen.some((entry) => !flags.some(([, key]) => key === entry.value))) throw new Error("Unknown access option.");
+    return Object.fromEntries(flags.map(([, key]) => [key, chosen.some((entry) => entry.value === key)]));
+  }
+  if (userLists.some(([name]) => name === field)) {
+    const selected = action?.selected_users;
+    if (!Array.isArray(selected)) throw new Error("Access option is incomplete. Reopen Settings and try again.");
+    return { [field]: selected };
+  }
+  throw new Error("Unknown access control.");
+}
 
 export function accessSettingsSnapshot(meta = {}) {
   return {
@@ -27,53 +73,6 @@ export function assertAccessManager(meta, actor) {
   if (meta.isDM || !isAuthorized(meta, actor.authorId, false, actor) || !canManage(meta, actor)) {
     throw new Error("Only admins and current channel managers can change access settings.");
   }
-}
-
-export function buildAccessEditorView(meta, privateMetadata) {
-  const current = accessSettingsSnapshot(meta);
-  const flagOptions = flags.map(([label, value]) => option(label, value));
-  const initialFlags = flagOptions.filter((entry) => current[entry.value]);
-  return {
-    type: "modal", callback_id: ACCESS_CALLBACK_ID, private_metadata: privateMetadata,
-    title: text("Channel access"), submit: text("Save"), close: text("Cancel"),
-    blocks: [
-      { type: "section", text: { type: "mrkdwn", text: "Changes apply to this channel's next runs. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access also exposes the gateway home to this channel. Network is advisory; the container stays on its bridge network." } },
-      ...Object.entries(selects).map(([key, choices]) => {
-        const options = choices.map(([label, value]) => option(label, value));
-        return { type: "input", block_id: `settings_access_${key}`, label: text(labels[key]), element: {
-          type: "static_select", action_id: key, options,
-          initial_option: options.find((entry) => entry.value === current[key]) || options[0],
-        } };
-      }),
-      { type: "input", block_id: "settings_access_flags", optional: true, label: text("Special modes & network"), element: {
-        type: "checkboxes", action_id: "flags", options: flagOptions,
-        ...(initialFlags.length ? { initial_options: initialFlags } : {}),
-      } },
-      ...[["allowedUsers", "Guest access — named users"], ["managers", "Named managers (when selected above)"]].map(([key, label]) => ({
-        type: "input", block_id: `settings_access_${key}`, optional: true, label: text(label),
-        hint: text("Select current human members of this channel. Membership is checked when you save."),
-        element: { type: "multi_users_select", action_id: key, max_selected_items: 100,
-          ...(current[key].length ? { initial_users: current[key] } : {}),
-        },
-      })),
-    ],
-  };
-}
-
-export function readAccessForm(view = {}) {
-  const values = view.state?.values || {};
-  const form = {};
-  for (const key of Object.keys(selects)) form[key] = values[`settings_access_${key}`]?.[key]?.selected_option?.value;
-  const chosen = values.settings_access_flags?.flags?.selected_options;
-  if (!Array.isArray(chosen)) throw new Error("Access form is incomplete. Reopen Settings and try again.");
-  if (chosen.some((entry) => !flags.some(([, key]) => key === entry.value))) throw new Error("Unknown access option.");
-  for (const [, key] of flags) form[key] = chosen.some((entry) => entry.value === key);
-  for (const key of ["allowedUsers", "managers"]) {
-    const selected = values[`settings_access_${key}`]?.[key];
-    if (!selected || !Array.isArray(selected.selected_users)) throw new Error("Access form is incomplete. Reopen Settings and try again.");
-    form[key] = selected.selected_users;
-  }
-  return form;
 }
 
 // Validate both UI values and the latest policy inside the metadata transaction. A stale editor
@@ -95,9 +94,4 @@ export function accessSettingsPatch(meta, form, actor) {
     allowedUsers: [...new Set(form.allowedUsers)], managers: [...new Set(form.managers)],
   };
   return patch;
-}
-
-export function accessSummary(meta) {
-  const current = accessSettingsSnapshot(meta);
-  return `*Mode:* ${channelProfile(meta)}\n*Auto:* ${current.autoMode ? "on" : "off"} · *Lean:* ${current.cleanMode ? "on" : "off"} · *Network:* ${current.allowNetwork ? "on" : "off"}\n*Who can use:* ${current.access} · *Who can manage:* ${current.manageAccess}\n*Named users:* ${current.allowedUsers.length} · *Named managers:* ${current.managers.length}`;
 }

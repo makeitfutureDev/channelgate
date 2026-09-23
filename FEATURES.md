@@ -400,13 +400,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   so historic controls cannot retain revoked access. Cloud MCP actions additionally re-check admin
   status. Secrets can be edited in every channel mode, including through `/secrets`; file-edit
   permissions and the separate `/model` command policy are unchanged.
-  The **Access** section of that page is manager-only — its summary and *Change access settings*
-  button render only for current admins/channel managers, and everyone else sees a line saying so
-  while keeping the rest of the page. Managers can edit the
-  base mode (including Admin/full access), Auto, Lean, network, use/manage policy and named guest/manager lists. Selecting
+  The **Access** section of that page is manager-only — its controls render only for current
+  admins/channel managers, and everyone else sees a line saying so while keeping the rest of the
+  page. They are live controls on the page, not a summary behind a button into a pushed form: a
+  **Mode** select (including Admin/full access), an **Auto / Lean / Network** checkbox group, a
+  **Who can use it here** and a **Who can manage this channel** select, and two member pickers for
+  named guests and named managers. Each one saves the moment it is changed, the same in-place rule
+  the engine and model rows follow. Selecting
   Full access does not grant anyone an administrator role; bypass still requires an admin author.
-  Saves acknowledge immediately with a progress view, validate named users against live human
-  channel membership, re-check management and roles at the write boundary, and audit policy changes.
+  One dispatch describes exactly ONE field — the rest of the policy is read back from the stored
+  record, so a repainted neighbour can never resubmit a stale value — and every save keeps the
+  guarantees the submitted form had: the channel-membership lock, named users validated against
+  live human channel membership, management and roles re-checked at the write boundary, and audited
+  policy changes. A rejected value writes nothing at all.
   The **Network & VPN** section below it states the channel's network policy and the VPN's real
   state, with the on/off controls still gated to admins and channel managers. A conversation with
   no provisioned VPN service is answered from metadata alone — no status helper runs, and the row

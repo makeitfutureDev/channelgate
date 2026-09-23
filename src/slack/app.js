@@ -74,7 +74,7 @@ import {
   CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_URL_BLOCK_ID,
   CONNECTION_TOOLBOX_BLOCK_ID, TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
-import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, ACCESS_MODE_BLOCK_ID, buildAccessEditorView, readAccessForm, accessSettingsPatch, assertAccessManager } from "./access-settings.js";
+import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, readAccessFieldValue } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 // The two scopes that are not the channel's (config/scoped-env.js).
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../config/scoped-env.js";
@@ -911,34 +911,13 @@ async function patchAuditedChannelSettings(entry, actor, patch) {
   return after;
 }
 
-export async function handleAccessSettingsSubmission({ ack, body, view, client }, { save = saveAccessSettings, rootView = settingsRootView } = {}) {
-  let state;
-  let form;
-  const clicker = body?.user?.id;
-  try {
-    state = parseEditorMetadata(view?.private_metadata);
-    if (!clicker || state.ownerId !== clicker || state.view !== "access") throw new Error("This access editor expired. Open your own Settings.");
-    form = readAccessForm(view);
-  } catch (error) {
-    await ack({ response_action: "errors", errors: { [ACCESS_MODE_BLOCK_ID]: String(error.message).slice(0, 150) } });
-    return;
-  }
-  // Consume Slack's three-second submission window before any membership API calls or locks.
-  await ack({ response_action: "update", view: {
-    type: "modal", title: { type: "plain_text", text: "Channel access" },
-    close: { type: "plain_text", text: "Close" },
-    blocks: [{ type: "section", text: { type: "plain_text", text: "Checking channel membership and saving access settings…" } }],
-  } });
-  try {
-    const { entry, saved, userIsAdmin } = await save(client, state, clicker, form);
-    await client.views.update({ view_id: view.id, view: await rootView(entry, saved, { ...state, tab: "general" }, userIsAdmin, {
-      notice: "✅ Channel access settings saved. Changes apply to the next run.",
-    }) });
-  } catch (error) {
-    await client.views.update({ view_id: view.id, view: buildChannelSettingsErrorView(
-      `${error.message || "Couldn't finish updating access settings."} Reopen Settings to check the current values and try again.`,
-    ) }).catch(() => {});
-  }
+// The access form was a pushed modal until its controls moved onto General Settings itself. One
+// left open across that deploy still submits here: answer it with where the controls went rather
+// than saving a form nothing builds any more, or leaving the submit unhandled.
+export async function handleAccessSettingsSubmission({ ack }) {
+  await ack({ response_action: "update", view: buildChannelSettingsErrorView(
+    "Channel access settings now live on the Settings page itself. Reopen ⚙️ Settings → General Settings to change them — each control there saves on its own.",
+  ) });
 }
 
 // Serialize with member-left cleanup, verify selected humans, then re-read authorization and
@@ -1443,11 +1422,6 @@ async function connectAndWire(app) {
       let { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
         channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
         cloudMcp: actionId.startsWith("cg_channel_settings_cloud_"),
-        // Opening the page that HOLDS the access summary is not itself a manager action: the
-        // summary is rendered only for a manager (canEditAccess), and the editor below still
-        // asserts. Requiring management to read General Settings would lock every ordinary
-        // authorized user out of their own engine, model and network rows.
-        accessSettings: actionId === ACCESS_EDIT_ACTION_ID,
       });
       // The hash guards against replacing a view the user has already moved past. The runtime
       // dropdowns opt out: picking engine then model in quick succession makes the second click
@@ -1473,10 +1447,25 @@ async function connectAndWire(app) {
       }
 
       if (actionId === ACCESS_EDIT_ACTION_ID) {
-        await client.views.push({
-          trigger_id: requireTrigger(),
-          view: buildAccessEditorView(meta, editorMetadata(state, { view: "access" })),
-        });
+        // Compatibility with a Settings view opened before the access controls moved onto the
+        // page: repaint it, and the controls are simply there.
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general" }));
+        return;
+      }
+
+      // One access control changed. Only the field that dispatched is taken from the payload; the
+      // rest of the form is read back from the stored record, so a repainted neighbour can never
+      // resubmit a stale value. saveAccessSettings still owns the whole guarantee — the membership
+      // lock, live human-member validation for named users, and a management re-check at the write
+      // boundary — exactly as it did when a submitted form called it.
+      const accessField = accessFieldTarget(actionId);
+      if (accessField) {
+        const form = { ...accessSettingsSnapshot(meta), ...readAccessFieldValue(accessField, action) };
+        const saved = await saveAccessSettings(client, state, clicker, form);
+        await updateCurrent(await settingsRootView(saved.entry, saved.saved, { ...state, tab: "general" }, saved.userIsAdmin, {
+          tab: "general",
+          notice: "✅ Access settings saved. They apply to this channel's next run.",
+        }), { guardHash: false });
         return;
       }
 
