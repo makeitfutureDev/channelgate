@@ -158,6 +158,9 @@ test("the root installer finds node without relying on root's PATH, copies it be
   assert.match(script, /install -m 0755 -o root -g root "\$NODE_SRC" "\$NODE_BIN"/, "node is copied root-owned beside the wrapper");
   assert.match(script, /NODE_BIN="\$LIB_DIR\/node"/, "the attach command uses the copy, not the operator's private install");
   assert.match(script, /runuser -u "\$SSH_USER" -- "\$NODE_BIN" -e "process\.exit\(0\)"/, "the login account is proven able to execute it before sshd is configured");
+  assert.match(script, /ssh-keyscan -p "\$SSH_PORT" -t ed25519 "\$SSH_HOST"/, "the advertised endpoint is probed");
+  assert.match(script, /answers with a different SSH host key[\s\S]*exit 1/, "an address that reaches another server is fatal");
+  assert.match(script, /Cloudflare/, "a proxied web hostname is called out as the usual mistake");
   const parsed = spawnSync("bash", ["-n", new URL("../scripts/install-ssh-access.sh", import.meta.url).pathname], { encoding: "utf8" });
   assert.equal(parsed.status, 0, parsed.stderr);
 });

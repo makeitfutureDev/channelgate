@@ -155,5 +155,21 @@ fi
 if command -v systemctl >/dev/null; then
   systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || echo "⚠ reload the SSH service by hand (systemctl reload ssh)"
 fi
+# Prove the advertised address actually lands on THIS sshd: a web hostname behind an HTTP proxy
+# (Cloudflare) or a NAT port that forwards elsewhere would hand developers a block that hangs or
+# reaches a stranger. Compare the host key that answers with this machine's own. No answer is only a
+# warning (hairpin NAT and firewalls often refuse a self-connection); a DIFFERENT key is fatal.
+if command -v ssh-keyscan >/dev/null && [ -r /etc/ssh/ssh_host_ed25519_key.pub ]; then
+  local_fp="$(ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $2}')"
+  remote_fp="$(timeout 10 ssh-keyscan -p "$SSH_PORT" -t ed25519 "$SSH_HOST" 2>/dev/null | ssh-keygen -lf - 2>/dev/null | awk '{print $2}' || true)"
+  if [ -z "$remote_fp" ]; then
+    echo "⚠ $SSH_HOST:$SSH_PORT did not answer an SSH probe from this host. If developers can reach this machine's sshd there (NAT hairpin often fails from inside), ignore this; if $SSH_HOST is a web address behind an HTTP proxy such as Cloudflare, SSH will NEVER arrive here — rerun with CG_SSH_HOST=<address> CG_SSH_PORT=<port> that reach this machine's sshd."
+  elif [ "$remote_fp" != "$local_fp" ]; then
+    echo "❌ $SSH_HOST:$SSH_PORT answers with a different SSH host key ($remote_fp) than this machine ($local_fp) — that address reaches ANOTHER server. Rerun with the CG_SSH_HOST / CG_SSH_PORT developers use to SSH into this machine."
+    exit 1
+  else
+    echo "→ verified: $SSH_HOST:$SSH_PORT reaches this machine's sshd"
+  fi
+fi
 echo "✅ SSH access enabled: developers connect through $SSH_USER@$SSH_HOST${SSH_PORT:+:$SSH_PORT} (attach dir $SSH_DIR, daemon account $SERVICE_USER)"
 echo "   The daemon binds $SSH_DIR/attach.sock within a minute. Register keys and grants from Slack (docs/SSH-ACCESS.md)."
