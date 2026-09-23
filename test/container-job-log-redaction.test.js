@@ -70,7 +70,9 @@ test("log is redacted while detached work outlives its launcher and keeps a reco
       // is already complete then; kill(pid, 0) would incorrectly keep waiting for that zombie.
       return !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0]);
     } catch (err) {
-      if (err.code === "ENOENT") return false;
+      // Both mean the process is gone: ENOENT when /proc/<pid> was already reaped, ESRCH when it
+      // exited between the open() and the read() — a window a loaded, parallel suite does hit.
+      if (err.code === "ENOENT" || err.code === "ESRCH") return false;
       throw err;
     }
   };
