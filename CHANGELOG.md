@@ -16,7 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## 0.5.3 — 2026-09-24
 
 - Slack ⚙️ Settings: the VPN moved out of its own **Network & VPN** section and onto the row right
   under the Auto/Lean/**Network** switches it belongs to — `VPN — On / Off / Not configured` plus
