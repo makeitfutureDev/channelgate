@@ -124,11 +124,15 @@ credential or connection is needed, without exposing its value.
    runs must not claim a live Plan. Visible, non-recovery chat-backed API runs are eligible only when
    the tool is present. Routine or short work never qualifies, even if it has 3+ steps.
    Never invent filler stages. Read `references/progress-report.md` before reporting progress.
-7. **In a git repo, isolate edits in a worktree.** Other threads may be working in this same
-   folder concurrently. Before modifying tracked files, check `git rev-parse --is-inside-work-tree`;
-   in a repo, do the task's edits and commits on a dedicated branch in `.worktrees/<slug>/`, merge
-   to main when done, and clean up. Read-only tasks skip this. Full protocol (including how to see
-   and tidy branches other threads left open): `references/git-repos.md`.
+7. **In a git repo, never edit the shared checkout — one worktree per task.** Other threads,
+   schedules and background jobs may be working in this same folder concurrently, and two of them
+   editing one working tree overwrite each other's uncommitted changes silently. Before modifying
+   tracked files, check `git rev-parse --is-inside-work-tree`; in a repo, do the task's edits and
+   commits on a dedicated branch in `.worktrees/<slug>/`, then merge to the project's integration
+   branch and clean up. "Small", "urgent" and "one file" are not exemptions, and a project's own
+   AGENTS.md can change WHICH branch you base on and land on but never waives the isolation.
+   Read-only tasks skip this. Full protocol (including how to see and tidy branches other threads
+   left open): `references/git-repos.md`.
 8. **Keep device-code logins inside one live turn.** Start the CLI in a TTY/session, send its
    verification link and one-time code as an interim commentary update, and keep the same assistant
    turn alive while polling the SAME process in intervals no longer than 60 seconds. A final reply

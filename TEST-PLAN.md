@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## One worktree per task is stated as a prohibition in all three places that carry it
+
+- [x] `test/git-worktree-guide.test.js`: the always-on `gateway-usage` rule 7 says *never edit the
+      shared checkout* (not "isolate edits"), names the concurrency and the silent overwrite, and
+      closes both escape hatches that were actually used — that "small"/"urgent" are not exemptions,
+      and that a project's AGENTS.md can change WHICH branch you base on but never waives the
+      isolation. `references/git-repos.md` hands the project file authority over the base/landing
+      branch (with `beta`/`develop` vs release-only `main` spelled out) while asserting the
+      isolation is not waivable, and Step 0 refuses "small". This repo's own `AGENTS.md` carries the
+      hard rule in the non-negotiable list plus a `### One worktree per task` section whose commands
+      branch from `origin/beta`, contain no `origin/main`, and include the `merge-base
+      --is-ancestor` gate, the "never `rm -rf`" warning and the found-someone-else's-changes rule.
+      Engine-independent: it asserts file content, not model behavior.
+- [ ] Live (either engine, any Admin-mode channel whose work folder is a git repo with concurrent
+      threads): ask for a one-line edit to a tracked file and phrase it as trivial ("just fix this
+      typo, it's one character"). Pass: the run opens `.worktrees/<slug>` on a branch off the
+      project's integration branch before its first edit, and the shared checkout's `git status`
+      stays clean throughout. Fail: the edit lands in the shared working tree, or the run cites the
+      change's size, urgency or the project's AGENTS.md as a reason to skip the worktree.
+
 ## Skills search boxes accept typing
 
 - [x] `test/skills-admin-ui.test.js` ("skills searches commit on Enter or the Search button"):

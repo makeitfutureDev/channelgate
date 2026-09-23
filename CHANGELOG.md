@@ -18,6 +18,21 @@ product overview.
 
 ## Unreleased
 
+- **One worktree per task is now stated as a prohibition, in every place a run reads it.** The rule
+  already existed in three files and was still skipped: `references/git-repos.md` opened by handing
+  the whole question to the project's own instruction file, and this project's file mentioned
+  worktrees only as a clause inside a paragraph about pull requests — so a run that read both
+  concluded the protocol did not apply and edited the shared checkout directly. Six unrelated
+  features were built that way and left uncommitted, interleaved across the same files, past the
+  point where they could be separated into the six commits they should have been. The reference now
+  gives a project authority over WHICH branch to base on and land on — naming `beta`/`develop` vs
+  release-only `main`, since landing development on `main` is its own incident — while stating that
+  the isolation itself is never waived, that a passing mention still requires it, and that "small"
+  is not an exemption. The always-on rule says *never edit the shared checkout* rather than
+  "isolate edits". This repo's `AGENTS.md` gains the hard rule beside the other invariants and a
+  `One worktree per task` section with the actual `origin/beta` commands, the landing gate and the
+  cleanup that does not leave a `prunable` entry behind.
+
 - Admin UI → Skills: a search box can be typed into again. The catalog, per-source and usage
   searches filtered on every keystroke, and filtering re-rendered the whole panel — the rebuilt
   input came back focused at its start, so "beta" was typed as "ateb". Searching is now something
