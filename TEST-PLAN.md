@@ -125,7 +125,11 @@
       channelgate-testing` (account appended, every existing user still admitted, one line after a
       rerun); no allow-list (no line added, nobody restricted); `AllowGroups` only; `AllowUsers` plus
       `AllowGroups` (both appended); an existing `channelgate-*` glob (nothing added); `DenyUsers` of
-      the account (exit 1, names the grep). Reproduced red against the pre-fix installer: the
+      the account (exit 1, names the grep). A seventh live case runs the installer as a first
+      install with an explicit endpoint, then bare, then with only `CG_SSH_PORT`: the bare rerun keeps
+      `host:port`, both keeps are announced, an explicit port wins while the host is kept, and only a
+      first install falls back to `hostname:22` — red before the fix (`<hostname>:22` after the bare
+      rerun). Reproduced red against the pre-fix installer: the
       AllowUsers, AllowGroups and deny cases fail, the two "nothing to add" cases pass either way.
       Engine-independent: host sshd configuration, no engine involved.
 - [ ] Live on the gateway host: with `AllowUsers` excluding the login account, rerun the installer

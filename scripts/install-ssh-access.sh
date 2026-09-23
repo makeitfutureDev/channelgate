@@ -38,8 +38,10 @@ id "$SERVICE_USER" >/dev/null 2>&1 || { echo "Service account $SERVICE_USER does
 [ "$(id -u "$SERVICE_USER")" -ne 0 ] || { echo "The daemon account must not be root"; exit 1; }
 SSH_USER="${CG_SSH_USER:-channelgate-ssh}"
 SSH_DIR="${CG_SSH_DIR:-/var/lib/channelgate-ssh}"
-SSH_HOST="${CG_SSH_HOST:-$(hostname -f 2>/dev/null || hostname)}"
-SSH_PORT="${CG_SSH_PORT:-22}"
+# Resolved below, once node is known: explicit CG_SSH_HOST/CG_SSH_PORT, else what an earlier run
+# recorded in endpoint.json, else this machine's hostname and port 22.
+SSH_HOST="${CG_SSH_HOST:-}"
+SSH_PORT="${CG_SSH_PORT:-}"
 LIB_DIR="/usr/local/lib/channelgate"
 # Node for the attach wrapper. Root's sudo PATH (secure_path) rarely contains a per-user Node
 # install, so look where the daemon actually finds it: the invoking user's and the service
@@ -70,6 +72,25 @@ NODE_SRC="$(readlink -f "$NODE_SRC")"
 NODE_BIN="$LIB_DIR/node"
 echo "→ node: $NODE_SRC → $NODE_BIN"
 case "$SSH_USER" in *[!a-zA-Z0-9_-]*|"") echo "Invalid login account name"; exit 1;; esac
+# A rerun must not undo a corrected endpoint. The header promises reruns are safe, and the
+# troubleshooting guide sends operators back here; with only hostname/22 as defaults, a bare rerun
+# silently re-advertised the gateway's web hostname — the Cloudflare mistake the endpoint was
+# corrected away from — and every developer connection hung again. So an unset value keeps what
+# endpoint.json already says, and hostname/22 apply only to a first install.
+if [ -z "$SSH_HOST" ] || [ -z "$SSH_PORT" ]; then
+  prev_host=""; prev_port=""
+  if [ -r "$SSH_DIR/endpoint.json" ]; then
+    read -r prev_host prev_port < <("$NODE_SRC" -e '
+      try {
+        const e = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(`${String(e.host || "")} ${Number.isInteger(e.port) ? e.port : ""}\n`);
+      } catch { process.stdout.write("\n"); }' "$SSH_DIR/endpoint.json" 2>/dev/null || true) || true
+  fi
+  if [ -z "$SSH_HOST" ] && [ -n "$prev_host" ]; then SSH_HOST="$prev_host"; echo "→ keeping the configured endpoint host $SSH_HOST (set CG_SSH_HOST to change it)"; fi
+  if [ -z "$SSH_PORT" ] && [ -n "$prev_port" ]; then SSH_PORT="$prev_port"; echo "→ keeping the configured endpoint port $SSH_PORT (set CG_SSH_PORT to change it)"; fi
+  SSH_HOST="${SSH_HOST:-$(hostname -f 2>/dev/null || hostname)}"
+  SSH_PORT="${SSH_PORT:-22}"
+fi
 case "$SSH_HOST" in *[!a-zA-Z0-9_.:-]*|"") echo "Invalid CG_SSH_HOST"; exit 1;; esac
 case "$SSH_PORT" in *[!0-9]*|"") echo "Invalid CG_SSH_PORT"; exit 1;; esac
 for value in "$SSH_DIR" "$NODE_BIN"; do
