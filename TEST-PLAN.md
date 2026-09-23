@@ -224,6 +224,15 @@
 - [x] Reproduced red before the fix: with `src/gateway/run.js` at the pre-fix revision the
       Codex→Claude case fails on `mcp=no` and the clean case fails because no config file was
       written at all; the Claude→Codex guard passes either way.
+- [x] Live finding (0.5.3 acceptance): a Codex→Claude failover turn streamed Claude's answer under
+      no notice, because the failover note lived only on `content`. `test/fallback-spawn-contract.test.js`
+      now requires the failover to ANNOUNCE exactly one `answer_note` naming "Codex hit its usage
+      limit … using Claude" before the fallback produces output, with `content` starting with the
+      same sentence; `test/slack-progress.test.js` requires several streamed notes each delivered once
+      when `content` orders them differently, on the tool-only path too, and a streamed note that
+      `content` never carries kept once with nothing lost. Red against the pre-fix `run.js` and
+      `progress.js`. The cross-engine model-substitution test now expects the failover note first,
+      then the model note.
 - [ ] Live acceptance, both directions: in a private non-clean fixture channel whose engine is
       Codex, exhaust or simulate the Codex usage limit so the turn fails over to Claude, then ask
       the agent to list its available `mcp__gateway__*` tools and to run `search_channel_memory`.

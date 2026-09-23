@@ -629,6 +629,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   engines, unsupported network policy, or adapters without confinement and health compilers.
 - Claude pooling and Codex execution/MCP policy run behind adapters; fallback routing is a directed
   registry graph, and every registered CLI receives a boot version/readiness probe.
+- Gateway notices about a turn — the failover line, the license allowance warning, a skipped MCP
+  connection, a substituted model — are announced to the delivery layer before the answering
+  engine spawns (`announceAnswerNote`), so a streamed Slack answer leads with them instead of
+  losing them to `content`, which only non-streaming surfaces render. Delivery subtracts each
+  streamed note from what is still owed individually, so a note is shown once whatever order the
+  orchestrator assembled `content` in. → TEST-PLAN: Cross-engine failover spawn contract.
 - A cross-engine failover spawns the fallback harness under the same contract the primary would
   have received: its own reminted MCP payload materialized for its own transport (a file for
   Claude/Qwen, argv overrides for Codex), the channel permission lockdown, and the approval-prompt
