@@ -507,6 +507,19 @@ editor lease until that VS Code window closes, preventing idle or capacity evict
 terminal is user `agent` with the same persistent `/home/agent`, so its installed tools, GitHub and
 provider CLI logins, Claude history, and Codex history are the channel's own existing state.
 
+The VS Code server itself is not downloaded into the channel. The image carries one read-only copy
+of each pinned version (`containers/versions.json` → `vscodeServers`, currently 1.139.0 and
+1.138.0) under `/opt/channelgate/vscode-server`, and every container start links it into
+`~/.vscode-server` — the attach layout (`bin/<commit>`) and the Remote-SSH layout
+(`cli/servers/Stable-<commit>/server`, `code-<commit>`) alike — so an editor attach costs the volume
+a few kilobytes instead of ~650 MB. A client on a version that is not pinned downloads its own server
+into the volume exactly as before. To bump: add the new release's commit and VS Code's published
+`sha256hash` values from `https://update.code.visualstudio.com/api/versions/commit:<commit>/server-linux-x64/stable`
+and `…/cli-alpine-x64/stable`, drop the oldest, and rebuild; a mismatched download fails the build.
+A channel opts out with `touch ~/.vscode-server/.cg-no-shared-server` inside its container. Servers a
+client downloaded into a volume before this are left where they are — they show up in the storage
+report as reclaimable, and nothing deletes them automatically.
+
 Codex uses the same shared login file already mounted for chat turns. Claude's rotating credential
 file is still never copied or mounted: the helper refreshes the gateway's normal subscription
 access-token relay every 20 minutes and exposes only that access token to interactive `claude`

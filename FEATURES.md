@@ -2327,6 +2327,21 @@ are retired, bullet by bullet; everything else stands.
   is replaced, the exported keys are written only by the daemon that owns the socket, and
   shutdown removes nothing but this daemon's own socket. → TEST-PLAN: Container runtime (v0.8
   P1); SSH installer admits the login account; SSH attach socket ownership.
+- **One VS Code server per version for the whole host, not one per channel** (image spec 1.5.0).
+  VS Code's remote extensions install a ~620 MB server plus a 34 MB CLI per client version into
+  `~/.vscode-server`, which is the per-channel HOME volume, so every channel an editor was opened in
+  carried its own copy. The image carries the pinned versions (`containers/versions.json` →
+  `vscodeServers`: 1.139.0 and 1.138.0) once, root-owned and read-only under
+  `/opt/channelgate/vscode-server/<commit>/{server,cli/code}`, each download checked against VS
+  Code's own published SHA-256 and its `product.json` commit, a mismatch failing the build.
+  `cg-init` links them into the volume on every start in both layouts VS Code looks for —
+  attach-container `bin/<commit>` and Remote-SSH `cli/servers/Stable-<commit>/server` +
+  `code-<commit>` (the CLI's own `log.txt`/`pid.txt` stay in the writable `Stable-<commit>` dir) — so
+  an attach costs the volume kilobytes; the server's state still goes to the channel's own
+  `~/.vscode-server/data`. It never replaces an install already in the volume, removes only a link
+  it made that no longer resolves (a newer image dropped that version), and skips a channel that
+  created `~/.vscode-server/.cg-no-shared-server`. An unpinned client version downloads its own
+  server exactly as before. → TEST-PLAN: Shared VS Code servers.
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch

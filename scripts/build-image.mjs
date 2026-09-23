@@ -188,6 +188,8 @@ function main() {
     "--build-arg", `SUPABASE_VERSION=${npmPins.supabase}`,
     "--build-arg", `PLAYWRIGHT_VERSION=${npmPins.playwright}`,
     "--build-arg", `AGENT_BROWSER_VERSION=${npmPins["agent-browser"]}`,
+    // commit:serverSha256:cliSha256 per shared VS Code server; the Containerfile verifies each download.
+    "--build-arg", `VSCODE_SERVERS=${(versions.vscodeServers || []).map((v) => `${v.commit}:${v.serverSha256}:${v.cliSha256}`).join(" ")}`,
     "--build-arg", `OPENCV_VERSION=${versions.python?.["opencv-python-headless"]}`,
     "--build-arg", `FASTER_WHISPER_VERSION=${versions.python?.["faster-whisper"]}`,
     "--build-arg", `WHISPER_MODEL=${versions.whisperModel}`,

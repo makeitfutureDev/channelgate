@@ -94,6 +94,32 @@
 - [ ] Live acceptance, negative: in an Admin channel whose container mounts the operator home, ask
       for a public link to a file under that mounted home (outside the channel's working folder).
       Require a refusal, and require `list_public_file_links` to show nothing new.
+## Shared VS Code servers
+
+- [x] `test/container-image.test.js` (always runs): every `vscodeServers` entry has a semver
+      version, a 40-hex commit and 64-hex server/CLI SHA-256s, no duplicates; the build passes
+      `commit:serverSha256:cliSha256`; the Containerfile verifies both hashes with `sha256sum -c`,
+      checks `product.json`'s commit and both executables, makes the tree `a+rX,go-w`, and sits above
+      the helper `COPY`; `cg-init` guards every link with an existence check, removes only its own
+      dangling links into the shared tree, never runs `rm -rf`, honors `.cg-no-shared-server` and
+      still ends in `exec "$@"`.
+- [x] `test/vscode-shared-server.live.test.js` (`CG_LIVE_CONTAINER=1`): in a fresh volume, as `agent`,
+      all versions are linked in all three layouts, each pinned CLI reports its own version and
+      commit, the volume stays under 1 MB, the shared read-only server starts and `GET /version`
+      returns its commit with no write errors, its state lands in the volume, `/opt` is not writable,
+      a second start changes nothing, a dangling link is removed, a real install is preserved, and
+      the opt-out marker suppresses every link. Red against the 1.4.0 image (no links). The seeded
+      Remote-SSH layout was also compared with a real client-made install on the host
+      (`cli/servers/Stable-<commit>/server/{bin,node,out,…}` + `code-<commit>`): identical.
+      Engine-independent: editor infrastructure in the image, no engine involved.
+- [ ] Live, a real client on a pinned version (1.139.0 or 1.138.0): open a channel with VS Code
+      Remote-SSH (the `show_channel_ssh` block) and separately with `npm run vscode -- <channel>`.
+      Require that the Remote-SSH output log shows no server download for that commit, that the
+      window opens the channel's work folder as `agent`, and that the channel's `~/.vscode-server`
+      stays in the kilobytes (`du -sh` inside the container) apart from `data/` and any extensions
+      the user installs. Repeat with a client on an unpinned version and require that it still
+      connects, downloading its own server into the volume.
+
 ## SSH attach socket ownership
 
 - [x] `test/ssh-broker.test.js` drives a genuinely separate process holding the attach socket (the
