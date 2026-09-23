@@ -2,7 +2,7 @@
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { ACCESS_EDIT_ACTION_ID, accessSummary } from "./access-settings.js";
+import { ACCESS_FIELD_PREFIX, ACCESS_FLAGS, ACCESS_LABELS, ACCESS_SELECTS, ACCESS_USER_LISTS, accessSettingsSnapshot } from "./access-settings.js";
 import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
 import { buildSecretsView } from "./secret-explorer.js";
@@ -451,12 +451,57 @@ function networkBlocks(snapshot, state, { canManageVpn }) {
   ];
 }
 
+// The channel's access policy as live controls rather than a summary plus a button into a pushed
+// form. Every row saves on its own the moment it is changed — the same in-place rule the engine
+// and model rows follow — because reaching mode, guests or managers used to cost opening a second
+// modal, filling a whole form and submitting it, for what is usually one deliberate change. The
+// controls cannot be `input` blocks (Slack rejects those in a modal with no submit button), so
+// each one is a section accessory or an actions row that dispatches on change.
+function accessControlBlocks(access = {}) {
+  const current = accessSettingsSnapshot(access);
+  const flagOptions = ACCESS_FLAGS.map((flag) => option(flag.label, flag.key));
+  const chosen = flagOptions.filter((entry) => current[entry.value]);
+  return [
+    ...Object.entries(ACCESS_SELECTS).map(([field, choices]) => selectRow({
+      label: ACCESS_LABELS[field],
+      actionId: `${ACCESS_FIELD_PREFIX}${field}`,
+      options: choices.map((choice) => ({ ...choice })),
+      initialValue: current[field],
+    })),
+    { type: "section", text: mrkdwn("*Special modes & network*") },
+    {
+      type: "actions",
+      block_id: `${ACCESS_FIELD_PREFIX}flags_row`,
+      elements: [{
+        type: "checkboxes",
+        action_id: `${ACCESS_FIELD_PREFIX}flags`,
+        options: flagOptions,
+        // Slack rejects an empty initial_options array, so an all-off channel simply omits it.
+        ...(chosen.length ? { initial_options: chosen } : {}),
+      }],
+    },
+    ...ACCESS_USER_LISTS.map(({ field, label }) => ({
+      type: "section",
+      block_id: `${ACCESS_FIELD_PREFIX}${field}_row`,
+      text: mrkdwn(`*${label}*`),
+      accessory: {
+        type: "multi_users_select",
+        action_id: `${ACCESS_FIELD_PREFIX}${field}`,
+        placeholder: plain("Current channel members"),
+        max_selected_items: 100,
+        ...(current[field].length ? { initial_users: current[field] } : {}),
+      },
+    })),
+    { type: "context", elements: [mrkdwn("Each control saves on its own and applies to this channel's next runs. Named users are checked against live channel membership when they are saved. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access also exposes the gateway home to this channel. Network is advisory; the container stays on its bridge network.")] },
+  ];
+}
+
 // Everything that decides HOW this conversation runs, on one page: its mode and Auto/Lean
 // switches, the engine/model scopes, who may use and manage it, and its network/VPN posture.
 // These were three tabs (Engine & model, Access, Network) until the tab row outgrew what a Slack
 // modal renders comfortably — and they belong together anyway, because "what is this channel
 // allowed to do?" is not answerable from any one of them alone. Each section keeps the
-// authorization it had as a tab: the access summary and its editor stay manager-only, and the VPN
+// authorization it had as a tab: the access controls render only for a manager, and the VPN
 // controls are still gated by canManageVpn inside networkBlocks.
 function generalBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false, canEditAccess = false, canManageVpn = false } = {}) {
   return [
@@ -468,10 +513,7 @@ function generalBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
       { type: "divider" },
       { type: "header", text: plain("Access") },
       ...(canEditAccess
-        ? [
-          { type: "section", text: mrkdwn(accessSummary(snapshot.access || {})) },
-          { type: "actions", elements: [button(ACCESS_EDIT_ACTION_ID, "Change access settings", state, "access_edit", {}, { style: "primary" })] },
-        ]
+        ? accessControlBlocks(snapshot.access || {})
         : [{ type: "context", elements: [mrkdwn("_Who may use and manage this channel is shown to admins and channel managers only._")] }]),
     ]),
     { type: "divider" },

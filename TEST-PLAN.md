@@ -1725,26 +1725,37 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       from metadata alone and never *Checking status…*, and only a provisioned one is left for the
       hydration pass — so opening Settings costs no status subprocess and no second view update in
       the ordinary case (`test/slack-vpn-settings.test.js`).
-- [x] Automated Access: ordinary authorized users cannot see/forge the Access section of General
-      Settings or its editor; admins,
-      approved members under Members policy and named managers under Custom policy can edit it.
-      A DM has no Access section. Independent base-mode/Auto/Lean/network flags round-trip; preset
+- [x] Automated Access: ordinary authorized users get none of the six access controls (three
+      selects, the Auto/Lean/Network checkboxes, two member pickers) and cannot forge them; admins,
+      approved members under Members policy and named managers under Custom policy can edit them.
+      A DM has no Access section, and no page pushes an access editor any more.
+      Each control contributes ONLY its own field: a select's chosen value, the checkbox group's
+      whole selection (so an unchecked box is a false, not a missing key), a picker's user list —
+      and an unknown field, an unknown option or a malformed payload fails closed. Saving one
+      control leaves the rest of the policy and unrelated channel settings untouched, and a
+      previously saved control survives the next one. Independent base-mode/Auto/Lean/network flags
+      round-trip; preset
       flags and stored profile agree. Unknown fields cannot change workDir, credentials or roles.
       Real store saves preserve unrelated settings and audit only policy. Departed actors,
       outsiders/bots in named lists, revoked channel grants and global role revocation during the
-      final membership request are rejected. Submission acknowledgment precedes asynchronous work.
+      final membership request are rejected, and a rejected value writes nothing. An access form
+      left open from before the controls moved answers with where they went and saves nothing.
 - [ ] Live Access UI (engine-independent Slack callback case): create disposable Slack channel
       `access-settings-qa`, join an admin actor, an approved member, a named external guest, and
       the bot. Start with Worker, network/Full access/Lean off, Approved use, Admins manage, and
-      no explicit grants. From a fresh reply open Settings as each actor. Only admin sees Access.
-      Change manage to Members; approved actor now sees Access, guest does not. Save Admin mode,
-      Auto, Lean, network, named guest, and Custom management with the approved actor
-      named. Reopen Slack and web settings: all values agree; unrelated model/tokens are unchanged;
-      audit identifies actor/channel and contains no secrets. Clear special flags/lists and save:
-      all clear. Try a bot and a user outside the channel: save fails without changing metadata.
-      Revoke management or remove the actor with the editor open: old submit fails. Delay Slack
-      membership responses beyond three seconds: immediate progress view, then one final result;
-      no Slack timeout or double save. Restore/delete fixture. Pending live execution.
+      no explicit grants. From a fresh reply open Settings as each actor. Only admin sees the
+      Access controls on General Settings.
+      Change manage to Members; approved actor now sees them, guest does not. Change Admin mode,
+      Auto, Lean, network, the named guest, and Custom management with the approved actor
+      named — each from its own control on the page, with no second modal, and each repainting the
+      page with its saved values and a notice. Reopen Slack and web settings: all values agree;
+      unrelated model/tokens are unchanged;
+      audit identifies actor/channel and contains no secrets. Clear the checkboxes and both member
+      pickers: all clear. Try a bot and a user outside the channel: the pick is refused without
+      changing metadata, and reopening shows the previous list intact.
+      Revoke management with the page open, then change a control: it is refused. Delay Slack
+      membership responses beyond three seconds: the page still lands one final result with no
+      double save. Restore/delete fixture. Pending live execution.
 - [ ] Live Access Claude and Codex (one run each in disposable channel `access-settings-qa`):
       select engine explicitly, Admin mode, Auto/Lean/network off, Members management.
       As approved non-admin, prompt “Create access-proof.txt containing access proof and report

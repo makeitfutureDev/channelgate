@@ -18,6 +18,18 @@ product overview.
 
 ## Unreleased
 
+- **Channel access is edited on the Settings page itself.** Mode, Auto/Lean/Network, who may use
+  the channel, who may manage it, named guests and named managers were behind a *Change access
+  settings* button that pushed a second modal you had to fill in and submit — five clicks to flip
+  one switch. They are now six controls on **General Settings**, each saving the moment it is
+  changed, exactly like the engine and model rows above them. Nothing was relaxed: the controls
+  render only for admins and channel managers, one change describes one field (the rest of the
+  policy is read back from the record, so a repainted control can never resubmit a stale value),
+  and every save still takes the membership lock, validates named users against live channel
+  membership, re-checks management at the write boundary and audits the change. A rejected pick
+  writes nothing. An access form left open from before this shipped says where its controls went
+  instead of saving.
+
 - **Slack Settings is five pages behind one dropdown, and the first one is General Settings.**
   Engine & model, Access and Network/VPN were three separate tabs; they are now three sections of
   **General Settings**, in that order, because "what is this channel allowed to do?" was never

@@ -199,7 +199,10 @@ test("General Settings holds the engine, access and network sections that used t
     ["Engine & model", "Access", "Network & VPN"]);
   const text = rendered(view);
   assert.match(text, /claude-opus-4-8/);
-  assert.match(text, /cg_channel_settings_access_edit/);
+  // The access policy is edited on the page itself, not behind a button into a pushed form.
+  assert.match(text, /cg_channel_settings_access_field_mode/);
+  assert.match(text, /cg_channel_settings_access_field_allowedUsers/);
+  assert.doesNotMatch(text, /cg_channel_settings_access_edit/);
   assert.match(text, /Network use/);
   assert.match(text, /VPN/);
   // Every legacy page id still lands here, so a Settings view opened before the merge keeps working.
