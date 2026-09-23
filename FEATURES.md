@@ -2317,7 +2317,12 @@ are retired, bullet by bullet; everything else stands.
   key-only (`*`, not useradd's locked `!`). The root installer `scripts/install-ssh-access.sh`
   creates the account, the group-shared attach directory (`/var/lib/channelgate-ssh`, overridable
   with `CHANNELGATE_SSH_DIR`) and the sshd drop-in; the daemon binds its socket the minute the
-  directory exists, no restart needed. → TEST-PLAN: Container runtime (v0.8 P1).
+  directory exists, no restart needed. The installer also asks sshd (`sshd -T -C`) whether its
+  effective `AllowUsers`/`AllowGroups`/`DenyUsers`/`DenyGroups` admit the login account: an
+  allow-list that excludes it gets the account appended inside the drop-in (the lists accumulate,
+  the operator's file is untouched), a host with no allow-list gets no line at all, and a deny
+  match stops the install naming the file to edit. → TEST-PLAN: Container runtime (v0.8 P1);
+  SSH installer admits the login account.
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch

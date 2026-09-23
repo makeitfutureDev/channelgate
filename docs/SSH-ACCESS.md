@@ -146,10 +146,20 @@ ended); `show_channel_ssh` lists the live ones.
 | `/var/lib/channelgate-ssh/endpoint.json` | host, port, login account, attach command (installer-written) |
 | `/var/lib/channelgate-ssh/authorized_keys` | every registered key, `restrict,command=` (daemon-written) |
 | `/var/lib/channelgate-ssh/attach.sock` | the daemon's attach socket (0660, group = login account) |
-| `/etc/ssh/sshd_config.d/channelgate.conf` | the Match block for the login account |
+| `/etc/ssh/sshd_config.d/channelgate.conf` | the Match block for the login account, plus an `AllowUsers`/`AllowGroups` line when the host restricts logins |
 | `<artifacts>/<platform>/<slug>/ssh/` | `sshd_config`, `authorized_keys`, `host_key` for the container (identical path inside) |
 | `gateway.db` → `ssh_keys`, `ssh_sessions`, `events` | keys, sessions, audit |
 
+- *`channelgate-ssh@…: Permission denied (publickey)`* straight away, with nothing in the daemon
+  log — the **host** sshd refused the login account before the gateway was ever asked, and a
+  refusal by an access list looks exactly like a wrong key. Most often an `AllowUsers` or
+  `AllowGroups` line in a hardening file names the machine's real people and not the login
+  account. The installer checks this with `sshd -T -C user=channelgate-ssh,…` and appends the
+  account to the list inside `channelgate.conf` (lists accumulate; your own line is untouched), so
+  rerunning it is the fix. A `DenyUsers`/`DenyGroups` match cannot be overridden and stops the
+  installer with the file to edit. Also check `MaxAuthTries`: an agent offering more keys than
+  that is disconnected before it reaches the registered one; pin the registered key with
+  `IdentityFile` and `IdentitiesOnly yes`.
 - *"this SSH key is not registered"* — register it from chat; the key must be the same one the
   ssh client offers (`ssh -v` shows which).
 - *"you have no SSH grant on …"* — a manager grants it in that channel.

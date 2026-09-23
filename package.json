@@ -25,7 +25,7 @@
     "pretest:coverage": "node scripts/test-scratch-sweep.mjs",
     "test:coverage": "node scripts/run-tests.mjs --coverage",
     "test:security-coverage": "node scripts/security-coverage.mjs",
-    "test:live-container": "CG_LIVE_CONTAINER=1 node --test test/container-durability.live.test.js",
+    "test:live-container": "CG_LIVE_CONTAINER=1 node --test test/container-durability.live.test.js test/ssh-installer-access.test.js",
     "check:static": "node scripts/static-check.mjs",
     "check:dco": "node scripts/check-dco.mjs",
     "secret-scan": "node scripts/secret-scan.mjs",

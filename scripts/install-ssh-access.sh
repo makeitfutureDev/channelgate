@@ -10,7 +10,8 @@
 #     authorized_keys and the daemon's attach socket;
 #   * root-owned copies of the attach wrapper and the AuthorizedKeysCommand under
 #     /usr/local/lib/channelgate;
-#   * /etc/ssh/sshd_config.d/channelgate.conf, then `sshd -t` and a reload.
+#   * /etc/ssh/sshd_config.d/channelgate.conf, then `sshd -t`, a check that the host's
+#     AllowUsers/AllowGroups/Deny* admit the login account (sshd -T), and a reload.
 # The daemon notices the directory within a minute and needs no restart.
 set -euo pipefail
 trap 'echo "❌ install-ssh-access.sh failed at line $LINENO — nothing is half-configured (every step is idempotent); fix the cause and rerun" >&2' ERR
@@ -124,10 +125,12 @@ if ! grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf'
   echo "❌ /etc/ssh/sshd_config does not include $CONF_DIR/*.conf — add 'Include /etc/ssh/sshd_config.d/*.conf' at its TOP, then rerun."
   exit 1
 fi
-cat > "$CONF_DIR/channelgate.conf.tmp" <<CONF
+# $1 is an access prelude (see below), written ABOVE the Match block so it applies globally.
+write_conf() {
+  cat > "$CONF_DIR/channelgate.conf.tmp" <<CONF
 # Managed by ChannelGate (scripts/install-ssh-access.sh). SSH access to channel containers:
 # the $SSH_USER account exists only to hand connections to the gateway daemon.
-Match User $SSH_USER
+${1}Match User $SSH_USER
     AuthorizedKeysCommand $LIB_DIR/cg-ssh-authorized-keys %f
     AuthorizedKeysCommandUser $SSH_USER
     AuthorizedKeysFile none
@@ -145,12 +148,87 @@ Match User $SSH_USER
     PermitUserRC no
     GatewayPorts no
 CONF
-chmod 0644 "$CONF_DIR/channelgate.conf.tmp"
-mv "$CONF_DIR/channelgate.conf.tmp" "$CONF_DIR/channelgate.conf"
-if ! "$SSHD_BIN" -t; then
-  echo "❌ sshd rejected the configuration; $CONF_DIR/channelgate.conf was removed"
-  rm -f "$CONF_DIR/channelgate.conf"
-  exit 1
+  chmod 0644 "$CONF_DIR/channelgate.conf.tmp"
+  mv "$CONF_DIR/channelgate.conf.tmp" "$CONF_DIR/channelgate.conf"
+  if ! "$SSHD_BIN" -t; then
+    echo "❌ sshd rejected the configuration; $CONF_DIR/channelgate.conf was removed"
+    rm -f "$CONF_DIR/channelgate.conf"
+    exit 1
+  fi
+}
+write_conf ""
+
+# sshd applies AllowUsers / AllowGroups / DenyUsers / DenyGroups BEFORE it looks at any key, and a
+# login refused there reaches the client as "Permission denied (publickey)" — indistinguishable
+# from a wrong key, and nothing reaches the daemon log because the forced command never runs. A
+# hardened host commonly carries an AllowUsers list naming its real people, and the login account
+# is not on it: that is exactly how the first live install locked every developer out.
+#
+# Ask sshd itself which lists it would apply to this account — after every Include and Match —
+# rather than grepping files. AllowUsers and AllowGroups directives ACCUMULATE, so the fix is one
+# line in the file this script manages; the operator's own list is never edited. It is added ONLY
+# when an allow-list already exists and excludes the account: on a host with no allow-list, the
+# same line would restrict every login on the machine to this account. A deny list wins over every
+# allow list, so that case cannot be repaired from here and stops the install instead.
+sshd_effective() {
+  { "$SSHD_BIN" -T -C "user=$SSH_USER,host=localhost,addr=127.0.0.1" 2>/dev/null || true; } \
+    | awk -v k="$1" '$1 == k { print $2 }'
+}
+# $1 is sshd's newline-separated pattern list; the remaining arguments are candidate names. The
+# host half of a user@host pattern depends on where a developer connects from, so only the name
+# half is compared — the final check below is the proof that counts.
+list_matches() {
+  local pattern name
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    pattern="${pattern%%@*}"
+    for name in "${@:2}"; do
+      # shellcheck disable=SC2053 # an sshd glob, matched as one on purpose
+      [[ "$name" == $pattern ]] && return 0
+    done
+  done <<< "$1"
+  return 1
+}
+read -r -a SSH_USER_GROUPS <<< "$(id -Gn "$SSH_USER")"
+access_blocker() {
+  local list
+  list="$(sshd_effective denyusers)"
+  if list_matches "$list" "$SSH_USER"; then echo DenyUsers; return 0; fi
+  list="$(sshd_effective denygroups)"
+  if list_matches "$list" "${SSH_USER_GROUPS[@]}"; then echo DenyGroups; return 0; fi
+  list="$(sshd_effective allowusers)"
+  if [ -n "$list" ] && ! list_matches "$list" "$SSH_USER"; then echo AllowUsers; return 0; fi
+  list="$(sshd_effective allowgroups)"
+  if [ -n "$list" ] && ! list_matches "$list" "${SSH_USER_GROUPS[@]}"; then echo AllowGroups; return 0; fi
+  return 0
+}
+if ! "$SSHD_BIN" -T -C "user=$SSH_USER,host=localhost,addr=127.0.0.1" >/dev/null 2>&1; then
+  echo "⚠ could not ask sshd for its effective settings (sshd -T -C); AllowUsers/AllowGroups were NOT checked. If developers get 'Permission denied (publickey)', add $SSH_USER to those lists by hand."
+else
+  ACCESS_PRELUDE=""
+  fixed=""
+  while blocker="$(access_blocker)"; [ -n "$blocker" ]; do
+    case "$blocker" in
+      DenyUsers|DenyGroups)
+        echo "❌ sshd's $blocker excludes $SSH_USER, and a deny list wins over every allow list — no developer can log in. Remove $SSH_USER from it (grep -rn '$blocker' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/), then rerun this script."
+        exit 1 ;;
+    esac
+    # Appending the same keyword twice would mean the line did not take effect (an earlier included
+    # file left a Match block open around it, say) — stop rather than loop.
+    case " $fixed " in *" $blocker "*)
+      echo "❌ appending $SSH_USER to sshd's $blocker in $CONF_DIR/channelgate.conf did not take effect — an earlier file in the Include order likely leaves a Match block open. Add $SSH_USER to your own $blocker line, then rerun."
+      exit 1 ;;
+    esac
+    if [ "$blocker" = AllowUsers ]; then
+      ACCESS_PRELUDE+="# This host restricts logins with AllowUsers; lists accumulate, so the login account is appended here."$'\n'"AllowUsers $SSH_USER"$'\n'
+    else
+      ACCESS_PRELUDE+="# This host restricts logins with AllowGroups; lists accumulate, so the login account's group is appended here."$'\n'"AllowGroups $(id -gn "$SSH_USER")"$'\n'
+    fi
+    fixed+=" $blocker"
+    write_conf "$ACCESS_PRELUDE"
+    echo "→ sshd's $blocker did not include $SSH_USER; appended it in $CONF_DIR/channelgate.conf (your own list is untouched)"
+  done
+  echo "→ verified: sshd's access lists admit $SSH_USER"
 fi
 if command -v systemctl >/dev/null; then
   systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || echo "⚠ reload the SSH service by hand (systemctl reload ssh)"

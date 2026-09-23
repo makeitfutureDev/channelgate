@@ -18,6 +18,16 @@ product overview.
 
 ## Unreleased
 
+- Stop a hardened host from silently locking every developer out of SSH access. sshd checks
+  `AllowUsers`/`AllowGroups`/`DenyUsers`/`DenyGroups` before it looks at any key, and a refusal
+  there reads `Permission denied (publickey)` — the same as a wrong key, with nothing in the gateway
+  log. A host whose hardening names its real people in `AllowUsers` therefore refused the login
+  account for everyone. The installer now asks sshd for the lists it would actually enforce and,
+  when an allow-list excludes the account, appends it inside ChannelGate's own `channelgate.conf`
+  (the lists accumulate; your file is not edited). It adds nothing on a host with no allow-list,
+  where the same line would restrict every login to that account, and it stops with the file to
+  edit when a deny list names the account. Rerun `sudo bash scripts/install-ssh-access.sh`.
+
 - **Channel access is edited on the Settings page itself.** Mode, Auto/Lean/Network, who may use
   the channel, who may manage it, named guests and named managers were behind a *Change access
   settings* button that pushed a second modal you had to fill in and submit — five clicks to flip
