@@ -2321,8 +2321,12 @@ are retired, bullet by bullet; everything else stands.
   effective `AllowUsers`/`AllowGroups`/`DenyUsers`/`DenyGroups` admit the login account: an
   allow-list that excludes it gets the account appended inside the drop-in (the lists accumulate,
   the operator's file is untouched), a host with no allow-list gets no line at all, and a deny
-  match stops the install naming the file to edit. → TEST-PLAN: Container runtime (v0.8 P1);
-  SSH installer admits the login account.
+  match stops the install naming the file to edit. The attach directory is one per host, so the
+  daemon probes its socket path before touching it: a socket another process is serving is left
+  alone (and taken over within a retry once that process is gone), only a file nobody listens on
+  is replaced, the exported keys are written only by the daemon that owns the socket, and
+  shutdown removes nothing but this daemon's own socket. → TEST-PLAN: Container runtime (v0.8
+  P1); SSH installer admits the login account; SSH attach socket ownership.
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch

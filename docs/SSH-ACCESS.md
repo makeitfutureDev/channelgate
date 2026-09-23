@@ -165,6 +165,11 @@ ended); `show_channel_ssh` lists the live ones.
 - *"you have no SSH grant on …"* — a manager grants it in that channel.
 - *"the gateway attach socket is unavailable"* — the daemon is down, or the installer ran with a
   different `CG_SSH_DIR` than the daemon's `CHANNELGATE_SSH_DIR`.
+- *Attach fails with `ENOENT` although the daemon looks healthy* (`ss -xl` still lists
+  `attach.sock` as listening, but the file is gone) — the socket file was deleted underneath a live
+  listener. Restart the daemon to rebind it. Current releases never delete a socket another process
+  is serving, and log `already served by another process` instead of taking it over; that line
+  means a second gateway on this host is using the same attach directory.
 - *Host key changed* warnings — the channel's `ssh/host_key` was removed (a deleted channel
   artifact dir); remove the stale `known_hosts` line.
 - *Connection drops on daemon restart* — expected; reconnect.

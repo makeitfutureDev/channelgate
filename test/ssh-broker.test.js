@@ -275,3 +275,122 @@ test("stopping the broker ends live sessions (lease released, row closed) and un
   assert.equal(access.listSshSessions({ slug: entry.slug }).length, 0);
   assert.equal(access.listSshSessions({ slug: entry.slug, live: false })[0].endReason, "daemon restart");
 });
+
+// ── The attach directory is one per HOST, not one per runtime root ─────────────────────────────
+// A second gateway under another CHANNELGATE_DIR — a test daemon started from a worktree, a second
+// install — reaches the same socket path. The broker used to delete whatever was there before
+// binding, and delete the path again on stop even when it had never bound it. Either one silently
+// took SSH access away from the daemon that owned it: its listener survived on an unlinked inode,
+// so every attach got ENOENT while `ss -xl` still showed it listening. These drive a genuinely
+// SEPARATE process holding the socket, which is the real situation (and the only one possible —
+// the broker is a per-process singleton).
+const OWNER_SCRIPT = `
+const net = require("node:net");
+// Like any real server it survives a peer that hangs up first — which is exactly what a probe does.
+const server = net.createServer((s) => { s.on("error", () => {}); s.end("owner\\n"); });
+server.listen(process.argv[1], () => process.stdout.write("ready\\n"));
+`;
+async function foreignOwner(socketPath) {
+  const child = spawn(process.execPath, ["-e", OWNER_SCRIPT, socketPath], { stdio: ["ignore", "pipe", "pipe"] });
+  await new Promise((resolve, reject) => {
+    child.stdout.once("data", resolve);
+    child.once("exit", (code) => reject(new Error(`owner exited early (${code})`)));
+  });
+  return child;
+}
+function configuredDir(prefix) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+  trackTempDir(dir);
+  writeFileSync(path.join(dir, "endpoint.json"), JSON.stringify({ host: "gw.example.com", port: 22, user: "channelgate-ssh", attachCommand: "/usr/bin/node /x.mjs" }));
+  return dir;
+}
+function reachesOwner(socketPath) {
+  return new Promise((resolve) => {
+    const c = net.connect(socketPath);
+    let data = "";
+    c.on("data", (d) => { data += d; });
+    c.on("end", () => resolve(data.trim() === "owner"));
+    c.on("error", () => resolve(false));
+  });
+}
+async function waitFor(predicate, ms = 3_000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) { if (await predicate()) return true; await new Promise((r) => setTimeout(r, 25)); }
+  return false;
+}
+
+test("the probe tells a live listener, a stale file and a missing path apart", async () => {
+  const dir = configuredDir("cgssh-probe-");
+  const sock = path.join(dir, broker.SSH_ATTACH_SOCKET);
+  assert.equal(await broker.probeUnixSocket(sock), "absent");
+  const owner = await foreignOwner(sock);
+  assert.equal(await broker.probeUnixSocket(sock), "live");
+  owner.kill("SIGKILL");                                  // dies without closing: the file stays
+  await once(owner, "exit");
+  assert.equal(existsSync(sock), true, "precondition — a killed owner leaves its socket file behind");
+  assert.equal(await broker.probeUnixSocket(sock), "stale");
+});
+
+test("a broker never takes a socket another process is serving — and stopping it leaves that socket alone", async () => {
+  await broker.stopSshBroker();
+  const dir = configuredDir("cgssh-owned-");
+  const sock = path.join(dir, broker.SSH_ATTACH_SOCKET);
+  const owner = await foreignOwner(sock);
+  const warnings = [];
+  try {
+    const state = await broker.startSshBroker({ dir, log: { log() {}, warn: (m) => warnings.push(m) }, retryMs: 0, deps, authorizeOptions });
+    assert.equal(state.server, null, "it did not bind over the live socket");
+    assert.equal(broker.sshBrokerStatus().listening, false);
+    assert.equal(existsSync(path.join(dir, "authorized_keys")), false, "nor did it overwrite the owner's exported keys");
+    assert.match(warnings.join("\n"), /already served by another process/);
+    assert.equal(await reachesOwner(sock), true, "developers still reach the owner");
+
+    // The incident path: a daemon that never bound the socket shuts down.
+    await broker.stopSshBroker();
+    assert.equal(existsSync(sock), true, "stop did not unlink a path it never bound");
+    assert.equal(await reachesOwner(sock), true, "the owner is still reachable after the other daemon stopped");
+  } finally {
+    owner.kill("SIGKILL");
+    await broker.stopSshBroker();
+  }
+});
+
+test("when the owner goes away, a waiting broker takes over within its retry", async () => {
+  await broker.stopSshBroker();
+  const dir = configuredDir("cgssh-takeover-");
+  const sock = path.join(dir, broker.SSH_ATTACH_SOCKET);
+  const owner = await foreignOwner(sock);
+  try {
+    await broker.startSshBroker({ dir, log: silent, retryMs: 50, deps, authorizeOptions });
+    assert.equal(broker.sshBrokerStatus().listening, false, "waits while the owner is alive");
+    owner.kill("SIGKILL");                                // leaves a stale file, like a crashed daemon
+    await once(owner, "exit");
+    assert.equal(await waitFor(() => broker.sshBrokerStatus().listening), true, "binds once the path is stale");
+    assert.equal(await broker.probeUnixSocket(sock), "live");
+    assert.equal(existsSync(path.join(dir, "authorized_keys")), true, "and exports its keys now that it owns the directory");
+  } finally {
+    owner.kill("SIGKILL");
+    await broker.stopSshBroker();
+  }
+});
+
+test("probing a live broker neither refuses, logs nor disturbs it", async () => {
+  await broker.stopSshBroker();
+  const dir = configuredDir("cgssh-quiet-");
+  const sock = path.join(dir, broker.SSH_ATTACH_SOCKET);
+  const lines = [];
+  const log = { log: (m) => lines.push(m), warn: (m) => lines.push(m) };
+  try {
+    await broker.startSshBroker({ dir, log, retryMs: 0, headerTimeoutMs: 60, deps, authorizeOptions });
+    assert.equal(broker.sshBrokerStatus().listening, true);
+    const refusedBefore = readEvents({ type: "ssh_attach_refused" }).length;
+    const logged = lines.length;
+    for (let i = 0; i < 3; i++) assert.equal(await broker.probeUnixSocket(sock), "live");
+    await new Promise((r) => setTimeout(r, 200));        // past the header deadline
+    assert.equal(readEvents({ type: "ssh_attach_refused" }).length, refusedBefore, "no refusal was recorded");
+    assert.equal(lines.length, logged, "nothing was logged");
+    assert.equal(broker.sshBrokerStatus().listening, true, "the broker is still up");
+  } finally {
+    await broker.stopSshBroker();
+  }
+});

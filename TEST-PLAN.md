@@ -94,6 +94,23 @@
 - [ ] Live acceptance, negative: in an Admin channel whose container mounts the operator home, ask
       for a public link to a file under that mounted home (outside the channel's working folder).
       Require a refusal, and require `list_public_file_links` to show nothing new.
+## SSH attach socket ownership
+
+- [x] `test/ssh-broker.test.js` drives a genuinely separate process holding the attach socket (the
+      broker is a per-process singleton, and a second gateway is a second process). The probe tells
+      `live` / `stale` (owner SIGKILLed, file left behind) / `absent` apart. A broker started while
+      another process serves the path does not bind, does not export keys over the owner's, logs
+      `already served by another process`, and — the incident path — stopping it leaves the
+      owner's socket reachable. When the owner is killed, a waiting broker binds within its retry
+      and exports its keys. Probing a live broker records no `ssh_attach_refused`, logs nothing and
+      leaves it listening. Reproduced red against the pre-fix broker: the take-over and stop cases
+      fail. Engine-independent: host socket handling, no engine involved.
+- [ ] Live on the gateway host: with the daemon serving `/var/lib/channelgate-ssh/attach.sock`,
+      start a second daemon from a worktree under a different `CHANNELGATE_DIR` and the default SSH
+      directory; require its log to say `already served by another process`, require the file to
+      survive both that daemon's start and its shutdown, and require a developer attach to succeed
+      throughout.
+
 ## SSH installer admits the login account
 
 - [x] `test/ssh-installer-access.test.js` (static half, always runs): the installer queries sshd's
