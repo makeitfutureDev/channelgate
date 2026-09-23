@@ -18,6 +18,18 @@ product overview.
 
 ## Unreleased
 
+- **Slack Settings is five pages behind one dropdown, and the first one is General Settings.**
+  Engine & model, Access and Network/VPN were three separate tabs; they are now three sections of
+  **General Settings**, in that order, because "what is this channel allowed to do?" was never
+  answerable from one of them alone. The row of tab buttons — which wrapped onto a second line as
+  pages were added — is now a single *Page* dropdown listing General Settings, Resume Session, MCP,
+  Skills and Secrets. Nothing changed about who may do what: the access summary and its editor
+  still render only for admins and channel managers, the VPN on/off controls are still theirs, and
+  every other control stays open to any authorized user. A Settings view opened before this shipped
+  keeps working — its old page ids resolve to the page that now owns those controls. The VPN row
+  also stopped costing a subprocess on every open: a conversation with no provisioned service says
+  *Not configured* straight away, and only a provisioned one waits for a status read.
+
 - **One worktree per task is now stated as a prohibition, in every place a run reads it.** The rule
   already existed in three files and was still skipped: `references/git-repos.md` opened by handing
   the whole question to the project's own instruction file, and this project's file mentioned

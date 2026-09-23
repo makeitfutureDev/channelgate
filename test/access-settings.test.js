@@ -13,7 +13,7 @@ const base = { access: "approved", manageAccess: "members", ...PROFILE_FLAGS.wor
 const form = { ...accessSettingsSnapshot(base), mode: "admin", autoMode: true, cleanMode: true, allowNetwork: true };
 const state = { channelId: "CACCESS", slug: "access-test", ownerId: "UMANAGER" };
 
-test("only admins and current managers see Access; existing tabs remain available", () => {
+test("only admins and current managers see the Access section of General Settings", () => {
   for (const [meta, admin, user, expected] of [
     [{ ...base, manageAccess: "admins" }, false, actor, false],
     [base, false, actor, true],
@@ -25,11 +25,19 @@ test("only admins and current managers see Access; existing tabs remain availabl
   ]) {
     const options = channelSettingsEditOptions(meta, admin, user);
     assert.equal(options.canEditAccess, expected);
-    const view = buildChannelSettingsView({ access: meta }, state, { ...options, tab: "access" });
+    // A Settings view opened before the merge carries "access" in its metadata; it must land on
+    // the page that now owns those controls rather than on an empty first page.
+    const view = buildChannelSettingsView({ access: meta, isDM: Boolean(meta.isDM) }, state, { ...options, tab: "access" });
+    assert.equal(JSON.parse(view.private_metadata).p, "general");
     const buttons = view.blocks.flatMap((block) => block.elements || []);
-    assert.equal(buttons.some((b) => b.action_id === "cg_channel_settings_tab_access"), expected);
     assert.equal(buttons.some((b) => b.action_id === "cg_channel_settings_access_edit"), expected);
-    assert.ok(buttons.some((b) => b.action_id === "cg_channel_settings_tab_secrets"));
+    // The access summary itself is manager-only; the page around it is not. A DM has no access
+    // policy at all, so it gets neither the summary nor the line explaining its absence.
+    const headers = view.blocks.filter((block) => block.type === "header").map((block) => block.text.text);
+    assert.equal(headers.includes("Access"), !meta.isDM);
+    assert.equal(JSON.stringify(view).includes("Who may use and manage this channel is shown"), !expected && !meta.isDM);
+    const pages = view.blocks.find((block) => block.block_id === "cg_channel_settings_tabs").accessory.options;
+    assert.ok(pages.some((page) => JSON.parse(page.value).p === "secrets"));
   }
 });
 

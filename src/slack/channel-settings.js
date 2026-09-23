@@ -10,7 +10,12 @@ import { buildSecretsView } from "./secret-explorer.js";
 export const CHANNEL_SETTINGS_MODE_PREFIX = "cg_channel_settings_mode_";
 export const CHANNEL_SETTINGS_OPTION_PREFIX = "cg_channel_settings_option_";
 export const CHANNEL_SETTINGS_ACTION_ID = "cg_channel_settings";
+// Pages are picked from one dropdown now. The per-tab button ids this prefix built still arrive
+// from Settings views opened before that change: CHANNEL_SETTINGS_ACTION_PATTERN matches them, and
+// the handler dispatches on the command in their value, so they keep working without the prefix
+// being referenced anywhere.
 export const CHANNEL_SETTINGS_TAB_PREFIX = "cg_channel_settings_tab_";
+export const CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID = "cg_channel_settings_tab_select";
 // Kept only so a Settings modal opened before the inline dropdowns shipped still has a live
 // control: the handler repaints the runtime tab instead of pushing the retired editor.
 export const CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID = "cg_channel_settings_runtime_edit";
@@ -39,7 +44,12 @@ export const CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID = "cg_channel_settings_se
 export const CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID = "cg_channel_settings_vpn_toggle";
 export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_refresh";
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "resume", "mcp", "skills", "secrets", "network", "access"]);
+// The pages the modal offers, in the order the dropdown lists them. "general" absorbed the former
+// runtime, access and network tabs (see generalBlocks); LEGACY_TABS keeps a Settings view opened
+// before that merge — its buttons still carry the old ids — landing on the page that now owns
+// those controls instead of silently falling back to the first one.
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["general", "resume", "mcp", "skills", "secrets"]);
+const LEGACY_TABS = Object.freeze({ runtime: "general", access: "general", network: "general" });
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
@@ -104,9 +114,10 @@ function inlineCode(value) {
   return `\`${escapeMrkdwn(value || "—").replaceAll("`", "'")}\``;
 }
 
-function normalizeTab(tab) {
+export function normalizeTab(tab) {
   const value = String(tab || "").toLowerCase();
-  return CHANNEL_SETTINGS_TABS.includes(value) ? value : "runtime";
+  if (CHANNEL_SETTINGS_TABS.includes(value)) return value;
+  return LEGACY_TABS[value] || CHANNEL_SETTINGS_TABS[0];
 }
 
 export function actionValue(op, extra = {}) {
@@ -120,6 +131,14 @@ export function parseActionValue(raw) {
   } catch {
     return {};
   }
+}
+
+// What did this control ask for? A button carries its command in `value`; a select carries it in
+// the option the user landed on. Every other select on these pages holds a bare id (a model, an
+// effort), which is not JSON and yields {} — the same answer an unrecognized control gets, so the
+// handler's dispatch on `o` stays the only thing that decides what happens.
+export function settingsCommand(action) {
+  return parseActionValue(action?.selected_option?.value ?? action?.value);
 }
 
 export function settingsMetadata(state = {}) {
@@ -245,6 +264,7 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
     { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option shared by all admitted members, not host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
     { type: "divider" },
     ] : []),
+    { type: "header", text: plain("Engine & model") },
     { type: "section", text: mrkdwn("*Channel default*") },
     ...runtimeScopeRows("channel", scopes.channel, { editable: canEditRuntime }),
     { type: "context", elements: [mrkdwn("Applies to every thread here that has no pin of its own. Each change saves immediately and takes effect on the next turn.")] },
@@ -422,12 +442,41 @@ function networkBlocks(snapshot, state, { canManageVpn }) {
   }
   return [
     fieldBlock("Network use", snapshot.mode?.allowNetwork ? "Allowed" : "Off"),
-    { type: "context", elements: [mrkdwn("Network use is the engine's channel policy. Managers can change it under Access.")] },
+    { type: "context", elements: [mrkdwn("Network use is the engine's channel policy. Managers can change it under Access above.")] },
     fieldBlock("VPN", vpn ? (labels[vpn.state] || "Unknown") : "Checking status…"),
     ...(vpn?.message ? [{ type: "section", text: mrkdwn(escapeMrkdwn(vpn.message)) }] : []),
     ...(vpn?.missingSecrets?.length ? [fieldBlock("Missing channel secrets", vpn.missingSecrets.map(inlineCode).join(", "))] : []),
     { type: "actions", elements: buttons },
     { type: "context", elements: [mrkdwn("VPN connects the channel's dedicated VPN service and extractor. It does not route the ordinary agent container through the tunnel. Only admins and current channel managers can turn it on or off.")] },
+  ];
+}
+
+// Everything that decides HOW this conversation runs, on one page: its mode and Auto/Lean
+// switches, the engine/model scopes, who may use and manage it, and its network/VPN posture.
+// These were three tabs (Engine & model, Access, Network) until the tab row outgrew what a Slack
+// modal renders comfortably — and they belong together anyway, because "what is this channel
+// allowed to do?" is not answerable from any one of them alone. Each section keeps the
+// authorization it had as a tab: the access summary and its editor stay manager-only, and the VPN
+// controls are still gated by canManageVpn inside networkBlocks.
+function generalBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false, canEditAccess = false, canManageVpn = false } = {}) {
+  return [
+    ...runtimeBlocks(snapshot, state, { canEditRuntime, canEnableAdmin }),
+    // A DM has no access policy to show: its only member is the person reading the page, and its
+    // mode switches are already above. Everywhere else the section is present for everyone, and
+    // only its contents depend on whether this reader may manage the channel.
+    ...(snapshot.isDM ? [] : [
+      { type: "divider" },
+      { type: "header", text: plain("Access") },
+      ...(canEditAccess
+        ? [
+          { type: "section", text: mrkdwn(accessSummary(snapshot.access || {})) },
+          { type: "actions", elements: [button(ACCESS_EDIT_ACTION_ID, "Change access settings", state, "access_edit", {}, { style: "primary" })] },
+        ]
+        : [{ type: "context", elements: [mrkdwn("_Who may use and manage this channel is shown to admins and channel managers only._")] }]),
+    ]),
+    { type: "divider" },
+    { type: "header", text: plain("Network & VPN") },
+    ...networkBlocks(snapshot, state, { canManageVpn }),
   ];
 }
 
@@ -459,26 +508,31 @@ function resumeBlocks(snapshot = {}) {
 }
 
 const TAB_LABELS = Object.freeze({
-  access: "Access",
-  network: "Network",
-  runtime: "Engine & model",
+  general: "General Settings",
   resume: "Resume Session",
   mcp: "MCP",
   skills: "Skills",
   secrets: "Secrets",
 });
 
-function tabButtons(state, active, canEditAccess) {
+// Pages are chosen from a dropdown rather than a row of buttons: an actions row wraps onto a
+// second line in a narrow modal, and every page added made it worse. The select carries the same
+// `tab` command the buttons did, so a Settings view opened before this shipped keeps switching
+// pages through the very same handler.
+function tabSelect(state, active) {
+  const options = CHANNEL_SETTINGS_TABS.map((tab) =>
+    option(TAB_LABELS[tab], actionValue("tab", { c: state.channelId, u: state.ownerId, p: tab })));
   return {
-    type: "actions",
+    type: "section",
     block_id: "cg_channel_settings_tabs",
-    elements: CHANNEL_SETTINGS_TABS.filter((tab) => tab !== "access" || canEditAccess).map((tab) => ({
-      type: "button",
-      action_id: `${CHANNEL_SETTINGS_TAB_PREFIX}${tab}`,
-      text: plain(TAB_LABELS[tab]),
-      ...(tab === active ? { style: "primary" } : {}),
-      value: actionValue("tab", { c: state.channelId, u: state.ownerId, p: tab }),
-    })),
+    text: mrkdwn("*Page*"),
+    accessory: {
+      type: "static_select",
+      action_id: CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID,
+      placeholder: plain("Choose a page"),
+      options,
+      initial_option: options[Math.max(0, CHANNEL_SETTINGS_TABS.indexOf(active))],
+    },
   };
 }
 
@@ -496,24 +550,16 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   canManageVpn = false,
   notice = "",
 } = {}) {
-  const requested = normalizeTab(tab);
-  const active = requested === "access" && !canEditAccess ? "runtime" : requested;
-  const content = active === "access"
-    ? [
-      { type: "section", text: mrkdwn(accessSummary(snapshot.access || {})) },
-      { type: "actions", elements: [button(ACCESS_EDIT_ACTION_ID, "Change access settings", state, "access_edit", {}, { style: "primary" })] },
-    ]
-    : active === "resume"
+  const active = normalizeTab(tab);
+  const content = active === "resume"
     ? resumeBlocks(snapshot)
-    : active === "network"
-    ? networkBlocks(snapshot, state, { canManageVpn })
     : active === "mcp"
     ? mcpBlocks(snapshot, state, { canManageCloudMcp })
     : active === "skills"
       ? skillsBlocks(snapshot, state)
       : active === "secrets"
         ? secretsBlocks(snapshot, state, { canEditSecrets, canEditOrgSecrets })
-        : runtimeBlocks(snapshot, state, { canEditRuntime, canEnableAdmin });
+        : generalBlocks(snapshot, state, { canEditRuntime, canEnableAdmin, canEditAccess, canManageVpn });
   return {
     type: "modal",
     callback_id: "cg_channel_settings_modal",
@@ -523,7 +569,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     blocks: [
       { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings and VPN controls require a channel manager or admin. Cloud MCP is admin-only.`)] },
       ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
-      tabButtons(state, active, canEditAccess),
+      tabSelect(state, active),
       { type: "divider" },
       ...content,
     ],

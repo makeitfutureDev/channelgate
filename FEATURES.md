@@ -359,8 +359,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Grant Tier switch is gone.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
-  setup concepts: **Engine & model** edits in place — six dropdowns, no nested form, each saving the
-  moment it is picked. The tab shows and edits BOTH scopes: the **channel default** (written to the
+  setup concepts across five pages — **General Settings**, **Resume Session**, **MCP**, **Skills**,
+  **Secrets** — picked from a single *Page* dropdown rather than a row of buttons that wrapped onto
+  a second line as pages were added. Legacy page ids (`runtime`, `access`, `network`) still resolve,
+  so a Settings view opened before the merge keeps navigating.
+  **General Settings** is everything that decides how the conversation runs: its Engine & model
+  scopes, then **Access**, then **Network & VPN**. Engine & model edits in place — six dropdowns,
+  no nested form, each saving the
+  moment it is picked. It shows and edits BOTH scopes: the **channel default** (written to the
   channel record and audited like any policy change) and, when Settings was opened from a reply
   inside a thread, **that thread's own pins** (the per-thread overrides the `/model` wizard's "just
   this thread" scope and the `claude`/`codex` directive write, which beat the channel at run time).
@@ -394,18 +400,26 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   so historic controls cannot retain revoked access. Cloud MCP actions additionally re-check admin
   status. Secrets can be edited in every channel mode, including through `/secrets`; file-edit
   permissions and the separate `/model` command policy are unchanged.
-  **Access** is a manager-only tab, visible only to current admins/channel managers. They can edit the
+  The **Access** section of that page is manager-only — its summary and *Change access settings*
+  button render only for current admins/channel managers, and everyone else sees a line saying so
+  while keeping the rest of the page. Managers can edit the
   base mode (including Admin/full access), Auto, Lean, network, use/manage policy and named guest/manager lists. Selecting
   Full access does not grant anyone an administrator role; bypass still requires an admin author.
   Saves acknowledge immediately with a progress view, validate named users against live human
   channel membership, re-check management and roles at the write boundary, and audit policy changes.
-  **Resume Session** is a tab of its own, open to every authorized user: it renders THIS thread's
+  The **Network & VPN** section below it states the channel's network policy and the VPN's real
+  state, with the on/off controls still gated to admins and channel managers. A conversation with
+  no provisioned VPN service is answered from metadata alone — no status helper runs, and the row
+  reads *Not configured* immediately — so only a provisioned channel spends a subprocess and a
+  second view update filling in *Checking status…*.
+  **Resume Session** is a page of its own, open to every authorized user: it renders THIS thread's
   copyable `cd "…" && <engine> --resume <id>` terminal command (the container `exec` form for a
   containerized channel), resolved from the session at render time so a stale Settings view cannot
   hand out a cleared session's id, plus the session id and the folder it belongs to. Opened outside
   a thread, or in a thread that has not run a turn yet, the tab says so instead of showing a
   command. It replaces the 💻 reply-footer button, which is gone from run footers.
-  DMs keep every tab except Access. Work-dir and gateway-wide settings are not exposed here.
+  A DM sees the same five pages, with its mode/Auto/Lean buttons at the top of General Settings and
+  no Access summary. Work-dir and gateway-wide settings are not exposed here.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
   admins are selected and locked, while explicit guest grants remain independently editable.

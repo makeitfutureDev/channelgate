@@ -1695,6 +1695,15 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       (plus any 📄 review-file buttons) with no `resume_cmd_modal` control, and an unattended
       `deliverResult` footer posts run stats with no control at all
       (`test/slack-progress.test.js`, `test/channel-settings-modal.test.js`, `test/deliver.test.js`).
+- [ ] Live General Settings (engine-independent Slack UI case): in a disposable channel with a
+      manager actor and an ordinary approved member, open **⚙️ Settings** from a reply. Pass when
+      the modal opens on General Settings with one *Page* dropdown listing five pages; switching
+      pages through it repaints in place; the manager sees Engine & model, Access (summary +
+      *Change access settings*) and Network & VPN on one page, while the member sees the same page
+      without the access summary and cannot reach the editor; saving access settings returns to
+      General Settings with its notice; and a channel with a provisioned VPN shows *Checking
+      status…* replaced by the real state, while a channel without one shows *Not configured*
+      immediately with no flicker.
 - [ ] Live resume round trip (engine-independent Slack UI case, run once per harness where the
       session is minted by that harness): in a disposable channel, send a message, then open
       **⚙️ Settings → Resume Session** from a reply inside that thread. Pass when the tab shows the
@@ -1703,9 +1712,23 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       pasting the same line back as `/resume <command>` continues it from the thread. Then `/clear`
       the thread and reopen the tab: it must say there is no session rather than offering the
       cleared id.
-- [x] Automated Access: ordinary authorized users cannot see/forge the Access tab; admins,
+- [x] Automated page dropdown and General Settings: the modal carries exactly one *Page* control —
+      a `static_select` whose options are General Settings / Resume Session / MCP / Skills /
+      Secrets in that order, opening on the page being shown, each option bound to the view's
+      channel and owner, and no page rendered as a button any more. General Settings carries the
+      Engine & model, Access and Network & VPN headers in that order. Every legacy page id
+      (`runtime`, `access`, `network`) and an unknown one resolve to `general`, so a Settings view
+      opened before the merge keeps navigating. A control's command is read from a button's own
+      value or from the picked option, while a runtime dropdown's bare model id parses to no
+      command at all (`test/channel-settings-modal.test.js`).
+- [x] Automated VPN row cost: a conversation with no provisioned service renders *Not configured*
+      from metadata alone and never *Checking status…*, and only a provisioned one is left for the
+      hydration pass — so opening Settings costs no status subprocess and no second view update in
+      the ordinary case (`test/slack-vpn-settings.test.js`).
+- [x] Automated Access: ordinary authorized users cannot see/forge the Access section of General
+      Settings or its editor; admins,
       approved members under Members policy and named managers under Custom policy can edit it.
-      DMs keep every tab except Access. Independent base-mode/Auto/Lean/network flags round-trip; preset
+      A DM has no Access section. Independent base-mode/Auto/Lean/network flags round-trip; preset
       flags and stored profile agree. Unknown fields cannot change workDir, credentials or roles.
       Real store saves preserve unrelated settings and audit only policy. Departed actors,
       outsiders/bots in named lists, revoked channel grants and global role revocation during the

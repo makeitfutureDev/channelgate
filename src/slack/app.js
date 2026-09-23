@@ -38,7 +38,7 @@ import { listSkills } from "../gateway/skills/catalog.js";
 import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
 import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
-import { getChannelVpnStatus, setChannelVpnEnabled } from "../gateway/channel-vpn-control.js";
+import { channelVpnConfigured, getChannelVpnStatus, setChannelVpnEnabled, unconfiguredChannelVpnStatus } from "../gateway/channel-vpn-control.js";
 import { logChannelPolicyChange } from "../config/channel-audit.js";
 
 import { createTtlSet } from "./util.js";
@@ -58,6 +58,7 @@ import {
   buildConnectionsEditorView, buildTemplateEditorView, maskedCredential,
   parseActionValue as parseChannelSettingsActionValue, editorMetadata, parseEditorMetadata, parseSettingsMetadata,
   readConnectionsForm, readTemplateForm, assertVpnActionBinding, runtimeSelectTarget,
+  normalizeTab as normalizeSettingsTab, settingsCommand,
   CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
@@ -930,7 +931,7 @@ export async function handleAccessSettingsSubmission({ ack, body, view, client }
   } });
   try {
     const { entry, saved, userIsAdmin } = await save(client, state, clicker, form);
-    await client.views.update({ view_id: view.id, view: await rootView(entry, saved, { ...state, tab: "access" }, userIsAdmin, {
+    await client.views.update({ view_id: view.id, view: await rootView(entry, saved, { ...state, tab: "general" }, userIsAdmin, {
       notice: "✅ Channel access settings saved. Changes apply to the next run.",
     }) });
   } catch (error) {
@@ -960,9 +961,12 @@ export async function saveAccessSettings(client, state, userId, form) {
 }
 
 // The one builder for the Settings modal's root view. Thread pins and this thread's session are
-// store reads, so the runtime tab's two scopes and the Resume Session tab's command are resolved
-// here rather than inside the synchronous snapshot. A resume lookup that fails must not take the
-// other six tabs down with it — the tab then reads as "no session" instead of an error card.
+// store reads, so General Settings' two runtime scopes and the Resume Session page's command are
+// resolved here rather than inside the synchronous snapshot. A resume lookup that fails must not
+// take the other pages down with it — it then reads as "no session" instead of an error card.
+// The VPN row is the one fact a subprocess owns: a conversation with no provisioned service is
+// answered here and now, and only a provisioned one is left saying "Checking status…" for the
+// hydration pass to fill in.
 async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "", vpn } = {}) {
   const snapshot = channelSettingsSnapshot(meta);
   const threadTs = state.threadTs || "";
@@ -978,7 +982,7 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   snapshot.resume = resume;
   snapshot.orgSecrets = secretScopes.organization;
   snapshot.personalSecrets = secretScopes.personal;
-  return buildChannelSettingsView({ ...snapshot, vpn }, { ...state, tab }, {
+  return buildChannelSettingsView({ ...snapshot, vpn: vpn ?? unconfiguredChannelVpnStatus(meta) }, { ...state, tab }, {
     channelName: entry.name,
     tab,
     notice,
@@ -1008,7 +1012,7 @@ export async function hydrateChannelVpnSettings(client, view, state, {
     const vpn = await status(state.channelId);
     const { entry, meta, userIsAdmin } = await context(client, state, state.ownerId);
     await client.views.update({ view_id: view.id, ...(view.hash ? { hash: view.hash } : {}),
-      view: await rootView(entry, meta, { ...state, tab: "network" }, userIsAdmin, { vpn }),
+      view: await rootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { vpn }),
     });
   } catch (error) {
     // Hash conflicts mean the user already moved on; do not replace that newer view.
@@ -1041,7 +1045,7 @@ export async function handleChannelVpnSettingsAction({ ack, body, action, client
       : await status(state.channelId);
     const { entry, meta, userIsAdmin } = await context(client, state, userId);
     await client.views.update({ view_id: body.view.id, ...(body.view.hash ? { hash: body.view.hash } : {}),
-      view: await rootView(entry, meta, { ...state, tab: "network" }, userIsAdmin, { vpn }),
+      view: await rootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { vpn }),
     });
   } catch (error) {
     if (body?.view?.id && error?.data?.error !== "hash_conflict") await client.views.update({
@@ -1051,7 +1055,7 @@ export async function handleChannelVpnSettingsAction({ ack, body, action, client
   }
 }
 
-async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "runtime" } = {}) {
+async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "general" } = {}) {
   const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
     channelId,
     userId,
@@ -1062,7 +1066,9 @@ async function openChannelSettings(client, triggerId, { channelId, userId, threa
     trigger_id: triggerId,
     view: await settingsRootView(entry, meta, state, userIsAdmin, { tab }),
   });
-  if (tab === "network" && opened.view?.id) await hydrateChannelVpnSettings(client, opened.view, state);
+  // Only a provisioned service needs the status helper; every other conversation already rendered
+  // its final "Not configured" row, so opening Settings costs no subprocess and no second update.
+  if (tab === "general" && channelVpnConfigured(meta) && opened.view?.id) await hydrateChannelVpnSettings(client, opened.view, state);
   await logEvent("channel_settings_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
@@ -1412,7 +1418,7 @@ async function connectAndWire(app) {
     }
     await ack();
     const clicker = body?.user?.id;
-    const command = parseChannelSettingsActionValue(action?.value);
+    const command = settingsCommand(action);
     const actionId = String(action?.action_id || "");
     try {
       if (command.o === "open") {
@@ -1437,7 +1443,11 @@ async function connectAndWire(app) {
       let { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
         channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
         cloudMcp: actionId.startsWith("cg_channel_settings_cloud_"),
-        accessSettings: actionId === ACCESS_EDIT_ACTION_ID || (command.o === "tab" && command.p === "access"),
+        // Opening the page that HOLDS the access summary is not itself a manager action: the
+        // summary is rendered only for a manager (canEditAccess), and the editor below still
+        // asserts. Requiring management to read General Settings would lock every ordinary
+        // authorized user out of their own engine, model and network rows.
+        accessSettings: actionId === ACCESS_EDIT_ACTION_ID,
       });
       // The hash guards against replacing a view the user has already moved past. The runtime
       // dropdowns opt out: picking engine then model in quick succession makes the second click
@@ -1454,9 +1464,11 @@ async function connectAndWire(app) {
       };
 
       if (command.o === "tab") {
-        const tab = String(command.p || "runtime");
+        const tab = String(command.p || "general");
         const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
-        if (tab === "network" && updated.view?.id) await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
+        if (normalizeSettingsTab(tab) === "general" && channelVpnConfigured(meta) && updated.view?.id) {
+          await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
+        }
         return;
       }
 
@@ -1469,7 +1481,7 @@ async function connectAndWire(app) {
       }
 
       if (actionId.startsWith(CHANNEL_SETTINGS_MODE_PREFIX) || actionId.startsWith(CHANNEL_SETTINGS_OPTION_PREFIX)) {
-        if (!meta.isDM) throw new Error("Channel mode controls moved to Settings → Access. Reopen Settings.");
+        if (!meta.isDM) throw new Error("Channel mode controls live under Settings → General Settings → Access. Reopen Settings.");
         let change;
         if (actionId.startsWith(CHANNEL_SETTINGS_MODE_PREFIX)) {
           change = { mode: actionId.slice(CHANNEL_SETTINGS_MODE_PREFIX.length) };
@@ -1492,7 +1504,7 @@ async function connectAndWire(app) {
 
       if (actionId === CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID) {
         // Compatibility with Settings views opened before the inline engine/model dropdowns shipped.
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "runtime" }, userIsAdmin, { tab: "runtime" }));
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general" }));
         return;
       }
 
@@ -1516,15 +1528,15 @@ async function connectAndWire(app) {
         } else {
           notice = await applyThreadRuntimeSelection({ entry, meta, state, actorId: clicker, field, value });
         }
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "runtime" }, userIsAdmin, { tab: "runtime", notice }), { guardHash: false });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general", notice }), { guardHash: false });
         return;
       }
 
       if (actionId === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID) {
         await clearThreadRuntime(entry.slug, requireThread(state));
         await logEvent("thread_runtime_updated", { channel: state.channelId, slug: entry.slug, thread: state.threadTs, cleared: true, author: clicker });
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "runtime" }, userIsAdmin, {
-          tab: "runtime",
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, {
+          tab: "general",
           notice: "🗑️ Cleared this thread's pins. It follows the channel default again.",
         }), { guardHash: false });
         return;
