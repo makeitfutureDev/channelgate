@@ -17,7 +17,7 @@ const {
 const UNKNOWN = "future-engine";
 
 test("all shipped engines are registered with the facts callers depend on", () => {
-  assert.deepEqual([...ENGINE_IDS], ["claude", "codex", "qwen", "opencode"]);
+  assert.deepEqual([...ENGINE_IDS], ["claude", "codex", "qwen", "qwen-eu", "opencode"]);
   for (const id of ENGINE_IDS) {
     const a = adapterFor(id);
     assert.equal(a.id, id);

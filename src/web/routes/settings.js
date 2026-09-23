@@ -58,6 +58,8 @@ import { readSecret } from "../secrets.js";
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
 import { engineUiManifest, refreshEngineModels } from "../../engines/registry.js";
+// The Anthropic-compatible provider table — one settings card, one credential pair, per entry.
+import { QWEN_PROVIDERS } from "../../engines/qwen.js";
 
 // The month the license ledger is keyed on — UTC, never the daemon's local zone (a deployment in
 // UTC+13 would otherwise roll its allowance a day early).
@@ -375,19 +377,23 @@ export function createSettingsRouter({
       // The Claude subscription token for container runs (`claude setup-token` on the host). Same
       // write-only rule as every other credential: set on a value, cleared by an empty string or
       // the explicit flag, never echoed back by any listing.
-      // ── Qwen provider (the opt-in `qwen` harness) ───────────────────────────
+      // ── Anthropic-compatible providers (the opt-in Qwen harnesses) ──────────
       // Write-only, exactly like the tokens above: the value is never echoed back on a listing,
-      // and `clearQwenApiKey` is how the UI removes one it cannot read.
-      if (typeof body.qwenApiKey === "string") patch.qwenApiKey = body.qwenApiKey.trim();
-      if (body.clearQwenApiKey === true) patch.qwenApiKey = "";
-      if (typeof body.qwenBaseUrl === "string") {
-        const url = body.qwenBaseUrl.trim();
+      // and `clear<Key>` is how the UI removes one it cannot read. Driven off the provider TABLE,
+      // not a literal pair — a provider added there would otherwise get a settings card in the UI
+      // whose key and endpoint silently never saved.
+      for (const entry of QWEN_PROVIDERS) {
+        const { apiKey: keyField, baseUrl: urlField } = entry.settings;
+        if (typeof body[keyField] === "string") patch[keyField] = body[keyField].trim();
+        if (body[`clear${keyField[0].toUpperCase()}${keyField.slice(1)}`] === true) patch[keyField] = "";
+        if (typeof body[urlField] !== "string") continue;
+        const url = body[urlField].trim();
         // An endpoint the daemon will send a credential to: https only, and shape-checked here
         // rather than at spawn time, where a bad value would fail every turn in the channel.
         if (url && !/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[\w./-]*)?$/i.test(url)) {
-          return res.status(400).json({ error: "Qwen base URL must be an https:// endpoint" });
+          return res.status(400).json({ error: `${entry.label} base URL must be an https:// endpoint` });
         }
-        patch.qwenBaseUrl = url;
+        patch[urlField] = url;
       }
       if (typeof body.containerClaudeOauthToken === "string") patch.containerClaudeOauthToken = body.containerClaudeOauthToken.trim();
       if (body.clearContainerClaudeOauthToken === true) patch.containerClaudeOauthToken = "";

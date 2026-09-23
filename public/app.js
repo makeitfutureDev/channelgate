@@ -96,6 +96,9 @@ function applyEngineManifests(manifests) {
   ENGINE_MANIFESTS = manifests;
   Object.assign(EFFORT_OPTIONS, Object.fromEntries(manifests.map((m) => [m.id, [["", "default"], ...(m.efforts || []).map((v) => [v, v])]])));
   Object.assign(MODEL_OPTIONS, Object.fromEntries(manifests.map((m) => [m.id, (m.models || []).map((o) => [o.value, o.label])])));
+  // Which harnesses speak the QwenCloud model vocabulary — declared by the adapter, never inferred
+  // from the id, so modelMatchesEngine keeps working for a provider added later.
+  QWEN_ENGINE_IDS = manifests.filter((m) => m.modelFamily === "qwen").map((m) => m.id);
   Object.assign(MODEL_EFFORT_OPTIONS, Object.fromEntries(manifests.map((m) => [m.id, Object.fromEntries(
     (m.models || []).filter((o) => Array.isArray(o.efforts) && o.efforts.length).map((o) => [o.value, o.efforts]),
   )])));
@@ -160,9 +163,12 @@ const MODEL_OPTIONS = {
 // an extra option (same engine: keep so Save round-trips it) or be dropped (other engine).
 function modelMatchesEngine(model, engine) {
   if (engine === "codex") return /^(?:gpt-|o[0-9]|codex)/i.test(model);
-  // Mirrors isQwenTextModel (src/engines/qwen.js): the QwenCloud families, minus the image/audio
-  // ones that cannot hold a conversation.
-  if (engine === "qwen") return /^(?:auto|qwen[0-9][\w.-]*|qwen-[\w.-]+|glm-[\w.-]+|deepseek-[\w.-]+|kimi-[\w.-]+|minimax-[\w.-]+)$/i.test(model) && !/(?:^wan|image|video|audio|tts|realtime|t2v|i2v|speech)/i.test(model);
+  // Mirrors isQwenTextModel (src/engines/qwen.js): the provider families, minus the image/audio
+  // and single-purpose ones that cannot hold a conversation. Every engine generated from that
+  // table shares the shapes, so the check follows the SERVER's list of provider harnesses rather
+  // than a hard-coded id — a provider added there must not silently fail this test and have its
+  // saved model dropped from the picker on the next repaint.
+  if (QWEN_ENGINE_IDS.includes(engine)) return /^(?:auto|qwen[0-9][\w.-]*|qwen-[\w.-]+|glm-[\w.-]+|deepseek-[\w.-]+|kimi-[\w.-]+|minimax-[\w.-]+)$/i.test(model) && !/(?:^wan|image|video|audio|tts|realtime|t2v|i2v|speech|ocr|(?:^|-)mt-)/i.test(model);
   return /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/i.test(model);
 }
 
@@ -3079,6 +3085,66 @@ function addChipValues(container, text) {
 // switch a harness on and paste its key in the same save).
 const SETTINGS_HAVE_PROVIDER_KEY = {};
 
+// The Anthropic-compatible provider harnesses (/api/settings `qwenProviders`) and the cards
+// rendered for them. `collectSettings` reads the cards rather than fixed element ids, so the
+// save body carries exactly the providers the server declared.
+let QWEN_ENGINE_IDS = [];
+let QWEN_PROVIDER_CARDS = [];
+
+// One settings card per provider, cloned from the template that marks where they belong. Rendered
+// as SIBLINGS of the other cards (not nested in a wrapper) so the settings search, the jump nav
+// and the section's own spacing treat them like any hand-written card.
+function paintQwenProviders(providers) {
+  const tpl = document.getElementById("qwen-provider-tpl");
+  if (!tpl) return;
+  for (const old of document.querySelectorAll(".qwen-provider-card")) old.remove();
+  QWEN_PROVIDER_CARDS = [];
+  for (const p of providers || []) {
+    const card = tpl.content.firstElementChild.cloneNode(true);
+    const at = (role) => card.querySelector(`[data-role="${role}"]`);
+    at("label").textContent = p.label;
+    at("description").textContent = p.description || "";
+    at("endpoint-hint").textContent = p.endpointHint || "";
+    const keyInput = at("api-key");
+    const urlInput = at("base-url");
+    const modelSelect = at("default-model");
+    const clearBtn = at("clear-key");
+    // An endpoint the provider ships is a placeholder (blank = keep it); one only the operator can
+    // know is not, so the box says so instead of implying a default exists.
+    urlInput.placeholder = p.defaultBaseUrl || "required — paste your account's endpoint";
+    urlInput.value = p.baseUrl || "";
+    at("key-state").textContent = tokenState(p.hasApiKey, p.apiKeyLast4);
+    attachReveal(keyInput, { has: p.hasApiKey, last4: p.apiKeyLast4 || "", fetch: revealSecret("settings", p.apiKeyField) });
+    // The button sits inside the field's <label>; preventDefault stops the click focusing the input.
+    clearBtn.addEventListener("click", (e) => { e.preventDefault(); toggleClearTok(clearBtn); });
+    syncModelOptions({ modelSelect, engine: p.id, value: p.defaultModel || "", blankLabel: "provider default" });
+    // Say WHERE the list came from: a stale shipped list and a live account list look identical in
+    // a picker, and the difference decides whether a missing model is a typo or a missing key.
+    const catalog = ENGINE_MANIFESTS.find((m) => m.id === p.id)?.modelCatalog;
+    at("catalog-note").textContent = catalog?.source === "live"
+      ? `Read from the account itself${catalog.refreshedAt ? ` · refreshed ${new Date(catalog.refreshedAt).toLocaleString()}` : ""}.`
+      : (p.hasApiKey
+        ? "Built-in list — the account's own list could not be read. Check the key and endpoint, then reload."
+        : "Built-in list. Save an API key to read the account's own models.");
+    tpl.parentNode.insertBefore(card, tpl);
+    QWEN_PROVIDER_CARDS.push({ ...p, keyInput, urlInput, modelSelect, clearBtn });
+  }
+}
+
+// The provider half of the save body: each card's endpoint, default model, and a key only when one
+// was typed (write-only) or an explicit clear was armed.
+function collectQwenProviders() {
+  const body = {};
+  for (const card of QWEN_PROVIDER_CARDS) {
+    body[card.baseUrlField] = card.urlInput.value;
+    body[card.defaultModelField] = card.modelSelect.value;
+    const typed = tokenValue(card.keyInput);
+    if (typed) body[card.apiKeyField] = typed;
+    if (card.clearBtn.classList.contains("armed")) body[`clear${card.apiKeyField[0].toUpperCase()}${card.apiKeyField.slice(1)}`] = true;
+  }
+  return body;
+}
+
 // One checkbox per known harness. Re-rendered (not patched) on every change so the engine pickers
 // and the "last one standing" lock stay derived from a single source: ENGINE_ENABLED.
 function paintEngineToggles() {
@@ -3173,10 +3239,7 @@ function readSettingsForm() {
     engine: document.getElementById("set-engine").value,
     defaultClaudeModel: document.getElementById("set-default-claude-model").value,
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
-    defaultQwenModel: document.getElementById("set-default-qwen-model").value,
-    qwenBaseUrl: document.getElementById("set-qwen-base-url").value,
-    ...(tokenValue(document.getElementById("set-qwen-api-key")) ? { qwenApiKey: tokenValue(document.getElementById("set-qwen-api-key")) } : {}),
-    ...(document.getElementById("clear-qwen-api-key").classList.contains("armed") ? { clearQwenApiKey: true } : {}),
+    ...collectQwenProviders(),
     modelChangeAccess: document.getElementById("set-model-change-access").value,
     engineEnabled: { ...ENGINE_ENABLED },
     engineFallback: document.getElementById("set-engine-fallback").checked,
@@ -3231,7 +3294,8 @@ function paintSettings(s) {
   applyEngineManifests(s.engines);
   ENGINE_ENABLED = { ...(s.engineEnabled || {}) };
   // Before the toggles paint: they annotate an opt-in harness whose provider key is still missing.
-  SETTINGS_HAVE_PROVIDER_KEY.qwen = s.hasQwenApiKey === true;
+  paintQwenProviders(s.qwenProviders);
+  for (const p of s.qwenProviders || []) SETTINGS_HAVE_PROVIDER_KEY[p.id] = p.hasApiKey === true;
   paintEngineToggles();
   const orgGrantsHost = document.getElementById("org-grants-editor");
   orgGrantsEditor = buildAccessGrantsEditor(s.accessGrants || {}, { tier: "organization" });
@@ -3301,23 +3365,6 @@ function paintSettings(s) {
   GLOBAL_ENGINE = s.engine || "claude";
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
-  syncModelOptions({ modelSelect: document.getElementById("set-default-qwen-model"), engine: "qwen", value: s.defaultQwenModel || "", blankLabel: "provider default" });
-  document.getElementById("set-qwen-base-url").value = s.qwenBaseUrl || "";
-  document.getElementById("qwen-key-state").textContent = tokenState(s.hasQwenApiKey, s.qwenApiKeyLast4);
-  attachReveal(document.getElementById("set-qwen-api-key"), { has: s.hasQwenApiKey, last4: s.qwenApiKeyLast4 || "", fetch: revealSecret("settings", "qwenApiKey") });
-  // Say WHERE the Qwen list came from: a stale fallback list and a live one look identical in a
-  // <select>, and an admin picking a model the account cannot call would only find out in Slack.
-  {
-    const qwenCatalog = ENGINE_MANIFESTS.find((m) => m.id === "qwen")?.modelCatalog;
-    const note = document.getElementById("qwen-model-catalog");
-    if (note) {
-      note.textContent = qwenCatalog?.source === "live"
-        ? `Read from the QwenCloud account${qwenCatalog.refreshedAt ? ` · refreshed ${new Date(qwenCatalog.refreshedAt).toLocaleString()}` : ""}.`
-        : (s.hasQwenApiKey
-          ? "Built-in list — the account's own model list could not be read. Check the key and base URL."
-          : "Built-in list. Save a QwenCloud API key to read the account's own models.");
-    }
-  }
   document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
   document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";
@@ -3531,7 +3578,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-qwen-api-key"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -3688,7 +3735,8 @@ function bindSettings() {
       // Reset only the write-only password box; the token fields are repainted (masked) by the
       // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
       document.getElementById("set-adminpw").value = "";
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-qwen-api-key"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) disarmClearTok(document.getElementById(id));
+      for (const card of QWEN_PROVIDER_CARDS) disarmClearTok(card.clearBtn);
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.
       loadLicense().catch(() => { /* the save itself succeeded — the card refreshes on reload */ });

@@ -10,7 +10,7 @@ import { getDb } from "../db/index.js";
 import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
-import { QWEN_DEFAULT_BASE_URL } from "../engines/qwen.js";
+import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
@@ -388,20 +388,49 @@ export function getContainerRuntime() {
     fullAccessHome: s.containerFullAccessHome === true,
   };
 }
-// ── Qwen provider (the `qwen` engine — src/engines/qwen.js) ───────────────────────────────────
-// A gateway-level credential, deliberately NOT a per-channel environment secret: `ANTHROPIC_*` is
-// a reserved prefix in channel-env.js because redirecting a run's provider is identity hijack.
+// ── Anthropic-compatible providers (the Qwen harnesses — src/engines/qwen.js) ─────────────────
+// Gateway-level credentials, deliberately NOT per-channel environment secrets: `ANTHROPIC_*` is a
+// reserved prefix in channel-env.js because redirecting a run's provider is identity hijack.
 // Write-only from the API like every other token here — has*/last4 on listings, the value only
-// through POST /api/secrets/reveal.
-export function getQwenConfig() {
+// through POST /api/secrets/reveal. Keyed by PROVIDER so a second endpoint (a different region, a
+// different account) is a table row rather than a second copy of this accessor.
+export function getQwenConfig(providerId) {
+  const entry = qwenProvider(providerId);
   const s = getSettings();
+  const stored = (key) => (typeof s[key] === "string" ? s[key].trim() : "");
   return {
-    apiKey: typeof s.qwenApiKey === "string" ? s.qwenApiKey.trim() : "",
-    baseUrl: typeof s.qwenBaseUrl === "string" && s.qwenBaseUrl.trim() ? s.qwenBaseUrl.trim() : QWEN_DEFAULT_BASE_URL,
+    id: entry.id,
+    apiKey: stored(entry.settings.apiKey),
+    // The shipped endpoint is a DEFAULT, not a guarantee: a provider whose endpoint is
+    // account-specific ships none, and stays unconfigured until the operator saves theirs.
+    baseUrl: stored(entry.settings.baseUrl) || entry.defaultBaseUrl,
   };
 }
-export function hasQwenApiKey() {
-  return Boolean(getQwenConfig().apiKey);
+export function hasQwenApiKey(providerId) {
+  return Boolean(getQwenConfig(providerId).apiKey);
+}
+// What the admin UI renders one card from, per provider. Presence and endpoint only — the key
+// itself is fetched one at a time from POST /api/secrets/reveal, like every other credential.
+export function qwenProviderSettings() {
+  return QWEN_PROVIDERS.map((entry) => {
+    const config = getQwenConfig(entry.id);
+    return {
+      id: entry.id,
+      label: entry.label,
+      description: entry.description,
+      endpointHint: entry.endpointHint,
+      defaultBaseUrl: entry.defaultBaseUrl,
+      apiKeyField: entry.settings.apiKey,
+      baseUrlField: entry.settings.baseUrl,
+      defaultModelField: entry.defaultModelKey,
+      hasApiKey: Boolean(config.apiKey),
+      apiKeyLast4: last4(config.apiKey),
+      // The STORED endpoint, so an empty box means "still on the shipped default" rather than
+      // silently re-saving a default the operator never chose.
+      baseUrl: typeof getSettings()[entry.settings.baseUrl] === "string" ? getSettings()[entry.settings.baseUrl].trim() : "",
+      defaultModel: getDefaultModel(entry.id),
+    };
+  });
 }
 
 // The long-lived subscription token from `claude setup-token`, injected as CLAUDE_CODE_OAUTH_TOKEN
@@ -891,12 +920,9 @@ export function settingsForApi() {
     engine: getEngine(),
     defaultClaudeModel: getDefaultModel("claude"),
     defaultCodexModel: getDefaultModel("codex"),
-    defaultQwenModel: getDefaultModel("qwen"),
-    // The Qwen provider: presence and endpoint only. The key itself is fetched one at a time from
-    // POST /api/secrets/reveal, like every other credential on this snapshot.
-    hasQwenApiKey: hasQwenApiKey(),
-    qwenApiKeyLast4: last4(getQwenConfig().apiKey),
-    qwenBaseUrl: getQwenConfig().baseUrl,
+    // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
+    // instead of carrying a hard-coded copy of the table.
+    qwenProviders: qwenProviderSettings(),
     modelChangeAccess: getModelChangeAccess(),
     engineEnabled: getEngineEnabledMap(),
     engineFallback: getEngineFallback(),
