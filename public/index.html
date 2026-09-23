@@ -682,6 +682,11 @@
                   </label>
                 </div>
                 <div class="setcard">
+                  <h4>Public file links</h4>
+                  <p class="desc">Lets a conversation mint a <strong>temporary public download URL</strong> for one file in its own working folder — anyone holding the link can fetch it with no login. Two uses: handing a file to an API that ingests by URL (a few minutes, capped fetches), and sending a person a link (duration chosen per link, <strong>48 hours maximum</strong>). Links are re-checked on every fetch against this switch, their expiry, their fetch count and the file's continued presence inside the channel folder; turning this off kills every outstanding link immediately. Requires <strong>Public URL</strong> (above) to be set. Destinations reachable through Composio do not need this — those files are staged directly into Composio storage and never published.</p>
+                  <label class="toggle"><input type="checkbox" id="set-public-file-links-enabled" /> <strong>Enable temporary public file links</strong> — off refuses every mint and every outstanding link.</label>
+                </div>
+                <div class="setcard">
                   <h4>Google Drive sync</h4>
                   <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and a dedicated <code>Drive/</code> subfolder inside that channel's working folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>apt install rclone</code>, or the official installer from rclone.org).</p>
                   <label class="toggle"><input type="checkbox" id="set-drivesync-enabled" /> <strong>Enable scheduled Drive sync</strong> — off keeps the whole feature dormant even if channels have a folder link set.</label>

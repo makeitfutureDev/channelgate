@@ -78,7 +78,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   the changed keys), `dead-fields.js` (retired fields stripped on every write).
 - `src/db/` — `index.js` (the one lazy `node:sqlite` connection: WAL, `busy_timeout`,
   `foreign_keys`, migrations on open, the one-time legacy JSON import behind `_meta` flags),
-  `migrations.js` (versioned on `PRAGMA user_version`, currently 27 — append, never edit),
+  `migrations.js` (versioned on `PRAGMA user_version`, currently 29 — append, never edit),
   `import-legacy.js`, `fts.js` (the optional FTS5 `channel_memory_fts` index; without FTS5 memory
   search degrades to a scan).
 - `src/gateway/run.js` — the run orchestrator: engine adapter selection and precedence (per-run

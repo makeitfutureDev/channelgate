@@ -42,6 +42,58 @@
       last. This is the reported symptom ("the cursor jumps to the left").
 - [x] `test/skills-source-browser.test.js` updated for the new contract: filling the source search
       leaves the table unfiltered until Enter, then it filters. Re-run green.
+## Composio file staging
+
+- [x] `test/composio-files.test.js` drives the three-step flow against an injected fetch: the
+      upload request carries `x-api-key`, the derived toolkit slug, the filename, the detected MIME
+      type and the file's md5; the presigned `PUT` carries the bytes and the content type and must
+      NOT carry the API key; the returned object is exactly `{name, mimetype, s3key}`. A response
+      with a key but no presigned URL is a deduplication HIT, not a failure. A failed request or
+      `PUT` names its own step and status and must not contain the key. Oversize is refused before
+      any network call; a missing key and a non-slug tool name are refused outright.
+- [x] `test/file-sharing-tools.test.js` exercises the MCP tool against a stub Composio API: the
+      identity named in the call is the key that gets spent (`user` → the author's personal token,
+      `agent` → the channel token), a named identity with no key is reported instead of falling
+      back to the other, and a path escaping the channel folder is refused before any key is spent.
+      Engine-independent: the tool runs daemon-side and no harness participates.
+- [ ] Live acceptance, Claude and Codex: in a fixture channel with a Composio connection, ask the
+      agent to put a file it generated into Drive. Require it to call `stage_file_for_composio`
+      (not a base64 relay, not a public link), then `GOOGLEDRIVE_UPLOAD_FILE` on the SAME identity,
+      and require the file to open in Drive with the right bytes. Repeat with "my Drive" vs "your
+      Drive" and confirm the staged identity matches the one the upload ran as. Record the
+      `composio_file_staged` audit event.
+
+## Temporary public file links
+
+- [x] `test/public-file-links.test.js`: the duration rules per purpose (upload defaults to 5 and is
+      capped at 15; share has NO default and is capped at 2880, with an over-long request refused
+      rather than clamped); only the token's SHA-256 is stored; a share link has no fetch cap while
+      an upload link is exhausted after five; expiry, revocation and an unknown token are each
+      refused and revocation is idempotent and channel-scoped; the fetch cap is claimed atomically
+      under concurrent claims; listing is channel-scoped and the sweeper keeps dead rows for a week.
+- [x] Same file, over the real Express router on a loopback port: a live token streams the file with
+      `attachment`, `nosniff`, `noindex` and the correct `Content-Type`, audits the fetch with IP
+      and user agent but never the token, and spends exactly one download; a `HEAD` probe verifies
+      without spending one; flipping the gateway switch off refuses a previously working link
+      immediately; a traversal path, a symlink at the final component, a deleted file and a missing
+      channel all fail closed; unknown, expired and revoked tokens return one byte-identical 404.
+- [x] `test/file-sharing-tools.test.js`: the tool is refused entirely while the switch is off or no
+      Public URL is set, an upload link's reply states the 5-minute life, the fetch cap and "do not
+      post it", a share link with no duration is told to ask and one over 48 hours is told the
+      ceiling, and the listing never reprints a minted URL. The control-plane gate cards a `share`
+      link (naming the file and the duration) and returns null for `upload`.
+- [x] `test/file-download.test.js` still passes with the Slack download router refactored onto the
+      shared confined open — the symlink-race behaviour it pins is unchanged.
+- [ ] Live acceptance, Claude and Codex: with the gateway switch ON and a Public URL set, ask for a
+      link to a file in the channel folder. Require the agent to ask how long it should live before
+      minting, require an Approve card naming the file and duration, and require the posted link to
+      download the file from a browser with no gateway session. Then ask for 5 days and require the
+      48-hour ceiling to be stated, not silently applied. Revoke it with `revoke_public_file_link`
+      and require the URL to 404 immediately. Finally turn the Settings switch off and require the
+      same URL to 404 while the file is still perfectly readable inside the channel.
+- [ ] Live acceptance, negative: in an Admin channel whose container mounts the operator home, ask
+      for a public link to a file under that mounted home (outside the channel's working folder).
+      Require a refusal, and require `list_public_file_links` to show nothing new.
 
 ## Cross-engine failover spawn contract
 

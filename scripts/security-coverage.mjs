@@ -63,6 +63,27 @@ const areas = [
   // live cookies and tabs — so a bug in it is one channel reading another channel's logged-in
   // session, not a preference.
   { name: "secrets", floor: [90, 80, 65], include: ["src/web/secrets.js", "src/engines/child-env.js", "src/config/channel-env.js", "src/gateway/browser-env.js"], tests: ["test/secret-reveal.test.js", "test/child-env.test.js", "test/channel-env.test.js", "test/browser-env.test.js"] },
+  // File export is a security area because it is the only path that serves channel bytes to a
+  // caller with NO gateway session. public-file-links.js owns the token/expiry/cap/revocation
+  // rules, public-files.js is the unauthenticated route, and confined-file.js is the shared
+  // lookup-then-open race guard all three exporters (Slack download, public link, Composio
+  // staging) go through — a bug in it is a channel publishing the operator's home.
+  // Floors set just under measured reality when the area was added (97/82/74 on 2026-09-23).
+  {
+    name: "file-export", floor: [95, 80, 70],
+    include: [
+      "src/gateway/public-file-links.js",
+      "src/web/public-files.js",
+      "src/gateway/confined-file.js",
+      "src/gateway/composio-files.js",
+    ],
+    tests: [
+      "test/public-file-links.test.js",
+      "test/file-sharing-tools.test.js",
+      "test/file-download.test.js",
+      "test/composio-files.test.js",
+    ],
+  },
   { name: "web-boundary", floor: [80, 80, 75], include: ["src/web/security.js", "src/web/ip-policy.js"], tests: ["test/web-security.test.js", "test/ssrf.test.js", "test/host-guard.test.js"] },
   // The old include named src/gateway/update-runner.js, which no longer exists — this area had
   // been passing vacuously (exactly the failure the existence check below now refuses). Floors

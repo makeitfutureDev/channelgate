@@ -206,6 +206,24 @@ product overview.
   registration order, so `qwen-eu` would have selected `qwen` and left `eu` at the front of the
   prompt; ids are now matched longest-first. And the confirmation posted after such a switch called
   every harness either "Claude" or "Codex" — it now names the harness actually selected.
+- Let a conversation hand a file it generated to something outside Slack. Until now a run that
+  produced a PDF or an export had no way to deliver it anywhere: Composio's file-taking tools
+  (Drive upload, Gmail attachments, Slack uploads) accept only bytes already staged in Composio's
+  own storage, and nothing in the gateway could put them there — so the file stayed in the
+  channel's container while the agent explained why it could not be moved. `stage_file_for_composio`
+  now performs Composio's documented upload flow from the daemon and hands the model the exact
+  object those tools expect. You name which identity will run the upload, and that identity's key
+  is the one spent; a key never enters the container and nothing is published.
+
+- Added temporary public file links for the cases a URL is the only way in — an API that ingests by
+  URL, or a person who just wants a download link. `create_public_file_link` serves one file from
+  the channel's own working folder at a short, unguessable URL. A machine-facing link lives five
+  minutes and allows five fetches; a person-facing one lives exactly as long as you say, up to a
+  hard 48-hour ceiling, and needs an Approve click naming the file and the duration. Links are
+  listable and revocable, every fetch is audited, and the whole capability is off until an admin
+  turns it on in Settings → Public file links — where turning it back off kills every outstanding
+  link at once. A link can never reach outside the channel's working folder, including on an Admin
+  channel that mounts the operator home.
 
 ## 0.5.2 — 2026-09-22
 
