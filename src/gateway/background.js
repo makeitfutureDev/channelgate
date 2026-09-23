@@ -27,7 +27,9 @@ import { recordUsage, createUsageBank } from "./usage.js";
 import { countDrop } from "../util/drops.js";
 import { getDb, toJson, fromJson } from "../db/index.js";
 import { postNotice, automationTarget } from "../platforms/notify.js";
-import { resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
+import { safeSpawnEnv } from "../config/channel-env.js";
+// A job gets the same three credential scopes a foreground turn does (config/scoped-env.js).
+import { resolveRunEnv } from "../config/scoped-env.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 import { containerJobScript } from "./background-shell-log.js";
@@ -449,9 +451,12 @@ export class BackgroundJobs {
       }
       rec.tail = appendTail(rec.tail, chunk, MAX_TAIL);
     };
-    // The channel's own environment secrets, resolved at THIS spawn rather than inherited from the
-    // run that queued the job: a background job outlives its run, and a provider's lease may not.
-    const jobEnv = safeSpawnEnv(await resolveChannelEnv(meta));
+    // The organization's, the launching author's and the channel's environment secrets, resolved
+    // at THIS spawn rather than inherited from the run that queued the job: a background job
+    // outlives its run, and a provider's lease may not. The author is the one the daemon PERSISTED
+    // when the job was created and has already re-authorized, so the personal scope applies here
+    // exactly as it did in the foreground — a job is the same person's work, continued.
+    const jobEnv = safeSpawnEnv((await resolveRunEnv({ meta, authorId })).env);
     rec.secretValues = [...Object.values(jobEnv), ...serviceSecretValues()];
     rec.label = redactSecretValues(rec.label, rec.secretValues);
     let onChunk = writeChunk;
@@ -978,7 +983,7 @@ export class BackgroundJobs {
         // Recovery may attach to a job launched before this build stopped injecting operator VPN
         // credentials. Resolve a value-only projection so those former environment values remain
         // covered by output redaction without making them available to new jobs.
-        rec.secretValues = [...Object.values(safeSpawnEnv(await resolveChannelEnv({env:meta.env}))), ...serviceSecretValues()];
+        rec.secretValues = [...Object.values(safeSpawnEnv((await resolveRunEnv({ meta: { env: meta.env }, authorId: rec.authorId })).env)), ...serviceSecretValues()];
       } catch {
         rec.secretValues = serviceSecretValues();
       }

@@ -20,6 +20,7 @@ import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintR
 import { loadSkills } from "./admin-skills.js";
 import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
+import { mountSecretEditor, secretEditorMarkup } from "./admin-secrets.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 
 // ── Inline SVG icon ─────────────────────────────────────────────────────────────
@@ -618,22 +619,223 @@ function chartCard(title, values, color, peak, axis, opts = {}) {
   </div>`;
 }
 
+// ── Per-model stacking ───────────────────────────────────────────────────────────
+// Eight categorical hues, stepped for THIS surface (--panel #1e3535) and validated as a set:
+// lightness band, chroma floor, adjacent CVD separation, normal-vision separation and 3:1 contrast
+// all pass (scripts/validate_palette.js from the dataviz skill). The order is the colorblind-safety
+// mechanism, not decoration — re-ordering or substituting a hue means re-running that validator.
+// MODEL_OTHER is deliberately NOT a ninth category: it is the neutral every series past the eighth
+// folds into, because a generated hue is how a stacked chart stops being readable.
+const MODEL_PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#48a02b", "#9085e9", "#e66767"];
+const MODEL_OTHER = "#7a9294";
+const MODEL_OTHER_KEY = "__other__";
+// How many models get their own band. Seven leaves a slot for "Other" and keeps every adjacent pair
+// inside the validated palette; the Models card below still lists every model, so nothing is hidden
+// — it just stops being its own colour.
+const MODEL_STACK_MAX = 7;
+
+// Colour belongs to the MODEL, not to its rank in the current window: switching range, harness or
+// source must never repaint the series that survived the filter. `models` arrives ordered by cost,
+// but the slot is taken from the model id itself (a stable string hash), and a collision inside one
+// chart is resolved by walking to the next free slot — deterministic for a given set of models, so
+// the same models always draw the same way.
+function modelColorMap(models) {
+  const hash = (value) => {
+    let h = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      h ^= value.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0) % MODEL_PALETTE.length;
+  };
+  const taken = new Set();
+  const map = new Map();
+  // Only the models that get their own band are assigned a hue — the rest are "Other" and share the
+  // neutral. Assignment walks them SORTED BY ID, not in the cost order they arrive in, so a given
+  // set of models always resolves a slot collision the same way no matter which window produced it.
+  for (const model of models.slice(0, MODEL_STACK_MAX).sort()) {
+    let slot = hash(model || "?");
+    while (taken.has(slot)) slot = (slot + 1) % MODEL_PALETTE.length;
+    taken.add(slot);
+    map.set(model, MODEL_PALETTE[slot]);
+  }
+  map.set(MODEL_OTHER_KEY, MODEL_OTHER);
+  return map;
+}
+
+// The models a stacked chart draws, largest first, plus "Other" when there are more. Returned as
+// {key, label, color} so the chart, the legend and the tooltip all read the same list.
+function stackKeys(models, colors) {
+  const top = models.slice(0, MODEL_STACK_MAX);
+  const keys = top.map((m) => ({ key: m.model, label: m.label, color: colors.get(m.model) || MODEL_OTHER }));
+  if (models.length > top.length) {
+    keys.push({ key: MODEL_OTHER_KEY, label: `Other (${models.length - top.length})`, color: MODEL_OTHER, rest: models.slice(top.length).map((m) => m.model) });
+  }
+  return keys;
+}
+
+// Per-bucket value for one stack key, folding every model past the cap into "Other".
+function stackValue(point, entry, metric) {
+  const models = point.models || {};
+  if (!entry.rest) return Number(models[entry.key]?.[metric]) || 0;
+  return entry.rest.reduce((total, model) => total + (Number(models[model]?.[metric]) || 0), 0);
+}
+
+// Stacked area chart. Same stretched viewBox and non-scaling strokes as sparkArea, so it drops into
+// the existing chart cards unchanged. Bands are separated by a 2px stroke in the CARD's own colour
+// rather than a gap in the geometry: at one-pixel bucket widths a geometric gap would swallow thin
+// series whole.
+function stackedArea(series, keys, metric, opts = {}) {
+  const W = 300, H = opts.height || 110, pad = 4;
+  const n = series.length;
+  const cls = "spark" + (opts.tall ? " spark-tall" : "");
+  if (!n || !keys.length) return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`;
+  const totals = series.map((point) => keys.reduce((sum, entry) => sum + stackValue(point, entry, metric), 0));
+  const max = Math.max(1e-9, ...totals);
+  const xs = (i) => (n <= 1 ? W / 2 : (i / (n - 1)) * W);
+  const ys = (v) => H - pad - (v / max) * (H - pad * 2);
+  const grid = opts.grid
+    ? [1, 2].map((k) => `<line x1="0" y1="${((H * k) / 3).toFixed(1)}" x2="${W}" y2="${((H * k) / 3).toFixed(1)}" stroke="var(--line-soft)" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join("")
+    : "";
+  // Cumulative from the baseline up, so each band's lower edge is the previous band's upper edge.
+  const running = new Array(n).fill(0);
+  const bands = [];
+  for (const entry of keys) {
+    const lower = running.map((v) => v);
+    for (let i = 0; i < n; i++) running[i] += stackValue(series[i], entry, metric);
+    const upper = running.map((v) => v);
+    if (upper.every((v, i) => v === lower[i])) continue; // a model with nothing in this window
+    const top = upper.map((v, i) => `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`);
+    const bottom = lower.map((v, i) => `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).reverse();
+    bands.push(
+      `<path d="M${top.join(" L")} L${bottom.join(" L")} Z" fill="${entry.color}" opacity="0.72"/>` +
+      `<path d="M${top.join(" L")}" fill="none" stroke="${entry.color}" stroke-width="2" vector-effect="non-scaling-stroke"/>`
+    );
+  }
+  return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${bands.join("")}</svg>`;
+}
+
+// Legend for a stacked chart. Always rendered when there is more than one series — identity must
+// never be carried by colour alone.
+function modelLegend(keys) {
+  if (keys.length < 2) return "";
+  return `<span class="legend legend-wrap">${keys
+    .map((entry) => `<span><span class="dot" style="background:${entry.color}"></span>${escapeHtml(entry.label)}</span>`)
+    .join("")}</span>`;
+}
+
+// A stacked chart card, with the hover layer the plain sparkline cards do not need: an area chart
+// that stacks eight series is unreadable without being able to ask "what is this band, here".
+function stackedChartCard(id, title, series, keys, metric, peak, axis, fmt, opts = {}) {
+  return `<div class="chart-card">
+    <div class="chart-title"><h3>${escapeHtml(title)}</h3><span class="chart-peak">${peak}</span></div>
+    <div class="spark-hover" data-stack="${escapeHtml(id)}" data-metric="${escapeHtml(metric)}" data-fmt="${escapeHtml(fmt)}">
+      ${stackedArea(series, keys, metric, opts)}
+      <span class="spark-cursor" hidden></span>
+      <div class="spark-tip" role="status" hidden></div>
+    </div>
+    <div class="spark-axis"><span>${escapeHtml(axis[0] || "")}</span><span>${escapeHtml(axis[1] || "")}</span></div>
+  </div>`;
+}
+
+// One bar's track. With a `stack` (the row's per-model split and the shared key order), the fill is
+// divided into per-model segments in the SAME order every bar uses, so the colours read as one
+// legend across the whole page instead of per card. Without one it is a single-hue fill, which is
+// what a metric with no model dimension (skill uses) still wants.
+function barTrack(pct, { color = "", stack = null } = {}) {
+  if (!stack || !stack.keys.length) return `<span class="bar-track"><span class="bar-fill" style="width:${pct}%;background:${color}"></span></span>`;
+  const parts = stack.keys
+    .map((entry) => ({ entry, value: stackValue(stack.row, entry, stack.metric) }))
+    .filter((part) => part.value > 0);
+  const total = parts.reduce((sum, part) => sum + part.value, 0);
+  if (!total) return `<span class="bar-track"><span class="bar-fill" style="width:${pct}%;background:${color || MODEL_OTHER}"></span></span>`;
+  const segments = parts
+    .map((part) => `<i style="width:${((part.value / total) * 100).toFixed(2)}%;background:${part.entry.color}" title="${escapeHtml(part.entry.label)}"></i>`)
+    .join("");
+  return `<span class="bar-track"><span class="bar-fill bar-stack" style="width:${pct}%">${segments}</span></span>`;
+}
+
 // Single-metric horizontal bar list, descending. Row: name · bar (width ∝ value) · value.
-function barList(items, valueOf, fmt, color, empty) {
+// `stack` (optional) = { keys, metric } — splits every bar by model, as the charts above do.
+function barList(items, valueOf, fmt, color, empty, stack = null) {
   if (!items.length) return `<p class="hint" style="margin:6px 0 0">${empty}</p>`;
   const max = Math.max(1, ...items.map(valueOf));
   return items.map((it) => {
     const pct = Math.max(2, (valueOf(it) / max) * 100);
     return `<div class="bar-row">
       <span class="bar-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>
-      <span class="bar-track"><span class="bar-fill" style="width:${pct}%;background:${color}"></span></span>
+      ${barTrack(pct, { color, stack: stack ? { ...stack, row: it } : null })}
       <span class="bar-val">${fmt(it)}</span>
     </div>`;
   }).join("");
 }
 
-// Per-channel bars: sessions (blue) over cost (gold) over tokens (teal), each normalized to its own max.
-function channelBars(items) {
+// How a session was driven. "Headless" is the one that needs saying out loud: a scripted
+// `claude -p` / `codex exec` is indistinguishable on disk from the gateway's own invocation, so a
+// row here means "not one of ours, but driven the same way", never "a person at a keyboard".
+const ORIGIN_LABEL = {
+  gateway: "Chat gateway",
+  terminal: "Terminal CLI",
+  vscode: "VS Code",
+  desktop: "Desktop app",
+  ssh: "SSH into a container",
+  headless: "Headless / scripted",
+  other: "Other",
+};
+
+// What the outside figure covers, and how much of what was read was recognised as the gateway's
+// own work. That second number is the one that makes the first believable: an operator who sees
+// "hundreds of sessions attributed back to the gateway" knows the total is not quietly inflated
+// with the gateway's own runs.
+function externalScanNote(scan) {
+  if (!scan) return "Outside-the-gateway usage has not been scanned yet.";
+  const parts = [];
+  if (scan.since) parts.push(`Outside usage counted from ${new Date(scan.since).toLocaleString()}.`);
+  else if (scan.trackingStartedAt) parts.push(`Outside usage covers all engine history on this host (first scanned ${new Date(scan.trackingStartedAt).toLocaleDateString()}).`);
+  else parts.push("Outside usage has not been scanned yet.");
+  const attributed = Object.entries(scan.attributed || {})
+    .filter(([reason]) => !["terminal", "vscode", "desktop", "headless", "ssh", "other", "empty"].includes(reason))
+    .reduce((sum, [, count]) => sum + count, 0);
+  if (attributed) parts.push(`${fmtNum(attributed)} session(s) were recognised as the gateway's own and are not counted here.`);
+  if (scan.pending) parts.push("A backlog of sessions is still being read.");
+  if (scan.errors) parts.push(`${scan.errors} scope(s) could not be read.`);
+  return parts.join(" ");
+}
+
+// Models, largest spend first: cost sets the bar, tokens and runs ride along as text. Every model
+// is listed — this is the readout the stacked charts' top-7 cap deliberately does not limit.
+function modelBars(models, colors) {
+  if (!models.length) return `<p class="hint" style="margin:6px 0 0">No model usage in this window.</p>`;
+  const max = Math.max(1e-9, ...models.map((m) => m.cost || 0));
+  const totalCost = models.reduce((sum, m) => sum + (m.cost || 0), 0);
+  const shown = models.slice(0, DASH_TOP_N);
+  const rows = shown
+    .map((m) => {
+      const pct = Math.max(2, ((m.cost || 0) / max) * 100);
+      const share = totalCost > 0 ? Math.round(((m.cost || 0) / totalCost) * 100) : 0;
+      const where = m.externalRuns > 0 ? ` · ${fmtNum(m.externalRuns)} outside` : "";
+      // Runs charted here because nothing recorded a model for them (Settings → Agent defaults).
+      // Saying so keeps the band readable without letting the assumption pass as measurement.
+      const guessed = m.assumedRuns > 0 ? ` · ${fmtNum(m.assumedRuns)} assumed` : "";
+      // A model can spend without ever heading a run — a Codex subagent or the auto-review pass.
+      // "0 runs" would read as a bug; naming what it actually is does not.
+      const runs = m.runs > 0 ? `${fmtNum(m.runs)} runs${where}${guessed}` : "inside other runs";
+      return `<div class="bar-row">
+      <span class="bar-name" title="${escapeHtml(m.model || m.label)}">${escapeHtml(m.label)}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${pct}%;background:${colors.get(m.model) || MODEL_OTHER}"></span></span>
+      <span class="bar-val"><span>${m.cost > 0 ? fmtUSD(m.cost) : "unpriced"} · ${share}%</span><span>${runs}</span><span>${fmtCompact(m.tokens)} tokens</span></span>
+    </div>`;
+    })
+    .join("");
+  const more = models.length - shown.length;
+  return rows + (more > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${more} more</p>` : "");
+}
+
+// Per-channel bars: runs over cost over tokens, each normalized to its own max and each split by
+// the models that produced it. Three rows of the same colours make the composition comparable down
+// the column — a channel whose cost bar is mostly one hue while its runs bar is mostly another is
+// running a few expensive turns on a pricier model, which the old single-hue bars could not show.
+function channelBars(items, keys) {
   if (!items.length) return `<p class="hint" style="margin:6px 0 0">No channel activity yet.</p>`;
   const maxRuns = Math.max(1, ...items.map((c) => c.runs));
   const maxCost = Math.max(1e-6, ...items.map((c) => c.cost || 0));
@@ -642,12 +844,13 @@ function channelBars(items) {
     const rp = Math.max(2, (c.runs / maxRuns) * 100);
     const cp = Math.max(2, ((c.cost || 0) / maxCost) * 100);
     const tp = Math.max(2, ((c.tokens || 0) / maxTokens) * 100);
+    const track = (pct, metric, fallback) => barTrack(pct, { color: fallback, stack: keys?.length ? { keys, metric, row: c } : null });
     return `<div class="bar-row bar-row-dual">
       <span class="bar-name" title="${escapeHtml(c.name)}">${escapeHtml(c.name)}</span>
       <span class="bar-dual">
-        <span class="bar-track"><span class="bar-fill" style="width:${rp}%;background:#91c9ce"></span></span>
-        <span class="bar-track"><span class="bar-fill" style="width:${cp}%;background:var(--orange)"></span></span>
-        <span class="bar-track"><span class="bar-fill" style="width:${tp}%;background:#317b80"></span></span>
+        ${track(rp, "runs", "#91c9ce")}
+        ${track(cp, "cost", "var(--orange)")}
+        ${track(tp, "tokens", "#317b80")}
       </span>
       <span class="bar-val">${fmtNum(c.runs)} · ${fmtUSD(c.cost)} · ${fmtCompact(c.tokens)}</span>
     </div>`;
@@ -666,6 +869,8 @@ const UNIT_WORD = { hour: "hour", day: "day", month: "month" };
 const DASH_TOP_N = 12;
 let dashRange = "last30"; // remembered across nav so switching away and back keeps the selection
 let dashHarness = "all"; // all | claude | codex; scopes every dashboard KPI and chart
+let dashSource = "all"; // all | gateway | external; chat-driven runs, usage the gateway never launched, or both
+let DASH_DATA = null; // the last dashboard payload, kept for the stacked charts' hover layer
 let ACTIVE_RUNS = []; // live in-flight turns, for the "Active sessions" KPI + its modal
 let activeRunsVersion = 0;
 let activeRunsLive = false;
@@ -830,11 +1035,13 @@ async function loadDashboard() {
   const body = document.getElementById("dash-body");
   const rangeSel = document.getElementById("dash-range");
   const harnessSel = document.getElementById("dash-harness");
+  const sourceSel = document.getElementById("dash-source");
   if (rangeSel) dashRange = rangeSel.value;
   if (harnessSel) dashHarness = harnessSel.value;
+  if (sourceSel) dashSource = sourceSel.value;
   let d;
   try {
-    d = await api(`/api/dashboard?range=${encodeURIComponent(dashRange)}&harness=${encodeURIComponent(dashHarness)}`);
+    d = await api(`/api/dashboard?range=${encodeURIComponent(dashRange)}&harness=${encodeURIComponent(dashHarness)}&source=${encodeURIComponent(dashSource)}`);
   } catch (e) {
     body.innerHTML = `<p class="hint">Couldn't load dashboard: ${escapeHtml(e.message)}</p>`;
     return;
@@ -867,10 +1074,14 @@ async function loadDashboard() {
   // open the Activity run history (view), "Active sessions" opens the live in-flight list (action).
   // "Active users" is a plain read-only tile (per user request — clicking it does nothing).
   const activeCount = dashboardActiveRuns().length;
+  const outsideShare = t.cost > 0 ? Math.round(((t.externalCost || 0) / t.cost) * 100) : 0;
   const kpis = [
     { label: "Token Est Cost", value: fmtUSD(t.cost), cls: "cost", sub: multiDay ? `≈ ${fmtUSD(t.cost / spanDays)}/day · ${pricingCoverage}` : pricingCoverage, view: "audit" },
     { label: "Claude Cost", value: fmtUSD(t.claudeCost), cls: "cost", sub: "provider-reported", view: "audit" },
     { label: "Codex Cost", value: fmtUSD(t.codexCost), cls: "cost", sub: "Standard API estimate", view: "audit" },
+    // The whole point of the external scan: what was spent on these engines WITHOUT going through a
+    // conversation. Zero is a real answer here, so the tile is always shown rather than hidden.
+    { label: "Outside the gateway", value: fmtUSD(t.externalCost), cls: "cost", sub: `${fmtNum(t.externalSessions || 0)} session${t.externalSessions === 1 ? "" : "s"} · ${outsideShare}% of spend` },
     { label: "Runs", value: fmtNum(t.runs), sub: multiDay ? `≈ ${(t.runs / spanDays).toFixed(1)}/day · ${fmtUSD(avgCost)} avg value` : `${fmtUSD(avgCost)} avg value`, view: "audit" },
     { label: "Active users", value: fmtNum(t.users), sub: `across ${fmtNum(t.channels)} channels` },
     { label: "Active sessions", value: fmtNum(activeCount), sub: activeCount ? "running now — view" : "none running now", action: "active", liveActive: true },
@@ -893,10 +1104,17 @@ async function loadDashboard() {
   const costPeakLabel = costPeak && costPeak.cost > 0
     ? `peak ${fmtUSD(costPeak.cost)}${costPeak.key ? " · " + bucketLabel(costPeak.key, unit) : ""}`
     : "no value yet";
+  // Every hero chart is stacked by the model that actually answered, so a rising cost line can be
+  // read as "we moved onto a pricier model" rather than only "we ran more". One colour map and one
+  // key list across all three, so a band means the same thing in each and the legend is shared.
+  const allModels = d.models || [];
+  const modelColors = modelColorMap(allModels.map((m) => m.model));
+  const keys = stackKeys(allModels, modelColors);
+  DASH_DATA = { series, keys, unit, models: allModels };
   const charts = [
-    chartCard(`Token est. cost per ${per}`, series.map((x) => x.cost), "var(--orange)", costPeakLabel, axis, { height: 110, grid: true, tall: true }),
-    chartCard("Runs", series.map((x) => x.runs), "#91c9ce", `peak ${peakOf((x) => x.runs, fmtNum)}`, axis, { height: 110, tall: true }),
-    chartCard("Tokens", series.map((x) => x.tokens), "#317b80", `peak ${peakOf((x) => x.tokens, fmtCompact)}`, axis, { height: 110, tall: true }),
+    stackedChartCard("cost", `Token est. cost per ${per}`, series, keys, "cost", costPeakLabel, axis, "usd", { height: 110, grid: true, tall: true }),
+    stackedChartCard("runs", "Runs", series, keys, "runs", `peak ${peakOf((x) => x.runs, fmtNum)}`, axis, "num", { height: 110, tall: true }),
+    stackedChartCard("tokens", "Tokens", series, keys, "tokens", `peak ${peakOf((x) => x.tokens, fmtCompact)}`, axis, "compact", { height: 110, tall: true }),
   ].join("");
 
   const users = (d.byUser || []).slice(0, DASH_TOP_N);
@@ -912,21 +1130,52 @@ async function loadDashboard() {
   const moreChannels = (d.byChannel || []).length - channels.length;
   const skills = (d.topSkills || []).slice(0, 10);
 
+  // Where the spend came from, and how far back that answer is trustworthy. The gateway's own runs
+  // are exact; outside usage is only counted from the moment the scan started keeping session ids,
+  // so the panel says so rather than letting a short history read as "nobody works outside chat".
+  const origins = d.origins || [];
+  const scan = d.externalScan || null;
+  const originsCard = `<div class="chart-card">
+      <div class="chart-title"><h3>Where usage came from</h3><span class="chart-peak">${origins.length} source${origins.length === 1 ? "" : "s"}</span></div>
+      ${barList(
+        origins.map((o) => ({ ...o, name: ORIGIN_LABEL[o.origin] || o.origin })),
+        (o) => o.cost,
+        (o) => `<span>${fmtUSD(o.cost)}</span><span>${fmtNum(o.runs)} turns</span><span>${fmtCompact(o.tokens)} tokens</span>`,
+        "#91c9ce",
+        "No usage in this window.",
+        { keys, metric: "cost" }
+      )}
+      <p class="hint" style="margin:10px 0 0">${escapeHtml(externalScanNote(scan))}</p>
+    </div>`;
+
+  // The dedicated model chart. A bar list, not a pie: the question is "which models are used more",
+  // which is magnitude, and length compares far better than angle. Each bar keeps its series colour
+  // so a band in the charts above and a row here are recognisably the same model.
+  const assumedRuns = t.assumedRuns || 0;
+  const modelsCard = `<div class="chart-card">
+      <div class="chart-title"><h3>Models — token cost &amp; usage</h3><span class="chart-peak">${fmtNum(allModels.length)} model${allModels.length === 1 ? "" : "s"}</span></div>
+      ${modelBars(allModels, modelColors)}
+      ${assumedRuns > 0 ? `<p class="hint" style="margin:10px 0 0">${fmtNum(assumedRuns)} run(s) recorded no model and are charted under the fallback for their engine (Settings → Agent defaults). Their cost is what was actually recorded; only the model is assumed.</p>` : ""}
+    </div>`;
+
   body.innerHTML = `
     <div class="kpi-row">${kpiHtml}</div>
     <div id="dash-approvals"></div>
+    <div class="dash-legend">${modelLegend(keys)}</div>
     <div class="dash-grid">${charts}</div>
     <div class="dash-two">
+      ${modelsCard}
+      ${originsCard}
       <div class="chart-card">
         <div class="chart-title"><h3>Runs per user</h3><span class="chart-peak">${users.length} of ${fmtNum(t.users)}</span></div>
-        ${barList(users, (u) => u.runs, (u) => `<span>${fmtNum(u.runs)} runs</span><span>${fmtCompact(u.tokens)} tokens</span><span>${fmtUSD(u.cost)} est.</span>`, "#91c9ce", "No user activity yet.")}
+        ${barList(users, (u) => u.runs, (u) => `<span>${fmtNum(u.runs)} runs</span><span>${fmtCompact(u.tokens)} tokens</span><span>${fmtUSD(u.cost)} est.</span>`, "#91c9ce", "No user activity yet.", { keys, metric: "runs" })}
         ${moreUsers > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreUsers} more</p>` : ""}
       </div>
       <div class="chart-card">
         <div class="chart-title"><h3>Channels — runs, token cost &amp; tokens</h3>
-          <span class="legend"><span><span class="dot" style="background:#91c9ce"></span>runs</span><span><span class="dot" style="background:var(--orange)"></span>token cost</span><span><span class="dot" style="background:#317b80"></span>tokens</span></span>
+          <span class="chart-peak">three bars per channel, split by model</span>
         </div>
-        ${channelBars(channels)}
+        ${channelBars(channels, keys)}
         ${moreChannels > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreChannels} more</p>` : ""}
       </div>
       <div class="chart-card">
@@ -947,12 +1196,80 @@ async function loadDashboard() {
     });
   }
 
+  wireStackHover(body);
+
   // KPI cards drill in — a view card switches views; the "active" card opens the live-sessions
   // modal. Click or keyboard (Enter/Space).
   for (const el of body.querySelectorAll(".kpi-link")) {
     const go = () => { if (el.dataset.action === "active") openActiveSessions(); else if (el.dataset.goto) setView(el.dataset.goto); };
     el.addEventListener("click", go);
     el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  }
+}
+
+// Crosshair + tooltip for the stacked charts. A stacked area with up to eight bands cannot be read
+// without asking "which band is this, and how much"; the legend names the colours, this says the
+// numbers. Pointer-driven and keyboard-reachable (the chart is focusable and arrow keys step
+// buckets), so the reading is not mouse-only.
+const STACK_FMT = { usd: (v) => fmtUSD(v), num: (v) => fmtNum(v), compact: (v) => fmtCompact(v) };
+
+function renderStackTip(host, index) {
+  const data = DASH_DATA;
+  const point = data?.series?.[index];
+  if (!point) return;
+  const metric = host.dataset.metric;
+  const fmt = STACK_FMT[host.dataset.fmt] || STACK_FMT.num;
+  const rows = data.keys
+    .map((entry) => ({ entry, value: stackValue(point, entry, metric) }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+  const total = rows.reduce((sum, row) => sum + row.value, 0);
+  const tip = host.querySelector(".spark-tip");
+  const cursor = host.querySelector(".spark-cursor");
+  const pct = data.series.length <= 1 ? 50 : (index / (data.series.length - 1)) * 100;
+  cursor.style.left = `${pct}%`;
+  cursor.hidden = false;
+  tip.hidden = false;
+  tip.classList.toggle("flip", pct > 60);
+  tip.style.left = `${pct}%`;
+  tip.innerHTML =
+    `<div class="spark-tip-head">${escapeHtml(bucketLabel(point.key, data.unit))} · <strong>${fmt(total)}</strong></div>` +
+    (rows.length
+      ? rows.map((row) => `<div class="spark-tip-row"><span class="dot" style="background:${row.entry.color}"></span>${escapeHtml(row.entry.label)}<b>${fmt(row.value)}</b></div>`).join("")
+      : `<div class="spark-tip-row">nothing in this ${data.unit}</div>`);
+}
+
+function wireStackHover(root) {
+  for (const host of root.querySelectorAll(".spark-hover")) {
+    const count = () => DASH_DATA?.series?.length || 0;
+    let current = -1;
+    const hide = () => {
+      current = -1;
+      host.querySelector(".spark-tip").hidden = true;
+      host.querySelector(".spark-cursor").hidden = true;
+    };
+    const show = (index) => {
+      const n = count();
+      if (!n) return;
+      current = Math.max(0, Math.min(n - 1, index));
+      renderStackTip(host, current);
+    };
+    host.tabIndex = 0;
+    host.addEventListener("pointermove", (event) => {
+      const n = count();
+      if (!n) return;
+      const rect = host.getBoundingClientRect();
+      if (!rect.width) return;
+      show(Math.round(((event.clientX - rect.left) / rect.width) * (n - 1)));
+    });
+    host.addEventListener("pointerleave", hide);
+    host.addEventListener("focus", () => show(current >= 0 ? current : count() - 1));
+    host.addEventListener("blur", hide);
+    host.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft") { event.preventDefault(); show((current < 0 ? count() : current) - 1); }
+      else if (event.key === "ArrowRight") { event.preventDefault(); show(current + 1); }
+      else if (event.key === "Escape") hide();
+    });
   }
 }
 
@@ -1783,100 +2100,15 @@ function renderChannelDetail(ch) {
   // immediately rather than on the card's Save button: the card round-trips its fields, and a
   // write-only value must never be a field that round-trips. The list is names + last4 only —
   // there is no reveal endpoint for these, by design (see config/channel-env.js).
-  const envList = card.querySelector(".ch-env-list");
-  const envState = card.querySelector(".ch-env-state");
-  const envHint = card.querySelector(".ch-env-hint");
-  const envNameInput = card.querySelector(".ch-env-name");
-  const envValueInput = card.querySelector(".ch-env-value");
-  const envSaveButton = card.querySelector(".ch-env-save");
-  let envVars = Array.isArray(meta.envVars) ? meta.envVars : [];
-  const renderEnvVars = () => {
-    envState.textContent = envVars.length ? `${envVars.length} set` : "none";
-    envList.textContent = "";
-    if (envVars.length === 0) {
-      const empty = document.createElement("em");
-      empty.className = "state";
-      empty.textContent = "No variables — runs here use whatever login the gateway host has.";
-      envList.appendChild(empty);
-      return;
-    }
-    for (const entry of envVars) {
-      const row = document.createElement("div");
-      row.className = "ch-env-row";
-      const name = document.createElement("code");
-      name.textContent = entry.name;
-      const mask = document.createElement("em");
-      mask.className = "state";
-      const trail = [entry.setBy ? `set by ${entry.setBy}` : "", entry.setAt ? new Date(entry.setAt).toISOString().slice(0, 10) : ""].filter(Boolean).join(" · ");
-      mask.textContent = `${entry.last4 ? `••••${entry.last4}` : "•••••••"}${trail ? ` · ${trail}` : ""}`
-        + (entry.resolvable === false ? ` · ⚠️ provider "${entry.provider}" can't be resolved by this build` : "");
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "ghost ch-env-remove";
-      remove.textContent = "Remove";
-      remove.addEventListener("click", async () => {
-        const ok = await confirmDialog({
-          title: `Remove ${entry.name}?`,
-          body: "Runs in this channel stop receiving it. The value can't be recovered — you would have to issue a new one.",
-          confirmLabel: "Remove",
-          danger: true,
-        });
-        if (!ok) return;
-        remove.disabled = true;
-        try {
-          const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/env/${encodeURIComponent(entry.name)}`, { method: "DELETE" });
-          envVars = result.vars || [];
-          envHint.textContent = `Removed ${entry.name}.`;
-          renderEnvVars();
-        } catch (e) {
-          remove.disabled = false;
-          envHint.textContent = e.message || "Couldn't remove that variable.";
-        }
-      });
-      row.append(name, mask, remove);
-      envList.appendChild(row);
-    }
-  };
-  renderEnvVars();
-  // Environment variables are UPPER_SNAKE everywhere they are shown, and the store folds case on
-  // write — so fold it VISIBLY here too, as the admin types. Typing `supabase_token` and having
-  // the row come back as SUPABASE_TOKEN is a surprise; watching it become SUPABASE_TOKEN is not.
-  // The caret is restored because assigning .value otherwise jumps it to the end mid-word.
-  envNameInput.addEventListener("input", () => {
-    const upper = envNameInput.value.toUpperCase();
-    if (upper === envNameInput.value) return;
-    const { selectionStart, selectionEnd } = envNameInput;
-    envNameInput.value = upper; // ASCII case folding is length-preserving, so the caret still fits
-    try { envNameInput.setSelectionRange(selectionStart, selectionEnd); } catch { /* selection unsupported here */ }
-  });
-  envNameInput.addEventListener("blur", () => { envNameInput.value = envNameInput.value.trim().toUpperCase(); });
-  envSaveButton.addEventListener("click", async () => {
-    const name = envNameInput.value.trim().toUpperCase();
-    envNameInput.value = name; // what gets sent is what the admin can see
-    const value = envValueInput.value;
-    if (!name || !value) {
-      envHint.textContent = "Both a name and a value are required.";
-      return;
-    }
-    envSaveButton.disabled = true;
-    envHint.textContent = "saving…";
-    try {
-      const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/env/${encodeURIComponent(name)}`, {
-        method: "PUT",
-        body: JSON.stringify({ value }),
-      });
-      envVars = result.vars || [];
-      // Clear the value box the moment it is stored: a secret left sitting in a form field is one
-      // screen-share away from being read, and there is nothing to re-submit.
-      envValueInput.value = "";
-      envNameInput.value = "";
-      envHint.textContent = `Saved ${name}. It reaches the next run in this channel.`;
-      renderEnvVars();
-    } catch (e) {
-      envHint.textContent = e.message || "Couldn't save that variable.";
-    } finally {
-      envSaveButton.disabled = false;
-    }
+  card.querySelector(".ch-env-editor").appendChild(secretEditorMarkup());
+  mountSecretEditor({
+    root: card,
+    vars: Array.isArray(meta.envVars) ? meta.envVars : [],
+    endpoint: (name) => `/api/channels/${encodeURIComponent(ch.channelId)}/env/${encodeURIComponent(name)}`,
+    namePlaceholder: "SUPABASE_ACCESS_TOKEN",
+    emptyText: "No variables — runs here use whatever login the gateway host has, plus any organization secret.",
+    removeBody: "Runs in this channel stop receiving it. The value can't be recovered — you would have to issue a new one.",
+    savedText: (name) => `Saved ${name}. It reaches the next run in this channel.`,
   });
 
   const makeToolboxUrlInput = card.querySelector(".ch-make-toolbox-url");
@@ -2739,6 +2971,21 @@ function openUserDrawer(id) {
 
   drawer.querySelector(".ud-close").addEventListener("click", closeUserDrawer);
 
+  // This person's OWN environment secrets (config/scoped-env.js). Mounted on the row rather than
+  // folded into the Save button: a secret write is one blind overwrite that must not ride along
+  // with an unrelated profile save, and the endpoints are per-variable for the same reason.
+  const secretsRow = drawer.querySelector(".ud-secrets-row");
+  secretsRow.querySelector(".ud-secrets").appendChild(secretEditorMarkup());
+  mountSecretEditor({
+    root: secretsRow,
+    vars: u.secrets || [],
+    endpoint: (name) => `/api/users/${encodeURIComponent(id)}/env/${encodeURIComponent(name)}`,
+    namePlaceholder: "GH_TOKEN",
+    emptyText: "No personal variables — this person's runs use the organization's and each conversation's own secrets.",
+    removeBody: "This person's runs stop receiving it everywhere. The value can't be recovered — they would have to issue a new one.",
+    savedText: (name) => `Saved ${name}. It reaches the next run this person authors.`,
+  });
+
   const saved = drawer.querySelector(".ud-saved");
   drawer.querySelector(".ud-save").addEventListener("click", async () => {
     const token = tokenValue(drawer.querySelector(".ud-composio"));
@@ -3213,6 +3460,11 @@ function readSettingsForm() {
     driveSyncConflict: document.getElementById("set-drivesync-conflict").value,
     driveSyncRclonePath: document.getElementById("set-drivesync-rclone").value,
     codexModelRates: readCodexRates(),
+    claudeModelRates: readClaudeRates(),
+    assumedModels: {
+      claude: document.getElementById("set-assumed-claude").value.trim(),
+      codex: document.getElementById("set-assumed-codex").value.trim(),
+    },
     ...(channelTplEditor ? { channelTemplate: channelTplEditor.getValues() } : {}),
     // DM templates fold into the one global Save. Only include an editor that's mounted (the
     // section may not have been visited yet — mounting happens in loadSettings, so it always is).
@@ -3379,6 +3631,22 @@ function paintSettings(s) {
         `</tr>`
     )
     .join("");
+  // Per-model Claude rates. Open model list (Anthropic ships models between gateway releases), so
+  // this paints whatever the server merged rather than a fixed set of rows.
+  const claudeRatesBody = document.querySelector("#claude-rates tbody");
+  claudeRatesBody.innerHTML = Object.entries(s.claudeModelRates || {})
+    .map(
+      ([model, r]) =>
+        `<tr data-model="${escapeHtml(model)}"><td><code>${escapeHtml(model)}</code></td>` +
+        ["input", "cacheWrite5m", "cacheWrite1h", "cacheRead", "output"]
+          .map((f) => `<td><input type="number" min="0" step="0.001" data-f="${f}" value="${Number(r?.[f] ?? 0)}" /></td>`)
+          .join("") +
+        `</tr>`
+    )
+    .join("");
+  const assumed = s.assumedModels || {};
+  document.getElementById("set-assumed-claude").value = assumed.claude ?? "";
+  document.getElementById("set-assumed-codex").value = assumed.codex ?? "";
   renderSlackStatus(s.slack);
   renderSkillTemplatesSettings().catch(() => {});
   renderChannelTemplateSettings(s.channelTemplate || {});
@@ -3411,7 +3679,39 @@ async function loadSettings() {
   ]);
   USERS = directory.users || {};
   paintSettings(settings);
-  await loadLicense();
+  await Promise.all([loadLicense(), loadOrgSecrets()]);
+}
+
+// ── Settings: organization-wide environment secrets (config/scoped-env.js) ────────
+// Its own endpoint, not part of /api/settings: that payload is a fixed set of named fields with
+// hand-written has*/last4 echoes, and an arbitrary-name secret bag behind it is exactly the shape
+// that erodes the "resolve a NAMED field" property web/secrets.js depends on.
+let orgSecretEditor = null;
+async function loadOrgSecrets() {
+  const host = document.getElementById("org-secrets-editor");
+  if (!host) return;
+  let vars = [];
+  try {
+    vars = (await api("/api/org-secrets")).vars || [];
+  } catch {
+    /* an older daemon, or a transient failure: the card renders empty rather than breaking Settings */
+  }
+  if (orgSecretEditor) {
+    orgSecretEditor.setVars(vars);
+    return;
+  }
+  host.textContent = "";
+  host.appendChild(secretEditorMarkup());
+  const card = document.getElementById("org-secrets-card");
+  orgSecretEditor = mountSecretEditor({
+    root: card,
+    vars,
+    endpoint: (name) => `/api/org-secrets/${encodeURIComponent(name)}`,
+    namePlaceholder: "GH_TOKEN",
+    emptyText: "No organization variables — each conversation relies on its own secrets, or on whatever login the gateway host has.",
+    removeBody: "EVERY conversation stops receiving it on its next run. The value can't be recovered — you would have to issue a new one.",
+    savedText: (name) => `Saved ${name}. Every conversation's next run receives it.`,
+  });
 }
 
 // ── Settings: the License card (src/ee/) ──────────────────────────────────────────
@@ -3499,16 +3799,20 @@ function paintLicense(l) {
     }).join("");
 }
 
-// Collect the per-model Codex rates table into the settings PUT shape.
-function readCodexRates() {
+// Collect a per-model rates table into the settings PUT shape. Both tables carry their field names
+// in `data-f`, so one reader covers the Codex and Claude tables and neither can drift from the
+// other's column set.
+function readRatesTable(tableId) {
   const out = {};
-  for (const tr of document.querySelectorAll("#codex-rates tbody tr[data-model]")) {
+  for (const tr of document.querySelectorAll(`#${tableId} tbody tr[data-model]`)) {
     const r = {};
     for (const inp of tr.querySelectorAll("input[data-f]")) r[inp.dataset.f] = Number(inp.value || 0);
     out[tr.dataset.model] = r;
   }
   return out;
 }
+const readCodexRates = () => readRatesTable("codex-rates");
+const readClaudeRates = () => readRatesTable("claude-rates");
 
 function bindSettings() {
   // "Verify now": one bounded round trip to the platform. It is allowed to be slow (the platform
@@ -4350,6 +4654,7 @@ document.getElementById("dash-refresh").addEventListener("click", (e) => {
 
 document.getElementById("dash-range").addEventListener("change", () => loadDashboard().catch(() => {}));
 document.getElementById("dash-harness").addEventListener("change", () => loadDashboard().catch(() => {}));
+document.getElementById("dash-source").addEventListener("change", () => loadDashboard().catch(() => {}));
 
 document.getElementById("remove-password").addEventListener("click", async () => {
   const ok = await confirmDialog({

@@ -78,7 +78,7 @@ test("Overview exposes the harness selector and sends its scope to the dashboard
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
   ]);
   assert.match(html, /id="dash-harness"[\s\S]*value="all"[\s\S]*value="claude"[\s\S]*value="codex"/);
-  assert.match(app, /api\(`\/api\/dashboard\?range=\$\{encodeURIComponent\(dashRange\)\}&harness=\$\{encodeURIComponent\(dashHarness\)\}`\)/);
+  assert.match(app, /api\(`\/api\/dashboard\?range=\$\{encodeURIComponent\(dashRange\)\}&harness=\$\{encodeURIComponent\(dashHarness\)\}&source=\$\{encodeURIComponent\(dashSource\)\}`\)/);
   assert.match(app, /label: "Token Est Cost"/);
   assert.match(app, /label: "Claude Cost"/);
   assert.match(app, /label: "Codex Cost"/);

@@ -1,5 +1,28 @@
 # ChannelGate — Test Plan
 
+## Skills search boxes accept typing
+
+- [x] `test/skills-admin-ui.test.js` ("skills searches commit on Enter or the Search button"):
+      each of `skills-q`, `source-skills-q` and `usage-q` keeps a draft separate from its committed
+      query, renders through the shared `searchBox` helper with a `data-action="search"` button, and
+      the `input` listener records the draft without rendering. Blur no longer searches (`skills-q`
+      is out of the change-triggered filter list), and every render captures and restores the
+      caret. Engine-independent: this is browser-side admin UI.
+- [x] `CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs node --test
+      test/skills-search-browser.test.js`: real Chromium against the real admin router and a
+      disposable folder source of three skills. Typing `beta` character by character into the
+      source panel's filter leaves `value="beta"` with `selectionStart === 4` and the field still
+      focused, and the table still shows all three rows; Enter filters to one and keeps the caret.
+      On Catalog, typing sends no `/api/skills/catalog?` request, clicking **Search** sends exactly
+      one and filters to `beta-three`, and Escape clears the box and restores all three rows.
+      No page errors.
+- [x] Reproduced red before the fix: with `public/admin-skills.js` at the pre-fix revision the same
+      browser case fails with `value: 'ateb'`, `start: 0` — the panel re-rendered per keystroke and
+      the replacement input came back focused at offset 0, so each character landed in front of the
+      last. This is the reported symptom ("the cursor jumps to the left").
+- [x] `test/skills-source-browser.test.js` updated for the new contract: filling the source search
+      leaves the table unfiltered until Enter, then it filters. Re-run green.
+
 ## Cross-engine failover spawn contract
 
 - [x] `test/fallback-spawn-contract.test.js` drives the real orchestrator against the stub CLIs on
@@ -23,6 +46,124 @@
 
 Private QA registry: append these as new failover cases; the automated pass does not close the
 unchecked live gate above.
+
+## Per-model dashboard stacking and usage outside the gateway
+
+- [x] `test/usage-model-breakdown.test.js`: a run's cost is attributed to the model that ANSWERED,
+      and a Codex run whose subagent used a different model contributes a slice to each — while the
+      run is still counted once, so per-model run counts sum to the headline run count and a
+      subagent-only model heads no run of its own. Every bucket carries the same split, so the sum
+      of the stacked bands equals the total. A run whose components are only PARTLY priced
+      contributes no dollars to any model (mirroring `CANONICAL_CTE`), which is the drift that
+      would otherwise make the breakdown exceed the total drawn beside it — reproduced red against
+      the first implementation, which over-reported by $211 of $3,126 on the development ledger.
+      Model labels are asserted for every id shape the ledger holds (API id, `[1m]` variant, dated
+      snapshot, OpenAI id, unknown id, empty). Engine-independent: this is ledger SQL, not harness
+      behaviour.
+- [x] `test/usage-model-breakdown.test.js` also pins the Overview's chart contract: the categorical
+      palette hexes (changing one obliges re-running the dataviz validator), the stacked-area
+      renderer, a legend for every multi-series chart, the models bar chart, and that hues are
+      keyed on the model rather than cycled by position in a filtered list.
+- [x] `test/external-usage.test.js`: Claude transcript parsing into per-hour/per-model aggregates
+      (subagent spend counted, synthetic error replies not, tool results and subagent prompts not
+      counted as turns, dated snapshots collapsed onto the billing id); the cache-write TTL split,
+      including the fallback to the cheaper 5-minute rate when the reported split does not account
+      for the total; per-token-class pricing for Claude and Codex, with unknown models left
+      explicitly unpriced; origin labelling for both engines (and that `headless` is never claimed
+      as a person); de-duplication against the ledger's session ids, the live thread bindings and a
+      Codex subagent's parent; incremental rescanning; a Codex rollout's replayed terminal
+      `token_count` not being billed twice; longest-match channel attribution by working directory;
+      the tracking floor dropping pre-cutoff hours; the `source` scopes partitioning the combined
+      total; and a container scope being read through the runtime's `inspectUsage` with its rows
+      attributed to that channel. Engine-independent: these parse files both CLIs have already
+      written.
+- [x] `test/usage-model-breakdown.test.js`: a run recording no model at all is charted under its
+      engine's fallback (Claude → Opus, Codex → Sol), no "unknown" band survives, `assumedRuns` is
+      reported per model and in the totals, a run that DID record a model is never marked assumed,
+      and the fallback changes neither the cost total nor the run total — it only moves a figure
+      between bands. Engine-independent.
+- [x] `test/external-usage.test.js` pins the two findings that only real data exposed: that the
+      several assistant records of ONE API response (same `requestId`/`message.id`, differing
+      `uuid`/`apiBlockIndex`, identical `usage`) are billed once and not once each — with a record
+      carrying no request identity still counted — and that `sessionAttribution` recognises a
+      gateway session by id, by root, by parent, by a channel container, by a channel work folder
+      and by the gateway runtime root, while leaving INTERACTIVE work in a channel folder as
+      outside usage. Engine-independent.
+- [x] `test/external-usage.test.js`: a scanner-version change, a rate-table change, and rows left by
+      a build from before the marker existed each make the next pass forget its bookmarks exactly
+      ONCE (so a restart or a truncated pass continues draining rather than restarting), while a
+      gateway that has never scanned is not forced and an up-to-date one stays an ordinary
+      incremental pass. Engine-independent.
+- [x] `test/usage-model-breakdown.test.js`: the ledger and the transcript scan resolve to one key
+      per model (a dated snapshot folds onto its family, a `[1m]` context variant does not), no two
+      Models rows share a label, and byUser / byChannel / origins each carry a per-model split whose
+      segments sum back to that row's own total — the invariant a stacked bar depends on.
+- [x] Verified on a copy of the live database that had already been scanned by the deployed build:
+      the first pass reported "scanned by an earlier build" and re-read all 700 sessions in 4.4 s,
+      the second was a no-op (0 read, all unchanged), and multiplying the Opus 5 rate by ten made the
+      next pass report "model rates changed" and restate Claude's outside cost from $2,038.59 to
+      $4,993.00.
+- [x] Pricing verified against ground truth: Claude Code writes a `cost-state` record carrying the
+      cost IT computed per model. Over every session on the development machine whose final
+      cost-state is self-contained (17 of them, token sets identical to Claude Code's own), this
+      feature's figure matches Claude Code's to **0.000%** ($26.73 vs $26.73). The same comparison
+      run before the per-request fix was +21% in aggregate and up to +235% on one session, which is
+      how that defect was found; sessions whose cost-state also covers subagent work recorded in
+      sibling transcripts are excluded from the comparison rather than counted as drift, because
+      the scan reads those siblings separately.
+- [x] Verified against the development deployment's real data (a copy of `gateway.db`, the operator
+      home's 1,012 Claude transcripts and 1,405 Codex rollouts): the per-model split reconciles to
+      the canonical total to the rounding digit; a FULL-history pass over both stores completes in
+      ~4.2 s and attributes 222 sessions back to the gateway by folder plus 98 as gateway
+      housekeeping, leaving 251 outside sessions ($2,038.59 Claude + $2,062.60 Codex) and 128
+      sessions that recorded no API call and are counted as neither; an incremental pass once
+      bookmarked is ~30 ms; and the Overview renders with a live payload (KPIs, legend, three
+      stacked charts, models card, origins card, crosshair tooltip).
+- [ ] Live acceptance (stacked bar lists): on the Overview, require Runs per user, Channels and
+      Where usage came from to draw multi-colour bars whose segment colours match the legend above
+      the charts, and require a model's colour to be the same in every card. Hover a Models row and
+      a bar segment for the same model and require the same label. A channel with a single model
+      must still draw one solid segment rather than an empty track.
+- [ ] Live acceptance (unknown-model fallback): on the deployment, open Overview at a range that
+      includes mid-2026 and require no "model unknown" band, an Opus row whose subtitle names the
+      assumed count, and the Models card's note naming the same number. Change the Claude fallback
+      in Settings → Agent defaults to another model, save, reload, and require those runs to move to
+      that band with the window's total cost unchanged. Blank the field and require the band to
+      return to "Claude (model unknown)".
+- [ ] Live acceptance (reprocess): on the deployment, run `npm run usage:external` (dry run) and
+      require its "attributed to the gateway itself" counts to be non-zero on a machine with
+      history, its outside counts to name the clients actually used there, and no scope error. Then
+      `--apply`, reload the Overview, and require the "Outside the gateway" KPI and the "Where usage
+      came from" card to match the command's report. Re-run `--apply` and require the totals to be
+      unchanged (the pass is idempotent). Finally run `--rescan --apply` and require the same
+      totals again from a full re-read.
+- [ ] Live acceptance (Claude): in a fixture channel, run two turns on DIFFERENT models (switch with
+      `/model` between them), then open the admin Overview. Require the cost/runs/tokens charts to
+      show a band per model whose hovered tooltip names both models with figures that sum to the
+      bucket total, the Models card to list both with their share of spend, and "Where usage came
+      from" to attribute both to the chat gateway. Record the range, the two model labels and the
+      KPI total.
+- [ ] Live acceptance (Codex): repeat in a Codex fixture channel with a turn that spawns a subagent
+      on a different model. Require the subagent's model to appear as its own band and its own
+      Models row reading "inside other runs" (it heads no run), while the Runs KPI still counts the
+      turn once.
+- [ ] Live acceptance (outside the gateway, both engines): after the daemon has run at least one
+      scan (check `externalScan.since` on `GET /api/dashboard`), start an INTERACTIVE `claude` in a
+      channel's work folder on the daemon host and send one prompt; separately run `codex` in the
+      same folder. Wait for the next hourly pass (or restart the daemon). Require: the "Outside the
+      gateway" KPI to rise by roughly the sessions' own cost, "Where usage came from" to show a
+      Terminal CLI row, `source=external` to show only those sessions, `source=gateway` to show
+      none of them, and the two scopes' totals to sum to the unfiltered total. Then confirm the
+      gateway's OWN turns in that same folder are NOT double-counted: run a chat turn in the
+      channel and require the outside figure to stay flat while the gateway figure rises.
+- [ ] Live acceptance (inside a container): SSH into a channel container (docs/SSH-ACCESS.md) or
+      take the VS Code lease, run one `claude` turn there, and require the next scan to add it under
+      that channel's slug with the container scope — and require a channel whose container is
+      STOPPED to be skipped without being started (evidence: the container's status before and
+      after the pass, and no create/start entry in the daemon log).
+- [ ] Live acceptance (pricing): set a Claude model's rate to an obviously different value in
+      Settings → Agent defaults, save, and require the next scan's outside figure for that model to
+      move accordingly while every gateway run's cost stays exactly as the CLI reported it.
 
 ## VPN controls through agents, web and Slack
 
@@ -3080,6 +3221,17 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       🩺 thread in that channel with error + context and a root-cause reply; a second error within
       30 min does NOT spawn another; a failure inside a diagnosis thread is never re-diagnosed;
       `errorDiagnosisChannel: ""` disables the feature.
+- [x] Unit: **diagnosis admission** (`test/diagnosis-skip.test.js`) — `isDiagnosableRunError`
+      refuses provider account state (`usage_limit`, `authentication`, `billing`, `model_rejected`,
+      `availability`, `connection`), limit wording that arrived unclassified, and explicit
+      stops/aborts, while keeping crashes, stalls and `invalid_request`/`permission`/`provider`;
+      end to end, a Claude session-limit error posts NOTHING in the configured diagnosis channel
+      (checked before any cooldown is set) and the next crash still posts the 🩺 card.
+- [ ] Live **usage limit is not a bug:** with `errorDiagnosisChannel` set, drive a channel into a
+      Claude session/usage limit. The failing thread shows the limit line with its harness-switch
+      hint, a `run_error` row with `providerKind: usage_limit` lands in the Audit feed, and NO 🩺
+      thread appears in the diagnosis channel. A subsequent genuine failure (kill the engine
+      process mid-turn) DOES open one — proving the cooldown was not consumed by the limit.
 - [ ] **Footer & resume UX:** reply footers read "«Model»: ⏱ … · tokens · cost · ctx%" with no
       resume command in the text; `/resume` posts the thread's terminal command in a code block
       (built with the THREAD's engine, so a Codex thread prints `codex exec resume`);
@@ -4194,6 +4346,18 @@ release, no egress cut-off — so the network entry has no container equivalent 
       (`thread_ts` = the current thread), not the channel root.
 - [ ] Empty `content` is refused with a one-line message; no channel context returns a friendly error.
 - [ ] Hard-scoped to the current channel — it never uploads to an arbitrary channel id.
+- [ ] Asking for a file directly ("send me `REPORT.md`", "share that file here", "attach the JSON")
+      makes the AI upload it with `slack_upload_snippet` under its real name/extension instead of
+      only naming the path, and the reply is a one-line summary rather than the pasted content.
+      Engine-independent guidance; verify on Claude and Codex.
+- [ ] The injected `gateway-usage` skill (`platforms/slack/writing-replies.md`, the capability map,
+      and rule 3 in `SKILL.md`) states: any UTF-8 text file may be uploaded; `.html` uploads and
+      downloads but previews as source, not a rendered page; images keep the `![alt](path.png)`
+      auto-upload route; binaries (PDF/PPTX/XLSX/ZIP) are refused and named as inline-code paths for
+      the 📄 file-explorer button; files above roughly 1 MB are offered rather than uploaded by
+      reflex.
+- [ ] The `slack_upload_snippet` tool description itself names the share-a-file use and the UTF-8
+      text restriction, so an engine that never loads the skill still picks the right route.
 
 ### Native Slack charts (control MCP)
 - [ ] `slack_post_chart chart_type:"line" ...` posts a Block Kit `data_visualization` into the
@@ -4372,6 +4536,85 @@ history.
 - [ ] **Retired 2026-09-03 (Linux + containers only):** the Bash-sandbox rationale; the per-channel namespace entries above stand. Manual (per host): a fully sandboxed (non-admin, non-bash) run navigates a public page and
       reads the rendered snapshot — proving the MCP child still escapes the Bash sandbox that
       denies Chromium's `socket(AF_UNIX)`.
+
+## Environment secret scopes: organization and personal (2026-09-23)
+
+Automated: `test/scoped-env.test.js`. The name/value/masking rules are shared with the channel
+scope and are covered by `test/channel-env.test.js`; these cases cover only what the new scopes add.
+
+- [x] Organization scope: a secret round-trips write-only (name + last4 + setBy, never `value` or
+      `ref`), folds case on write and on remove, resolves to its real value for a spawn, and is
+      stored in `settings.json` — while `applySettingsToEnv()` leaves it out of the daemon's own
+      `process.env`, because only `ENV_MAP` keys are copied there.
+- [x] Personal scope: Alice's secret resolves for Alice and is absent for Bob, including for Bob's
+      turn in the SAME conversation. A write from the person is attributed to them; a write from
+      the admin UI is attributed to the UI.
+- [x] Untrusted principal: `resolveUserEnv(..., { untrustedPrincipal: true })` and a `resolveRunEnv`
+      with that flag both withhold the personal scope, so the run API's caller-supplied `author`
+      cannot borrow someone's credentials. Organization and channel scopes still apply.
+- [x] Precedence is organization → personal → channel, most specific last: a channel secret wins
+      over a personal one of the same name, a personal one wins over the organization's, and each
+      scope fills the names the more specific ones do not define. `scopes` reports the winner's
+      origin per name.
+- [x] The warm-pool fingerprint differs between two authors of the same channel, so a pooled
+      process started for one is never reused for the other while holding their secrets.
+- [x] Clean mode resolves to `{}` across all three scopes, not just the channel's.
+- [x] The preamble names each scope's variables (names only, no value) when more than one scope is
+      in play, and emits nothing at all in clean mode.
+- [x] Reserved names (`LD_PRELOAD`, `NODE_OPTIONS`, `PATH`, `ANTHROPIC_BASE_URL`, `CG_TOOLSET`) are
+      refused in the organization and personal scopes exactly as in the channel scope.
+- [x] Tool classification: the four writing tools (`set_my_secret`, `remove_my_secret`,
+      `set_org_secret`, `remove_org_secret`) are CONTROL_PLANE-gated like the other
+      credential-identity tools; the two masked listings are explicitly open
+      (`test/mcp-control-plane-approval.test.js`, `test/folders-settings.test.js`).
+- [x] Automated Slack surface: `/secrets` and Settings → Secrets render all three scopes in one
+      modal; row action ids carry a scope letter so three lists can each hold an index 0; a viewer
+      sees their OWN personal secrets and never another person's; no value from any scope reaches
+      the rendered view. A non-admin gets no organization Add button, and a forged click on an
+      organization row is refused with the organization secret left intact, because authority is
+      re-derived from the `action_id` rather than trusted from the clicked value. The entry form
+      states its scope and carries it in the view metadata (absent = the channel's, so an older
+      build's open form still means what it meant); submissions land in the named scope only, with
+      case folded, and never leak into the channel's env
+      (`test/slack-secret-actions.test.js`, `test/channel-settings-modal.test.js`).
+- [ ] Live Slack, engine-independent: as an admin, open `/secrets` in a channel. Pass when the
+      modal shows Organization / Yours / This conversation in that order with the precedence note;
+      adding an organization variable confirms "Every conversation's next run receives it"; adding
+      a personal one confirms it reaches runs you author; and each row's Remove confirmation names
+      the right blast radius. Then repeat as a NON-admin approved member: the organization Add
+      button is absent, organization rows have no Remove, and the personal and channel sections
+      still work. Confirm a second person opening `/secrets` in the same channel sees their own
+      (empty) personal section, never the first person's.
+- [ ] Live Claude+Codex, both engines: set an organization secret from an admin's message
+      (`set_org_secret GH_TOKEN …`), approve the card, then in a DIFFERENT channel ask the agent to
+      check the variable's presence without printing it. Pass when it reports the name present,
+      names it as organization-wide, and the value never appears in the reply, the live stream, or
+      a background job's output. Repeat with `set_my_secret` and confirm a second person's turn in
+      the same channel does NOT see it.
+- [x] Browser-verified 2026-09-23 (headless Chrome over CDP against a scratch daemon, recipe in
+      the channel's `admin-ui-browser-verification` notes): all three editors render from the one
+      shared module. In the Users drawer the name/value inputs measure 594×41 with `9px 12px`
+      padding and an `8px` radius — identical to the `.ud-toolboxtoken` field above them — and the
+      row count renders inline and lower-case ("2 set") beside the label instead of as an
+      uppercased block. The Settings *Organization secrets* card and a conversation's *Environment*
+      tab both render masked rows + Remove and the same 41px-tall controls. Re-check with a
+      screenshot after any change to `public/admin-secrets.js` or the `.secret-*` CSS.
+- [x] Whole-app control sweep, same session: every `input`/`select`/`textarea` rendered across all
+      nine views, every conversation subpane (Access, MCP Connections, Cloud MCP, Environment
+      tokens, Skills, Runtime, Instructions, Memory) and the user drawer was measured against the
+      canonical control (`var(--panel-2)` surface, 1px `var(--line)` border, non-zero radius).
+      Result after the fix: zero deviations. The only intentional exceptions are the two search
+      treatments (`.setsearch input` for the page-level search-with-icon, `.list-search input` for
+      the conversation sidebar filter) and the borderless `.chip-input` inside a chip well — each
+      internally consistent and deliberately not the standard box.
+- [x] Automated: `.tok-label` and `.secret-add input` each carry their own background/border/
+      radius/padding using the shared palette variables, `.desc` is unscoped, and the conversation
+      card no longer hand-writes the secret editor's markup
+      (`test/admin-ui-controls.test.js`).
+- [ ] Live admin UI: Settings → Integrations → *Organization secrets* and the Users drawer →
+      *Personal secrets* both list names + last4 only, save in place, show the updated last4 after
+      a re-set, and remove on confirm. Verify no reveal control exists in either, and that
+      `POST /api/secrets/reveal` still refuses these names.
 
 ## Per-channel environment secrets (2026-08-26)
 

@@ -160,9 +160,13 @@ function maskValue(value) {
 
 // The ONLY shape any surface may render. No value, no ref (a vault ref names a path that is itself
 // worth not publishing), sorted so the list is stable between renders.
-export function listChannelEnv(meta = {}) {
-  const env = normalizeChannelEnv(meta.env);
-  return Object.entries(env)
+//
+// Map-based, because the same store now backs three SCOPES — the organization, a channel and a
+// person (config/scoped-env.js). Everything below the storage layer is scope-agnostic on purpose:
+// one set of name/value rules, one masking shape, one resolver, so a new scope can never drift
+// into a second validation story (the reason patchChannelEnv exists at all).
+export function listEnvVars(env) {
+  return Object.entries(normalizeChannelEnv(env))
     .map(([name, entry]) => ({
       name,
       provider: entry.provider,
@@ -177,49 +181,57 @@ export function listChannelEnv(meta = {}) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// The channel's own listing: the same shape, read off the channel's meta blob.
+export function listChannelEnv(meta = {}) {
+  return listEnvVars(meta.env);
+}
+
 // Pure: returns the NEW env map. Add and update are the same operation — a blind overwrite — so
 // there is no read-modify-write of the value anywhere, and nothing to leak on the way through.
-export function setChannelEnvVar(env, { name, value, provider = "local", ref = "", actor = "", now = Date.now() } = {}) {
+export function setChannelEnvVar(env, { name, value, provider = "local", ref = "", actor = "", now = Date.now(), scopeNoun = "This channel" } = {}) {
   const key = assertValidEnvName(name);
   if (!Object.hasOwn(PROVIDERS, provider)) throw new Error(`Unknown secret provider "${provider}".`);
   const current = normalizeChannelEnv(env);
   if (!Object.hasOwn(current, key) && Object.keys(current).length >= MAX_CHANNEL_ENV_VARS) {
-    throw new Error(`This channel already has the maximum of ${MAX_CHANNEL_ENV_VARS} variables.`);
+    throw new Error(`${scopeNoun} already ${scopeNoun === "You" ? "have" : "has"} the maximum of ${MAX_CHANNEL_ENV_VARS} variables.`);
   }
   const stored = PROVIDERS[provider].store({ value, ref });
   return { ...current, [key]: { provider, ...stored, setBy: String(actor || ""), setAt: now } };
 }
 
-export function removeChannelEnvVar(env, name) {
+export function removeChannelEnvVar(env, name, { scopeWhere = "this channel" } = {}) {
   const current = normalizeChannelEnv(env);
   // Same case folding as the write side: stored keys are always uppercase, so a lowercase spelling
   // names the same variable here too.
   const key = normalizeEnvName(name);
-  if (!Object.hasOwn(current, key)) throw new Error(`"${key}" is not set on this channel.`);
+  if (!Object.hasOwn(current, key)) throw new Error(`"${key}" is not set on ${scopeWhere}.`);
   const next = { ...current };
   delete next[key];
   return next;
 }
 
-// name → value, for the spawn sites. Async because a provider may have to fetch.
-export async function resolveChannelEnv(meta = {}) {
-  const env = normalizeChannelEnv(meta.env);
-  // VPN/database credentials belong only to the host-side operator service. The full channel meta
-  // is passed by every engine/background spawn site, so configured refs are removed here before
-  // values are fetched. Operator code deliberately resolves a narrow `{ env }` projection instead.
-  const serviceSecrets = operatorServiceSecretNames(meta);
+// name → value, for the spawn sites. Async because a provider may have to fetch. `skip` is the
+// caller's scope-specific exclusion set; `scopeLabel` only shapes the error text.
+export async function resolveEnvMap(env, { skip = new Set(), scopeLabel = "Channel" } = {}) {
   const out = {};
-  for (const [name, entry] of Object.entries(env)) {
-    if (serviceSecrets.has(name)) continue;
+  for (const [name, entry] of Object.entries(normalizeChannelEnv(env))) {
+    if (skip.has(name)) continue;
     const provider = PROVIDERS[entry.provider];
     // Loud, not silent: a variable this build cannot resolve fails the turn with its NAME in the
     // message. Resolving it to "" would hand the run a missing credential and let it report
     // whatever the CLI does with one — usually "success" against an account it never reached.
-    if (!provider) throw new Error(`Channel variable ${name} uses secret provider "${entry.provider}", which this build cannot resolve.`);
+    if (!provider) throw new Error(`${scopeLabel} variable ${name} uses secret provider "${entry.provider}", which this build cannot resolve.`);
     const value = await provider.resolve(entry);
     if (value) out[name] = value;
   }
   return out;
+}
+
+export async function resolveChannelEnv(meta = {}) {
+  // VPN/database credentials belong only to the host-side operator service. The full channel meta
+  // is passed by every engine/background spawn site, so configured refs are removed here before
+  // values are fetched. Operator code deliberately resolves a narrow `{ env }` projection instead.
+  return resolveEnvMap(meta.env, { skip: operatorServiceSecretNames(meta), scopeLabel: "Channel" });
 }
 
 // Warm Claude processes are reused across turns by a fingerprint of their launch options. A pooled
@@ -251,8 +263,8 @@ export function safeSpawnEnv(resolved = {}) {
 // One mutation entry point, so the admin API and the Slack modal cannot drift into two different
 // validation stories. Pure — the caller decides how to persist the returned map (atomically, via
 // the function form of patchChannelMeta, so two people editing at once can't lose an entry).
-export function patchChannelEnv(env, { set = null, remove = "", actor = "", now = Date.now() } = {}) {
-  if (set) return setChannelEnvVar(env, { ...set, actor, now });
-  if (remove) return removeChannelEnvVar(env, remove);
+export function patchChannelEnv(env, { set = null, remove = "", actor = "", now = Date.now(), scopeNoun = "This channel", scopeWhere = "this channel" } = {}) {
+  if (set) return setChannelEnvVar(env, { ...set, actor, now, scopeNoun });
+  if (remove) return removeChannelEnvVar(env, remove, { scopeWhere });
   throw new Error("Nothing to change.");
 }

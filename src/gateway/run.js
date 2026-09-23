@@ -52,7 +52,10 @@ import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntim
 import { isForceStopping } from "./shutdown.js";
 import { allowedFsRoot } from "../web/security.js";
 import { licenseAdmission } from "../ee/limits.js";
-import { channelEnvFingerprint, resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
+import { channelEnvFingerprint, safeSpawnEnv } from "../config/channel-env.js";
+// The other two credential scopes (organization-wide, and the author's own) merged with the
+// channel's at one place, so every spawn site gets the same three-scope answer.
+import { resolveRunEnv } from "../config/scoped-env.js";
 import { browserNamespaceFor } from "./browser-env.js";
 import { serviceSecretValues } from "../engines/child-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
@@ -1061,14 +1064,26 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const clean = Boolean(meta.cleanMode);
   const userSkills = clean ? [] : userOnlySkillGrants(runGrants);
 
-  // The channel's OWN environment secrets (config/channel-env.js) — its per-project CLI logins.
-  // Resolved once per turn and handed to the engine as process environment, not a project .env
-  // or another channel's credentials. Clean mode runs bare, so it gets none, for the same reason
-  // it gets no MCP servers and no Composio tokens. A resolve FAILURE throws: a turn that quietly
-  // ran without the credential looks like a deploy that did nothing.
-  const channelEnv = clean ? {} : safeSpawnEnv(await resolveChannelEnv(meta));
+  // The environment secrets this turn runs with, across all three scopes (config/scoped-env.js):
+  // the ORGANIZATION's shared credentials, the AUTHOR's own, and the CHANNEL's per-project CLI
+  // logins — merged most-specific-last, so the channel's own account is never displaced by a
+  // personal one. Resolved once per turn and handed to the engine as process environment, not a
+  // project .env or another channel's credentials. Clean mode runs bare, so it gets none, for the
+  // same reason it gets no MCP servers and no Composio tokens. A resolve FAILURE throws: a turn
+  // that quietly ran without the credential looks like a deploy that did nothing.
+  //
+  // untrustedPrincipal withholds the PERSONAL scope only: the HTTP run API authenticates its key,
+  // not the author it names, so that caller must not be able to borrow someone's personal token by
+  // naming them. The organization and channel scopes are not identity claims and still apply.
+  const { env: resolvedRunEnv, scopes: runEnvScopes } = await resolveRunEnv({
+    meta, authorId, untrustedPrincipal, clean,
+  });
+  const channelEnv = safeSpawnEnv(resolvedRunEnv);
+  // The warm pool keys on this digest, so it must cover every scope: without the personal values
+  // in it, a process started for one author would be reused for the next message in the thread —
+  // still holding the first author's secrets.
   const channelEnvFp = channelEnvFingerprint(channelEnv);
-  const channelCredentialsPrefix = channelCredentialsPreamble(channelEnv, { clean });
+  const channelCredentialsPrefix = channelCredentialsPreamble(channelEnv, { clean, scopes: runEnvScopes });
   // Which browser daemon this channel's browser MCP server attaches to. Unconditional — clean
   // mode included: it injects no MCP servers, but the isolation must not depend on that staying
   // true, and a namespace costs nothing when nothing reads it. See gateway/browser-env.js.

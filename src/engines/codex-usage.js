@@ -396,6 +396,156 @@ export async function listCodexRollouts(stateDir) {
   return walkJsonl(path.join(stateDir, "sessions"));
 }
 
+// ── Usage the gateway did NOT launch (see ../gateway/external-usage.js) ─────────────────────────
+// A rollout's `session_meta.originator` names the client that drove it. `codex_exec` is the
+// headless invocation the gateway itself uses, so — exactly as with Claude's `sdk-cli` entrypoint —
+// it is never evidence of an outside session on its own; the caller decides that by session id and
+// uses this only to say HOW an outside session was driven.
+const ORIGINATOR_ORIGIN = {
+  codex_exec: "headless",
+  "codex-tui": "terminal",
+  codex_tui: "terminal",
+  "Codex Desktop": "desktop",
+  codex_vscode_extension: "vscode",
+  "codex-vscode": "vscode",
+};
+
+export function codexOriginFor(originator) {
+  const raw = String(originator || "");
+  if (ORIGINATOR_ORIGIN[raw]) return ORIGINATOR_ORIGIN[raw];
+  if (/vscode/i.test(raw)) return "vscode";
+  if (/desktop/i.test(raw)) return "desktop";
+  if (/tui|cli/i.test(raw)) return "terminal";
+  return "other";
+}
+
+const hourOf = (iso) => {
+  const ms = Date.parse(String(iso || ""));
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 13) : "";
+};
+
+/**
+ * One rollout reduced to per-(UTC hour, model) aggregates — the Codex twin of
+ * scanClaudeTranscript in ../gateway/claude-usage.js, and deliberately the same output shape so
+ * external-usage.js can persist both through one path.
+ *
+ * `last_token_usage` is the per-request delta while `total_token_usage` is cumulative for the
+ * provider thread, so requests are taken from `last` and deduplicated by the cumulative key —
+ * a terminal `token_count` is replayed verbatim and would otherwise be billed twice. A child
+ * (subagent, fork, guardian) rollout opens by replaying its parent's history, so counting starts
+ * at the first task it actually owns.
+ */
+export async function scanCodexRollout(file) {
+  const parsed = await readMinimalRollout(file);
+  const meta = parsed.meta || {};
+  const threadId = String(meta.id || meta.thread_id || meta.threadId || "");
+  const rootId = String(meta.session_id || meta.sessionId || threadId);
+  const parent = parentId(meta);
+  const boundary = parent ? firstOwnTaskIndex(parsed) : 0;
+  const buckets = new Map();
+  const bump = (bucket, model) => {
+    const key = `${bucket} ${model}`;
+    let row = buckets.get(key);
+    if (!row) {
+      row = { bucket, model, requests: 0, turns: 0, usage: { ...ZERO } };
+      buckets.set(key, row);
+    }
+    return row;
+  };
+  const seen = new Set();
+  let requests = 0;
+  for (const node of parsed.tokens) {
+    if (node.index <= boundary) continue;
+    const key = usageKey(node.total);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!node.last.input_tokens && !node.last.output_tokens) continue;
+    const bucket = hourOf(node.timestamp) || hourOf(meta.timestamp);
+    if (!bucket) continue;
+    const row = bump(bucket, String(node.model || parsed.lastModel || ""));
+    row.requests += 1;
+    row.usage = addCodexTokenUsage(row.usage, node.last);
+    requests += 1;
+  }
+  // Only a ROOT thread's completions are turns a person asked for; a subagent's are the model's own
+  // internal steps and would double-count the prompt that spawned it.
+  let turns = 0;
+  if (!parent) {
+    for (const task of parsed.tasks) {
+      if (task.type !== "task_complete" || task.index <= boundary) continue;
+      const bucket = hourOf(task.timestamp);
+      if (!bucket) continue;
+      bump(bucket, "").turns += 1;
+      turns += 1;
+    }
+  }
+  return {
+    file,
+    sessionId: threadId || rootId,
+    rootSessionId: rootId,
+    parentSessionId: parent,
+    cwd: String(meta.cwd || ""),
+    originator: String(meta.originator || ""),
+    origin: codexOriginFor(meta.originator),
+    version: String(meta.cli_version || meta.cliVersion || ""),
+    firstTs: String(meta.timestamp || ""),
+    lastTs: String(parsed.lastTimestamp || meta.timestamp || ""),
+    requests,
+    turns,
+    buckets: [...buckets.values()].sort((a, b) => (a.bucket < b.bucket ? -1 : a.bucket > b.bucket ? 1 : a.model.localeCompare(b.model))),
+  };
+}
+
+/**
+ * Scan a whole Codex state dir. Mirrors scanClaudeState: `known` (sessionId → { size, mtimeMs })
+ * skips a rollout that has not changed since the last scan, and `skipSessions` drops one before it
+ * is opened — the caller passes the gateway's own session ids there, so a gateway rollout is never
+ * read. A rollout is also skipped when its PARENT is a gateway session: a subagent's spend already
+ * belongs to the run that spawned it.
+ */
+export async function scanCodexState(stateDir, { known = {}, skipSessions = [], limit = 0, sinceMs = 0 } = {}) {
+  const skip = new Set(skipSessions);
+  const files = await listCodexRollouts(stateDir);
+  const entries = [];
+  for (const file of files) {
+    try {
+      const info = await stat(file);
+      entries.push({ file, size: info.size, mtimeMs: Math.trunc(info.mtimeMs) });
+    } catch {
+      /* rotated away mid-scan */
+    }
+  }
+  entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const sessions = [];
+  const unchanged = [];
+  const skipped = [];
+  let scanned = 0;
+  for (const entry of entries) {
+    if (sinceMs && entry.mtimeMs < sinceMs) continue;
+    // A rollout's id is in its filename (`rollout-<timestamp>-<id>.jsonl`), so both the "already
+    // scanned" and the "belongs to the gateway" checks cost nothing before the file is opened.
+    const id = path.basename(entry.file).replace(/\.jsonl$/, "").replace(/^rollout-\d{4}-\d{2}-\d{2}T[\d-]+-/, "");
+    if (id && skip.has(id)) {
+      skipped.push(id);
+      continue;
+    }
+    const seen = id ? known[id] : null;
+    if (seen && Number(seen.size) === entry.size && Number(seen.mtimeMs) === entry.mtimeMs) {
+      unchanged.push(id);
+      continue;
+    }
+    if (limit && scanned >= limit) break;
+    scanned += 1;
+    const parsed = await scanCodexRollout(entry.file);
+    if (skip.has(parsed.sessionId) || (parsed.parentSessionId && skip.has(parsed.parentSessionId)) || skip.has(parsed.rootSessionId)) {
+      skipped.push(parsed.sessionId);
+      continue;
+    }
+    sessions.push({ ...parsed, size: entry.size, mtimeMs: entry.mtimeMs });
+  }
+  return { stateDir, sessions, unchanged, skipped, total: entries.length, truncated: Boolean(limit) && scanned >= limit };
+}
+
 export const codexUsageKey = usageKey;
 export const codexParentId = parentId;
 export const codexFirstOwnTaskIndex = firstOwnTaskIndex;
@@ -430,6 +580,7 @@ export async function reduceCodexUsage({ operation, ...args }) {
     case "children": return listCodexChildThreads(args);
     case "root": return readCodexRootAccounting(args);
     case "accounting": return collectCodexChildAccounting(args);
+    case "external": return scanCodexState(args.stateDir, args);
     default: throw new Error("unknown Codex usage inspection");
   }
 }

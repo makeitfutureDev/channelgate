@@ -18,6 +18,105 @@ product overview.
 
 ## Unreleased
 
+- Admin UI → Skills: a search box can be typed into again. The catalog, per-source and usage
+  searches filtered on every keystroke, and filtering re-rendered the whole panel — the rebuilt
+  input came back focused at its start, so "beta" was typed as "ateb". Searching is now something
+  you ask for: type freely, then press Enter, click the new **Search** button beside the box (it is
+  highlighted while a typed query has not been searched yet), or clear the box with Escape or the
+  browser's own ×. Typing itself only records a draft, which also survives a re-render for an
+  unrelated reason, and any render under a focused field now restores the caret where it was.
+
+- Environment secrets now have three scopes instead of one (`src/config/scoped-env.js`).
+  **Organization** secrets are injected into every conversation's runs — one `GH_TOKEN` the whole
+  deployment shares instead of a copy in every channel — and live in `settings.json` (`orgEnv`,
+  0600), outside the `ENV_MAP` that can reach the daemon's own environment. **Personal** secrets
+  belong to a person and are injected only into runs THEY authored, in any conversation, never into
+  someone else's turn in the same room; they live on the user record beside the personal Composio
+  and Toolbox tokens. Precedence is organization → personal → channel, most specific last, so a
+  conversation's own account is never displaced by a personal token. The run preamble names each
+  variable's scope, the warm-pool fingerprint covers the merged set (a process started for one
+  author is never reused for another's turn), an unauthenticated run-API caller gets no personal
+  scope, and clean mode still injects nothing. New: `set_org_secret` / `remove_org_secret` /
+  `list_org_secrets` (admins) and `set_my_secret` / `remove_my_secret` / `list_my_secrets`; Slack's
+  `/secrets` and Settings → Secrets now render all three scopes in one modal (the organization's
+  Add button is absent for non-admins, and a row's authority is re-derived from its `action_id`
+  rather than trusted from the clicked value); the admin UI's *Organization secrets* card and
+  *Personal secrets* in the Users drawer; and `/api/org-secrets` + `/api/users/:id/env`.
+  Write-only everywhere, with no reveal path in any scope. One editor implementation now serves
+  all three (`public/admin-secrets.js`) and carries its own styling, so a secret box matches the
+  canonical admin-UI input wherever it is mounted instead of inheriting whatever its host gave it;
+  in the user drawer it stacks full-width like the token fields directly above. `.desc` is now
+  small everywhere rather than only inside a `.setcard`.
+- Admin UI: the "owner — whose account?" note beside every Composio/Toolbox token field
+  (`.tok-label`) now styles itself instead of relying on an ancestor. It was only ever styled where
+  it happened to sit inside a `.field` — in Settings — so the same input rendered as a small grey
+  browser-default box in the conversation card and the user drawer. It now matches the token field
+  it labels in all three. `test/admin-ui-controls.test.js` asserts this class of control carries its
+  own box styling, since the bug shipped twice.
+
+- **Overview charts are stacked by model, and there is a chart for the models themselves.** The
+  cost, runs and tokens charts now draw one band per model instead of a single line, so a rising
+  cost reads as "we moved onto a pricier model" or "we ran more" rather than leaving it ambiguous.
+  Attribution is per component, not per run: a Codex turn whose subagent used a different model
+  contributes to both, while the run is still counted once — and a run whose components are only
+  partly priced contributes no dollars at all, exactly as the headline figure treats it, so the
+  bands always add up to the total beside them. A new **Models** card lists every model in the
+  window with its token cost, share of spend, runs and tokens. Each chart has a legend and a
+  crosshair tooltip that breaks the hovered bucket down per model (pointer or keyboard); colours
+  come from a palette validated for the admin surface and are keyed on the model, so changing the
+  range, harness or source never repaints the series that survived the filter.
+- **Usage that never went through chat is counted too.** The same engines, on the same machine and
+  billing account, are also driven by hand — a terminal `claude`/`codex` in a channel's work
+  folder, the VS Code extension, the desktop apps, and SSH or VS Code sessions inside a channel
+  container. An hourly read-only scan of what both CLIs already write (Claude Code's per-session
+  transcripts, Codex's rollouts) now feeds the Overview: an **Outside the gateway** KPI, a **Where
+  usage came from** breakdown (chat gateway / terminal CLI / VS Code / desktop app / headless), the
+  same per-model stacking, and a **source** filter that partitions the totals into chat-driven runs
+  and everything else. Outside work inside a channel's folder is charged to that channel; work
+  elsewhere stays in the totals rather than being charged to a conversation that never ran it.
+  Nothing is double-counted: every run now records the engine session it spent tokens in, and a
+  session the gateway launched — or a Codex subagent whose parent it launched — is skipped before
+  its file is opened. Sessions from before that recording started are recognised by WHERE they ran:
+  inside a channel container, or in a channel's own work folder, nothing but the gateway runs an
+  engine headlessly. That is what lets the scan cover a machine's **entire** engine history instead
+  of only what happened after this release, and every pass reports how many sessions it recognised
+  as the gateway's own so the outside figure can be checked rather than taken on trust. A container
+  is only read when it is already running, through the runtime's existing read-only inspection — a
+  usage scan never starts one or makes a turn wait behind it. `npm run usage:external` reprocesses
+  on demand (dry run by default, `--rescan` to re-read everything).
+- **Fixed: one Claude API response was being charged several times.** Claude Code writes one record
+  per content block of a response — same request id, same usage — so summing the records billed a
+  single request two or three times. Usage is now counted per request. Checked against the sessions
+  where Claude Code recorded its own final cost, the figure this produces now matches Claude Code's
+  exactly; before the fix it was 21% high in aggregate and up to 3x on a single session. This only
+  ever affected the new outside-the-gateway figures — costs for runs made through chat come from
+  the CLI itself and were never computed this way.
+- **Updating a gateway now restates its own history.** The outside-usage scan never re-reads a
+  transcript it has already seen, which is what keeps it cheap — and what would have left a gateway
+  stuck with numbers from an older build for good. Each pass now checks a fingerprint of the scanner
+  and of the rate tables against the last completed one; on a mismatch (including rows written
+  before this check existed) it forgets its bookmarks once and re-reads everything over the next few
+  passes. So deploying an update, or editing a rate table, reprocesses the past by itself — no
+  command to run. The per-model breakdown never needed reprocessing: it is computed from the
+  existing ledger when the page is drawn.
+- **The bar lists are stacked by model too.** Runs per user, Channels and Where usage came from now
+  split each bar into the models that produced it, in the same colours and order as the charts — so
+  a colour means one model across the whole Overview, and a channel's runs bar and cost bar can be
+  compared directly. Also fixed: the ledger and the transcript scan disagreed on how to name a
+  dated model snapshot, which showed up as two identically-labelled "Haiku 4.5" rows.
+- **Runs with no recorded model are no longer a "model unknown" band.** The gateway only started
+  resolving which model answered partway through its life, so older runs carry none — on this
+  deployment 387 runs worth $990. They are now charted under a per-engine fallback (Opus for
+  Claude, Sol for Codex, both editable in Settings → Agent defaults, blank to keep them unknown).
+  Only the model is assumed: the cost is whatever was already recorded, the per-model figures still
+  add up to the headline exactly, and the Models card says how many runs in a band were filled in
+  rather than measured.
+- **Per-model Claude rates** (Settings → Agent defaults). A transcript records tokens, not dollars,
+  so outside Claude usage is valued from an editable $/1M table — input, both cache-write TTLs,
+  cache read and output, defaults verified against Anthropic's published pricing. Every token class
+  is priced separately, because an agent session is mostly cache reads. These rates never touch a
+  gateway run: Claude Code reports a real cost for those and it is used as-is.
+
 - **The 💻 button is gone from reply footers; the resume command moved into Settings.** Slack
   replies now end with 📂 Files, 🔑 Secrets, ⚙️ Settings (and any 📄 review-file buttons) — the
   resume control no longer rides under every answer. Channel Settings gained a **Resume Session**
@@ -27,6 +126,23 @@ product overview.
   hand out a cleared session's id, and it names the harness that MINTED the session rather than
   the channel default. `/resume`, `/menu`'s 💻 Resume button and the 💻 control on "🛑 Stopped."
   messages are unchanged.
+
+- **"Just send me the file" now sends the file.** Asking for a file in the thread — "share it here",
+  "attach it", "send me the report" — makes the assistant upload it with `slack_upload_snippet`
+  under its real name instead of only printing the path and a 📄 button. Any UTF-8 text file
+  qualifies: `.md`, `.txt`, `.json`, `.html`, `.yaml`, `.csv`, source, logs. Images keep their
+  automatic `![alt](path.png)` upload, `.html` is flagged as downloadable-but-previewed-as-source,
+  binaries (PDF, PPTX, XLSX, ZIP) still go through the file explorer, and a file over roughly 1 MB
+  is offered rather than pushed through the model's context. The `gateway-usage` skill and the tool
+  description both carry the rule, so an engine that never opens the skill still routes correctly.
+
+- **A usage limit is no longer treated as a bug.** Self-diagnosis skips failures that are provider
+  account state rather than a defect in this source — usage/spend limits, missing or expired
+  sign-ins, billing, a model the account cannot serve, provider outages and dropped connections, as
+  well as a user's own stop. Hitting the Claude session limit no longer opens a 🩺 root-cause thread
+  in the diagnosis channel (which spent the exhausted quota to conclude "wait for the reset"), and
+  no longer burns the 30-minute cooldown a real crash needs. Crashes, stalls and malformed requests
+  are diagnosed exactly as before.
 
 - Slack **⚙️ Settings → Engine & model** now edits the runtime in place instead of opening a second
   modal, and covers both scopes: the channel default AND, when Settings was opened from a reply

@@ -39,7 +39,7 @@ test("credential discovery lists only sorted, usable names without values or suf
     assert.ok(!prompt.includes(forbidden), `must omit ${forbidden}`);
   }
   assert.match(prompt, /replaces earlier turns/);
-  assert.match(prompt, /never silently substitute a channel credential for a personal connection/);
+  assert.match(prompt, /never silently substitute one scope's credential for another's/);
 });
 
 test("empty inventory clears old assumptions, while clean mode suppresses discovery", () => {

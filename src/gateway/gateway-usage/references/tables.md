@@ -67,6 +67,11 @@ Slack renders a scrollable spreadsheet grid instead of cramming it into a messag
 
 Prefer TSV when values contain commas. Do not also paste the exported rows into the reply.
 
+The same tool is how you hand over a file that is not a table at all — a report, `.json`, `.html`,
+a log, source — whenever the user asks for the file rather than a pointer to it. Pass the file's
+text as `content` and its real name as `filename`; see `references/writing-replies.md` for which
+file types can go this way and which need the 📄 footer button instead.
+
 Example — all duplicate drafts: call `slack_upload_snippet` with
 `title:"107 duplicate drafts — cleanup list"`, `filename:"cleanup.tsv"`, a one-line `comment`,
 and TSV `content` containing the full header and rows.

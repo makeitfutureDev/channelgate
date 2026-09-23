@@ -44,13 +44,18 @@
           <div class="view-head dash-head">
             <div>
               <h2>Overview</h2>
-              <p class="hint">Gateway usage — every interactive, scheduled, and background run.</p>
+              <p class="hint">Usage on this gateway — every interactive, scheduled and background run, plus engine sessions driven outside chat.</p>
             </div>
             <div class="dash-tools">
               <select id="dash-harness" class="dash-range" title="Harness" aria-label="Harness">
                 <option value="all" selected>All harnesses</option>
                 <option value="claude">Claude</option>
                 <option value="codex">Codex</option>
+              </select>
+              <select id="dash-source" class="dash-range" title="Where the usage came from" aria-label="Usage source">
+                <option value="all" selected>Gateway + outside</option>
+                <option value="gateway">Chat gateway only</option>
+                <option value="external">Outside the gateway</option>
               </select>
               <select id="dash-range" class="dash-range" title="Date range">
                 <option value="today">Today</option>
@@ -654,6 +659,21 @@
                       <tbody><!-- rendered by loadSettings from settings.codexModelRates --></tbody>
                     </table>
                   </div>
+                  <div class="field full">
+                    <span>Claude $ per 1M tokens by model, verified 2026-09-23 against <a href="https://platform.claude.com/docs/en/about-claude/pricing" target="_blank" rel="noopener noreferrer">Anthropic pricing</a>. These are used <strong>only</strong> to value Claude sessions the gateway did not launch (Overview → "Outside the gateway") — a run that goes through a conversation reports its real cost and is never estimated. "5m"/"1h" are the two cache-write TTLs and "Cache read" the hit rate; the 1M context window carries no premium.</span>
+                    <table class="rates-table" id="claude-rates">
+                      <thead><tr><th>Model</th><th>Input</th><th>Write 5m</th><th>Write 1h</th><th>Cache read</th><th>Output</th></tr></thead>
+                      <tbody><!-- rendered by loadSettings from settings.claudeModelRates --></tbody>
+                    </table>
+                  </div>
+                  <label class="field">
+                    <span>Assume this Claude model when a run recorded none — older runs predate the gateway resolving the model that answered, and would otherwise sit in one "model unknown" band on Overview. This changes only which band an already-recorded figure is charted under; it never prices anything, and the Models card says how many runs were filled in this way. Leave blank to keep them unknown.</span>
+                    <input id="set-assumed-claude" type="text" placeholder="claude-opus-5" />
+                  </label>
+                  <label class="field">
+                    <span>…and the same for Codex.</span>
+                    <input id="set-assumed-codex" type="text" placeholder="gpt-5.6-sol" />
+                  </label>
                 </div>
                 <div class="setcard">
                   <h4>Google Drive sync</h4>
@@ -733,6 +753,11 @@
                   <h3 id="set-integrations-h">Integrations</h3>
                   <p class="setsec-desc">Composio and Toolbox endpoints plus the org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
                 </header>
+                <div class="setcard" id="org-secrets-card">
+                  <h4>Organization secrets <em class="state secret-state"></em></h4>
+                  <p class="desc">Environment variables passed to <strong>every</strong> conversation's runs &mdash; one credential the whole deployment shares, such as a <code>GH_TOKEN</code> every channel can push with. A conversation's own secret of the same name overrides it there, and a person's own fills names neither defines. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
+                  <div id="org-secrets-editor"></div>
+                </div>
                 <div class="setcard">
                   <h4>Composio connection mode</h4>
                   <p class="desc">Choose how both <code>composio-user</code> (personal) and <code>composio</code> (shared channel) are provisioned. Switching modes never deletes saved personal, channel, or organization tokens.</p>
@@ -1205,15 +1230,10 @@
         <!-- ── ENVIRONMENT TOKENS ────────────────────────────────────────── -->
         <div class="subpane" data-pane="environment">
           <div class="setcard channel-env-card">
-            <h4>Environment secrets <em class="state ch-env-state"></em></h4>
+            <h4>Environment secrets <em class="state secret-state"></em></h4>
             <p class="desc">Variables passed to every run in this conversation — this channel's own CLI logins (e.g. <code>SUPABASE_ACCESS_TOKEN</code>), separate from every other channel's. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
-            <div class="ch-env-list"></div>
-            <div class="ch-env-add">
-              <input class="ch-env-name" type="text" placeholder="SUPABASE_ACCESS_TOKEN" autocomplete="off" spellcheck="false" />
-              <input class="ch-env-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
-              <button type="button" class="ghost ch-env-save">Save variable</button>
-            </div>
-            <em class="state ch-env-hint"></em>
+            <!-- Built by public/admin-secrets.js, the one editor all three scopes share. -->
+            <div class="ch-env-editor"></div>
           </div>
         </div>
 
@@ -1352,6 +1372,12 @@
           <input class="ud-toolboxtoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
           <input class="ud-toolboxtoken" type="password" placeholder="Toolbox token (Authorization: Bearer)" />
           <em class="state ud-toolbox-state"></em>
+        </div>
+
+        <div class="ud-row ud-secrets-row">
+          <label class="fldlab">Personal secrets<em class="state secret-state"></em></label>
+          <p class="desc">Environment variables injected only into runs <strong>this person</strong> authors, in every conversation they talk in &mdash; never into anyone else's turn in those same conversations. A conversation's own secret of the same name still wins there. Saved and removed immediately, separately from the Save button below. Write-only: a stored value is never shown again.</p>
+          <div class="ud-secrets"></div>
         </div>
 
         <div class="drawer-foot">

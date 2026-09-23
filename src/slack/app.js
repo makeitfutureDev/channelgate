@@ -49,6 +49,7 @@ import { buildFileEditView, buildFilePreviewView, buildFilesLoadingView, buildFi
 import {
   buildSecretFormView, buildSecretsErrorView, buildSecretsView, parseActionValue as parseSecretActionValue,
   parseSecretsMetadata, readSecretForm, SECRETS_ACTION_PATTERN, SECRETS_ADD_ACTION_ID,
+  SECRETS_ADD_ORG_ACTION_ID, SECRETS_ADD_PERSONAL_ACTION_ID, normalizeSecretScope, scopeFromActionId,
   SECRETS_FORM_CALLBACK_ID, SECRETS_NAME_BLOCK_ID, SECRETS_REMOVE_ACTION_PREFIX, SECRETS_SHORTCUT_ID,
   SECRETS_VALUE_BLOCK_ID,
 } from "./secret-explorer.js";
@@ -74,6 +75,8 @@ import {
 } from "./channel-settings.js";
 import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, ACCESS_MODE_BLOCK_ID, buildAccessEditorView, readAccessForm, accessSettingsPatch, assertAccessManager } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
+// The two scopes that are not the channel's (config/scoped-env.js).
+import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../config/scoped-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
 
 import { uploadLocalFile } from "./upload.js";
@@ -382,16 +385,37 @@ export async function secretsContext(client, { channelId, userId, expectedSlug =
   return { ...ctx, mayEdit: true };
 }
 
+// The three masked lists one viewer may see: the organization's, THEIR OWN, and this channel's.
+// `personal` is always the viewer's — the modal is bound to one owner and refuses a different
+// clicker, so another person's secrets have no path into this view.
+export async function secretScopeLists(meta, viewerId) {
+  return {
+    organization: listOrgEnv(),
+    personal: await listUserEnv(viewerId),
+    channel: listChannelEnv(meta),
+  };
+}
+
 async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "" } = {}) {
   await ensureUserKnown(client, userId);
-  const { entry, meta, mayEdit } = await secretsContext(client, { channelId, userId });
+  const { entry, meta, mayEdit, userIsAdmin } = await secretsContext(client, { channelId, userId });
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId };
   await client.views.open({
     trigger_id: triggerId,
-    view: buildSecretsView(listChannelEnv(meta), state, { channelName: entry.name, mayEdit }),
+    view: buildSecretsView(await secretScopeLists(meta, userId), state, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin }),
   });
   // The names are worth an audit line; there is no value to omit, because we never had one.
   await logEvent("channel_secrets_opened", { channel: channelId, author: userId, slug: entry.slug });
+}
+
+// Who may change WHICH scope. The channel's is the existing rule; the organization's is
+// admin-only because it reaches every conversation; a person's own is always theirs to change —
+// the modal already refuses any clicker who is not its owner, so "personal" here IS the clicker.
+function assertMaySecretScope(scope, { mayEdit = false, userIsAdmin = false } = {}) {
+  const where = normalizeSecretScope(scope);
+  if (where === "organization" && !userIsAdmin) throw new Error("Only organization admins can change the organization's secrets.");
+  if (where === "channel" && !mayEdit) throw new Error("You can't change this channel's secrets.");
+  return where;
 }
 
 export async function handleSecretsAction({ ack, body, action, client }, { context = secretsContext, rootView = settingsRootView } = {}) {
@@ -410,23 +434,47 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
     const { entry, mayEdit, userIsAdmin } = await context(client, {
       channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
     });
-    if (!mayEdit) throw new Error("You can't change this channel's secrets.");
-    if (action?.action_id === SECRETS_ADD_ACTION_ID) {
+    // No blanket gate: the three scopes have different authority, so each branch asserts its own
+    // (assertMaySecretScope). Reaching here only means the clicker owns this modal and is
+    // authorized in this conversation at all.
+    const addScope = action?.action_id === SECRETS_ADD_ORG_ACTION_ID ? "organization"
+      : action?.action_id === SECRETS_ADD_PERSONAL_ACTION_ID ? "personal"
+        : action?.action_id === SECRETS_ADD_ACTION_ID ? "channel" : "";
+    if (addScope) {
+      assertMaySecretScope(addScope, { mayEdit, userIsAdmin });
       await client.views.push({
         trigger_id: body.trigger_id,
-        view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(cliIntegrationIds()) }),
+        view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(cliIntegrationIds()), scope: addScope }),
       });
       return;
     }
     if (String(action?.action_id || "").startsWith(SECRETS_REMOVE_ACTION_PREFIX)) {
       const name = String(command.n || "");
-      // Runs resolve env at spawn; no folder/skill provisioning is needed for an env-only edit.
-      const saved = await patchChannelMeta(entry.slug, (existing) => ({ env: patchChannelEnv(existing?.env, { remove: name }) }));
-      await logEvent("channel_env_removed", { slug: entry.slug, name, actor: clicker });
-      const notice = `🗑️ Removed *${name}*. New runs in this channel no longer receive it.`;
+      // The scope comes from the action_id, not from the clicked value: a value is attacker-shaped
+      // input on a surface where the three scopes carry different authority.
+      const scope = scopeFromActionId(action.action_id);
+      assertMaySecretScope(scope, { mayEdit, userIsAdmin });
+      let saved = null;
+      if (scope === "organization") {
+        patchOrgEnv({ remove: name, actor: `<@${clicker}>` });
+        await logEvent("org_env_removed", { name, actor: clicker });
+      } else if (scope === "personal") {
+        await patchUserEnv(clicker, { remove: name });
+        await logEvent("user_env_removed", { user: clicker, name, actor: clicker });
+      } else {
+        // Runs resolve env at spawn; no folder/skill provisioning is needed for an env-only edit.
+        saved = await patchChannelMeta(entry.slug, (existing) => ({ env: patchChannelEnv(existing?.env, { remove: name }) }));
+        await logEvent("channel_env_removed", { slug: entry.slug, name, actor: clicker });
+      }
+      const meta = saved || await getChannelMeta(entry.slug);
+      const notice = scope === "organization"
+        ? `🗑️ Removed *${name}*. No conversation receives it any more.`
+        : scope === "personal"
+          ? `🗑️ Removed *${name}*. Runs you author no longer receive it.`
+          : `🗑️ Removed *${name}*. New runs in this channel no longer receive it.`;
       const nextView = state.returnTo === "settings"
-        ? await rootView(entry, saved, { ...state, tab: "secrets" }, userIsAdmin, { notice })
-        : buildSecretsView(listChannelEnv(saved), state, { channelName: entry.name, mayEdit, notice });
+        ? await rootView(entry, meta, { ...state, tab: "secrets" }, userIsAdmin, { notice })
+        : buildSecretsView(await secretScopeLists(meta, clicker), state, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin, notice });
       await updateFileExplorerView(client, body, nextView);
     }
   } catch (e) {
@@ -465,16 +513,37 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
     const { entry, mayEdit, userIsAdmin } = await context(client, {
       channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
     });
-    if (!mayEdit) throw new Error("You can't change this channel's secrets.");
-    const existed = listChannelEnv(await getChannelMeta(entry.slug)).some((v) => v.name === name);
-    const saved = await patchChannelMeta(entry.slug, (existing) => ({
-      env: patchChannelEnv(existing?.env, { set: { name, value }, actor: `<@${clicker}>` }),
-    }));
-    await logEvent("channel_env_set", { slug: entry.slug, name, actor: clicker });
-    const notice = `✅ ${existed ? "Updated" : "Added"} *${name}*. It reaches the next run in this channel.`;
+    // The scope was fixed when the form was opened and rides in its metadata — re-authorize it
+    // here anyway: a submission is a separate request, and the clicker's admin status may have
+    // been revoked between opening the form and pressing Save.
+    const scope = assertMaySecretScope(state.scope, { mayEdit, userIsAdmin });
+    let saved = null;
+    let existed = false;
+    if (scope === "organization") {
+      existed = listOrgEnv().some((v) => v.name === name);
+      patchOrgEnv({ set: { name, value }, actor: `<@${clicker}>` });
+      await logEvent("org_env_set", { name, actor: clicker });
+    } else if (scope === "personal") {
+      existed = (await listUserEnv(clicker)).some((v) => v.name === name);
+      await patchUserEnv(clicker, { set: { name, value } });
+      await logEvent("user_env_set", { user: clicker, name, actor: clicker });
+    } else {
+      existed = listChannelEnv(await getChannelMeta(entry.slug)).some((v) => v.name === name);
+      saved = await patchChannelMeta(entry.slug, (existing) => ({
+        env: patchChannelEnv(existing?.env, { set: { name, value }, actor: `<@${clicker}>` }),
+      }));
+      await logEvent("channel_env_set", { slug: entry.slug, name, actor: clicker });
+    }
+    const meta = saved || await getChannelMeta(entry.slug);
+    const reach = scope === "organization"
+      ? "Every conversation's next run receives it."
+      : scope === "personal"
+        ? "It reaches the next run you author, in any conversation."
+        : "It reaches the next run in this channel.";
+    const notice = `✅ ${existed ? "Updated" : "Added"} *${name}*. ${reach}`;
     const nextView = state.returnTo === "settings"
-      ? await rootView(entry, saved, { ...state, tab: "secrets" }, userIsAdmin, { notice })
-      : buildSecretsView(listChannelEnv(saved), { ...state, editName: "" }, { channelName: entry.name, mayEdit, notice });
+      ? await rootView(entry, meta, { ...state, tab: "secrets" }, userIsAdmin, { notice })
+      : buildSecretsView(await secretScopeLists(meta, clicker), { ...state, editName: "" }, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin, notice });
     // Pop the temporary form and refresh its existing parent, preserving Settings navigation
     // and Slack's three-view stack budget across repeated saves.
     await navigation.show(nextView);
@@ -565,6 +634,8 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
     canEnableAdmin: Boolean(userIsAdmin),
     canEditRuntime: true,
     canEditSecrets: true,
+    // Reaches every conversation, so admin-only even for someone who may edit this channel's own.
+    canEditOrgSecrets: Boolean(userIsAdmin),
     canManageCloudMcp: Boolean(userIsAdmin),
     canManageVpn: canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
     canEditAccess: !meta.isDM && canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
@@ -895,13 +966,18 @@ export async function saveAccessSettings(client, state, userId, form) {
 async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "", vpn } = {}) {
   const snapshot = channelSettingsSnapshot(meta);
   const threadTs = state.threadTs || "";
-  const [scopes, resume] = await Promise.all([
+  const [scopes, resume, secretScopes] = await Promise.all([
     runtimeScopes(entry.slug, meta, snapshot, threadTs),
     resolveResumeSession({ entry, meta: effectiveMeta(meta) }, threadTs)
       .catch(() => ({ inThread: Boolean(threadTs), sessionId: "", engine: "", workDir: "", command: "" })),
+    // The other two credential scopes, so the Secrets tab shows what a run will ACTUALLY receive.
+    // `personal` is the VIEWER's own — state.ownerId is the only person this modal answers to.
+    secretScopeLists(meta, state.ownerId).catch(() => ({ organization: [], personal: [], channel: [] })),
   ]);
   snapshot.runtime.scopes = scopes;
   snapshot.resume = resume;
+  snapshot.orgSecrets = secretScopes.organization;
+  snapshot.personalSecrets = secretScopes.personal;
   return buildChannelSettingsView({ ...snapshot, vpn }, { ...state, tab }, {
     channelName: entry.name,
     tab,

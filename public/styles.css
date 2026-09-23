@@ -317,7 +317,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .reveal-btn svg { width: 16px; height: 16px; }
 
 /* Optional owner note that sits directly above a token box — subtler than the token field itself. */
-.tok-label { margin-bottom: 6px; font-size: 12.5px; }
+/* The "owner" note beside a token field is a text input like any other, and it appears in THREE
+   hosts: Settings (inside a .field, which styled it), the conversation card and the user drawer
+   (which did not — so it fell back to the browser default and rendered as a small grey box). Style
+   the control itself rather than depending on an ancestor, and give it the canonical .field input
+   look so it matches the token field it labels. */
+.tok-label { display: block; width: 100%; box-sizing: border-box; margin-bottom: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
 .tok-label::placeholder { font-style: italic; opacity: .8; }
 
 /* Footer under a token box: a "clear" button pinned to the right edge. */
@@ -421,6 +426,37 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .legend { display: flex; gap: 12px; font-size: 10.5px; color: var(--faint); }
 .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; box-shadow: none; }
 
+/* ── Per-model stacking ──────────────────────────────────────────────────────
+   One legend above the three hero charts: the bands mean the same model in each,
+   so repeating it per card would be three copies of the same key. It wraps because
+   a deployment can easily be running eight models at once. Legend text stays in the
+   muted ink token — the swatch carries identity, never the label's colour. */
+.dash-legend { margin: 0 0 12px; }
+.dash-legend .legend-wrap { flex-wrap: wrap; row-gap: 6px; color: var(--muted); }
+
+/* The hover layer. The chart itself is a stretched SVG, so the crosshair and tooltip
+   are positioned in CSS percentages over it rather than in viewBox units. */
+.spark-hover { position: relative; display: block; }
+.spark-hover:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; border-radius: 4px; }
+.spark-cursor {
+  position: absolute; top: 0; bottom: 0; width: 1px; background: var(--light);
+  opacity: .5; pointer-events: none; transform: translateX(-.5px);
+}
+.spark-tip {
+  position: absolute; bottom: calc(100% + 6px); z-index: 4; pointer-events: none;
+  min-width: 150px; max-width: 260px; padding: 8px 10px;
+  background: var(--panel-dark); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45); font-size: 11.5px; color: var(--ink);
+}
+/* Anchored left of the cursor once past the chart's right side, so the last buckets —
+   the ones people actually look at — do not push the tooltip off the card. */
+.spark-tip.flip { transform: translateX(-100%); }
+.spark-tip-head { color: var(--faint); font-size: 10.5px; margin-bottom: 5px; white-space: nowrap; }
+.spark-tip-head strong { color: var(--ink); }
+.spark-tip-row { display: flex; align-items: center; gap: 6px; line-height: 1.7; white-space: nowrap; }
+.spark-tip-row b { margin-left: auto; font-variant-numeric: tabular-nums; }
+.spark-tip-row .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex: none; }
+
 .bar-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 10px; padding: 6px 0; font-size: 12.5px; }
 .bar-row-dual { align-items: center; }
 .bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
@@ -428,6 +464,12 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 /* FIX: .bar-fill is an inline <span> in app.js, so width/height were ignored and every
    dashboard bar rendered empty. display:block makes the fills actually paint. */
 .bar-fill { display: block; height: 100%; border-radius: 5px; }
+/* A bar split by model: the fill becomes a row of segments in the shared model-colour order, so a
+   bar answers "how much" and "on what" at once. The 1px surface gap between segments is the same
+   separation rule the stacked charts use — without it two adjacent hues read as one band. */
+.bar-stack { display: flex; overflow: hidden; }
+.bar-stack > i { display: block; height: 100%; min-width: 1px; box-shadow: 1px 0 0 var(--panel); }
+.bar-stack > i:last-child { box-shadow: none; }
 .bar-dual { display: flex; flex-direction: column; gap: 3px; }
 .bar-dual .bar-track { height: 6px; }
 .bar-val { color: var(--muted); font-size: 11px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
@@ -519,7 +561,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 /* Settings section card (+ danger-zone variant). */
 .setcard { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 18px 22px; }
 .setcard h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
-.setcard .desc { font-size: 11.5px; color: var(--faint); margin: 0 0 14px; line-height: 1.5; }
+.desc { font-size: 11.5px; color: var(--faint); margin: 0 0 14px; line-height: 1.5; }
 .setcard.danger { border-color: rgba(229, 96, 77, .4); }
 .setcard.danger h4 { color: var(--danger); }
 .dz-row { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid var(--line-soft); font-size: 12.5px; }
@@ -594,11 +636,24 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
    here on purpose, so there is deliberately no eye-toggle styling to match the token fields. */
 .channel-env-card { margin-top: 18px; }
 .channel-env-card .ch-env-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
-.channel-env-card .ch-env-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.channel-env-card .ch-env-row code { font-weight: 600; }
-.channel-env-card .ch-env-row .state { flex: 1 1 auto; }
-.channel-env-card .ch-env-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.channel-env-card .ch-env-add input { flex: 1 1 200px; }
+/* Environment-secret editor (public/admin-secrets.js). ONE editor serves all three scopes and is
+   mounted in three different hosts — a conversation card, the Settings organization card and the
+   user drawer — so it carries its own styling rather than inheriting whatever each host happens to
+   give an input. The boxes deliberately match the canonical .field control above: a secret input
+   should look like every other input in the admin UI, wherever it appears. */
+.secret-list { display: grid; gap: 8px; margin-bottom: 10px; }
+.secret-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.secret-row code { font-weight: 600; }
+.secret-row .state { flex: 1 1 auto; }
+.secret-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.secret-add input { flex: 1 1 220px; min-width: 0; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
+.secret-add .secret-save { flex: none; }
+/* In the user drawer the editor sits directly under the full-width token fields, so it stacks to
+   match them — same control, same width, instead of two narrow boxes sharing a row. */
+.drawer .secret-add { flex-direction: column; align-items: stretch; gap: 8px; }
+.drawer .secret-add input { flex: none; width: 100%; }
+.drawer .secret-add .secret-save { align-self: flex-start; }
+.secret-hint { display: block; margin-top: 8px; }
 .channel-env-card .ch-env-hint { display: block; margin-top: 8px; }
 
 /* Editor cards (Instructions / Memory) — a mono editor with a slim toolbar; own Save. */
@@ -657,6 +712,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 /* Only the plain name input needs base styling — the token fields get theirs from .reveal-wrap. */
 .drawer .ud-name { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
 .drawer .ud-row .state { display: block; font-size: 11px; color: var(--faint); margin-top: 4px; }
+.drawer .ud-row .fldlab .state { display: inline; margin: 0 0 0 7px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .drawer-foot { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .drawer .tokchip .empty { color: var(--faint); }
 
@@ -914,6 +970,9 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .skills-toolbar input[type="search"], .skills-toolbar select { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 7px 10px; border-radius: 8px; font: inherit; }
 .skills-toolbar input[type="search"] { min-width: 220px; }
 .skills-toolbar .spacer { flex: 1; }
+/* Search runs on Enter or this button, never per keystroke; `pending` says a typed query has not
+   been searched yet. */
+.skills-toolbar .skills-search-go.pending { border-color: var(--ink); background: var(--panel-2); }
 .skills-source-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr)); }
 .skills-source-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 22px; text-align: left; background: var(--panel-dark); border: 1px solid var(--line); color: var(--ink); border-radius: 12px; cursor: pointer; font: inherit; }
 .skills-source-card:hover { background: var(--panel-2); border-color: var(--muted); }

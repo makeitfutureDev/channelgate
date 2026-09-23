@@ -3,6 +3,7 @@
 // URL is unchanged.
 import { Router } from "express";
 import { readUsage, usageSummary, usageDashboard } from "../../gateway/usage.js";
+import { externalUsageStatus, externalTrackingStartedAt } from "../../gateway/external-usage.js";
 import { activeRunForApi, listActiveRuns, onActiveRunsChanged } from "../../gateway/active-runs.js";
 import { readEvents } from "../../util/logger.js";
 import { getChannelsIndex, getUsers } from "../../config/store.js";
@@ -108,16 +109,39 @@ export function createObservabilityRouter() {
   // Dashboard — KPIs + per-bucket/per-user/per-channel rollups for a named `range` (today, last7,
   // last30, month, lastmonth, year, lastyear; default last30), aggregated in SQL. Author/channel
   // ids get their display names attached (as the audit view does) so the UI can render labels
-  // without a second lookup. `harness` is all (default), claude or codex and scopes every rollup.
+  // without a second lookup. `harness` is all (default), claude or codex and scopes every rollup;
+  // `source` is all (default), gateway (chat-driven runs only) or external (usage the gateway never
+  // launched — see gateway/external-usage.js). Every point also carries its per-model split, which
+  // is what the charts stack by, and `externalScan` reports when that side was last refreshed so a
+  // stale or failing scan is visible instead of silently showing less spend than there was.
   router.get("/dashboard", async (req, res, next) => {
     try {
       const range = String(req.query.range || "last30");
       const harness = String(req.query.harness || "all");
-      const data = usageDashboard({ range, harness });
+      const source = String(req.query.source || "all");
+      const data = usageDashboard({ range, harness, source });
       const index = await getChannelsIndex();
       const users = await getUsers();
       data.byUser = data.byUser.map((u) => ({ ...u, name: users[u.userId]?.name || u.userId }));
       data.byChannel = data.byChannel.map((c) => ({ ...c, name: index[c.channelId]?.name || c.slug || c.channelId }));
+      const scan = externalUsageStatus();
+      data.externalScan = scan
+        ? {
+            startedAt: scan.startedAt,
+            since: scan.since,
+            trackingStartedAt: scan.trackingStartedAt,
+            sessions: scan.sessions,
+            outside: scan.outside,
+            rows: scan.rows,
+            // How many sessions this pass recognised as the gateway's OWN, and by which evidence.
+            // Surfaced because it is the number that decides whether the outside figure is credible.
+            attributed: scan.attributed,
+            pending: scan.truncated,
+            errors: scan.errors.length,
+          }
+        // No pass has run yet this boot (the first is deferred a minute past startup); say when
+        // tracking began if an earlier boot already recorded it.
+        : { startedAt: "", since: "", trackingStartedAt: externalTrackingStartedAt(), sessions: 0, outside: 0, rows: 0, attributed: {}, pending: false, errors: 0 };
       data.topSkills = [...usageCountsBySlug({ since: data.start, engine: data.harness === "all" ? "" : data.harness }).values()]
         .sort((a, b) => b.total - a.total || a.slug.localeCompare(b.slug))
         .slice(0, 10)

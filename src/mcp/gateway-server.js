@@ -273,6 +273,14 @@ export function buildControlPlane({ loadMeta }) {
     ["clear_my_composio_token", { authz: "any", details: () => "Remove YOUR Composio token." }],
     ["set_my_toolbox_token", { authz: "any", details: () => "Set YOUR Toolbox token (value hidden)." }],
     ["clear_my_toolbox_token", { authz: "any", details: () => "Remove YOUR Toolbox token." }],
+    // Environment secret scopes that are not the channel's (config/scoped-env.js). Same reason the
+    // connector tokens above are gated: each one changes WHICH account future runs authenticate as,
+    // and the organization scope does it for every conversation at once. Names only in the card —
+    // a value must never reach the approval UI any more than it reaches a listing.
+    ["set_my_secret", { authz: "any", details: ({ name }) => `Set YOUR personal environment secret ${summarize(name)} (value hidden) — injected into every run YOU author, in any conversation.` }],
+    ["remove_my_secret", { authz: "any", details: ({ name }) => `Remove YOUR personal environment secret ${summarize(name)}.` }],
+    ["set_org_secret", { authz: "admin", details: ({ name }) => `Set the ORGANIZATION-WIDE environment secret ${summarize(name)} (value hidden) — injected into EVERY conversation's runs, for every author admitted there.` }],
+    ["remove_org_secret", { authz: "admin", details: ({ name }) => `Remove the organization-wide environment secret ${summarize(name)} — every conversation stops receiving it.` }],
     // SSH access to channel containers (src/gateway/ssh-access.js): a registered key is what a
     // later grant turns into a shell inside a container, and a grant IS that shell. Never echo the
     // key material in the card — the fingerprint is computed after approval.

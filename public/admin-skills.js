@@ -18,12 +18,14 @@ const state = {
   detail: null,
   fileView: null,
   query: "",
+  queryDraft: "",
   owner: "",
   source: "",
   category: "",
   sourceSelected: "",
   sourceSkills: [],
   sourceQuery: "",
+  sourceQueryDraft: "",
   enabled: "1",
   discoverable: "all",
   mandatory: "all",
@@ -35,6 +37,7 @@ const state = {
   usageDays: 30,
   usage: null,
   usageQuery: "",
+  usageQueryDraft: "",
   usageView: "skill",
   templatePreview: null,
   applyTemplate: "",
@@ -124,7 +127,72 @@ export async function loadSkills() {
   render();
 }
 
+// ── search boxes ────────────────────────────────────────────────────────────────────────────
+
+// Every search box here is commit-on-demand: typing updates only its draft, and the panel
+// re-renders when the reader presses Enter, clicks Search, or clears the box. Filtering per
+// keystroke rebuilt the whole of #skills-body under the cursor, and the replacement input came
+// back focused at offset 0 — so the second character of a query landed in front of the first.
+// The draft lives in state, so a re-render for an unrelated reason keeps what was typed.
+const SEARCH_BOXES = Object.freeze({
+  "skills-q": { draft: "queryDraft", committed: "query", reload: true },
+  "source-skills-q": { draft: "sourceQueryDraft", committed: "sourceQuery" },
+  "usage-q": { draft: "usageQueryDraft", committed: "usageQuery" },
+});
+
+// Own-property lookup: an element with id="constructor" would otherwise inherit a FUNCTION from
+// Object.prototype and be treated as a search box.
+const searchBoxFor = (id) => (Object.hasOwn(SEARCH_BOXES, String(id)) ? SEARCH_BOXES[id] : null);
+
+// The Search button for a box, so its "you have typed something not searched yet" hint can be
+// toggled without a render (which is the very thing we are avoiding while someone types).
+const searchButton = (id) => body().querySelector(`[data-action="search"][data-search="${id}"]`);
+
+function markSearchPending(id) {
+  const box = searchBoxFor(id);
+  const button = box && searchButton(id);
+  if (button) button.classList.toggle("pending", String(state[box.draft] || "") !== String(state[box.committed] || ""));
+}
+
+async function commitSearch(id) {
+  const box = searchBoxFor(id);
+  if (!box) return;
+  const input = document.getElementById(id);
+  if (input) state[box.draft] = input.value;
+  state[box.committed] = state[box.draft];
+  if (box.reload) {
+    try { await refreshAll(); } catch (err) { setMessage(err?.message || String(err), true); }
+  }
+  render();
+}
+
+// A search input renders as the box plus its own Search button; `reload` boxes ask the server,
+// the others filter what is already loaded. Both only act when the reader says so.
+const searchBox = (id, { label, placeholder }) => `<input type="search" id="${id}" aria-label="${esc(label)}" placeholder="${esc(placeholder)}" value="${esc(state[searchBoxFor(id).draft] || "")}" autocomplete="off" /><button type="button" class="ghost skills-search-go" data-action="search" data-search="${id}" title="Press Enter or click to search">Search</button>`;
+
 // ── rendering ───────────────────────────────────────────────────────────────────────────────
+
+// Replacing the panel's innerHTML throws away the focused control. Remember where the caret was
+// and put it back, so a render triggered while the reader is in a field (a committed search, a
+// governance toggle) does not silently move the cursor to the front of the box.
+const CARET_TYPES = new Set(["text", "search", "url", "tel", "password"]);
+
+function captureFocus() {
+  const el = document.activeElement;
+  if (!el?.id || !body().contains(el)) return null;
+  const caret = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && CARET_TYPES.has(el.type));
+  return { id: el.id, start: caret ? el.selectionStart : null, end: caret ? el.selectionEnd : null };
+}
+
+function restoreFocus(snapshot) {
+  if (!snapshot) return;
+  const el = document.getElementById(snapshot.id);
+  if (!el || !body().contains(el)) return;
+  el.focus({ preventScroll: true });
+  if (snapshot.start == null || typeof el.setSelectionRange !== "function") return;
+  const limit = el.value.length;
+  el.setSelectionRange(Math.min(snapshot.start, limit), Math.min(snapshot.end ?? snapshot.start, limit));
+}
 
 function render() {
   renderSummary();
@@ -135,6 +203,7 @@ function render() {
   for (const b of document.querySelectorAll(".skills-tab")) b.classList.toggle("active", b.dataset.tab === state.tab);
   const status = state.error ? `<p class="skills-error">${esc(state.error)}</p>` : state.message ? `<p class="skills-ok">${esc(state.message)}</p>` : "";
   const panel = { catalog: renderCatalog, review: renderReview, sources: renderSources, sync: renderSyncSettings, mcp: renderMcp, templates: renderTemplates, usage: renderUsage }[state.tab] || renderCatalog;
+  const focused = captureFocus();
   body().innerHTML = status + panel();
   const picker = document.getElementById("template-skills-picker");
   if (picker && state.editTemplate) mountSkillAssignmentPicker(picker, {
@@ -143,6 +212,8 @@ function render() {
     activeNote: "Skills selected for this template. Save to update conversations that follow it.",
     onChange: (skills) => { state.editTemplate.skills = skills; },
   });
+  for (const id of Object.keys(SEARCH_BOXES)) markSearchPending(id);
+  restoreFocus(focused);
 }
 
 function renderSummary() {
@@ -190,7 +261,7 @@ function renderCatalog() {
     </tr>`).join("");
   return `
     <div class="skills-toolbar">
-      <input type="search" id="skills-q" placeholder="Search slug, name, description, tags…" value="${esc(state.query)}" />
+      ${searchBox("skills-q", { label: "Search the skill catalog", placeholder: "Search slug, name, description, tags…" })}
       <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(o) : "every owner"}</option>`).join("")}</select>
       <select id="skills-source" aria-label="Source"><option value="">Every source</option>${(state.overview?.sources || []).map((source) => `<option value="${source.id}"${String(source.id) === state.source ? " selected" : ""}>${esc(source.label || source.url)}</option>`).join("")}</select>
       <select id="skills-category" aria-label="Category"><option value="">Every category</option>${(state.catalog?.categories || []).map((category) => `<option value="${esc(category.category)}"${category.category === state.category ? " selected" : ""}>${esc(category.category)}</option>`).join("")}</select>
@@ -336,7 +407,7 @@ function renderSourceSkills(source) {
     <div class="skills-source-stats"><span><b>${all.length}</b> skills</span><span><b>${all.filter((s) => s.enabled).length}</b> enabled</span><span><b>${all.filter((s) => s.discoverable).length}</b> discoverable</span><span><b>${all.filter((s) => s.mandatory).length}</b> mandatory</span></div>
     ${source.lastSyncError ? `<p class="skills-error">${esc(source.lastSyncError)}</p>` : ""}
     ${renderSourceSettings(source)}
-    <div class="skills-toolbar"><input type="search" id="source-skills-q" aria-label="Search this source’s skills" placeholder="Search this source’s skills…" value="${esc(state.sourceQuery)}" /><span class="skills-note">${skills.length} of ${all.length} skills</span></div>
+    <div class="skills-toolbar">${searchBox("source-skills-q", { label: "Search this source’s skills", placeholder: "Search this source’s skills…" })}<span class="skills-note">${skills.length} of ${all.length} skills</span></div>
     <p class="skills-note">Discoverable applies across the organization. Mandatory loads a skill in every conversation and also enables discovery. Disabled skills stay listed here so you can enable them again.</p>
     <div class="skills-source-table-wrap"><table class="skills-table skills-source-table"><thead><tr><th>Skill or plugin</th><th>Enabled</th><th>Discoverable · org-wide</th><th>Mandatory</th></tr></thead><tbody>
     ${skills.map((skill) => `<tr><td><button type="button" class="skills-skill-link" data-action="select" data-slug="${esc(skill.slug)}">${esc(skill.name || skill.slug)}</button>${pluginBadge(skill)}<code>${esc(skill.slug)}</code><p class="skills-source-description">${esc(skill.description)}</p>${skill.deleted ? '<span class="pill">disabled</span>' : ""}${skill.currentRevisionId == null && !skill.deleted ? '<span class="pill">awaiting approval</span>' : ""}</td><td>${toggle(skill, "enabled", "Enabled")}</td><td>${toggle(skill, "discoverable", "Discoverable organization-wide")}</td><td>${toggle(skill, "mandatory", "Mandatory")}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${all.length ? "No skills match your search." : "No catalog skills from this source yet. Sync the source to import them."}</td></tr>`}
@@ -463,7 +534,7 @@ function renderUsage() {
   return `
     <div class="skills-toolbar">
       <div class="skills-segmented"><button type="button" data-action="usage-view" data-view="skill" class="${state.usageView === "skill" ? "active" : ""}">By skill</button><button type="button" data-action="usage-view" data-view="channel" class="${state.usageView === "channel" ? "active" : ""}">By channel</button></div>
-      <input type="search" id="usage-q" placeholder="Search ${state.usageView === "skill" ? "skills" : "conversations"}…" value="${esc(state.usageQuery)}" />
+      ${searchBox("usage-q", { label: `Search ${state.usageView === "skill" ? "skills" : "conversations"}`, placeholder: `Search ${state.usageView === "skill" ? "skills" : "conversations"}…` })}
       <select id="usage-channel"><option value="">every conversation</option>${channels.map((c) => `<option value="${esc(c.slug)}"${c.slug === state.usageChannel ? " selected" : ""}>${esc(c.name || c.slug)}</option>`).join("")}</select>
       <select id="usage-days">${[7, 30, 90, 365].map((d) => `<option value="${d}"${d === state.usageDays ? " selected" : ""}>last ${d} days</option>`).join("")}</select>
       <button type="button" data-action="load-usage">Load</button>
@@ -498,12 +569,16 @@ function rememberTemplateDraft() {
 }
 
 async function act(action, el) {
+  if (action === "search") {
+    await commitSearch(el.dataset.search);
+    return;
+  }
   const id = el.dataset.id;
   const slug = el.dataset.slug;
   switch (action) {
     case "select-source":
       state.sourceSelected = String(id);
-      state.sourceQuery = "";
+      state.sourceQuery = state.sourceQueryDraft = "";
       state.selected = "";
       state.detail = null;
       await refreshAll();
@@ -815,8 +890,10 @@ function wire() {
       for (const field of root.querySelectorAll("[data-source-kind]")) field.hidden = field.dataset.sourceKind !== el.value;
       return;
     }
-    if (["skills-q", "skills-owner", "skills-source", "skills-category", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned"].includes(el.id)) {
-      state.query = val("skills-q");
+    // Not "skills-q": a search box commits on Enter or its Search button, never on blur. Picking
+    // a filter here does apply whatever is currently typed — that click is a deliberate ask too.
+    if (["skills-owner", "skills-source", "skills-category", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned"].includes(el.id)) {
+      state.query = state.queryDraft = val("skills-q");
       state.owner = val("skills-owner");
       state.source = val("skills-source");
       state.category = val("skills-category");
@@ -850,24 +927,27 @@ function wire() {
     }
   });
   root.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && event.target.id === "skills-q") {
-      event.preventDefault();
-      state.query = val("skills-q");
-      refreshAll().then(render).catch((err) => { setMessage(err.message, true); render(); });
+    const box = searchBoxFor(event.target.id);
+    if (!box || (event.key !== "Enter" && event.key !== "Escape")) return;
+    event.preventDefault();
+    if (event.key === "Escape") {
+      event.target.value = "";
+      state[box.draft] = "";
+    }
+    commitSearch(event.target.id).catch((err) => { setMessage(err?.message || String(err), true); render(); });
+  });
+  // The browser's own × on an input[type=search] fires this — an emptied box searches at once,
+  // which is what clearing a filter means.
+  root.addEventListener("search", (event) => {
+    if (searchBoxFor(event.target.id)) {
+      commitSearch(event.target.id).catch((err) => { setMessage(err?.message || String(err), true); render(); });
     }
   });
+  // Typing only records the draft. No render, so the caret stays where the reader put it.
   root.addEventListener("input", (event) => {
-    if (event.target.id === "source-skills-q") {
-      state.sourceQuery = event.target.value;
-      render();
-      document.getElementById("source-skills-q")?.focus();
-      return;
-    }
-    if (event.target.id === "usage-q") {
-      state.usageQuery = event.target.value;
-      render();
-      document.getElementById("usage-q")?.focus();
-      return;
-    }
+    const box = searchBoxFor(event.target.id);
+    if (!box) return;
+    state[box.draft] = event.target.value;
+    markSearchPending(event.target.id);
   });
 }

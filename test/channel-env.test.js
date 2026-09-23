@@ -56,12 +56,15 @@ test("a lowercase spelling writes, lists and removes the same canonical variable
 // The admin card folds case as the admin types (ADM-010/SEC-02: the name is VISIBLY normalized),
 // and sends the folded name — so the row that comes back is the one that was on screen.
 test("the admin env form upper-cases the name it shows and sends", () => {
-  const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
-  const form = client.slice(client.indexOf("const envNameInput = card.querySelector"), client.indexOf("const makeToolboxUrlInput"));
-  assert.match(form, /envNameInput\.addEventListener\("input"/);
-  assert.match(form, /envNameInput\.value = upper/);
-  assert.match(form, /envNameInput\.addEventListener\("blur", \(\) => \{ envNameInput\.value = envNameInput\.value\.trim\(\)\.toUpperCase\(\); \}\)/);
-  assert.match(form, /const name = envNameInput\.value\.trim\(\)\.toUpperCase\(\);/);
+  // One editor now serves all three scopes (public/admin-secrets.js) — a channel's own secrets,
+  // the organization's and a person's — so this property is asserted once, where it lives.
+  const form = readFileSync(new URL("../public/admin-secrets.js", import.meta.url), "utf8");
+  assert.match(form, /nameInput\.addEventListener\("input"/);
+  assert.match(form, /nameInput\.value = upper/);
+  assert.match(form, /nameInput\.addEventListener\("blur", \(\) => \{ nameInput\.value = nameInput\.value\.trim\(\)\.toUpperCase\(\); \}\)/);
+  assert.match(form, /const name = nameInput\.value\.trim\(\)\.toUpperCase\(\);/);
+  // And the value box is emptied the moment the value is stored, in that same one place.
+  assert.match(form, /valueInput\.value = "";/);
 });
 
 // ADM-009: these fields save through their OWN request (a variable is stored the moment "Save

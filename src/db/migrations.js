@@ -864,4 +864,59 @@ export const migrations = [
       `);
     },
   },
+  {
+    // Usage the gateway did NOT launch — a terminal `claude`/`codex`, the VS Code extension, the
+    // desktop apps, or an SSH/VS Code session inside a channel container. Two tables:
+    //
+    //  * `usage.session_id` closes the identification gap. The ledger already knows every run the
+    //    gateway made, but not which ENGINE session it was, so an outside session could only be
+    //    told apart by heuristics. Stamping it makes the exclusion exact from here on; the
+    //    `sessions` table (current bindings only) covers what history it can.
+    //  * `external_usage` is the scanned result, aggregated per (scope, engine, session, UTC hour,
+    //    model) so a year of transcripts stays small and the dashboard's hour/day/month buckets are
+    //    a prefix match on `bucket`. `external_usage_files` is the incremental-scan bookmark: an
+    //    unchanged transcript is never reopened.
+    version: 28,
+    up(db) {
+      db.exec(`
+        ALTER TABLE usage ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+        CREATE INDEX idx_usage_session ON usage(session_id) WHERE session_id <> '';
+        CREATE TABLE external_usage (
+          id INTEGER PRIMARY KEY,
+          scope TEXT NOT NULL,
+          scope_key TEXT NOT NULL DEFAULT '',
+          engine TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          bucket TEXT NOT NULL,
+          model TEXT NOT NULL DEFAULT '',
+          origin TEXT NOT NULL DEFAULT 'other',
+          cwd TEXT NOT NULL DEFAULT '',
+          channel_id TEXT NOT NULL DEFAULT '',
+          slug TEXT NOT NULL DEFAULT '',
+          turns INTEGER NOT NULL DEFAULT 0,
+          requests INTEGER NOT NULL DEFAULT 0,
+          tokens_in INTEGER NOT NULL DEFAULT 0,
+          tokens_cached INTEGER NOT NULL DEFAULT 0,
+          tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+          tokens_out INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL,
+          cost_estimated INTEGER NOT NULL DEFAULT 1,
+          updated_ms INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX idx_external_usage_key
+          ON external_usage(scope, scope_key, engine, session_id, bucket, model);
+        CREATE INDEX idx_external_usage_bucket ON external_usage(bucket);
+        CREATE TABLE external_usage_files (
+          scope TEXT NOT NULL,
+          scope_key TEXT NOT NULL DEFAULT '',
+          engine TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          size INTEGER NOT NULL DEFAULT 0,
+          mtime_ms INTEGER NOT NULL DEFAULT 0,
+          scanned_ms INTEGER NOT NULL,
+          PRIMARY KEY (scope, scope_key, engine, session_id)
+        );
+      `);
+    },
+  },
 ];

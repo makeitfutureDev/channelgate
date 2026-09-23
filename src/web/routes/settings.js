@@ -51,6 +51,10 @@ import { isSubscriptionName } from "../../platforms/googlechat/pubsub.js";
 import { logEvent } from "../../util/logger.js";
 import { checkForUpdate, startUpdate } from "../../gateway/updater.js";
 import { isValidModel } from "../../slack/util.js";
+// Organization-wide environment secrets. WRITE-ONLY, exactly like the per-channel ones:
+// listOrgEnv is the only shape that may leave the process (config/scoped-env.js).
+import { listOrgEnv, patchOrgEnv } from "../../config/scoped-env.js";
+import { normalizeEnvName } from "../../config/channel-env.js";
 import { detectServiceManager, requestShutdown, restartExitCode } from "../../gateway/shutdown.js";
 import { invalidateAllSessions, authEnabled } from "../auth.js";
 import { readSecret } from "../secrets.js";
@@ -69,6 +73,8 @@ function utcMonthNow(at = Date.now()) {
 // Caller-supplied labels that go into an audit row (a rejected reveal's scope/field/id). Names,
 // never values — and bounded, so a padded request body cannot inflate the events table.
 const clipLabel = (v) => String(v ?? "").slice(0, 120);
+
+const ORG_SECRET_ACTOR = "admin UI";
 
 export function createSettingsRouter({
   slack,
@@ -427,6 +433,30 @@ export function createSettingsRouter({
         }
         patch.codexModelRates = cleanRates;
       }
+      // Per-model Claude $/1M rates (input / 5m + 1h cache write / cache read / output). Unlike the
+      // Codex table the model list is OPEN, because these only price usage the gateway did not
+      // launch and Anthropic ships models between gateway releases — but a row is kept only when
+      // every column is a real number, so a half-filled entry can never zero out a price.
+      if (body.claudeModelRates && typeof body.claudeModelRates === "object" && !Array.isArray(body.claudeModelRates)) {
+        const keys = ["input", "cacheWrite5m", "cacheWrite1h", "cacheRead", "output"];
+        const cleanRates = {};
+        for (const [model, r] of Object.entries(body.claudeModelRates)) {
+          if (!model || !r || typeof r !== "object") continue;
+          if (!keys.every((key) => Number.isFinite(Number(r[key])) && Number(r[key]) >= 0)) continue;
+          cleanRates[model] = Object.fromEntries(keys.map((key) => [key, Number(r[key])]));
+        }
+        patch.claudeModelRates = cleanRates;
+      }
+      // Which model a run with none recorded is CHARTED under, per engine. "" is a deliberate
+      // "leave those unknown"; anything else is taken as a model id.
+      if (body.assumedModels && typeof body.assumedModels === "object" && !Array.isArray(body.assumedModels)) {
+        const clean = {};
+        for (const [engine, model] of Object.entries(body.assumedModels)) {
+          if (!engine.trim() || typeof model !== "string") continue;
+          clean[engine.trim()] = model.trim();
+        }
+        patch.assumedModels = clean;
+      }
       // Org DM templates (User/Admin) — edited under Settings → Access Templates, folded into this save.
       // Validate model/effort exactly like the per-channel/DM routes (bad values 400 before any save),
       // then shape-clean. Only a present side is replaced; a missing side keeps its stored value.
@@ -736,6 +766,57 @@ export function createSettingsRouter({
     try {
       const engine = ENGINES.includes(req.query.engine) ? req.query.engine : getEngine();
       res.json({ engine, servers: await requireAdapter(engine).discoverMcps() });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // ── Organization-wide environment secrets ───────────────────────────────────
+  // One credential the whole deployment shares, injected into EVERY conversation's runs. The same
+  // write-only contract as a channel's: names + last4 leave here and nothing else, there is no
+  // reveal route, and these are deliberately NOT in web/secrets.js — its named-getter shape is
+  // what stops it becoming "read any config key", and a dynamic bag behind it would end that.
+  // The admin UI authenticates one shared password, so the actor is the UI, not a person.
+  router.get("/org-secrets", (req, res, next) => {
+    try {
+      res.json({ vars: listOrgEnv() });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Add or update one variable — one blind write, so nothing can leak back out of an update.
+  router.put("/org-secrets/:name", (req, res, next) => {
+    try {
+      const value = typeof req.body?.value === "string" ? req.body.value : "";
+      // The stored key is the canonical (uppercase) spelling, so the audit line names THAT; the
+      // mutation still gets the raw name so a refusal quotes what the caller actually sent.
+      const name = normalizeEnvName(req.params.name);
+      let vars;
+      try {
+        vars = patchOrgEnv({ set: { name: req.params.name, value }, actor: ORG_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      // Name only. The audit trail must never carry what was set.
+      logEvent("org_env_set", { name, actor: ORG_SECRET_ACTOR });
+      res.json({ ok: true, vars });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.delete("/org-secrets/:name", (req, res, next) => {
+    try {
+      const name = normalizeEnvName(req.params.name);
+      let vars;
+      try {
+        vars = patchOrgEnv({ remove: name, actor: ORG_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      logEvent("org_env_removed", { name, actor: ORG_SECRET_ACTOR });
+      res.json({ ok: true, vars });
     } catch (e) {
       next(e);
     }

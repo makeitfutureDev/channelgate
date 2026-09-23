@@ -1,4 +1,5 @@
-// Native Slack manager for a channel's environment secrets (config/channel-env.js).
+// Native Slack manager for the environment secrets a run receives, across all THREE scopes
+// (config/scoped-env.js): the organization's, the viewer's own, and this conversation's.
 //
 // Deliberately a sibling of file-explorer.js, not a section of it: files are content, these are
 // credentials, and the whole point of this surface is that it can LIST and WRITE but never READ.
@@ -12,8 +13,26 @@
 // every render, to everyone who can screenshot the modal.
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
 
+// The three scopes, in PRECEDENCE order — organization is the broadest and the most easily
+// overridden, the conversation's own is the most specific and wins. The view renders them in this
+// order so the list reads the way resolution works.
+export const SECRET_SCOPES = Object.freeze(["organization", "personal", "channel"]);
+// One letter per scope, so a row's action_id stays unique ACROSS scopes: Slack rejects a modal
+// when any two controls share an id, and three lists can each have an index 0.
+const SCOPE_LETTER = Object.freeze({ organization: "o", personal: "p", channel: "c" });
+const LETTER_SCOPE = Object.freeze({ o: "organization", p: "personal", c: "channel" });
+export function scopeFromActionId(actionId = "") {
+  const suffix = String(actionId).slice(SECRETS_REMOVE_ACTION_PREFIX.length);
+  return LETTER_SCOPE[suffix[0]] || "channel";
+}
+export function normalizeSecretScope(value) {
+  return SECRET_SCOPES.includes(String(value)) ? String(value) : "channel";
+}
+
 export const SECRETS_ACTION_ID = "cg_channel_secrets";
 export const SECRETS_ADD_ACTION_ID = "cg_channel_secrets_add";
+export const SECRETS_ADD_ORG_ACTION_ID = "cg_channel_secrets_add_organization";
+export const SECRETS_ADD_PERSONAL_ACTION_ID = "cg_channel_secrets_add_personal";
 export const SECRETS_REFRESH_ACTION_ID = "cg_channel_secrets_refresh";
 // Row buttons need per-view-unique action ids (Slack rejects a modal when any two controls share
 // one), so removals are `cg_channel_secrets_remove_<row>` and the RegExp below catches them all.
@@ -41,7 +60,13 @@ export function parseActionValue(raw) {
 }
 
 export function secretsMetadata(state = {}) {
-  return JSON.stringify({ c: state.channelId, s: state.slug, t: state.threadTs || "", u: state.ownerId, n: state.editName || "", ...(state.returnTo === "settings" ? { r: "settings" } : {}) });
+  return JSON.stringify({
+    c: state.channelId, s: state.slug, t: state.threadTs || "", u: state.ownerId, n: state.editName || "",
+    // Which scope a submitted form writes into. Absent = the channel's, so a form opened by an
+    // older build still means what it meant then.
+    ...(state.scope && state.scope !== "channel" ? { p: SCOPE_LETTER[state.scope] } : {}),
+    ...(state.returnTo === "settings" ? { r: "settings" } : {}),
+  });
 }
 
 export function parseSecretsMetadata(raw) {
@@ -58,6 +83,7 @@ export function parseSecretsMetadata(raw) {
     threadTs: String(value.t || ""),
     ownerId: String(value.u),
     editName: String(value.n || ""),
+    scope: LETTER_SCOPE[value.p] || "channel",
     ...(value.r === "settings" ? { returnTo: "settings" } : {}),
   };
 }
@@ -92,20 +118,46 @@ export function describeSecret(entry = {}) {
   return `*${entry.name}* — ${maskLabel(entry)}${trail ? `  ·  set ${trail}` : ""}${unresolvable}`;
 }
 
-export function buildSecretsView(vars = [], state = {}, { channelName = "", mayEdit = false, notice = "" } = {}) {
-  const blocks = [];
-  if (notice) blocks.push({ type: "section", text: mrkdwn(notice) });
-  blocks.push({
-    type: "context",
-    elements: [mrkdwn(
-      `Environment variables injected into every run in *#${channelName || "this channel"}* — this channel's own CLI logins. ` +
-      `Values can never be read back here, or anywhere else. To replace one, set it again.`,
-    )],
-  });
-  blocks.push({ type: "divider" });
-  if (vars.length === 0) {
-    blocks.push({ type: "section", text: mrkdwn("_No variables set. This channel uses whatever login the gateway host has._") });
-  }
+// Per-scope copy. Kept in one table so a scope cannot ship with a heading that says one thing and
+// a removal confirmation that says another.
+const SCOPE_COPY = Object.freeze({
+  organization: {
+    heading: "🏢 Organization — every conversation",
+    blurb: "Shared by every conversation in this deployment. Admins only.",
+    empty: "_No organization variables._",
+    emptyLocked: "_No organization variables._",
+    addLabel: "Add organization variable",
+    locked: "_Only organization admins can change these._",
+    removeText: (name) => `*${name}* will stop being passed to runs in EVERY conversation. The value cannot be recovered — you would have to issue a new one.`,
+  },
+  personal: {
+    heading: "👤 Yours — only runs you author",
+    blurb: "Injected only into runs you author, in any conversation. Nobody else's turn receives them, and nobody else can see them here.",
+    empty: "_You have no personal variables._",
+    emptyLocked: "_You have no personal variables._",
+    addLabel: "Add personal variable",
+    locked: "",
+    removeText: (name) => `*${name}* will stop being passed to runs you author, everywhere. The value cannot be recovered — you would have to issue a new one.`,
+  },
+  channel: {
+    heading: "💬 This conversation",
+    blurb: "This conversation's own CLI logins. Overrides a personal or organization variable of the same name.",
+    empty: "_No variables set. This conversation uses whatever login the gateway host has, plus any organization variable above._",
+    emptyLocked: "_No variables set._",
+    addLabel: "Add or update a variable",
+    locked: "_You can see which variables exist, but only someone who can run commands in this channel may change them._",
+    removeText: (name) => `*${name}* will stop being passed to runs in this channel. The value cannot be recovered — you would have to issue a new one.`,
+  },
+});
+
+function scopeBlocks(scope, vars, state, mayEdit) {
+  const copy = SCOPE_COPY[scope];
+  const blocks = [
+    { type: "divider" },
+    { type: "section", text: mrkdwn(`*${copy.heading}*`) },
+    { type: "context", elements: [mrkdwn(copy.blurb)] },
+  ];
+  if (vars.length === 0) blocks.push({ type: "section", text: mrkdwn(mayEdit ? copy.empty : copy.emptyLocked) });
   for (const [index, entry] of vars.entries()) {
     blocks.push({
       type: "section",
@@ -114,42 +166,67 @@ export function buildSecretsView(vars = [], state = {}, { channelName = "", mayE
         ? {
             accessory: {
               type: "button",
-              action_id: `${SECRETS_REMOVE_ACTION_PREFIX}${index}`,
+              // The scope letter keeps this unique across the three lists in one view.
+              action_id: `${SECRETS_REMOVE_ACTION_PREFIX}${SCOPE_LETTER[scope]}${index}`,
               style: "danger",
               text: plain("Remove"),
               // Confirmation, because removal is silent until the next run fails somewhere else.
               confirm: {
                 title: plain("Remove this variable?"),
-                text: mrkdwn(`*${entry.name}* will stop being passed to runs in this channel. The value cannot be recovered — you would have to issue a new one.`),
+                text: mrkdwn(copy.removeText(entry.name)),
                 confirm: plain("Remove"),
                 deny: plain("Keep"),
               },
-              value: actionValue("remove", { c: state.channelId, u: state.ownerId, n: entry.name }),
+              value: actionValue("remove", { c: state.channelId, u: state.ownerId, n: entry.name, s: SCOPE_LETTER[scope] }),
             },
           }
         : {}),
     });
   }
   if (mayEdit) {
-    blocks.push({ type: "divider" });
     blocks.push({
       type: "actions",
       elements: [{
         type: "button",
-        style: "primary",
-        action_id: SECRETS_ADD_ACTION_ID,
-        text: plain("Add or update a variable"),
-        value: actionValue("add", { c: state.channelId, u: state.ownerId }),
+        ...(scope === "channel" ? { style: "primary" } : {}),
+        action_id: scope === "organization" ? SECRETS_ADD_ORG_ACTION_ID : scope === "personal" ? SECRETS_ADD_PERSONAL_ACTION_ID : SECRETS_ADD_ACTION_ID,
+        text: plain(copy.addLabel),
+        value: actionValue("add", { c: state.channelId, u: state.ownerId, s: SCOPE_LETTER[scope] }),
       }],
     });
-  } else {
-    blocks.push({ type: "context", elements: [mrkdwn("_You can see which variables exist, but only someone who can run commands in this channel may change them._")] });
+  } else if (copy.locked) {
+    blocks.push({ type: "context", elements: [mrkdwn(copy.locked)] });
   }
+  return blocks;
+}
+
+// All three scopes in one view, in resolution order. `scopes.personal` is always the VIEWER's own
+// — the modal is bound to one owner and refuses a different clicker, so there is no way to render
+// somebody else's here.
+export function buildSecretsView(scopes = {}, state = {}, { channelName = "", mayEdit = false, canEditOrg = false, notice = "" } = {}) {
+  const lists = {
+    organization: Array.isArray(scopes.organization) ? scopes.organization : [],
+    personal: Array.isArray(scopes.personal) ? scopes.personal : [],
+    // A single array is the pre-three-scope call shape: it meant the channel's variables.
+    channel: Array.isArray(scopes) ? scopes : Array.isArray(scopes.channel) ? scopes.channel : [],
+  };
+  const editable = { organization: Boolean(canEditOrg), personal: true, channel: Boolean(mayEdit) };
+  const blocks = [];
+  if (notice) blocks.push({ type: "section", text: mrkdwn(notice) });
+  blocks.push({
+    type: "context",
+    elements: [mrkdwn(
+      `Environment variables injected into runs in *#${channelName || "this channel"}*, from three scopes. ` +
+      `Where the same name exists in more than one, *this conversation's wins*, then yours, then the organization's. ` +
+      `Values can never be read back here, or anywhere else. To replace one, set it again.`,
+    )],
+  });
+  for (const scope of SECRET_SCOPES) blocks.push(...scopeBlocks(scope, lists[scope], state, editable[scope]));
   return {
     type: "modal",
     callback_id: "cg_channel_secrets_modal",
     private_metadata: secretsMetadata(state),
-    title: plain("Channel secrets"),
+    title: plain("Secrets"),
     close: plain("Done"),
     blocks,
   };
@@ -158,19 +235,27 @@ export function buildSecretsView(vars = [], state = {}, { channelName = "", mayE
 // The add/update form. `suggested` are the env names the catalog CLIs actually read
 // (config/cli-catalog.js envKeys) — the difference between someone guessing "SUPABASE_TOKEN"
 // and typing the name the CLI looks for.
-export function buildSecretFormView(state = {}, { channelName = "", name = "", suggested = [] } = {}) {
+export function buildSecretFormView(state = {}, { channelName = "", name = "", suggested = [], scope = "channel" } = {}) {
+  const where = normalizeSecretScope(scope);
   const hint = suggested.length
     ? `Names this channel's enabled integrations read: ${suggested.map((s) => `\`${s}\``).join(", ")}.`
     : "Use the exact variable name the CLI reads, e.g. `SUPABASE_ACCESS_TOKEN`.";
+  // Say plainly who will receive it — the three scopes look identical in this form otherwise, and
+  // the difference between "my token" and "every conversation's token" is the whole decision.
+  const reach = where === "organization"
+    ? "Stored for the *whole organization* and passed to every run in *every conversation*."
+    : where === "personal"
+      ? "Stored for *you* and passed only to runs *you* author, in any conversation."
+      : `Stored for *#${channelName || "this channel"}* and passed to every run here.`;
   return {
     type: "modal",
     callback_id: SECRETS_FORM_CALLBACK_ID,
-    private_metadata: secretsMetadata({ ...state, editName: name }),
+    private_metadata: secretsMetadata({ ...state, editName: name, scope: where }),
     title: plain(name ? "Update variable" : "Add variable"),
     submit: plain("Save"),
     close: plain("Cancel"),
     blocks: [
-      { type: "context", elements: [mrkdwn(`Stored for *#${channelName || "this channel"}* and passed to every run here. ${hint}`)] },
+      { type: "context", elements: [mrkdwn(`${reach} ${hint}`)] },
       {
         type: "input",
         block_id: SECRETS_NAME_BLOCK_ID,

@@ -94,6 +94,36 @@ export function modelLabel(result = {}) {
   return (ver ? `${name} ${ver}` : name) + suffix;
 }
 
+// A model id as a chart legend should print it. Unlike modelLabel above (which answers "what
+// governed this reply" for a footer, from a whole run result), this takes a bare id out of the
+// usage ledger and has to survive every shape the ledger holds: an API id (`claude-opus-5`), a
+// dated snapshot (`claude-haiku-4-5-20251001`), a configured variant (`opus[1m]`), an OpenAI id
+// (`gpt-5.6-sol`), a pseudo-model a component carries (`codex-auto-review`), and "" for the rows
+// written before the runtime model was resolved. An unrecognized id passes through verbatim rather
+// than being forced into a family — a wrong label on a spend chart is worse than an ugly one.
+const MODEL_FAMILIES = ["opus", "sonnet", "haiku", "fable", "mythos"];
+
+export function modelDisplayLabel(model, engine = "") {
+  const raw = String(model || "").trim();
+  if (!raw) return engineLabel(engine) ? `${engineLabel(engine)} (model unknown)` : "Unknown model";
+  const suffix = /\[1m\]/i.test(raw) ? " 1M" : "";
+  // Strip the configured-variant suffix and any dated snapshot: both name the same priced model.
+  const id = raw.replace(/\[[^\]]*\]/g, "").toLowerCase().replace(/-(\d{8}|\d{4}(?:-\d{2}){2})$/, "");
+  const claude = id.replace(/^claude-/, "");
+  const family = MODEL_FAMILIES.find((name) => claude === name || claude.startsWith(`${name}-`) || claude.startsWith(`${name}.`));
+  if (family) {
+    const version = claude.slice(family.length).replace(/^[-.]/, "").replace(/-/g, ".");
+    const name = family[0].toUpperCase() + family.slice(1);
+    return (version ? `${name} ${version}` : name) + suffix;
+  }
+  const gpt = id.match(/^gpt-([\d.]+)(?:-(.+))?$/);
+  if (gpt) {
+    const variant = (gpt[2] || "").split("-").filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
+    return `GPT-${gpt[1]}${variant ? ` ${variant}` : ""}${suffix}`;
+  }
+  return raw;
+}
+
 // Context window for the model a run actually used, not the global settings constant.
 export function contextWindowFor(result = {}) {
   const raw = resolveCurrentModel(result);

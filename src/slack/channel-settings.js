@@ -368,10 +368,17 @@ function skillsBlocks(snapshot = {}, state = {}) {
   ];
 }
 
-function secretsBlocks(snapshot = {}, state = {}, { canEditSecrets = false } = {}) {
-  // The same masked rows and mutation controls as /secrets, directly in the Settings tab.
-  return buildSecretsView(Array.isArray(snapshot.secrets) ? snapshot.secrets : [], state, {
+function secretsBlocks(snapshot = {}, state = {}, { canEditSecrets = false, canEditOrgSecrets = false } = {}) {
+  // The same masked rows and mutation controls as /secrets, directly in the Settings tab — all
+  // three scopes, so the tab answers "what will this run actually receive?" and not just "what did
+  // this conversation set?". snapshot.secrets stays the channel list for older callers.
+  return buildSecretsView({
+    organization: Array.isArray(snapshot.orgSecrets) ? snapshot.orgSecrets : [],
+    personal: Array.isArray(snapshot.personalSecrets) ? snapshot.personalSecrets : [],
+    channel: Array.isArray(snapshot.secrets) ? snapshot.secrets : [],
+  }, state, {
     mayEdit: canEditSecrets,
+    canEditOrg: canEditOrgSecrets,
   }).blocks;
 }
 
@@ -481,6 +488,9 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   canEditRuntime = true,
   canEnableAdmin = false,
   canEditSecrets = false,
+  // The organization scope reaches every conversation, so it is admin-only even for someone who
+  // may edit this channel's own secrets.
+  canEditOrgSecrets = false,
   canManageCloudMcp = false,
   canEditAccess = false,
   canManageVpn = false,
@@ -502,7 +512,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     : active === "skills"
       ? skillsBlocks(snapshot, state)
       : active === "secrets"
-        ? secretsBlocks(snapshot, state, { canEditSecrets })
+        ? secretsBlocks(snapshot, state, { canEditSecrets, canEditOrgSecrets })
         : runtimeBlocks(snapshot, state, { canEditRuntime, canEnableAdmin });
   return {
     type: "modal",

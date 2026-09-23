@@ -358,6 +358,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
     "set_my_composio_token", "clear_my_composio_token",
     "set_my_toolbox_token", "clear_my_toolbox_token",
+    // environment secret scopes that are not the channel's: each changes which account future runs
+    // authenticate as, and the organization one does it for every conversation at once
+    "set_my_secret", "remove_my_secret", "set_org_secret", "remove_org_secret",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
     // SSH access (src/gateway/ssh-access.js): a registered key is what a grant turns into a shell
     // inside a container, and a grant IS that shell — persistent, and never on the model's word alone.
@@ -391,6 +394,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "list_skills", "show_channel_skills", "list_skill_templates", "preview_skill_template",
     "get_skill_file", "get_skill_info", "propose_skill_change", "list_skill_proposals", "skill_usage_report",
     "list_skill_sources", // admin read
+    "list_my_secrets", "list_org_secrets", // masked name listings; there is no reveal path anywhere
     "list_my_ssh_keys", "show_channel_ssh", // the requester's own keys; this channel's SSH state and the connection block
     // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
     // self-service like starring in a skill library — reversible, affects nobody else, no card.

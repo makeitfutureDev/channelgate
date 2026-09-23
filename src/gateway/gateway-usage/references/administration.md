@@ -210,6 +210,33 @@ operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) —
   `get_channel_drive_folder`. It cannot target another channel — to sync a different channel, the
   user asks in that channel or clicks **Sync now** on its admin-UI page.
 
+## Environment secrets: three scopes
+Injected variables come from three places, merged **organization → personal → channel** (most
+specific last):
+
+- **organization** — shared by every conversation in this deployment (e.g. a `GH_TOKEN` every
+  channel can push with). Admins manage it in Settings → Integrations → *Organization secrets*,
+  or from chat with `set_org_secret` / `remove_org_secret` / `list_org_secrets`.
+- **personal** — belongs to the person who sent THIS message and is injected only into runs they
+  author, in any conversation. Anyone sets their own with `set_my_secret` / `remove_my_secret` /
+  `list_my_secrets` — tell them to send it in a DM and delete the message afterwards. It is never
+  injected into another person's turn, so do not suggest one person's secret as a fix for another's
+  missing access.
+- **channel** — this conversation's own, below.
+
+A `GH_TOKEN` in any of these scopes is picked up by the `gh` CLI with no setup. Plain `git push`
+over HTTPS is separate: it uses a credential helper, and the runtime image configures none. Run
+`gh auth setup-git` once in the conversation's container — it writes the helper into the channel's
+own persistent home, so it survives restarts and container recreates — and `git push` then
+authenticates with whichever `GH_TOKEN` the run was given. Do not embed a token in a remote URL:
+it lands in `.git/config` and in every log line that echoes the remote.
+
+A channel variable **wins** over a personal one of the same name, and a personal one wins over the
+organization's. So a personal secret fills a name the conversation does not define; it never
+redirects one the conversation does. The **[Channel credentials for THIS attempt]** block names the
+scope of each variable when more than one is in play — use it to say which account you acted as,
+and never assume a name implies a particular owner.
+
 ## This channel's own environment secrets (its own CLI logins)
 “Write-only” describes the UI/API listing and reveal contract. A secret injected into a run is
 available to that process and its CLI for authorized use; do not claim it is unreadable at runtime.

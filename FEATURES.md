@@ -1235,14 +1235,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   links, mentions, emoji, lists, and line boundaries. A table-only message counts as content (while
   the normal channel mention gate still applies). No extra Slack scope is needed. Any allowed user.
   → TEST-PLAN: Native Slack data tables.
-- Slack **file snippets** for big/wide tables: `slack_upload_snippet` (gateway control MCP) uploads
-  `content` (CSV/TSV/markdown/code) as a FILE into the current channel + thread, so a CSV/TSV renders
-  as a **scrollable spreadsheet grid** — the right shape for a large read-only table/export vs. a
-  cramped message code block or a 100-row Slack List. Daemon-side via the workspace bot token
-  (`files:write`) using Slack's external-upload flow (`files.getUploadURLExternal` → POST bytes →
-  `files.completeUploadExternal`), so it needs no Bash/network in the channel; hard-scoped to the
-  current channel. The filename extension drives rendering (`.csv`/`.tsv` = grid; text/code = plain
-  snippet). Any allowed user. → TEST-PLAN: Slack file snippets.
+- Slack **file snippets** for sharing a file and for big/wide tables: `slack_upload_snippet` (gateway
+  control MCP) uploads `content` (CSV/TSV/markdown/code) as a FILE into the current channel + thread,
+  so a CSV/TSV renders as a **scrollable spreadsheet grid** — the right shape for a large read-only
+  table/export vs. a cramped message code block or a 100-row Slack List. Daemon-side via the
+  workspace bot token (`files:write`) using Slack's external-upload flow
+  (`files.getUploadURLExternal` → POST bytes → `files.completeUploadExternal`), so it needs no
+  Bash/network in the channel; hard-scoped to the current channel. The filename extension drives
+  rendering (`.csv`/`.tsv` = grid; text/code = plain snippet). The tool description and the
+  `gateway-usage` skill also route a **direct request for a file** ("send it here", "share the
+  file", "attach it") to this tool for any UTF-8 text file — `.md`, `.txt`, `.json`, `.html`,
+  `.yaml`, code, logs — uploaded under its real name, while images keep the automatic
+  `![alt](path.png)` upload path and binaries (PDF, PPTX, XLSX, ZIP) stay inline-code paths served by
+  the 📄 file-explorer button. Any allowed user. → TEST-PLAN: Slack file snippets.
 - Native Slack **charts**: `slack_post_chart` (gateway control MCP) posts Block Kit
   `data_visualization` blocks into the current channel + thread using the workspace bot token and
   existing `chat:write` scope. Supports line/bar/area charts (1–12 series, 1–20 shared category
@@ -1661,9 +1666,54 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   by Settings → `errorDiagnosisChannel` (slug, e.g. `gateway-slack`, whose folder is the gateway
   repo; "" = off) with the error + stderr tail + recent channel events, and runs Claude there to
   root-cause and PROPOSE a fix (never apply). 30-min global cooldown; a diagnosis thread's own
-  failures are never re-diagnosed. → TEST-PLAN: Engines.
+  failures are never re-diagnosed; and failures that are provider ACCOUNT state rather than a
+  source defect — usage/spend limit, expired or missing sign-in, billing, a rejected model, a
+  provider outage, a dropped connection, plus a user's own stop/abort — are skipped entirely, so a
+  hit quota neither notifies the dev channel nor spends the cooldown a real crash may need.
+  → TEST-PLAN: Engines.
 
-## Per-channel environment secrets
+## Environment secrets: three scopes
+- **Organization, person, channel.** The same write-only secret store answers three questions, and
+  a run merges all three (`src/config/scoped-env.js`):
+  - **organization** — one credential the whole deployment shares, injected into EVERY
+    conversation's runs (the `GH_TOKEN` every channel needs to push, a company npm token). Stored
+    in `settings.json` (`orgEnv`, already 0600) and deliberately NOT in `config/settings.js`'s
+    `ENV_MAP`, so an arbitrary org name can never be copied into the daemon's own `process.env`.
+    Admin-only, because its blast radius is every channel and every author admitted there.
+  - **person** — a credential belonging to the human, not to any room. Injected only into runs
+    that person AUTHORED, in every conversation they talk in, and into nobody else's turn in those
+    same conversations. Stored on the `users` row (`data.env`), beside the personal Composio and
+    Toolbox tokens.
+  - **channel** — the conversation's own CLI logins, below, unchanged.
+- **Precedence is organization → person → channel, most specific last.** The channel deliberately
+  outranks the person: a channel's secrets ARE its project identity, and a personal token silently
+  answering for the room's account is exactly the substitution the Composio identity rules exist to
+  prevent. A personal secret therefore FILLS a name the channel does not define; it never redirects
+  one the channel does. Every attempt's preamble names which scope supplied each variable (names
+  only) so the agent can say which account it acted as.
+- **The personal scope is withheld from an unauthenticated principal.** The HTTP run API
+  authenticates its key, not the `author` it names, so that caller can never borrow someone's
+  personal secret by naming them — the same rule that already withholds their personal Composio and
+  Toolbox tokens. The organization and channel scopes are not identity claims and still apply.
+- **The warm pool keys on the merged digest**, so a process started for one author is never reused
+  for another's message in the same thread while still holding the first author's secrets. Clean
+  mode injects none of the three, for the same reason it injects no MCP servers or skills.
+- **Surfaces.** All three are managed from the same three places:
+  - **Slack** — `/secrets` and Settings → *Secrets* now render all three scopes in one modal, in
+    resolution order, each with its own rows and its own Add button. The organization's Add is
+    absent for a non-admin, and authority is re-derived from the clicked `action_id` (never from
+    the button's value) and re-checked on submit, so a forged click on an organization row is
+    refused. The entry form states which scope it writes into before you paste anything.
+  - **Admin UI** — Settings → Integrations → *Organization secrets*, and the Users drawer →
+    *Personal secrets*. One editor implementation serves all three (`public/admin-secrets.js`).
+  - **Chat tools** — `set_org_secret` / `remove_org_secret` / `list_org_secrets` (admins; the
+    writes are approval-gated like every other credential-identity change) and `set_my_secret` /
+    `remove_my_secret` / `list_my_secrets` (a signed run capability is what names the author, so an
+    unverified principal gets no personal scope at all).
+  A person only ever sees their OWN personal secrets on any surface: the Slack modal is bound to
+  one owner and refuses a different clicker, and the admin UI reaches them per user record.
+
+### A channel's own
 - **A channel's own CLI logins.** Each conversation can hold its own credentials — its own Supabase
   project, its own Vercel account — instead of every channel sharing whatever login the gateway
   host has. Stored per channel (`channel_meta.env`) and injected as process environment at spawn,
@@ -2878,7 +2928,13 @@ are retired, bullet by bullet; everything else stands.
   detection provenance and explained context warnings instead of every profile's full skill dump.
   Catalog state filters are enforced in both the API and browser, so newly served static assets do
   not expose cosmetic controls while the long-running daemon is waiting to restart.
-  → TEST-PLAN: Skills platform (Core).
+  Every search box here (catalog, per-source, usage) is commit-on-demand: typing records a draft
+  and nothing else, and the search runs on Enter, on the **Search** button beside the box
+  (highlighted while a typed query is still unsearched), or when the box is cleared with Escape or
+  the browser's own ×. Filtering per keystroke re-rendered the panel under the cursor and the
+  rebuilt input came back focused at offset 0, which scattered what was typed; a render that does
+  happen under a focused field now restores its caret.
+  → TEST-PLAN: Skills platform (Core), Skills search boxes accept typing.
 - **Governed skill discovery and mandatory loading**: every catalog row can be disabled without
   disabling its source, approved for member/agent discovery, or made mandatory in every
   conversation. Mandatory implies enabled + discoverable; effective profiles remain mandatory ∪
@@ -3109,15 +3165,137 @@ are retired, bullet by bullet; everything else stands.
   first-boot password is minted whenever no OPERATOR key is in `settings.json` — the installer's
   own pre-boot `whisperEnabled` answer does not count, so `npm run setup` never skips it.
   → TEST-PLAN: A7 boundary hardening.
-- Dashboard admin tab (default landing view): usage overview for a selectable **date range** and
-  **harness** (All by default, Claude, or Codex) —
+- Dashboard admin tab (default landing view): usage overview for a selectable **date range**,
+  **harness** (All by default, Claude, or Codex) and **source** (Gateway + outside by default, chat
+  gateway only, or outside the gateway only) —
   Today, Last 7 days, Last 30 days, This month, Last month, This year, Last year
-  (`GET /api/dashboard?range=…&harness=…`, SQL rollups). The bucket granularity adapts to the range: **hour**
+  (`GET /api/dashboard?range=…&harness=…&source=…`, SQL rollups). The bucket granularity adapts to the range: **hour**
   for a single day, **day** for weeks/months, **month** for years — series gap-filled so charts stay
-  stable. KPI tiles (Token Est Cost, separate Claude and Codex costs, sessions, active users,
-  active sessions, and total tokens), per-bucket sparklines for sessions/tokens/cost, a sessions-per-user bar list
-  (descending), and a per-channel sessions+cost bar chart. Pure inline SVG + div bars — no chart
-  library, no build step. → TEST-PLAN: Admin UI.
+  stable. KPI tiles (Token Est Cost, separate Claude and Codex costs, Outside the gateway, sessions,
+  active users, active sessions, and total tokens), per-bucket charts for sessions/tokens/cost, a
+  sessions-per-user bar list (descending), and a per-channel sessions+cost bar chart. Pure inline
+  SVG + div bars — no chart library, no build step. → TEST-PLAN: Admin UI.
+- **Every Overview chart is stacked by the model that answered.** A cost, run or token line split
+  by model answers "did spend rise because we ran more, or because we moved onto a pricier model" —
+  which one undifferentiated line cannot. Attribution is per component, not per run: a Codex turn
+  whose subagent ran a different model contributes a slice to EACH, while the run itself is still
+  counted once (`MODEL_ATTRIBUTION_CTE` in `src/gateway/usage.js`). The split reconciles with the
+  headline by construction — a run whose components are only partly priced contributes no dollars
+  to any model, exactly as the canonical rollup drops it — so the bands always add up to the total
+  beside them. Model ids are normalised for display (`modelDisplayLabel`): a dated snapshot
+  (`claude-haiku-4-5-20251001`) reads as its family, a context variant keeps its `1M` marker, an
+  OpenAI id becomes `GPT-5.6 Sol`, and an unrecognised id passes through verbatim rather than being
+  forced into a family. → TEST-PLAN: Admin UI.
+- **A run that recorded no model is charted under a per-engine fallback** (Settings → Agent
+  defaults; `claude-opus-5` and `gpt-5.6-sol` by default, each editable, blank = leave unknown).
+  The gateway only began resolving the runtime model partway through its life, so older rows carry
+  none at all — 387 runs, $990 and 443M tokens on the development deployment — which would sit in
+  one undifferentiated "model unknown" band. This is ATTRIBUTION only: it decides which band an
+  already-recorded figure belongs to and never prices anything, so no spend is invented and the
+  per-model totals still reconcile to the headline exactly. The Models card reports how many runs
+  in each band were filled in this way ("… · 387 assumed") plus a note under the list, so the
+  assumption stays visible instead of passing as measurement. Attempting to RECOVER the real model
+  was tried and rejected: matching those rows to transcript turns by token counts resolved fewer
+  than 1 in 25 (most of the era's transcripts have since moved into per-channel containers), and a
+  wrong model on a spend chart is worse than a declared assumption. → TEST-PLAN: Admin UI.
+- **A dedicated Models chart**, answering "which models are used more" directly: every model in the
+  window as a bar — token cost, its share of spend, runs (and how many of them came from outside
+  the gateway) and tokens. The stacked charts above cap at the seven largest models plus a neutral
+  "Other" band, because a stacked area with a generated ninth hue stops being readable; this card
+  lists everything, so nothing is hidden by that cap. Colours come from a categorical palette
+  validated for the admin surface (lightness band, chroma floor, adjacent colourblind separation,
+  normal-vision separation and 3:1 contrast all pass) and are keyed on the MODEL, so changing range,
+  harness or source never repaints the series that survived the filter. Each chart carries a legend
+  and a crosshair tooltip breaking the hovered bucket down per model (pointer or keyboard).
+  → TEST-PLAN: Admin UI.
+- **The bar lists stack by model too**, in the same colours and the same order as the charts, so one
+  hue means one model across the whole page: Runs per user (stacked by runs), Channels (all three
+  bars — runs, token cost, tokens — each stacked by its own metric), and Where usage came from
+  (stacked by cost). A channel whose cost bar is mostly one hue while its runs bar is mostly another
+  is running a few expensive turns on a pricier model, which single-hue bars could not show. The
+  ledger and the transcript scan agree on ONE key per model (`mergeModelKey`): the ledger stores
+  what the CLI reported, including a dated snapshot, while the scanners fold those onto the billing
+  id — merging them without a shared key produced two identically-labelled "Haiku 4.5" rows and
+  broke segment lookup. A CONTEXT variant (`opus[1m]`) is deliberately kept distinct: same price,
+  different configuration. → TEST-PLAN: Admin UI.
+- **Usage the gateway never launched is counted too** (`src/gateway/external-usage.js`). The same
+  two engines, on the same machine and the same billing account, are also driven by hand — a
+  terminal `claude`/`codex` in a channel's work folder, the VS Code extension, the desktop apps, and
+  SSH or VS Code sessions INSIDE a channel container. Both CLIs keep the evidence (Claude Code a
+  transcript per session, Codex a rollout per thread, each carrying model, token counts, working
+  directory and the client that drove it), so an hourly read-only scan collects it into
+  `external_usage` and the Overview shows it beside the ledger: an "Outside the gateway" KPI, a
+  "Where usage came from" breakdown (chat gateway / terminal CLI / VS Code / desktop app /
+  headless), the same per-model stacking, and a `source` filter that partitions the totals. Three
+  rules keep it honest:
+  - **Nothing is counted twice.** Whose session a transcript belongs to is decided by one
+    classifier (`sessionAttribution`). An id recorded in the ledger is proof — `usage.session_id`
+    (schema 28), the live thread bindings, and Codex's component sessions, including a subagent
+    whose parent is a gateway run. Everything else is a PLACE argument, because the places the
+    gateway runs in are ones nobody drives an engine from by hand: inside a channel container the
+    only thing that ever runs an engine headlessly is the gateway (interactive work there arrives
+    over SSH or the VS Code lease and stamps itself `cli`/`claude-vscode`), and on the host a
+    headless session whose working directory is a channel's own folder — or the gateway runtime
+    root, which is where the Claude token-relay turn lives — is a gateway run whose session row has
+    since rotated out. The residual error is a person's own scripted `claude -p` inside a channel
+    folder being read as the gateway's, which understates outside usage rather than charging the
+    operator for the gateway's own spend. Measured over the development deployment's whole history:
+    725 of 1,146 Claude transcripts and 1,085 of 1,404 Codex rollouts identified by id, 222 more
+    recovered by folder and 98 as gateway housekeeping, leaving 251 genuinely outside sessions.
+  - **All history is read, and every pass says how it attributed it.** Because the classifier does
+    not depend on session ids alone, the scan covers a machine's entire engine history rather than
+    only what happened after ids started being recorded. The scan summary and the Overview report
+    how many sessions were recognised as the gateway's own and by which evidence — the number that
+    makes the outside figure believable. `CHANNELGATE_EXTERNAL_USAGE_SINCE` limits the window for
+    an operator who wants only recent history.
+  - **How a session was driven is reported, never inferred.** `origin` comes from the client's own
+    stamp (Claude's `entrypoint`, Codex's `originator`). Outside the places the gateway runs, a
+    headless invocation is labelled `headless` rather than presented as a person at a keyboard.
+    A transcript that records no API call at all (an interrupted turn, a test fixture) is counted
+    as neither: it is not outside usage, it is not usage.
+- **One API response is charged once.** Claude Code writes one assistant record PER CONTENT BLOCK —
+  same `requestId`, same `message.id` and the same `usage` object, differing only in `uuid` and
+  `apiBlockIndex` — so summing the records bills a single request two or three times. Usage is
+  therefore counted per request. Validated against the sessions where Claude Code recorded its OWN
+  final cost (`cost-state`): counting per record overstated spend by 21% in aggregate and up to 3x
+  on one session, while counting per request reproduces Claude Code's figure to **0.000%** across
+  every self-contained session on the development machine. → TEST-PLAN: Observability.
+- **A deployment reprocesses itself.** A pass never re-reads a bookmarked transcript, which keeps
+  the hourly scan cheap — and would otherwise freeze a wrong answer in place forever. So each pass
+  compares a fingerprint of the SCANNER (`EXTERNAL_SCAN_LOGIC_VERSION`, bumped alongside any change
+  to what the scanners extract or how a session is attributed) and of the RATE tables against the
+  one it last completed. On a mismatch — or on a gateway holding rows written before this marker
+  existed, which is exactly the build whose Claude figures were up to 3x high — it forgets its
+  bookmarks once and the ordinary incremental machinery re-reads everything over the next few
+  passes, replacing each session's rows as it goes. Updating a gateway therefore restates its own
+  history with no operator step; editing a rate table does the same. The per-MODEL breakdown needs
+  no reprocessing at all: it is computed from the existing ledger at query time, so it is correct
+  the moment the new code is running. → TEST-PLAN: Observability.
+- **`npm run usage:external`** reprocesses that history on demand: `--rescan` re-reads every
+  transcript (after a rate change, a corrected channel folder, or a new scanner release),
+  `--containers` also reads channels whose container is already running, `--since` limits the
+  window, `--limit` bounds one pass. A dry run is the DEFAULT and writes nothing — it runs the real
+  write path inside a transaction it always rolls back, so the preview exercises exactly the code
+  the apply would. It reports, per scope and engine, what was read, what was attributed back to the
+  gateway and by which evidence, what was recorded as outside usage, and the resulting cost.
+  Outside work done inside a channel's folder is charged to that channel (longest folder match
+  wins); work anywhere else stays in the totals and the origin breakdown rather than being charged
+  to a conversation that never ran it. Container scopes are read through the runtime's read-only
+  `inspectUsage` — the same door `createCodexUsageReader` uses, running the byte-identical scanner
+  on the side that owns the rootless HOME volume — and ONLY for a container that is already
+  running: a usage scan never starts a container, takes a lease, or makes a turn wait behind it.
+  Scanning is incremental (an unchanged transcript is never reopened) and bounded per pass, so a
+  large backlog drains over several passes instead of blocking one. → TEST-PLAN: Observability.
+- **Per-model Claude rates** (Settings → Agent defaults): a transcript records tokens, not dollars,
+  so outside Claude usage is priced from an editable $/1M table — input, the two cache-write TTLs
+  (5m/1h), cache read and output per model, defaults verified 2026-09-23 against Anthropic's
+  pricing. Every token class is priced separately, because an agent session is mostly cache reads
+  and charging those at the base input rate would overstate it several times over; a model with no
+  rate stays explicitly unpriced instead of guessed. These rates NEVER price a gateway run — Claude
+  Code reports a real dollar cost for those, and it is used as-is. Unlike the Codex table the model
+  list is open (Anthropic ships models between gateway releases), but a row is kept only when every
+  column is a real number, so a half-filled entry can never zero out a price.
+  → TEST-PLAN: Observability.
 - Money display: smart currency formatter — whole dollars at $100+ (no "$359.3113" on totals),
   2 decimals for normal amounts, 4 for sub-dollar per-run costs.
 - App Home tab: an orientation dashboard (your access level, connections, favourite skills, channels

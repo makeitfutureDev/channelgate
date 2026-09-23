@@ -35,6 +35,7 @@ import { recoverApiRuns } from "./gateway/api-runs.js";
 import { startNudgeSweep } from "./gateway/nudges.js";
 import { startClaudeLoginWatch } from "./gateway/login-watch.js";
 import { startFollowupDigest } from "./gateway/followups.js";
+import { startExternalUsageScan } from "./gateway/external-usage.js";
 import { startDriveSync, handleDriveSyncIpc } from "./gateway/drivesync.js";
 import { configDir } from "./config/paths.js";
 import { hardenRuntimeFiles, ensureAdminPasswordOnFirstBoot, isOperatorConfigured, assertRuntimeHardening } from "./config/harden.js";
@@ -357,6 +358,11 @@ async function main() {
 
   // Scheduled two-way Google Drive ↔ channel-folder sync (dormant unless enabled + configured).
   startDriveSync();
+
+  // Hourly scan for engine usage the gateway did NOT launch — a terminal/VS Code/desktop session on
+  // this host, or one inside a channel container someone SSH'd into. Read-only, deferred past boot,
+  // and it never starts a container: a stopped channel is simply picked up on a later pass.
+  startExternalUsageScan({ log: (m) => console.log(m) });
 
   // One-shot Codex usage-history maintenance. After an update introduces accounting schema v10 (which
   // marks pre-existing codex rows legacy-unverified), reconstruct per-turn + subagent usage from

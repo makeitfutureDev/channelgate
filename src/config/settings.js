@@ -559,6 +559,79 @@ export function getCodexModelRates() {
   return out;
 }
 
+// Per-model Claude $/1M-token rates. Claude Code REPORTS a real dollar cost for every run the
+// gateway launches, so these never price a gateway run — they exist for usage the gateway did not
+// launch (../gateway/external-usage.js), where the only record is a transcript's token counts.
+// Verified against platform.claude.com/docs/en/about-claude/pricing on 2026-09-23. `cacheWrite5m` /
+// `cacheWrite1h` are the two cache-write TTLs and `cacheRead` the hit rate; the multipliers differ
+// per family (Fable 5.1 reads at 0.025x, Opus 5.5 at 0.05x, everything else at 0.1x), which is why
+// the rate is stored outright instead of derived. The 1M context window carries no premium on
+// 4.6-and-later models, so there is no long-context multiplier here.
+export const DEFAULT_CLAUDE_RATES = {
+  "claude-fable-5-1": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 },
+  "claude-mythos-5-1": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 },
+  "claude-fable-5": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 1, output: 50 },
+  "claude-mythos-5": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 1, output: 50 },
+  "claude-opus-5-5": { input: 4, cacheWrite5m: 5, cacheWrite1h: 8, cacheRead: 0.2, output: 20 },
+  "claude-opus-5": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-8": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-7": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-6": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-5": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-1": { input: 15, cacheWrite5m: 18.75, cacheWrite1h: 30, cacheRead: 1.5, output: 75 },
+  "claude-sonnet-5": { input: 2, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.2, output: 10 },
+  "claude-sonnet-4-6": { input: 3, cacheWrite5m: 3.75, cacheWrite1h: 6, cacheRead: 0.3, output: 15 },
+  "claude-sonnet-4-5": { input: 3, cacheWrite5m: 3.75, cacheWrite1h: 6, cacheRead: 0.3, output: 15 },
+  "claude-haiku-4-5": { input: 1, cacheWrite5m: 1.25, cacheWrite1h: 2, cacheRead: 0.1, output: 5 },
+  "claude-haiku-3-5": { input: 0.8, cacheWrite5m: 1, cacheWrite1h: 1.6, cacheRead: 0.08, output: 4 },
+};
+
+const CLAUDE_RATE_KEYS = ["input", "cacheWrite5m", "cacheWrite1h", "cacheRead", "output"];
+
+export function getClaudeModelRates() {
+  const stored = getSettings().claudeModelRates || {};
+  const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : d);
+  const out = {};
+  for (const [model, d] of Object.entries(DEFAULT_CLAUDE_RATES)) {
+    const s = stored[model] || {};
+    out[model] = Object.fromEntries(CLAUDE_RATE_KEYS.map((key) => [key, num(s[key], d[key])]));
+  }
+  // An admin may price a model the defaults do not list yet (a launch between releases). Only a
+  // fully specified rate is accepted, so a half-filled row can never silently zero a price.
+  for (const [model, s] of Object.entries(stored)) {
+    if (out[model] || !s || typeof s !== "object") continue;
+    if (!CLAUDE_RATE_KEYS.every((key) => Number.isFinite(Number(s[key])) && Number(s[key]) >= 0)) continue;
+    out[model] = Object.fromEntries(CLAUDE_RATE_KEYS.map((key) => [key, Number(s[key])]));
+  }
+  return out;
+}
+
+// Which model a run is CHARTED under when nothing recorded one. The gateway only began resolving
+// the runtime model partway through its life, so older ledger rows carry no model at all — on the
+// development deployment, 387 runs worth $990 and 443M tokens. Left alone they collapse into a
+// single "model unknown" band that says nothing; attributed to the family that almost certainly
+// answered them, the charts become readable again.
+//
+// This is ATTRIBUTION ONLY. It decides which band an already-recorded figure sits in; it never
+// prices anything, so no spend is invented — and the dashboard still reports how many runs were
+// attributed this way, so the assumption stays visible rather than becoming a silent claim. An
+// engine with no entry here keeps its runs explicitly unknown.
+export const DEFAULT_ASSUMED_MODELS = Object.freeze({
+  claude: "claude-opus-5",
+  codex: "gpt-5.6-sol",
+});
+
+export function getAssumedModels() {
+  const stored = getSettings().assumedModels || {};
+  const out = { ...DEFAULT_ASSUMED_MODELS };
+  for (const [engine, model] of Object.entries(stored)) {
+    if (typeof engine !== "string" || !engine.trim()) continue;
+    // An explicit empty string is a deliberate "leave these unknown", not a missing value.
+    if (typeof model === "string") out[engine.trim()] = model.trim();
+  }
+  return out;
+}
+
 // Emoji reactions that act as an @mention: reacting with one on any message makes the bot
 // respond to that message. Stored as Slack emoji names without colons (e.g. "robot_face").
 // Default: robot_face (🤖). Admins can add others from Settings.
@@ -939,6 +1012,8 @@ export function settingsForApi() {
     driveSyncRclonePath: getDriveSyncRclonePath(),
     codexRatePer1MTokens: getCodexRatePer1MTokens(),
     codexModelRates: getCodexModelRates(),
+    claudeModelRates: getClaudeModelRates(),
+    assumedModels: getAssumedModels(),
     scheduleMinIntervalMinutes: getScheduleMinIntervalMinutes(),
     scheduleMaxPerChannel: getScheduleMaxPerChannel(),
     noResponseReminderHours: getNoResponseReminderHours(),

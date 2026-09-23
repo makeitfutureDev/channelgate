@@ -186,7 +186,15 @@ test("each Settings tab renders its channel setup snapshot", () => {
   assert.match(secrets, /••••beef/);
   assert.doesNotMatch(secrets, /actual-secret-value/);
   assert.ok(allButtons(secretsView).some((button) => button.action_id === "cg_channel_secrets_add"));
-  assert.ok(secretsView.blocks.some((block) => block.accessory?.action_id === "cg_channel_secrets_remove_0"));
+  // Row ids carry a scope letter (o/p/c) so three lists in one view can each have an index 0.
+  assert.ok(secretsView.blocks.some((block) => block.accessory?.action_id === "cg_channel_secrets_remove_c0"));
+  // All three scopes are on the tab, so it answers "what will a run here actually receive?".
+  for (const heading of [/Organization/, /Yours/, /This conversation/]) assert.match(secrets, heading);
+  // The personal scope is always the viewer's own to change; the organization's is admin-only.
+  assert.ok(allButtons(secretsView).some((button) => button.action_id === "cg_channel_secrets_add_personal"));
+  assert.ok(!allButtons(secretsView).some((button) => button.action_id === "cg_channel_secrets_add_organization"));
+  const orgAdminView = buildChannelSettingsView(snapshot, state, { tab: "secrets", canEditSecrets: true, canEditOrgSecrets: true });
+  assert.ok(allButtons(orgAdminView).some((button) => button.action_id === "cg_channel_secrets_add_organization"));
   assert.doesNotMatch(secrets, /Add, update, or remove secrets/);
   const mcp = buildChannelSettingsView(snapshot, state, { tab: "mcp" });
   assert.ok(allButtons(mcp).some((button) => button.action_id === CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID));
@@ -478,9 +486,12 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
   for (const flags of [{}, { allowBash: true }, { autoMode: true }, { adminMode: true }]) {
     await store.saveChannelMeta(entry.slug, { ...base, managers: [], ...flags });
     assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
+    // A non-admin may edit this channel's own secrets in every mode, but never the organization's:
+    // that scope reaches every conversation in the deployment.
     assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
-      canEnableAdmin: false, canEditRuntime: true, canEditSecrets: true, canManageCloudMcp: false, canManageVpn: false, canEditAccess: false,
+      canEnableAdmin: false, canEditRuntime: true, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false, canEditAccess: false,
     });
+    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditOrgSecrets, true);
   }
   await store.setUser(args.userId, { approved: false });
   await store.saveChannelMeta(entry.slug, { ...base, managers: [], allowedUsers: [args.userId] });
