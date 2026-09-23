@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- Stop the assistant recommending a cleanup command that deletes channel data. Asked whether the
+  gateway was running out of disk, it correctly said it could not measure containers from inside
+  one — and then suggested `podman system prune -a --volumes`, which removes every stopped
+  channel's home volume along with its sessions and logins. The operating guide now forbids
+  running or suggesting `podman system prune`, `podman volume prune` and `podman image prune -a`
+  by name, and points at `npm run runtime:storage` instead.
+
 - Add `npm run runtime:storage`, a report of what container storage could be reclaimed. It lists
   every channel container, runtime image and volume as keep or remove with the reason, and counts
   the space layer by layer so layers shared between images are not counted twice. It changes

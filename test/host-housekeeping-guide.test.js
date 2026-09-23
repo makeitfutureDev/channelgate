@@ -20,7 +20,7 @@ test("every platform's materialized guide routes housekeeping to the admin refer
       await applyGatewayGuide(cwd, { platform });
       const skill = await readFile(guidePath(cwd, "SKILL.md"), "utf8");
       assert.match(skill, /Check disk space, stale containers or old runtime images/, platform);
-      assert.match(skill, /never delete on your own/, platform);
+      assert.match(skill, /Report and ask; remove only via `-- --apply` when an admin says so/, platform);
     }
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
@@ -66,4 +66,26 @@ test("the guide sends the agent to the gateway's own report first, and to --appl
   assert.match(admin, /npm run runtime:storage\s+# report only/);
   assert.match(admin, /Only if they ask, run `npm run runtime:storage -- --apply`/);
   assert.match(admin, /schedule `--apply` only when they say so/);
+});
+
+// Live finding (0.5.3 acceptance, cg-qa-admin): asked "are we running out of disk?", a turn that
+// loaded SKILL.md but not the reference answered correctly that it could not measure containers —
+// and then RECOMMENDED `podman system prune -a --volumes`, which deletes every stopped channel's
+// HOME volume. "Never delete on your own" did not stop it suggesting the command. The row it does
+// read must forbid the commands by name and point at the safe report.
+test("the always-loaded routing row forbids suggesting a blanket prune and names the safe report", async () => {
+  const cwd = tempDir("cg-housekeeping-prune-");
+  try {
+    for (const platform of ["slack", "msteams", "googlechat"]) {
+      await applyGatewayGuide(cwd, { platform });
+      const skill = await readFile(guidePath(cwd, "SKILL.md"), "utf8");
+      const row = skill.split("\n").find((line) => line.startsWith("| Check disk space"));
+      assert.ok(row, `${platform}: the routing row exists`);
+      assert.match(row, /Never run or suggest `podman system prune`, `podman volume prune` or `podman image prune -a`/, platform);
+      assert.match(row, /delete channel HOME volumes/, platform);
+      assert.match(row, /npm run runtime:storage/, platform);
+    }
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+  const admin = await readFile(new URL("../src/gateway/gateway-usage/references/administration.md", import.meta.url), "utf8");
+  assert.match(admin, /never \*recommend\* a blanket prune either/);
 });
