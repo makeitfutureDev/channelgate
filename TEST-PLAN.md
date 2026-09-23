@@ -1847,9 +1847,10 @@ Google Workspace / Azure tenant and are unchecked until that drill runs.
 - [x] Verify complete safe Codex stdio/HTTP MCP serialization and reject credentials/userinfo.
 - [x] Run the full local suite and static parser/whitespace gate.
 
-## Qwen harness (opt-in, Claude Code CLI against QwenCloud)
+## Qwen harnesses (opt-in, Claude Code CLI against an Anthropic-compatible provider)
 
-Automated (`test/qwen-engine.test.js`, `test/engine-registry.test.js`,
+Automated (`test/qwen-engine.test.js`, `test/qwen-provider-settings-route.test.js`,
+`test/qwen-provider-settings-browser.test.js`, `test/engine-registry.test.js`,
 `test/engine-adapter-contract.test.js`, `test/engine-failover.test.js`) — engine-independent
 except where a case names a harness, because these guard the adapter layer itself:
 
@@ -1873,9 +1874,9 @@ except where a case names a harness, because these guard the adapter layer itsel
       list; an unconfigured account or an HTTP failure raises instead of blanking the picker.
 - [x] Cost: a Qwen turn records real tokens and `costUSD === null`, even with
       `codexRatePer1MTokens` configured; Codex's own estimate is unaffected.
-- [x] Settings: the key is write-only (`hasQwenApiKey`/`qwenApiKeyLast4` only, value absent from
-      the API snapshot), is in the `POST /api/secrets/reveal` allowlist, and the per-engine default
-      model is keyed off the adapter rather than a hardcoded pair.
+- [x] Settings: each provider's key is write-only (`qwenProviders[].hasApiKey`/`apiKeyLast4` only,
+      value absent from the API snapshot), is in the `POST /api/secrets/reveal` allowlist, and the
+      per-engine default model is keyed off the adapter rather than a hardcoded pair.
 - [x] A provider failure names the harness that failed ("Qwen authentication failed"), not the CLI
       it borrows.
 - [x] Model default: with no Qwen model set on the thread, channel or gateway, the run passes
@@ -1915,6 +1916,73 @@ Live acceptance (executed 2026-09-21 against the QwenCloud Token Plan endpoint
       `qwen` (needs a deployment with the harness enabled). The adapter path, credential boundary,
       MCP injection and resume above are all exercised; what remains unproven is only the
       Slack-surface plumbing, which is engine-independent and shared with Claude.
+
+### The provider TABLE (a second provider: Model Studio EU)
+
+Automated — engine-independent (the adapter layer itself):
+
+- [x] Every table entry generates its own registered harness, with its own label, default-model
+      key, shipped catalog, `optIn` and `realCost: false`; no two entries share a settings key
+      (`test/qwen-engine.test.js`).
+- [x] One provider's key never configures another's: with only the first configured, the second
+      resolves `configured: false` and its run fails closed naming ITS harness ("Qwen EU"), rather
+      than answering on the configured account (`test/qwen-engine.test.js`).
+- [x] A provider that ships no endpoint stays unconfigured until the operator saves one; both
+      missing halves are named in ONE message; a trailing slash never reaches the CLI; the provider
+      that DOES ship one still defaults to it (`test/qwen-engine.test.js`).
+- [x] Each provider redirects the CLI at its own endpoint with no Anthropic credential attached,
+      and the same key pasted into two providers still yields distinct credential fingerprints, so
+      the warm-pool/auth-cooldown comparison cannot confuse them (`test/qwen-engine.test.js`).
+- [x] The model-list URL follows the configured workspace endpoint; single-purpose models
+      (`qwen-mt-*` translation, `*-ocr`, image) are filtered out of a catalog while
+      `qwen3-coder-plus`, `qwen3-max`, `kimi-k2.7-code`, `glm-5.2`, `qwen3-vl-plus` remain
+      selectable (`test/qwen-engine.test.js`).
+- [x] Admin API: every provider in the table can be saved and none echoes its key back; a non-https
+      endpoint is refused with the provider named and stores nothing; an untouched (masked) key box
+      survives an unrelated save while the explicit `clear<Key>` flag removes it; a provider's
+      default model is validated against THAT provider's catalog
+      (`test/qwen-provider-settings-route.test.js`).
+- [x] An engine id that is a prefix of another (`qwen` / `qwen-eu`) still selects the harness the
+      user named in a thread, consuming the id whole (`test/engine-failover.test.js`).
+- [x] Browser (real Chromium, pinned Playwright, real admin API): one card per provider with the
+      right labels; the endpoint box says "required" for a provider that ships none; the opt-in
+      toggle says "needs an API key below" until one is stored and stops once it is; each card
+      offers its OWN catalog; a key typed into one card is stored under that provider and leaves
+      the other untouched; the repaint re-masks it; an unrelated save keeps the key while the clear
+      button removes it; the settings search filters the two cards independently; no page or
+      console errors (`test/qwen-provider-settings-browser.test.js`, executed with
+      `CG_BROWSER_MODULE` pointing at Playwright 1.63.0 — the version pinned in
+      `containers/versions.json`).
+
+Live acceptance (executed 2026-09-23 against Alibaba Cloud Model Studio's EU/Frankfurt
+Anthropic-compatible workspace endpoint `https://ws-<workspace>.eu-central-1.maas.aliyuncs.com/apps/anthropic`,
+Claude Code 2.1.258, model `qwen3.8-max` unless stated). Provider-specific by nature — these
+exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production settings written):
+
+- [x] Raw-CLI conformance for the gateway's exact flag set: `--output-format stream-json --verbose
+      --include-partial-messages` produced 65 lines with the full `message_start` /
+      `content_block_start` / `content_block_delta` / `content_block_stop` / `message_delta` /
+      `message_stop` / `result` sequence `src/engines/stream.js` parses; the `Read` tool loop ran
+      and the answer was exact; `--session-id` then `-r <id>` recalled it across processes.
+- [x] Discovery through the adapter returned the account's **74** text models out of 84 listed,
+      including the `kimi-*` family this endpoint serves (`kimi-k2.5`, `kimi-k2.7-code`, `kimi-k3`)
+      plus `glm-5.1/5.2`, `deepseek-v4-*` and the `qwen3*` families; `qwen-mt-*`, `*-vl-ocr`,
+      `qwen-image-*` and the internal `llm-*-drillrun-*` ids were excluded.
+- [x] A real turn through `adapterFor("qwen-eu").run()` read a file with the `Read` tool and
+      answered correctly (`AMBER-HERON-77`); stream events `thinking` / `tool_use` / `tool_result`
+      arrived; `costUSD` was `null` while `usage` kept real token counts (in 12 / out 101); a
+      session id was minted and a second run with `fresh: false` resumed it and recalled the answer.
+- [x] `kimi-k2.7-code` and `glm-5.2` each completed a turn on the same endpoint, confirming the
+      catalog beyond the Qwen family is usable rather than merely listed.
+- [x] The credential probe reports `authenticated: true`, `method: "api-key"`, and a fingerprint
+      namespaced by provider (`qwen-eu:…`), naming "Qwen EU" rather than the CLI it borrows.
+- [x] Negative: with an INVALID key the turn failed closed with `Qwen EU authentication failed: …
+      API Error: 401 Invalid API-key provided` (`details.engine === "qwen-eu"`,
+      `providerKind === "authentication"`) instead of quietly answering from another account.
+- [ ] Not executed: a full Slack foreground turn on a live container-backed channel pinned to
+      `qwen-eu` (needs the deployment restarted with the harness enabled and an operator-supplied
+      key). Same gap, and same reasoning, as the `qwen` entry above: what remains unproven is only
+      the Slack-surface plumbing, which is engine-independent and shared with Claude.
 
 ## Dynamic engine model catalog
 

@@ -15,14 +15,17 @@ import { trackEngineChild } from "./process-registry.js";
 import { containerPaths, dropHostLocationEnv, isIsolatedTarget, probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
 import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
+import { QWEN_PROVIDERS } from "./qwen.js";
 
 const MAX_LOG_CHARS = 8_000;
 const MAX_RETAINED = 64_000; // stdout/stderr kept for error context — tail only, never unbounded
 
-// Harness id → the name its provider failures use. Kept here rather than read from the engine
+// Harness id → the name its provider failures use. Read from the PROVIDER TABLE, not the engine
 // registry: this module sits BELOW the registry in the import graph (the registry imports the
-// adapters, which import this file), so a registry lookup would close a cycle.
-const HARNESS_LABELS = { qwen: "Qwen" };
+// adapters, which import this file), so a registry lookup would close a cycle — but qwen.js
+// imports nothing at all, so the table itself is safe to read here. A provider added there names
+// its own failures without touching this file.
+const HARNESS_LABELS = Object.fromEntries(QWEN_PROVIDERS.map((p) => [p.id, p.harnessLabel]));
 
 // Plugin skill bodies may be loaded lazily after process startup. A run-private plugin directory
 // is deleted when the turn settles, so such a process must be cold (and therefore gone before

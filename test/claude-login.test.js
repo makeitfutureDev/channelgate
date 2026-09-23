@@ -162,14 +162,19 @@ const { engineCredentialState } = await import("../src/engines/registry.js");
 const { formatClaudeLoginLine } = await import("../src/slack/status-controller.js");
 
 test("the Claude engine's credential probe names the login source and compares by fingerprint", async () => {
-  write(operatorFile(), { accessToken: "one" });
+  // The only case here that goes through the ENGINE registry, whose credential hook reads the real
+  // clock rather than this file's fixed NOW. Its fixture therefore has to be dated relative to the
+  // real one — a login written 20 fixture-days out from a hardcoded 2026-09-02 quietly became an
+  // expired login on 2026-09-22, and the case failed from then on for no product reason.
+  const live = { expiresAt: Date.now() + 4 * HOUR, refreshTokenExpiresAt: Date.now() + 20 * DAY };
+  write(operatorFile(), { accessToken: "one", ...live });
   const first = await engineCredentialState("claude");
   assert.equal(first.known, true);
   assert.equal(first.authenticated, true);
   assert.ok(first.fingerprint);
   assert.equal((await engineCredentialState("claude")).fingerprint, first.fingerprint);
   // A new sign-in rewrites the file, which is exactly what must release an auth-failure cooldown.
-  write(operatorFile(), { accessToken: "two" });
+  write(operatorFile(), { accessToken: "two", ...live });
   assert.notEqual((await engineCredentialState("claude")).fingerprint, first.fingerprint);
   clear();
   const gone = await engineCredentialState("claude");

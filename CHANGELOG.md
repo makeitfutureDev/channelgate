@@ -189,6 +189,24 @@ product overview.
   `sshUsers` channel policy key, and six gateway tools (`add_my_ssh_key`, `list_my_ssh_keys`,
   `remove_my_ssh_key`, `grant_channel_ssh`, `revoke_channel_ssh`, `show_channel_ssh`).
 
+- Add a second Anthropic-compatible provider harness, **Qwen EU (Claude Code)**: Alibaba Cloud
+  Model Studio's EU (Frankfurt) region, driven through the same Claude Code CLI as the existing
+  Qwen harness. It keeps everything the CLI owns — streamed progress, the tool loop, approval
+  cards, connectors, `CLAUDE.md`, skills and resume — and serves that region's own catalog, which
+  includes the Kimi, GLM and DeepSeek families alongside Qwen. Like the first one it is off until
+  you switch it on, never an automatic failover target, and its turns are recorded with tokens
+  only.
+
+  The two harnesses are now generated from one provider table, so each has its own settings card,
+  its own write-only API key, its own endpoint, its own default model and its own live model list;
+  saving one never touches the other. The EU endpoint is per-workspace, so no default is shipped —
+  the harness names both missing halves and fails closed until you paste your own endpoint and key.
+
+- Fix two defects the second harness exposed. Naming a harness in a thread matched engine ids in
+  registration order, so `qwen-eu` would have selected `qwen` and left `eu` at the front of the
+  prompt; ids are now matched longest-first. And the confirmation posted after such a switch called
+  every harness either "Claude" or "Codex" — it now names the harness actually selected.
+
 ## 0.5.2 — 2026-09-22
 
 - Give a conversation its tools back when one engine runs out of quota. A channel whose engine had

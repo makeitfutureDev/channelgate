@@ -38,7 +38,7 @@ test("adapter registration and RunContext validation fail closed", () => {
 
 test("built-in registry publishes safe UI manifests and a generic fallback graph", () => {
   const manifests = engineUiManifest();
-  assert.deepEqual(manifests.map((m) => m.id), ["claude", "codex", "qwen", "opencode"]);
+  assert.deepEqual(manifests.map((m) => m.id), ["claude", "codex", "qwen", "qwen-eu", "opencode"]);
   assert.ok(manifests.every((m) => !Object.values(m).some((v) => typeof v === "function")));
   assert.deepEqual(fallbackTargets("claude"), ["codex"]);
   assert.deepEqual(fallbackTargets("codex"), ["claude"], "failover is bidirectional — either harness covers the other");
@@ -47,7 +47,9 @@ test("built-in registry publishes safe UI manifests and a generic fallback graph
   // turn over would spend the operator's Anthropic quota, and failing Claude over to Qwen would
   // spend a QwenCloud balance nobody pointed at that thread.
   assert.deepEqual(fallbackTargets("qwen"), []);
+  assert.deepEqual(fallbackTargets("qwen-eu"), [], "every provider harness is terminal, not just the first one");
   assert.ok(!fallbackTargets("claude").includes("qwen"));
+  assert.ok(!fallbackTargets("claude").includes("qwen-eu"));
   assert.throws(() => requireAdapter("missing"), /Unknown or unavailable/);
 });
 

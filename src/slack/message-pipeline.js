@@ -250,6 +250,14 @@ export function fallbackContextFetcher({ threadContext = "", threadClean = false
 // explicitly — the user chose that harness, and silence about it reads as a broken failover
 // rather than a respected choice. Returns "" for any other failure so ordinary errors stay
 // unadorned.
+// Engine ids as a regex alternation, LONGEST FIRST. Some ids are prefixes of others
+// (`qwen` / `qwen-eu`), and JavaScript alternation is first-match, not longest-match: in id order
+// "qwen-eu build the thing" would match `qwen`, silently running an EU-pinned request on the other
+// provider's account and leaving "eu" glued to the front of the prompt.
+export function engineIdAlternation(ids = ENGINE_IDS) {
+  return [...ids].sort((a, b) => b.length - a.length).join("|");
+}
+
 export function engineSwitchHint(err, { engines = ENGINE_IDS } = {}) {
   const details = err?.details || {};
   if (details.providerError !== true) return "";
@@ -1049,13 +1057,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // It sticks until changed; the rest of the message is the task.
     if (files.length === 0) {
       const trimmed = prompt.trim();
-      const anchored = new RegExp(`^(${ENGINE_IDS.join("|")})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
+      const anchored = new RegExp(`^(${engineIdAlternation()})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
       // Only a switch INTENT near the START counts (index ≤ 12, allowing a short lead like
       // "ok "/"please "), so a long message that merely mentions switching ("explain how to
       // switch to codex in a script") doesn't flip the thread or get mangled.
       let phrase = null;
       if (!anchored) {
-        const m = new RegExp(`\\b(?:switch(?:ing)?\\s+to|use|using|try(?:\\s+again)?(?:\\s+with)?|retry(?:\\s+with)?|run\\s+(?:it|this|that)?\\s*(?:with|on|in))\\s+(${ENGINE_IDS.join("|")})\\b`, "i").exec(trimmed);
+        const m = new RegExp(`\\b(?:switch(?:ing)?\\s+to|use|using|try(?:\\s+again)?(?:\\s+with)?|retry(?:\\s+with)?|run\\s+(?:it|this|that)?\\s*(?:with|on|in))\\s+(${engineIdAlternation()})\\b`, "i").exec(trimmed);
         if (m && m.index <= 12) phrase = m;
       }
       if (anchored || phrase) {
@@ -1071,7 +1079,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         if (anchored) {
           prompt = anchored[2].trim();
           if (!prompt) {
-            await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `✅ This thread now uses *${eng === "codex" ? "Codex" : "Claude"}*. What would you like me to do?` });
+            await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `✅ This thread now uses *${engineLabel(eng)}*. What would you like me to do?` });
             return;
           }
         } else {

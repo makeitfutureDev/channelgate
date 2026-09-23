@@ -584,26 +584,32 @@
                     <input id="set-ctxwindow" type="number" min="1000" step="1000" placeholder="200000" />
                   </label>
                 </div>
-                <div class="setcard">
-                  <h4>Qwen (Claude Code)</h4>
-                  <p class="desc">An optional third harness: the same Claude Code CLI, pointed at QwenCloud&rsquo;s Anthropic-compatible endpoint, so it keeps the CLI&rsquo;s tool loop, approval cards, connectors and skills. It is <strong>off until you switch it on</strong> under <em>Engine &amp; runtime &rarr; Harnesses the gateway may use</em>. Your Anthropic login is never sent to QwenCloud, this harness is never used as an automatic failover target in either direction, and because QwenCloud reports no usable dollar cost its turns are recorded with tokens only.</p>
-                  <label class="field">
-                    <span>QwenCloud API key <em class="state" id="qwen-key-state"></em></span>
-                    <input id="set-qwen-api-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-qwen-api-key">clear</button></div>
-                    <em class="state">Gateway-wide and write-only &mdash; a channel cannot set or read it. Without a key the harness fails closed instead of falling back to your Anthropic account.</em>
-                  </label>
-                  <label class="field">
-                    <span>QwenCloud base URL</span>
-                    <input id="set-qwen-base-url" type="text" placeholder="https://token-plan.maas.qwencloudapi.com/apps/anthropic" />
-                    <em class="state">The Anthropic-compatible endpoint. Token Plan keys use <code>token-plan.maas.qwencloudapi.com</code>; pay-as-you-go keys use <code>maas.qwencloudapi.com</code>.</em>
-                  </label>
-                  <label class="field">
-                    <span>Default Qwen model</span>
-                    <select id="set-default-qwen-model"></select>
-                    <em class="state" id="qwen-model-catalog">The list is read from the QwenCloud account itself. Save a key, then reload this page to refresh it.</em>
-                  </label>
-                </div>
+                <!-- One card per Anthropic-compatible provider (src/engines/qwen.js holds the
+                     table; /api/settings sends `qwenProviders`). The cards are cloned from this
+                     template into the section as SIBLINGS, so each one is searched, jumped to and
+                     spaced like a hand-written card. -->
+                <template id="qwen-provider-tpl">
+                  <div class="setcard qwen-provider-card">
+                    <h4 data-role="label"></h4>
+                    <p class="desc"><span data-role="description"></span> An optional extra harness: the same Claude Code CLI pointed at this provider, so it keeps the CLI&rsquo;s tool loop, approval cards, connectors and skills. It is <strong>off until you switch it on</strong> under <em>Engine &amp; runtime &rarr; Harnesses the gateway may use</em>. Your Anthropic login is never sent to this provider, this harness is never used as an automatic failover target in either direction, and because the provider reports no usable dollar cost its turns are recorded with tokens only.</p>
+                    <label class="field">
+                      <span>API key <em class="state" data-role="key-state"></em></span>
+                      <input type="password" data-role="api-key" placeholder="leave blank to keep current" autocomplete="new-password" />
+                      <div class="tok-foot"><button type="button" class="clear-tok" data-role="clear-key">clear</button></div>
+                      <em class="state">Gateway-wide and write-only &mdash; a channel cannot set or read it. Without a key the harness fails closed instead of falling back to your Anthropic account.</em>
+                    </label>
+                    <label class="field">
+                      <span>Anthropic-compatible base URL</span>
+                      <input type="text" data-role="base-url" />
+                      <em class="state" data-role="endpoint-hint"></em>
+                    </label>
+                    <label class="field">
+                      <span>Default model</span>
+                      <select data-role="default-model"></select>
+                      <em class="state" data-role="catalog-note"></em>
+                    </label>
+                  </div>
+                </template>
                 <div class="setcard">
                   <h4>Slack replies</h4>
                   <p class="desc">Replies use Slack native streaming with native assistant status for thinking and tool progress.</p>

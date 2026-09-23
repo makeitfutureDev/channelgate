@@ -258,9 +258,10 @@ test("the key is revealable only through the audited one-at-a-time endpoint", as
   reset();
   saveSettings({ qwenApiKey: "sk-sp-SECRET-VALUE-1234" });
   const snapshot = settingsForApi();
-  assert.equal(snapshot.hasQwenApiKey, true);
-  assert.equal(snapshot.qwenApiKeyLast4, "1234");
-  assert.equal(snapshot.qwenApiKey, undefined, "a listing response must never carry the value");
+  const card = snapshot.qwenProviders.find((p) => p.id === "qwen");
+  assert.equal(card.hasApiKey, true);
+  assert.equal(card.apiKeyLast4, "1234");
+  assert.equal(card.apiKey, undefined, "a listing response must never carry the value");
   assert.ok(!JSON.stringify(snapshot).includes("sk-sp-SECRET-VALUE-1234"));
   reset();
 });
@@ -280,4 +281,134 @@ test("the harness reuses Claude's CLI, instruction file and skills dir, and its 
   assert.equal(q.supports.warmPool, false, "a warm process would outlive a provider-key rotation");
   assert.equal(q.supports.permissionPrompt, true, "the approval card is the CLI's, and it works");
   assert.ok(ENGINE_IDS.includes("qwen"));
+});
+
+// ── The provider TABLE ────────────────────────────────────────────────────────────────────────
+// A second entry (Model Studio's EU region) is the reason the single-provider module became a
+// table. These guard the properties that would let one provider quietly answer for another.
+
+const euReset = () => saveSettings({ qwenEuApiKey: "", qwenEuBaseUrl: "", defaultQwenEuModel: "" });
+
+test("every table entry generates its own harness, with its own credential and its own catalog", () => {
+  assert.deepEqual(qwen.QWEN_PROVIDER_IDS, ["qwen", "qwen-eu"]);
+  const keys = new Set();
+  for (const entry of qwen.QWEN_PROVIDERS) {
+    const adapter = adapterFor(entry.id);
+    assert.ok(adapter, `${entry.id} must be registered`);
+    assert.equal(adapter.label, entry.label);
+    assert.equal(adapter.defaultModelKey, entry.defaultModelKey);
+    assert.equal(adapter.models[0].value, entry.models[0].value, "the shipped catalog is the entry's own");
+    assert.equal(adapter.optIn, true, "no provider harness is ever on by default");
+    assert.equal(adapter.supports.realCost, false, "no provider harness books the CLI's Anthropic pricing");
+    // Every settings key is unique across the table: a shared one would let saving one provider's
+    // credential silently re-point another's turns.
+    for (const key of [entry.settings.apiKey, entry.settings.baseUrl, entry.defaultModelKey]) {
+      assert.equal(keys.has(key), false, `${key} is used by more than one provider`);
+      keys.add(key);
+    }
+  }
+});
+
+test("one provider's key never configures another's harness", async () => {
+  reset();
+  euReset();
+  saveSettings({ qwenApiKey: "sk-sp-TOKEN-PLAN", qwenBaseUrl: "https://token-plan.example/apps/anthropic" });
+  const first = await qwen.resolveQwenProvider("qwen");
+  const second = await qwen.resolveQwenProvider("qwen-eu");
+  assert.equal(first.configured, true);
+  assert.equal(second.configured, false, "the EU harness is not configured by the other account's key");
+  assert.equal(second.apiKey, "");
+  // …and the run fails closed naming ITS provider, rather than answering on the configured one.
+  const err = await adapterFor("qwen-eu").run({
+    cwd: "/tmp", prompt: "hi", session: { id: "s", fresh: true },
+    runtime: { pluginRuntime: { engine: "qwen-eu" } },
+  }).then(() => null, (error) => error);
+  assert.match(err.message, /Qwen EU harness is selected/);
+  assert.equal(err.details.runtimeCredential, true);
+  reset();
+});
+
+test("a provider with no shipped endpoint stays unconfigured until the operator saves one", async () => {
+  euReset();
+  const blank = await qwen.resolveQwenProvider("qwen-eu");
+  assert.equal(blank.configured, false);
+  // Both missing halves in ONE message: reporting them a save apart makes the second look like a
+  // new failure.
+  assert.match(blank.error, /no API key or endpoint is configured/);
+  assert.match(blank.error, /Settings → Qwen EU/);
+
+  saveSettings({ qwenEuApiKey: "sk-ws-EU" });
+  assert.match((await qwen.resolveQwenProvider("qwen-eu")).error, /no endpoint is configured/);
+
+  saveSettings({ qwenEuBaseUrl: "https://ws-test.eu-central-1.example/apps/anthropic/" });
+  const ready = await qwen.resolveQwenProvider("qwen-eu");
+  assert.equal(ready.configured, true);
+  assert.equal(ready.baseUrl, "https://ws-test.eu-central-1.example/apps/anthropic", "a trailing slash never reaches the CLI");
+  // The other provider ships one, so a blank box there means "keep the documented endpoint".
+  assert.equal((await qwen.resolveQwenProvider("qwen")).baseUrl, qwen.QWEN_DEFAULT_BASE_URL);
+  euReset();
+});
+
+test("each provider redirects the CLI at ITS OWN endpoint, and the fingerprints never collide", async () => {
+  euReset();
+  saveSettings({ qwenEuApiKey: "sk-ws-EU", qwenEuBaseUrl: "https://ws-test.eu-central-1.example/apps/anthropic" });
+  const eu = await qwen.resolveQwenProvider("qwen-eu");
+  const env = buildClaudeEnv({
+    home: "/home/agent",
+    oauthToken: "sk-ant-oat-RELAYED-OPERATOR-TOKEN",
+    providerEnv: qwen.qwenProviderEnv(eu),
+  }, { PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-ant-api-DAEMON-KEY" });
+  assert.equal(env.ANTHROPIC_BASE_URL, "https://ws-test.eu-central-1.example/apps/anthropic");
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, "sk-ws-EU");
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined, "the operator's login never reaches a provider, whichever one it is");
+  assert.equal(env.ANTHROPIC_API_KEY, undefined);
+
+  // The same key pasted into both boxes must still produce two distinct fingerprints: the warm
+  // pool and the auth-failure cooldown compare them to decide "is this the credential that failed".
+  const a = qwen.qwenProviderFingerprint({ id: "qwen", apiKey: "same", baseUrl: "https://x.example" });
+  const b = qwen.qwenProviderFingerprint({ id: "qwen-eu", apiKey: "same", baseUrl: "https://x.example" });
+  assert.ok(a && b);
+  assert.notEqual(a, b);
+  assert.equal(qwen.qwenProviderFingerprint({ id: "qwen-eu", apiKey: "", baseUrl: "https://x.example" }), "", "no key, nothing to compare");
+  euReset();
+});
+
+test("the model list URL follows the workspace endpoint, not a hardcoded host", () => {
+  assert.equal(
+    qwen.qwenModelsUrl("https://ws-abc.eu-central-1.maas.aliyuncs.com/apps/anthropic"),
+    "https://ws-abc.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
+  );
+  assert.equal(qwen.qwenModelsUrl(""), "", "an unconfigured endpoint yields no URL to guess at");
+});
+
+test("single-purpose models are filtered out of a provider catalog", () => {
+  // Live ids from the EU account: translation and OCR models answer, but cannot run an agent turn.
+  for (const id of ["qwen-mt-plus", "qwen-mt-turbo", "qwen-vl-ocr", "qwen-image-3.0"]) {
+    assert.equal(qwen.isQwenTextModel(id), false, `${id} must not be selectable`);
+  }
+  for (const id of ["qwen3-coder-plus", "qwen3-max", "kimi-k2.7-code", "glm-5.2", "qwen3-vl-plus"]) {
+    assert.equal(qwen.isQwenTextModel(id), true, `${id} is a usable conversational model`);
+  }
+});
+
+test("both provider keys are write-only, revealable only through the audited endpoint", async () => {
+  const { revealableFields } = await import("../src/web/secrets.js");
+  const { settingsForApi } = await import("../src/config/settings.js");
+  reset();
+  euReset();
+  for (const entry of qwen.QWEN_PROVIDERS) {
+    assert.ok(revealableFields("settings").includes(entry.settings.apiKey), `${entry.settings.apiKey} must be revealable`);
+  }
+  saveSettings({ qwenEuApiKey: "sk-ws-EU-SECRET-9876", qwenEuBaseUrl: "https://ws-test.eu-central-1.example/apps/anthropic" });
+  const snapshot = settingsForApi();
+  const card = snapshot.qwenProviders.find((p) => p.id === "qwen-eu");
+  assert.equal(card.hasApiKey, true);
+  assert.equal(card.apiKeyLast4, "9876");
+  assert.equal(card.baseUrl, "https://ws-test.eu-central-1.example/apps/anthropic", "the endpoint is not a secret — the UI has to show it");
+  assert.ok(!JSON.stringify(snapshot).includes("sk-ws-EU-SECRET-9876"));
+  // The UI renders its card from these; a missing field silently disables saving that provider.
+  for (const field of ["label", "apiKeyField", "baseUrlField", "defaultModelField", "endpointHint"]) {
+    assert.ok(card[field], `the settings card needs ${field}`);
+  }
+  euReset();
 });
