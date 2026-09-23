@@ -156,10 +156,26 @@ ended); `show_channel_ssh` lists the live ones.
   `AllowGroups` line in a hardening file names the machine's real people and not the login
   account. The installer checks this with `sshd -T -C user=channelgate-ssh,…` and appends the
   account to the list inside `channelgate.conf` (lists accumulate; your own line is untouched), so
-  rerunning it is the fix. A `DenyUsers`/`DenyGroups` match cannot be overridden and stops the
-  installer with the file to edit. Also check `MaxAuthTries`: an agent offering more keys than
-  that is disconnected before it reaches the registered one; pin the registered key with
-  `IdentityFile` and `IdentitiesOnly yes`.
+  rerunning it is the fix (a rerun keeps the configured endpoint). A `DenyUsers`/`DenyGroups`
+  match cannot be overridden and stops the installer with the file to edit.
+- *`Too many authentication failures`*, or a refusal only on a laptop with several keys — the
+  host's `MaxAuthTries` (often 3 on a hardened host) ran out before your agent offered the key you
+  registered. Both hops authenticate separately with that same key, and an `IdentityFile` in the
+  `Host` block does **not** reach the `ProxyCommand` hop, so pin it in both places:
+
+  ```
+  Host acme-app
+    HostName acme-app
+    User agent
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    ProxyCommand ssh -p 2222 -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 channelgate-ssh@gw.example.com acme-app
+  ```
+
+  Point both paths at the key whose fingerprint `list_my_ssh_keys` shows. If that key lives only in
+  an agent (Secretive, 1Password, a hardware key), point them at its **public** key file instead:
+  `IdentitiesOnly` then selects that agent key rather than refusing the agent. The generated block
+  leaves this out on purpose — a guessed path would lock out exactly those agent-only setups.
 - *"this SSH key is not registered"* — register it from chat; the key must be the same one the
   ssh client offers (`ssh -v` shows which).
 - *"you have no SSH grant on …"* — a manager grants it in that channel.
