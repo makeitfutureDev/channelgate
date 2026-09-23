@@ -176,6 +176,7 @@ credential or connection is needed, without exposing its value.
 | See, grant or remove skills here, apply a skills template, create/update/propose a skill, see skill usage | `references/skills.md` | `gateway` → `show_channel_skills`, `add_channel_skills`, `apply_skill_template`, `create_skill`, `propose_skill_change`, `skill_usage_report` |
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |
 | Register an SSH key, grant/revoke SSH into this channel's container, get the connection block | `references/administration.md` | `gateway` → `add_my_ssh_key`, `grant_channel_ssh`, `revoke_channel_ssh`, `show_channel_ssh` |
+| Check disk space, stale containers or old runtime images | `references/administration.md` | Host `/sudo` thread: `df -h /`, `podman system df -v` — report and ask; never delete on your own |
 
 ## Tool identities: the bot, YOUR account, and the requester's account
 

@@ -131,6 +131,16 @@ product overview.
   cache read and output, defaults verified against Anthropic's published pricing. Every token class
   is priced separately, because an agent session is mostly cache reads. These rates never touch a
   gateway run: Claude Code reports a real cost for those and it is used as-is.
+- Teach the assistant to check container disk usage without acting on it. The gateway never
+  reclaims container storage on its own — each image build keeps the previous ~2-4 GB image, and
+  the idle reaper stops a channel's container without removing it, so the container keeps its
+  image alive. The operating guide now explains how to read free space and per-image container
+  counts from an admin `/sudo` thread, how to tell a leftover from a live container (they are
+  named by runtime-root hash, and test runs mint their own), and the two traps that make a naive
+  cleanup wrong: container tags follow `:latest` so only image IDs identify what is pinned, and a
+  removed container leaves its named HOME volume dangling, so a blanket volume prune destroys a
+  channel's engine sessions and CLI logins. Deletion stays a manual or scheduled admin action —
+  the assistant reports and asks.
 
 - **The 💻 button is gone from reply footers; the resume command moved into Settings.** Slack
   replies now end with 📂 Files, 🔑 Secrets, ⚙️ Settings (and any 📄 review-file buttons) — the

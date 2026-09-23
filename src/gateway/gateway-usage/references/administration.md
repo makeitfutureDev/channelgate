@@ -338,6 +338,78 @@ admin rights or change the permissions required by separate gateway control tool
 - Admin mode starts an admin author's safe restart without a second approval. Auto/Read/Worker
   modes require an admin's Slack approval first.
 
+## Disk space, stale containers and old images (admin)
+Container storage grows on its own and nothing in the gateway reclaims it. Every
+`npm run build:image` adds a new ~2-4 GB runtime image and re-points `:latest`; the previous
+versions stay. The idle reaper **stops** a channel's container but never removes it (a stopped
+container restarts in under a second, so that is deliberate), and a container keeps the image it
+was created from alive. A full disk takes the daemon, its database and every channel down at once,
+so check before it gets there.
+
+**Never delete anything automatically.** Report what you found and what it would free, then let an
+admin decide. Removal happens only on an explicit request or from a schedule an admin set up — not
+as a tidy-up you decided was helpful.
+
+These commands need the **host**, not a channel container: there is no `podman` inside a channel
+container. Run them from an admin `/sudo` thread.
+
+### Check
+```sh
+df -h /                 # free space on the filesystem holding the runtime root
+podman system df        # images / containers / volumes, with a reclaimable column
+podman system df -v     # per image: size, and how many containers still reference it
+```
+Treat under ~10 GB free as worth raising, and under ~5 GB as urgent — a single image build needs
+several GB plus scratch space for its layers.
+
+### Find what is actually stale
+- **Containers from other runtime roots.** A container is named
+  `cg-<runtime-root-hash>-<platform>-<slug>`. Only the hash belonging to the running daemon is
+  live; every other hash is a leftover, most often from a live container test run (each run pins
+  its own scratch runtime root, so it mints a whole new set and abandons them). The daemon is
+  correctly scoped to its own root and will never touch the others, so they accumulate forever.
+  Group them:
+  ```sh
+  podman ps -a --format '{{.Names}}' | sed -E 's/^(cg-[0-9a-f]+)-.*/\1/' | sort | uniq -c | sort -rn
+  ```
+  The largest group is normally the live daemon; confirm which hash is live before treating any
+  group as disposable.
+- **Containers pinned to a superseded image.** Compare each container's *image ID* with the
+  current one. Do not compare tags: `podman ps` shows `runtime:latest` for every container because
+  the tag moved, while the container still holds the older image ID it was created from.
+  ```sh
+  latest=$(podman images --format '{{.ID}}' localhost/channelgate/runtime:latest)
+  podman ps -a --format '{{.Names}}\t{{.ImageID}}\t{{.Status}}' \
+    | awk -F'\t' -v cur="$latest" '{if (substr($2,1,12) != cur) print}'
+  ```
+  These are recreated on the current image the next time their channel is used, so retiring an
+  **exited** one costs nothing. Never remove a container that is `Up` — it may be holding a lease
+  for a background job, a schedule or an attached editor.
+- **Images nothing references.** In `podman system df -v`, the last column is the container count.
+  An image at `containers=0` can go. An image with a non-zero count cannot, until those containers
+  are gone.
+
+### What is safe to remove, and what is never
+| Safe | Never |
+| --- | --- |
+| Containers under a non-live runtime-root hash | Anything under the live daemon's hash that is `Up` |
+| **Exited** containers pinned to a superseded image ID | The current `runtime:latest` / its version tag |
+| Runtime image versions at `containers=0` | A `…-home` volume for a channel that still exists |
+| Dangling images (`podman image prune`) | Any volume still attached to a container |
+
+A channel's state lives in its named `cg-<hash>-<platform>-<slug>-home` volume, not in the
+container, so removing the container is recoverable and removing that volume is not: it destroys
+that channel's engine sessions, CLI logins and installed tools. `podman rm -v` only drops
+*anonymous* volumes, so it is safe — but once a container is gone its named HOME volume becomes
+dangling, which means **`podman volume prune` is not safe** here. Filter the dangling list by hand
+and keep every `-home` volume whose channel is still real; remove only test/QA fixture volumes and
+anonymous hashes.
+
+### Reporting it
+Say how much is free, what is reclaimable, which groups you classified as stale and why, and what
+each step would free. Keep at least the current image and the previous one if a rollback window
+matters (`docs/RELEASE-CHECKLIST.md` tracks that). Then stop and ask.
+
 ## This guide (admin) — customize what the AI reads
 This whole usage guide (the `gateway-usage` skill) can be customized live and restored to the
 built-in default at any time. The default ships in the repo (in git); overrides are applied on

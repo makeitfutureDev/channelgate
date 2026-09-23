@@ -591,6 +591,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   commands are checked against stable 3.0.3.
   → TEST-PLAN: Google Chat and Teams transports. Setup: `docs/PLATFORMS.md`.
 
+- The operating guide covers host container-storage housekeeping: reading free space and per-image
+  container counts, distinguishing a live runtime root from test leftovers, and the tag-versus-image-ID
+  and dangling-HOME-volume traps. It is diagnosis-only by contract — the assistant reports what is
+  reclaimable and never deletes without an explicit request or an admin-configured schedule.
+  → TEST-PLAN: Host container-storage housekeeping guidance.
+
 ## Engine adapter kernel
 
 - Validated `EngineAdapter` and `RunContext`/`Principal`/`Origin` contracts fail closed for unknown
