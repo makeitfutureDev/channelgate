@@ -193,7 +193,10 @@
 
 - [x] `test/host-housekeeping-guide.test.js`: the materialized guide for every platform routes
       disk/stale-container/old-image questions to `references/administration.md` and carries the
-      "never delete on your own" instruction. The reference itself must forbid autonomous deletion
+      instruction to report and ask, removing only via `--apply` on an admin's word, and forbids
+      running or SUGGESTING `podman system prune`, `volume prune` or `image prune -a` by name (a
+      live 0.5.3 run recommended `podman system prune -a --volumes` while the row only said "never
+      delete on your own"). The reference itself must forbid autonomous deletion
       and scope removal to an explicit request or an admin-configured schedule; name the `df -h /`
       and `podman system df -v` checks; state that tags must not be compared because `:latest`
       moves while containers keep the image ID they were created from; state that
