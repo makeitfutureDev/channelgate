@@ -33,7 +33,7 @@ is what makes VS Code Remote-SSH and "forward my app's port 3000" work.
 ## Operator setup (once)
 
 Prerequisites on the gateway host: `openssh-server` with `Include /etc/ssh/sshd_config.d/*.conf`
-at the top of `/etc/ssh/sshd_config` (Debian/Ubuntu default), `node` on `PATH`, and the channel
+at the top of `/etc/ssh/sshd_config` (Debian/Ubuntu default), a Node install the installer can find (it looks on root's `PATH`, then in the invoking user's and the service account's `~/.local`, nvm, volta and fnm trees, then the system locations; `CG_NODE_BIN` overrides), and the channel
 image rebuilt at spec 1.4.0 or later (`npm run build:image` — it now ships `openssh-server` and the
 `cg-sshd` helper; containers are recreated on their next turn).
 
@@ -55,7 +55,7 @@ The installer is idempotent and creates:
 
 Other knobs: `CG_SSH_PORT` (the host sshd's port, default 22), `CG_SERVICE_USER` when the daemon
 does not run as `channelgate`/`claude-gateway` (it defaults to the checkout's owner),
-`CG_NODE_BIN`. Re-run the installer after an update that changes `scripts/cg-ssh-attach.mjs`.
+`CG_NODE_BIN`. The installer keeps a root-owned COPY of the Node binary beside the wrapper (`/usr/local/lib/channelgate/node`), because the login account cannot traverse a per-user install under a private home; re-run the installer after upgrading Node or after an update that changes `scripts/cg-ssh-attach.mjs`. It never fails silently: every abort names the failing line.
 
 The daemon needs no restart: it checks the directory every minute, closes any session records a
 previous daemon left open, exports the registered keys and binds the socket. Its boot log says

@@ -147,6 +147,21 @@ test("host side: no endpoint means not configured, and every exported line is re
   assert.match(access.connectSnippet({ endpoint: { ...state.endpoint, port: 2222 }, channel: "acme-app", alias: "acme" }), /^Host acme\n[\s\S]*ProxyCommand ssh -p 2222 channelgate-ssh@gw\.example\.com acme-app$/);
 });
 
+test("the root installer finds node without relying on root's PATH, copies it beside the wrapper, and never dies silently", () => {
+  const script = readFileSync(new URL("../scripts/install-ssh-access.sh", import.meta.url), "utf8");
+  assert.match(script, /^trap 'echo "❌ install-ssh-access\.sh failed at line \$LINENO/m, "an ERR trap names the failing line");
+  assert.doesNotMatch(script, /=\$\{CG_NODE_BIN:-\$\(command -v node\)\}/, "a failing command substitution in an assignment exits silently under set -e");
+  assert.match(script, /candidate="\$\(command -v node 2>\/dev\/null \|\| true\)"/, "the PATH lookup must not abort the script");
+  for (const location of ["$home/.local/bin/node", "$home/.local/node/bin/node", "/.nvm/versions/node/*/bin/node", "$home/.volta/bin/node", "/usr/local/bin/node"]) {
+    assert.ok(script.includes(location), `the installer looks in ${location}`);
+  }
+  assert.match(script, /install -m 0755 -o root -g root "\$NODE_SRC" "\$NODE_BIN"/, "node is copied root-owned beside the wrapper");
+  assert.match(script, /NODE_BIN="\$LIB_DIR\/node"/, "the attach command uses the copy, not the operator's private install");
+  assert.match(script, /runuser -u "\$SSH_USER" -- "\$NODE_BIN" -e "process\.exit\(0\)"/, "the login account is proven able to execute it before sshd is configured");
+  const parsed = spawnSync("bash", ["-n", new URL("../scripts/install-ssh-access.sh", import.meta.url).pathname], { encoding: "utf8" });
+  assert.equal(parsed.status, 0, parsed.stderr);
+});
+
 test("container side: the generated sshd_config is key-only, forwards inside, no agent forwarding, reaps dead peers; files are private", async () => {
   const target = { artifactDir: path.join(SSH_DIR, "artifacts", "acme") };
   mkdirSync(target.artifactDir, { recursive: true });
