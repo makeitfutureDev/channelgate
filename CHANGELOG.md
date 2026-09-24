@@ -22,9 +22,17 @@ product overview.
   worked and `claude -p` answered, but plain `claude` opened the first-run theme picker and a
   login screen, so it looked signed out. Headless engine turns never finish Claude's onboarding,
   and the flag lives in the channel's `$CLAUDE_CONFIG_DIR/.claude.json`, not `~/.claude.json`.
-  Each SSH or VS Code attach now marks onboarding done there (merging, never overwriting other
-  settings or a theme you picked), so `claude` opens straight on the gateway's login. Claude
-  still asks once per folder whether to trust it.
+  A second cause: sshd starts every session with a clean environment, so an SSH shell, a remote
+  command and VS Code's server never saw the container's own variables (`CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`, `PATH`, `TZ`, …) and Claude read the wrong settings file. SSH sessions now get
+  the same environment `podman exec` gives, every SSH or VS Code attach marks onboarding done
+  (merging, never overwriting other settings or a theme you picked), and the gateway's `claude`
+  wrapper pins its settings folder. Claude still asks once per folder whether to trust it.
+
+- Start SSH sessions in the channel's folder. An interactive `ssh` login now opens in the
+  channel's work folder instead of `/home/agent` (image spec 1.5.1; rebuild with
+  `npm run build:image`), and "show SSH access" prints a `code --remote ssh-remote+…` command
+  that opens VS Code straight on that folder.
 
 - Show the gateway's own notices in streamed Slack answers. When a turn failed over to the other
   engine, the "Codex hit its usage limit — using Claude" line, the license allowance warning and

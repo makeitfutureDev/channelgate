@@ -5237,10 +5237,27 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       a fresh channel, keeps a theme the developer chose, merges without touching other keys or
       per-folder trust, leaves an already-onboarded file byte-for-byte unchanged, and leaves corrupt
       or non-object JSON exactly as it was (automated: `test/vscode-container.test.js`).
-- [ ] LIVE (Claude, editor onboarding): in a channel whose engine sessions never ran an interactive
-      Claude, open a fresh SSH (or VS Code Remote-SSH) session and run plain `claude`. Pass: no
-      theme picker and no login screen — at most the per-folder "trust this folder" prompt, then the
-      main screen names the relayed login and a prompt answers.
+- [x] Unit: an SSH session inherits the container's environment. The broker reads the running
+      container's `Config.Env`, drops what sshd owns per session (`HOME`, `USER`, `HOSTNAME`,
+      `TERM`, `container`, …) and anything sshd_config cannot carry verbatim (quotes, backslashes,
+      control characters, invalid names), adds `CG_WORKDIR` = the channel folder, and renders it as
+      ONE sorted `SetEnv` directive (sshd ignores every later `SetEnv` line); an unreadable env
+      still sends the folder and never blocks the session. The `claude` wrapper defaults
+      `CLAUDE_CONFIG_DIR`. "show SSH access" prints `code --remote ssh-remote+<channel> <folder>`
+      (automated: `test/ssh-access.test.js`, `test/ssh-broker.test.js`, `test/vscode-container.test.js`).
+- [x] Unit: the image ships `/etc/profile.d/channelgate-workdir.sh`, which moves only an
+      INTERACTIVE shell of an SSH session still in HOME into `CG_WORKDIR`, never Codex's
+      `bash -lc` (automated: `test/container-durability.test.js`).
+- [ ] LIVE (Claude, editor onboarding + environment): after `npm run build:image` (spec 1.5.1),
+      in a channel whose engine sessions never ran an interactive Claude, open a fresh `ssh
+      <channel>` session. Pass: the prompt starts in the channel's work folder; `echo
+      $CLAUDE_CONFIG_DIR` prints `/home/agent/.claude`; plain `claude` shows no theme picker and no
+      login screen (at most "trust this folder"), then the main screen names the relayed login and
+      a prompt answers; `ssh <channel> pwd` (non-interactive) still prints `/home/agent`. Repeat in
+      a VS Code Remote-SSH terminal opened with the `code --remote` command from "show SSH access".
+- [ ] LIVE (Codex, same session): `codex exec 'Reply with exactly SSH-CODEX-OK'` answers, and a
+      Codex engine turn in that channel still runs its commands where it did before (its
+      `bash -lc` is not moved by the login-folder script).
 - [ ] LIVE (Codex, Airtable CTR-33): repeat in `cg-testing-codex-bash`; `codex exec 'Reply with exactly
       SSH-CODEX-OK'` answers on the shared sign-in without another login.
 - [ ] LIVE (engine-independent, refusals, Airtable CTR-34): an ungranted user's `ssh` prints "you have no SSH grant";

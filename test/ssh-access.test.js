@@ -187,6 +187,26 @@ test("container side: the generated sshd_config is key-only, forwards inside, no
   assert.throws(() => access.containerSshDir({}), /artifact directory/);
 });
 
+// Live finding (0.5.3): over SSH, `claude` showed onboarding and a login screen while `claude -p`
+// answered — sshd had started the session with a clean environment, so CLAUDE_CONFIG_DIR (and PATH,
+// CODEX_HOME, TZ, the CG_* identity) never reached it.
+test("container side: the session inherits the container's environment through ONE SetEnv, and CG_WORKDIR names the channel folder", () => {
+  const env = access.containerSessionEnv([
+    "PATH=/home/agent/.local/bin:/usr/bin", "CLAUDE_CONFIG_DIR=/home/agent/.claude", "TZ=Europe/Bucharest",
+    "HOME=/home/agent", "HOSTNAME=abc", "container=podman", "TERM=xterm", "USER=agent",
+    'QUOTE=a"b', "BACKSLASH=a\\b", "NEWLINE=a\nb", "=nameless", "1BAD=x", "no-equals", "SPACED=a b",
+  ], { workDir: "/home/me/My Project" });
+  assert.deepEqual(env, {
+    PATH: "/home/agent/.local/bin:/usr/bin", CLAUDE_CONFIG_DIR: "/home/agent/.claude", TZ: "Europe/Bucharest",
+    SPACED: "a b", CG_WORKDIR: "/home/me/My Project",
+  }, "names sshd owns and anything sshd_config cannot carry verbatim are dropped, never escaped");
+  const lines = access.renderContainerSshdConfig("/x/ssh", env).split("\n").filter((l) => l.startsWith("SetEnv"));
+  assert.deepEqual(lines, ['SetEnv "CG_WORKDIR=/home/me/My Project" "CLAUDE_CONFIG_DIR=/home/agent/.claude" "PATH=/home/agent/.local/bin:/usr/bin" "SPACED=a b" "TZ=Europe/Bucharest"'],
+    "sshd honours only the FIRST SetEnv line, so every variable rides one directive");
+  assert.deepEqual(access.containerSessionEnv(null, { workDir: "/w" }), { CG_WORKDIR: "/w" }, "an unreadable container env still sends the folder");
+  assert.ok(!access.renderContainerSshdConfig("/x/ssh").includes("SetEnv"), "no env, no directive");
+});
+
 test("sessions: open, list live per channel, close with a reason, and a restart closes the orphans", () => {
   let clock = 1_000;
   const now = () => clock;
@@ -275,6 +295,7 @@ test("tools: grants need a manager, an approved grantee, and are audited; show h
   assert.match(shown, /Granted: @Apps\b/);
   assert.match(shown, new RegExp(`ProxyCommand ssh channelgate-ssh@gw\\.example\\.com ${entry.slug}`));
   assert.match(shown, /Live sessions: none/);
+  assert.match(shown, new RegExp(`\`code --remote ssh-remote\\+${entry.slug} /\\S+/${entry.slug}\``), "VS Code opens straight on the channel folder");
   const adminGranted = reply(await admin.get("grant_channel_ssh")({ user: ADMIN }));
   assert.match(adminGranted, /not registered a key yet/);
   assert.match(reply(await admin.get("show_channel_ssh")({})), /no key registered yet/);

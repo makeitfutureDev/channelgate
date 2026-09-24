@@ -93,7 +93,11 @@ yet, and `show_channel_ssh` names the installer.
    Remote-SSH → `acme-app`. The channel rides in the ProxyCommand: one key, one config block per
    channel, several channels at once. The first connection records the channel's own host key.
 
-Inside, you are user `agent` in the channel's work folder, with the channel's persistent
+To open VS Code directly on the channel folder rather than browsing from `/home/agent`, use the
+command "show SSH access" prints: `code --remote ssh-remote+acme-app <channel folder>`.
+
+Inside, you are user `agent` in the channel's work folder (an interactive login starts there;
+image spec 1.5.1), with the same environment an engine turn gets and the channel's persistent
 `/home/agent` (installed tools, `gh`/`vercel`/`supabase` logins, Claude and Codex history).
 `claude` uses the gateway's relayed operator login (refreshed every 20 minutes while a session is
 open, the same relay as `npm run vscode`); Codex uses the shared sign-in mount. Everyone in a

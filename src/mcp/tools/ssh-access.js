@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getUser, isAdmin, isApproved, patchChannelMeta } from "../../config/store.js";
 import { logChannelPolicyChange } from "../../config/channel-audit.js";
 import { getContainerRuntime } from "../../config/settings.js";
+import { effectiveWorkDir } from "../../gateway/folders.js";
 import {
   addSshKey, connectSnippet, exportHostAuthorizedKeys, grantSshUser, keysForUsers, listSshKeys, listSshSessions, parseUserRef,
   removeSshKey, revokeSshUser, sshAccessState, sshBlockedByHomeGrant, sshUsersOf, SSH_PUBLIC_KEY_HELP,
@@ -181,6 +182,7 @@ export function register(server, ctx) {
       else if (!mine && createdBy) lines.push(`• You are not granted here${myKeys.length ? "" : " and have no key registered"}.`);
       if (setup.configured) {
         lines.push("", "Once granted, add this to `~/.ssh/config` on your laptop (your usual key; nothing per channel), then `ssh " + slug + "` or open it with VS Code Remote-SSH:", "```", connectSnippet({ endpoint: setup.endpoint, channel: slug }), "```",
+          `To open VS Code straight on the channel folder: \`code --remote ssh-remote+${slug} ${effectiveWorkDir(slug, meta)}\` (the Open Folder dialog otherwise starts in /home/agent).`,
           "Inside you are user `agent` in the channel's work folder with its `/home/agent`, CLI logins, Claude (the gateway's relayed login) and Codex. Everyone in the box shares that one user; set your git identity per session. A daemon restart drops sessions — just reconnect.");
       }
       return text(lines.join("\n"));

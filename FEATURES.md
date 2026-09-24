@@ -2318,9 +2318,13 @@ are retired, bullet by bullet; everything else stands.
   container LEASE for the session's whole life, writes the in-container `sshd_config` +
   `authorized_keys` into the artifact dir, refreshes the same Claude access-token relay VS Code
   attach uses (which also marks Claude's first-run onboarding done in
-  `$CLAUDE_CONFIG_DIR/.claude.json`, merge-only, so an interactive `claude` opens on the relayed
-  login instead of the theme picker and login screen; folder trust stays the developer's
-  choice), and runs `exec -i <container> cg-sshd` — an unprivileged inetd-mode sshd on that
+  `$CLAUDE_CONFIG_DIR/.claude.json`, merge-only; folder trust stays the developer's choice),
+  renders the container's own environment into the session with ONE `SetEnv` (sshd starts a
+  clean environment and honours only the first `SetEnv` line) plus `CG_WORKDIR`, so an SSH shell,
+  a remote command and VS Code's server see what `podman exec` sees and an interactive `claude`
+  opens on the relayed login; an interactive login starts in the channel's work folder
+  (`/etc/profile.d/channelgate-workdir.sh`, spec 1.5.1, never for Codex's non-interactive
+  `bash -lc`), and "show SSH access" prints `code --remote ssh-remote+<channel> <folder>`), and runs `exec -i <container> cg-sshd` — an unprivileged inetd-mode sshd on that
   stream, inside the container, with which the developer's own client completes a second
   handshake. So the pty, the shell, sftp, VS Code Remote-SSH and port forwards all live in the
   container's namespaces; no container and no extra host port ever listens; the channel is named

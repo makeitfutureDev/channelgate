@@ -193,6 +193,17 @@ ENV CG_RUNTIME=container \
 RUN printf 'export PATH="%s"\n' "$PATH" > /etc/profile.d/channelgate-path.sh \
  && chmod 0644 /etc/profile.d/channelgate-path.sh
 
+# An interactive SSH login starts in the channel's work folder instead of HOME (spec 1.5.1). The
+# gateway's in-container sshd_config hands every session CG_WORKDIR. Only an INTERACTIVE shell of an
+# SSH session that is still in HOME moves: Codex runs each command through `bash -lc` (a login shell,
+# but not interactive, and never an SSH session), and a `cd` there would change where it runs.
+RUN printf '%s\n' \
+      '# ChannelGate: an interactive SSH login starts in the channel work folder (CG_WORKDIR).' \
+      'if [ -n "${SSH_CONNECTION:-}" ] && [ -n "${CG_WORKDIR:-}" ] && [ "$PWD" = "$HOME" ] && [ -d "$CG_WORKDIR" ]; then' \
+      '  case $- in *i*) cd "$CG_WORKDIR" || true ;; esac' \
+      'fi' > /etc/profile.d/channelgate-workdir.sh \
+ && chmod 0644 /etc/profile.d/channelgate-workdir.sh
+
 USER agent
 WORKDIR /home/agent
 
