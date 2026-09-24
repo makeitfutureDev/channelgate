@@ -16,6 +16,24 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- Sending a generated file to Drive, Gmail and other Composio tools works again — or rather, works
+  for the first time on a gateway using personal Composio tokens. `stage_file_for_composio` sent the
+  stored token to Composio's REST upload, which only accepts project API keys; the tokens stored
+  here are consumer (MCP) keys, so every stage failed with "Invalid API key" and the model told the
+  user their key was broken. With a consumer key the gateway now stages through the hosted MCP's own
+  workbench, daemon-side and in chunks, so the file still never passes through the conversation
+  (limit 25 MB there, 100 MB with a project key). A real problem now reads `Staging failed:`;
+  `Staging refused:` is kept for files that are not the conversation's own (outside its folder, a
+  symlink, not a regular file).
+- Security: staging a file for Composio now reads the exact file whose location it checked. It
+  used to check the file, close it and open it again by name, and the conversation's container can
+  write its own folder — so in that gap the name could be swapped for a link to a file elsewhere on
+  the host, which the gateway would then have read and uploaded. Found by review during the
+  2026-09-25 QA campaign. The tool first shipped in 0.5.3, and on a gateway using consumer keys (the
+  default) no stage could complete before this release, so the gap could not have been used there.
+
 ## 0.5.5 — 2026-09-24
 
 - The runtime image no longer carries SSH host private keys. Installing `openssh-server` generated

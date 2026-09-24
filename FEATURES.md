@@ -1809,6 +1809,27 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   the one spent, through the same precedence the MCP config uses; a named identity with no key is
   reported rather than silently replaced by the other one. The key never enters the container,
   never reaches the model, and never appears in an error message. Nothing is published.
+  The REST upload accepts only a Composio PROJECT API key. The keys this gateway stores in personal
+  mode are CONSUMER keys (`ck_…`, the hosted MCP's credential), which that endpoint rejects, so
+  with a consumer key the gateway stages through the hosted MCP's own workbench instead: the daemon
+  opens its own MCP session on the same key, writes the file into the sandbox in base64 chunks of
+  768 KB (one request above ~5 MB is rejected), checks the md5 and mints the key with
+  `get_mount_file_s3_key` — a key the model's separate session can then use. Bytes still never
+  pass through the model. The sandbox path is a random directory plus a name reduced to safe
+  characters, so a file name can never become Python source. Consumer-key staging is capped at
+  25 MB (project keys keep 100 MB), within an overall 10-minute deadline; the MCP session is ended
+  afterwards, but the sandbox copy is kept because the s3key IS that file's storage (deleting it
+  breaks the upload — verified live). A known property of this route: the copy stays in that
+  identity's Composio file storage, so on `composio-agent` backed by the organization key it is
+  listable from any conversation sharing that key (its random directory name is not a secret) —
+  stage on `composio-user`, or give the channel its own Composio key, when that matters. The bytes are read from the SAME descriptor the confinement
+  check proved (O_NOFOLLOW + /proc/self/fd), bounded to the cap: the tool used to close that
+  descriptor and reopen the file by path, so a symlink swapped in by the container between proof
+  and read could have sent any file the daemon can read. Every error text is scrubbed of the key
+  and of long base64 runs before it reaches the model. A path outside the working folder answers `Staging refused:`;
+  anything that goes wrong after that answers `Staging failed:`, and the guide tells the model a
+  refusal is final (no copying the file in to get around it) and a failure is reported, not
+  worked around by pushing the bytes through a tool itself.
   → TEST-PLAN: Composio file staging.
 - **Temporary public file links (`create_public_file_link`).** For destinations that ingest by URL
   rather than by body, and for a person who simply wants a link. One file from the channel's own
