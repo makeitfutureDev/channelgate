@@ -2382,7 +2382,10 @@ are retired, bullet by bullet; everything else stands.
   is reaped by `ClientAlive` in about three minutes. Sessions are `ssh_sessions` rows and
   `ssh_session_start`/`ssh_session_end` events; refusals are `ssh_attach_refused` with the reason
   the developer saw. The image ships `openssh-server` (spec 1.4.0) and marks the `agent` account
-  key-only (`*`, not useradd's locked `!`). The root installer `scripts/install-ssh-access.sh`
+  key-only (`*`, not useradd's locked `!`). It carries no SSH host private key: the package's
+  post-install keys are deleted in the same build step that installs it (a later step would still
+  ship them in that layer), because `cg-sshd` never reads them — it gives each channel its own
+  ed25519 key and runs `sshd -h` on it. The root installer `scripts/install-ssh-access.sh`
   creates the account, the group-shared attach directory (`/var/lib/channelgate-ssh`, overridable
   with `CHANNELGATE_SSH_DIR`) and the sshd drop-in; the daemon binds its socket the minute the
   directory exists, no restart needed. The installer also asks sshd (`sshd -T -C`) whether its

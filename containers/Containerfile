@@ -45,9 +45,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ~/.local, which is inside the per-channel HOME volume and therefore permanent.
 # openssh-server is NOT a listening service: cg-sshd runs `sshd -i` on stdio, unprivileged, for one
 # gateway-brokered SSH attach session at a time (docs/SSH-ACCESS.md). The container never listens.
+# Its post-install generates /etc/ssh/ssh_host_*_key. Nothing uses them — cg-sshd makes each
+# channel its own host key and the generated sshd_config pins HostKey to it — but a built image
+# would carry those private keys, identical across every channel on the host and public in a
+# release archive. They are deleted in THIS step: removed in a later RUN they would still ship in
+# this layer.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl ffmpeg git jq less openssh-client openssh-server pipx postgresql-client procps python3 python3-pip python3-venv ripgrep tini unzip \
+ && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \

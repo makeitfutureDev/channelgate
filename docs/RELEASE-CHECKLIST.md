@@ -6,6 +6,14 @@
 > CI passed on the exact candidate and a live smoke ran for Claude and Qwen. The owner released it
 > without Codex live acceptance (the Codex account was usage-limited until 2026-09-24) and without
 > the full live campaign; both remain open for the next release, see RELEASE-ACCEPTANCE.md.
+> 0.5.5 was published on 2026-09-24 by explicit owner decision after the full automated gate and
+> CI passed on the exact candidate. It exists to produce the first signed release artifacts since
+> 0.5.2: the `v0.5.3` Release evidence run failed its artifact scan (seven findings in the image
+> archive, nothing published), and `v0.5.4` carries the same image plus Codex 0.156.1's two new
+> matches. Three findings were real, unused SSH host private keys from `openssh-server`'s
+> post-install, now deleted in the install step. The other four were reviewed against their
+> re-downloaded official archives and catalogued; see TEST-PLAN.md → "Release image evidence
+> findings after the 0.5.3 image". `v0.5.3` and `v0.5.4` remain tags without release artifacts.
 > 0.5.4 was published on 2026-09-24 by explicit owner decision after the full automated gate and
 > CI passed on the exact candidate. It carries one change on top of 0.5.3: Claude Opus 5.5 and
 > GPT-6 Sol / Luna reach the gateway (Claude Code `2.1.281`, Codex CLI `0.156.1`, the Codex rate

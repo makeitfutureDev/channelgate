@@ -6895,6 +6895,36 @@ acceptance gates; no production restart or external message was performed by the
   entire paths, packages, credential patterns or repository/history scans.
 - Candidate execution remains pending; this regression does not waive the separate live QA campaign.
 
+### Release image evidence findings after the 0.5.3 image (2026-09-24)
+
+The `v0.5.3` Release evidence run failed its artifact scan with seven findings in
+`runtime-image.tar.gz`. Each was traced to its upstream bytes with values never printed (matches
+located and compared by sha256 only):
+
+- **Three `Private key block`** — `/etc/ssh/ssh_host_{rsa,ecdsa,ed25519}_key`, written by
+  `openssh-server`'s post-install. Real keys, never read (`cg-sshd` runs `sshd -h` on the channel's
+  own key). Fixed at the source, not waived: deleted in the install step itself.
+- **Two `GitHub token` in GitHub Copilot's native runtime** bundled with the official VS Code server
+  (`extensions/copilot/.../prebuilds/linux-x64/runtime.node`). A `ghs_` prefix constant packed
+  against adjacent identifier literals: no digits, unbroken 27- and 40-letter lowercase runs.
+  Evidence: both VS Code server archives re-downloaded and matching their `versions.json` pins,
+  and the member byte-identical in both and to the installed file.
+- **One `GitHub token` and one `OpenAI project key` in Codex CLI `0.156.1`** (new with the 0.5.4 pin
+  bump). Each begins with a prefix literal in Codex's credential broker at `rust-v0.156.1` —
+  `providers/github.rs:14` and `providers/openai.rs:13` — followed by adjacent data. The only
+  longer `sk-proj-` literal in non-test source sits in a `#[cfg(test)]` block and is below the
+  scanner's length threshold. Evidence: the npm archive re-downloaded; its member is
+  byte-identical to the installed binary.
+
+- [x] Automated: `node --test test/container-image.test.js` — the step that installs
+      `openssh-server` deletes `/etc/ssh/ssh_host_*_key` and `.pub`, and `cg-sshd` still runs
+      `sshd -h` on the channel key. Moving the delete into a later step fails the test.
+- [x] Local image re-scan with the release scanner's patterns, complete-PEM rule, digest and the
+      updated catalog over `/opt /usr /etc /root` of a built 0.5.4 image: 31 matches waived, and the
+      only unreviewed findings are the three host keys the fixed build no longer produces.
+- [ ] Candidate gate: the next exact-tag Release evidence run must pass its artifact scan. `v0.5.3`
+      and `v0.5.4` stay tags without release artifacts.
+
 ### Optional MCP effective-definition regression (2026-09-08)
 
 - Automated: `node --test test/mcp-discovery.test.js` uses real-shaped native status (tools/auth,
