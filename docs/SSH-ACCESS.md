@@ -106,7 +106,11 @@ brokered sessions — reconnect.
 ### `claude` in a session is a chat turn's Claude
 
 Before your shell starts, the daemon prepares the session the way it prepares a turn in that
-channel, and refreshes it every 20 minutes while any session is open:
+channel, refreshes it every 20 minutes while any session is open, and re-prepares it within a
+second of a change that concerns it (a secret or MCP selection added to the channel, an
+organization secret, your own secrets or Composio token). A `claude` that is already running
+keeps the environment and servers it started with, like any process — start a new `claude` to
+pick a change up; the SSH connection itself needs no reconnect. What a session gets:
 
 - **The channel's tool policy and MCP allowlist** — the same lockdown file every turn runs with.
 - **The same MCP servers a turn gets:** the gateway's control tools (memory, schedules, skills,

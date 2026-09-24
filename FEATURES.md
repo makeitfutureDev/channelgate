@@ -2345,7 +2345,11 @@ are retired, bullet by bullet; everything else stands.
   environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. The files are per
   developer under `<artifacts>/ssh/users/<id>/`, chosen by the `CG_SSH_USER` name sshd sets from
   the developer's authorized_keys line (`PermitUserEnvironment CG_SSH_USER`), and removed when
-  their last session ends. The login is an ACCESS-ONLY `.credentials.json` in the channel's config
+  their last session ends, refreshed every 20 minutes AND within `CONFIG_REFRESH_DEBOUNCE_MS` of a
+  configuration write that concerns the session (`src/config/change-events.js`: every channel-meta,
+  user and organization-secret write emits after it commits; the broker re-prepares the sessions
+  of that channel, that developer, or all of them, coalesced per session). The login is an
+  ACCESS-ONLY `.credentials.json` in the channel's config
   dir plus the operator's account record — never a refresh token — written through the relay and
   removed with the channel's last session, so an interactive `claude` shows "Claude Max account",
   the organization, the usage windows and the plan's default model instead of "Claude API".

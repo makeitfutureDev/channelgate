@@ -211,6 +211,34 @@ test("two sessions of one developer share their files; the first hang-up keeps t
   await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, deps, authorizeOptions });
 });
 
+test("a configuration write that concerns a live session re-prepares it at once; an unrelated one does not", async () => {
+  const { emitConfigChange } = await import("../src/config/change-events.js");
+  const { socket, line } = await attach({ v: 1, key: ED25519, channel: entry.slug, client: "laptop" });
+  assert.equal(line.ok, true);
+  const wait = () => new Promise((resolve) => setTimeout(resolve, broker.CONFIG_REFRESH_DEBOUNCE_MS + 120));
+  const base = prepared.length;
+  emitConfigChange("channel-meta", { slug: "some-other-channel" });
+  emitConfigChange("user", { userId: "U_SOMEONE_ELSE" });
+  await wait();
+  assert.equal(prepared.length, base, "another channel's or another developer's change is not this session's");
+  emitConfigChange("channel-meta", { slug: entry.slug });
+  emitConfigChange("channel-meta", { slug: entry.slug });
+  emitConfigChange("channel-meta", { slug: entry.slug });
+  await wait();
+  assert.equal(prepared.length, base + 1, "a burst of saves to THIS channel is one refresh");
+  emitConfigChange("org-env", {});
+  await wait();
+  assert.equal(prepared.length, base + 2, "the organization's secrets concern every session");
+  emitConfigChange("user", { userId: DEV });
+  await wait();
+  assert.equal(prepared.length, base + 3, "the developer's own record concerns their session");
+  socket.end();
+  await settle();
+  emitConfigChange("channel-meta", { slug: entry.slug });
+  await wait();
+  assert.equal(prepared.length, base + 3, "an ended session is never re-prepared");
+});
+
 test("refusals name the remedy and leave no lease, no session and no exec behind", async () => {
   const before = children.length;
   const cases = [

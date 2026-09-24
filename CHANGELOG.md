@@ -27,7 +27,10 @@ product overview.
   load. Claude reads the gateway's login from an access-only file (no refresh token, removed when
   the channel's last session ends) and shows it as the account it is: "Claude Max account", the
   organization, the usage windows and the plan's default model. Everything is refreshed every 20
-  minutes while a session is open; "show SSH access" says what a session gets.
+  minutes while a session is open — and re-prepared within a second when a secret or MCP
+  selection is added to the channel, an organization secret changes, or your own secrets or
+  Composio token change, so the next `claude` you start in the session has it (a running one
+  keeps what it started with, like any process); "show SSH access" says what a session gets.
 
 - Stop Claude Code updating itself inside a channel. Its interactive updater had installed a
   newer copy into the channel's `~/.npm-global/bin`, which is first on the image PATH — so that
