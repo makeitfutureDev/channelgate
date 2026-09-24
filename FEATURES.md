@@ -2317,7 +2317,10 @@ are retired, bullet by bullet; everything else stands.
   socket; the daemon authorizes key → user → channel → grant → not operator-home-mounted, takes a
   container LEASE for the session's whole life, writes the in-container `sshd_config` +
   `authorized_keys` into the artifact dir, refreshes the same Claude access-token relay VS Code
-  attach uses, and runs `exec -i <container> cg-sshd` — an unprivileged inetd-mode sshd on that
+  attach uses (which also marks Claude's first-run onboarding done in
+  `$CLAUDE_CONFIG_DIR/.claude.json`, merge-only, so an interactive `claude` opens on the relayed
+  login instead of the theme picker and login screen; folder trust stays the developer's
+  choice), and runs `exec -i <container> cg-sshd` — an unprivileged inetd-mode sshd on that
   stream, inside the container, with which the developer's own client completes a second
   handshake. So the pty, the shell, sftp, VS Code Remote-SSH and port forwards all live in the
   container's namespaces; no container and no extra host port ever listens; the channel is named

@@ -5230,6 +5230,17 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       / `ssh_session_end` rows in the Audit feed, `show SSH access` listed the live session.
 - [ ] LIVE (Claude, Airtable CTR-32): inside that SSH session, `claude -p 'Reply with exactly SSH-CLAUDE-OK'`
       answers on the gateway operator's relayed login without any `claude login`.
+- [x] Unit: the editor/SSH relay also records Claude's first-run onboarding in
+      `$CLAUDE_CONFIG_DIR/.claude.json` (`/home/agent/.claude/.claude.json`, not `~/.claude.json`),
+      exec'd as the container user right after the wrapper; a failed write never blocks the attach.
+      Run against real files, the seed creates `{hasCompletedOnboarding:true, theme:"dark"}` 0600 on
+      a fresh channel, keeps a theme the developer chose, merges without touching other keys or
+      per-folder trust, leaves an already-onboarded file byte-for-byte unchanged, and leaves corrupt
+      or non-object JSON exactly as it was (automated: `test/vscode-container.test.js`).
+- [ ] LIVE (Claude, editor onboarding): in a channel whose engine sessions never ran an interactive
+      Claude, open a fresh SSH (or VS Code Remote-SSH) session and run plain `claude`. Pass: no
+      theme picker and no login screen — at most the per-folder "trust this folder" prompt, then the
+      main screen names the relayed login and a prompt answers.
 - [ ] LIVE (Codex, Airtable CTR-33): repeat in `cg-testing-codex-bash`; `codex exec 'Reply with exactly
       SSH-CODEX-OK'` answers on the shared sign-in without another login.
 - [ ] LIVE (engine-independent, refusals, Airtable CTR-34): an ungranted user's `ssh` prints "you have no SSH grant";

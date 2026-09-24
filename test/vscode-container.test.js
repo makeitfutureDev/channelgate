@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,7 +9,9 @@ const scratch = mkdtempSync(path.join(os.tmpdir(), "cg-vscode-test-"));
 process.env.CHANNELGATE_DIR = path.join(scratch, "gateway");
 const { createEditorLease, activeEditorLeases } = await import("../src/runtimes/container/editor-lease.js");
 const { createContainerReaper } = await import("../src/runtimes/container/reaper.js");
-const { vscodeAttachedContainerUri, installVscodeClaudeRelay, launchVscodeContainer } = await import("../src/runtimes/container/vscode.js");
+const {
+  vscodeAttachedContainerUri, installVscodeClaudeRelay, launchVscodeContainer, CLAUDE_ONBOARDING_SEED, CLAUDE_ONBOARDING_FILE,
+} = await import("../src/runtimes/container/vscode.js");
 
 test.after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -82,4 +85,66 @@ test("launcher holds an external lease until code --wait exits and removes the t
   assert.equal(codeSawLease, true);
   assert.equal(activeEditorLeases(t).length, 0);
   assert.throws(() => readFileSync(path.join(t.artifactDir, "vscode", "claude-token")), /ENOENT/);
+});
+
+// Live finding (0.5.3 acceptance): SSH and VS Code Remote-SSH into a channel worked, but the first
+// interactive `claude` opened the theme picker and a login screen — "not authenticated" — although
+// `claude -p` in the same shell answered. The image sets CLAUDE_CONFIG_DIR, so Claude's state is
+// $CLAUDE_CONFIG_DIR/.claude.json, and headless engine turns never complete onboarding there.
+const seed = (file) => execFileSync(process.execPath, ["-e", CLAUDE_ONBOARDING_SEED, file], { encoding: "utf8" });
+
+test("the relay records Claude onboarding in the file Claude actually reads, after the wrapper", async () => {
+  assert.equal(CLAUDE_ONBOARDING_FILE, "/home/agent/.claude/.claude.json", "CLAUDE_CONFIG_DIR/.claude.json, not ~/.claude.json");
+  const calls = [];
+  await installVscodeClaudeRelay(target("seed"), "podman", {
+    resolveToken: async () => ({ token: "test-oauth-value", source: "operator", expiresAt: 1 }),
+    runCommand: async (bin, args, options) => calls.push({ bin, args, options }),
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].args.slice(0, 4), ["exec", "cg-seed", "node", "-e"], "run as the container's own user, like the wrapper");
+  assert.equal(calls[1].args.at(-1), CLAUDE_ONBOARDING_FILE);
+});
+
+test("a failed onboarding write never blocks the attach", async () => {
+  let n = 0;
+  const result = await installVscodeClaudeRelay(target("seedfail"), "podman", {
+    resolveToken: async () => ({ token: "test-oauth-value", source: "operator", expiresAt: 1 }),
+    runCommand: async () => { if (++n === 2) throw new Error("node missing"); },
+  });
+  assert.equal(result.source, "operator");
+});
+
+test("the seed marks onboarding done on a fresh channel, and keeps a theme the developer chose", () => {
+  const dir = mkdtempSync(path.join(scratch, "onboard-"));
+  const fresh = path.join(dir, "fresh", ".claude.json");
+  seed(fresh);
+  assert.deepEqual(JSON.parse(readFileSync(fresh, "utf8")), { hasCompletedOnboarding: true, theme: "dark" });
+  assert.equal(statSync(fresh).mode & 0o777, 0o600);
+  const chosen = path.join(dir, "chosen.json");
+  writeFileSync(chosen, JSON.stringify({ theme: "light-daltonized", numStartups: 4 }));
+  seed(chosen);
+  assert.deepEqual(JSON.parse(readFileSync(chosen, "utf8")), { theme: "light-daltonized", numStartups: 4, hasCompletedOnboarding: true });
+});
+
+test("the seed merges into the channel's Claude state and never replaces or repairs it", () => {
+  const dir = mkdtempSync(path.join(scratch, "onboard-"));
+  const state = path.join(dir, "state.json");
+  const existing = { projects: { "/work": { hasTrustDialogAccepted: false, allowedTools: ["Bash"] } }, userID: "abc" };
+  writeFileSync(state, JSON.stringify(existing));
+  seed(state);
+  const merged = JSON.parse(readFileSync(state, "utf8"));
+  assert.deepEqual(merged.projects, existing.projects, "folder trust is NOT pre-accepted; other state untouched");
+  assert.equal(merged.userID, "abc");
+  assert.equal(merged.hasCompletedOnboarding, true);
+  // Already done: the file is not rewritten at all.
+  const before = readFileSync(state, "utf8");
+  seed(state);
+  assert.equal(readFileSync(state, "utf8"), before);
+  // Corrupt or non-object JSON is left exactly as it is, never "fixed".
+  for (const body of ["{not json", "[1,2]", "null"]) {
+    const bad = path.join(dir, `bad-${Math.random()}.json`);
+    writeFileSync(bad, body);
+    seed(bad);
+    assert.equal(readFileSync(bad, "utf8"), body, `left alone: ${body}`);
+  }
 });
