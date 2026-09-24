@@ -38,6 +38,11 @@ export const CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX = "cg_channel_settings_cloud_pag
 export const CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID = "cg_channel_settings_skills_manage";
 export const CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX = "cg_channel_settings_skill_toggle_";
 export const CHANNEL_SETTINGS_SKILL_PAGE_PREFIX = "cg_channel_settings_skill_page_";
+// The template is one value out of a list, so it is picked in place like the runtime selects.
+// The EDIT/CALLBACK pair below is the retired pushed editor, kept only so a Settings view (or a
+// pushed modal) opened before the inline control shipped still resolves — the button repaints the
+// page instead of pushing, and the callback still saves a modal that was already open.
+export const CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID = "cg_channel_settings_template_select";
 export const CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID = "cg_channel_settings_template_edit";
 export const CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID = "cg_channel_settings_template_form";
 export const CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID = "cg_channel_settings_secrets_manage";
@@ -366,9 +371,25 @@ function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false } = {}
 
 function skillsBlocks(snapshot = {}, state = {}) {
   const skills = snapshot.skills || {};
+  // One value out of a known list → a dropdown that saves on change, not a button that opens a
+  // second modal to show the same dropdown. With no templates defined there is nothing to pick,
+  // so the row stays a plain read-out that says where templates come from.
+  const templates = Array.isArray(skills.templates) ? skills.templates : [];
   return [
-    fieldBlock("Skill Template", skills.template ? inlineCode(skills.template) : "_none_"),
-    { type: "context", elements: [mrkdwn("A reusable set of skills for this channel. Use Change Template below to choose a different set.")] },
+    ...(templates.length
+      ? [selectRow({
+        label: "Skill Template",
+        actionId: CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
+        options: [
+          { label: "No template", value: SETTINGS_NONE_VALUE, description: "Keep only channel and organization grants" },
+          ...templates.map((entry) => ({ label: entry.name || entry.slug, value: entry.slug, description: entry.description || "" })),
+        ],
+        initialValue: skills.templateSlug || SETTINGS_NONE_VALUE,
+      })]
+      : [fieldBlock("Skill Template", skills.template ? inlineCode(skills.template) : "_none_")]),
+    { type: "context", elements: [mrkdwn(templates.length
+      ? "A reusable set of skills for this channel. Changing it saves immediately and applies to the next turn."
+      : "A reusable set of skills for this channel. Admins create templates in the admin UI → Skills.")] },
     fieldBlock("Channel Skills", listLabel(skills.additional)),
     { type: "context", elements: [mrkdwn("Added directly to this channel. Use Manage Channel Skills below to add or remove them.")] },
     fieldBlock("Channel Skills Including Template", listLabel(skills.channel)),
@@ -381,7 +402,6 @@ function skillsBlocks(snapshot = {}, state = {}) {
       type: "actions",
       elements: [
         button(CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, "Manage Channel Skills", state, "skills_manage", {}, { style: "primary" }),
-        button(CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, "Change Template", state, "template_edit"),
       ],
     },
     { type: "context", elements: [mrkdwn("Personal skill grants are user-specific, so they are not channel settings and are not included here.")] },
@@ -805,6 +825,8 @@ export function buildCatalogManagerView(items = [], state = {}, {
   };
 }
 
+// Retired: the template is picked in place on the Skills page now. Kept so a modal that was
+// already pushed when the inline control shipped still renders and submits.
 export function buildTemplateEditorView(templates = [], current = "", state = {}, { channelName = "" } = {}) {
   const ordered = [...templates].sort((a, b) => Number(b.slug === current) - Number(a.slug === current));
   const options = [

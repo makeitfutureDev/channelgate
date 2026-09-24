@@ -393,8 +393,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Skills labels each source as Skill Template, Channel Skills, Channel Skills Including Template,
   Org Skills, or All Shared Skills, with directions to the corresponding controls. Org Skills
   explicitly require admins to add/remove them in the admin UI; both combined lists explicitly
-  explain that their summaries update automatically when their source groups change. Skills
-  supports direct grants and live template assignment; Secrets lists all supported variables with
+  explain that their summaries update automatically when their source groups change. The **Skill
+  Template** is one value out of a known list, so it is a dropdown ON the page that saves the
+  moment it is picked — not a button that pushed a second modal to show the same dropdown. With no
+  templates defined the row stays a read-out that points at the admin UI. A Settings view opened
+  before the control moved repaints onto the page instead of pushing, and a template modal that
+  was already open still saves. Skills supports direct grants and live template assignment; Secrets lists all supported variables with
   a confirmed Remove button on each row and Add/update directly on the tab. Entry forms return
   to the refreshed parent tab after saving, without duplicate manager pages or growing modal stacks.
   Deletion persists and refreshes the same page without waiting for folder/skill provisioning. Inherited and template grants are labelled and cannot be removed from

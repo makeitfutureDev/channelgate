@@ -55,7 +55,7 @@ import {
 } from "./secret-explorer.js";
 import {
   buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
-  buildConnectionsEditorView, buildTemplateEditorView, maskedCredential,
+  buildConnectionsEditorView, maskedCredential,
   parseActionValue as parseChannelSettingsActionValue, editorMetadata, parseEditorMetadata, parseSettingsMetadata,
   readConnectionsForm, readTemplateForm, assertVpnActionBinding, runtimeSelectTarget,
   normalizeTab as normalizeSettingsTab, settingsCommand,
@@ -70,7 +70,8 @@ import {
   CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, CHANNEL_SETTINGS_SKILL_PAGE_PREFIX,
   CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX, CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID,
-  CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, SETTINGS_DEFAULT_VALUE, SETTINGS_NONE_VALUE,
+  CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
+  SETTINGS_DEFAULT_VALUE, SETTINGS_NONE_VALUE,
   CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_URL_BLOCK_ID,
   CONNECTION_TOOLBOX_BLOCK_ID, TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
@@ -620,6 +621,10 @@ function channelSettingsSnapshot(meta = {}) {
     },
     skills: {
       template: template?.name || effective.skillTemplate || "",
+      // The slug the picker selects by, and the catalog it picks from — the page edits the
+      // template in place, so the options have to travel with the snapshot.
+      templateSlug: template?.slug || effective.skillTemplate || "",
+      templates: listTemplateSummaries(),
       additional: effective.skills || [],
       channel: channelTier.skills || [],
       organization: organization.skills || [],
@@ -1642,11 +1647,29 @@ async function connectAndWire(app) {
         return;
       }
 
+      // One template picked in place, exactly like the runtime dropdowns: no second modal, and the
+      // pick is saved before the page repaints. The value is read only from the select that
+      // dispatched; everything else in the record is left alone.
+      if (actionId === CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID) {
+        const picked = String(action?.selected_option?.value || SETTINGS_NONE_VALUE);
+        const assigned = await assignTemplateToChannel(entry.slug, picked === SETTINGS_NONE_VALUE ? "" : picked);
+        if (!assigned) throw new Error("That skill template is no longer available.");
+        meta = await getChannelMeta(entry.slug);
+        await ensureChannelFolder(entry.slug, effectiveMeta(meta));
+        await logEvent("skill_template_assigned", { channel: state.channelId, slug: entry.slug, template: assigned.template?.slug || "none", author: clicker });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "skills" }, userIsAdmin, {
+          tab: "skills",
+          notice: assigned.template
+            ? `✅ This channel now follows the *${assigned.template.name}* skill template.`
+            : "✅ The channel no longer follows a skill template.",
+        }), { guardHash: false });
+        return;
+      }
+
       if (actionId === CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID) {
-        await client.views.push({
-          trigger_id: requireTrigger(),
-          view: buildTemplateEditorView(listTemplateSummaries(), meta.skillTemplate || "", state, { channelName: entry.name }),
-        });
+        // Compatibility with a Settings view opened before the template dropdown moved onto the
+        // page: repaint it, and the control is simply there.
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "skills" }, userIsAdmin, { tab: "skills" }));
         return;
       }
 
