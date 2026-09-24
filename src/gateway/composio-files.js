@@ -22,8 +22,9 @@
 // precedence the MCP config uses, spent against Composio over TLS, and never returned to the
 // model, written to the workspace or logged. The only thing that crosses back is the opaque
 // `s3key`.
-import { createHash } from "node:crypto";
-import { open, stat } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import path from "node:path";
 
 import { guessMimeType } from "../util/mime.js";
@@ -82,16 +83,30 @@ function failure(step, status, body) {
 // in chunks, because one request above ~5 MB of base64 is rejected (413); the sandbox keeps its
 // files for the life of one MCP session, so the chunks append to one file and a final call checks
 // the md5 before minting the key. That makes this route slower than the REST one, hence its own,
-// lower size cap.
+// lower size cap and an overall deadline.
+//
+// The sandbox copy is deliberately NOT deleted afterwards: the s3key IS that mounted file's
+// storage, and removing the file makes the upload fail with "the file does not exist in storage"
+// (verified live). It lives in the same identity's own Composio sandbox as any workbench file. The
+// MCP session itself is ended (HTTP DELETE) — that does not affect the key (also verified).
 export const COMPOSIO_WORKBENCH_STAGE_MAX_BYTES = 25 * 1024 * 1024;
 export const COMPOSIO_WORKBENCH_CHUNK_BYTES = 768 * 1024;
+export const COMPOSIO_WORKBENCH_DEADLINE_MS = 10 * 60_000;
 const WORKBENCH_TOOL = "COMPOSIO_REMOTE_WORKBENCH";
-const WORKBENCH_TIMEOUT_MS = 120_000;
+const WORKBENCH_CALL_TIMEOUT_MS = 120_000;
 const STAGE_MARKER = "CGSTAGE";
 
-/** A Composio consumer (hosted-MCP) key, as opposed to a project API key the REST API accepts. */
+/**
+ * A Composio PROJECT API key — the only kind the REST upload accepts. Anything else takes the
+ * workbench route: the tokens a gateway stores are consumer keys, and src/util/redact.js notes
+ * Composio tokens carry no guaranteed prefix, so the unknown case goes where stored tokens work.
+ */
+export function isProjectApiKey(key) {
+  return /^ak_/.test(String(key || ""));
+}
+
 export function isConsumerKey(key) {
-  return /^ck_/.test(String(key || ""));
+  return Boolean(String(key || "")) && !isProjectApiKey(key);
 }
 
 // The name becomes part of Python source, so it is reduced to characters that cannot end the
@@ -102,28 +117,46 @@ export function sandboxFileName(name) {
   return cleaned || "file";
 }
 
-function mcpClient({ url, key, fetchImpl }) {
+// Every message that can reach the model passes through here. The daemon never writes the key into
+// an error itself, but an upstream body can echo it back; and a sandbox traceback can quote a line
+// of the base64 the daemon sent. Neither belongs in a reply.
+export function scrubStagingText(text, key = "") {
+  let out = String(text || "");
+  if (key && String(key).length >= 6) out = out.split(String(key)).join("[redacted]");
+  return out.replace(/[A-Za-z0-9+/=]{48,}/g, "[data]");
+}
+
+function mcpClient({ url, key, fetchImpl, deadline }) {
   let session = "";
   let nextId = 1;
-  async function rpc(method, params, { notify = false } = {}) {
-    const body = notify ? { jsonrpc: "2.0", method, params } : { jsonrpc: "2.0", id: nextId++, method, params };
-    const response = await fetchImpl(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "x-consumer-api-key": key,
-        ...(session ? { "mcp-session-id": session } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(WORKBENCH_TIMEOUT_MS),
-    });
-    const minted = response.headers?.get?.("mcp-session-id");
-    if (minted) session = minted;
-    const raw = await response.text().catch(() => "");
-    if (notify) return null;
+  const signal = () => AbortSignal.any([AbortSignal.timeout(WORKBENCH_CALL_TIMEOUT_MS), deadline]);
+  async function post(body) {
+    try {
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          "x-consumer-api-key": key,
+          ...(session ? { "mcp-session-id": session } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: signal(),
+      });
+      const minted = response.headers?.get?.("mcp-session-id");
+      if (minted) session = minted;
+      const raw = await response.text();
+      return { response, raw };
+    } catch (error) {
+      if (error?.name === "TimeoutError" || error?.name === "AbortError") throw new Error("the Composio workbench timed out");
+      throw error;
+    }
+  }
+  async function rpc(method, params) {
+    const id = nextId++;
+    const { response, raw } = await post({ jsonrpc: "2.0", id, method, params });
     if (!response.ok) throw failure(`workbench ${method}`, response.status, raw);
-    return parseRpc(raw);
+    return parseRpc(raw, id);
   }
   return {
     async open() {
@@ -133,34 +166,48 @@ function mcpClient({ url, key, fetchImpl }) {
         clientInfo: { name: "channelgate-stage", version: "1" },
       });
       if (init?.error) throw new Error(`Composio workbench refused the session: ${rpcMessage(init.error)}`);
-      await rpc("notifications/initialized", {}, { notify: true });
+      await post({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
     },
     async run(code) {
       const reply = await rpc("tools/call", { name: WORKBENCH_TOOL, arguments: { code_to_execute: code, thought: "Stage a channel file for a Composio tool." } });
       if (reply?.error) throw new Error(`Composio workbench call failed: ${rpcMessage(reply.error)}`);
       return workbenchOutput(reply);
     },
+    async close() {
+      if (!session) return;
+      await fetchImpl(url, { method: "DELETE", headers: { "x-consumer-api-key": key, "mcp-session-id": session }, signal: AbortSignal.timeout(10_000) }).catch(() => {});
+    },
   };
 }
 
-// A JSON-RPC reply arrives either as plain JSON or as one or more server-sent events; the result
-// is the last event that carries an id, a result or an error.
-function parseRpc(raw) {
+// A JSON-RPC reply arrives either as plain JSON or as server-sent events. Only the message that
+// answers THIS request counts: same id, and no `method` (a server-to-client request such as a
+// ping also carries an id). An event's data may span several `data:` lines.
+function parseRpc(raw, id) {
   const text = String(raw || "");
-  const events = text.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).filter(Boolean);
-  for (let i = events.length - 1; i >= 0; i--) {
+  const candidates = [];
+  if (/^\s*[[{]/.test(text)) {
     try {
-      const message = JSON.parse(events[i]);
-      if (message.id !== undefined || message.result || message.error) return message;
+      const parsed = JSON.parse(text);
+      candidates.push(...(Array.isArray(parsed) ? parsed : [parsed]));
     } catch {
-      /* not JSON — keep looking */
+      /* fall through to SSE */
     }
   }
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error("Composio workbench returned an unreadable response");
+  if (!candidates.length) {
+    for (const event of text.split(/\r?\n\r?\n/)) {
+      const data = event.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).replace(/^ /, "")).join("\n");
+      if (!data) continue;
+      try {
+        candidates.push(JSON.parse(data));
+      } catch {
+        /* not JSON — skip */
+      }
+    }
   }
+  const match = candidates.find((message) => message && message.id === id && !message.method);
+  if (!match) throw new Error("the Composio workbench returned no answer to the request");
+  return match;
 }
 
 function rpcMessage(error) {
@@ -169,9 +216,10 @@ function rpcMessage(error) {
 
 // The tool's text content is itself JSON (`{ data: { stdout, error }, successful }`). Return the
 // sandbox's stdout, or throw with the sandbox's own error so a Python failure is not mistaken for
-// an empty success.
+// an empty success. An MCP-level tool error (`isError`) is a failure whatever its text.
 function workbenchOutput(reply) {
   const text = (reply?.result?.content || []).map((part) => part?.text || "").join("\n");
+  if (reply?.result?.isError) throw new Error(`Composio workbench error: ${text.slice(0, 200) || "the tool reported a failure"}`);
   let parsed = null;
   try {
     parsed = JSON.parse(text);
@@ -198,56 +246,85 @@ export async function stageViaWorkbench({
   md5,
   fetchImpl = fetch,
   chunkBytes = COMPOSIO_WORKBENCH_CHUNK_BYTES,
+  deadlineMs = COMPOSIO_WORKBENCH_DEADLINE_MS,
 } = {}) {
   if (!mcpUrl) throw new Error("no Composio MCP URL is configured for workbench staging");
-  const client = mcpClient({ url: mcpUrl, key: consumerKey, fetchImpl });
-  await client.open();
-  // A fresh directory per stage, so two stages in one sandbox can never append to each other.
-  const target = `/mnt/files/channelgate-stage/${createHash("md5").update(`${md5}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 16)}/${sandboxFileName(name)}`;
-  const step = Math.max(1, Math.floor(chunkBytes));
-  for (let offset = 0, first = true; offset < bytes.length || first; offset += step, first = false) {
-    const chunk = bytes.subarray(offset, offset + step).toString("base64");
-    await client.run(
-      "import base64, os\n" +
-      `os.makedirs(os.path.dirname('${target}'), exist_ok=True)\n` +
-      `with open('${target}', '${first ? "wb" : "ab"}') as handle:\n` +
-      `    handle.write(base64.b64decode('${chunk}'))\n`,
+  const client = mcpClient({ url: mcpUrl, key: consumerKey, fetchImpl, deadline: AbortSignal.timeout(deadlineMs) });
+  try {
+    await client.open();
+    // A fresh directory per stage, so two stages in one sandbox can never append to each other.
+    const target = `/mnt/files/channelgate-stage/${randomBytes(8).toString("hex")}/${sandboxFileName(name)}`;
+    const step = Math.max(1, Math.floor(chunkBytes));
+    for (let offset = 0, first = true; offset < bytes.length || first; offset += step, first = false) {
+      const chunk = bytes.subarray(offset, offset + step).toString("base64");
+      await client.run(
+        "import base64, os\n" +
+        `os.makedirs(os.path.dirname('${target}'), exist_ok=True)\n` +
+        `with open('${target}', '${first ? "wb" : "ab"}') as handle:\n` +
+        `    handle.write(base64.b64decode('${chunk}'))\n`,
+      );
+      if (bytes.length === 0) break;
+    }
+    const output = await client.run(
+      "import hashlib, json\n" +
+      `data = open('${target}', 'rb').read()\n` +
+      `digest = hashlib.md5(data).hexdigest()\n` +
+      `key = get_mount_file_s3_key('${target}') if digest == '${md5}' else None\n` +
+      "key = key[0] if isinstance(key, (tuple, list)) else key\n" +
+      `print('${STAGE_MARKER}' + json.dumps({'md5': digest, 'bytes': len(data), 's3key': key}))\n`,
     );
-    if (bytes.length === 0) break;
+    const line = String(output).split("\n").find((entry) => entry.startsWith(STAGE_MARKER));
+    if (!line) throw new Error("the Composio workbench did not report the staged file");
+    const report = JSON.parse(line.slice(STAGE_MARKER.length));
+    if (report.md5 !== md5 || report.bytes !== bytes.length) {
+      throw new Error("the file arrived in the Composio workbench incomplete; nothing was staged");
+    }
+    const s3key = String(report.s3key || "");
+    if (!s3key) throw new Error("the Composio workbench returned no storage key");
+    return s3key;
+  } finally {
+    await client.close();
   }
-  const output = await client.run(
-    "import hashlib, json\n" +
-    `data = open('${target}', 'rb').read()\n` +
-    `digest = hashlib.md5(data).hexdigest()\n` +
-    `key = get_mount_file_s3_key('${target}') if digest == '${md5}' else None\n` +
-    "key = key[0] if isinstance(key, (tuple, list)) else key\n" +
-    `print('${STAGE_MARKER}' + json.dumps({'md5': digest, 'bytes': len(data), 's3key': key}))\n`,
-  );
-  const line = String(output).split("\n").find((entry) => entry.startsWith(STAGE_MARKER));
-  if (!line) throw new Error("the Composio workbench did not report the staged file");
-  const report = JSON.parse(line.slice(STAGE_MARKER.length));
-  if (report.md5 !== md5 || report.bytes !== bytes.length) {
-    throw new Error("the file arrived in the Composio workbench incomplete; nothing was staged");
+}
+
+// Read at most `limit` bytes from an already-open descriptor. The size is taken from the SAME
+// descriptor (never a second stat of a path), and the read stops one byte past the limit, so a file
+// that grows after the check can neither exceed the cap nor be swapped for another file.
+async function readBounded(handle, limit, consumer) {
+  const tooLarge = (size) => new Error(`file is ${size} bytes; the staging limit is ${limit}${consumer ? " with a Composio consumer key" : ""}`);
+  const info = await handle.stat();
+  if (!info.isFile()) throw new Error("only a regular file can be staged");
+  if (info.size > limit) throw tooLarge(info.size);
+  const parts = [];
+  let total = 0;
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  for (;;) {
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, total);
+    if (!bytesRead) break;
+    total += bytesRead;
+    if (total > limit) throw tooLarge(`more than ${limit}`);
+    parts.push(Buffer.from(buffer.subarray(0, bytesRead)));
   }
-  const s3key = String(report.s3key || "");
-  if (!s3key) throw new Error("the Composio workbench returned no storage key");
-  return s3key;
+  return Buffer.concat(parts, total);
 }
 
 /**
- * Stage one already-resolved absolute path into Composio storage.
+ * Stage one file into Composio storage.
  *
- * `absolutePath` must already have been confined to the channel's working folder by the caller —
- * this module does no path authorization of its own and must never be handed a model-supplied
- * path directly. `fetchImpl` is injectable so the tests can drive the whole three-step flow
- * without a network.
+ * Pass `handle` — the descriptor `openConfinedFile` proved to be inside the channel's working
+ * folder — and the bytes are read from THAT descriptor. Reopening the file by path (as this module
+ * once did) let a symlink swapped in between the proof and the read redirect the daemon, which runs
+ * unsandboxed, to any file the operator can read. `absolutePath` remains for direct callers and is
+ * opened with O_NOFOLLOW; this module does no path authorization of its own and must never be
+ * handed a model-supplied path. `fetchImpl` is injectable so the tests drive the whole flow.
  *
  * Returns the exact `FileUploadable` the Composio tool expects, plus `deduplicated` so the caller
- * can say whether bytes actually moved.
+ * can say whether bytes actually moved. Every error message is scrubbed of the key.
  */
 export async function stageFileForComposio({
   apiKey,
-  absolutePath,
+  handle = null,
+  absolutePath = "",
   toolSlug,
   toolkitSlug = "",
   filename = "",
@@ -257,69 +334,74 @@ export async function stageFileForComposio({
   maxBytes = COMPOSIO_STAGE_MAX_BYTES,
   workbenchMaxBytes = COMPOSIO_WORKBENCH_STAGE_MAX_BYTES,
   workbenchChunkBytes = COMPOSIO_WORKBENCH_CHUNK_BYTES,
+  workbenchDeadlineMs = COMPOSIO_WORKBENCH_DEADLINE_MS,
   fetchImpl = fetch,
 } = {}) {
   const key = String(apiKey || "");
-  if (!key) throw new Error("no Composio API key resolved for this identity");
-  const tool = normalizeSlug(toolSlug, "tool");
-  const toolkit = toolkitSlug ? normalizeSlug(toolkitSlug, "toolkit") : toolkitFromToolSlug(tool);
-  const name = String(filename || path.basename(absolutePath || "")).trim();
-  if (!name) throw new Error("the file to stage needs a name");
-
-  const consumer = isConsumerKey(key);
-  const limit = consumer ? Math.min(maxBytes, workbenchMaxBytes) : maxBytes;
-  const info = await stat(absolutePath);
-  if (!info.isFile()) throw new Error("only a regular file can be staged");
-  if (info.size > limit) throw new Error(`file is ${info.size} bytes; the staging limit is ${limit}${consumer ? " with a Composio consumer key" : ""}`);
-
-  // O_NOFOLLOW on the final open, for the same reason the download router uses it: the caller
-  // proved this path at lookup time, and a symlink swapped in between then and now must not
-  // redirect the read.
-  const handle = await open(absolutePath, "r");
-  let bytes;
   try {
-    bytes = await handle.readFile();
-  } finally {
-    await handle.close().catch(() => {});
+    return await stage();
+  } catch (error) {
+    throw new Error(scrubStagingText(error?.message || String(error), key));
   }
 
-  const type = String(mimetype || "").trim() || guessMimeType(name);
-  const md5 = createHash("md5").update(bytes).digest("hex");
+  async function stage() {
+    if (!key) throw new Error("no Composio API key resolved for this identity");
+    const tool = normalizeSlug(toolSlug, "tool");
+    const toolkit = toolkitSlug ? normalizeSlug(toolkitSlug, "toolkit") : toolkitFromToolSlug(tool);
+    const name = String(filename || path.basename(absolutePath || "")).trim();
+    if (!name) throw new Error("the file to stage needs a name");
 
-  if (consumer) {
-    const s3key = await stageViaWorkbench({ consumerKey: key, mcpUrl, bytes, name, md5, fetchImpl, chunkBytes: workbenchChunkBytes });
-    return { file: { name, mimetype: type, s3key }, bytes: bytes.length, deduplicated: false, toolkit, tool, route: "workbench" };
-  }
+    const consumer = isConsumerKey(key);
+    const limit = consumer ? Math.min(maxBytes, workbenchMaxBytes) : maxBytes;
+    let bytes;
+    if (handle) {
+      bytes = await readBounded(handle, limit, consumer);
+    } else {
+      const own = await open(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        bytes = await readBounded(own, limit, consumer);
+      } finally {
+        await own.close().catch(() => {});
+      }
+    }
 
-  const base = String(apiBase || "").trim().replace(/\/+$/, "") || composioApiBase();
+    const type = String(mimetype || "").trim() || guessMimeType(name);
+    const md5 = createHash("md5").update(bytes).digest("hex");
 
-  const requested = await fetchImpl(`${base}${COMPOSIO_UPLOAD_REQUEST_PATH}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": key },
-    body: JSON.stringify({ toolkit_slug: toolkit, tool_slug: tool, filename: name, mimetype: type, md5 }),
-  });
-  if (!requested.ok) throw failure("upload request", requested.status, await requested.text().catch(() => ""));
-  const grant = (await requested.json().catch(() => ({}))) || {};
-  const s3key = String(grant.key || grant.s3key || "");
-  if (!s3key) throw new Error("Composio returned no storage key for the upload request");
+    if (consumer) {
+      const s3key = await stageViaWorkbench({ consumerKey: key, mcpUrl, bytes, name, md5, fetchImpl, chunkBytes: workbenchChunkBytes, deadlineMs: workbenchDeadlineMs });
+      return { file: { name, mimetype: type, s3key }, bytes: bytes.length, deduplicated: false, toolkit, tool, route: "workbench" };
+    }
 
-  // Dedup hit: Composio already holds these exact bytes and mints no presigned URL for them.
-  const presigned = String(grant.new_presigned_url || grant.presigned_url || "");
-  if (presigned) {
-    const put = await fetchImpl(presigned, {
-      method: "PUT",
-      headers: { "Content-Type": type, "Content-Length": String(bytes.length) },
-      body: bytes,
+    const base = String(apiBase || "").trim().replace(/\/+$/, "") || composioApiBase();
+    const requested = await fetchImpl(`${base}${COMPOSIO_UPLOAD_REQUEST_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key },
+      body: JSON.stringify({ toolkit_slug: toolkit, tool_slug: tool, filename: name, mimetype: type, md5 }),
     });
-    if (!put.ok) throw failure("storage upload", put.status, await put.text().catch(() => ""));
-  }
+    if (!requested.ok) throw failure("upload request", requested.status, await requested.text().catch(() => ""));
+    const grant = (await requested.json().catch(() => ({}))) || {};
+    const s3key = String(grant.key || grant.s3key || "");
+    if (!s3key) throw new Error("Composio returned no storage key for the upload request");
 
-  return {
-    file: { name, mimetype: type, s3key },
-    bytes: bytes.length,
-    deduplicated: !presigned,
-    toolkit,
-    tool,
-    route: "rest",
-  };
+    // Dedup hit: Composio already holds these exact bytes and mints no presigned URL for them.
+    const presigned = String(grant.new_presigned_url || grant.presigned_url || "");
+    if (presigned) {
+      const put = await fetchImpl(presigned, {
+        method: "PUT",
+        headers: { "Content-Type": type, "Content-Length": String(bytes.length) },
+        body: bytes,
+      });
+      if (!put.ok) throw failure("storage upload", put.status, await put.text().catch(() => ""));
+    }
+
+    return {
+      file: { name, mimetype: type, s3key },
+      bytes: bytes.length,
+      deduplicated: !presigned,
+      toolkit,
+      tool,
+      route: "rest",
+    };
+  }
 }

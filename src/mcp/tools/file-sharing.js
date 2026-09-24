@@ -127,13 +127,13 @@ export function register(server, ctx) {
         } catch (error) {
           return text(`Staging refused: ${clean(error)}`);
         }
+        // Stage from the descriptor that was just PROVEN to be inside the folder — never reopen the
+        // file by path. The container can write this folder, so a path reopened after the proof
+        // could by then be a symlink into the operator's home, read by the unsandboxed daemon.
         handle = opened.handle;
-        await handle.close();
-        handle = null;
-
         const staged = await stageFileForComposio({
           apiKey: key,
-          absolutePath: opened.realPath,
+          handle,
           toolSlug: tool,
           filename: filename || opened.name,
           mimetype,
