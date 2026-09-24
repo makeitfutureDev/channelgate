@@ -80,15 +80,17 @@ function failure(step, status, body) {
 //
 // It still runs in the daemon, for the same reason as the REST route: the key never reaches the
 // model, and neither do the file's bytes. They cross as base64 inside the code the daemon sends,
-// in chunks, because one request above ~5 MB of base64 is rejected (413); the sandbox keeps its
-// files for the life of one MCP session, so the chunks append to one file and a final call checks
-// the md5 before minting the key. That makes this route slower than the REST one, hence its own,
-// lower size cap and an overall deadline.
+// in chunks, because one request above ~5 MB of base64 is rejected (413). All chunk calls go
+// through ONE MCP session, so they land in the same sandbox and append to one file; a final call
+// checks the md5 before minting the key. That makes this route slower than the REST one, hence its
+// own, lower size cap and an overall deadline.
 //
 // The sandbox copy is deliberately NOT deleted afterwards: the s3key IS that mounted file's
 // storage, and removing the file makes the upload fail with "the file does not exist in storage"
-// (verified live). It lives in the same identity's own Composio sandbox as any workbench file. The
-// MCP session itself is ended (HTTP DELETE) — that does not affect the key (also verified).
+// (verified live). Ending the MCP session (HTTP DELETE) does not affect the file or the key (also
+// verified). So the copy stays in that identity's Composio file storage — and on `composio-agent`
+// backed by the organization key, that storage is shared by every conversation using the same
+// key, whose own workbench can list it. The random directory name is not a secret.
 export const COMPOSIO_WORKBENCH_STAGE_MAX_BYTES = 25 * 1024 * 1024;
 export const COMPOSIO_WORKBENCH_CHUNK_BYTES = 768 * 1024;
 export const COMPOSIO_WORKBENCH_DEADLINE_MS = 10 * 60_000;

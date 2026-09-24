@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import { ensureTestEnv } from "./helpers.js";
 
@@ -82,7 +82,7 @@ process.env.COMPOSIO_API_BASE = `http://127.0.0.1:${composio.address().port}`;
 process.env.COMPOSIO_MCP_URL = `http://127.0.0.1:${composio.address().port}/mcp`;
 test.after(() => composio.close());
 
-function tools({ author = "U_AUTHOR", meta = {} } = {}) {
+function tools({ author = "U_AUTHOR", meta = {}, stageFile } = {}) {
   const map = new Map();
   register({ registerTool: (name, _schema, handler) => map.set(name, handler) }, {
     channelId: CHANNEL,
@@ -90,6 +90,7 @@ function tools({ author = "U_AUTHOR", meta = {} } = {}) {
     createdBy: author,
     text: (t) => t,
     loadMeta: async () => ({ platform: "slack", isDM: false, ...meta }),
+    ...(stageFile ? { stageFile } : {}),
   });
   return map;
 }
@@ -121,6 +122,26 @@ test("a consumer key stages through the Composio workbench on the named identity
   });
   assert.match(agentReply, /composio-agent/);
   assert.ok(staged.every((call) => call.key === "ck_channel"));
+});
+
+test("the tool hands staging the proven descriptor, never a path to reopen", async () => {
+  // The confinement proof is only worth something if the bytes come from the descriptor it proved:
+  // the container can write this folder, so a path reopened after the proof could by then be a
+  // symlink (or sit under a swapped parent directory) pointing anywhere the daemon can read.
+  await setUser("U_AUTHOR", { name: "Author", approved: true, composioToken: "ck_personal" });
+  let seen = null;
+  const reply = await tools({
+    stageFile: async (options) => {
+      const bytes = Buffer.alloc(64);
+      const { bytesRead } = await options.handle.read(bytes, 0, 64, 0);
+      seen = { ...options, content: bytes.subarray(0, bytesRead).toString(), fd: typeof options.handle?.fd };
+      return { file: { name: "PROPOSAL.pdf", mimetype: "application/pdf", s3key: "k" }, bytes: bytesRead, deduplicated: false, tool: "GOOGLEDRIVE_UPLOAD_FILE", route: "workbench" };
+    },
+  }).get("stage_file_for_composio")({ path: "work/PROPOSAL.pdf", tool: "GOOGLEDRIVE_UPLOAD_FILE", identity: "user" });
+  assert.match(reply, /Staged `work\/PROPOSAL\.pdf`/);
+  assert.equal(seen.fd, "number", "a live descriptor reaches staging");
+  assert.equal(seen.absolutePath, undefined, "no path is handed over to be reopened");
+  assert.equal(seen.content, readFileSync(path.join(WORKDIR, "work", "PROPOSAL.pdf"), "utf8"), "and it is the proven file");
 });
 
 test("a project API key keeps the REST upload route", async () => {

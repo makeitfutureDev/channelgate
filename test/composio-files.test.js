@@ -331,13 +331,11 @@ test("every workbench failure mode is an error, and none carries the key", async
   const cases = [
     [{ corrupt: true }, /incomplete; nothing was staged/],
     [{ failWith: "PermissionError: /mnt/files is read-only", echoKeyInError: true }, /PermissionError/],
-    [{ failWith: "" }, null],
     [{ isError: true }, /upstream tool exploded/],
     [{ rpcError: true }, /tool unavailable/],
     [{ httpStatus: 500, echoKeyInError: true }, /HTTP 500/],
   ];
   for (const [options, pattern] of cases) {
-    if (options.failWith === "") continue; // an empty error with successful:true is a success; covered above
     const wb = fakeWorkbench(options);
     await assert.rejects(stage({ absolutePath: file, fetchImpl: wb.fetchImpl }), (error) => {
       assert.match(error.message, pattern, JSON.stringify(options));

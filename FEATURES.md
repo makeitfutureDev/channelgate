@@ -1819,7 +1819,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   characters, so a file name can never become Python source. Consumer-key staging is capped at
   25 MB (project keys keep 100 MB), within an overall 10-minute deadline; the MCP session is ended
   afterwards, but the sandbox copy is kept because the s3key IS that file's storage (deleting it
-  breaks the upload — verified live). The bytes are read from the SAME descriptor the confinement
+  breaks the upload — verified live). A known property of this route: the copy stays in that
+  identity's Composio file storage, so on `composio-agent` backed by the organization key it is
+  listable from any conversation sharing that key (its random directory name is not a secret) —
+  stage on `composio-user`, or give the channel its own Composio key, when that matters. The bytes are read from the SAME descriptor the confinement
   check proved (O_NOFOLLOW + /proc/self/fd), bounded to the cap: the tool used to close that
   descriptor and reopen the file by path, so a symlink swapped in by the container between proof
   and read could have sent any file the daemon can read. Every error text is scrubbed of the key

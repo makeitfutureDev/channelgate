@@ -76,6 +76,9 @@ export async function resolveComposioKey({ identity, authorId, meta }) {
 
 export function register(server, ctx) {
   const { slug, channelId, createdBy, text, loadMeta } = ctx;
+  // Injectable only so the tests can prove what the tool hands to staging (a proven descriptor,
+  // never a path to reopen); production always uses the real function.
+  const stageFile = ctx.stageFile || stageFileForComposio;
 
   server.registerTool(
     "stage_file_for_composio",
@@ -131,7 +134,7 @@ export function register(server, ctx) {
         // file by path. The container can write this folder, so a path reopened after the proof
         // could by then be a symlink into the operator's home, read by the unsandboxed daemon.
         handle = opened.handle;
-        const staged = await stageFileForComposio({
+        const staged = await stageFile({
           apiKey: key,
           handle,
           toolSlug: tool,
