@@ -25,12 +25,12 @@ import { isAuthorized } from "./modes.js";
 import { isShuttingDown } from "./shutdown.js";
 import { logEvent } from "../util/logger.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
-import { cliEnv } from "../runtimes/container/cli.js";
+import { cliEnv, defaultExec } from "../runtimes/container/cli.js";
 import { containerRuntimeStatus } from "../runtimes/container/index.js";
 import { installVscodeClaudeRelay } from "../runtimes/container/vscode.js";
 import {
   closeOrphanSshSessions, closeSshSession, containerSshDir, exportHostAuthorizedKeys, findSshKeyByFingerprint, findSshKeyById,
-  keysForUsers, materializeContainerSshFiles, openSshSession, parsePublicKey, sshAccessState, sshBlockedByHomeGrant, sshUsersOf, touchSshKey,
+  containerSessionEnv, keysForUsers, materializeContainerSshFiles, openSshSession, parsePublicKey, sshAccessState, sshBlockedByHomeGrant, sshUsersOf, touchSshKey,
 } from "./ssh-access.js";
 
 export const SSH_ATTACH_SOCKET = "attach.sock";
@@ -117,6 +117,14 @@ export function sshExecArgs(target) {
   return args;
 }
 
+// The running container's environment — what `podman exec` gives a process and, through the
+// in-container sshd_config, what an SSH session now gets too.
+async function defaultContainerEnv(target, cliBin) {
+  const result = await defaultExec([cliBin, "inspect", "--format", "{{json .Config.Env}}", target.container.name], { timeoutMs: 15_000 });
+  if (result.code !== 0) throw new Error((result.stderr || `inspect exited ${result.code}`).trim().slice(0, 200));
+  return JSON.parse(result.stdout || "[]");
+}
+
 function defaultSpawnExec(target, cliBin) {
   return spawnProcess(cliBin, sshExecArgs(target), { stdio: ["pipe", "pipe", "pipe"], env: cliEnv() });
 }
@@ -181,8 +189,11 @@ async function runSession(socket, header, leftover, state) {
   try {
     await target.runtime.ensureUp(target, { announce() {}, lease });
     const keys = await keysForUsers(sshUsersOf(meta));
-    materializeContainerSshFiles(target, keys);
     const cliBin = await deps.cliBin(target);
+    let containerEnv = [];
+    try { containerEnv = await deps.containerEnv(target, cliBin); }
+    catch (error) { log.warn?.(`[ssh] container environment for ${entry.slug}: ${error?.message || error} — the session starts with sshd's own`); }
+    materializeContainerSshFiles(target, keys, { env: containerSessionEnv(containerEnv, target) });
     let claude = { relayed: false, reason: "" };
     const refresh = async () => {
       try {
@@ -321,6 +332,7 @@ export async function startSshBroker({ dir = sshAccessDir(), log = console, retr
         authorize: (header) => authorizeSshAttach(header, overrides.authorizeOptions || {}),
         resolveTarget: resolveRuntime,
         cliBin: defaultCliBin,
+        containerEnv: defaultContainerEnv,
         installRelay: (target, cliBin) => installVscodeClaudeRelay(target, cliBin),
         spawnExec: defaultSpawnExec,
         ...(overrides.deps || {}),

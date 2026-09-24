@@ -285,6 +285,11 @@ test("durability: the image PATH reaches every place a channel can install into,
   // never sees ~/.npm-global/bin or /opt/channelgate/bin (observed live on 2026-09-02).
   assert.ok(containerfile.includes('> /etc/profile.d/channelgate-path.sh'), "containers/Containerfile must re-assert PATH for login shells via /etc/profile.d");
   assert.ok(/printf 'export PATH="%s"\\n' "\$PATH" > \/etc\/profile\.d\/channelgate-path\.sh/.test(containerfile), "the profile.d snippet must export the SAME PATH the ENV line declares");
+  // An interactive SSH login starts in the channel folder (spec 1.5.1) — and ONLY that: Codex's
+  // `bash -lc` is a login shell too, and a cd there would move every command it runs.
+  assert.ok(containerfile.includes("> /etc/profile.d/channelgate-workdir.sh"), "the SSH login folder script ships in /etc/profile.d");
+  assert.match(containerfile, /\$\{SSH_CONNECTION:-\}[^\n]*\$\{CG_WORKDIR:-\}[^\n]*"\$PWD" = "\$HOME"/, "only an SSH session still in HOME with a folder moves");
+  assert.match(containerfile, /case \$- in \*i\*\) cd "\$CG_WORKDIR"/, "only an INTERACTIVE shell moves");
   // One string, two modules: src/engines/runtime-target.js keeps a fallback for targets that
   // declare no container.path, and it drifted from the image once already.
   assert.equal(ENGINE_FALLBACK_PATH, CONTAINER_PATH, "src/engines/runtime-target.js CONTAINER_PATH has drifted from the image's");

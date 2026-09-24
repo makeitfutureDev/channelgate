@@ -87,6 +87,7 @@ const deps = {
   resolveTarget,
   spawnExec: (target, cliBin) => { const child = fakeChild(); child.spawnedWith = { target, cliBin }; return child; },
   cliBin: async () => "/usr/bin/podman",
+  containerEnv: async () => ["PATH=/home/agent/.local/bin:/usr/bin:/bin", "CLAUDE_CONFIG_DIR=/home/agent/.claude", "HOME=/home/agent", "HOSTNAME=abc123", "container=podman"],
   installRelay: async (target) => { relays.push(target.slug); return { source: "operator", expiresAt: 0 }; },
 };
 const authorizeOptions = { settings: { fullAccessHome: false }, resolveMeta: async (e) => e.meta || (await getChannelMeta(e.slug)) };
@@ -141,6 +142,10 @@ test("a granted developer's connection is authorized, leased, prepared, relayed 
   assert.ok(readFileSync(path.join(sshDir, "authorized_keys"), "utf8").includes(ED25519.split(" ")[1]));
   assert.ok(!readFileSync(path.join(sshDir, "authorized_keys"), "utf8").includes(ECDSA.split(" ")[1]), "an ungranted user's key is not in the box");
   assert.match(readFileSync(path.join(sshDir, "sshd_config"), "utf8"), /AllowUsers agent/);
+  // The session gets the container's environment, not sshd's clean one — ONE SetEnv line (sshd
+  // ignores every later one), the channel folder as CG_WORKDIR, nothing sshd owns per session.
+  const setEnv = readFileSync(path.join(sshDir, "sshd_config"), "utf8").split("\n").filter((l) => l.startsWith("SetEnv"));
+  assert.deepEqual(setEnv, [`SetEnv "CG_WORKDIR=/work/${entry.slug}" "CLAUDE_CONFIG_DIR=/home/agent/.claude" "PATH=/home/agent/.local/bin:/usr/bin:/bin"`]);
   assert.deepEqual(relays, [entry.slug]);
   assert.equal(ensured.at(-1).name, `cg-${entry.slug}`);
   assert.match(ensured.at(-1).leaseId, /^ssh:/, "ensureUp is told about the session's own lease so a rebuild is never deferred by it");

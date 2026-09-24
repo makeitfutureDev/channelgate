@@ -65,7 +65,9 @@ export async function installVscodeClaudeRelay(target, cliBin, {
   writeFileSync(tokenFile, relay.token, { mode: 0o600 });
   chmodSync(tokenFile, 0o600);
   const quoted = `'${tokenFile.replaceAll("'", "'\\''")}'`;
-  const wrapper = `#!/bin/sh\nif [ -z "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -r ${quoted} ]; then\n  CLAUDE_CODE_OAUTH_TOKEN="$(cat ${quoted})"\n  export CLAUDE_CODE_OAUTH_TOKEN\nfi\nexec /usr/local/bin/claude "$@"\n`;
+  // CLAUDE_CONFIG_DIR is the image's, but a shell that arrived without the container environment
+  // (an older SSH session, `env -i`) would otherwise read ~/.claude.json and look signed out.
+  const wrapper = `#!/bin/sh\n: "\${CLAUDE_CONFIG_DIR:=${CONTAINER_CLAUDE_CONFIG_DIR}}"\nexport CLAUDE_CONFIG_DIR\nif [ -z "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -r ${quoted} ]; then\n  CLAUDE_CODE_OAUTH_TOKEN="$(cat ${quoted})"\n  export CLAUDE_CODE_OAUTH_TOKEN\nfi\nexec /usr/local/bin/claude "$@"\n`;
   await runCommand(cliBin, ["exec", "-i", target.container.name, "sh", "-c", "umask 077; mkdir -p /home/agent/.local/bin; cat > /home/agent/.local/bin/claude; chmod 700 /home/agent/.local/bin/claude"], { input: wrapper });
   // Best effort: without it the editor still works, it just greets the developer with onboarding.
   try { await runCommand(cliBin, ["exec", target.container.name, "node", "-e", CLAUDE_ONBOARDING_SEED, CLAUDE_ONBOARDING_FILE]); }
