@@ -523,10 +523,13 @@ export function createChannelsRouter({
     }
   });
 
-  // Clear every channel's engine + model overrides so future runs inherit Settings → Engine &
-  // runtime again. DMs are deliberately skipped: this action says channels, and their runtime is
-  // governed separately by the User/Admin DM templates. Only these two fields change; effort,
-  // capabilities, access, tools and credentials are preserved. Audit-logged.
+  // Clear every channel's engine + model + effort overrides so future runs inherit Settings →
+  // Engine & runtime again. DMs are deliberately skipped: this action says channels, and their
+  // runtime is governed separately by the User/Admin DM templates. Only the runtime triple
+  // changes; capabilities, access, tools and credentials are preserved. Effort belongs in the
+  // reset because it is part of the same pick (the `/model` wizard sets engine → model → effort in
+  // one pass): leaving it behind put a channel on the gateway's default model with a hand-chosen
+  // effort it was never meant to keep. Audit-logged.
   //
   // `includeThreads` widens the same reset to the threads that already exist. Channel meta only
   // decides what a NEW thread inherits, so without it a thread someone pinned by hand (`/model` →
@@ -541,7 +544,7 @@ export function createChannelsRouter({
       for (const ch of channels) {
         const patched = await patchChannelMeta(ch.slug, (current) => {
           const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
-          return { ...base, engine: "", model: "" };
+          return { ...base, engine: "", model: "", effort: "" };
         });
         if (patched) reset++;
       }

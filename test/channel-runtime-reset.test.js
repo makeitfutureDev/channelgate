@@ -63,7 +63,7 @@ const server = await new Promise((resolve) => {
 const base = `http://127.0.0.1:${server.address().port}`;
 after(() => server.close());
 
-test("runtime reset is admin-gated and clears only channel engine/model overrides", async () => {
+test("runtime reset is admin-gated and clears only channel engine/model/effort overrides", async () => {
   const unauthorized = await fetch(`${base}/api/channels/reset-runtime`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-cg-request": "1" },
@@ -89,7 +89,9 @@ test("runtime reset is admin-gated and clears only channel engine/model override
   const changed = await getChannelMeta(configured.slug);
   assert.equal(changed.engine, "");
   assert.equal(changed.model, "");
-  assert.equal(changed.effort, "high");
+  // Effort is part of the same runtime pick as engine/model, so it resets with them — a channel
+  // left on the gateway default model with a hand-chosen effort is the bug this closes.
+  assert.equal(changed.effort, "");
   assert.equal(changed.access, "admins");
   assert.deepEqual(changed.skills, ["keep-skill"]);
   assert.equal(changed.composioToken, "keep-secret");
@@ -147,7 +149,7 @@ test("Settings UI confirms and calls the channel runtime reset route", () => {
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 
   assert.match(html, /id="reset-channel-runtime"/);
-  assert.match(html, /Clears every channel's engine and model overrides/);
+  assert.match(html, /Clears every channel's engine, model and effort overrides/);
   assert.match(html, /per-thread <code>\/model<\/code> pins/);
   assert.match(client, /Reset every channel to gateway defaults\?/);
   assert.match(client, /alternativeLabel: "Channels \+ threads"/);

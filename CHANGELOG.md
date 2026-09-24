@@ -41,7 +41,10 @@ product overview.
   harness and model and the reset looked like it had done nothing. The confirmation now offers
   **Channels only** (the previous behaviour) or **Channels + threads**, which also deletes those
   per-thread engine, model and effort pins and reports how many it cleared. Per-thread `/clean`
-  and `/sudo` postures, DMs and DM threads are untouched either way.
+  and `/sudo` postures, DMs and DM threads are untouched either way. The reset also clears each
+  channel's reasoning **effort** now: the `/model` wizard picks engine, model and effort in one
+  pass, so keeping effort behind left channels on the gateway's default model with a hand-chosen
+  effort they were never meant to keep.
 
 - Say why a VPN would not turn on. When the helper refused, the web toggle, Slack Settings and
   the agent all answered "Could not change VPN state", so a VPN image left over from before an

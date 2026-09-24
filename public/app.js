@@ -3924,7 +3924,7 @@ function bindSettings() {
     // own harness and model until that per-thread pin is cleared too.
     const choice = await confirmDialog({
       title: "Reset every channel to gateway defaults?",
-      body: "Every channel's engine and model overrides will be cleared. \"Channels only\" changes what new threads inherit; threads that were pinned by hand (/model → just this thread) keep their pinned harness and model. \"Channels + threads\" also clears those per-thread engine, model and effort pins — existing threads still keep the engine that owns their live session. Access, channel effort, tools, tokens and DM templates stay unchanged. Save any changed gateway defaults first. This can't be undone.",
+      body: "Every channel's engine, model and effort overrides will be cleared. \"Channels only\" changes what new threads inherit; threads that were pinned by hand (/model → just this thread) keep their pinned harness and model. \"Channels + threads\" also clears those per-thread engine, model and effort pins — existing threads still keep the engine that owns their live session. Access, tools, tokens and DM templates stay unchanged. Save any changed gateway defaults first. This can't be undone.",
       confirmLabel: "Channels only",
       alternativeLabel: "Channels + threads",
       danger: true,
