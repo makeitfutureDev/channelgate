@@ -95,6 +95,20 @@ export function renderSessionEnvFile(env = {}) {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * What only an SSH session's model needs to know, appended to its system prompt by the wrapper
+ * (`--append-system-prompt-file`) — never part of every channel's managed block, whose 4 KB budget
+ * is for the rules every run shares. Named facts only; no value ever rides here.
+ */
+export function renderSessionNote({ slug, userId, envFile }) {
+  return [
+    `This is an interactive SSH session in channel \`${slug}\`, prepared by the gateway for <@${userId}> exactly like one of that channel's chat turns: the channel's tool policy, its MCP servers (\`gateway\`, \`composio-user\` = this developer's own accounts, \`composio-agent\` = the channel's) and its secrets as environment variables.`,
+    `Secrets change while a session is open. \`list_secrets\` is live, but a process keeps the environment it started with — this one included. The session's CURRENT environment is rewritten within a moment of any change at \`${envFile}\` (also \`$CG_SESSION_ENV\`). When a command needs a credential added after this process started, source that file in the SAME command: \`. "$CG_SESSION_ENV"; <command>\`. Never print a value; refer to secrets by name. A newly selected MCP server needs a new \`claude\`.`,
+    "There is no chat thread behind this session: no background jobs, progress or approval cards; the developer answers your prompts in this terminal.",
+    "",
+  ].join("\n");
+}
+
 function writePrivate(file, body) {
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, body, { mode: 0o600 });
@@ -203,9 +217,14 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     const safe = safeSpawnEnv(env);
     // Without the account login the token has to ride the environment after all (the wrapper's
     // editor branch is skipped once the session files exist).
-    const sessionEnv = claude.account || !relay.token ? safe : { ...safe, CLAUDE_CODE_OAUTH_TOKEN: relay.token };
+    // CG_SESSION_ENV names this very file: it is rewritten within a moment of a change, but a
+    // process that already started keeps its environment — so a command that needs a secret
+    // added since can source it first (the hard rules tell the model so).
+    const sessionEnv = { ...(claude.account || !relay.token ? safe : { ...safe, CLAUDE_CODE_OAUTH_TOKEN: relay.token }), CG_SESSION_ENV: path.join(userDir, "env") };
     writePrivate(path.join(userDir, "env"), renderSessionEnvFile(sessionEnv));
+    writePrivate(path.join(userDir, "session.md"), renderSessionNote({ slug, userId: user.id, envFile: path.join(userDir, "env") }));
     result.secrets = Object.keys(safe).sort();
+    result.sessionEnvFile = path.join(userDir, "env");
   } catch (error) {
     result.problems.push(`secrets: ${String(error?.message || error).slice(0, 160)}`);
   }

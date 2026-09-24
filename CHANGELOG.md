@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- One tool per verb for secrets. `list_secrets` replaces `list_my_secrets` and `list_org_secrets`
+  and shows every scope a run receives — organization, personal, this conversation — in one live
+  call (names, provider, masked tail, who set them; never a value), filterable with `scope`.
+  `set_secret` and `remove_secret` replace the four `*_my_*` / `*_org_*` writers; the scope is an
+  argument and the approval card's tier follows it. In an SSH session, `CG_SESSION_ENV` names the
+  session's current env file, and the assistant is told to source it in the same command when it
+  needs a credential added after its `claude` started — no restart, no reconnect.
+
 - Make `claude` over SSH the same Claude a Slack turn runs. A session had no MCP servers, no
   channel secrets and a login labelled "Claude API" with no usage shown, while a turn in the same
   channel had all of it. Now, before your shell starts, the gateway prepares the session like a

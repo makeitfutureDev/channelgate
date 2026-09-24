@@ -5294,6 +5294,16 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       change that concerns it — its channel, its developer, or the organization's secrets — one
       refresh per burst, never for another channel's or developer's change, never for an ended
       session (automated: `test/change-events.test.js`, `test/ssh-broker.test.js`).
+- [x] Unit: one tool per verb for secrets — `list_secrets` lists the three scopes in one call
+      (names, masked tails, authors; never a value; the organization's tails only for admins; a
+      person only their own personal scope; an unverified principal no personal scope; `scope`
+      filters, with `org`/`channel`/`my` aliases); `set_secret` / `remove_secret` write the personal
+      scope by default and the organization scope for admins only, refuse the conversation scope
+      (Secrets modal / admin UI), and the control-plane gate's tier follows the `scope` argument
+      (`gateAuthz`); the six old names are off the allowlist; the session env carries
+      `CG_SESSION_ENV`; the session's own system-prompt note (`session.md`, 0600, names only)
+      tells its model to source it in the same command, and the wrapper appends it (automated:
+      `test/secrets-tool.test.js`, `test/mcp-control-plane-approval.test.js`, `test/ssh-session.test.js`).
 - [x] Unit: the broker prepares the session for the connecting developer before sshd starts,
       re-prepares on every refresh tick, reports MCP/secrets/toolset on the status line, and
       releases per developer and per channel (two sessions of one developer: the first hang-up
