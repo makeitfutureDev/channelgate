@@ -16,7 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## 0.5.5 — 2026-09-24
 
 - The runtime image no longer carries SSH host private keys. Installing `openssh-server` generated
   `/etc/ssh/ssh_host_*_key`; nothing used them (each channel's `cg-sshd` makes its own key), but
