@@ -28,6 +28,7 @@
 import { getSettings, saveSettings } from "./settings.js";
 import { getUser, setUser } from "./store.js";
 import { listEnvVars, normalizeChannelEnv, patchChannelEnv, resolveChannelEnv, resolveEnvMap } from "./channel-env.js";
+import { emitConfigChange } from "./change-events.js";
 
 // ── Organization ──────────────────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ export function patchOrgEnv({ set = null, remove = "", actor = "", now = Date.no
     scopeNoun: "The organization", scopeWhere: "the organization",
   });
   saveSettings({ orgEnv: next });
+  emitConfigChange("org-env", {});
   return listEnvVars(next);
 }
 

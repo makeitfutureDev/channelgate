@@ -5285,6 +5285,13 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `ssh` toolset is the control plane minus exactly `run_in_background`,
       `run_agent_in_background`, `request_approval`, `permission_prompt` (automated:
       `test/ssh-session.test.js`).
+- [x] Unit: every configuration write chokepoint (`saveChannelMeta`, `patchChannelMeta`, `setUser`,
+      `patchOrgEnv`, `patchUserEnv`) emits an in-process change event after it commits, naming only
+      what changed (an aborted patch emits nothing; a throwing listener never fails the write;
+      an unknown kind is refused); the broker re-prepares a live session within the debounce of a
+      change that concerns it — its channel, its developer, or the organization's secrets — one
+      refresh per burst, never for another channel's or developer's change, never for an ended
+      session (automated: `test/change-events.test.js`, `test/ssh-broker.test.js`).
 - [x] Unit: the broker prepares the session for the connecting developer before sshd starts,
       re-prepares on every refresh tick, reports MCP/secrets/toolset on the status line, and
       releases per developer and per channel (two sessions of one developer: the first hang-up
@@ -5304,8 +5311,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `/mcp` lists `gateway`, `composio-user`, `composio-agent` and the channel's selected servers
       and NO `claude.ai …` connectors; a prompt that lists the environment names starting with the
       channel's secret prefixes sees the same names a Slack turn in that channel is told about;
-      `ssh <channel> pwd` (non-interactive) still prints `/home/agent`. Repeat in a VS Code
-      Remote-SSH terminal opened with the `code --remote` command from "show SSH access".
+      `ssh <channel> pwd` (non-interactive) still prints `/home/agent`. Then add a secret to the
+      channel in Slack (`/secrets`) and, in the SAME SSH session, start a new `claude`: `env` in it
+      names the new secret within seconds, with no reconnect. Repeat in a VS Code Remote-SSH
+      terminal opened with the `code --remote` command from "show SSH access".
 - [ ] LIVE (Codex, same session): `codex exec 'Reply with exactly SSH-CODEX-OK'` answers, and a
       Codex engine turn in that channel still runs its commands where it did before (its
       `bash -lc` is not moved by the login-folder script).

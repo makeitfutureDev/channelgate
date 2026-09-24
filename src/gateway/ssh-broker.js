@@ -28,6 +28,7 @@ import { resolveRuntime } from "../runtimes/resolve.js";
 import { cliEnv, defaultExec } from "../runtimes/container/cli.js";
 import { containerRuntimeStatus } from "../runtimes/container/index.js";
 import { prepareSshSession, releaseSshSession } from "./ssh-session.js";
+import { onConfigChange } from "../config/change-events.js";
 import {
   closeOrphanSshSessions, closeSshSession, containerSshDir, exportHostAuthorizedKeys, findSshKeyByFingerprint, findSshKeyById,
   containerSessionEnv, keysForUsers, materializeContainerSshFiles, openSshSession, parsePublicKey, sshAccessState, sshBlockedByHomeGrant, sshUsersOf, touchSshKey,
@@ -172,7 +173,7 @@ async function runSession(socket, header, leftover, state) {
   const lease = target.runtime.acquireLease(target, { kind: "ssh", id });
   const session = {
     id, slug: entry.slug, channelId: entry.channelId, userId: user.id, userName: user.name, fingerprint: key.fingerprint, client,
-    container: target.container.name, startedAt: Date.now(), finish: null,
+    container: target.container.name, startedAt: Date.now(), finish: null, refresh: null,
   };
   state.sessions.set(id, session);
   let child = null;
@@ -229,6 +230,7 @@ async function runSession(socket, header, leftover, state) {
       }
     };
     await refresh();
+    session.refresh = refresh;
     child = deps.spawnExec(target, cliBin);
     touchSshKey(key.id);
     openSshSession({ id, userId: user.id, slug: entry.slug, channelId: entry.channelId, fingerprint: key.fingerprint, client, container: target.container.name });
@@ -359,6 +361,7 @@ export async function startSshBroker({ dir = sshAccessDir(), log = console, retr
       server: null, dir, path: path.join(dir, SSH_ATTACH_SOCKET), sessions: new Map(), log, retryTimer: null, warned: false, warnedOwner: false, conns: new Set(),
       relayRefreshMs, headerTimeoutMs,
       counts: { users: new Map(), channels: new Map() },
+      unsubscribe: null,
       deps: {
         authorize: (header) => authorizeSshAttach(header, overrides.authorizeOptions || {}),
         resolveTarget: resolveRuntime,
@@ -372,6 +375,7 @@ export async function startSshBroker({ dir = sshAccessDir(), log = console, retr
     };
   }
   const state = active;
+  state.unsubscribe ||= subscribeConfigChanges(state);
   const scheduleRetry = () => {
     if (retryMs <= 0 || state.retryTimer) return;
     state.retryTimer = setTimeout(() => {
@@ -458,6 +462,7 @@ export async function stopSshBroker() {
   const state = active;
   active = null;
   if (state.retryTimer) clearTimeout(state.retryTimer);
+  state.unsubscribe?.();
   for (const session of [...state.sessions.values()]) {
     try { await session.finish?.("daemon shutdown"); } catch { /* best effort */ }
   }
@@ -467,4 +472,30 @@ export async function stopSshBroker() {
   // unlink here: a daemon that never bound the path — setup not done, or another process already
   // serving it — used to delete that process's live socket on its way out.
   if (state.server) await new Promise((resolve) => state.server.close(resolve));
+}
+
+// A configuration write that concerns a live session re-prepares it at once (secrets, MCP
+// selection, mode switches; the organization's secrets; the developer's own record), coalesced
+// per session so a burst of saves runs one refresh. A `claude` already running keeps the
+// environment and servers it started with, like any process; the NEXT one a developer starts in
+// the session gets the change — without waiting for the periodic tick.
+export const CONFIG_REFRESH_DEBOUNCE_MS = 250;
+function subscribeConfigChanges(state) {
+  const pending = new Map();
+  return onConfigChange((change) => {
+    for (const session of state.sessions.values()) {
+      if (!session.refresh) continue;
+      const concerns = change.kind === "org-env"
+        || (change.kind === "channel-meta" && change.slug === session.slug)
+        || (change.kind === "user" && change.userId === session.userId);
+      if (!concerns || pending.has(session.id)) continue;
+      const timer = setTimeout(() => {
+        pending.delete(session.id);
+        if (!state.sessions.has(session.id)) return;
+        void session.refresh();
+      }, CONFIG_REFRESH_DEBOUNCE_MS);
+      timer.unref?.();
+      pending.set(session.id, timer);
+    }
+  });
 }
