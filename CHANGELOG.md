@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Say why a VPN would not turn on. When the helper refused, the web toggle, Slack Settings and
+  the agent all answered "Could not change VPN state", so a VPN image left over from before an
+  update looked like an unexplained failure and invited repeated retries. The toggle now gives
+  the same fixed diagnostic as the status row, for example that the image needs rebuilding.
+  Only a known failure class is passed on; helper text and provider output never are.
 - Open interactive Claude signed in over SSH and VS Code. Connecting to a channel's container
   worked and `claude -p` answered, but plain `claude` opened the first-run theme picker and a
   login screen, so it looked signed out. Headless engine turns never finish Claude's onboarding,
