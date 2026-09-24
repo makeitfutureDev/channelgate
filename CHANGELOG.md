@@ -16,6 +16,16 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- The runtime image no longer carries SSH host private keys. Installing `openssh-server` generated
+  `/etc/ssh/ssh_host_*_key`; nothing used them (each channel's `cg-sshd` makes its own key), but
+  every channel container on a host held the same three private keys, and the signed release
+  would have published them in the image archive. They are now deleted in the step that installs
+  sshd. That, plus four reviewed look-alikes — prefix constants in Codex 0.156.1 and in the Copilot
+  runtime bundled with the VS Code server, each pinned to its official archive — is what failed the
+  `v0.5.3` release evidence scan. Rebuild the image (`npm run build:image`) to drop the keys.
+
 ## 0.5.4 — 2026-09-24
 
 - Claude Opus 5.5 and GPT-6 Sol / GPT-6 Luna reach the gateway. The image pins move to Claude Code

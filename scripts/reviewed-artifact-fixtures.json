@@ -143,5 +143,53 @@
     "upstreamArchiveSha256": "8aac35011c18f6e2d10696154af89a5728ac2ddd6dc6fad24ffdf243c3fcfd5a",
     "upstreamMember": "chrome-linux64/chrome",
     "upstreamMemberSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e"
+  },
+  {
+    "pattern": "GitHub token",
+    "sha256": "c396025824f55618e8ffd007c3e91da91156094a84c444361f1825ea17f40adc",
+    "description": "Compiler-adjacent string data following a four-byte token-prefix constant; not a complete credential constant",
+    "sources": [
+      "https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/network-proxy/src/credential_broker/providers/github.rs#L14",
+      "https://registry.npmjs.org/@openai/codex/-/codex-0.156.1-linux-x64.tgz"
+    ],
+    "upstreamArchiveSha256": "ded9840babeb511e79738ae708044ae489fbce50db7002b943b3195cf5ae6a25",
+    "upstreamMember": "vendor/x86_64-unknown-linux-musl/bin/codex",
+    "upstreamMemberSha256": "0b2e9301d6100dddda3b9d5c80ebaeaa3a2f1962388f2f36f6b96a9f08b1f33f"
+  },
+  {
+    "pattern": "OpenAI project key",
+    "sha256": "fa038125f14f85bfdde12b75c6b18f0c339ecd9799c8d4a6638ae2d202774a17",
+    "description": "Compiler-adjacent string data following the eight-byte \"sk-proj-\" entry of OPENAI_API_KEY_PREFIXES; not a complete credential constant",
+    "sources": [
+      "https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/network-proxy/src/credential_broker/providers/openai.rs#L13",
+      "https://registry.npmjs.org/@openai/codex/-/codex-0.156.1-linux-x64.tgz"
+    ],
+    "upstreamArchiveSha256": "ded9840babeb511e79738ae708044ae489fbce50db7002b943b3195cf5ae6a25",
+    "upstreamMember": "vendor/x86_64-unknown-linux-musl/bin/codex",
+    "upstreamMemberSha256": "0b2e9301d6100dddda3b9d5c80ebaeaa3a2f1962388f2f36f6b96a9f08b1f33f"
+  },
+  {
+    "pattern": "GitHub token",
+    "sha256": "11116762eb8f44dcdcabd6cc844d36d367f2be80c0788bd61104ef968d874c57",
+    "description": "Compiler-adjacent string data following a four-byte token-prefix constant in GitHub Copilot's native runtime, bundled with the official VS Code server; not a credential. The match body has no digits and unbroken 27- and 40-character lowercase runs (packed identifier literals). The runtime is closed source, so the evidence is the vendor archive and member hash; the same member ships byte-identical in VS Code 1.139.0 and 1.138.0",
+    "sources": [
+      "https://update.code.visualstudio.com/commit:2242ebbb54efeeb0129e08e919e7e8d43033cd83/server-linux-x64/stable",
+      "https://update.code.visualstudio.com/commit:7debcd0e2acdea1c52de81bf9ee1620444407dda/server-linux-x64/stable"
+    ],
+    "upstreamArchiveSha256": "3c19ff1d530f5fd18b2708f803f233de04c8148ead41e25b79d9e4bd01d1a27c",
+    "upstreamMember": "extensions/copilot/node_modules/@github/copilot/sdk/prebuilds/linux-x64/runtime.node",
+    "upstreamMemberSha256": "5dbbafdd65ffce5b89b62472e9303ce3854662bff399dae3ffda44a554c44849"
+  },
+  {
+    "pattern": "GitHub token",
+    "sha256": "e436670abd29f6abc2a834649981d9fbbe33c1bcb4cd70d748100e5a3b844380",
+    "description": "Compiler-adjacent string data following a four-byte token-prefix constant in GitHub Copilot's native runtime, bundled with the official VS Code server; not a credential. The match body has no digits and unbroken 27- and 40-character lowercase runs (packed identifier literals). The runtime is closed source, so the evidence is the vendor archive and member hash; the same member ships byte-identical in VS Code 1.139.0 and 1.138.0",
+    "sources": [
+      "https://update.code.visualstudio.com/commit:2242ebbb54efeeb0129e08e919e7e8d43033cd83/server-linux-x64/stable",
+      "https://update.code.visualstudio.com/commit:7debcd0e2acdea1c52de81bf9ee1620444407dda/server-linux-x64/stable"
+    ],
+    "upstreamArchiveSha256": "3c19ff1d530f5fd18b2708f803f233de04c8148ead41e25b79d9e4bd01d1a27c",
+    "upstreamMember": "extensions/copilot/node_modules/@github/copilot/sdk/prebuilds/linux-x64/runtime.node",
+    "upstreamMemberSha256": "5dbbafdd65ffce5b89b62472e9303ce3854662bff399dae3ffda44a554c44849"
   }
 ]
