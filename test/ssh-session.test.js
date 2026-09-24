@@ -65,7 +65,10 @@ test("the session is prepared like a turn: lockdown, MCP payload signed for THIS
   assert.deepEqual(result.secrets, ["GITHUB_PAT", "MAKE_API"], "reserved names are filtered like a turn's (safeSpawnEnv)");
   const dir = session.sshUserDir(t, user.id);
   assert.equal(dir, path.join(containerSshDir(t), "users", user.id), "beside the channel's sshd files, per developer");
-  for (const name of ["mcp.json", "settings.json", "env"]) assert.equal(statSync(path.join(dir, name)).mode & 0o777, 0o600, name);
+  for (const name of ["mcp.json", "settings.json", "env", "session.md"]) assert.equal(statSync(path.join(dir, name)).mode & 0o777, 0o600, name);
+  const note = readFileSync(path.join(dir, "session.md"), "utf8");
+  assert.ok(note.includes(`. "$CG_SESSION_ENV"; <command>`) && note.includes(`<@${user.id}>`) && note.includes(entry.slug), "the session's own system-prompt note: source the current env file for a credential added since");
+  assert.ok(!note.includes("m-U_SSH_DEV") && !note.includes("quoted"), "names, never values");
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   // The lockdown is the channel's own.
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8")).slug, entry.slug);
@@ -87,6 +90,7 @@ test("the session is prepared like a turn: lockdown, MCP payload signed for THIS
   const envFile = readFileSync(path.join(dir, "env"), "utf8");
   assert.ok(!envFile.includes("CLAUDE_CODE_OAUTH_TOKEN"), "no token rides the environment when the login file exists");
   assert.ok(!envFile.includes("LD_PRELOAD"));
+  assert.ok(envFile.includes(`export CG_SESSION_ENV='${path.join(dir, "env")}'`), "the session names its own env file");
   const echoed = execFileSync("sh", ["-c", `. '${path.join(dir, "env")}'; printf '%s|%s' "$GITHUB_PAT" "$MAKE_API"`], { encoding: "utf8" });
   assert.equal(echoed, `it's a 'quoted'\nvalue|m-${user.id}`);
   // The login: an access-only credentials file written into the channel's config dir, then the
@@ -210,7 +214,7 @@ test("the ssh toolset is the control plane minus the thread-bound tools; ssh_ses
     assert.ok(full.includes(name) || name === "report_progress", `${name} is a turn's`);
     assert.ok(!ssh.includes(name), `${name} has no thread to speak into over SSH`);
   }
-  for (const name of ["update_channel_memory", "search_channel_memory", "list_schedules", "workspace_read", "list_skills", "show_channel_ssh", "list_my_secrets"]) {
+  for (const name of ["update_channel_memory", "search_channel_memory", "list_schedules", "workspace_read", "list_skills", "show_channel_ssh", "list_secrets"]) {
     assert.ok(ssh.includes(name), `${name} is available over SSH`);
   }
   assert.deepEqual(full.filter((n) => !ssh.includes(n)).sort(), threadBound.filter((n) => full.includes(n)).sort(), "nothing else differs");

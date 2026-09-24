@@ -66,7 +66,8 @@ export function renderClaudeWrapper({ tokenFile, usersDir = "" }) {
     `d=${quote(usersDir)}/"\${CG_SSH_USER:-}"`,
     'if [ -n "${CG_SSH_USER:-}" ] && [ -r "$d/env" ] && [ -r "$d/mcp.json" ] && [ -r "$d/settings.json" ]; then',
     '  set -a; . "$d/env"; set +a',
-    '  exec /usr/local/bin/claude --setting-sources "" --settings "$d/settings.json" --mcp-config "$d/mcp.json" --strict-mcp-config "$@"',
+    '  note=""; [ -r "$d/session.md" ] && note="$d/session.md"',
+    '  exec /usr/local/bin/claude --setting-sources "" --settings "$d/settings.json" --mcp-config "$d/mcp.json" --strict-mcp-config ${note:+--append-system-prompt-file "$note"} "$@"',
     "fi",
   ] : [];
   return [

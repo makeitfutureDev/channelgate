@@ -1773,10 +1773,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
     refused. The entry form states which scope it writes into before you paste anything.
   - **Admin UI** — Settings → Integrations → *Organization secrets*, and the Users drawer →
     *Personal secrets*. One editor implementation serves all three (`public/admin-secrets.js`).
-  - **Chat tools** — `set_org_secret` / `remove_org_secret` / `list_org_secrets` (admins; the
-    writes are approval-gated like every other credential-identity change) and `set_my_secret` /
-    `remove_my_secret` / `list_my_secrets` (a signed run capability is what names the author, so an
-    unverified principal gets no personal scope at all).
+  - **Chat tools** — one per verb, the scope an argument: `list_secrets` (all three scopes in one
+    live call — names, provider, masked tail, who set them; the organization's tails and authors
+    only for admins, the names for everyone as the run prompt already carries them; filterable
+    with `scope`), `set_secret` and `remove_secret` (`personal` by default; `organization` for
+    admins, with the approval card's tier following the scope; a conversation's own are written in
+    the Secrets modal or the admin UI, never pasted into a channel). A signed run capability is
+    what names the author, so an unverified principal gets no personal scope at all. In an SSH
+    session the env file the wrapper sourced is named by `CG_SESSION_ENV` and rewritten on every
+    change, and the session's own system-prompt note (`session.md`, appended by the wrapper with
+    `--append-system-prompt-file`; the managed block's 4 KB budget is for every run's rules) tells
+    the model to source it in the same command when it needs a credential added since its
+    `claude` started.
   A person only ever sees their OWN personal secrets on any surface: the Slack modal is bound to
   one owner and refuses a different clicker, and the admin UI reaches them per user record.
 

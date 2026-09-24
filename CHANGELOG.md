@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- One tool per verb for secrets. `list_secrets` replaces `list_my_secrets` and `list_org_secrets`
+  and shows every scope a run receives — organization, personal, this conversation — in one live
+  call (names, provider, masked tail, who set them; never a value), filterable with `scope`.
+  `set_secret` and `remove_secret` replace the four `*_my_*` / `*_org_*` writers; the scope is an
+  argument and the approval card's tier follows it. In an SSH session, `CG_SESSION_ENV` names the
+  session's current env file, and the assistant is told to source it in the same command when it
+  needs a credential added after its `claude` started — no restart, no reconnect.
+
 - Slack ⚙️ Settings → Skills: the skill template is now a dropdown on the page instead of a
   **Change Template** button that opened a second modal containing that same dropdown. Picking a
   template saves immediately and repaints the page, like the Engine & model selects already did.

@@ -216,13 +216,20 @@ specific last):
 
 - **organization** — shared by every conversation in this deployment (e.g. a `GH_TOKEN` every
   channel can push with). Admins manage it in Settings → Integrations → *Organization secrets*,
-  or from chat with `set_org_secret` / `remove_org_secret` / `list_org_secrets`.
+  or from chat with `set_secret` / `remove_secret` with `scope: "organization"`.
 - **personal** — belongs to the person who sent THIS message and is injected only into runs they
-  author, in any conversation. Anyone sets their own with `set_my_secret` / `remove_my_secret` /
-  `list_my_secrets` — tell them to send it in a DM and delete the message afterwards. It is never
+  author, in any conversation. Anyone sets their own with `set_secret` / `remove_secret` (the
+  default scope) — tell them to send it in a DM and delete the message afterwards. It is never
   injected into another person's turn, so do not suggest one person's secret as a fix for another's
   missing access.
 - **channel** — this conversation's own, below.
+
+`list_secrets` shows all three scopes in ONE call (names, provider, masked tail, who set them —
+never a value), filterable with `scope`. It is live: a secret added a moment ago is listed at once.
+A process that already started keeps the environment it started with; a chat turn gets the
+current set at its start, and in an SSH session `CG_SESSION_ENV` names the session's current env
+file — source it in the same command (`. "$CG_SESSION_ENV"; <command>`) to use a credential added
+since that `claude` started.
 
 A `GH_TOKEN` in any of these scopes is picked up by the `gh` CLI with no setup. Plain `git push`
 over HTTPS is separate: it uses a credential helper, and the runtime image configures none. Run

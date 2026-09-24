@@ -213,6 +213,18 @@ const summarize = (v, n = 200) => {
 };
 const onOff = (v) => (v ? "ON" : "OFF");
 
+// `set_secret` / `remove_secret` take the scope as an argument; the organization scope is the
+// admin tier, everything else the author's own.
+export function secretScopeTier(scope) {
+  const s = String(scope || "personal").trim().toLowerCase();
+  return s === "organization" || s === "org" ? "admin" : "any";
+}
+
+/** A gate's tier: a string, or a function of the call's arguments (see set_secret). */
+export function gateAuthz(gate, args = {}) {
+  return typeof gate?.authz === "function" ? gate.authz(args ?? {}) : gate?.authz;
+}
+
 export function buildControlPlane({ loadMeta }) {
   return new Map([
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
@@ -295,10 +307,14 @@ export function buildControlPlane({ loadMeta }) {
     // connector tokens above are gated: each one changes WHICH account future runs authenticate as,
     // and the organization scope does it for every conversation at once. Names only in the card —
     // a value must never reach the approval UI any more than it reaches a listing.
-    ["set_my_secret", { authz: "any", details: ({ name }) => `Set YOUR personal environment secret ${summarize(name)} (value hidden) — injected into every run YOU author, in any conversation.` }],
-    ["remove_my_secret", { authz: "any", details: ({ name }) => `Remove YOUR personal environment secret ${summarize(name)}.` }],
-    ["set_org_secret", { authz: "admin", details: ({ name }) => `Set the ORGANIZATION-WIDE environment secret ${summarize(name)} (value hidden) — injected into EVERY conversation's runs, for every author admitted there.` }],
-    ["remove_org_secret", { authz: "admin", details: ({ name }) => `Remove the organization-wide environment secret ${summarize(name)} — every conversation stops receiving it.` }],
+    // One tool per verb across the secret scopes: the tier follows the SCOPE argument (an
+    // organization secret is every conversation's, so its card needs an admin's click).
+    ["set_secret", { authz: ({ scope }) => secretScopeTier(scope), details: ({ name, scope }) => secretScopeTier(scope) === "admin"
+      ? `Set the ORGANIZATION-WIDE environment secret ${summarize(name)} (value hidden) — injected into EVERY conversation's runs, for every author admitted there.`
+      : `Set YOUR personal environment secret ${summarize(name)} (value hidden) — injected into every run YOU author, in any conversation.` }],
+    ["remove_secret", { authz: ({ scope }) => secretScopeTier(scope), details: ({ name, scope }) => secretScopeTier(scope) === "admin"
+      ? `Remove the organization-wide environment secret ${summarize(name)} — every conversation stops receiving it.`
+      : `Remove YOUR personal environment secret ${summarize(name)}.` }],
     // SSH access to channel containers (src/gateway/ssh-access.js): a registered key is what a
     // later grant turns into a shell inside a container, and a grant IS that shell. Never echo the
     // key material in the card — the fingerprint is computed after approval.
@@ -377,8 +393,9 @@ export function createGatewayMcpServer(ctx) {
         // unauthorized caller gets one refusal and no approval spam — but if the two ever drift
         // (a handler check relaxed below its gate tier), falling through to the handler would
         // execute a gated change with NO approval at all. Refuse here instead.
-        if (!(await passesAuthzPrecheck(gate.authz))) {
-          return text(gate.authz === "admin"
+        const authz = gateAuthz(gate, args);
+        if (!(await passesAuthzPrecheck(authz))) {
+          return text(authz === "admin"
             ? `🚫 Only admins can run \`${name}\`. Nothing was changed.`
             : `🚫 Only this channel's managers (or an admin) can run \`${name}\`. Nothing was changed.`);
         }
@@ -395,7 +412,7 @@ export function createGatewayMcpServer(ctx) {
               return text(`Couldn't request the instruction update: ${error.message}`);
             }
           }
-          const tier = durableAction?.mode === "replace" ? "admin" : gate.authz === "any" ? "" : gate.authz;
+          const tier = durableAction?.mode === "replace" ? "admin" : authz === "any" ? "" : authz;
           const d = await requireToolApproval(name, details, tier, durableAction);
           if (d.pending) {
             return text(`⏳ \`${name}\` is awaiting your approval (request ${d.approvalId}). The exact change is saved with no deadline and survives gateway restarts. You can end this turn; the gateway applies it when you click Approve. Deny or Comment cancels it. Nothing has changed yet.`);
