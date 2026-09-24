@@ -108,7 +108,7 @@ test("browser VPN switch applies immediately, polls connection state, and shows 
     const entry = await upsertChannelEntry(id, { name: id.toLowerCase(), type: "channel", isDM: false, platform: "slack" });
     await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: id, name: id.toLowerCase(), type: "channel", isDM: false }), allowNetwork: true });
   }
-  statuses.set("C_VPN_SETUP", { ...off, configured: false, state: "unconfigured", message: "No VPN configured." });
+  statuses.set("C_VPN_SETUP", { ...off, configured: false, state: "unconfigured", message: "VPN is not configured. An administrator must import the profile and prepare the service first." });
   const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   t.after(() => browser.close());
   const context = await browser.newContext();
@@ -161,6 +161,10 @@ test("browser VPN switch applies immediately, polls connection state, and shows 
   await page.goto(`${base}/conversations/channel/C_VPN_SETUP`);
   await page.waitForFunction(() => globalThis.document.querySelector("#channel-detail .ch-vpn-state")?.textContent.includes("Not configured"));
   assert.equal(await page.locator("#channel-detail .ch-vpn-enabled").isDisabled(), true);
-  assert.match(await page.locator("#channel-detail .ch-vpn-state").textContent(), /administrator must import/);
+  const setupText = await page.locator("#channel-detail .ch-vpn-state").textContent();
+  assert.match(setupText, /administrator must import/);
+  // QA-0925: the server's own "VPN is not configured. …" used to be appended to the hint below,
+  // saying the same thing twice.
+  assert.equal(setupText.includes("VPN is not configured"), false, "an unconfigured VPN is explained once");
   assert.deepEqual(errors, []);
 });

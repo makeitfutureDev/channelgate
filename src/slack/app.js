@@ -684,12 +684,19 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   const channelEngine = runtime.effectiveEngineId;
   const channelModel = runtime.configuredModel || getDefaultModel(channelEngine) || "";
   const parent = inheritedChannelRuntime(meta);
+  // An unset MODEL falls back to what the harness that actually runs this channel would use: its
+  // template's model when that belongs to it, else THAT harness's gateway default. `parent.model`
+  // falls back to the GATEWAY engine's default, so under a channel pinned to the non-default
+  // harness it named the other harness's default ("Inherited default (gpt-6-sol)" on a Claude
+  // channel) — misleading, though the run itself used the right one. Effort follows the same rule.
+  const parentModel = [parent.model, getDefaultModel(channelEngine)].find((m) => m && modelBelongsToEngine(m, channelEngine)) || "";
+  const parentEffort = parent.effort && effortBelongsToModel(parent.effort, channelEngine, runtime.configuredModel || parentModel) ? parent.effort : "";
   const channel = {
     values: { engine: runtime.configuredEngineId, model: runtime.configuredModel, effort: runtime.configuredEffort },
     inherited: {
       engine: `Inherited default (${engineLabel(parent.engine)})`,
-      model: parent.model ? `Inherited default (${parent.model})` : "Engine default",
-      effort: parent.effort ? `Inherited default (${parent.effort})` : "Engine default",
+      model: parentModel ? `Inherited default (${parentModel})` : "Engine default",
+      effort: parentEffort ? `Inherited default (${parentEffort})` : "Engine default",
     },
     options: { engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
   };

@@ -680,6 +680,24 @@ test("a DM following an org template inherits that template's runtime, not the g
   }
 });
 
+test("a channel pinned to the non-default harness names THAT harness's default model as inherited", async () => {
+  const { saveSettings, getSettings } = await import("../src/config/settings.js");
+  const before = getSettings();
+  try {
+    // Gateway default engine is Codex; this channel is pinned to Claude with no model of its own.
+    await saveSettings({ ...before, engine: "codex", defaultClaudeModel: "opus[1m]", defaultCodexModel: "gpt-6-sol" });
+    const meta = { engine: "claude", model: "", effort: "" };
+    const scopes = await runtimeScopes("pinned-claude-channel", meta, { runtime: { ...snapshot.runtime, configuredEngineId: "claude", configuredModel: "", configuredEffort: "", effectiveEngineId: "claude" } }, "");
+    // What a run here actually uses is Claude's default; the Codex default must not be shown as
+    // the inherited value of a Claude channel (QA-0925: "Inherited default (gpt-6-sol)").
+    assert.equal(scopes.channel.inherited.model, "Inherited default (opus[1m])");
+    assert.equal(scopes.channel.inherited.engine, "Inherited default (Codex)", "the ENGINE row still names what an unset engine inherits");
+    assert.ok(scopes.channel.options.models.every((option) => !/^gpt-/.test(option.value)), "and the catalog is Claude's");
+  } finally {
+    await saveSettings(before);
+  }
+});
+
 test("a thread pick is validated against the harness the dropdown offered, not the channel's", async () => {
   const { saveSession } = await import("../src/gateway/sessions.js");
   const { getThreadEngine, getThreadModel, getThreadEffort } = await import("../src/gateway/thread-engine.js");

@@ -1972,6 +1972,13 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       General Settings with its notice; and a channel with a provisioned VPN shows *Checking
       status…* replaced by the real state, while a channel without one shows *Not configured*
       immediately with no flicker.
+- [x] Automated inherited-model label (engine-independent): with the gateway default harness
+      Codex, a channel pinned to Claude with no model shows *Inherited default (<Claude default>)*,
+      not the Codex default, and offers only Claude models
+      (`test/channel-settings-modal.test.js`). The web admin's unconfigured VPN row explains the
+      missing setup once, without the server's own "VPN is not configured. …" repeated
+      (`test/channel-vpn-web.test.js`, browser case; run it from a path without a dot-directory —
+      the static server 404s any path under `.worktrees/`).
 - [ ] Live resume round trip (engine-independent Slack UI case, run once per harness where the
       session is minted by that harness): in a disposable channel, send a message, then open
       **⚙️ Settings → Resume Session** from a reply inside that thread. Pass when the tab shows the

@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Slack **⚙️ Settings** no longer claims a channel pinned to Claude inherits the Codex default
+  model (or the reverse): an unset model or effort now names what the channel's own harness would
+  actually use. The web admin's VPN status also stops saying "not configured" twice.
+
 - Sending a generated file to Drive, Gmail and other Composio tools works again — or rather, works
   for the first time on a gateway using personal Composio tokens. `stage_file_for_composio` sent the
   stored token to Composio's REST upload, which only accepts project API keys; the tokens stored

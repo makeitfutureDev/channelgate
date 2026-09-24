@@ -375,7 +375,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   inside a thread, **that thread's own pins** (the per-thread overrides the `/model` wizard's "just
   this thread" scope and the `claude`/`codex` directive write, which beat the channel at run time).
   An unset field preselects the label of what it inherits — the gateway default, an org DM
-  template's value, or "Follow channel (…)" for a thread — so nothing reads as a blank; each
+  template's value, or "Follow channel (…)" for a thread — so nothing reads as a blank (an unset
+  model or effort names what the channel's OWN harness would use, so a Claude-pinned channel on a
+  Codex-default gateway reads the Claude default, never the Codex one); each
   scope's model and effort lists follow the harness THAT scope resolves to, so a Codex-pinned
   thread inside a Claude channel offers Codex models. Changing one field drops only the dependents
   it invalidates (a harness change always clears the model, and the effort when the new harness
