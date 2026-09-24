@@ -202,16 +202,21 @@ test("a settings control's command is read from a button value or from the picke
 
 test("General Settings holds the engine, access and network sections that used to be three tabs", () => {
   const view = buildChannelSettingsView(snapshot, state, { tab: "general", canEditRuntime: true, canEditAccess: true, canManageVpn: true });
+  // The VPN is not a section of its own any more: it is one row under the network switch it
+  // belongs to, so the page keeps two headers.
   assert.deepEqual(view.blocks.filter((block) => block.type === "header").map((block) => block.text.text),
-    ["Engine & model", "Access", "Network & VPN"]);
+    ["Engine & model", "Access"]);
   const text = rendered(view);
   assert.match(text, /claude-opus-4-8/);
   // The access policy is edited on the page itself, not behind a button into a pushed form.
   assert.match(text, /cg_channel_settings_access_field_mode/);
   assert.match(text, /cg_channel_settings_access_field_allowedUsers/);
   assert.doesNotMatch(text, /cg_channel_settings_access_edit/);
-  assert.match(text, /Network use/);
-  assert.match(text, /VPN/);
+  // The VPN row sits immediately after the Auto/Lean/Network checkboxes, and a manager reads the
+  // network policy off that checkbox instead of a second read-out repeating it.
+  const flags = view.blocks.findIndex((block) => block.block_id === "cg_channel_settings_access_field_flags_row");
+  assert.match(view.blocks[flags + 1].text.text, /^\*VPN\* — /);
+  assert.doesNotMatch(text, /Network use/);
   // Every legacy page id still lands here, so a Settings view opened before the merge keeps working.
   for (const legacy of ["runtime", "access", "network", "nonsense"]) {
     assert.equal(parseSettingsMetadata(buildChannelSettingsView(snapshot, state, { tab: legacy }).private_metadata).tab, "general");

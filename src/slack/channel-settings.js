@@ -445,14 +445,23 @@ function vpnButton(state, enabled) {
   const toggle = typeof enabled === "boolean";
   const operation = toggle ? "vpn_toggle" : "vpn_refresh";
   return button(toggle ? CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID : CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
-    toggle ? (enabled ? "Turn VPN on" : "Turn VPN off") : "Refresh VPN status", state, operation,
+    toggle ? (enabled ? "Turn on" : "Turn off") : "Refresh", state, operation,
     { ...(toggle ? { enabled } : {}), signature: vpnActionSignature(state, operation, enabled) },
     toggle && enabled ? { style: "primary" } : {});
 }
 
-function networkBlocks(snapshot, state, { canManageVpn }) {
+// The VPN is one more thing this channel's network either does or does not do, so it rides
+// directly under the network switch instead of owning a section further down the page. One state
+// word and its controls — the paragraphs explaining what a VPN is are documentation, not settings.
+// A message is kept only for the two states whose label cannot say why on its own (a failure and
+// an unavailable service), and that is exactly the diagnosis a refused toggle reports.
+const VPN_STATE_LABELS = Object.freeze({
+  unconfigured: "Not configured", unavailable: "Unavailable", off: "Off",
+  starting: "Starting", on: "On", stopping: "Stopping", failed: "Failed",
+});
+
+function vpnRows(snapshot, state, { canManageVpn }) {
   const vpn = snapshot.vpn;
-  const labels = { unconfigured: "Not configured", unavailable: "Unavailable", off: "Off", starting: "Starting — not connected yet", on: "On — connected", stopping: "Stopping", failed: "Failed — not connected" };
   const buttons = [vpnButton(state)];
   // Stopping remains possible while a tunnel is starting or failed. A running control operation
   // must settle before another one can be accepted by the service.
@@ -460,15 +469,21 @@ function networkBlocks(snapshot, state, { canManageVpn }) {
     if (vpn.enabled || vpn.running || ["on", "starting"].includes(vpn.state)) buttons.unshift(vpnButton(state, false));
     else if (vpn.state !== "stopping" && vpn.allowNetwork && !vpn.missingSecrets?.length) buttons.unshift(vpnButton(state, true));
   }
+  const explained = vpn?.message && ["failed", "unavailable"].includes(vpn.state);
   return [
-    fieldBlock("Network use", snapshot.mode?.allowNetwork ? "Allowed" : "Off"),
-    { type: "context", elements: [mrkdwn("Network use is the engine's channel policy. Managers can change it under Access above.")] },
-    fieldBlock("VPN", vpn ? (labels[vpn.state] || "Unknown") : "Checking status…"),
-    ...(vpn?.message ? [{ type: "section", text: mrkdwn(escapeMrkdwn(vpn.message)) }] : []),
-    ...(vpn?.missingSecrets?.length ? [fieldBlock("Missing channel secrets", vpn.missingSecrets.map(inlineCode).join(", "))] : []),
+    { type: "section", text: mrkdwn(`*VPN* — ${vpn ? (VPN_STATE_LABELS[vpn.state] || "Unknown") : "Checking status…"}`) },
+    ...(explained ? [{ type: "context", elements: [mrkdwn(escapeMrkdwn(vpn.message))] }] : []),
+    ...(vpn?.missingSecrets?.length
+      ? [{ type: "context", elements: [mrkdwn(`Missing channel secrets: ${vpn.missingSecrets.map(inlineCode).join(", ")}`)] }]
+      : []),
     { type: "actions", elements: buttons },
-    { type: "context", elements: [mrkdwn("VPN connects the channel's dedicated VPN service and extractor. It does not route the ordinary agent container through the tunnel. Only admins and current channel managers can turn it on or off.")] },
   ];
+}
+
+// Whoever cannot see the Access controls cannot see the network checkbox either, so they get the
+// policy as a one-line read-out. A manager reads it off the checkbox itself.
+function networkReadoutRow(snapshot) {
+  return { type: "section", text: mrkdwn(`*Network* — ${snapshot.mode?.allowNetwork ? "Allowed" : "Off"}`) };
 }
 
 // The channel's access policy as live controls rather than a summary plus a button into a pushed
@@ -477,7 +492,7 @@ function networkBlocks(snapshot, state, { canManageVpn }) {
 // modal, filling a whole form and submitting it, for what is usually one deliberate change. The
 // controls cannot be `input` blocks (Slack rejects those in a modal with no submit button), so
 // each one is a section accessory or an actions row that dispatches on change.
-function accessControlBlocks(access = {}) {
+function accessControlBlocks(access = {}, afterFlags = []) {
   const current = accessSettingsSnapshot(access);
   const flagOptions = ACCESS_FLAGS.map((flag) => option(flag.label, flag.key));
   const chosen = flagOptions.filter((entry) => current[entry.value]);
@@ -500,6 +515,7 @@ function accessControlBlocks(access = {}) {
         ...(chosen.length ? { initial_options: chosen } : {}),
       }],
     },
+    ...afterFlags,
     ...ACCESS_USER_LISTS.map(({ field, label }) => ({
       type: "section",
       block_id: `${ACCESS_FIELD_PREFIX}${field}_row`,
@@ -522,8 +538,9 @@ function accessControlBlocks(access = {}) {
 // modal renders comfortably — and they belong together anyway, because "what is this channel
 // allowed to do?" is not answerable from any one of them alone. Each section keeps the
 // authorization it had as a tab: the access controls render only for a manager, and the VPN
-// controls are still gated by canManageVpn inside networkBlocks.
+// controls are still gated by canManageVpn inside vpnRows.
 function generalBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false, canEditAccess = false, canManageVpn = false } = {}) {
+  const vpn = vpnRows(snapshot, state, { canManageVpn });
   return [
     ...runtimeBlocks(snapshot, state, { canEditRuntime, canEnableAdmin }),
     // A DM has no access policy to show: its only member is the person reading the page, and its
@@ -533,12 +550,15 @@ function generalBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
       { type: "divider" },
       { type: "header", text: plain("Access") },
       ...(canEditAccess
-        ? accessControlBlocks(snapshot.access || {})
-        : [{ type: "context", elements: [mrkdwn("_Who may use and manage this channel is shown to admins and channel managers only._")] }]),
+        ? accessControlBlocks(snapshot.access || {}, vpn)
+        : [
+          { type: "context", elements: [mrkdwn("_Who may use and manage this channel is shown to admins and channel managers only._")] },
+          networkReadoutRow(snapshot),
+          ...vpn,
+        ]),
     ]),
-    { type: "divider" },
-    { type: "header", text: plain("Network & VPN") },
-    ...networkBlocks(snapshot, state, { canManageVpn }),
+    // A DM never renders the Access section, so its network posture has nowhere else to live.
+    ...(snapshot.isDM ? [{ type: "divider" }, networkReadoutRow(snapshot), ...vpn] : []),
   ];
 }
 

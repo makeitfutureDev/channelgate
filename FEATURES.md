@@ -368,7 +368,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a second line as pages were added. Legacy page ids (`runtime`, `access`, `network`) still resolve,
   so a Settings view opened before the merge keeps navigating.
   **General Settings** is everything that decides how the conversation runs: its Engine & model
-  scopes, then **Access**, then **Network & VPN**. Engine & model edits in place — six dropdowns,
+  scopes, then **Access** (with the network switch and the VPN row). Engine & model edits in place — six dropdowns,
   no nested form, each saving the
   moment it is picked. It shows and edits BOTH scopes: the **channel default** (written to the
   channel record and audited like any policy change) and, when Settings was opened from a reply
@@ -421,8 +421,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   guarantees the submitted form had: the channel-membership lock, named users validated against
   live human channel membership, management and roles re-checked at the write boundary, and audited
   policy changes. A rejected value writes nothing at all.
-  The **Network & VPN** section below it states the channel's network policy and the VPN's real
-  state, with the on/off controls still gated to admins and channel managers. A conversation with
+  The **VPN** is one row directly under that Auto/Lean/Network checkbox group rather than a
+  section of its own: `*VPN* — On / Off / Not configured / Starting / Stopping / Failed /
+  Unavailable`, its Turn on / Turn off / Refresh controls still gated to admins and channel
+  managers, and no prose restating what the state word already says. A message is kept only for
+  the two states whose label cannot explain itself — a failure and an unavailable service — which
+  is the same diagnosis a refused toggle reports. Readers who cannot see the access controls (an
+  ordinary member, and every DM) get the channel's network policy as a one-line read-out beside
+  it, since the checkbox that would otherwise show it is not rendered for them. A conversation with
   no provisioned VPN service is answered from metadata alone — no status helper runs, and the row
   reads *Not configured* immediately — so only a provisioned channel spends a subprocess and a
   second view update filling in *Checking status…*.

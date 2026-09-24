@@ -36,7 +36,7 @@ test("an unprovisioned VPN is answered without the status helper; a provisioned 
 // User-visible states must distinguish starting a service from an established VPN, including
 // failures with autostart still enabled. No button may silently change the channel network policy.
 test("Network shows honest state, missing credentials and scoped manager controls", () => {
-  for (const [status, label] of [["off", "Off"], ["starting", "Starting — not connected yet"], ["on", "On — connected"], ["failed", "Failed — not connected"], ["unconfigured", "Not configured"], ["unavailable", "Unavailable"]]) {
+  for (const [status, label] of [["off", "Off"], ["starting", "Starting"], ["on", "On"], ["failed", "Failed"], ["unconfigured", "Not configured"], ["unavailable", "Unavailable"]]) {
     const vpn = { ...off, state: status, enabled: ["starting", "on", "failed"].includes(status), configured: status !== "unconfigured" };
     const view = render(vpn);
     assert.match(JSON.stringify(view), new RegExp(label));
@@ -54,7 +54,11 @@ test("Network shows honest state, missing credentials and scoped manager control
   const manuallyStarted = { ...off, enabled: false, state: "failed", running: true };
   assert.equal(parseActionValue(actionFor(manuallyStarted).value).enabled, false);
   assert.equal(parseActionValue(actionFor({ ...manuallyStarted, allowNetwork: false, missingSecrets: ["VPN_PASSWORD"] }).value).enabled, false);
-  assert.match(JSON.stringify(render(off)), /does not route the ordinary agent container/);
+  // The row is the state and its controls. A message survives only where the label cannot say why
+  // on its own, so a failure still explains itself while "Off" does not restate itself in prose.
+  assert.match(JSON.stringify(render({ ...off, state: "failed", message: "VPN image needs rebuilding." })), /needs rebuilding/);
+  assert.doesNotMatch(JSON.stringify(render(off)), /VPN is off\./);
+  assert.doesNotMatch(JSON.stringify(render(off)), /does not route the ordinary agent container/);
 });
 
 test("VPN actions bind channel, slug, owner and requested operation", () => {
@@ -96,7 +100,7 @@ test("VPN actions ACK before authority checks/service calls and show returned st
   });
   assert.deepEqual(events, ["ack", "manage", "manage", "read"]);
   assert.equal(updates[0].hash, "view-hash");
-  assert.match(JSON.stringify(updates[0]), /Starting — not connected yet/);
+  assert.match(JSON.stringify(updates[0]), /\*VPN\* — Starting/);
 });
 
 test("forged owner or metadata cannot call the service; safe backend errors reach the view", async () => {
@@ -173,7 +177,7 @@ test("authorized members refresh VPN status without mutation authority", async (
     status: async (channel) => { assert.equal(events[0], "ack"); assert.equal(channel, state.channelId); return off; },
     setEnabled: async () => assert.fail("refresh must not change VPN"),
   });
-  assert.match(JSON.stringify(updates), /VPN is off/);
+  assert.match(JSON.stringify(updates), /\*VPN\* — Off/);
   assert.equal(buttons(updates[0].view).some((b) => b.action_id === TOGGLE), false);
 });
 

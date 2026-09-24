@@ -1827,7 +1827,7 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       manager actor and an ordinary approved member, open **⚙️ Settings** from a reply. Pass when
       the modal opens on General Settings with one *Page* dropdown listing five pages; switching
       pages through it repaints in place; the manager sees Engine & model, Access (summary +
-      *Change access settings*) and Network & VPN on one page, while the member sees the same page
+      *Change access settings*) and the VPN row under the network switch on one page, while the member sees the same page
       without the access summary and cannot reach the editor; saving access settings returns to
       General Settings with its notice; and a channel with a provisioned VPN shows *Checking
       status…* replaced by the real state, while a channel without one shows *Not configured*
@@ -1844,11 +1844,16 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       a `static_select` whose options are General Settings / Resume Session / MCP / Skills /
       Secrets in that order, opening on the page being shown, each option bound to the view's
       channel and owner, and no page rendered as a button any more. General Settings carries the
-      Engine & model, Access and Network & VPN headers in that order. Every legacy page id
+      Engine & model and Access headers in that order, with the VPN rendered as a single row
+      immediately after the Auto/Lean/Network checkboxes rather than a section of its own. Every legacy page id
       (`runtime`, `access`, `network`) and an unknown one resolve to `general`, so a Settings view
       opened before the merge keeps navigating. A control's command is read from a button's own
       value or from the picked option, while a runtime dropdown's bare model id parses to no
       command at all (`test/channel-settings-modal.test.js`).
+- [x] Automated VPN row: each state renders as `*VPN* — <state>` with its scoped controls; a
+      failure or an unavailable service still carries its diagnosis, while `off` no longer restates
+      itself in prose and the "does not route the agent container" paragraph is gone from the modal
+      (it stays in `docs/CHANNEL-VPN.md`) (`test/slack-vpn-settings.test.js`).
 - [x] Automated VPN row cost: a conversation with no provisioned service renders *Not configured*
       from metadata alone and never *Checking status…*, and only a provisioned one is left for the
       hydration pass — so opening Settings costs no status subprocess and no second view update in
