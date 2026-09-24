@@ -241,6 +241,14 @@ test("the managed block carries the hard rules a run must never get wrong", () =
     assert.match(block, /A bounded "check every N minutes, K times"/);
     assert.match(block, /never an in-turn sleep\/poll loop/);
 
+    // 5. No blanket container prune, ever — in the block every run loads, not only in the skill
+    //    (OPS-DISK-01: a Claude run never opened the skill and recommended `podman system prune`).
+    assert.match(block, /Never run or recommend a blanket prune/);
+    for (const command of ["podman system prune", "podman image prune -a", "podman volume prune", "docker system prune"]) {
+      assert.ok(block.includes(`\`${command}\``), `${command} is named whole, on one line`);
+    }
+    assert.ok(block.includes("`npm run runtime:storage` (report only)"));
+
     // Still the whole block, not a replacement for it: tonight's switches section survives.
     assert.match(block, /This conversation's switches/);
   }

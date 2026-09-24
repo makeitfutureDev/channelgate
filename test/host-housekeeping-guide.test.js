@@ -73,7 +73,10 @@ test("the guide sends the agent to the gateway's own report first, and to --appl
 // and then RECOMMENDED `podman system prune -a --volumes`, which deletes every stopped channel's
 // HOME volume. "Never delete on your own" did not stop it suggesting the command. The row it does
 // read must forbid the commands by name and point at the safe report.
-test("the always-loaded routing row forbids suggesting a blanket prune and names the safe report", async () => {
+// The routing row is only read when a run opens the skill. The same rule therefore also lives in
+// the managed CLAUDE.md block's hard rules (test/folders-generator-paths.test.js), which every run
+// of every engine loads — the row alone did not stop a run that never opened the skill (OPS-DISK-01).
+test("the skill's routing row forbids suggesting a blanket prune and names the safe report", async () => {
   const cwd = tempDir("cg-housekeeping-prune-");
   try {
     for (const platform of ["slack", "msteams", "googlechat"]) {

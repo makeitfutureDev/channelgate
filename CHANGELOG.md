@@ -16,6 +16,15 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- The assistant no longer suggests a blanket container prune when asked about disk space. The
+  rule against `podman system prune`, `podman image prune -a`, `podman volume prune` and
+  `docker system prune` lived only in the operating guide, and a run that answered without opening
+  the guide recommended two of them — on this host they delete every channel's home. The rule now
+  sits among the few hard rules every run of every engine reads, pointing at the report-only
+  `npm run runtime:storage` instead.
+
 ## 0.5.5 — 2026-09-24
 
 - The runtime image no longer carries SSH host private keys. Installing `openssh-server` generated

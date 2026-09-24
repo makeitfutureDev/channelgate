@@ -2859,10 +2859,16 @@ are retired, bullet by bullet; everything else stands.
   rather than by reading the shared identity that holds other people's accounts (and the mirror:
   "your X" never touches `composio-user`); that `COMPOSIO_MANAGE_CONNECTIONS` initiates connections
   rather than listing them; and that only the gateway's `run_in_background` /
-  `run_agent_in_background` / `create_schedule` can report back after a turn ends — stated here
+  `run_agent_in_background` / `create_schedule` can report back after a turn ends; and that no run
+  runs or recommends a blanket container prune (`podman system prune`, `podman image prune -a`,
+  `podman volume prune`, `docker system prune`), which deletes every channel's home — disk cleanup
+  goes through the report-only `npm run runtime:storage` — stated here
   because a skill body is read only when the model opens it, and one engine reliably did not
-  (retest, 2026-09-06). They ride clean mode too, are engine-neutral,
-  and stay under 4 KB with the switches so the always-on prompt weight is read rather than skimmed. Editable three ways: the admin UI Instructions tab (edits the real
+  (retest, 2026-09-06; the prune rule after a 2026-09-25 run that skipped the skill and recommended
+  both prunes). They ride clean mode too, are engine-neutral,
+  and stay under 4 KB with the switches so the always-on prompt weight is read rather than skimmed
+  (4,091 bytes after the prune rule: the header note was tightened to make room, and the next
+  always-on rule has to trade space for it). Editable three ways: the admin UI Instructions tab (edits the real
   file; managed block shown read-only with a Settings link; hash-guarded against concurrent
   writes), by hand, or by asking the agent — the `update_channel_instructions` gateway MCP tool
   appends a rule in any mode (replace = admin-only). New sessions and `/clear` pick the file up
