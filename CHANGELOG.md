@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- Open interactive Claude signed in over SSH and VS Code. Connecting to a channel's container
+  worked and `claude -p` answered, but plain `claude` opened the first-run theme picker and a
+  login screen, so it looked signed out. Headless engine turns never finish Claude's onboarding,
+  and the flag lives in the channel's `$CLAUDE_CONFIG_DIR/.claude.json`, not `~/.claude.json`.
+  Each SSH or VS Code attach now marks onboarding done there (merging, never overwriting other
+  settings or a theme you picked), so `claude` opens straight on the gateway's login. Claude
+  still asks once per folder whether to trust it.
+
 - Show the gateway's own notices in streamed Slack answers. When a turn failed over to the other
   engine, the "Codex hit its usage limit — using Claude" line, the license allowance warning and
   the "Skipped MCP connection" notice were attached only to the finished reply, but Slack writes a
