@@ -184,9 +184,9 @@ export function channelSwitchesNote(meta = {}) {
 // administration.md already forbade suggesting a blanket prune after 0.5.3's L3 failure — but that
 // text lives in the skill, and a Claude run asked "what can we clean up?" never opened it, measured
 // the disk with its own tools and recommended `podman image prune -a` and `podman system prune`,
-// while the Codex run, which read administration.md, warned against exactly those. On this host a
-// blanket prune deletes every stopped channel's HOME volume (sessions, CLI logins, memory), so the
-// one-line core belongs here.
+// while the Codex run, which read administration.md, warned against exactly those. On this host
+// those commands can delete channel HOME volumes (sessions, CLI logins, memory) or the runtime image
+// every channel needs, so the one-line core belongs here.
 const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; details are in the
 \`gateway-usage\` skill:
 - Use \`ask_questions\` for clarification.

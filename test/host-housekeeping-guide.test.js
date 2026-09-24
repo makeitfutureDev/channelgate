@@ -84,8 +84,12 @@ test("the skill's routing row forbids suggesting a blanket prune and names the s
       const skill = await readFile(guidePath(cwd, "SKILL.md"), "utf8");
       const row = skill.split("\n").find((line) => line.startsWith("| Check disk space"));
       assert.ok(row, `${platform}: the routing row exists`);
-      assert.match(row, /Never run or suggest `podman system prune`, `podman volume prune` or `podman image prune -a`/, platform);
-      assert.match(row, /delete channel HOME volumes/, platform);
+      for (const command of ["podman system prune", "podman system reset", "podman volume prune", "podman image prune -a", "docker system prune"]) {
+        assert.ok(row.includes(`\`${command}\``), `${platform}: ${command}`);
+      }
+      assert.match(row, /Never run or suggest/, platform);
+      // The same TRUE consequence as the hard rule (not every command touches volumes).
+      assert.match(row, /can delete channel HOME volumes .* or the runtime image/, platform);
       assert.match(row, /npm run runtime:storage/, platform);
     }
   } finally { await rm(cwd, { recursive: true, force: true }); }
