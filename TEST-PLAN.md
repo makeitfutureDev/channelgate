@@ -1778,6 +1778,16 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       authorization and Slack membership before every mutation. Cloud MCP is hidden from non-admins
       and its controls reject revoked admin status; all authorized users can edit runtime and secrets
       in every channel mode regardless of manager policy.
+- [x] Automated Skills page: the Skill Template renders as a dispatching dropdown on the page
+      (options = "No template" + every live template, preselecting the channel's current slug) and
+      the old **Change Template** button that pushed a second modal is gone; with no templates
+      defined the row falls back to a read-out pointing at the admin UI
+      (`test/channel-settings-modal.test.js`).
+- [ ] Live (engine-independent): open ⚙️ Settings → *Skills* in a channel, pick a different
+      template from the dropdown, and confirm the page repaints in place with the ✅ notice, no
+      second modal opens, the Skill Template and "Channel Skills Including Template" rows both
+      update, and the channel folder's `.claude/skills/` reflects the new set on the next turn.
+      Picking *No template* clears it while directly added Channel Skills remain.
 - [x] Automated Engine & model tab: the tab carries no submit button and no `input` block (Slack
       rejects that combination), and renders six dispatching dropdowns — the channel default and
       this thread's pins — each preselecting its stored value or the label of what it inherits.

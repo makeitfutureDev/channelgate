@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- Slack ⚙️ Settings → Skills: the skill template is now a dropdown on the page instead of a
+  **Change Template** button that opened a second modal containing that same dropdown. Picking a
+  template saves immediately and repaints the page, like the Engine & model selects already did.
+  With no templates defined the row stays a read-out pointing at the admin UI. A Settings view
+  opened before this change repaints onto the new control, and a template modal that was already
+  open still saves.
+
 - Make `claude` over SSH the same Claude a Slack turn runs. A session had no MCP servers, no
   channel secrets and a login labelled "Claude API" with no usage shown, while a turn in the same
   channel had all of it. Now, before your shell starts, the gateway prepares the session like a

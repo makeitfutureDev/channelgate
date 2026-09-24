@@ -28,6 +28,8 @@ import {
   CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID,
   CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
   CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID,
+  CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID,
+  CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
   CHANNEL_SETTINGS_TABS,
   CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID,
   CONNECTION_COMPOSIO_ACTION_ID,
@@ -111,6 +113,11 @@ const snapshot = {
   },
   skills: {
     template: "Development",
+    templateSlug: "development",
+    templates: [
+      { slug: "development", name: "Development", description: "Build software" },
+      { slug: "support", name: "Support", description: "Answer customers" },
+    ],
     additional: ["pdf"],
     channel: ["development", "pdf"],
     organization: ["gateway-usage"],
@@ -389,6 +396,23 @@ test("catalog managers paginate and only allow direct grants to be deactivated",
   assert.equal(controls.find((button) => parseActionValue(button.value).k === "direct").text.text, "Deactivate");
   assert.equal(controls.find((button) => parseActionValue(button.value).k === "off").text.text, "Activate");
   assert.equal(controls.some((button) => parseActionValue(button.value).k === "org"), false);
+});
+
+test("the skill template is picked in place, with no second modal to open", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "skills" });
+  const picker = selects(view).map((block) => block.accessory).find((element) => element.action_id === CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID);
+  assert.ok(picker, "the Skills page carries the template dropdown itself");
+  assert.equal(picker.initial_option.value, "development");
+  assert.deepEqual(picker.options.map((o) => o.value), [SETTINGS_NONE_VALUE, "development", "support"]);
+  // The button that used to push the editor is gone; only the list managers remain buttons.
+  assert.equal(allButtons(view).some((button) => button.action_id === CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID), false);
+  assert.match(rendered(view), /Changing it saves immediately/);
+});
+
+test("with no templates defined the Skills page explains where they come from", () => {
+  const view = buildChannelSettingsView({ ...snapshot, skills: { ...snapshot.skills, template: "", templateSlug: "", templates: [] } }, state, { tab: "skills" });
+  assert.equal(selects(view).some((block) => block.accessory.action_id === CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID), false);
+  assert.match(rendered(view), /Admins create templates in the admin UI/);
 });
 
 test("template editor supports clearing and selecting a live template", () => {
