@@ -177,6 +177,9 @@ test("the container environment always points HOME and both engine state dirs in
     CG_RUNTIME: "container",
     CG_CHANNEL: "env-chan",
     CG_PLATFORM: "slack",
+    // Claude Code's interactive updater installed a newer copy into ~/.npm-global/bin — first on the
+    // image PATH — which then shadowed the pinned CLI for every turn and the login wrapper (2026-09-24).
+    DISABLE_AUTOUPDATER: "1",
   });
 });
 

@@ -179,6 +179,24 @@ every other channel. In a `/sudo` turn, HOME is the daemon user's native host HO
 elsewhere; a credential pasted there can end up committed. A credential this channel should have
 is a `/secrets` variable (below) — use its injected environment value, not a project `.env` file.
 
+## SSH into this channel's container (developers)
+A person can open a real SSH session — terminal, VS Code Remote-SSH, sftp, port forwards — inside
+THIS channel's container, the same box you work in. One key per person, granted per channel.
+- `add_my_ssh_key` — the requester registers their OWN public key (the `.pub` line) once, for every
+  channel. Refuse to accept a private key; if one was pasted, say it is now compromised. Never
+  repeat key material back; quote the fingerprint the tool returns.
+- `list_my_ssh_keys` / `remove_my_ssh_key` — the requester's own keys only.
+- `grant_channel_ssh` / `revoke_channel_ssh` (managers) — who may SSH into this channel's
+  container. Granting is handing someone a shell as the channel (its files, its CLI logins, Claude
+  and Codex): say so, and never grant on the requester's word alone when they are not a manager.
+- `show_channel_ssh` — whether the host is set up, who is granted, live sessions, and the
+  `~/.ssh/config` block to paste (the channel rides in the ProxyCommand; one key reaches several
+  channels). Use it for "how do I SSH in", "who has SSH here", "give me the connection info".
+A container with a live SSH session is never idle-stopped. SSH is refused while this channel is
+in Admin mode and the gateway's `containerFullAccessHome` switch is on, because that container
+would expose the operator's home; `show_channel_ssh` says so. If the host is not set up, the
+operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) — no tool can.
+
 ## Working folder & Drive
 - `get_channel_workdir` / `set_channel_workdir` (admin) / `clear_channel_workdir` (admin) — run
   the channel's agent in a real project directory instead of the default folder.
@@ -191,6 +209,40 @@ is a `/secrets` variable (below) — use its injected environment value, not a p
   pass keeps running in the gateway, so say it is still running and check later with
   `get_channel_drive_folder`. It cannot target another channel — to sync a different channel, the
   user asks in that channel or clicks **Sync now** on its admin-UI page.
+
+## Environment secrets: three scopes
+Injected variables come from three places, merged **organization → personal → channel** (most
+specific last):
+
+- **organization** — shared by every conversation in this deployment (e.g. a `GH_TOKEN` every
+  channel can push with). Admins manage it in Settings → Integrations → *Organization secrets*,
+  or from chat with `set_secret` / `remove_secret` with `scope: "organization"`.
+- **personal** — belongs to the person who sent THIS message and is injected only into runs they
+  author, in any conversation. Anyone sets their own with `set_secret` / `remove_secret` (the
+  default scope) — tell them to send it in a DM and delete the message afterwards. It is never
+  injected into another person's turn, so do not suggest one person's secret as a fix for another's
+  missing access.
+- **channel** — this conversation's own, below.
+
+`list_secrets` shows all three scopes in ONE call (names, provider, masked tail, who set them —
+never a value), filterable with `scope`. It is live: a secret added a moment ago is listed at once.
+A process that already started keeps the environment it started with; a chat turn gets the
+current set at its start, and in an SSH session `CG_SESSION_ENV` names the session's current env
+file — source it in the same command (`. "$CG_SESSION_ENV"; <command>`) to use a credential added
+since that `claude` started.
+
+A `GH_TOKEN` in any of these scopes is picked up by the `gh` CLI with no setup. Plain `git push`
+over HTTPS is separate: it uses a credential helper, and the runtime image configures none. Run
+`gh auth setup-git` once in the conversation's container — it writes the helper into the channel's
+own persistent home, so it survives restarts and container recreates — and `git push` then
+authenticates with whichever `GH_TOKEN` the run was given. Do not embed a token in a remote URL:
+it lands in `.git/config` and in every log line that echoes the remote.
+
+A channel variable **wins** over a personal one of the same name, and a personal one wins over the
+organization's. So a personal secret fills a name the conversation does not define; it never
+redirects one the conversation does. The **[Channel credentials for THIS attempt]** block names the
+scope of each variable when more than one is in play — use it to say which account you acted as,
+and never assume a name implies a particular owner.
 
 ## This channel's own environment secrets (its own CLI logins)
 “Write-only” describes the UI/API listing and reveal contract. A secret injected into a run is
@@ -246,7 +298,12 @@ override the channel's tool permissions or *Allow network* policy.
 
 The Slack **Settings** reply button is available to every authorized agent user, including channel
 guests. It allows editing engine/model/effort, channel skills and templates, MCP connection tokens
-and labels, and write-only secrets. Cloud MCP is visible and editable only by current admins.
+and labels, and write-only secrets. Its **Engine & model** tab edits both scopes in place, with no
+nested form: the channel default, and — when Settings was opened from a reply inside a thread —
+that thread's own engine/model/effort pins (the same per-thread overrides `/model` → *just this
+thread* and a `claude`/`codex` directive write). Each dropdown saves on pick and applies to the
+next turn; an unset field shows what it inherits, and a pinned thread has a **Follow channel
+default** button. Cloud MCP is visible and editable only by current admins.
 A separate **Access** tab is visible only to admins and current channel managers. It edits mode,
 Admin/full access, Auto, Lean, network, who may use/manage the channel, and named guests/managers. Manager
 policy applies to this entire page; changing Full access still leaves run-time bypass admin-author-only.
@@ -287,6 +344,94 @@ admin rights or change the permissions required by separate gateway control tool
   cancels the restart, reports what remains in this thread, and requires a fresh request later.
 - Admin mode starts an admin author's safe restart without a second approval. Auto/Read/Worker
   modes require an admin's Slack approval first.
+
+## Disk space, stale containers and old images (admin)
+Container storage grows on its own and nothing in the gateway reclaims it. Every
+`npm run build:image` adds a new ~2-4 GB runtime image and re-points `:latest`; the previous
+versions stay. The idle reaper **stops** a channel's container but never removes it (a stopped
+container restarts in under a second, so that is deliberate), and a container keeps the image it
+was created from alive. A full disk takes the daemon, its database and every channel down at once,
+so check before it gets there.
+
+**Never delete anything automatically.** Report what you found and what it would free, then let an
+admin decide. And never *recommend* a blanket prune either: `podman system prune`
+(with or without `--volumes`), `podman volume prune` and `podman image prune -a` look like the
+routine fix, but they delete every channel HOME volume whose container happens to be stopped or
+gone — its engine sessions, CLI logins and installed tools, unrecoverably. The safe path is always
+`npm run runtime:storage`, which knows which volumes are channel homes. Removal happens only on an explicit request or from a schedule an admin set up — not
+as a tidy-up you decided was helpful.
+
+These commands need the **host**, not a channel container: there is no `podman` inside a channel
+container. Run them from an admin `/sudo` thread.
+
+### Check
+Start with the gateway's own report. It applies every rule in this section for you and changes
+nothing unless told to:
+```sh
+cd <the gateway checkout> && npm run runtime:storage        # report only
+npm run runtime:storage -- --json                           # the same, as JSON
+```
+It lists every container, image and volume as `remove` or `keep` with the reason, and counts the
+space removing the images would free layer by layer (shared layers are not double-counted). Show
+the admin that report. Only if they ask, run `npm run runtime:storage -- --apply`, which removes
+exactly the lines marked `remove` and prints the free space before and after. An admin may schedule
+the report; schedule `--apply` only when they say so. The raw commands below are for when the
+report itself needs explaining.
+```sh
+df -h /                 # free space on the filesystem holding the runtime root
+podman system df        # images / containers / volumes, with a reclaimable column
+podman system df -v     # per image: size, and how many containers still reference it
+```
+Treat under ~10 GB free as worth raising, and under ~5 GB as urgent — a single image build needs
+several GB plus scratch space for its layers.
+
+### Find what is actually stale
+- **Containers from other runtime roots.** A container is named
+  `cg-<runtime-root-hash>-<platform>-<slug>`. Only the hash belonging to the running daemon is
+  live; every other hash is a leftover, most often from a live container test run (each run pins
+  its own scratch runtime root, so it mints a whole new set and abandons them). The daemon is
+  correctly scoped to its own root and will never touch the others, so they accumulate forever.
+  Group them:
+  ```sh
+  podman ps -a --format '{{.Names}}' | sed -E 's/^(cg-[0-9a-f]+)-.*/\1/' | sort | uniq -c | sort -rn
+  ```
+  The largest group is normally the live daemon; confirm which hash is live before treating any
+  group as disposable.
+- **Containers pinned to a superseded image.** Compare each container's *image ID* with the
+  current one. Do not compare tags: `podman ps` shows `runtime:latest` for every container because
+  the tag moved, while the container still holds the older image ID it was created from.
+  ```sh
+  latest=$(podman images --format '{{.ID}}' localhost/channelgate/runtime:latest)
+  podman ps -a --format '{{.Names}}\t{{.ImageID}}\t{{.Status}}' \
+    | awk -F'\t' -v cur="$latest" '{if (substr($2,1,12) != cur) print}'
+  ```
+  These are recreated on the current image the next time their channel is used, so retiring an
+  **exited** one costs nothing. Never remove a container that is `Up` — it may be holding a lease
+  for a background job, a schedule or an attached editor.
+- **Images nothing references.** In `podman system df -v`, the last column is the container count.
+  An image at `containers=0` can go. An image with a non-zero count cannot, until those containers
+  are gone.
+
+### What is safe to remove, and what is never
+| Safe | Never |
+| --- | --- |
+| Containers under a non-live runtime-root hash | Anything under the live daemon's hash that is `Up` |
+| **Exited** containers pinned to a superseded image ID | The current `runtime:latest` / its version tag |
+| Runtime image versions at `containers=0` | A `…-home` volume for a channel that still exists |
+| Dangling images (`podman image prune`) | Any volume still attached to a container |
+
+A channel's state lives in its named `cg-<hash>-<platform>-<slug>-home` volume, not in the
+container, so removing the container is recoverable and removing that volume is not: it destroys
+that channel's engine sessions, CLI logins and installed tools. `podman rm -v` only drops
+*anonymous* volumes, so it is safe — but once a container is gone its named HOME volume becomes
+dangling, which means **`podman volume prune` is not safe** here. Filter the dangling list by hand
+and keep every `-home` volume whose channel is still real; remove only test/QA fixture volumes and
+anonymous hashes.
+
+### Reporting it
+Say how much is free, what is reclaimable, which groups you classified as stale and why, and what
+each step would free. Keep at least the current image and the previous one if a rollback window
+matters (`docs/RELEASE-CHECKLIST.md` tracks that). Then stop and ask.
 
 ## This guide (admin) — customize what the AI reads
 This whole usage guide (the `gateway-usage` skill) can be customized live and restored to the

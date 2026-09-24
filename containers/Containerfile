@@ -43,9 +43,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # PID 1, postgresql-client for the Supabase workflows, and python3 WITH pip/venv/pipx — after npm,
 # python packaging is the most common "install a CLI" path, and everything it installs lands in
 # ~/.local, which is inside the per-channel HOME volume and therefore permanent.
+# openssh-server is NOT a listening service: cg-sshd runs `sshd -i` on stdio, unprivileged, for one
+# gateway-brokered SSH attach session at a time (docs/SSH-ACCESS.md). The container never listens.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl ffmpeg git jq less openssh-client pipx postgresql-client procps python3 python3-pip python3-venv ripgrep tini unzip \
+      ca-certificates curl ffmpeg git jq less openssh-client openssh-server pipx postgresql-client procps python3 python3-pip python3-venv ripgrep tini unzip \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
@@ -64,6 +66,8 @@ RUN set -eux; \
       old="$(getent passwd "${UID}" | cut -d: -f1)"; \
       usermod -l agent -g "${GID}" -d /home/agent -m -s /bin/bash "$old"; \
     else useradd -u "${UID}" -g "${GID}" -m -d /home/agent -s /bin/bash agent; fi; \
+    # "!" (useradd's default) makes sshd refuse the account as locked; "*" is Debian's key-only marker.
+    usermod -p '*' agent; \
     install -d -o agent -g agent -m 0755 /home/agent; \
     install -d -o agent -g agent -m 0700 /home/agent/.claude /home/agent/.codex /home/agent/.npm-global /home/agent/.cache /home/agent/.config /home/agent/.local/bin /home/agent/bin
 
@@ -119,6 +123,36 @@ RUN pip3 install --break-system-packages --no-cache-dir \
  && python3 -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')" \
  && chmod -R a+rX /opt/channelgate/models
 
+# VS Code servers, shared by every channel. VS Code's remote extensions install a ~620 MB server
+# (plus a 34 MB CLI) per client version into ~/.vscode-server — and /home/agent is the per-channel
+# volume, so every channel someone opened an editor in paid for its own copy (measured: 687 MB of
+# the 689 MB in one channel's .vscode-server, extensions 8 KB). Baked here, root-owned like the
+# browsers above, every channel shares ONE copy per pinned version; cg-init links them into the
+# volume on each start, in both layouts VS Code looks for (attach-container: bin/<commit>;
+# Remote-SSH: cli/servers/Stable-<commit>/server and code-<commit>). A client on an unlisted version
+# is unaffected: it downloads its own server into the volume exactly as before.
+# Each entry is commit:serverSha256:cliSha256 from containers/versions.json. The hashes are VS
+# Code's own published sha256; a download that does not match fails the build rather than
+# shipping a different editor. An empty list builds an image without shared servers.
+ARG VSCODE_SERVERS=
+RUN set -eu; \
+    for entry in $VSCODE_SERVERS; do \
+      commit="${entry%%:*}"; rest="${entry#*:}"; server_sha="${rest%%:*}"; cli_sha="${rest#*:}"; \
+      dir="/opt/channelgate/vscode-server/$commit"; \
+      curl -fsSL --retry 3 -o /tmp/vscode-server.tgz "https://update.code.visualstudio.com/commit:$commit/server-linux-x64/stable"; \
+      echo "$server_sha  /tmp/vscode-server.tgz" | sha256sum -c -; \
+      curl -fsSL --retry 3 -o /tmp/vscode-cli.tgz "https://update.code.visualstudio.com/commit:$commit/cli-alpine-x64/stable"; \
+      echo "$cli_sha  /tmp/vscode-cli.tgz" | sha256sum -c -; \
+      install -d "$dir/server" "$dir/cli"; \
+      tar xzf /tmp/vscode-server.tgz -C "$dir/server" --strip-components=1 --no-same-owner; \
+      tar xzf /tmp/vscode-cli.tgz -C "$dir/cli" --no-same-owner; \
+      test "$(node -p "require('$dir/server/product.json').commit")" = "$commit"; \
+      test -x "$dir/server/bin/code-server"; \
+      test -x "$dir/cli/code"; \
+      rm -f /tmp/vscode-server.tgz /tmp/vscode-cli.tgz; \
+    done; \
+    if [ -d /opt/channelgate/vscode-server ]; then chmod -R a+rX,go-w /opt/channelgate/vscode-server; fi
+
 # The gateway's own in-container bundle: the process helpers plus the minimal set of daemon modules
 # an ENGINE spawns during a run (the MCP bridges and the Stop hook), resolved as an import closure
 # by the build script — never the whole checkout, which is never mounted either.
@@ -158,6 +192,17 @@ ENV CG_RUNTIME=container \
 # skeleton prepends ~/bin and ~/.local/bin once more — harmless duplicates.
 RUN printf 'export PATH="%s"\n' "$PATH" > /etc/profile.d/channelgate-path.sh \
  && chmod 0644 /etc/profile.d/channelgate-path.sh
+
+# An interactive SSH login starts in the channel's work folder instead of HOME (spec 1.5.1). The
+# gateway's in-container sshd_config hands every session CG_WORKDIR. Only an INTERACTIVE shell of an
+# SSH session that is still in HOME moves: Codex runs each command through `bash -lc` (a login shell,
+# but not interactive, and never an SSH session), and a `cd` there would change where it runs.
+RUN printf '%s\n' \
+      '# ChannelGate: an interactive SSH login starts in the channel work folder (CG_WORKDIR).' \
+      'if [ -n "${SSH_CONNECTION:-}" ] && [ -n "${CG_WORKDIR:-}" ] && [ "$PWD" = "$HOME" ] && [ -d "$CG_WORKDIR" ]; then' \
+      '  case $- in *i*) cd "$CG_WORKDIR" || true ;; esac' \
+      'fi' > /etc/profile.d/channelgate-workdir.sh \
+ && chmod 0644 /etc/profile.d/channelgate-workdir.sh
 
 USER agent
 WORKDIR /home/agent

@@ -81,14 +81,19 @@ test("Admin save handlers repaint from their successful PUT responses", () => {
   assert.match(channelSave, /const result = await api\(/);
   assert.match(channelSave, /ch\.meta = reconcileChannelMeta\(ch\.meta, result\.meta\)/);
   assert.match(client, /function paintSettings\(s\)/);
-  // loadSettings paints from /api/settings and then refreshes the License card from its own
-  // endpoint (the licensing state machine has a clock in it, so it is not part of the settings
-  // payload). The invariant this guards is unchanged: settings are painted from ONE fetch.
-  const loadSettings = client.slice(client.indexOf("async function loadSettings()"), client.indexOf("async function loadLicense()"));
+  // loadSettings paints from /api/settings and then refreshes the two cards that have their own
+  // endpoints: the License card (the licensing state machine has a clock in it) and the
+  // organization secrets card (an arbitrary-name secret bag has no business in the settings
+  // payload's fixed named fields). The invariant this guards is unchanged: settings themselves are
+  // painted from ONE fetch.
+  const loadSettings = client.slice(client.indexOf("async function loadSettings()"), client.indexOf("async function loadOrgSecrets()"));
   assert.match(loadSettings, /api\("\/api\/settings"\)/);
   assert.match(loadSettings, /api\("\/api\/users"\)\.catch/);
-  assert.match(loadSettings, /paintSettings\(settings\);\s*await loadLicense\(\);/);
+  assert.match(loadSettings, /paintSettings\(settings\);\s*await Promise\.all\(\[loadLicense\(\), loadOrgSecrets\(\)\]\);/);
   assert.match(client, /async function loadLicense\(\)/);
+  // The org-secrets card paints from ITS endpoint and from the full masked list every mutation
+  // answers with — never from a locally patched copy.
+  assert.match(client, /api\("\/api\/org-secrets"\)\)\.vars/);
   assert.match(settingsSave, /paintSettings\(r\)/);
   assert.doesNotMatch(settingsSave, /await loadSettings\(\)/);
 });

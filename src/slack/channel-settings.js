@@ -2,7 +2,7 @@
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { ACCESS_EDIT_ACTION_ID, accessSummary } from "./access-settings.js";
+import { ACCESS_FIELD_PREFIX, ACCESS_FLAGS, ACCESS_LABELS, ACCESS_SELECTS, ACCESS_USER_LISTS, accessSettingsSnapshot } from "./access-settings.js";
 import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
 import { buildSecretsView } from "./secret-explorer.js";
@@ -10,11 +10,21 @@ import { buildSecretsView } from "./secret-explorer.js";
 export const CHANNEL_SETTINGS_MODE_PREFIX = "cg_channel_settings_mode_";
 export const CHANNEL_SETTINGS_OPTION_PREFIX = "cg_channel_settings_option_";
 export const CHANNEL_SETTINGS_ACTION_ID = "cg_channel_settings";
+// Pages are picked from one dropdown now. The per-tab button ids this prefix built still arrive
+// from Settings views opened before that change: CHANNEL_SETTINGS_ACTION_PATTERN matches them, and
+// the handler dispatches on the command in their value, so they keep working without the prefix
+// being referenced anywhere.
 export const CHANNEL_SETTINGS_TAB_PREFIX = "cg_channel_settings_tab_";
+export const CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID = "cg_channel_settings_tab_select";
+// Kept only so a Settings modal opened before the inline dropdowns shipped still has a live
+// control: the handler repaints the runtime tab instead of pushing the retired editor.
 export const CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID = "cg_channel_settings_runtime_edit";
 export const CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID = "cg_channel_settings_runtime_engine";
 export const CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID = "cg_channel_settings_runtime_model";
-export const CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID = "cg_channel_settings_runtime_form";
+export const CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID = "cg_channel_settings_thread_engine";
+export const CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID = "cg_channel_settings_thread_model";
+export const CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID = "cg_channel_settings_thread_effort";
+export const CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID = "cg_channel_settings_thread_reset";
 export const CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID = "cg_channel_settings_connections_edit";
 export const CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID = "cg_channel_settings_connections_form";
 export const CHANNEL_SETTINGS_FALLBACK_ACTION_ID = "cg_channel_settings_connections_fallback";
@@ -28,20 +38,53 @@ export const CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX = "cg_channel_settings_cloud_pag
 export const CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID = "cg_channel_settings_skills_manage";
 export const CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX = "cg_channel_settings_skill_toggle_";
 export const CHANNEL_SETTINGS_SKILL_PAGE_PREFIX = "cg_channel_settings_skill_page_";
+// The template is one value out of a list, so it is picked in place like the runtime selects.
+// The EDIT/CALLBACK pair below is the retired pushed editor, kept only so a Settings view (or a
+// pushed modal) opened before the inline control shipped still resolves — the button repaints the
+// page instead of pushing, and the callback still saves a modal that was already open.
+export const CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID = "cg_channel_settings_template_select";
 export const CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID = "cg_channel_settings_template_edit";
 export const CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID = "cg_channel_settings_template_form";
 export const CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID = "cg_channel_settings_secrets_manage";
 export const CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID = "cg_channel_settings_vpn_toggle";
 export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_refresh";
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["runtime", "mcp", "skills", "secrets", "network", "access"]);
+// The pages the modal offers, in the order the dropdown lists them. "general" absorbed the former
+// runtime, access and network tabs (see generalBlocks); LEGACY_TABS keeps a Settings view opened
+// before that merge — its buttons still carry the old ids — landing on the page that now owns
+// those controls instead of silently falling back to the first one.
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["general", "resume", "mcp", "skills", "secrets"]);
+const LEGACY_TABS = Object.freeze({ runtime: "general", access: "general", network: "general" });
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
-export const RUNTIME_ENGINE_BLOCK_ID = "settings_runtime_engine";
-export const RUNTIME_MODEL_BLOCK_ID = "settings_runtime_model";
-export const RUNTIME_EFFORT_BLOCK_ID = "settings_runtime_effort";
 export const RUNTIME_EFFORT_ACTION_ID = "cg_channel_settings_runtime_effort";
+// The two runtime scopes the Engine & model tab edits in place. Declaring the ids once keeps the
+// renderer and the controller from drifting over which dropdown writes which scope and field.
+export const RUNTIME_SELECT_ACTION_IDS = Object.freeze({
+  channel: Object.freeze({
+    engine: CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID,
+    model: CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID,
+    effort: RUNTIME_EFFORT_ACTION_ID,
+  }),
+  thread: Object.freeze({
+    engine: CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID,
+    model: CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID,
+    effort: CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID,
+  }),
+});
+export const RUNTIME_SCOPES = Object.freeze(Object.keys(RUNTIME_SELECT_ACTION_IDS));
+export const RUNTIME_FIELDS = Object.freeze(["engine", "model", "effort"]);
+
+// Which scope and field a dispatched dropdown writes, or null when the action isn't one of them.
+export function runtimeSelectTarget(actionId) {
+  for (const scope of RUNTIME_SCOPES) {
+    for (const field of RUNTIME_FIELDS) {
+      if (RUNTIME_SELECT_ACTION_IDS[scope][field] === actionId) return { scope, field };
+    }
+  }
+  return null;
+}
 export const CONNECTION_COMPOSIO_BLOCK_ID = "settings_composio_token";
 export const CONNECTION_COMPOSIO_ACTION_ID = "cg_channel_settings_composio_token";
 export const CONNECTION_COMPOSIO_LABEL_BLOCK_ID = "settings_composio_label";
@@ -76,9 +119,10 @@ function inlineCode(value) {
   return `\`${escapeMrkdwn(value || "—").replaceAll("`", "'")}\``;
 }
 
-function normalizeTab(tab) {
+export function normalizeTab(tab) {
   const value = String(tab || "").toLowerCase();
-  return CHANNEL_SETTINGS_TABS.includes(value) ? value : "runtime";
+  if (CHANNEL_SETTINGS_TABS.includes(value)) return value;
+  return LEGACY_TABS[value] || CHANNEL_SETTINGS_TABS[0];
 }
 
 export function actionValue(op, extra = {}) {
@@ -92,6 +136,14 @@ export function parseActionValue(raw) {
   } catch {
     return {};
   }
+}
+
+// What did this control ask for? A button carries its command in `value`; a select carries it in
+// the option the user landed on. Every other select on these pages holds a bare id (a model, an
+// effort), which is not JSON and yields {} — the same answer an unrecognized control gets, so the
+// handler's dispatch on `o` stays the only thing that decides what happens.
+export function settingsCommand(action) {
+  return parseActionValue(action?.selected_option?.value ?? action?.value);
 }
 
 export function settingsMetadata(state = {}) {
@@ -181,15 +233,27 @@ function destructiveConfirm(title, text, confirm = "Remove") {
   };
 }
 
+// One scope's three rows. A stored value renders as itself; an empty one renders as the label of
+// whatever it inherits, so "nothing set here" never shows up as a blank the reader has to decode.
+// `options` carries the catalogs the app layer resolved for the engine THIS scope actually runs.
+function runtimeScopeRows(scope, { values = {}, inherited = {}, options = {} } = {}, { editable = true } = {}) {
+  const ids = RUNTIME_SELECT_ACTION_IDS[scope];
+  const lists = { engine: options.engines || [], model: options.models || [], effort: options.efforts || [] };
+  const labels = { engine: "Engine", model: "Model", effort: "Reasoning effort" };
+  return RUNTIME_FIELDS.map((field) => (editable
+    ? selectRow({
+      label: labels[field],
+      actionId: ids[field],
+      options: [{ label: inherited[field] || "Inherited default", value: SETTINGS_DEFAULT_VALUE }, ...lists[field]],
+      initialValue: values[field] || SETTINGS_DEFAULT_VALUE,
+    })
+    : fieldBlock(labels[field], values[field] ? inlineCode(values[field]) : `_${escapeMrkdwn(inherited[field] || "inherited default")}_`)));
+}
+
 function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false } = {}) {
   const runtime = snapshot.runtime || {};
-  const configuredEngine = runtime.configuredEngine
-    ? inlineCode(runtime.configuredEngine)
-    : `_inherits gateway default (${inlineCode(runtime.effectiveEngine || "unknown")})_`;
-  const configuredModel = runtime.configuredModel
-    ? inlineCode(runtime.configuredModel)
-    : `_inherits ${runtime.gatewayModel ? `gateway default (${inlineCode(runtime.gatewayModel)})` : "the CLI default"}_`;
-  const effort = runtime.configuredEffort ? inlineCode(runtime.configuredEffort) : "_engine default_";
+  const scopes = runtime.scopes || {};
+  const thread = scopes.thread || null;
   const mode = snapshot.mode || {};
   const selected = channelMode(mode);
   const blocks = [
@@ -205,16 +269,30 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
     { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option shared by all admitted members, not host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
     { type: "divider" },
     ] : []),
-    fieldBlock("Engine", configuredEngine),
-    fieldBlock("Model", configuredModel),
-    fieldBlock("Reasoning effort", effort),
+    { type: "header", text: plain("Engine & model") },
+    { type: "section", text: mrkdwn("*Channel default*") },
+    ...runtimeScopeRows("channel", scopes.channel, { editable: canEditRuntime }),
+    { type: "context", elements: [mrkdwn("Applies to every thread here that has no pin of its own. Each change saves immediately and takes effect on the next turn.")] },
+    { type: "divider" },
+    { type: "section", text: mrkdwn("*This thread*") },
   ];
-  if (canEditRuntime) {
-    blocks.push({
-      type: "actions",
-      elements: [button(CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, "Change engine & model", state, "runtime_edit", {}, { style: "primary" })],
-    });
+  if (!thread) {
+    blocks.push({ type: "context", elements: [mrkdwn("_Open Settings from a reply inside a thread to pin that thread's engine, model or effort._")] });
   } else {
+    blocks.push(
+      ...runtimeScopeRows("thread", thread, { editable: canEditRuntime }),
+      ...(canEditRuntime && thread.pinned
+        ? [{ type: "actions", elements: [button(CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID, "Follow channel default", state, "thread_reset", {}, {
+          confirm: destructiveConfirm("Clear this thread's pins?", "The thread goes back to the channel's engine, model and effort.", "Clear"),
+        })] }]
+        : []),
+      { type: "context", elements: [mrkdwn("A pin here beats the channel default for this thread only, and stops cross-engine failover from answering on the other harness.")] },
+      ...(thread.sessionEngineLabel
+        ? [{ type: "context", elements: [mrkdwn(`_This thread's live session was started by *${escapeMrkdwn(thread.sessionEngineLabel)}*, so it keeps running there until you pin an engine above or clear the session with \`/clear\`._`)] }]
+        : []),
+    );
+  }
+  if (!canEditRuntime) {
     blocks.push({ type: "context", elements: [mrkdwn("_Your gateway's runtime-change policy limits this control to administrators._")] });
   }
   return blocks;
@@ -293,9 +371,25 @@ function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false } = {}
 
 function skillsBlocks(snapshot = {}, state = {}) {
   const skills = snapshot.skills || {};
+  // One value out of a known list → a dropdown that saves on change, not a button that opens a
+  // second modal to show the same dropdown. With no templates defined there is nothing to pick,
+  // so the row stays a plain read-out that says where templates come from.
+  const templates = Array.isArray(skills.templates) ? skills.templates : [];
   return [
-    fieldBlock("Skill Template", skills.template ? inlineCode(skills.template) : "_none_"),
-    { type: "context", elements: [mrkdwn("A reusable set of skills for this channel. Use Change Template below to choose a different set.")] },
+    ...(templates.length
+      ? [selectRow({
+        label: "Skill Template",
+        actionId: CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
+        options: [
+          { label: "No template", value: SETTINGS_NONE_VALUE, description: "Keep only channel and organization grants" },
+          ...templates.map((entry) => ({ label: entry.name || entry.slug, value: entry.slug, description: entry.description || "" })),
+        ],
+        initialValue: skills.templateSlug || SETTINGS_NONE_VALUE,
+      })]
+      : [fieldBlock("Skill Template", skills.template ? inlineCode(skills.template) : "_none_")]),
+    { type: "context", elements: [mrkdwn(templates.length
+      ? "A reusable set of skills for this channel. Changing it saves immediately and applies to the next turn."
+      : "A reusable set of skills for this channel. Admins create templates in the admin UI → Skills.")] },
     fieldBlock("Channel Skills", listLabel(skills.additional)),
     { type: "context", elements: [mrkdwn("Added directly to this channel. Use Manage Channel Skills below to add or remove them.")] },
     fieldBlock("Channel Skills Including Template", listLabel(skills.channel)),
@@ -308,17 +402,23 @@ function skillsBlocks(snapshot = {}, state = {}) {
       type: "actions",
       elements: [
         button(CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, "Manage Channel Skills", state, "skills_manage", {}, { style: "primary" }),
-        button(CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, "Change Template", state, "template_edit"),
       ],
     },
     { type: "context", elements: [mrkdwn("Personal skill grants are user-specific, so they are not channel settings and are not included here.")] },
   ];
 }
 
-function secretsBlocks(snapshot = {}, state = {}, { canEditSecrets = false } = {}) {
-  // The same masked rows and mutation controls as /secrets, directly in the Settings tab.
-  return buildSecretsView(Array.isArray(snapshot.secrets) ? snapshot.secrets : [], state, {
+function secretsBlocks(snapshot = {}, state = {}, { canEditSecrets = false, canEditOrgSecrets = false } = {}) {
+  // The same masked rows and mutation controls as /secrets, directly in the Settings tab — all
+  // three scopes, so the tab answers "what will this run actually receive?" and not just "what did
+  // this conversation set?". snapshot.secrets stays the channel list for older callers.
+  return buildSecretsView({
+    organization: Array.isArray(snapshot.orgSecrets) ? snapshot.orgSecrets : [],
+    personal: Array.isArray(snapshot.personalSecrets) ? snapshot.personalSecrets : [],
+    channel: Array.isArray(snapshot.secrets) ? snapshot.secrets : [],
+  }, state, {
     mayEdit: canEditSecrets,
+    canEditOrg: canEditOrgSecrets,
   }).blocks;
 }
 
@@ -345,14 +445,23 @@ function vpnButton(state, enabled) {
   const toggle = typeof enabled === "boolean";
   const operation = toggle ? "vpn_toggle" : "vpn_refresh";
   return button(toggle ? CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID : CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
-    toggle ? (enabled ? "Turn VPN on" : "Turn VPN off") : "Refresh VPN status", state, operation,
+    toggle ? (enabled ? "Turn on" : "Turn off") : "Refresh", state, operation,
     { ...(toggle ? { enabled } : {}), signature: vpnActionSignature(state, operation, enabled) },
     toggle && enabled ? { style: "primary" } : {});
 }
 
-function networkBlocks(snapshot, state, { canManageVpn }) {
+// The VPN is one more thing this channel's network either does or does not do, so it rides
+// directly under the network switch instead of owning a section further down the page. One state
+// word and its controls — the paragraphs explaining what a VPN is are documentation, not settings.
+// A message is kept only for the two states whose label cannot say why on its own (a failure and
+// an unavailable service), and that is exactly the diagnosis a refused toggle reports.
+const VPN_STATE_LABELS = Object.freeze({
+  unconfigured: "Not configured", unavailable: "Unavailable", off: "Off",
+  starting: "Starting", on: "On", stopping: "Stopping", failed: "Failed",
+});
+
+function vpnRows(snapshot, state, { canManageVpn }) {
   const vpn = snapshot.vpn;
-  const labels = { unconfigured: "Not configured", unavailable: "Unavailable", off: "Off", starting: "Starting — not connected yet", on: "On — connected", stopping: "Stopping", failed: "Failed — not connected" };
   const buttons = [vpnButton(state)];
   // Stopping remains possible while a tunnel is starting or failed. A running control operation
   // must settle before another one can be accepted by the service.
@@ -360,37 +469,152 @@ function networkBlocks(snapshot, state, { canManageVpn }) {
     if (vpn.enabled || vpn.running || ["on", "starting"].includes(vpn.state)) buttons.unshift(vpnButton(state, false));
     else if (vpn.state !== "stopping" && vpn.allowNetwork && !vpn.missingSecrets?.length) buttons.unshift(vpnButton(state, true));
   }
+  const explained = vpn?.message && ["failed", "unavailable"].includes(vpn.state);
   return [
-    fieldBlock("Network use", snapshot.mode?.allowNetwork ? "Allowed" : "Off"),
-    { type: "context", elements: [mrkdwn("Network use is the engine's channel policy. Managers can change it under Access.")] },
-    fieldBlock("VPN", vpn ? (labels[vpn.state] || "Unknown") : "Checking status…"),
-    ...(vpn?.message ? [{ type: "section", text: mrkdwn(escapeMrkdwn(vpn.message)) }] : []),
-    ...(vpn?.missingSecrets?.length ? [fieldBlock("Missing channel secrets", vpn.missingSecrets.map(inlineCode).join(", "))] : []),
+    { type: "section", text: mrkdwn(`*VPN* — ${vpn ? (VPN_STATE_LABELS[vpn.state] || "Unknown") : "Checking status…"}`) },
+    ...(explained ? [{ type: "context", elements: [mrkdwn(escapeMrkdwn(vpn.message))] }] : []),
+    ...(vpn?.missingSecrets?.length
+      ? [{ type: "context", elements: [mrkdwn(`Missing channel secrets: ${vpn.missingSecrets.map(inlineCode).join(", ")}`)] }]
+      : []),
     { type: "actions", elements: buttons },
-    { type: "context", elements: [mrkdwn("VPN connects the channel's dedicated VPN service and extractor. It does not route the ordinary agent container through the tunnel. Only admins and current channel managers can turn it on or off.")] },
+  ];
+}
+
+// Whoever cannot see the Access controls cannot see the network checkbox either, so they get the
+// policy as a one-line read-out. A manager reads it off the checkbox itself.
+function networkReadoutRow(snapshot) {
+  return { type: "section", text: mrkdwn(`*Network* — ${snapshot.mode?.allowNetwork ? "Allowed" : "Off"}`) };
+}
+
+// The channel's access policy as live controls rather than a summary plus a button into a pushed
+// form. Every row saves on its own the moment it is changed — the same in-place rule the engine
+// and model rows follow — because reaching mode, guests or managers used to cost opening a second
+// modal, filling a whole form and submitting it, for what is usually one deliberate change. The
+// controls cannot be `input` blocks (Slack rejects those in a modal with no submit button), so
+// each one is a section accessory or an actions row that dispatches on change.
+function accessControlBlocks(access = {}, afterFlags = []) {
+  const current = accessSettingsSnapshot(access);
+  const flagOptions = ACCESS_FLAGS.map((flag) => option(flag.label, flag.key));
+  const chosen = flagOptions.filter((entry) => current[entry.value]);
+  return [
+    ...Object.entries(ACCESS_SELECTS).map(([field, choices]) => selectRow({
+      label: ACCESS_LABELS[field],
+      actionId: `${ACCESS_FIELD_PREFIX}${field}`,
+      options: choices.map((choice) => ({ ...choice })),
+      initialValue: current[field],
+    })),
+    { type: "section", text: mrkdwn("*Special modes & network*") },
+    {
+      type: "actions",
+      block_id: `${ACCESS_FIELD_PREFIX}flags_row`,
+      elements: [{
+        type: "checkboxes",
+        action_id: `${ACCESS_FIELD_PREFIX}flags`,
+        options: flagOptions,
+        // Slack rejects an empty initial_options array, so an all-off channel simply omits it.
+        ...(chosen.length ? { initial_options: chosen } : {}),
+      }],
+    },
+    ...afterFlags,
+    ...ACCESS_USER_LISTS.map(({ field, label }) => ({
+      type: "section",
+      block_id: `${ACCESS_FIELD_PREFIX}${field}_row`,
+      text: mrkdwn(`*${label}*`),
+      accessory: {
+        type: "multi_users_select",
+        action_id: `${ACCESS_FIELD_PREFIX}${field}`,
+        placeholder: plain("Current channel members"),
+        max_selected_items: 100,
+        ...(current[field].length ? { initial_users: current[field] } : {}),
+      },
+    })),
+    { type: "context", elements: [mrkdwn("Each control saves on its own and applies to this channel's next runs. Named users are checked against live channel membership when they are saved. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access also exposes the gateway home to this channel. Network is advisory; the container stays on its bridge network.")] },
+  ];
+}
+
+// Everything that decides HOW this conversation runs, on one page: its mode and Auto/Lean
+// switches, the engine/model scopes, who may use and manage it, and its network/VPN posture.
+// These were three tabs (Engine & model, Access, Network) until the tab row outgrew what a Slack
+// modal renders comfortably — and they belong together anyway, because "what is this channel
+// allowed to do?" is not answerable from any one of them alone. Each section keeps the
+// authorization it had as a tab: the access controls render only for a manager, and the VPN
+// controls are still gated by canManageVpn inside vpnRows.
+function generalBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false, canEditAccess = false, canManageVpn = false } = {}) {
+  const vpn = vpnRows(snapshot, state, { canManageVpn });
+  return [
+    ...runtimeBlocks(snapshot, state, { canEditRuntime, canEnableAdmin }),
+    // A DM has no access policy to show: its only member is the person reading the page, and its
+    // mode switches are already above. Everywhere else the section is present for everyone, and
+    // only its contents depend on whether this reader may manage the channel.
+    ...(snapshot.isDM ? [] : [
+      { type: "divider" },
+      { type: "header", text: plain("Access") },
+      ...(canEditAccess
+        ? accessControlBlocks(snapshot.access || {}, vpn)
+        : [
+          { type: "context", elements: [mrkdwn("_Who may use and manage this channel is shown to admins and channel managers only._")] },
+          networkReadoutRow(snapshot),
+          ...vpn,
+        ]),
+    ]),
+    // A DM never renders the Access section, so its network posture has nowhere else to live.
+    ...(snapshot.isDM ? [{ type: "divider" }, networkReadoutRow(snapshot), ...vpn] : []),
+  ];
+}
+
+// The terminal command that reopens this thread's engine session, resolved by the app layer
+// (slack/resume-session.js) at render time. It replaced the 💻 control that used to ride under
+// every reply: the command is only wanted occasionally, and Settings is already the per-thread
+// place to look. Pins are per THREAD, so this tab — like the runtime tab's "This thread" scope —
+// only has something to show when Settings was opened from a reply inside a thread.
+function resumeBlocks(snapshot = {}) {
+  const resume = snapshot.resume || {};
+  if (!resume.inThread) {
+    return [{ type: "context", elements: [mrkdwn("_Open Settings from a reply inside a thread to get that thread's resume command._")] }];
+  }
+  if (!resume.command) {
+    return [
+      { type: "section", text: mrkdwn("No session in this thread yet — send a message first, then open this tab again.") },
+      { type: "context", elements: [mrkdwn("To continue a session you started elsewhere, post `/resume <command or session id>` in this thread.")] },
+    ];
+  }
+  return [
+    { type: "section", text: mrkdwn("Run this on the gateway machine to open this thread's session in your terminal:") },
+    // Escaped like every other value in this modal: a work-folder path is channel-configurable,
+    // and Slack parses control sequences inside a code block too.
+    { type: "section", text: mrkdwn("```" + escapeMrkdwn(resume.command) + "```") },
+    { type: "context", elements: [mrkdwn("Paste the same line back as `/resume <command>` in this channel to continue that session from a Slack thread.")] },
+    ...(resume.sessionId ? [fieldBlock("Session id", inlineCode(resume.sessionId))] : []),
+    ...(resume.workDir ? [fieldBlock("Folder", inlineCode(resume.workDir))] : []),
   ];
 }
 
 const TAB_LABELS = Object.freeze({
-  access: "Access",
-  network: "Network",
-  runtime: "Engine & model",
+  general: "General Settings",
+  resume: "Resume Session",
   mcp: "MCP",
   skills: "Skills",
   secrets: "Secrets",
 });
 
-function tabButtons(state, active, canEditAccess) {
+// Pages are chosen from a dropdown rather than a row of buttons: an actions row wraps onto a
+// second line in a narrow modal, and every page added made it worse. The select carries the same
+// `tab` command the buttons did, so a Settings view opened before this shipped keeps switching
+// pages through the very same handler.
+function tabSelect(state, active) {
+  const options = CHANNEL_SETTINGS_TABS.map((tab) =>
+    option(TAB_LABELS[tab], actionValue("tab", { c: state.channelId, u: state.ownerId, p: tab })));
   return {
-    type: "actions",
+    type: "section",
     block_id: "cg_channel_settings_tabs",
-    elements: CHANNEL_SETTINGS_TABS.filter((tab) => tab !== "access" || canEditAccess).map((tab) => ({
-      type: "button",
-      action_id: `${CHANNEL_SETTINGS_TAB_PREFIX}${tab}`,
-      text: plain(TAB_LABELS[tab]),
-      ...(tab === active ? { style: "primary" } : {}),
-      value: actionValue("tab", { c: state.channelId, u: state.ownerId, p: tab }),
-    })),
+    text: mrkdwn("*Page*"),
+    accessory: {
+      type: "static_select",
+      action_id: CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID,
+      placeholder: plain("Choose a page"),
+      options,
+      initial_option: options[Math.max(0, CHANNEL_SETTINGS_TABS.indexOf(active))],
+    },
   };
 }
 
@@ -400,27 +624,24 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   canEditRuntime = true,
   canEnableAdmin = false,
   canEditSecrets = false,
+  // The organization scope reaches every conversation, so it is admin-only even for someone who
+  // may edit this channel's own secrets.
+  canEditOrgSecrets = false,
   canManageCloudMcp = false,
   canEditAccess = false,
   canManageVpn = false,
   notice = "",
 } = {}) {
-  const requested = normalizeTab(tab);
-  const active = requested === "access" && !canEditAccess ? "runtime" : requested;
-  const content = active === "access"
-    ? [
-      { type: "section", text: mrkdwn(accessSummary(snapshot.access || {})) },
-      { type: "actions", elements: [button(ACCESS_EDIT_ACTION_ID, "Change access settings", state, "access_edit", {}, { style: "primary" })] },
-    ]
-    : active === "network"
-    ? networkBlocks(snapshot, state, { canManageVpn })
+  const active = normalizeTab(tab);
+  const content = active === "resume"
+    ? resumeBlocks(snapshot)
     : active === "mcp"
     ? mcpBlocks(snapshot, state, { canManageCloudMcp })
     : active === "skills"
       ? skillsBlocks(snapshot, state)
       : active === "secrets"
-        ? secretsBlocks(snapshot, state, { canEditSecrets })
-        : runtimeBlocks(snapshot, state, { canEditRuntime, canEnableAdmin });
+        ? secretsBlocks(snapshot, state, { canEditSecrets, canEditOrgSecrets })
+        : generalBlocks(snapshot, state, { canEditRuntime, canEnableAdmin, canEditAccess, canManageVpn });
   return {
     type: "modal",
     callback_id: "cg_channel_settings_modal",
@@ -430,7 +651,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     blocks: [
       { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings and VPN controls require a channel manager or admin. Cloud MCP is admin-only.`)] },
       ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
-      tabButtons(state, active, canEditAccess),
+      tabSelect(state, active),
       { type: "divider" },
       ...content,
     ],
@@ -478,70 +699,30 @@ export function parseEditorMetadata(raw) {
   };
 }
 
-function inputSelect({ blockId, actionId, label, options, initialValue, dispatch = false }) {
-  const current = options.find((entry) => entry.value === initialValue);
-  const prioritized = current ? [current, ...options.filter((entry) => entry !== current)] : options;
-  const normalized = prioritized.slice(0, 100).map((entry) => option(entry.label, entry.value, entry.description));
+// A labelled dropdown that saves on pick. It has to be a SECTION accessory rather than an `input`
+// block: Slack rejects a modal carrying input blocks without a submit button, and this tab has
+// only "Done". A section accessory dispatches block_actions the moment a value is chosen, which is
+// what lets the runtime tab persist each field in place instead of pushing a form.
+// A stored value outside the catalog (a hand-set model, a model the CLI stopped listing) is
+// appended rather than silently falling back to the first option, so the control never shows a
+// value the channel is not actually running.
+function selectRow({ label, actionId, options, initialValue }) {
+  const known = options.some((entry) => entry.value === initialValue);
+  const list = known || !initialValue
+    ? options
+    : [...options, { label: String(initialValue).slice(0, 60), value: initialValue, description: "Set outside the current catalog" }];
+  const normalized = list.slice(0, 100).map((entry) => option(entry.label, entry.value, entry.description));
   return {
-    type: "input",
-    block_id: blockId,
-    label: plain(label),
-    ...(dispatch ? { dispatch_action: true } : {}),
-    element: {
+    type: "section",
+    block_id: `${actionId}_row`,
+    text: mrkdwn(`*${label}*`),
+    accessory: {
       type: "static_select",
       action_id: actionId,
+      placeholder: plain(label),
       options: normalized,
       initial_option: selected(normalized, initialValue),
     },
-  };
-}
-
-export function buildRuntimeEditorView(runtime = {}, state = {}, {
-  channelName = "",
-  engines = [],
-  models = [],
-  efforts = [],
-  engineChoice = runtime.configuredEngineId || SETTINGS_DEFAULT_VALUE,
-  modelChoice = runtime.configuredModel || SETTINGS_DEFAULT_VALUE,
-} = {}) {
-  const engineOptions = [
-    { label: `Gateway default (${runtime.gatewayEngineLabel || runtime.effectiveEngine || "current"})`, value: SETTINGS_DEFAULT_VALUE },
-    ...engines,
-  ];
-  const modelOptions = [
-    { label: runtime.gatewayModel ? `Gateway default (${runtime.gatewayModel})` : "Engine default", value: SETTINGS_DEFAULT_VALUE },
-    ...models,
-  ];
-  const effortOptions = [
-    { label: "Engine default", value: SETTINGS_DEFAULT_VALUE },
-    ...efforts,
-  ];
-  const selectedEffort = efforts.some((entry) => entry.value === runtime.configuredEffort)
-    ? runtime.configuredEffort
-    : SETTINGS_DEFAULT_VALUE;
-  return {
-    type: "modal",
-    callback_id: CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID,
-    private_metadata: editorMetadata(state, { view: "runtime", engine: engineChoice, model: modelChoice }),
-    title: plain("Engine & model"),
-    submit: plain("Save"),
-    close: plain("Cancel"),
-    blocks: [
-      { type: "context", elements: [mrkdwn(`Change the default runtime for *#${escapeMrkdwn(channelName || "this channel")}*. Existing per-thread overrides are unchanged.`)] },
-      inputSelect({ blockId: RUNTIME_ENGINE_BLOCK_ID, actionId: CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID, label: "Engine", options: engineOptions, initialValue: engineChoice, dispatch: true }),
-      inputSelect({ blockId: RUNTIME_MODEL_BLOCK_ID, actionId: CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID, label: "Model", options: modelOptions, initialValue: modelChoice, dispatch: true }),
-      inputSelect({ blockId: RUNTIME_EFFORT_BLOCK_ID, actionId: RUNTIME_EFFORT_ACTION_ID, label: "Reasoning effort", options: effortOptions, initialValue: selectedEffort }),
-    ],
-  };
-}
-
-export function readRuntimeForm(view = {}) {
-  const values = view?.state?.values || {};
-  const pick = (blockId, actionId) => String(values[blockId]?.[actionId]?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
-  return {
-    engine: pick(RUNTIME_ENGINE_BLOCK_ID, CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID),
-    model: pick(RUNTIME_MODEL_BLOCK_ID, CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID),
-    effort: pick(RUNTIME_EFFORT_BLOCK_ID, RUNTIME_EFFORT_ACTION_ID),
   };
 }
 
@@ -664,6 +845,8 @@ export function buildCatalogManagerView(items = [], state = {}, {
   };
 }
 
+// Retired: the template is picked in place on the Skills page now. Kept so a modal that was
+// already pushed when the inline control shipped still renders and submits.
 export function buildTemplateEditorView(templates = [], current = "", state = {}, { channelName = "" } = {}) {
   const ordered = [...templates].sort((a, b) => Number(b.slug === current) - Number(a.slug === current));
   const options = [

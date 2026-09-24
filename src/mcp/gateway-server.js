@@ -34,6 +34,8 @@ import { register as registerChannelDatabase } from "./tools/channel-database.js
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
 import { register as registerQuestions } from "./tools/questions.js";
+import { register as registerSshAccess } from "./tools/ssh-access.js";
+import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 
 export const text = (t) => ({ content: [{ type: "text", text: t }] });
@@ -104,9 +106,14 @@ export function createDirectDaemonIpc(handlers = {}) {
 const ENGINE_CLAIMS = ["claude", "codex"];
 
 // Only the exact "full" value (or no value at all) exposes the whole control plane; anything else
-// is the reduced set, so a typo can never widen a helper. The background memory review
-// (gateway/memory-review.js) exists only to save what a finished conversation taught, so it gets
-// the save tool and nothing else — no schedules, no admin switches, no Slack writes.
+// is a reduced set, so a typo can never widen a helper. "ssh" is an interactive SSH session's
+// surface (gateway/ssh-session.js): everything a turn has EXCEPT the tools that report into, or
+// wait on, the chat thread a turn belongs to — background jobs, progress, approval cards — because
+// a session has no thread; the developer answers Claude's own prompts in their terminal. The
+// background memory review (gateway/memory-review.js) exists only to save what a finished
+// conversation taught, so it gets the save tool and nothing else — no schedules, no admin
+// switches, no Slack writes.
+export const SSH_TOOLSET = "ssh";
 export function normalizeToolset(value) {
   return String(value || "full");
 }
@@ -206,6 +213,18 @@ const summarize = (v, n = 200) => {
 };
 const onOff = (v) => (v ? "ON" : "OFF");
 
+// `set_secret` / `remove_secret` take the scope as an argument; the organization scope is the
+// admin tier, everything else the author's own.
+export function secretScopeTier(scope) {
+  const s = String(scope || "personal").trim().toLowerCase();
+  return s === "organization" || s === "org" ? "admin" : "any";
+}
+
+/** A gate's tier: a string, or a function of the call's arguments (see set_secret). */
+export function gateAuthz(gate, args = {}) {
+  return typeof gate?.authz === "function" ? gate.authz(args ?? {}) : gate?.authz;
+}
+
 export function buildControlPlane({ loadMeta }) {
   return new Map([
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
@@ -246,6 +265,18 @@ export function buildControlPlane({ loadMeta }) {
     ["remove_skill_source", { authz: "admin", details: ({ id }) => `REMOVE skill source #${Number(id) || "?"} and tombstone its skills.` }],
     ["set_skill_excluded", { authz: "admin", details: ({ skill, excluded }) => `${excluded ? "EXCLUDE" : "Include"} skill \`${summarize(skill)}\` in the catalog.` }],
     ["set_skill_governance", { authz: "admin", details: ({ skill, enabled, discoverable, mandatory }) => `Change skill governance for \`${summarize(skill)}\`: enabled=${enabled ?? "unchanged"}, discoverable=${discoverable ?? "unchanged"}, mandatory=${mandatory ?? "unchanged"}.` }],
+    // Publishing bytes: `create_public_file_link` with purpose "share" puts a channel file at an
+    // unauthenticated URL for up to 48 hours, which is outward-facing and cannot be taken back
+    // once fetched — so it carries a card naming the file and the duration. The "upload" purpose
+    // returns null (no card): it lives minutes, is spent by the machine the turn is already
+    // talking to, and gating it would stall the very step the user asked for. Staging into
+    // Composio publishes nothing and is not gated at all.
+    ["create_public_file_link", { authz: "any", details: ({ path: p, purpose, minutes }) => {
+      if (purpose !== "share") return null;
+      const value = Number(minutes);
+      const duration = Number.isFinite(value) && value > 0 ? describeDuration(Math.ceil(value)) : "an unspecified duration (the call will be rejected)";
+      return `Publish \`${summarize(p)}\` at a PUBLIC download URL for ${duration}. Anyone holding the link can download the file with no login, from anywhere.`;
+    } }],
     ["update_channel_instructions", { authz: "any", details: ({ mode, text: t }) => `${mode === "replace" ? "REPLACE" : "Append to"} this channel's standing instructions:\n${t}` }],
     ["update_gateway", {
       authz: "admin",
@@ -272,6 +303,25 @@ export function buildControlPlane({ loadMeta }) {
     ["clear_my_composio_token", { authz: "any", details: () => "Remove YOUR Composio token." }],
     ["set_my_toolbox_token", { authz: "any", details: () => "Set YOUR Toolbox token (value hidden)." }],
     ["clear_my_toolbox_token", { authz: "any", details: () => "Remove YOUR Toolbox token." }],
+    // Environment secret scopes that are not the channel's (config/scoped-env.js). Same reason the
+    // connector tokens above are gated: each one changes WHICH account future runs authenticate as,
+    // and the organization scope does it for every conversation at once. Names only in the card —
+    // a value must never reach the approval UI any more than it reaches a listing.
+    // One tool per verb across the secret scopes: the tier follows the SCOPE argument (an
+    // organization secret is every conversation's, so its card needs an admin's click).
+    ["set_secret", { authz: ({ scope }) => secretScopeTier(scope), details: ({ name, scope }) => secretScopeTier(scope) === "admin"
+      ? `Set the ORGANIZATION-WIDE environment secret ${summarize(name)} (value hidden) — injected into EVERY conversation's runs, for every author admitted there.`
+      : `Set YOUR personal environment secret ${summarize(name)} (value hidden) — injected into every run YOU author, in any conversation.` }],
+    ["remove_secret", { authz: ({ scope }) => secretScopeTier(scope), details: ({ name, scope }) => secretScopeTier(scope) === "admin"
+      ? `Remove the organization-wide environment secret ${summarize(name)} — every conversation stops receiving it.`
+      : `Remove YOUR personal environment secret ${summarize(name)}.` }],
+    // SSH access to channel containers (src/gateway/ssh-access.js): a registered key is what a
+    // later grant turns into a shell inside a container, and a grant IS that shell. Never echo the
+    // key material in the card — the fingerprint is computed after approval.
+    ["add_my_ssh_key", { authz: "any", details: ({ label }) => `Register an SSH public key for YOUR account${label ? ` (${summarize(label)})` : ""} — a channel manager can then grant it a shell inside channel containers.` }],
+    ["remove_my_ssh_key", { authz: "any", details: ({ key }) => `Remove YOUR SSH key ${summarize(key)} — every channel grant using it stops working.` }],
+    ["grant_channel_ssh", { authz: "manage", details: ({ user }) => `Grant ${summarize(user)} SSH access into THIS channel's container: a full shell as the channel, with its files and CLI logins.` }],
+    ["revoke_channel_ssh", { authz: "manage", details: ({ user }) => `Revoke ${summarize(user)}'s SSH access into this channel's container.` }],
     // The deployment's license key: gateway-wide, persistent, and the thing that decides how many
     // conversations and messages this install may serve. `get_license_status` is read-only and stays
     // un-gated. Never echo the key value in the card.
@@ -343,8 +393,9 @@ export function createGatewayMcpServer(ctx) {
         // unauthorized caller gets one refusal and no approval spam — but if the two ever drift
         // (a handler check relaxed below its gate tier), falling through to the handler would
         // execute a gated change with NO approval at all. Refuse here instead.
-        if (!(await passesAuthzPrecheck(gate.authz))) {
-          return text(gate.authz === "admin"
+        const authz = gateAuthz(gate, args);
+        if (!(await passesAuthzPrecheck(authz))) {
+          return text(authz === "admin"
             ? `🚫 Only admins can run \`${name}\`. Nothing was changed.`
             : `🚫 Only this channel's managers (or an admin) can run \`${name}\`. Nothing was changed.`);
         }
@@ -361,7 +412,7 @@ export function createGatewayMcpServer(ctx) {
               return text(`Couldn't request the instruction update: ${error.message}`);
             }
           }
-          const tier = durableAction?.mode === "replace" ? "admin" : gate.authz === "any" ? "" : gate.authz;
+          const tier = durableAction?.mode === "replace" ? "admin" : authz === "any" ? "" : authz;
           const d = await requireToolApproval(name, details, tier, durableAction);
           if (d.pending) {
             return text(`⏳ \`${name}\` is awaiting your approval (request ${d.approvalId}). The exact change is saved with no deadline and survives gateway restarts. You can end this turn; the gateway applies it when you click Approve. Deny or Comment cancels it. Nothing has changed yet.`);
@@ -391,10 +442,10 @@ export function createGatewayMcpServer(ctx) {
 
   // Registration order is stable within each group; the tool names/descriptions/schemas/handlers
   // are unchanged by the two-entry split.
-  if (ctx.toolset === "full") {
+  if (ctx.toolset === "full" || ctx.toolset === SSH_TOOLSET) {
     registerWorkspaceRead(server, ctx);
     registerSchedules(server, ctx);
-    registerBackground(server, ctx);
+    if (ctx.toolset === "full") registerBackground(server, ctx);
     registerChannelAdmin(server, ctx);
     registerChannelDatabase(server, ctx);
     registerTokens(server, ctx);
@@ -402,6 +453,8 @@ export function createGatewayMcpServer(ctx) {
     registerLicense(server, ctx);
     registerSkills(server, ctx);
     registerQuestions(server, ctx);
+    registerSshAccess(server, ctx);
+    registerFileSharing(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }

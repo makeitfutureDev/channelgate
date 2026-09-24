@@ -60,6 +60,34 @@ test("readSecret refuses anything not on the allowlist", async () => {
   await assert.rejects(() => readSecret({ scope: "nope", field: "slackBotToken" }), /unknown scope/);
 });
 
+// The three environment-secret scopes (config/scoped-env.js) are write-only with NO reveal path
+// in any of them. Keeping them off this allowlist is what preserves its "resolve a NAMED field to
+// a getter" shape — a dynamic bag of arbitrary variable names behind it would end that property,
+// which is the whole reason the endpoint is safe.
+test("no environment-secret scope is revealable — not the organization's, not a person's", async () => {
+  const { patchOrgEnv, patchUserEnv } = await import("../src/config/scoped-env.js");
+  const { setUser } = await import("../src/config/store.js");
+  patchOrgEnv({ set: { name: "GH_TOKEN", value: "ghp_reveal_probe_value" }, actor: "admin UI" });
+  await setUser("U_REVEAL_PROBE", { name: "Probe", approved: true });
+  await patchUserEnv("U_REVEAL_PROBE", { set: { name: "NPM_TOKEN", value: "npm_reveal_probe_val" } });
+
+  // The scope's own container is not a field...
+  await assert.rejects(() => readSecret({ scope: "settings", field: "orgEnv" }), /not revealable/);
+  await assert.rejects(() => readSecret({ scope: "user", field: "env", id: "U_REVEAL_PROBE" }), /not revealable/);
+  await assert.rejects(() => readSecret({ scope: "channel", field: "env", id: "any-slug" }), /not revealable/);
+  // ...and neither is a variable inside it, under any spelling.
+  for (const field of ["GH_TOKEN", "orgEnv.GH_TOKEN", "env.NPM_TOKEN"]) {
+    await assert.rejects(() => readSecret({ scope: "settings", field }), /not revealable/, field);
+  }
+  // revealableFields takes a SCOPE and returns its field names — check each real scope, or this
+  // reads as a pass over an empty list.
+  for (const scope of ["settings", "user", "channel"]) {
+    const fields = revealableFields(scope);
+    assert.ok(fields.length > 0, `${scope} has revealable fields to check against`);
+    assert.ok(!fields.some((field) => /env/i.test(field)), `no env-shaped field joined the ${scope} allowlist`);
+  }
+});
+
 test("the admin password is deliberately not revealable", () => {
   // It is stored as a scrypt hash, so there is nothing to reveal — and a "show me the password"
   // affordance is exactly what someone with a borrowed session would reach for.

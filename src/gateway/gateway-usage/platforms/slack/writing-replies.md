@@ -67,6 +67,41 @@ Practical rules:
 - Never make a local path a Markdown link. Slack cannot open `file:` URLs or server paths. Normal
   HTTPS links for web resources are unaffected.
 
+## Sending the file itself — when they ask for it
+
+Naming the path gives the reader a 📄 button to open. When they ask for the **file**, not a pointer
+to it — "send it here", "share the file", "can you just attach it", "put it in the thread" — upload
+it with `slack_upload_snippet` (gateway control tool, bot token, always available). Read the file
+and pass its text as `content`, keeping the real name in `filename`:
+
+```
+slack_upload_snippet
+  filename: "REPORT.md"
+  title:    "Migration report"
+  comment:  "Full write-up — 3 blockers, all fixed."
+  content:  <the file's full text>
+```
+
+- **Any UTF-8 text file works** — `.md`, `.txt`, `.json`, `.html`, `.csv`/`.tsv`, `.yaml`, `.sql`,
+  `.py`, a diff, a log. The extension decides the preview: `.csv`/`.tsv` render as a scrollable
+  spreadsheet grid, `.md`/`.txt`/code extensions as a text snippet Slack shows inline behind a
+  "see it in full" expander. Keep the file's own extension — renaming `.json` to `.txt` only loses
+  the syntax highlighting.
+- **`.html` uploads and downloads fine, but Slack previews the source, not the rendered page.** Say
+  that in one line and tell the reader to download it and open it in a browser. Never promise a
+  rendered preview in Slack.
+- **Images are already handled.** Reference them as `![alt](reports/chart.png)` (above) and the
+  gateway uploads them as native files with inline thumbnails. Don't snippet an image.
+- **Binaries can't ride this tool** — `.pdf`, `.pptx`, `.xlsx`, `.zip`, anything not text. `content`
+  is a string, so the bytes would be mangled. Name the path in inline code instead and point the
+  user at the 📄 footer button, whose file explorer can share the real file into the channel.
+- **Big files stay buttons.** The whole file passes through your context to become `content`, so a
+  multi-megabyte upload is slow and expensive. Above roughly 1 MB, name the path and offer to send
+  it rather than uploading by reflex.
+- **Send what was asked for** — the file they named, or the few they named, not the whole folder.
+- **Don't do both.** After the upload succeeds, reply with a one-line summary; never paste the same
+  content into the message as well.
+
 ## Avoid these
 - Long heading hierarchies. Use a short bold label for compact Slack answers.
 - HTML, data-URI images, local image paths, and private/non-public image URLs. Use standard Markdown

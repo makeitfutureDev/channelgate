@@ -1,7 +1,8 @@
 // Reply-footer cluster: the run-stats line ("Opus 4.8 1M · 14.4s · 36.8k/192 · $0.31 · 18%"),
-// its Block Kit form, and the 💻 Resume / 📂 Files controls that ride under it. Extracted from
-// slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so unattended delivery (slack/deliver.js) and the
-// Bolt wiring share one implementation without importing the whole app module.
+// its Block Kit form, and the 📂 Files / 🔑 Secrets / ⚙️ Settings controls that ride under it.
+// Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
+// unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
+// importing the whole app module.
 import path from "node:path";
 import { realpathSync, statSync } from "node:fs";
 import { getShowMessageCost } from "../config/settings.js";
@@ -28,11 +29,12 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
   return `cd ${JSON.stringify(cwd)} && ${base}`;
 }
 
-// A small button that opens the resume-command modal (the "resume_cmd_modal" handler). Rides
-// under the stats context line on reply footers (footerBlocks / the postChunkedReply trailer)
-// and as the accessory on "🛑 Stopped.". The label stays SHORT — Slack clips button labels to
-// ~35 visible chars (stats belong in the context line, never in the label). `/resume` is the
-// text alternative. Returns null when there's nothing to resume.
+// A small button that opens the resume-command modal (the "resume_cmd_modal" handler). It is NOT
+// a reply-footer control any more — the resume command lives in Channel Settings → Resume Session
+// (and in `/menu` and `/resume`), so an ordinary answer is not trailed by a button almost nobody
+// clicks. What is left is the accessory on "🛑 Stopped.", where the thread has no footer of its
+// own, plus the handler that keeps buttons in older messages alive. The label stays SHORT — Slack
+// clips button labels to ~35 visible chars. Returns null when there's nothing to resume.
 export function resumeButton(cwd, sessionId, engine, label = "💻") {
   if (!buildResumeCommand(cwd, sessionId, engine)) return null;
   return {
@@ -164,7 +166,6 @@ export function reviewFileButtons(result, { channel = "", threadTs = "", authorI
 
 export function footerButtons(result, { channel = "", threadTs = "", authorId = "", mayUseSettings = false } = {}) {
   return [
-    resumeButton(result.cwd, result.sessionId, result.engine),
     filesButton(channel, threadTs, authorId),
     secretsButton(channel, threadTs, authorId),
     settingsButton(channel, threadTs, authorId, mayUseSettings),
@@ -183,7 +184,8 @@ function fmtTok(n) {
 // Run stats, as SHORT as possible (width-conscious by user request; no icons — user preference):
 // "Opus 4.8 1M · 14.4s · 36.8k/192 · $0.31 · 18%" — model · duration · tokens in/out ·
 // cost (2 decimals, no ~/est. markers) · context% against the MODEL's own window
-// (contextWindowFor). The resume command never rides here as text — 💻 button + `/resume`.
+// (contextWindowFor). The resume command never rides here as text — it lives in Channel Settings
+// → Resume Session, `/menu` and `/resume`.
 export function footerText(result) {
   const u = result.usage || {};
   // Tolerate both Claude (input_tokens/…) and Codex (prompt_tokens/…) usage shapes.
@@ -210,10 +212,9 @@ export function footerText(result) {
 }
 
 // Same run-stats footer as footerText, but as Block Kit — used to append the footer to a
-// streamed reply (chat.stopStream takes `blocks`, not appended text). With a resumable session
-// one control uses the section ACCESSORY. With both 💻 Resume and 📂 Files, Slack's section block
-// cannot hold two accessories, so the compact stats context sits directly above an actions row
-// containing the two adjacent buttons.
+// streamed reply (chat.stopStream takes `blocks`, not appended text). A single control uses the
+// section ACCESSORY; Slack's section block cannot hold two, so several controls put the compact
+// stats context directly above an actions row containing the adjacent buttons.
 export function footerBlocks(result, context = {}) {
   const buttons = footerButtons(result, context);
   const text = { type: "mrkdwn", text: footerText(result) };

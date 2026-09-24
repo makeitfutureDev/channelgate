@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
-const { buildAccessEditorView, readAccessForm, accessSettingsPatch, accessSettingsSnapshot } = await import("../src/slack/access-settings.js");
+const { ACCESS_FIELD_PREFIX, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, readAccessFieldValue } = await import("../src/slack/access-settings.js");
 const { buildChannelSettingsView, editorMetadata } = await import("../src/slack/channel-settings.js");
 const { channelSettingsContext, channelSettingsEditOptions, saveAccessSettings, handleAccessSettingsSubmission } = await import("../src/slack/app.js");
 const store = await import("../src/config/store.js");
@@ -13,7 +13,7 @@ const base = { access: "approved", manageAccess: "members", ...PROFILE_FLAGS.wor
 const form = { ...accessSettingsSnapshot(base), mode: "admin", autoMode: true, cleanMode: true, allowNetwork: true };
 const state = { channelId: "CACCESS", slug: "access-test", ownerId: "UMANAGER" };
 
-test("only admins and current managers see Access; existing tabs remain available", () => {
+test("only admins and current managers see the Access section of General Settings", () => {
   for (const [meta, admin, user, expected] of [
     [{ ...base, manageAccess: "admins" }, false, actor, false],
     [base, false, actor, true],
@@ -25,29 +25,65 @@ test("only admins and current managers see Access; existing tabs remain availabl
   ]) {
     const options = channelSettingsEditOptions(meta, admin, user);
     assert.equal(options.canEditAccess, expected);
-    const view = buildChannelSettingsView({ access: meta }, state, { ...options, tab: "access" });
-    const buttons = view.blocks.flatMap((block) => block.elements || []);
-    assert.equal(buttons.some((b) => b.action_id === "cg_channel_settings_tab_access"), expected);
-    assert.equal(buttons.some((b) => b.action_id === "cg_channel_settings_access_edit"), expected);
-    assert.ok(buttons.some((b) => b.action_id === "cg_channel_settings_tab_secrets"));
+    // A Settings view opened before the merge carries "access" in its metadata; it must land on
+    // the page that now owns those controls rather than on an empty first page.
+    const view = buildChannelSettingsView({ access: meta, isDM: Boolean(meta.isDM) }, state, { ...options, tab: "access" });
+    assert.equal(JSON.parse(view.private_metadata).p, "general");
+    // Every access control is on the page itself, and only for a manager: the three selects, the
+    // Auto/Lean/Network checkboxes and the two member pickers.
+    const controls = [
+      ...view.blocks.map((block) => block.accessory).filter(Boolean),
+      ...view.blocks.flatMap((block) => block.elements || []),
+    ].filter((element) => String(element.action_id || "").startsWith(ACCESS_FIELD_PREFIX));
+    assert.equal(controls.length, expected ? 6 : 0);
+    if (expected) {
+      assert.deepEqual(controls.map((element) => element.type).sort(),
+        ["checkboxes", "multi_users_select", "multi_users_select", "static_select", "static_select", "static_select"]);
+      // No pushed editor any more — the page is the editor.
+      assert.equal(JSON.stringify(view).includes("cg_channel_settings_access_edit"), false);
+    }
+    // The access controls are manager-only; the page around them is not. A DM has no access
+    // policy at all, so it gets neither the controls nor the line explaining their absence.
+    const headers = view.blocks.filter((block) => block.type === "header").map((block) => block.text.text);
+    assert.equal(headers.includes("Access"), !meta.isDM);
+    assert.equal(JSON.stringify(view).includes("Who may use and manage this channel is shown"), !expected && !meta.isDM);
+    const pages = view.blocks.find((block) => block.block_id === "cg_channel_settings_tabs").accessory.options;
+    assert.ok(pages.some((page) => JSON.parse(page.value).p === "secrets"));
   }
 });
 
-test("access form preserves independent mode/Auto/Lean/network flags and clears lists", () => {
-  const view = buildAccessEditorView({ ...base, ...form, adminMode: true }, editorMetadata(state, { view: "access" }));
-  const values = {};
-  for (const block of view.blocks.filter((b) => b.type === "input")) {
-    const el = block.element;
-    values[block.block_id] = { [el.action_id]: el.type === "static_select"
-      ? { selected_option: el.initial_option }
-      : el.type === "checkboxes" ? { selected_options: el.initial_options || [] }
-        : { selected_users: el.initial_users || [] } };
+test("each inline access control contributes only its own field, and unknown ones contribute nothing", () => {
+  // Every control saves on its own now, so one dispatch must describe exactly one field: the rest
+  // of the form is read back from the record, never from the repainted neighbours.
+  assert.deepEqual(readAccessFieldValue("mode", { selected_option: { value: "admin" } }), { mode: "admin" });
+  assert.deepEqual(readAccessFieldValue("access", { selected_option: { value: "none" } }), { access: "none" });
+  assert.deepEqual(readAccessFieldValue("manageAccess", { selected_option: { value: "custom" } }), { manageAccess: "custom" });
+  assert.deepEqual(readAccessFieldValue("allowedUsers", { selected_users: ["UGUEST"] }), { allowedUsers: ["UGUEST"] });
+  assert.deepEqual(readAccessFieldValue("managers", { selected_users: [] }), { managers: [] });
+  // The checkbox group reports its WHOLE selection, which is what makes an unchecked box a false
+  // rather than a key the patch would reject as missing.
+  assert.deepEqual(readAccessFieldValue("flags", { selected_options: [{ value: "autoMode" }, { value: "allowNetwork" }] }),
+    { autoMode: true, cleanMode: false, allowNetwork: true });
+  assert.deepEqual(readAccessFieldValue("flags", { selected_options: [] }), { autoMode: false, cleanMode: false, allowNetwork: false });
+
+  for (const [field, action] of [["mode", { selected_option: { value: "auto" } }], ["access", {}], ["manageAccess", { selected_option: {} }],
+    ["flags", {}], ["flags", { selected_options: [{ value: "isAdmin" }] }], ["allowedUsers", {}], ["managers", { selected_users: "UONE" }],
+    ["workDir", { selected_option: { value: "/forged" } }]]) {
+    assert.throws(() => readAccessFieldValue(field, action), `${field} must fail closed`);
   }
-  // Admin is a base mode; Auto and Lean remain independent options.
-  values.settings_access_mode.mode.selected_option = { value: "admin" };
-  const parsed = readAccessForm({ state: { values } });
-  assert.deepEqual(parsed, form);
-  const patch = accessSettingsPatch(base, { ...parsed, workDir: "/forged", isAdmin: true, env: { SECRET: "forged" } }, actor);
+
+  // Only this page's access controls route here; every other control on it is somebody else's.
+  for (const field of ["mode", "access", "manageAccess", "flags", "allowedUsers", "managers"]) {
+    assert.equal(accessFieldTarget(`${ACCESS_FIELD_PREFIX}${field}`), field);
+  }
+  for (const foreign of ["", "cg_channel_settings_runtime_model", `${ACCESS_FIELD_PREFIX}isAdmin`, "cg_channel_settings_tab_select"]) {
+    assert.equal(accessFieldTarget(foreign), "");
+  }
+});
+
+test("a patch built from one control's value still refuses forged fields and keeps the flags independent", () => {
+  const patch = accessSettingsPatch(base, { ...form, ...readAccessFieldValue("mode", { selected_option: { value: "admin" } }),
+    workDir: "/forged", isAdmin: true, env: { SECRET: "forged" } }, actor);
   assert.equal(patch.profile, "admin");
   assert.equal(patch.autoMode, true);
   assert.equal(patch.allowBash, true);
@@ -55,9 +91,11 @@ test("access form preserves independent mode/Auto/Lean/network flags and clears 
   assert.equal(patch.cleanMode, true);
   assert.equal(patch.allowNetwork, true);
   for (const key of ["workDir", "isAdmin", "env"]) assert.equal(Object.hasOwn(patch, key), false);
-  values.settings_access_flags.flags.selected_options = [];
-  assert.equal(readAccessForm({ state: { values } }).autoMode, false);
-  assert.throws(() => readAccessForm({}), /incomplete/);
+  const cleared = accessSettingsPatch(base, { ...form, ...readAccessFieldValue("flags", { selected_options: [] }) }, actor);
+  assert.equal(cleared.autoMode, false);
+  assert.equal(cleared.cleanMode, false);
+  assert.equal(cleared.allowNetwork, false);
+  assert.equal(cleared.profile, "admin", "clearing the options does not disturb the base mode");
 });
 
 test("access validation fails closed and canonical presets agree with flags", () => {
@@ -104,6 +142,39 @@ test("real save admits managers, audits policy, preserves unrelated fields, and 
   await saveAccessSettings(client, { ...state, ownerId: "UADMIN" }, "UADMIN", form);
 });
 
+test("one inline control changes one field and leaves the rest of the policy alone", async () => {
+  const { client, state, entry } = await fixture();
+  // What the handler does for a dispatch: the changed field from the payload, everything else read
+  // back from the record.
+  const save = (field, action) => saveAccessSettings(client, state, state.ownerId,
+    { ...accessSettingsSnapshot(meta()), ...readAccessFieldValue(field, action) });
+  const meta = () => stored;
+  let stored = await store.getChannelMeta(entry.slug);
+
+  stored = (await save("allowedUsers", { selected_users: ["UGUEST"] })).saved;
+  assert.deepEqual(stored.allowedUsers, ["UGUEST"]);
+  assert.equal(stored.access, base.access, "picking a guest did not touch the use policy");
+  assert.equal(stored.adminMode, false, "…or the mode");
+
+  stored = (await save("mode", { selected_option: { value: "admin" } })).saved;
+  assert.equal(stored.adminMode, true);
+  assert.deepEqual(stored.allowedUsers, ["UGUEST"], "the guest saved a moment ago survives the next control");
+  assert.equal(stored.model, "unchanged", "unrelated channel settings are untouched throughout");
+
+  stored = (await save("flags", { selected_options: [{ value: "allowNetwork" }] })).saved;
+  assert.equal(stored.allowNetwork, true);
+  assert.equal(stored.autoMode, false);
+  assert.equal(stored.adminMode, true, "the options are independent of the base mode");
+
+  // The same guarantees the submitted form had: a rejected value writes nothing at all.
+  await assert.rejects(() => save("allowedUsers", { selected_users: ["UOUTSIDE"] }), /current human members/);
+  assert.deepEqual((await store.getChannelMeta(entry.slug)).allowedUsers, ["UGUEST"]);
+  await store.patchChannelMeta(entry.slug, { manageAccess: "admins" });
+  stored = await store.getChannelMeta(entry.slug);
+  await assert.rejects(() => save("access", { selected_option: { value: "none" } }), /current channel managers/);
+  assert.equal((await store.getChannelMeta(entry.slug)).access, base.access);
+});
+
 test("save rejects departed users, bots, outsiders and a revocation during user lookup", async () => {
   const { client, state, entry } = await fixture();
   for (const id of ["UBOT", "UOUTSIDE"]) {
@@ -132,31 +203,17 @@ test("global role revoked during final membership request cannot save", async ()
   assert.equal((await store.getChannelMeta(entry.slug)).adminMode, false);
 });
 
-test("submission acknowledges before asynchronous validation and rejects forged owners", async () => {
-  const editor = buildAccessEditorView(base, editorMetadata(state, { view: "access" }));
-  const values = {};
-  for (const block of editor.blocks.filter((b) => b.type === "input")) {
-    const el = block.element;
-    values[block.block_id] = { [el.action_id]: el.type === "static_select"
-      ? { selected_option: el.initial_option }
-      : el.type === "checkboxes" ? { selected_options: [] } : { selected_users: [] } };
-  }
+test("an access form left open from before the move says where its controls went, and saves nothing", async () => {
   const events = [];
-  const params = { ack: async (payload) => events.push(["ack", payload]), body: { user: { id: state.ownerId } },
-    view: { ...editor, id: "VACCESS", state: { values } },
-    client: { views: { update: async (payload) => events.push(["update", payload]) } } };
-  await handleAccessSettingsSubmission(params, {
-    save: async () => { assert.equal(events[0][0], "ack"); throw new Error("Management revoked"); },
-  });
-  assert.equal(events.length, 2);
-  assert.equal(events[0][1].response_action, "update");
-  assert.match(JSON.stringify(events[1]), /Management revoked/);
-  events.length = 0;
-  await handleAccessSettingsSubmission({ ...params, body: { user: { id: "UOTHER" } } }, {
-    save: async () => assert.fail("forged owner must never save"),
+  await handleAccessSettingsSubmission({
+    ack: async (payload) => events.push(payload),
+    body: { user: { id: state.ownerId } },
+    view: { id: "VACCESS", private_metadata: editorMetadata(state, { view: "access" }), state: { values: { forged: true } } },
+    client: { views: { update: async () => assert.fail("a retired form must not write a view") } },
   });
   assert.equal(events.length, 1);
-  assert.equal(events[0][1].response_action, "errors");
+  assert.equal(events[0].response_action, "update");
+  assert.match(JSON.stringify(events[0].view), /General Settings/);
 });
 
 

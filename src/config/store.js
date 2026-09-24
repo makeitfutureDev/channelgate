@@ -17,6 +17,7 @@ import { getDb, toJson, fromJson } from "../db/index.js";
 // Retired integrations' fields are dropped on the way IN, so a record can never be re-saved with
 // one and no listing has to remember to mask it (see ./dead-fields.js).
 import { stripDeadFields } from "./dead-fields.js";
+import { emitConfigChange } from "./change-events.js";
 import { DEFAULT_PLATFORM, isPlatformId, platformFolderNames } from "../platforms/registry.js";
 const PLATFORM_FOLDER_NAMES = new Set(platformFolderNames());
 
@@ -77,6 +78,7 @@ export async function setUser(userId, patch) {
     db.prepare("INSERT INTO users(user_id, data) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data")
       .run(userId, toJson(saved));
     db.exec("COMMIT");
+    emitConfigChange("user", { userId });
     return saved;
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
@@ -233,6 +235,7 @@ export async function saveChannelMeta(slug, meta) {
   getDb()
     .prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
     .run(slug, toJson(record));
+  emitConfigChange("channel-meta", { slug });
   return record;
 }
 
@@ -259,6 +262,7 @@ export async function patchChannelMeta(slug, patch) {
     const next = stripDeadFields(stripRetiredChannelFields({ ...(current || {}), ...partial }));
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data").run(slug, toJson(next));
     db.exec("COMMIT");
+    emitConfigChange("channel-meta", { slug });
     return next;
   } catch (e) {
     try {

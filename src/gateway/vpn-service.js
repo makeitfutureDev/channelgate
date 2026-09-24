@@ -48,6 +48,9 @@ const VPN_FAILURES = Object.freeze({
   startup_failed: "VPN did not become ready. Check credentials, server compatibility and the database route.",
   connection_lost: "VPN lost its route or service container and was stopped. Check the connection before restarting.",
 });
+export function isVpnFailureClass(code) {
+  return typeof code === "string" && Object.hasOwn(VPN_FAILURES,code);
+}
 export function vpnFailureMessage(code) {
   return Object.hasOwn(VPN_FAILURES,code) ? VPN_FAILURES[code] : VPN_FAILURES.startup_failed;
 }

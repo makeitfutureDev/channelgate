@@ -13,7 +13,7 @@ import { getDirectory } from "./directory.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { postChunkedReply } from "./util.js";
-import { footerText, resumeButton } from "./footer.js";
+import { footerText } from "./footer.js";
 
 export async function deliverResult(client, { channel, threadKey, result, dir, footer = false, trustedPrefix = "", uploadFile } = {}) {
   if (client?.platform && typeof client.post === "function") {
@@ -32,15 +32,10 @@ export async function deliverResult(client, { channel, threadKey, result, dir, f
   const md = `${trustedPrefix}${resolveMentions(mdToMrkdwn(result?.content || ""), directory).trim()}`.trim();
   const answerBlocks = answerImageBlocks(result?.content || "");
   if (footer) {
-    await postChunkedReply(
-      client,
-      channel,
-      threadKey,
-      md,
-      footerText(result),
-      resumeButton(result.cwd, result.sessionId, result.engine),
-      { answerBlocks },
-    );
+    // Stats only: an unattended answer carries no controls. The resume command for the thread
+    // lives in Channel Settings → Resume Session (and `/menu` / `/resume`), which an automation
+    // post has no author to bind a button to anyway.
+    await postChunkedReply(client, channel, threadKey, md, footerText(result), null, { answerBlocks });
   } else {
     await postChunkedReply(client, channel, threadKey, md, "", null, { answerBlocks });
   }

@@ -155,15 +155,20 @@ export function register(server, ctx) {
     "slack_upload_snippet",
     {
       description:
-        "Post a FILE/snippet into THIS thread — the way to share a big or wide TABLE. Give `content` " +
-        "as CSV or TSV and Slack renders it as a scrollable spreadsheet grid (with a header row and a " +
-        "'see it in full' expander) — far better than a cramped message code block, and lighter than a " +
-        "100-row Slack List (use a List only for a tracker people edit; use THIS for a read-only " +
-        "table/export). The filename EXTENSION drives rendering: `.csv`/`.tsv` → spreadsheet preview; " +
-        "`.md`/`.txt`/a code extension → a text snippet. `title` names the file; `filename` overrides " +
-        "the name/extension (default derived from the title, `.csv`); `comment` is an optional message " +
-        "posted with it. It's uploaded to the current channel/thread by the bot — no Bash or network " +
-        "needed. For a large export, prefer TSV (tab-separated) so values containing commas stay clean.",
+        "Post a FILE/snippet into THIS thread. Two uses: (1) SHARE A FILE the user asked for — when " +
+        "they say 'send it here', 'share the file', 'attach it', read the file and pass its text as " +
+        "`content` with its real name in `filename` (`.md`, `.txt`, `.json`, `.html`, `.yaml`, code, " +
+        "logs all work); (2) share a big or wide TABLE as CSV or TSV, which Slack renders as a " +
+        "scrollable spreadsheet grid (header row + a 'see it in full' expander) — far better than a " +
+        "cramped message code block, and lighter than a 100-row Slack List (use a List only for a " +
+        "tracker people edit; use THIS for a read-only table/export). The filename EXTENSION drives " +
+        "rendering: `.csv`/`.tsv` → spreadsheet preview; `.md`/`.txt`/a code extension → a text " +
+        "snippet. `content` must be UTF-8 TEXT: binaries (PDF, PPTX, XLSX, ZIP, images) cannot ride " +
+        "this tool — name their path in inline code so the reply gets a 📄 file-explorer button " +
+        "instead. `title` names the file; `filename` overrides the name/extension (default derived " +
+        "from the title, `.csv`); `comment` is an optional message posted with it. It's uploaded to " +
+        "the current channel/thread by the bot — no Bash or network needed. For a large export, " +
+        "prefer TSV (tab-separated) so values containing commas stay clean.",
       inputSchema: {
         content: z.string(),
         title: z.string().optional(),

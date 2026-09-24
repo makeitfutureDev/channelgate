@@ -90,7 +90,11 @@ credential or connection is needed, without exposing its value.
    `` `csv-import/REPORT.md` ``. The gateway resolves it against the folder and adds a clickable
    `📄 ACME_SOW.pdf` button to the reply footer that opens the file explorer straight to it.
    Plain prose with no backticks gets no button, and a bare word with no `/` and no extension
-   isn't treated as a file. Full detail: `references/writing-replies.md`.
+   isn't treated as a file. **When the user asks for the file itself** — "send it here", "share
+   the file", "attach it" — don't just name it: upload it with `slack_upload_snippet`, which
+   posts any UTF-8 text file (`.md`, `.txt`, `.json`, `.html`, `.csv`, code, logs) into this
+   thread as a real file. Binaries and images go the other routes.
+   Full detail: `references/writing-replies.md`.
 4. **Delegate work that may outlive this turn with the gateway tool, never an engine background subagent.**
    In-turn Agent/Task subagents are fine (a Stop hook mechanically prevents you from ending the
    turn while one is still running — if it blocks you, wait and collect the results). Before
@@ -120,11 +124,15 @@ credential or connection is needed, without exposing its value.
    runs must not claim a live Plan. Visible, non-recovery chat-backed API runs are eligible only when
    the tool is present. Routine or short work never qualifies, even if it has 3+ steps.
    Never invent filler stages. Read `references/progress-report.md` before reporting progress.
-7. **In a git repo, isolate edits in a worktree.** Other threads may be working in this same
-   folder concurrently. Before modifying tracked files, check `git rev-parse --is-inside-work-tree`;
-   in a repo, do the task's edits and commits on a dedicated branch in `.worktrees/<slug>/`, merge
-   to main when done, and clean up. Read-only tasks skip this. Full protocol (including how to see
-   and tidy branches other threads left open): `references/git-repos.md`.
+7. **In a git repo, never edit the shared checkout — one worktree per task.** Other threads,
+   schedules and background jobs may be working in this same folder concurrently, and two of them
+   editing one working tree overwrite each other's uncommitted changes silently. Before modifying
+   tracked files, check `git rev-parse --is-inside-work-tree`; in a repo, do the task's edits and
+   commits on a dedicated branch in `.worktrees/<slug>/`, then merge to the project's integration
+   branch and clean up. "Small", "urgent" and "one file" are not exemptions, and a project's own
+   AGENTS.md can change WHICH branch you base on and land on but never waives the isolation.
+   Read-only tasks skip this. Full protocol (including how to see and tidy branches other threads
+   left open): `references/git-repos.md`.
 8. **Keep device-code logins inside one live turn.** Start the CLI in a TTY/session, send its
    verification link and one-time code as an interim commentary update, and keep the same assistant
    turn alive while polling the SAME process in intervals no longer than 60 seconds. A final reply
@@ -139,6 +147,7 @@ credential or connection is needed, without exposing its value.
 | ---------------------------------------------- | --------------------------------- | ----------- |
 | Reply in this thread                           | `references/writing-replies.md`   | (just output text) |
 | Point the user at a file you wrote or changed   | `references/writing-replies.md`   | Write its folder-relative path in inline code → `📄 name` footer button |
+| Send a file into this thread because they asked for it ("share it here", "attach it") | `references/writing-replies.md` | `gateway` → `slack_upload_snippet` (any UTF-8 text file: `.md`, `.txt`, `.json`, `.html`, `.csv`, code) |
 | @-mention / ping someone                       | `references/mentions.md`          | (write `@Name`) |
 | Post to another channel / DM, schedule a send, react | `references/messages.md`    | chosen Composio account (`mcp__composio-agent__*` / `mcp__composio-user__*`) |
 | Set a reminder or schedule a task (once/recurring) | `references/reminders.md`     | `gateway` → `create_schedule`, `list_schedules`, `delete_schedule` |
@@ -149,6 +158,8 @@ credential or connection is needed, without exposing its value.
 | Make a tracker people edit over time           | `references/tables.md`            | `gateway` → `slack_list_create`, `…_add_item`, `…_update_item`, `…_items`, `…_info` |
 | Create / edit a canvas document                | `references/canvases.md`          | chosen Composio account (`composio-agent` / `composio-user`) |
 | Catch up / summarize / read a thread           | `references/reading.md`           | `gateway` → `slack_channel_history`, `slack_thread_replies`; cross-channel via Composio Slack |
+| Send a file to Drive / an email attachment / any Composio destination | `references/sharing-files.md` | `gateway` → `stage_file_for_composio` (returns the `{name, mimetype, s3key}` those tools require) |
+| Give a file a temporary public URL (API that ingests by URL, or a person who wants a link) | `references/sharing-files.md` | `gateway` → `create_public_file_link` (ask the duration for a person; 48h max), `list_public_file_links`, `revoke_public_file_link` |
 | Get a file shared earlier in this channel/thread ("download it", "try again with the video") | `references/reading.md` | `gateway` → `slack_download_file` (local path back; this channel only, ≤ 500 MB) |
 | Understand / summarize an attached video or screen recording | `references/video-understanding.md` | built-in local analyzer at `scripts/analyze_video.py` + Read/image inspection |
 | Remember a fact or add a standing rule         | `references/memory-and-rules.md`  | `gateway` → `update_channel_memory`, `update_channel_instructions` |
@@ -164,6 +175,8 @@ credential or connection is needed, without exposing its value.
 | A file/path outside the working folder seems missing, or host access is needed | `references/administration.md` | Check this run's resolved mounts and the optional operator-home grant; `~` remains the channel's own home |
 | See, grant or remove skills here, apply a skills template, create/update/propose a skill, see skill usage | `references/skills.md` | `gateway` → `show_channel_skills`, `add_channel_skills`, `apply_skill_template`, `create_skill`, `propose_skill_change`, `skill_usage_report` |
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |
+| Register an SSH key, grant/revoke SSH into this channel's container, get the connection block | `references/administration.md` | `gateway` → `add_my_ssh_key`, `grant_channel_ssh`, `revoke_channel_ssh`, `show_channel_ssh` |
+| Check disk space, stale containers or old runtime images | `references/administration.md` | Host `/sudo` thread: `npm run runtime:storage` (reports, changes nothing). **Never run or suggest `podman system prune`, `podman volume prune` or `podman image prune -a`** — they delete channel HOME volumes (engine sessions, CLI logins). Report and ask; remove only via `-- --apply` when an admin says so |
 
 ## Tool identities: the bot, YOUR account, and the requester's account
 

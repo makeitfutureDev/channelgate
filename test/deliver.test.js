@@ -48,7 +48,7 @@ test("deliverResult chunks a long answer instead of truncating it", async () => 
   assert.ok(client.posts.length > 1, `expected multiple chunks, got ${client.posts.length}`);
 });
 
-test("deliverResult with footer appends the run-stats trailer and resume control", async () => {
+test("deliverResult with footer appends the run-stats trailer without any control", async () => {
   const client = fakeClient();
   const result = {
     content: "done",
@@ -60,9 +60,11 @@ test("deliverResult with footer appends the run-stats trailer and resume control
   };
   await deliverResult(client, { channel: "C1", threadKey: "1.2", result, dir: null, footer: true });
   const trailer = client.posts.at(-1);
-  assert.ok(Array.isArray(trailer.blocks), "footer trailer should carry blocks");
-  const json = JSON.stringify(trailer.blocks);
-  assert.match(json, /resume_cmd_modal/);
+  // Stats ride the answer's last chunk now: the 💻 resume control moved into Settings →
+  // Resume Session, and an unattended post has no author to bind a button to.
+  assert.match(trailer.text, /done/);
+  assert.match(trailer.text, /1\.2s/);
+  assert.doesNotMatch(JSON.stringify(trailer.blocks || []), /resume_cmd_modal/);
 });
 
 for (const platform of ["googlechat", "msteams"]) {

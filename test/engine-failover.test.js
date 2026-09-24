@@ -17,7 +17,7 @@ const {
   saveSettings, getEngine, getEngineFallback, isEngineEnabled, getEnabledEngines,
   getEngineEnabledMap, settingsForApi,
 } = await import("../src/config/settings.js");
-const { engineSwitchHint } = await import("../src/slack/message-pipeline.js");
+const { engineSwitchHint, engineIdAlternation } = await import("../src/slack/message-pipeline.js");
 
 const LIVE_LIMIT_MESSAGE =
   "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 20th, 2026 6:35 AM.";
@@ -127,11 +127,12 @@ test("engines are enabled by default and the map round-trips through settings", 
   // …except an OPT-IN harness (Qwen), which needs a provider credential nobody has by default and
   // is therefore available only where an admin explicitly switched it on.
   assert.equal(isEngineEnabled("qwen"), false, "an opt-in harness is not enabled by a missing key");
+  assert.equal(isEngineEnabled("qwen-eu"), false, "and so is every other provider harness in the table");
 
   saveSettings({ engineEnabled: { claude: true, codex: false, opencode: false } });
   assert.equal(isEngineEnabled("codex"), false);
   assert.deepEqual(getEnabledEngines(), ["claude"]);
-  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, qwen: false, opencode: false });
+  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, qwen: false, "qwen-eu": false, opencode: false });
   assert.equal(settingsForApi().engineEnabled.codex, false);
 });
 
@@ -161,6 +162,22 @@ test("the failover toggle honors the pre-rename settings key", () => {
 });
 
 // ── The user-facing dead end ───────────────────────────────────────────────────
+
+// ── Naming a harness in a thread ───────────────────────────────────────────────
+
+test("an engine id that is a prefix of another still selects the harness the user named", () => {
+  // JavaScript alternation is FIRST-match, not longest-match. In registration order `qwen` would
+  // win over `qwen-eu`, so "qwen-eu ship it" would run on the other provider's account — and leave
+  // "eu" glued to the front of the prompt.
+  const anchored = (text, ids) => new RegExp(`^(${engineIdAlternation(ids)})\\b[\\s:,.;\u2013\u2014-]*([\\s\\S]*)$`, "i").exec(text);
+  const ids = ["claude", "codex", "qwen", "qwen-eu", "opencode"];
+  const eu = anchored("qwen-eu ship it", ids);
+  assert.equal(eu[1], "qwen-eu");
+  assert.equal(eu[2], "ship it", "the id is consumed whole — no fragment is left in the prompt");
+  assert.equal(anchored("qwen ship it", ids)[1], "qwen", "the shorter id still matches on its own");
+  assert.equal(anchored("claude: hi", ids)[1], "claude");
+  assert.equal(anchored("please use qwen-eu", ids), null, "an anchored match still means the message STARTS with the id");
+});
 
 test("an uncovered limit failure tells the user how to switch harness by hand", () => {
   const hint = engineSwitchHint({ details: { engine: "codex", providerError: true, providerKind: "usage_limit" } }, { engines: ["claude", "codex"] });

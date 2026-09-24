@@ -86,6 +86,18 @@ test("raw subprocess errors and malformed status never disclose provider output"
   assert.equal(status.state,'failed'); assert.doesNotMatch(JSON.stringify(status),/PRIVATE/);
 });
 
+test("a failed toggle names the helper's fixed failure class, never its free text",async()=>{
+  const f=fixture();
+  f.execute=async()=>({code:1,stdout:'{"errorClass":"upgrade_required"}\n',stderr:'Build the current OpenVPN 3 service image'});
+  await assert.rejects(f.control.setEnabled('C_VPN',true,allowed),e=>e.statusCode===503&&e.message===vpnFailureMessage('upgrade_required'));
+  assert.ok(f.events.some(([event,data])=>event==='channel_vpn_control_failed'&&data.errorClass==='upgrade_required'));
+  for (const stdout of ['{"errorClass":"token=PRIVATE"}','{"errorClass":"__proto__"}','PRIVATE {"errorClass":"upgrade_required"}','']) {
+    f.events.length=0; f.execute=async()=>({code:1,stdout,stderr:'password=PRIVATE'});
+    await assert.rejects(f.control.setEnabled('C_VPN',true,allowed),e=>/Could not change VPN state/.test(e.message)&&!e.message.includes('PRIVATE'));
+    assert.ok(f.events.every(([,data])=>!('errorClass' in data)));
+  }
+});
+
 test("server errors reduce to fixed diagnostics; TLS verification is preserved",()=>{
   assert.equal(classifyVpnFailure('secret=PRIVATE\nVERIFY KU ERROR'),'server_certificate_usage');
   assert.match(vpnFailureMessage('server_certificate_usage'),/Key Usage/);

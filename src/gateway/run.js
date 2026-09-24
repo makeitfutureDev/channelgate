@@ -6,11 +6,8 @@ import {
   getChannelEntry,
   getChannelMeta,
   defaultChannelMeta,
-  getComposioToken,
-  getToolboxToken,
   getUser,
   isAdmin,
-  isApproved,
 } from "../config/store.js";
 import { ensureChannelFolder } from "./folders.js";
 import { memorySnapshotPrefix } from "./channel-memory.js";
@@ -20,25 +17,22 @@ import { withTemplateSkills } from "./skills/templates.js";
 import { resolveSession, resetSession, getSession, saveSession, sessionGeneration, dropMintedSession } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
-import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getComposioMode, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants } from "../config/settings.js";
+import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
-import { PROFILE_FLAGS, canManage, normalizeModeMeta, authorModeMeta, sudoModeMeta } from "./modes.js";
+import { PROFILE_FLAGS, normalizeModeMeta, authorModeMeta, sudoModeMeta } from "./modes.js";
 import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
-import { resolveSdkSession } from "../ee/composio-sdk.js";
-import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
 import { channelCredentialsPreamble } from "./channel-credentials.js";
-import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
+import { resolveRunIntegrations } from "./run-integrations.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -46,13 +40,16 @@ import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
 import { randomUUID } from "node:crypto";
 import { createSemaphore } from "../util/semaphore.js";
 import { logEvent } from "../util/logger.js";
-import { resolveRunAccessGrants, resolveRunUserIdentity, userOnlySkillGrants } from "./access-grants.js";
+import { resolveRunAccessGrants, userOnlySkillGrants } from "./access-grants.js";
 import { getSkill } from "./skills/catalog.js";
 import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntimeReadPaths } from "./run-grant-artifacts.js";
 import { isForceStopping } from "./shutdown.js";
 import { allowedFsRoot } from "../web/security.js";
 import { licenseAdmission } from "../ee/limits.js";
-import { channelEnvFingerprint, resolveChannelEnv, safeSpawnEnv } from "../config/channel-env.js";
+import { channelEnvFingerprint, safeSpawnEnv } from "../config/channel-env.js";
+// The other two credential scopes (organization-wide, and the author's own) merged with the
+// channel's at one place, so every spawn site gets the same three-scope answer.
+import { resolveRunEnv } from "../config/scoped-env.js";
 import { browserNamespaceFor } from "./browser-env.js";
 import { serviceSecretValues } from "../engines/child-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
@@ -531,115 +528,7 @@ async function acquireRunSlotWithStatus({ signal, onEvent, origin }) {
   }
 }
 
-function resolveTokenSource({ clean, channelToken, userToken, defaultToken, noOrg }) {
-  if (clean) return { token: "", source: "clean" };
-  if (channelToken) return { token: channelToken, source: "channel" };
-  if (userToken) return { token: userToken, source: "user" };
-  if (!noOrg && defaultToken) return { token: defaultToken, source: "org" };
-  return { token: "", source: noOrg ? "none-no-org-default" : "none" };
-}
-
-// Composio is intentionally different from the other token-backed integrations: expose the active
-// author's identity and the gateway's shared identity at the same time instead of choosing one.
-// `composio-user` is personal-only; shared `composio` is channel-first, then org-default.
-// A DM is a private, one-person conversation: there is no shared audience to act on behalf of, so
-// the shared identity (channel token AND the org default) is suppressed there and only the
-// author's personal `composio-user` is injected. Everything else keeps both identities.
-export function resolveComposioConnections({ clean = false, userToken = "", channelToken = "", defaultToken = "", noOrg = false, isDM = false } = {}) {
-  if (clean) {
-    return {
-      user: { token: "", source: "clean" },
-      shared: { token: "", source: "clean" },
-    };
-  }
-  const user = { token: userToken || "", source: userToken ? "user" : "none" };
-  if (isDM) return { user, shared: { token: "", source: "none-dm" } };
-  return {
-    user,
-    shared: channelToken
-      ? { token: channelToken, source: "channel" }
-      : !noOrg && defaultToken
-        ? { token: defaultToken, source: "org" }
-        : { token: "", source: noOrg ? "none-no-org-default" : "none" },
-  };
-}
-
-export async function resolveComposioRuntime({
-  clean = false,
-  mode = "personal",
-  workspaceId = "",
-  channelId = "",
-  authorId = "",
-  threadKey = "",
-  meta = {},
-  authorIsAdmin = false,
-  authorIsApproved = false,
-  userToken = "",
-  channelToken = "",
-  defaultToken = "",
-  noOrg = false,
-  isDM = false,
-  principalTrusted = true,
-  resolveSdk = resolveSdkSession,
-} = {}) {
-  if (clean || mode !== "sdk") {
-    const legacy = resolveComposioConnections({
-      clean,
-      userToken: principalTrusted ? userToken : "",
-      channelToken,
-      defaultToken,
-      noOrg,
-      isDM,
-    });
-    return {
-      mode: mode === "sdk" ? "sdk" : "personal",
-      user: { ...legacy.user, endpoint: null },
-      shared: { ...legacy.shared, endpoint: null },
-    };
-  }
-
-  requireComposioSdkEntitlement();
-  const mayManageShared = principalTrusted && canManage(meta, {
-    authorId,
-    isAdminUser: authorIsAdmin,
-    isApprovedUser: authorIsApproved,
-  });
-  const [userResult, sharedResult] = await Promise.allSettled([
-    principalTrusted ? resolveSdk({
-      workspaceId,
-      kind: "user",
-      id: authorId,
-      threadKey,
-      accessKind: "owner",
-      manageConnections: true,
-    }) : null,
-    // Same rule as personal mode: a DM has no shared audience, so no channel session is minted.
-    isDM
-      ? null
-      : resolveSdk({
-        workspaceId,
-        kind: "channel",
-        id: channelId,
-        threadKey,
-        accessKind: mayManageShared ? "manager" : "member",
-        manageConnections: mayManageShared,
-      }),
-  ]);
-
-  return {
-    mode: "sdk",
-    user: !principalTrusted
-      ? { token: "", source: "none-untrusted-principal", endpoint: null }
-      : userResult.status === "fulfilled"
-      ? { token: "", source: "sdk-user", endpoint: userResult.value }
-      : { token: "", source: "sdk-unavailable", endpoint: null },
-    shared: isDM
-      ? { token: "", source: "none-dm", endpoint: null }
-      : sharedResult.status === "fulfilled"
-        ? { token: "", source: "sdk-channel", endpoint: sharedResult.value }
-        : { token: "", source: "sdk-unavailable", endpoint: null },
-  };
-}
+export { resolveComposioConnections, resolveComposioRuntime } from "./run-integrations.js";
 
 // Merge the HTTP run API's per-request overrides into the channel meta. An override may only
 // REDUCE capability, never introduce adminMode: the run-API key is not an admin credential
@@ -1061,14 +950,26 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const clean = Boolean(meta.cleanMode);
   const userSkills = clean ? [] : userOnlySkillGrants(runGrants);
 
-  // The channel's OWN environment secrets (config/channel-env.js) — its per-project CLI logins.
-  // Resolved once per turn and handed to the engine as process environment, not a project .env
-  // or another channel's credentials. Clean mode runs bare, so it gets none, for the same reason
-  // it gets no MCP servers and no Composio tokens. A resolve FAILURE throws: a turn that quietly
-  // ran without the credential looks like a deploy that did nothing.
-  const channelEnv = clean ? {} : safeSpawnEnv(await resolveChannelEnv(meta));
+  // The environment secrets this turn runs with, across all three scopes (config/scoped-env.js):
+  // the ORGANIZATION's shared credentials, the AUTHOR's own, and the CHANNEL's per-project CLI
+  // logins — merged most-specific-last, so the channel's own account is never displaced by a
+  // personal one. Resolved once per turn and handed to the engine as process environment, not a
+  // project .env or another channel's credentials. Clean mode runs bare, so it gets none, for the
+  // same reason it gets no MCP servers and no Composio tokens. A resolve FAILURE throws: a turn
+  // that quietly ran without the credential looks like a deploy that did nothing.
+  //
+  // untrustedPrincipal withholds the PERSONAL scope only: the HTTP run API authenticates its key,
+  // not the author it names, so that caller must not be able to borrow someone's personal token by
+  // naming them. The organization and channel scopes are not identity claims and still apply.
+  const { env: resolvedRunEnv, scopes: runEnvScopes } = await resolveRunEnv({
+    meta, authorId, untrustedPrincipal, clean,
+  });
+  const channelEnv = safeSpawnEnv(resolvedRunEnv);
+  // The warm pool keys on this digest, so it must cover every scope: without the personal values
+  // in it, a process started for one author would be reused for the next message in the thread —
+  // still holding the first author's secrets.
   const channelEnvFp = channelEnvFingerprint(channelEnv);
-  const channelCredentialsPrefix = channelCredentialsPreamble(channelEnv, { clean });
+  const channelCredentialsPrefix = channelCredentialsPreamble(channelEnv, { clean, scopes: runEnvScopes });
   // Which browser daemon this channel's browser MCP server attaches to. Unconditional — clean
   // mode included: it injects no MCP servers, but the isolation must not depend on that staying
   // true, and a namespace costs nothing when nothing reads it. See gateway/browser-env.js.
@@ -1135,69 +1036,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // own account (`composio-agent`, backed by the channel token, else the org token). Personal mode resolves the existing user/channel→org tokens; SDK mode
   // resolves stable user/channel identities into per-thread sessions. Stored personal-mode tokens
   // are never mutated when SDK mode is active. Clean mode injects none.
-  const noOrg = Boolean(meta.noDefaultTokens);
-  const composioMode = getComposioMode();
-  const effectiveWorkspaceId = String(workspaceId || process.env.CG_SLACK_TEAM_ID || "").trim();
-  // The HTTP API authenticates its API key, not the caller-supplied Slack author id. Never use
-  // that untrusted id to read a personal connector token or infer admin/approval state. Shared
-  // channel/org identities remain available; the user identity is intentionally absent.
-  const userIdentity = await resolveRunUserIdentity({
-    authorId,
-    untrustedPrincipal,
-    needsApproval: composioMode === "sdk" && !clean,
-    loadComposioToken: getComposioToken,
-    loadToolboxToken: getToolboxToken,
-    loadIsAdmin: isAdmin,
-    loadIsApproved: isApproved,
-  });
-  const personalComposioToken = userIdentity.composioToken;
-  const personalToolboxToken = userIdentity.toolboxToken;
+  const {
+    userIdentity, composio, toolbox, composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken,
+    makeToolboxUrl, makeToolboxKey, composioIdentityPrefix,
+  } = await resolveRunIntegrations({ meta, channelId, authorId, threadKey, workspaceId, clean, untrustedPrincipal });
   const authorIsAdmin = userIdentity.isAdmin;
-  const authorIsApproved = userIdentity.isApproved;
-  const composio = await resolveComposioRuntime({
-    clean,
-    mode: composioMode,
-    workspaceId: effectiveWorkspaceId,
-    channelId,
-    authorId,
-    threadKey,
-    meta,
-    authorIsAdmin,
-    authorIsApproved,
-    principalTrusted: !untrustedPrincipal,
-    channelToken: meta.composioToken,
-    userToken: personalComposioToken,
-    defaultToken: getDefaultComposioToken(),
-    noOrg,
-    isDM: Boolean(meta.isDM || meta.type === "im"),
-  });
-  const toolbox = resolveTokenSource({ clean, channelToken: meta.toolboxToken, userToken: personalToolboxToken, defaultToken: getDefaultToolboxToken(), noOrg });
-  const composioUserToken = composio.user.token;
-  const composioToken = composio.shared.token;
-  const composioUserEndpoint = composio.user.endpoint;
-  const composioEndpoint = composio.shared.endpoint;
-  const toolboxToken = toolbox.token;
-  outputSecrets.push(composioUserToken, composioToken, toolboxToken);
-  // The per-run half of the identity rule (CO-04: "check the calendar" with both identities present
-  // read the SHARED one and posted a colleague's week into the channel, where the other harness
-  // asked first). The managed instructions block carries the rule; this one line carries the fact
-  // it applies to — WHICH identities this turn received — which only a per-run prompt can say,
-  // since `composio-user` is per author. Empty when the run injects neither (clean mode, no tokens),
-  // so a channel without Composio pays nothing for it.
-  const composioIdentityPrefix = composioIdentityPreamble(composioIdentitiesForRun({
-    clean,
-    principalTrusted: !untrustedPrincipal,
-    composioUserEndpoint,
-    composioUserToken,
-    composioEndpoint,
-    composioToken,
-  }));
-  const { makeToolboxUrl, makeToolboxKey } = resolveMakeToolboxRuntime({
-    makeToolboxUrl: meta.makeToolboxUrl,
-    makeToolboxKey: meta.makeToolboxKey,
-    clean,
-  });
-  outputSecrets.push(makeToolboxKey);
+  outputSecrets.push(composioUserToken, composioToken, toolboxToken, makeToolboxKey);
   // Engine homes are deliberately isolated. Resolve these once in the daemon and carry them into
   // the gateway MCP instead of letting its subprocess derive paths from the disposable HOME.
   const gatewayFsRoot = allowedFsRoot();
@@ -1665,6 +1509,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // (Claude, Qwen) reads it via --mcp-config; an argv-transport one (Codex) returns "" and builds
     // its servers from the runtime bag instead.
     const fallbackMcpConfigFile = await materializeMcpConfig(fallbackEngine, fallbackMcpRuntime.mcpConfigJson);
+    // Say so in the answer the reader keeps. This was the gap users saw: a failover turn streamed
+    // Claude's words under nothing at all, because the note lived only on the finished `content`,
+    // and a streamed answer is written from the stream. Announced here — after every check that
+    // could still refuse the fallback — so it never promises an engine that then does not run.
+    if (note) announceAnswerNote(note);
+    if (fbMcpDropNote) announceAnswerNote(fbMcpDropNote);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
       assertRuntimeCanStart();
       return fallbackAdapter.run(validateRunContext({
@@ -1838,6 +1688,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     assertRuntimeCredentials(target, engine);
     runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
     await bringRuntimeUp();
+    // Every gateway note below is part of `content` for surfaces with no stream — and ANNOUNCED, so a
+    // surface that writes its answer from the live stream delivers it too (see announceAnswerNote).
+    // The license warning leads: it applies to this turn whichever engine answers it.
+    if (licenseWarning) announceAnswerNote(licenseWarning);
 
     // If THIS engine was recently limited in THIS channel (or its credential failed gateway-wide),
     // skip it and use the fallback harness for the cooldown window instead of re-probing it.
@@ -1865,6 +1719,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Minted BEFORE `engineStarted` flips: a failure in here is still a turn whose engine never
     // spawned, so the session row this turn minted must not survive it (see dropUnusedSession).
     await mintGatewayMcpRuntime();
+    if (mcpDropNote) announceAnswerNote(mcpDropNote);
     engineStarted = true;
     mcpConfigFile = await materializeMcpConfig(engine, mcpConfigJson);
 

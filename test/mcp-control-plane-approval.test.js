@@ -358,12 +358,22 @@ test("every registered gateway tool is consciously classified as gated or open (
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
     "set_my_composio_token", "clear_my_composio_token",
     "set_my_toolbox_token", "clear_my_toolbox_token",
+    // environment secret scopes that are not the channel's: each changes which account future runs
+    // authenticate as, and the organization one does it for every conversation at once
+    "set_secret", "remove_secret",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
+    // SSH access (src/gateway/ssh-access.js): a registered key is what a grant turns into a shell
+    // inside a container, and a grant IS that shell — persistent, and never on the model's word alone.
+    "add_my_ssh_key", "remove_my_ssh_key", "grant_channel_ssh", "revoke_channel_ssh",
     // skills platform: grants, templates, catalog writes and admin decisions are persistent state
     "add_channel_skills", "remove_channel_skills", "set_channel_skill_template",
     "create_skill", "update_skill", "decide_skill_proposal", "sync_skill_sources",
     "delete_skill", "publish_skill", "add_org_skills", "remove_org_skills",
-    "add_skill_source", "set_skill_source", "remove_skill_source", "set_skill_excluded", "set_skill_governance", "set_skill_scope",
+    "add_skill_source", "set_skill_source", "remove_skill_source", "set_skill_excluded", "set_skill_governance", "set_skill_scope",    // Publishing bytes outside the gateway: a "share" link puts a channel file at an
+    // unauthenticated URL for up to 48h and cannot be recalled once fetched. Its `details()`
+    // returns null for the short machine-facing "upload" purpose, the same conditional shape
+    // update_gateway/restart_gateway use for their admin-mode exception.
+    "create_public_file_link",
   ]);
   const OPEN = new Set([
     // read-only
@@ -388,10 +398,20 @@ test("every registered gateway tool is consciously classified as gated or open (
     "list_skills", "show_channel_skills", "list_skill_templates", "preview_skill_template",
     "get_skill_file", "get_skill_info", "propose_skill_change", "list_skill_proposals", "skill_usage_report",
     "list_skill_sources", // admin read
+    "list_secrets", // one masked name listing across the three scopes; there is no reveal path anywhere
+    "list_my_ssh_keys", "show_channel_ssh", // the requester's own keys; this channel's SSH state and the connection block
     // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
     // self-service like starring in a skill library — reversible, affects nobody else, no card.
     "add_my_skills", "remove_my_skills",
-    // runs this channel's ALREADY-linked Drive sync early — the same pass the schedule runs anyway,
+    // sends ONE already-readable channel file to Composio's storage for a tool call the user asked
+    // for; publishes nothing, spends only the identity the caller named, and the destination tool
+    // call is separately visible. Path is confined to the channel folder.
+    "stage_file_for_composio",
+    "list_public_file_links", // read-only; shows ids and expiries, never reprints a minted URL
+    // strictly de-escalating: it REMOVES public access. Gating a revocation would stall the one
+    // action someone takes when a link should not have gone out.
+    "revoke_public_file_link",
+        // runs this channel's ALREADY-linked Drive sync early — the same pass the schedule runs anyway,
     // this channel only, obeying the admin's global switch; linking/unlinking stays gated
     "sync_channel_drive",
   ]);

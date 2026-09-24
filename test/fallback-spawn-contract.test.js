@@ -126,3 +126,33 @@ test("a clean-mode failover still injects nothing", async () => {
   assert.deepEqual(await spawnedMcpServers("fb-clean"), [], "clean mode still injects no servers");
   assert.match(result.content, /permprompt=no/, "clean mode has no gateway server, so no approval tool to route to");
 });
+
+// Live finding (0.5.3 acceptance, Apps in cg-qa-auto): the Codex→Claude failover turn streamed
+// Claude's answer under no notice at all. The failover note lived only on the finished `content`,
+// and a streamed answer is written from the stream — so the reader never learned Codex was out.
+test("a Codex→Claude failover ANNOUNCES its note to the delivery layer, not only on content", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_FB_NOTE", { name: "Fallback Note", approved: true, isAdmin: false });
+  await connectedDM("D_FB_NOTE", "fb-note", "codex");
+  const events = [];
+  const result = await runMessage({
+    channelId: "D_FB_NOTE",
+    authorId: "U_FB_NOTE",
+    text: "CODEX_STUB_LIMIT_FAIL_SAFE",
+    threadKey: "1902.040",
+    origin: "slack_foreground",
+    preferCold: true,
+    getFallbackContext: async () => "Conversation context\n\n",
+    onEvent: (event) => events.push(event),
+  });
+  assert.equal(result.engine, "claude", "precondition — the turn really failed over");
+  const notes = events.filter((e) => e?.kind === "answer_note").map((e) => e.text);
+  assert.equal(notes.length, 1, `exactly one note: ${JSON.stringify(notes)}`);
+  assert.match(notes[0], /Codex hit its usage limit before any tool call — using Claude/);
+  assert.ok(result.content.startsWith(notes[0]), "content carries the same sentence for surfaces with no stream");
+  // Announced BEFORE the fallback produced a single word, so it can lead the answer.
+  const noteAt = events.findIndex((e) => e?.kind === "answer_note");
+  const firstText = events.findIndex((e) => e?.kind === "text" || e?.kind === "delta");
+  assert.ok(firstText === -1 || noteAt < firstText, "the note precedes the fallback's own output");
+});

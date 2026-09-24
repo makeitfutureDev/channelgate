@@ -51,6 +51,10 @@ import { isSubscriptionName } from "../../platforms/googlechat/pubsub.js";
 import { logEvent } from "../../util/logger.js";
 import { checkForUpdate, startUpdate } from "../../gateway/updater.js";
 import { isValidModel } from "../../slack/util.js";
+// Organization-wide environment secrets. WRITE-ONLY, exactly like the per-channel ones:
+// listOrgEnv is the only shape that may leave the process (config/scoped-env.js).
+import { listOrgEnv, patchOrgEnv } from "../../config/scoped-env.js";
+import { normalizeEnvName } from "../../config/channel-env.js";
 import { detectServiceManager, requestShutdown, restartExitCode } from "../../gateway/shutdown.js";
 import { invalidateAllSessions, authEnabled } from "../auth.js";
 import { readSecret } from "../secrets.js";
@@ -58,6 +62,8 @@ import { readSecret } from "../secrets.js";
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
 import { engineUiManifest, refreshEngineModels } from "../../engines/registry.js";
+// The Anthropic-compatible provider table — one settings card, one credential pair, per entry.
+import { QWEN_PROVIDERS } from "../../engines/qwen.js";
 
 // The month the license ledger is keyed on — UTC, never the daemon's local zone (a deployment in
 // UTC+13 would otherwise roll its allowance a day early).
@@ -69,6 +75,8 @@ function utcMonthNow(at = Date.now()) {
 // Caller-supplied labels that go into an audit row (a rejected reveal's scope/field/id). Names,
 // never values — and bounded, so a padded request body cannot inflate the events table.
 const clipLabel = (v) => String(v ?? "").slice(0, 120);
+
+const ORG_SECRET_ACTOR = "admin UI";
 
 export function createSettingsRouter({
   slack,
@@ -375,19 +383,23 @@ export function createSettingsRouter({
       // The Claude subscription token for container runs (`claude setup-token` on the host). Same
       // write-only rule as every other credential: set on a value, cleared by an empty string or
       // the explicit flag, never echoed back by any listing.
-      // ── Qwen provider (the opt-in `qwen` harness) ───────────────────────────
+      // ── Anthropic-compatible providers (the opt-in Qwen harnesses) ──────────
       // Write-only, exactly like the tokens above: the value is never echoed back on a listing,
-      // and `clearQwenApiKey` is how the UI removes one it cannot read.
-      if (typeof body.qwenApiKey === "string") patch.qwenApiKey = body.qwenApiKey.trim();
-      if (body.clearQwenApiKey === true) patch.qwenApiKey = "";
-      if (typeof body.qwenBaseUrl === "string") {
-        const url = body.qwenBaseUrl.trim();
+      // and `clear<Key>` is how the UI removes one it cannot read. Driven off the provider TABLE,
+      // not a literal pair — a provider added there would otherwise get a settings card in the UI
+      // whose key and endpoint silently never saved.
+      for (const entry of QWEN_PROVIDERS) {
+        const { apiKey: keyField, baseUrl: urlField } = entry.settings;
+        if (typeof body[keyField] === "string") patch[keyField] = body[keyField].trim();
+        if (body[`clear${keyField[0].toUpperCase()}${keyField.slice(1)}`] === true) patch[keyField] = "";
+        if (typeof body[urlField] !== "string") continue;
+        const url = body[urlField].trim();
         // An endpoint the daemon will send a credential to: https only, and shape-checked here
         // rather than at spawn time, where a bad value would fail every turn in the channel.
         if (url && !/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[\w./-]*)?$/i.test(url)) {
-          return res.status(400).json({ error: "Qwen base URL must be an https:// endpoint" });
+          return res.status(400).json({ error: `${entry.label} base URL must be an https:// endpoint` });
         }
-        patch.qwenBaseUrl = url;
+        patch[urlField] = url;
       }
       if (typeof body.containerClaudeOauthToken === "string") patch.containerClaudeOauthToken = body.containerClaudeOauthToken.trim();
       if (body.clearContainerClaudeOauthToken === true) patch.containerClaudeOauthToken = "";
@@ -401,6 +413,7 @@ export function createSettingsRouter({
       if (typeof body.memoryReviewNotify === "boolean") patch.memoryReviewNotify = body.memoryReviewNotify;
       // Scheduled Google Drive sync. Key file / subject are plain strings (a path + an email, not
       // secrets); interval floors at 1 minute; conflict policy is an enum.
+      if (typeof body.publicFileLinksEnabled === "boolean") patch.publicFileLinksEnabled = body.publicFileLinksEnabled;
       if (typeof body.driveSyncEnabled === "boolean") patch.driveSyncEnabled = body.driveSyncEnabled;
       if (typeof body.driveSyncKeyFile === "string") patch.driveSyncKeyFile = body.driveSyncKeyFile.trim();
       // Pasted service-account key JSON (write-only). Validate it's a real SA key before storing; a
@@ -426,6 +439,30 @@ export function createSettingsRouter({
           if (r && typeof r === "object") cleanRates[model] = { input: num(r.input), cachedInput: num(r.cachedInput), output: num(r.output) };
         }
         patch.codexModelRates = cleanRates;
+      }
+      // Per-model Claude $/1M rates (input / 5m + 1h cache write / cache read / output). Unlike the
+      // Codex table the model list is OPEN, because these only price usage the gateway did not
+      // launch and Anthropic ships models between gateway releases — but a row is kept only when
+      // every column is a real number, so a half-filled entry can never zero out a price.
+      if (body.claudeModelRates && typeof body.claudeModelRates === "object" && !Array.isArray(body.claudeModelRates)) {
+        const keys = ["input", "cacheWrite5m", "cacheWrite1h", "cacheRead", "output"];
+        const cleanRates = {};
+        for (const [model, r] of Object.entries(body.claudeModelRates)) {
+          if (!model || !r || typeof r !== "object") continue;
+          if (!keys.every((key) => Number.isFinite(Number(r[key])) && Number(r[key]) >= 0)) continue;
+          cleanRates[model] = Object.fromEntries(keys.map((key) => [key, Number(r[key])]));
+        }
+        patch.claudeModelRates = cleanRates;
+      }
+      // Which model a run with none recorded is CHARTED under, per engine. "" is a deliberate
+      // "leave those unknown"; anything else is taken as a model id.
+      if (body.assumedModels && typeof body.assumedModels === "object" && !Array.isArray(body.assumedModels)) {
+        const clean = {};
+        for (const [engine, model] of Object.entries(body.assumedModels)) {
+          if (!engine.trim() || typeof model !== "string") continue;
+          clean[engine.trim()] = model.trim();
+        }
+        patch.assumedModels = clean;
       }
       // Org DM templates (User/Admin) — edited under Settings → Access Templates, folded into this save.
       // Validate model/effort exactly like the per-channel/DM routes (bad values 400 before any save),
@@ -736,6 +773,57 @@ export function createSettingsRouter({
     try {
       const engine = ENGINES.includes(req.query.engine) ? req.query.engine : getEngine();
       res.json({ engine, servers: await requireAdapter(engine).discoverMcps() });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // ── Organization-wide environment secrets ───────────────────────────────────
+  // One credential the whole deployment shares, injected into EVERY conversation's runs. The same
+  // write-only contract as a channel's: names + last4 leave here and nothing else, there is no
+  // reveal route, and these are deliberately NOT in web/secrets.js — its named-getter shape is
+  // what stops it becoming "read any config key", and a dynamic bag behind it would end that.
+  // The admin UI authenticates one shared password, so the actor is the UI, not a person.
+  router.get("/org-secrets", (req, res, next) => {
+    try {
+      res.json({ vars: listOrgEnv() });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Add or update one variable — one blind write, so nothing can leak back out of an update.
+  router.put("/org-secrets/:name", (req, res, next) => {
+    try {
+      const value = typeof req.body?.value === "string" ? req.body.value : "";
+      // The stored key is the canonical (uppercase) spelling, so the audit line names THAT; the
+      // mutation still gets the raw name so a refusal quotes what the caller actually sent.
+      const name = normalizeEnvName(req.params.name);
+      let vars;
+      try {
+        vars = patchOrgEnv({ set: { name: req.params.name, value }, actor: ORG_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      // Name only. The audit trail must never carry what was set.
+      logEvent("org_env_set", { name, actor: ORG_SECRET_ACTOR });
+      res.json({ ok: true, vars });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.delete("/org-secrets/:name", (req, res, next) => {
+    try {
+      const name = normalizeEnvName(req.params.name);
+      let vars;
+      try {
+        vars = patchOrgEnv({ remove: name, actor: ORG_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      logEvent("org_env_removed", { name, actor: ORG_SECRET_ACTOR });
+      res.json({ ok: true, vars });
     } catch (e) {
       next(e);
     }

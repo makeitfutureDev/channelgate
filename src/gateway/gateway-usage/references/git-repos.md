@@ -6,9 +6,14 @@ built-in isolation: each editing task works in its **own worktree on its own bra
 merged results reach the shared branch. History, branches, and commits are shared instantly;
 working files are not.
 
-**If the project's own instruction file (its AGENTS.md / CLAUDE.md) defines a different git
-convention, the project's convention wins.** These rules are the default for repos that don't
-say otherwise.
+**Read the project's own instruction file (its AGENTS.md / CLAUDE.md) first — it decides WHICH
+branch you start from and land on.** Where this page says `origin/main`, substitute the base branch
+that file names: many repos integrate on `beta` or `develop` and treat `main` as releases only, and
+landing on the wrong one is its own incident. What a project convention never waives is the
+isolation itself — one worktree per task, no edits in the shared checkout — because that protects
+the project's own work from concurrent threads, not this page's preferences. A project that
+mentions worktrees only in passing still requires them; a project silent on git uses this page as
+written.
 
 ## Step 0 — detect (every task)
 
@@ -22,6 +27,11 @@ git rev-parse --is-inside-work-tree 2>/dev/null
   applies; work normally.
 - A repo AND the task will create/modify/delete files tracked by it → follow the protocol below.
   Scratch output that doesn't belong to the repo (downloads, generated reports) is fine outside it.
+- "Small" is not an exemption. One file, one line, a typo, a quick fix while you were in there, or
+  a task you had already started editing — all of them still get a worktree. The cost of the
+  worktree is seconds; the cost of skipping it is another thread's uncommitted work, gone with no
+  error message. Two pieces of work are two branches even when they touch the same file: that is
+  what keeps them separable once they are written.
 
 ## Step 1 — open a worktree for the task
 

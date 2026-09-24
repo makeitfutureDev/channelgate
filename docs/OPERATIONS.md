@@ -507,6 +507,40 @@ editor lease until that VS Code window closes, preventing idle or capacity evict
 terminal is user `agent` with the same persistent `/home/agent`, so its installed tools, GitHub and
 provider CLI logins, Claude history, and Codex history are the channel's own existing state.
 
+The VS Code server itself is not downloaded into the channel. The image carries one read-only copy
+of each pinned version (`containers/versions.json` → `vscodeServers`, currently 1.139.0 and
+1.138.0) under `/opt/channelgate/vscode-server`, and every container start links it into
+`~/.vscode-server` — the attach layout (`bin/<commit>`) and the Remote-SSH layout
+(`cli/servers/Stable-<commit>/server`, `code-<commit>`) alike — so an editor attach costs the volume
+a few kilobytes instead of ~650 MB. A client on a version that is not pinned downloads its own server
+into the volume exactly as before. To bump: add the new release's commit and VS Code's published
+`sha256hash` values from `https://update.code.visualstudio.com/api/versions/commit:<commit>/server-linux-x64/stable`
+and `…/cli-alpine-x64/stable`, drop the oldest, and rebuild; a mismatched download fails the build.
+A channel opts out with `touch ~/.vscode-server/.cg-no-shared-server` inside its container. Servers a
+client downloaded into a volume before this are left where they are — they show up in the storage
+report as reclaimable, and nothing deletes them automatically.
+
+### Container storage
+
+Nothing reclaims container storage automatically, on purpose: every image build keeps the previous
+runtime image, the idle reaper stops a channel's container without removing it, and a stopped
+container keeps the image it was created from. Check it with the report, which changes nothing:
+
+```bash
+npm run runtime:storage              # what could be reclaimed, and why each item is kept or not
+npm run runtime:storage -- --json    # the same report as JSON
+npm run runtime:storage -- --apply   # remove exactly the lines the report marks `remove`
+```
+
+Run it as the gateway's own OS user (rootless container storage is per user). It removes a stopped
+channel container only when it was created from a superseded image (the channel gets a fresh one
+on the current image next time), never a running one; runtime images other than the current one,
+the previous spec (`--keep-previous <n>`, default 1) and any still in use; untagged leftovers; and
+anything named for another install **only** when every folder that install's containers mounted is
+gone — a finished test run, not a second live gateway sharing this account. A channel's home volume
+is never removed by it. The space estimate counts image layers once each. To make it routine,
+schedule the report and read it; schedule `--apply` only if you have decided to.
+
 Codex uses the same shared login file already mounted for chat turns. Claude's rotating credential
 file is still never copied or mounted: the helper refreshes the gateway's normal subscription
 access-token relay every 20 minutes and exposes only that access token to interactive `claude`
@@ -520,6 +554,14 @@ full shell inside the container and bypasses chat tool presets. The container bo
 same—only this channel's mounts exist, there is no `sudo`, and no gateway database, host home, or
 other channel is exposed. Per-channel environment secrets remain write-only and are not exported
 to the editor terminal.
+
+**Let developers SSH into a channel container** (`docs/SSH-ACCESS.md`). Unlike the operator's
+local VS Code attach, this is for people WITHOUT a host account: a one-time root installer
+(`scripts/install-ssh-access.sh`) creates a no-shell login account whose forced command hands
+each connection to the daemon, which authorizes the registered key against the channel's SSH
+grant list and runs an unprivileged `sshd -i` inside the container on that stream. Keys and grants
+are managed from chat (`add_my_ssh_key`, `grant_channel_ssh`, `show_channel_ssh`); a container
+with a live session is never idle-stopped; sessions and refusals are in the Audit feed.
 
 ```bash
 podman ps --filter label=channelgate=1                 # every ChannelGate container on this host

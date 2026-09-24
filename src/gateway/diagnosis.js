@@ -2,8 +2,9 @@
 // configured dev channel (Settings → errorDiagnosisChannel, e.g. "gateway-slack" — whose work
 // folder IS this repo) and run Claude there with the error context, asking it to find the root
 // cause in the source and PROPOSE a fix (never apply one). Guardrails: off unless configured; a
-// global cooldown so an error storm can't become a run storm; and a failed diagnosis run is never
-// itself diagnosed (the diagnosis thread's own key is remembered and skipped — no recursion).
+// global cooldown so an error storm can't become a run storm; a failed diagnosis run is never
+// itself diagnosed (the diagnosis thread's own key is remembered and skipped — no recursion); and
+// failures that are provider STATE rather than a source defect are skipped entirely.
 import { runMessage } from "./run.js";
 import { listChannels } from "../config/store.js";
 import { getErrorDiagnosisChannel } from "../config/settings.js";
@@ -11,6 +12,27 @@ import { logEvent, readEvents } from "../util/logger.js";
 import { recordUsage } from "./usage.js";
 import { deliverResult } from "../slack/deliver.js";
 import { postNotice } from "../platforms/notify.js";
+
+// Not every failed run is a DEFECT in this source. A provider quota, a missing or expired sign-in,
+// a model the account will not serve, a provider outage and a dropped connection are states of the
+// world OUTSIDE this repository: the failing thread already told the user and named the remedy, and
+// a diagnosis could only ever report "wait for the limit to reset". Diagnosing them spends the very
+// quota that was exhausted, burns the half-hour cooldown a real bug may need, and trains the dev
+// channel to ignore the 🩺 card. Only failures whose root cause could plausibly live in the source
+// — crashes, stalls, requests we built wrong, denials, unclassified errors — are worth a thread.
+const PROVIDER_STATE_KINDS = new Set(["usage_limit", "authentication", "billing", "model_rejected", "availability", "connection"]);
+// Belt and braces for the same class arriving unclassified: the orchestrator's own limit throw
+// (run.js) and any runner that only reports the limit in prose still must not open a thread.
+const PROVIDER_LIMIT_TEXT = /\busage limit\b|\bspend limit\b|hit (?:your|its) (?:session|usage|weekly|account|spend|monthly|credit)\s+limit|purchase more credits|out of credits/i;
+
+// Is this failure something a reader of THIS repository could fix? Exported for the tests and for
+// any future caller that wants the same judgement before spending a run on a diagnosis.
+export function isDiagnosableRunError(err) {
+  const details = err?.details || {};
+  if (details.explicitStop === true || err?.name === "AbortError") return false; // the user ended it
+  if (details.providerError === true && PROVIDER_STATE_KINDS.has(String(details.providerKind || ""))) return false;
+  return !PROVIDER_LIMIT_TEXT.test(String(err?.message || ""));
+}
 
 const COOLDOWN_MS = 30 * 60_000; // at most one diagnosis per half hour, across all channels
 let lastAt = 0;
@@ -24,6 +46,7 @@ export async function maybeDiagnoseRunError({ client, err, channelId, slug, thre
   const targetSlug = getErrorDiagnosisChannel();
   if (!targetSlug || !client) return;
   if (ownThreads.has(threadKey)) return; // the diagnoser failed — do not diagnose the diagnosis
+  if (!isDiagnosableRunError(err)) return; // provider quota/credential/outage state — nothing here to fix
   if (Date.now() - lastAt < COOLDOWN_MS) return;
   const target = (await listChannels()).find((c) => c.slug === targetSlug && !c.meta?.isDM);
   if (!target) return;

@@ -10,7 +10,7 @@ import { getDb } from "../db/index.js";
 import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
-import { QWEN_DEFAULT_BASE_URL } from "../engines/qwen.js";
+import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
@@ -388,20 +388,49 @@ export function getContainerRuntime() {
     fullAccessHome: s.containerFullAccessHome === true,
   };
 }
-// ── Qwen provider (the `qwen` engine — src/engines/qwen.js) ───────────────────────────────────
-// A gateway-level credential, deliberately NOT a per-channel environment secret: `ANTHROPIC_*` is
-// a reserved prefix in channel-env.js because redirecting a run's provider is identity hijack.
+// ── Anthropic-compatible providers (the Qwen harnesses — src/engines/qwen.js) ─────────────────
+// Gateway-level credentials, deliberately NOT per-channel environment secrets: `ANTHROPIC_*` is a
+// reserved prefix in channel-env.js because redirecting a run's provider is identity hijack.
 // Write-only from the API like every other token here — has*/last4 on listings, the value only
-// through POST /api/secrets/reveal.
-export function getQwenConfig() {
+// through POST /api/secrets/reveal. Keyed by PROVIDER so a second endpoint (a different region, a
+// different account) is a table row rather than a second copy of this accessor.
+export function getQwenConfig(providerId) {
+  const entry = qwenProvider(providerId);
   const s = getSettings();
+  const stored = (key) => (typeof s[key] === "string" ? s[key].trim() : "");
   return {
-    apiKey: typeof s.qwenApiKey === "string" ? s.qwenApiKey.trim() : "",
-    baseUrl: typeof s.qwenBaseUrl === "string" && s.qwenBaseUrl.trim() ? s.qwenBaseUrl.trim() : QWEN_DEFAULT_BASE_URL,
+    id: entry.id,
+    apiKey: stored(entry.settings.apiKey),
+    // The shipped endpoint is a DEFAULT, not a guarantee: a provider whose endpoint is
+    // account-specific ships none, and stays unconfigured until the operator saves theirs.
+    baseUrl: stored(entry.settings.baseUrl) || entry.defaultBaseUrl,
   };
 }
-export function hasQwenApiKey() {
-  return Boolean(getQwenConfig().apiKey);
+export function hasQwenApiKey(providerId) {
+  return Boolean(getQwenConfig(providerId).apiKey);
+}
+// What the admin UI renders one card from, per provider. Presence and endpoint only — the key
+// itself is fetched one at a time from POST /api/secrets/reveal, like every other credential.
+export function qwenProviderSettings() {
+  return QWEN_PROVIDERS.map((entry) => {
+    const config = getQwenConfig(entry.id);
+    return {
+      id: entry.id,
+      label: entry.label,
+      description: entry.description,
+      endpointHint: entry.endpointHint,
+      defaultBaseUrl: entry.defaultBaseUrl,
+      apiKeyField: entry.settings.apiKey,
+      baseUrlField: entry.settings.baseUrl,
+      defaultModelField: entry.defaultModelKey,
+      hasApiKey: Boolean(config.apiKey),
+      apiKeyLast4: last4(config.apiKey),
+      // The STORED endpoint, so an empty box means "still on the shipped default" rather than
+      // silently re-saving a default the operator never chose.
+      baseUrl: typeof getSettings()[entry.settings.baseUrl] === "string" ? getSettings()[entry.settings.baseUrl].trim() : "",
+      defaultModel: getDefaultModel(entry.id),
+    };
+  });
 }
 
 // The long-lived subscription token from `claude setup-token`, injected as CLAUDE_CODE_OAUTH_TOKEN
@@ -458,6 +487,15 @@ export function getMemoryReviewModel() {
 export function getMemoryReviewNotify() {
   const v = getSettings().memoryReviewNotify;
   return v === undefined ? true : Boolean(v);
+}
+
+// Temporary public download links for one channel file (see gateway/public-file-links.js). OFF by
+// default and deliberately so: it is the only capability that serves channel bytes to a caller
+// with no gateway session, so an operator has to turn it on knowingly. Re-read on every fetch, so
+// switching it off kills every outstanding link at once rather than at its next expiry. Needs
+// `publicUrl` as well — without an address there is nothing to hand out.
+export function getPublicFileLinksEnabled() {
+  return Boolean(getSettings().publicFileLinksEnabled);
 }
 
 // Scheduled two-way Google Drive sync (see gateway/drivesync.js). Dormant unless enabled AND a
@@ -555,6 +593,79 @@ export function getCodexModelRates() {
     const candidate = stored[model] || {};
     const s = isExactRate(candidate, RETIRED_CODEX_DEFAULTS[model]) ? {} : candidate;
     out[model] = { input: num(s.input, d.input), cachedInput: num(s.cachedInput, d.cachedInput), output: num(s.output, d.output) };
+  }
+  return out;
+}
+
+// Per-model Claude $/1M-token rates. Claude Code REPORTS a real dollar cost for every run the
+// gateway launches, so these never price a gateway run — they exist for usage the gateway did not
+// launch (../gateway/external-usage.js), where the only record is a transcript's token counts.
+// Verified against platform.claude.com/docs/en/about-claude/pricing on 2026-09-23. `cacheWrite5m` /
+// `cacheWrite1h` are the two cache-write TTLs and `cacheRead` the hit rate; the multipliers differ
+// per family (Fable 5.1 reads at 0.025x, Opus 5.5 at 0.05x, everything else at 0.1x), which is why
+// the rate is stored outright instead of derived. The 1M context window carries no premium on
+// 4.6-and-later models, so there is no long-context multiplier here.
+export const DEFAULT_CLAUDE_RATES = {
+  "claude-fable-5-1": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 },
+  "claude-mythos-5-1": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 },
+  "claude-fable-5": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 1, output: 50 },
+  "claude-mythos-5": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 1, output: 50 },
+  "claude-opus-5-5": { input: 4, cacheWrite5m: 5, cacheWrite1h: 8, cacheRead: 0.2, output: 20 },
+  "claude-opus-5": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-8": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-7": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-6": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-5": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
+  "claude-opus-4-1": { input: 15, cacheWrite5m: 18.75, cacheWrite1h: 30, cacheRead: 1.5, output: 75 },
+  "claude-sonnet-5": { input: 2, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.2, output: 10 },
+  "claude-sonnet-4-6": { input: 3, cacheWrite5m: 3.75, cacheWrite1h: 6, cacheRead: 0.3, output: 15 },
+  "claude-sonnet-4-5": { input: 3, cacheWrite5m: 3.75, cacheWrite1h: 6, cacheRead: 0.3, output: 15 },
+  "claude-haiku-4-5": { input: 1, cacheWrite5m: 1.25, cacheWrite1h: 2, cacheRead: 0.1, output: 5 },
+  "claude-haiku-3-5": { input: 0.8, cacheWrite5m: 1, cacheWrite1h: 1.6, cacheRead: 0.08, output: 4 },
+};
+
+const CLAUDE_RATE_KEYS = ["input", "cacheWrite5m", "cacheWrite1h", "cacheRead", "output"];
+
+export function getClaudeModelRates() {
+  const stored = getSettings().claudeModelRates || {};
+  const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : d);
+  const out = {};
+  for (const [model, d] of Object.entries(DEFAULT_CLAUDE_RATES)) {
+    const s = stored[model] || {};
+    out[model] = Object.fromEntries(CLAUDE_RATE_KEYS.map((key) => [key, num(s[key], d[key])]));
+  }
+  // An admin may price a model the defaults do not list yet (a launch between releases). Only a
+  // fully specified rate is accepted, so a half-filled row can never silently zero a price.
+  for (const [model, s] of Object.entries(stored)) {
+    if (out[model] || !s || typeof s !== "object") continue;
+    if (!CLAUDE_RATE_KEYS.every((key) => Number.isFinite(Number(s[key])) && Number(s[key]) >= 0)) continue;
+    out[model] = Object.fromEntries(CLAUDE_RATE_KEYS.map((key) => [key, Number(s[key])]));
+  }
+  return out;
+}
+
+// Which model a run is CHARTED under when nothing recorded one. The gateway only began resolving
+// the runtime model partway through its life, so older ledger rows carry no model at all — on the
+// development deployment, 387 runs worth $990 and 443M tokens. Left alone they collapse into a
+// single "model unknown" band that says nothing; attributed to the family that almost certainly
+// answered them, the charts become readable again.
+//
+// This is ATTRIBUTION ONLY. It decides which band an already-recorded figure sits in; it never
+// prices anything, so no spend is invented — and the dashboard still reports how many runs were
+// attributed this way, so the assumption stays visible rather than becoming a silent claim. An
+// engine with no entry here keeps its runs explicitly unknown.
+export const DEFAULT_ASSUMED_MODELS = Object.freeze({
+  claude: "claude-opus-5",
+  codex: "gpt-5.6-sol",
+});
+
+export function getAssumedModels() {
+  const stored = getSettings().assumedModels || {};
+  const out = { ...DEFAULT_ASSUMED_MODELS };
+  for (const [engine, model] of Object.entries(stored)) {
+    if (typeof engine !== "string" || !engine.trim()) continue;
+    // An explicit empty string is a deliberate "leave these unknown", not a missing value.
+    if (typeof model === "string") out[engine.trim()] = model.trim();
   }
   return out;
 }
@@ -891,12 +1002,9 @@ export function settingsForApi() {
     engine: getEngine(),
     defaultClaudeModel: getDefaultModel("claude"),
     defaultCodexModel: getDefaultModel("codex"),
-    defaultQwenModel: getDefaultModel("qwen"),
-    // The Qwen provider: presence and endpoint only. The key itself is fetched one at a time from
-    // POST /api/secrets/reveal, like every other credential on this snapshot.
-    hasQwenApiKey: hasQwenApiKey(),
-    qwenApiKeyLast4: last4(getQwenConfig().apiKey),
-    qwenBaseUrl: getQwenConfig().baseUrl,
+    // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
+    // instead of carrying a hard-coded copy of the table.
+    qwenProviders: qwenProviderSettings(),
     modelChangeAccess: getModelChangeAccess(),
     engineEnabled: getEngineEnabledMap(),
     engineFallback: getEngineFallback(),
@@ -929,6 +1037,7 @@ export function settingsForApi() {
     memoryReviewEvery: getMemoryReviewEvery(),
     memoryReviewModel: getMemoryReviewModel(),
     memoryReviewNotify: getMemoryReviewNotify(),
+    publicFileLinksEnabled: getPublicFileLinksEnabled(),
     driveSyncEnabled: getDriveSyncEnabled(),
     driveSyncKeyFile: getDriveSyncKeyFile(),
     hasDriveSyncKeyJson: Boolean(getDriveSyncKeyJson()), // the raw key is NEVER returned to the client
@@ -939,6 +1048,8 @@ export function settingsForApi() {
     driveSyncRclonePath: getDriveSyncRclonePath(),
     codexRatePer1MTokens: getCodexRatePer1MTokens(),
     codexModelRates: getCodexModelRates(),
+    claudeModelRates: getClaudeModelRates(),
+    assumedModels: getAssumedModels(),
     scheduleMinIntervalMinutes: getScheduleMinIntervalMinutes(),
     scheduleMaxPerChannel: getScheduleMaxPerChannel(),
     noResponseReminderHours: getNoResponseReminderHours(),

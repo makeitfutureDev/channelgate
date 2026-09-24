@@ -20,6 +20,7 @@ import { MODEL_WIZARD_SCOPE_CHANNEL_ACTION, MODEL_WIZARD_SCOPE_THREAD_ACTION, MO
 // Re-exported for existing importers (tests) — moved to slack/model-wizard.js.
 export { modelOptionsForEngine };
 import { getSessionMap } from "../gateway/sessions.js";
+import { getThreadEffort, getThreadEngine, getThreadModel, resolveThreadEngine, setThreadEffort, setThreadEngine, setThreadModel } from "../gateway/thread-engine.js";
 
 import { logEvent } from "../util/logger.js";
 
@@ -37,7 +38,7 @@ import { listSkills } from "../gateway/skills/catalog.js";
 import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
 import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
-import { getChannelVpnStatus, setChannelVpnEnabled } from "../gateway/channel-vpn-control.js";
+import { channelVpnConfigured, getChannelVpnStatus, setChannelVpnEnabled, unconfiguredChannelVpnStatus } from "../gateway/channel-vpn-control.js";
 import { logChannelPolicyChange } from "../config/channel-audit.js";
 
 import { createTtlSet } from "./util.js";
@@ -48,14 +49,16 @@ import { buildFileEditView, buildFilePreviewView, buildFilesLoadingView, buildFi
 import {
   buildSecretFormView, buildSecretsErrorView, buildSecretsView, parseActionValue as parseSecretActionValue,
   parseSecretsMetadata, readSecretForm, SECRETS_ACTION_PATTERN, SECRETS_ADD_ACTION_ID,
+  SECRETS_ADD_ORG_ACTION_ID, SECRETS_ADD_PERSONAL_ACTION_ID, normalizeSecretScope, scopeFromActionId,
   SECRETS_FORM_CALLBACK_ID, SECRETS_NAME_BLOCK_ID, SECRETS_REMOVE_ACTION_PREFIX, SECRETS_SHORTCUT_ID,
   SECRETS_VALUE_BLOCK_ID,
 } from "./secret-explorer.js";
 import {
   buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
-  buildConnectionsEditorView, buildRuntimeEditorView, buildTemplateEditorView, maskedCredential,
+  buildConnectionsEditorView, maskedCredential,
   parseActionValue as parseChannelSettingsActionValue, editorMetadata, parseEditorMetadata, parseSettingsMetadata,
-  readConnectionsForm, readRuntimeForm, readTemplateForm, assertVpnActionBinding,
+  readConnectionsForm, readTemplateForm, assertVpnActionBinding, runtimeSelectTarget,
+  normalizeTab as normalizeSettingsTab, settingsCommand,
   CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
@@ -63,18 +66,19 @@ import {
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
   CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID,
-  CHANNEL_SETTINGS_FALLBACK_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID,
-  CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID,
-  CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID, CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID,
+  CHANNEL_SETTINGS_FALLBACK_ACTION_ID, CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
+  CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, CHANNEL_SETTINGS_SKILL_PAGE_PREFIX,
   CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX, CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID,
-  CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, SETTINGS_DEFAULT_VALUE, SETTINGS_NONE_VALUE,
+  CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
+  SETTINGS_DEFAULT_VALUE, SETTINGS_NONE_VALUE,
   CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_URL_BLOCK_ID,
-  CONNECTION_TOOLBOX_BLOCK_ID, RUNTIME_EFFORT_BLOCK_ID, RUNTIME_ENGINE_BLOCK_ID,
-  RUNTIME_MODEL_BLOCK_ID, TEMPLATE_BLOCK_ID,
+  CONNECTION_TOOLBOX_BLOCK_ID, TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
-import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, ACCESS_MODE_BLOCK_ID, buildAccessEditorView, readAccessForm, accessSettingsPatch, assertAccessManager } from "./access-settings.js";
+import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, readAccessFieldValue } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
+// The two scopes that are not the channel's (config/scoped-env.js).
+import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../config/scoped-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
 
 import { uploadLocalFile } from "./upload.js";
@@ -101,6 +105,7 @@ import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
 import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
+import { resolveResumeSession } from "./resume-session.js";
 import { buildStatusReport } from "./status-controller.js";
 // Re-exported for existing importers (tests) — moved to slack/message-pipeline.js.
 export { stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages };
@@ -382,16 +387,37 @@ export async function secretsContext(client, { channelId, userId, expectedSlug =
   return { ...ctx, mayEdit: true };
 }
 
+// The three masked lists one viewer may see: the organization's, THEIR OWN, and this channel's.
+// `personal` is always the viewer's — the modal is bound to one owner and refuses a different
+// clicker, so another person's secrets have no path into this view.
+export async function secretScopeLists(meta, viewerId) {
+  return {
+    organization: listOrgEnv(),
+    personal: await listUserEnv(viewerId),
+    channel: listChannelEnv(meta),
+  };
+}
+
 async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "" } = {}) {
   await ensureUserKnown(client, userId);
-  const { entry, meta, mayEdit } = await secretsContext(client, { channelId, userId });
+  const { entry, meta, mayEdit, userIsAdmin } = await secretsContext(client, { channelId, userId });
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId };
   await client.views.open({
     trigger_id: triggerId,
-    view: buildSecretsView(listChannelEnv(meta), state, { channelName: entry.name, mayEdit }),
+    view: buildSecretsView(await secretScopeLists(meta, userId), state, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin }),
   });
   // The names are worth an audit line; there is no value to omit, because we never had one.
   await logEvent("channel_secrets_opened", { channel: channelId, author: userId, slug: entry.slug });
+}
+
+// Who may change WHICH scope. The channel's is the existing rule; the organization's is
+// admin-only because it reaches every conversation; a person's own is always theirs to change —
+// the modal already refuses any clicker who is not its owner, so "personal" here IS the clicker.
+function assertMaySecretScope(scope, { mayEdit = false, userIsAdmin = false } = {}) {
+  const where = normalizeSecretScope(scope);
+  if (where === "organization" && !userIsAdmin) throw new Error("Only organization admins can change the organization's secrets.");
+  if (where === "channel" && !mayEdit) throw new Error("You can't change this channel's secrets.");
+  return where;
 }
 
 export async function handleSecretsAction({ ack, body, action, client }, { context = secretsContext, rootView = settingsRootView } = {}) {
@@ -410,23 +436,47 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
     const { entry, mayEdit, userIsAdmin } = await context(client, {
       channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
     });
-    if (!mayEdit) throw new Error("You can't change this channel's secrets.");
-    if (action?.action_id === SECRETS_ADD_ACTION_ID) {
+    // No blanket gate: the three scopes have different authority, so each branch asserts its own
+    // (assertMaySecretScope). Reaching here only means the clicker owns this modal and is
+    // authorized in this conversation at all.
+    const addScope = action?.action_id === SECRETS_ADD_ORG_ACTION_ID ? "organization"
+      : action?.action_id === SECRETS_ADD_PERSONAL_ACTION_ID ? "personal"
+        : action?.action_id === SECRETS_ADD_ACTION_ID ? "channel" : "";
+    if (addScope) {
+      assertMaySecretScope(addScope, { mayEdit, userIsAdmin });
       await client.views.push({
         trigger_id: body.trigger_id,
-        view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(cliIntegrationIds()) }),
+        view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(cliIntegrationIds()), scope: addScope }),
       });
       return;
     }
     if (String(action?.action_id || "").startsWith(SECRETS_REMOVE_ACTION_PREFIX)) {
       const name = String(command.n || "");
-      // Runs resolve env at spawn; no folder/skill provisioning is needed for an env-only edit.
-      const saved = await patchChannelMeta(entry.slug, (existing) => ({ env: patchChannelEnv(existing?.env, { remove: name }) }));
-      await logEvent("channel_env_removed", { slug: entry.slug, name, actor: clicker });
-      const notice = `🗑️ Removed *${name}*. New runs in this channel no longer receive it.`;
+      // The scope comes from the action_id, not from the clicked value: a value is attacker-shaped
+      // input on a surface where the three scopes carry different authority.
+      const scope = scopeFromActionId(action.action_id);
+      assertMaySecretScope(scope, { mayEdit, userIsAdmin });
+      let saved = null;
+      if (scope === "organization") {
+        patchOrgEnv({ remove: name, actor: `<@${clicker}>` });
+        await logEvent("org_env_removed", { name, actor: clicker });
+      } else if (scope === "personal") {
+        await patchUserEnv(clicker, { remove: name });
+        await logEvent("user_env_removed", { user: clicker, name, actor: clicker });
+      } else {
+        // Runs resolve env at spawn; no folder/skill provisioning is needed for an env-only edit.
+        saved = await patchChannelMeta(entry.slug, (existing) => ({ env: patchChannelEnv(existing?.env, { remove: name }) }));
+        await logEvent("channel_env_removed", { slug: entry.slug, name, actor: clicker });
+      }
+      const meta = saved || await getChannelMeta(entry.slug);
+      const notice = scope === "organization"
+        ? `🗑️ Removed *${name}*. No conversation receives it any more.`
+        : scope === "personal"
+          ? `🗑️ Removed *${name}*. Runs you author no longer receive it.`
+          : `🗑️ Removed *${name}*. New runs in this channel no longer receive it.`;
       const nextView = state.returnTo === "settings"
-        ? await rootView(entry, saved, { ...state, tab: "secrets" }, userIsAdmin, { notice })
-        : buildSecretsView(listChannelEnv(saved), state, { channelName: entry.name, mayEdit, notice });
+        ? await rootView(entry, meta, { ...state, tab: "secrets" }, userIsAdmin, { notice })
+        : buildSecretsView(await secretScopeLists(meta, clicker), state, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin, notice });
       await updateFileExplorerView(client, body, nextView);
     }
   } catch (e) {
@@ -465,16 +515,37 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
     const { entry, mayEdit, userIsAdmin } = await context(client, {
       channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
     });
-    if (!mayEdit) throw new Error("You can't change this channel's secrets.");
-    const existed = listChannelEnv(await getChannelMeta(entry.slug)).some((v) => v.name === name);
-    const saved = await patchChannelMeta(entry.slug, (existing) => ({
-      env: patchChannelEnv(existing?.env, { set: { name, value }, actor: `<@${clicker}>` }),
-    }));
-    await logEvent("channel_env_set", { slug: entry.slug, name, actor: clicker });
-    const notice = `✅ ${existed ? "Updated" : "Added"} *${name}*. It reaches the next run in this channel.`;
+    // The scope was fixed when the form was opened and rides in its metadata — re-authorize it
+    // here anyway: a submission is a separate request, and the clicker's admin status may have
+    // been revoked between opening the form and pressing Save.
+    const scope = assertMaySecretScope(state.scope, { mayEdit, userIsAdmin });
+    let saved = null;
+    let existed = false;
+    if (scope === "organization") {
+      existed = listOrgEnv().some((v) => v.name === name);
+      patchOrgEnv({ set: { name, value }, actor: `<@${clicker}>` });
+      await logEvent("org_env_set", { name, actor: clicker });
+    } else if (scope === "personal") {
+      existed = (await listUserEnv(clicker)).some((v) => v.name === name);
+      await patchUserEnv(clicker, { set: { name, value } });
+      await logEvent("user_env_set", { user: clicker, name, actor: clicker });
+    } else {
+      existed = listChannelEnv(await getChannelMeta(entry.slug)).some((v) => v.name === name);
+      saved = await patchChannelMeta(entry.slug, (existing) => ({
+        env: patchChannelEnv(existing?.env, { set: { name, value }, actor: `<@${clicker}>` }),
+      }));
+      await logEvent("channel_env_set", { slug: entry.slug, name, actor: clicker });
+    }
+    const meta = saved || await getChannelMeta(entry.slug);
+    const reach = scope === "organization"
+      ? "Every conversation's next run receives it."
+      : scope === "personal"
+        ? "It reaches the next run you author, in any conversation."
+        : "It reaches the next run in this channel.";
+    const notice = `✅ ${existed ? "Updated" : "Added"} *${name}*. ${reach}`;
     const nextView = state.returnTo === "settings"
-      ? await rootView(entry, saved, { ...state, tab: "secrets" }, userIsAdmin, { notice })
-      : buildSecretsView(listChannelEnv(saved), { ...state, editName: "" }, { channelName: entry.name, mayEdit, notice });
+      ? await rootView(entry, meta, { ...state, tab: "secrets" }, userIsAdmin, { notice })
+      : buildSecretsView(await secretScopeLists(meta, clicker), { ...state, editName: "" }, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin, notice });
     // Pop the temporary form and refresh its existing parent, preserving Settings navigation
     // and Slack's three-view stack budget across repeated saves.
     await navigation.show(nextView);
@@ -550,6 +621,10 @@ function channelSettingsSnapshot(meta = {}) {
     },
     skills: {
       template: template?.name || effective.skillTemplate || "",
+      // The slug the picker selects by, and the catalog it picks from — the page edits the
+      // template in place, so the options have to travel with the snapshot.
+      templateSlug: template?.slug || effective.skillTemplate || "",
+      templates: listTemplateSummaries(),
       additional: effective.skills || [],
       channel: channelTier.skills || [],
       organization: organization.skills || [],
@@ -565,31 +640,145 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
     canEnableAdmin: Boolean(userIsAdmin),
     canEditRuntime: true,
     canEditSecrets: true,
+    // Reaches every conversation, so admin-only even for someone who may edit this channel's own.
+    canEditOrgSecrets: Boolean(userIsAdmin),
     canManageCloudMcp: Boolean(userIsAdmin),
     canManageVpn: canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
     canEditAccess: !meta.isDM && canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
   };
 }
 
-function runtimeEditorData(meta, { engineChoice = "", modelChoice = "" } = {}) {
-  const snapshot = channelSettingsSnapshot(meta);
-  const runtime = snapshot.runtime;
-  const chosen = engineChoice || runtime.configuredEngineId || SETTINGS_DEFAULT_VALUE;
-  const actualEngine = chosen === SETTINGS_DEFAULT_VALUE ? runtime.gatewayEngineId : chosen;
-  const wantedModel = modelChoice || runtime.configuredModel || SETTINGS_DEFAULT_VALUE;
-  const selectedModel = wantedModel === SETTINGS_DEFAULT_VALUE || modelBelongsToEngine(wantedModel, actualEngine)
-    ? wantedModel
-    : SETTINGS_DEFAULT_VALUE;
-  const actualModel = selectedModel === SETTINGS_DEFAULT_VALUE ? getDefaultModel(actualEngine) : selectedModel;
-  runtime.gatewayModel = getDefaultModel(actualEngine);
+// What a channel field falls back to once its own value is cleared: a DM following an org template
+// inherits from the template, every other conversation from the gateway default. Asked of
+// effectiveMeta with that one field blank, so the dropdown's "inherited" label and the validation
+// that accepts the next pick can never disagree about what an unset field means.
+function inheritedChannelRuntime(meta = {}) {
+  const engine = effectiveMeta({ ...meta, engine: "" }).engine || getEngine();
   return {
-    snapshot,
-    engineChoice: chosen,
-    modelChoice: selectedModel,
-    engines: getEnabledEngines().map((id) => ({ label: engineLabel(id), value: id })),
-    models: modelsForEngine(actualEngine),
-    efforts: effortsForModel(actualEngine, actualModel).map((value) => ({ label: value === "xhigh" ? "XHigh" : value[0].toUpperCase() + value.slice(1), value })),
+    engine,
+    model: effectiveMeta({ ...meta, model: "" }).model || getDefaultModel(engine) || "",
+    effort: effectiveMeta({ ...meta, effort: "" }).effort || "",
   };
+}
+
+function effortChoices(engine, model) {
+  return effortsForModel(engine, model).map((value) => ({ label: value === "xhigh" ? "XHigh" : value[0].toUpperCase() + value.slice(1), value }));
+}
+
+// Which harness this thread's next turn actually starts on: its own pin, else the engine that
+// MINTED its live session (a channel default never displaces a session id that cannot resume
+// cross-engine), else the channel. The tab offers that engine's model and effort catalogs, so the
+// write path has to resolve it the SAME way — validating a pick against the channel's engine
+// instead would silently discard a model the user was just offered.
+async function threadRuntimeEngine(slug, threadKey, meta) {
+  return resolveThreadEngine(slug, threadKey, effectiveMeta(meta));
+}
+
+// The two runtime scopes the Engine & model tab edits in place: the channel default, and — when
+// Settings was opened from a reply inside a thread — that thread's own pins (thread-engine.js).
+// Each scope's model/effort catalogs follow the engine THAT scope resolves to, so a Codex-pinned
+// thread inside a Claude channel offers Codex models rather than the channel's.
+export async function runtimeScopes(slug, meta, snapshot, threadKey) {
+  const runtime = snapshot.runtime;
+  const engines = getEnabledEngines().map((id) => ({ label: engineLabel(id), value: id }));
+  const channelEngine = runtime.effectiveEngineId;
+  const channelModel = runtime.configuredModel || getDefaultModel(channelEngine) || "";
+  const parent = inheritedChannelRuntime(meta);
+  const channel = {
+    values: { engine: runtime.configuredEngineId, model: runtime.configuredModel, effort: runtime.configuredEffort },
+    inherited: {
+      engine: `Inherited default (${engineLabel(parent.engine)})`,
+      model: parent.model ? `Inherited default (${parent.model})` : "Engine default",
+      effort: parent.effort ? `Inherited default (${parent.effort})` : "Engine default",
+    },
+    options: { engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
+  };
+  if (!slug || !threadKey) return { channel, thread: null };
+  const [engine, model, effort, activeEngine] = await Promise.all([
+    getThreadEngine(slug, threadKey),
+    getThreadModel(slug, threadKey),
+    getThreadEffort(slug, threadKey),
+    threadRuntimeEngine(slug, threadKey, meta),
+  ]);
+  // A pinned harness cannot inherit the channel's model: the stored value becomes that engine's
+  // --model flag, and run.js drops one that belongs to the other harness.
+  const inheritedModel = modelBelongsToEngine(channelModel, activeEngine) ? channelModel : getDefaultModel(activeEngine) || "";
+  const inheritedEffort = effortBelongsToModel(runtime.configuredEffort, activeEngine, model || inheritedModel) ? runtime.configuredEffort : "";
+  return {
+    channel,
+    thread: {
+      values: { engine, model, effort },
+      pinned: Boolean(engine || model || effort),
+      // Named only when it is the reason this thread differs from the channel, so the tab explains
+      // a surprising engine instead of repeating what the dropdown already says.
+      sessionEngineLabel: !engine && activeEngine !== channelEngine ? engineLabel(activeEngine) : "",
+      inherited: {
+        engine: `Follow channel (${engineLabel(channelEngine)})`,
+        model: inheritedModel ? `Follow channel (${inheritedModel})` : "Follow channel (engine default)",
+        effort: inheritedEffort ? `Follow channel (${inheritedEffort})` : "Follow channel (engine default)",
+      },
+      options: { engines, models: modelsForEngine(activeEngine), efforts: effortChoices(activeEngine, model || inheritedModel) },
+    },
+  };
+}
+
+// Apply ONE dropdown. Engine, model and effort are not independent — a model is a flag for exactly
+// one harness and an effort for exactly one model — so changing a field drops the two below it
+// when the new value invalidates them, the same rule the /model wizard and the in-thread
+// `claude`/`codex` directive apply. `inheritedEngine` is what an empty engine falls back to:
+// the gateway default for the channel scope, the channel's own engine for a thread.
+export function nextRuntimeTriple(current = {}, field, value, inheritedEngine) {
+  const clean = (raw) => (raw === SETTINGS_DEFAULT_VALUE ? "" : String(raw || "").trim());
+  const next = { engine: clean(current.engine), model: clean(current.model), effort: clean(current.effort), [field]: clean(value) };
+  const engine = next.engine || inheritedEngine;
+  if (!modelBelongsToEngine(next.model, engine)) next.model = "";
+  if (!effortBelongsToModel(next.effort, engine, next.model || getDefaultModel(engine))) next.effort = "";
+  return next;
+}
+
+// A thread-scope pick must never silently widen to the channel because the thread id was lost.
+function requireThread(state) {
+  const threadTs = String(state?.threadTs || "");
+  if (!threadTs) throw new Error("Open Settings from a reply inside the thread you want to pin.");
+  return threadTs;
+}
+
+async function clearThreadRuntime(slug, threadKey) {
+  await setThreadEngine(slug, threadKey, "");
+  await setThreadModel(slug, threadKey, "");
+  await setThreadEffort(slug, threadKey, "");
+}
+
+// Thread pins live in the thread-override store, never in the channel record, so they are not a
+// channel policy change and are not audited as one (the /model wizard draws the same line). The
+// pin is all that is written: gateway/run.js notices the harness moved, starts a fresh session on
+// it and replays the thread, exactly as it does for an in-thread `claude` / `codex` directive.
+export async function applyThreadRuntimeSelection({ entry, meta, state, actorId, field, value }) {
+  const threadKey = requireThread(state);
+  // A cleared thread field falls back to what this thread would run with no pin at all — the same
+  // engine whose catalogs the dropdown just offered, not the channel's when a live session differs.
+  const inheritedEngine = await threadRuntimeEngine(entry.slug, threadKey, meta);
+  const current = {
+    engine: await getThreadEngine(entry.slug, threadKey),
+    model: await getThreadModel(entry.slug, threadKey),
+    effort: await getThreadEffort(entry.slug, threadKey),
+  };
+  const next = nextRuntimeTriple(current, field, value, inheritedEngine);
+  const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
+  if (patch.engine !== current.engine) await setThreadEngine(entry.slug, threadKey, patch.engine);
+  if (patch.model !== current.model) await setThreadModel(entry.slug, threadKey, patch.model);
+  if (patch.effort !== current.effort) await setThreadEffort(entry.slug, threadKey, patch.effort);
+  await logEvent("thread_runtime_updated", {
+    channel: state.channelId, slug: entry.slug, thread: threadKey, engine: actualEngine,
+    model: patch.model || "default", effort: patch.effort || "default", author: actorId,
+  });
+  return runtimeNotice("thread", patch, actualEngine);
+}
+
+function runtimeNotice(scope, { engine, model, effort }, resolvedEngine) {
+  const where = scope === "thread" ? "This thread" : "Channel default";
+  const engineText = engine ? engineLabel(engine) : `${engineLabel(resolvedEngine)} (inherited)`;
+  return `✅ ${where}: *${engineText}* · \`${model || "inherited model"}\` · \`${effort || "inherited effort"}\`.`;
 }
 
 export function runtimeSettingsPatch(form = {}, {
@@ -598,22 +787,12 @@ export function runtimeSettingsPatch(form = {}, {
 } = {}) {
   const engine = form.engine === SETTINGS_DEFAULT_VALUE ? "" : String(form.engine || "");
   const actualEngine = engine || gatewayEngine;
-  if (!enabledEngines.includes(actualEngine)) {
-    const error = new Error("That engine is no longer enabled.");
-    error.field = RUNTIME_ENGINE_BLOCK_ID;
-    throw error;
-  }
+  if (!enabledEngines.includes(actualEngine)) throw new Error("That engine is no longer enabled.");
   const model = form.model === SETTINGS_DEFAULT_VALUE ? "" : String(form.model || "");
-  if (model && !modelBelongsToEngine(model, actualEngine)) {
-    const error = new Error("That model does not belong to the selected engine.");
-    error.field = RUNTIME_MODEL_BLOCK_ID;
-    throw error;
-  }
+  if (model && !modelBelongsToEngine(model, actualEngine)) throw new Error("That model does not belong to the selected engine.");
   const effort = form.effort === SETTINGS_DEFAULT_VALUE ? "" : String(form.effort || "");
   if (effort && !effortBelongsToModel(effort, actualEngine, model || getDefaultModel(actualEngine))) {
-    const error = new Error("That effort is not supported by the selected model.");
-    error.field = RUNTIME_EFFORT_BLOCK_ID;
-    throw error;
+    throw new Error("That effort is not supported by the selected model.");
   }
   return { patch: { engine, model, effort }, actualEngine };
 }
@@ -737,34 +916,13 @@ async function patchAuditedChannelSettings(entry, actor, patch) {
   return after;
 }
 
-export async function handleAccessSettingsSubmission({ ack, body, view, client }, { save = saveAccessSettings, rootView = settingsRootView } = {}) {
-  let state;
-  let form;
-  const clicker = body?.user?.id;
-  try {
-    state = parseEditorMetadata(view?.private_metadata);
-    if (!clicker || state.ownerId !== clicker || state.view !== "access") throw new Error("This access editor expired. Open your own Settings.");
-    form = readAccessForm(view);
-  } catch (error) {
-    await ack({ response_action: "errors", errors: { [ACCESS_MODE_BLOCK_ID]: String(error.message).slice(0, 150) } });
-    return;
-  }
-  // Consume Slack's three-second submission window before any membership API calls or locks.
-  await ack({ response_action: "update", view: {
-    type: "modal", title: { type: "plain_text", text: "Channel access" },
-    close: { type: "plain_text", text: "Close" },
-    blocks: [{ type: "section", text: { type: "plain_text", text: "Checking channel membership and saving access settings…" } }],
-  } });
-  try {
-    const { entry, saved, userIsAdmin } = await save(client, state, clicker, form);
-    await client.views.update({ view_id: view.id, view: await rootView(entry, saved, { ...state, tab: "access" }, userIsAdmin, {
-      notice: "✅ Channel access settings saved. Changes apply to the next run.",
-    }) });
-  } catch (error) {
-    await client.views.update({ view_id: view.id, view: buildChannelSettingsErrorView(
-      `${error.message || "Couldn't finish updating access settings."} Reopen Settings to check the current values and try again.`,
-    ) }).catch(() => {});
-  }
+// The access form was a pushed modal until its controls moved onto General Settings itself. One
+// left open across that deploy still submits here: answer it with where the controls went rather
+// than saving a form nothing builds any more, or leaving the submit unhandled.
+export async function handleAccessSettingsSubmission({ ack }) {
+  await ack({ response_action: "update", view: buildChannelSettingsErrorView(
+    "Channel access settings now live on the Settings page itself. Reopen ⚙️ Settings → General Settings to change them — each control there saves on its own.",
+  ) });
 }
 
 // Serialize with member-left cleanup, verify selected humans, then re-read authorization and
@@ -786,8 +944,29 @@ export async function saveAccessSettings(client, state, userId, form) {
   });
 }
 
+// The one builder for the Settings modal's root view. Thread pins and this thread's session are
+// store reads, so General Settings' two runtime scopes and the Resume Session page's command are
+// resolved here rather than inside the synchronous snapshot. A resume lookup that fails must not
+// take the other pages down with it — it then reads as "no session" instead of an error card.
+// The VPN row is the one fact a subprocess owns: a conversation with no provisioned service is
+// answered here and now, and only a provisioned one is left saying "Checking status…" for the
+// hydration pass to fill in.
 async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "", vpn } = {}) {
-  return buildChannelSettingsView({ ...channelSettingsSnapshot(meta), vpn }, { ...state, tab }, {
+  const snapshot = channelSettingsSnapshot(meta);
+  const threadTs = state.threadTs || "";
+  const [scopes, resume, secretScopes] = await Promise.all([
+    runtimeScopes(entry.slug, meta, snapshot, threadTs),
+    resolveResumeSession({ entry, meta: effectiveMeta(meta) }, threadTs)
+      .catch(() => ({ inThread: Boolean(threadTs), sessionId: "", engine: "", workDir: "", command: "" })),
+    // The other two credential scopes, so the Secrets tab shows what a run will ACTUALLY receive.
+    // `personal` is the VIEWER's own — state.ownerId is the only person this modal answers to.
+    secretScopeLists(meta, state.ownerId).catch(() => ({ organization: [], personal: [], channel: [] })),
+  ]);
+  snapshot.runtime.scopes = scopes;
+  snapshot.resume = resume;
+  snapshot.orgSecrets = secretScopes.organization;
+  snapshot.personalSecrets = secretScopes.personal;
+  return buildChannelSettingsView({ ...snapshot, vpn: vpn ?? unconfiguredChannelVpnStatus(meta) }, { ...state, tab }, {
     channelName: entry.name,
     tab,
     notice,
@@ -817,7 +996,7 @@ export async function hydrateChannelVpnSettings(client, view, state, {
     const vpn = await status(state.channelId);
     const { entry, meta, userIsAdmin } = await context(client, state, state.ownerId);
     await client.views.update({ view_id: view.id, ...(view.hash ? { hash: view.hash } : {}),
-      view: await rootView(entry, meta, { ...state, tab: "network" }, userIsAdmin, { vpn }),
+      view: await rootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { vpn }),
     });
   } catch (error) {
     // Hash conflicts mean the user already moved on; do not replace that newer view.
@@ -850,7 +1029,7 @@ export async function handleChannelVpnSettingsAction({ ack, body, action, client
       : await status(state.channelId);
     const { entry, meta, userIsAdmin } = await context(client, state, userId);
     await client.views.update({ view_id: body.view.id, ...(body.view.hash ? { hash: body.view.hash } : {}),
-      view: await rootView(entry, meta, { ...state, tab: "network" }, userIsAdmin, { vpn }),
+      view: await rootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { vpn }),
     });
   } catch (error) {
     if (body?.view?.id && error?.data?.error !== "hash_conflict") await client.views.update({
@@ -860,7 +1039,7 @@ export async function handleChannelVpnSettingsAction({ ack, body, action, client
   }
 }
 
-async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "runtime" } = {}) {
+async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "general" } = {}) {
   const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
     channelId,
     userId,
@@ -869,13 +1048,11 @@ async function openChannelSettings(client, triggerId, { channelId, userId, threa
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId, tab };
   const opened = await client.views.open({
     trigger_id: triggerId,
-    view: buildChannelSettingsView(channelSettingsSnapshot(meta), state, {
-      channelName: entry.name,
-      tab,
-      ...channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) }),
-    }),
+    view: await settingsRootView(entry, meta, state, userIsAdmin, { tab }),
   });
-  if (tab === "network" && opened.view?.id) await hydrateChannelVpnSettings(client, opened.view, state);
+  // Only a provisioned service needs the status helper; every other conversation already rendered
+  // its final "Not configured" row, so opening Settings costs no subprocess and no second update.
+  if (tab === "general" && channelVpnConfigured(meta) && opened.view?.id) await hydrateChannelVpnSettings(client, opened.view, state);
   await logEvent("channel_settings_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
@@ -1225,7 +1402,7 @@ async function connectAndWire(app) {
     }
     await ack();
     const clicker = body?.user?.id;
-    const command = parseChannelSettingsActionValue(action?.value);
+    const command = settingsCommand(action);
     const actionId = String(action?.action_id || "");
     try {
       if (command.o === "open") {
@@ -1238,9 +1415,7 @@ async function connectAndWire(app) {
         return;
       }
 
-      const isEditorAction = actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID
-        || actionId === CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID
-        || actionId.startsWith(CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX)
+      const isEditorAction = actionId.startsWith(CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX)
         || actionId.startsWith(CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX)
         || actionId.startsWith(CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX)
         || actionId.startsWith(CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX)
@@ -1252,11 +1427,14 @@ async function connectAndWire(app) {
       let { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
         channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
         cloudMcp: actionId.startsWith("cg_channel_settings_cloud_"),
-        accessSettings: actionId === ACCESS_EDIT_ACTION_ID || (command.o === "tab" && command.p === "access"),
       });
-      const updateCurrent = (view) => client.views.update({
+      // The hash guards against replacing a view the user has already moved past. The runtime
+      // dropdowns opt out: picking engine then model in quick succession makes the second click
+      // carry the hash from before the first repaint, and each repaint is rebuilt from the store
+      // anyway — so honoring the hash there turns an ordinary second pick into an error card.
+      const updateCurrent = (view, { guardHash = true } = {}) => client.views.update({
         view_id: body.view.id,
-        ...(body.view.hash ? { hash: body.view.hash } : {}),
+        ...(guardHash && body.view.hash ? { hash: body.view.hash } : {}),
         view,
       });
       const requireTrigger = () => {
@@ -1265,22 +1443,39 @@ async function connectAndWire(app) {
       };
 
       if (command.o === "tab") {
-        const tab = String(command.p || "runtime");
+        const tab = String(command.p || "general");
         const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
-        if (tab === "network" && updated.view?.id) await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
+        if (normalizeSettingsTab(tab) === "general" && channelVpnConfigured(meta) && updated.view?.id) {
+          await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
+        }
         return;
       }
 
       if (actionId === ACCESS_EDIT_ACTION_ID) {
-        await client.views.push({
-          trigger_id: requireTrigger(),
-          view: buildAccessEditorView(meta, editorMetadata(state, { view: "access" })),
-        });
+        // Compatibility with a Settings view opened before the access controls moved onto the
+        // page: repaint it, and the controls are simply there.
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general" }));
+        return;
+      }
+
+      // One access control changed. Only the field that dispatched is taken from the payload; the
+      // rest of the form is read back from the stored record, so a repainted neighbour can never
+      // resubmit a stale value. saveAccessSettings still owns the whole guarantee — the membership
+      // lock, live human-member validation for named users, and a management re-check at the write
+      // boundary — exactly as it did when a submitted form called it.
+      const accessField = accessFieldTarget(actionId);
+      if (accessField) {
+        const form = { ...accessSettingsSnapshot(meta), ...readAccessFieldValue(accessField, action) };
+        const saved = await saveAccessSettings(client, state, clicker, form);
+        await updateCurrent(await settingsRootView(saved.entry, saved.saved, { ...state, tab: "general" }, saved.userIsAdmin, {
+          tab: "general",
+          notice: "✅ Access settings saved. They apply to this channel's next run.",
+        }), { guardHash: false });
         return;
       }
 
       if (actionId.startsWith(CHANNEL_SETTINGS_MODE_PREFIX) || actionId.startsWith(CHANNEL_SETTINGS_OPTION_PREFIX)) {
-        if (!meta.isDM) throw new Error("Channel mode controls moved to Settings → Access. Reopen Settings.");
+        if (!meta.isDM) throw new Error("Channel mode controls live under Settings → General Settings → Access. Reopen Settings.");
         let change;
         if (actionId.startsWith(CHANNEL_SETTINGS_MODE_PREFIX)) {
           change = { mode: actionId.slice(CHANNEL_SETTINGS_MODE_PREFIX.length) };
@@ -1302,20 +1497,42 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID) {
-        const data = runtimeEditorData(meta);
-        await client.views.push({
-          trigger_id: requireTrigger(),
-          view: buildRuntimeEditorView(data.snapshot.runtime, state, { channelName: entry.name, ...data }),
-        });
+        // Compatibility with Settings views opened before the inline engine/model dropdowns shipped.
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general" }));
         return;
       }
 
-      if (actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID || actionId === CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID) {
-        const selected = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
-        const engineChoice = actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID ? selected : state.engine;
-        const modelChoice = actionId === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID ? SETTINGS_DEFAULT_VALUE : selected;
-        const data = runtimeEditorData(meta, { engineChoice, modelChoice });
-        await updateCurrent(buildRuntimeEditorView(data.snapshot.runtime, state, { channelName: entry.name, ...data }));
+      const runtimeTarget = runtimeSelectTarget(actionId);
+      if (runtimeTarget) {
+        const { scope, field } = runtimeTarget;
+        const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
+        let notice;
+        if (scope === "channel") {
+          // The channel's OWN stored triple, so a pick never materializes an inherited value into
+          // the record — but validated against the engine an unset field really falls back to.
+          const inheritedEngine = inheritedChannelRuntime(meta).engine;
+          const next = nextRuntimeTriple({ engine: meta.engine, model: meta.model, effort: meta.effort }, field, value, inheritedEngine);
+          const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
+          meta = await patchAuditedChannelSettings(entry, clicker, patch);
+          await logEvent("channel_runtime_updated", {
+            channel: state.channelId, slug: entry.slug, engine: actualEngine,
+            model: patch.model || "default", effort: patch.effort || "default", author: clicker,
+          });
+          notice = runtimeNotice(scope, patch, actualEngine);
+        } else {
+          notice = await applyThreadRuntimeSelection({ entry, meta, state, actorId: clicker, field, value });
+        }
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general", notice }), { guardHash: false });
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID) {
+        await clearThreadRuntime(entry.slug, requireThread(state));
+        await logEvent("thread_runtime_updated", { channel: state.channelId, slug: entry.slug, thread: state.threadTs, cleared: true, author: clicker });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, {
+          tab: "general",
+          notice: "🗑️ Cleared this thread's pins. It follows the channel default again.",
+        }), { guardHash: false });
         return;
       }
 
@@ -1430,11 +1647,29 @@ async function connectAndWire(app) {
         return;
       }
 
+      // One template picked in place, exactly like the runtime dropdowns: no second modal, and the
+      // pick is saved before the page repaints. The value is read only from the select that
+      // dispatched; everything else in the record is left alone.
+      if (actionId === CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID) {
+        const picked = String(action?.selected_option?.value || SETTINGS_NONE_VALUE);
+        const assigned = await assignTemplateToChannel(entry.slug, picked === SETTINGS_NONE_VALUE ? "" : picked);
+        if (!assigned) throw new Error("That skill template is no longer available.");
+        meta = await getChannelMeta(entry.slug);
+        await ensureChannelFolder(entry.slug, effectiveMeta(meta));
+        await logEvent("skill_template_assigned", { channel: state.channelId, slug: entry.slug, template: assigned.template?.slug || "none", author: clicker });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "skills" }, userIsAdmin, {
+          tab: "skills",
+          notice: assigned.template
+            ? `✅ This channel now follows the *${assigned.template.name}* skill template.`
+            : "✅ The channel no longer follows a skill template.",
+        }), { guardHash: false });
+        return;
+      }
+
       if (actionId === CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID) {
-        await client.views.push({
-          trigger_id: requireTrigger(),
-          view: buildTemplateEditorView(listTemplateSummaries(), meta.skillTemplate || "", state, { channelName: entry.name }),
-        });
+        // Compatibility with a Settings view opened before the template dropdown moved onto the
+        // page: repaint it, and the control is simply there.
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "skills" }, userIsAdmin, { tab: "skills" }));
         return;
       }
 
@@ -1461,45 +1696,6 @@ async function connectAndWire(app) {
   app.action(CHANNEL_SETTINGS_ACTION_PATTERN, handleChannelSettingsAction);
 
   app.view(ACCESS_CALLBACK_ID, handleAccessSettingsSubmission);
-
-  app.view(CHANNEL_SETTINGS_RUNTIME_CALLBACK_ID, async ({ ack, body, view, client }) => {
-    const clicker = body?.user?.id;
-    let state;
-    let form;
-    try {
-      state = parseEditorMetadata(view?.private_metadata);
-      if (!clicker || state.ownerId !== clicker || state.view !== "runtime") throw new Error("This runtime editor expired. Open Settings again.");
-      form = readRuntimeForm(view);
-    } catch (error) {
-      await ack({ response_action: "errors", errors: { [RUNTIME_ENGINE_BLOCK_ID]: String(error.message).slice(0, 150) } });
-      return;
-    }
-    try {
-      const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
-        channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
-      });
-      let resolved;
-      try {
-        resolved = runtimeSettingsPatch(form);
-      } catch (error) {
-        await ack({ response_action: "errors", errors: { [error.field || RUNTIME_ENGINE_BLOCK_ID]: String(error.message).slice(0, 150) } });
-        return;
-      }
-      const { patch, actualEngine } = resolved;
-      const { engine, model, effort } = patch;
-      const saved = await patchAuditedChannelSettings(entry, clicker, patch);
-      await logEvent("channel_runtime_updated", { channel: state.channelId, slug: entry.slug, engine: actualEngine, model: model || "default", effort: effort || "default", author: clicker });
-      await ack({
-        response_action: "update",
-        view: await settingsRootView(entry, saved, { ...state, tab: "runtime" }, userIsAdmin, {
-          tab: "runtime",
-          notice: `✅ Runtime updated: *${engineLabel(actualEngine)}* · \`${model || getDefaultModel(actualEngine) || "engine default"}\` · \`${effort || "default effort"}\`.`,
-        }),
-      });
-    } catch (error) {
-      await ack({ response_action: "errors", errors: { [RUNTIME_ENGINE_BLOCK_ID]: String(error.message || "Couldn't update the runtime.").slice(0, 150) } });
-    }
-  });
 
   app.view(CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, async ({ ack, body, view, client }) => {
     const clicker = body?.user?.id;

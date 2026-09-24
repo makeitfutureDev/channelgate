@@ -93,10 +93,57 @@ test("pins: the image installs the same mcp-remote the daemon depends on, and ev
   }
   assert.equal(versions.whisperModel, "small");
   assert.match(String(versions.imageSpecVersion), /^\d+\.\d+\.\d+$/);
-  for (const arg of ["UID", "GID", "CLAUDE_VERSION", "CODEX_VERSION", "MCP_REMOTE_VERSION", "VERCEL_VERSION", "SUPABASE_VERSION", "OPENCV_VERSION", "FASTER_WHISPER_VERSION", "WHISPER_MODEL", "PLAYWRIGHT_VERSION", "AGENT_BROWSER_VERSION", "IMAGE_SPEC_VERSION"]) {
+  for (const arg of ["UID", "GID", "CLAUDE_VERSION", "CODEX_VERSION", "MCP_REMOTE_VERSION", "VERCEL_VERSION", "SUPABASE_VERSION", "OPENCV_VERSION", "FASTER_WHISPER_VERSION", "WHISPER_MODEL", "PLAYWRIGHT_VERSION", "AGENT_BROWSER_VERSION", "VSCODE_SERVERS", "IMAGE_SPEC_VERSION"]) {
     assert.ok(new RegExp(`ARG ${arg}\\b`).test(containerfile), `containers/Containerfile is missing ARG ${arg}`);
     assert.ok(buildScript.includes(`${arg}=`), `scripts/build-image.mjs never passes --build-arg ${arg}`);
   }
+});
+
+// Shared VS Code servers (spec 1.5.0). Every channel someone opened an editor in used to hold its
+// own ~650 MB server in its HOME volume; the image now carries each pinned version ONCE.
+test("each shared VS Code server is pinned to a commit and to VS Code's own published sha256", () => {
+  assert.ok(Array.isArray(versions.vscodeServers) && versions.vscodeServers.length >= 1, "at least one shared server is pinned");
+  const commits = new Set();
+  for (const server of versions.vscodeServers) {
+    assert.match(server.version, /^\d+\.\d+\.\d+$/, "a human-readable VS Code version accompanies the commit");
+    assert.match(server.commit, /^[0-9a-f]{40}$/, `${server.version}: the commit is a full 40-hex sha`);
+    assert.match(server.serverSha256, /^[0-9a-f]{64}$/, `${server.version}: server-linux-x64 sha256`);
+    assert.match(server.cliSha256, /^[0-9a-f]{64}$/, `${server.version}: cli-alpine-x64 sha256`);
+    assert.ok(!commits.has(server.commit), `${server.version} is listed twice`);
+    commits.add(server.commit);
+  }
+  // The build passes commit:serverSha256:cliSha256 triples, in that order.
+  assert.match(buildScript, /\$\{v\.commit\}:\$\{v\.serverSha256\}:\$\{v\.cliSha256\}/);
+});
+
+test("the image refuses a VS Code download that does not match its pin", () => {
+  // A mismatched hash, a server built for another commit, or a missing binary is a BUILD failure —
+  // never an image that quietly ships a different editor.
+  assert.match(containerfile, /echo "\$server_sha  \/tmp\/vscode-server\.tgz" \| sha256sum -c -/);
+  assert.match(containerfile, /echo "\$cli_sha  \/tmp\/vscode-cli\.tgz" \| sha256sum -c -/);
+  assert.match(containerfile, /test "\$\(node -p "require\('\$dir\/server\/product\.json'\)\.commit"\)" = "\$commit"/);
+  assert.match(containerfile, /test -x "\$dir\/server\/bin\/code-server"/);
+  assert.match(containerfile, /test -x "\$dir\/cli\/code"/);
+  // Root-owned and read-only for everyone else, like the shared browsers: a channel runs the
+  // server but can never replace it for the next channel.
+  assert.match(containerfile, /chmod -R a\+rX,go-w \/opt\/channelgate\/vscode-server/);
+  // Before the helper COPY, so a helper change does not re-download ~450 MB.
+  assert.ok(containerfile.indexOf("ARG VSCODE_SERVERS") < containerfile.indexOf("COPY --chown=root:root bin/"), "the VS Code layer sits above the frequently-changing helpers");
+});
+
+test("cg-init links the shared servers into the volume without ever deleting someone's install", () => {
+  const init = readFileSync(path.join(repoRoot, "containers", "bin", "cg-init"), "utf8");
+  for (const layout of ['"$VSCODE_HOME/bin/$commit"', '"$VSCODE_HOME/cli/servers/Stable-$commit/server"', '"$VSCODE_HOME/code-$commit"']) {
+    assert.ok(init.includes(`ln -s`) && init.includes(layout), `links ${layout}`);
+  }
+  // Never replaces a real directory or file: every link is guarded by an existence check.
+  assert.match(init, /\[ -e "\$VSCODE_HOME\/bin\/\$commit" \] \|\| \[ -L "\$VSCODE_HOME\/bin\/\$commit" \] \|\| ln -s/);
+  // The only removal: a link THIS script made (it points into the shared tree) that no longer resolves.
+  assert.match(init, /"\$VSCODE_SHARED"\/\*\) \[ -e "\$link" \] \|\| rm -f "\$link"/);
+  assert.doesNotMatch(init, /rm -rf/, "cg-init never removes a directory");
+  assert.match(init, /\.cg-no-shared-server/, "a channel can opt out");
+  // It must never stop the container from starting.
+  assert.match(init, /exec "\$@"\s*$/);
 });
 
 test("npm run setup builds the channel image as part of the install, and can be told not to", () => {
@@ -174,7 +221,7 @@ test("the Containerfile bakes in exactly the paths the backend declares", () => 
 test("the container-side helper scripts are present, executable and POSIX-sh clean", async () => {
   const { spawnSync } = await import("node:child_process");
   const binDir = path.join(repoRoot, "containers", "bin");
-  const expected = ["cg-exec", "cg-probe", "cg-signal", "cg-sweep", "cg-init", "cg-mcp-bridge"];
+  const expected = ["cg-exec", "cg-probe", "cg-signal", "cg-sweep", "cg-init", "cg-mcp-bridge", "cg-sshd"];
   for (const name of expected) {
     const file = path.join(binDir, name);
     assert.ok(existsSync(file), `containers/bin/${name} is missing`);

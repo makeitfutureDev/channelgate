@@ -14,6 +14,37 @@ for d in /home/agent/.claude /home/agent/.codex /home/agent/.npm-global /home/ag
   mkdir -p "$d" 2>/dev/null || true
 done
 
+# VS Code: link the image's shared servers into this channel's volume, so an editor attach finds
+# its server already installed instead of downloading ~650 MB into the volume. Two layouts, because
+# the two ways in look in different places: attach-container (Dev Containers, `npm run vscode`)
+# checks bin/<commit>; Remote-SSH's exec server checks cli/servers/Stable-<commit>/server and runs
+# code-<commit>. Only `server` is linked under Stable-<commit>: the CLI writes its log.txt and
+# pid.txt one level up, which stays a real, writable directory in the volume.
+#   * A real install already in the volume is never replaced — it is someone's download, and this
+#     script deletes nothing it did not make.
+#   * A link this script made that no longer resolves (a newer image dropped that version) is
+#     removed: left dangling, it would send VS Code's installer into the root-owned /opt tree.
+#   * ~/.vscode-server/.cg-no-shared-server opts this channel out entirely (existing links stay
+#     until removed; nothing new is linked).
+VSCODE_SHARED=/opt/channelgate/vscode-server
+VSCODE_HOME=/home/agent/.vscode-server
+if [ -d "$VSCODE_SHARED" ] && [ ! -e "$VSCODE_HOME/.cg-no-shared-server" ]; then
+  for link in "$VSCODE_HOME"/bin/* "$VSCODE_HOME"/cli/servers/Stable-*/server "$VSCODE_HOME"/code-*; do
+    [ -L "$link" ] || continue
+    case "$(readlink "$link")" in
+      "$VSCODE_SHARED"/*) [ -e "$link" ] || rm -f "$link" ;;
+    esac
+  done
+  for dir in "$VSCODE_SHARED"/*; do
+    [ -x "$dir/server/bin/code-server" ] && [ -x "$dir/cli/code" ] || continue
+    commit=${dir##*/}
+    mkdir -p "$VSCODE_HOME/bin" "$VSCODE_HOME/cli/servers/Stable-$commit" 2>/dev/null || continue
+    [ -e "$VSCODE_HOME/bin/$commit" ] || [ -L "$VSCODE_HOME/bin/$commit" ] || ln -s "$dir/server" "$VSCODE_HOME/bin/$commit" 2>/dev/null || true
+    [ -e "$VSCODE_HOME/cli/servers/Stable-$commit/server" ] || [ -L "$VSCODE_HOME/cli/servers/Stable-$commit/server" ] || ln -s "$dir/server" "$VSCODE_HOME/cli/servers/Stable-$commit/server" 2>/dev/null || true
+    [ -e "$VSCODE_HOME/code-$commit" ] || [ -L "$VSCODE_HOME/code-$commit" ] || ln -s "$dir/cli/code" "$VSCODE_HOME/code-$commit" 2>/dev/null || true
+  done
+fi
+
 # Claude credentials are NEVER copied in here: the daemon hands the engine a `claude setup-token`
 # value through the exec environment (CLAUDE_CODE_OAUTH_TOKEN). A copy of the gateway's own login
 # would refresh, rotate the refresh token and log the gateway itself out (2026-09-02 incident).

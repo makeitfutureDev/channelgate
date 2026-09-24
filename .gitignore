@@ -33,3 +33,7 @@ backup/
 .claude/skills/*
 .claude/worktrees/
 .agents/skills
+
+# Chat-generated deliverables (reports, HTML explainers, presentations) written into the served
+# checkout by a channel turn. Output of the work, not source — and never a release artifact.
+/deliverables/

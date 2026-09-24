@@ -1,15 +1,40 @@
 import { safeSpawnEnv } from "../config/channel-env.js";
 
+// Group the injected names by the SCOPE that supplied each one (config/scoped-env.js). A bare
+// list was enough while a channel's own secrets were the only kind; with three scopes the agent
+// has to be able to say WHICH account it acted as, and "the name was there" no longer answers
+// that. Names only — a scope is not a value.
+function scopeLines(names, scopes) {
+  const by = { organization: [], personal: [], channel: [] };
+  for (const name of names) by[scopes[name] || "channel"].push(name);
+  // Only worth saying when there is something to tell apart. With one scope in play the list
+  // above already names every variable, and a second line repeating it is prompt noise.
+  if (Object.values(by).filter((group) => group.length).length < 2) return [];
+  const lines = [];
+  if (by.organization.length) {
+    lines.push(`Organization-wide variables (shared by every conversation in this deployment): ${JSON.stringify(by.organization)}.`);
+  }
+  if (by.personal.length) {
+    lines.push(`Personal variables belonging to the author of THIS message, injected only into runs they authored: ${JSON.stringify(by.personal)}.`);
+  }
+  if (by.channel.length) {
+    lines.push(`This conversation's own variables: ${JSON.stringify(by.channel)}.`);
+  }
+  return lines;
+}
+
 // Describe the SAME resolved environment the runners receive, never the stored metadata or the
 // daemon's process.env. Rebuild per turn so a resumed conversation cannot retain a revoked name.
-export function channelCredentialsPreamble(resolved = {}, { clean = false } = {}) {
+export function channelCredentialsPreamble(resolved = {}, { clean = false, scopes = {} } = {}) {
   if (clean) return "";
   const names = Object.keys(safeSpawnEnv(resolved)).sort();
   return "[Channel credentials for THIS attempt]\n"
     + `Available channel environment variable names: ${JSON.stringify(names)}.\n`
+    + scopeLines(names, scopes).map((line) => `${line}\n`).join("")
     + "This inventory replaces earlier turns' channel credential inventories. It lists only variables injected into this run; an empty list means none were injected, not that all CLI logins or MCP connections are absent.\n"
-    + "Before declaring missing access or requesting a new connection, check relevant names here alongside task skills, existing CLI authentication and MCP tools. These channel-scoped variables are usable from the process environment for authorized API/CLI calls; they are not a project .env file. Some clients require explicitly passing the variable.\n"
-    + "A variable name does not prove its account, permissions or validity. Preserve the requested account; ask when identity is ambiguous and never silently substitute a channel credential for a personal connection. Respect this run's tool and network permissions.\n"
+    + "Before declaring missing access or requesting a new connection, check relevant names here alongside task skills, existing CLI authentication and MCP tools. These variables are usable from the process environment for authorized API/CLI calls; they are not a project .env file. Some clients require explicitly passing the variable.\n"
+    + "A variable name does not prove its account, permissions or validity. Where a conversation variable and a personal one could both serve a request, the conversation's is the one already in force — the personal scope only fills names the conversation does not define. Preserve the requested account; ask when identity is ambiguous and never silently substitute one scope's credential for another's.\n"
+    + "Respect this run's tool and network permissions.\n"
     + "Check presence without printing values. Never dump the environment, print credentials, or copy them into files, replies or memory.\n"
     + "[End channel credentials]\n\n";
 }

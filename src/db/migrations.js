@@ -830,4 +830,121 @@ export const migrations = [
       `);
     },
   },
+  {
+    // SSH access to channel containers (docs/SSH-ACCESS.md): one public key per person, bound to the
+    // chat identity that registered it, and the audit of every brokered session. The per-channel
+    // grant list lives in channel_meta (`sshUsers`) like the other access lists.
+    version: 27,
+    up(db) {
+      db.exec(`
+        CREATE TABLE ssh_keys (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          fingerprint TEXT NOT NULL UNIQUE,
+          key_type TEXT NOT NULL,
+          public_key TEXT NOT NULL,
+          label TEXT NOT NULL DEFAULT '',
+          created_ms INTEGER NOT NULL,
+          last_used_ms INTEGER
+        );
+        CREATE INDEX idx_ssh_keys_user ON ssh_keys(user_id);
+        CREATE TABLE ssh_sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          client TEXT NOT NULL DEFAULT '',
+          container TEXT NOT NULL DEFAULT '',
+          started_ms INTEGER NOT NULL,
+          ended_ms INTEGER,
+          end_reason TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX idx_ssh_sessions_slug ON ssh_sessions(slug, started_ms);
+      `);
+    },
+  },
+  {
+    // Usage the gateway did NOT launch — a terminal `claude`/`codex`, the VS Code extension, the
+    // desktop apps, or an SSH/VS Code session inside a channel container. Two tables:
+    //
+    //  * `usage.session_id` closes the identification gap. The ledger already knows every run the
+    //    gateway made, but not which ENGINE session it was, so an outside session could only be
+    //    told apart by heuristics. Stamping it makes the exclusion exact from here on; the
+    //    `sessions` table (current bindings only) covers what history it can.
+    //  * `external_usage` is the scanned result, aggregated per (scope, engine, session, UTC hour,
+    //    model) so a year of transcripts stays small and the dashboard's hour/day/month buckets are
+    //    a prefix match on `bucket`. `external_usage_files` is the incremental-scan bookmark: an
+    //    unchanged transcript is never reopened.
+    version: 28,
+    up(db) {
+      db.exec(`
+        ALTER TABLE usage ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+        CREATE INDEX idx_usage_session ON usage(session_id) WHERE session_id <> '';
+        CREATE TABLE external_usage (
+          id INTEGER PRIMARY KEY,
+          scope TEXT NOT NULL,
+          scope_key TEXT NOT NULL DEFAULT '',
+          engine TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          bucket TEXT NOT NULL,
+          model TEXT NOT NULL DEFAULT '',
+          origin TEXT NOT NULL DEFAULT 'other',
+          cwd TEXT NOT NULL DEFAULT '',
+          channel_id TEXT NOT NULL DEFAULT '',
+          slug TEXT NOT NULL DEFAULT '',
+          turns INTEGER NOT NULL DEFAULT 0,
+          requests INTEGER NOT NULL DEFAULT 0,
+          tokens_in INTEGER NOT NULL DEFAULT 0,
+          tokens_cached INTEGER NOT NULL DEFAULT 0,
+          tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+          tokens_out INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL,
+          cost_estimated INTEGER NOT NULL DEFAULT 1,
+          updated_ms INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX idx_external_usage_key
+          ON external_usage(scope, scope_key, engine, session_id, bucket, model);
+        CREATE INDEX idx_external_usage_bucket ON external_usage(bucket);
+        CREATE TABLE external_usage_files (
+          scope TEXT NOT NULL,
+          scope_key TEXT NOT NULL DEFAULT '',
+          engine TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          size INTEGER NOT NULL DEFAULT 0,
+          mtime_ms INTEGER NOT NULL DEFAULT 0,
+          scanned_ms INTEGER NOT NULL,
+          PRIMARY KEY (scope, scope_key, engine, session_id)
+        );
+      `);
+    },
+  },
+  {
+    // One row per issued public file link. The token itself is never stored — only its
+    // SHA-256 — and the row keeps a channel plus a RELATIVE path, re-resolved inside that
+    // channel's folder on every fetch, so a moved or escaped path stops resolving instead of
+    // widening what the link can reach.
+    version: 29,
+    up(db) {
+      db.exec(`
+        CREATE TABLE public_file_links (
+          id TEXT PRIMARY KEY,
+          token_hash TEXT NOT NULL UNIQUE,
+          channel_id TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          relative TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          purpose TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_ms INTEGER NOT NULL,
+          expires_ms INTEGER NOT NULL,
+          max_downloads INTEGER NOT NULL,
+          downloads INTEGER NOT NULL DEFAULT 0,
+          revoked_ms INTEGER NOT NULL DEFAULT 0,
+          last_download_ms INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_public_file_links_channel ON public_file_links(channel_id, expires_ms);
+      `);
+    },
+  },
 ];

@@ -69,7 +69,12 @@ test("source cards open only their skills and governance switches persist after 
   assert.equal(await page.getByRole("switch", { name: "Enabled: alpha-disabled", exact: true }).isChecked(), true);
   assert.equal(await page.getByRole("switch", { name: "Mandatory: alpha-active", exact: true }).isChecked(), true);
   if (process.env.CG_UI_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.CG_UI_SCREENSHOTS, "source-skills.png"), fullPage: true });
-  await page.getByRole("searchbox", { name: "Search this source’s skills" }).fill("disabled");
+  // Searching is a deliberate act: the box filters on Enter (or its Search button), not per keystroke.
+  const sourceSearch = page.getByRole("searchbox", { name: "Search this source’s skills" });
+  await sourceSearch.fill("disabled");
+  assert.equal(await page.locator(".skills-source-table tbody tr").count(), 2, "typing alone does not filter the table");
+  await sourceSearch.press("Enter");
+  await page.waitForFunction(() => globalThis.document.querySelectorAll(".skills-source-table tbody tr").length === 1);
   assert.equal(await page.locator(".skills-source-table tbody tr").count(), 1);
   await page.locator('.skills-tab[data-tab="catalog"]').click();
   await page.getByRole("combobox", { name: "Source", exact: true }).selectOption(String(sourceIds[1]));

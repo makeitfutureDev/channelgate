@@ -759,7 +759,8 @@ test("completed-run footer carries authorized-user Settings beside Files and Sec
   const stop = calls.find((call) => call[0] === "stopStream");
   assert.deepEqual(stop[1].blocks.map((block) => block.type), ["context", "actions"]);
   const buttons = stop[1].blocks[1].elements;
-  assert.deepEqual(buttons.map((button) => button.text.text), ["💻", "📂", "🔑", "⚙️ Settings"]);
+  // No 💻 control: the resume command lives in Settings → Resume Session, not on every reply.
+  assert.deepEqual(buttons.map((button) => button.text.text), ["📂", "🔑", "⚙️ Settings"]);
   const settings = buttons.find((button) => button.action_id === "cg_channel_settings");
   assert.deepEqual(JSON.parse(settings.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
   const files = buttons.find((button) => button.text.text === "📂");
@@ -2916,6 +2917,56 @@ test("a tool-only turn still delivers its whole answer under the note", async ()
   const text = streamedMarkdown(calls);
   assert.equal(text.match(/was rejected before the turn started/g).length, 1, `delivered once: ${JSON.stringify(text)}`);
   assert.equal(text.match(/Posted the chart\./g).length, 1, "the answer is not swallowed by the preface");
+});
+
+// A turn can carry several gateway notes, and `content` does not always order them the way they
+// were streamed (a failover's content leads with the license warning, then the failover note, while
+// an attempt that ran first may have announced something the fallback's content never carries).
+// Only an exact whole-preface PREFIX used to be subtracted — any other order delivered a note twice.
+const LICENSE = "⚠️ _This conversation is at 90% of its monthly message allowance._\n\n";
+const FAILOVER = "⚠️ _Codex hit its usage limit before any tool call — using Claude._\n\n";
+
+test("several streamed notes are each delivered once, whatever order content carries them in", async () => {
+  const calls = [];
+  const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000010.000000", { authorId: "U_NOTE", dir: null });
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: FAILOVER });
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: LICENSE });
+  await cardReady();
+  progress.onDelta("Claude's answer.");
+  await progress.finalize({ content: `${LICENSE}${FAILOVER}Claude's answer.`, durationMs: 10, usage: { input_tokens: 4, output_tokens: 2 } });
+  const text = streamedMarkdown(calls);
+  assert.equal(text.match(/using Claude/g).length, 1, `failover note once: ${JSON.stringify(text)}`);
+  assert.equal(text.match(/monthly message allowance/g).length, 1, "license warning once");
+  assert.equal(text.match(/Claude's answer\./g).length, 1, "answer once");
+});
+
+test("a tool-only failover turn delivers its answer under its notes without repeating them", async () => {
+  const calls = [];
+  const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000011.000000", { authorId: "U_NOTE", dir: null });
+  // Streamed in the opposite order to content — the case the old prefix check duplicated.
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: FAILOVER });
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: LICENSE });
+  await cardReady();
+  // Nothing streams: the whole reply arrives on the result, the path that used to duplicate.
+  await progress.finalize({ content: `${LICENSE}${FAILOVER}Uploaded qa-note.md.`, durationMs: 10, usage: { input_tokens: 4, output_tokens: 2 } });
+  const text = streamedMarkdown(calls);
+  assert.equal(text.match(/using Claude/g).length, 1, `failover note once: ${JSON.stringify(text)}`);
+  assert.equal(text.match(/monthly message allowance/g).length, 1, "license warning once");
+  assert.equal(text.match(/Uploaded qa-note\.md\./g).length, 1, "the answer is delivered, not swallowed");
+});
+
+test("a note announced by an attempt whose content never carries it is still shown once, and nothing is lost", async () => {
+  const calls = [];
+  const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000012.000000", { authorId: "U_NOTE", dir: null });
+  const SKIPPED = "⚠️ _Skipped MCP connection: `crm` — no safe transport._\n\n";
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: SKIPPED });   // the primary's, before it failed over
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: FAILOVER });
+  await cardReady();
+  await progress.finalize({ content: `${FAILOVER}Posted.`, durationMs: 10, usage: { input_tokens: 4, output_tokens: 2 } });
+  const text = streamedMarkdown(calls);
+  assert.equal(text.match(/Skipped MCP connection/g).length, 1, `streamed note stays: ${JSON.stringify(text)}`);
+  assert.equal(text.match(/using Claude/g).length, 1, "failover note once");
+  assert.equal(text.match(/Posted\./g).length, 1, "answer once");
 });
 
 test("a gateway note that arrives after the answer began becomes a durable card row", async () => {

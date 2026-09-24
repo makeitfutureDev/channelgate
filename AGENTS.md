@@ -78,7 +78,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   the changed keys), `dead-fields.js` (retired fields stripped on every write).
 - `src/db/` — `index.js` (the one lazy `node:sqlite` connection: WAL, `busy_timeout`,
   `foreign_keys`, migrations on open, the one-time legacy JSON import behind `_meta` flags),
-  `migrations.js` (versioned on `PRAGMA user_version`, currently 26 — append, never edit),
+  `migrations.js` (versioned on `PRAGMA user_version`, currently 29 — append, never edit),
   `import-legacy.js`, `fts.js` (the optional FTS5 `channel_memory_fts` index; without FTS5 memory
   search degrades to a scan).
 - `src/gateway/run.js` — the run orchestrator: engine adapter selection and precedence (per-run
@@ -166,6 +166,16 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   `channel_instructions`) that never expire and re-post after a restart, and signed single-use
   browser links (`/approve/<token>`: GET decides nothing, POST decides exactly once and re-checks
   authority) for surfaces without Block Kit and for automation.
+- `src/gateway/ssh-access.js` + `ssh-broker.js` + `ssh-session.js` + `src/mcp/tools/ssh-access.js` — SSH access to
+  channel containers (`docs/SSH-ACCESS.md`): the per-person key registry (`ssh_keys`), the
+  per-channel `sshUsers` grant list, the host `authorized_keys` export (every line
+  `restrict,command=`), the in-container sshd files, the session records (`ssh_sessions`), and the
+  daemon's attach socket under `/var/lib/channelgate-ssh` (`CHANNELGATE_SSH_DIR`) — bound only
+  once `scripts/install-ssh-access.sh` has set the host up. A session authorizes key → user →
+  channel → grant → not operator-home-mounted, holds a container lease for its whole life, and
+  pipes the developer's SSH stream into `exec -i <container> cg-sshd` (an unprivileged inetd-mode
+  sshd in the image). `scripts/cg-ssh-attach.mjs` is the host wrapper (self-contained, copied
+  root-owned by the installer). Nothing listens on a port anywhere.
 - `src/gateway/{updater,update-state,update-smoke,restart}.js` + `scripts/update-*` — the
   transactional self-update (the automatic path is an Enterprise entitlement; `scripts/update.sh`
   stays available to every operator): one durable transaction and lock, a detached built-ins-only
@@ -273,7 +283,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   (process-group kills), `process-outcome.js` (human descriptions of exits), `logger.js` (the
   `events` table), `timezone.js` (daemon-local time vs UTC containers), `cron.js`, `keyed-lock.js`,
   `singleton.js`, `drops.js`, `tail.js`.
-- `scripts/` — install and service (`install.sh`, `install-systemd.sh`, `install-whisper.mjs`),
+- `scripts/` — install and service (`install.sh`, `install-systemd.sh`, `install-ssh-access.sh` +
+  `cg-ssh-attach.mjs` + `cg-ssh-authorized-keys`, `install-whisper.mjs`),
   updates (`update.sh` → `update-runner.mjs`), backup and restore (`backup-config.sh`,
   `restore-config.sh`, `restore-drill.sh`, `runtime-maintenance.mjs`), the image
   (`build-image.mjs`), the checks (`run-tests.mjs`, `static-check.mjs`, `secret-scan.mjs`,
@@ -311,7 +322,8 @@ through the control MCP.
   `thread_overrides`, `conversation_reply_sessions`, `active_runs`, `stopped_turns`,
   `inbound_events`, `teams_graph_subscriptions`); automation (`schedules`, `acks`,
   `followup_threads`, `followup_done`, `followup_digest_messages`, `bg_jobs`, `api_jobs`);
-  approvals and questions (`approval_requests`, `approval_link_tokens`, `question_requests`); skills (`skills`, `skill_revisions`,
+  approvals and questions (`approval_requests`, `approval_link_tokens`, `question_requests`); SSH
+  access (`ssh_keys`, `ssh_sessions`); skills (`skills`, `skill_revisions`,
   `skill_revision_files`, `skill_sources`, `skill_templates`, `skill_usage`, `skill_proposals`,
   `skill_access_tokens`); Composio SDK (`composio_sessions`); licensing (`license_usage`);
   dashboard data (`usage`, `usage_components`, `usage_requests`, `usage_repair_batches`,
@@ -449,7 +461,14 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   in. A run receives a RELAY of the resolved login's ACCESS token instead, gateway-owned and
   applied last in the child env so a channel secret cannot displace it. A turn with no resolvable
   login fails closed with the remedy named; it never runs on a guessed credential. A new consumer
-  asks the resolver; it never adds a second notion of "the login".
+  asks the resolver; it never adds a second notion of "the login". The ONE login file the gateway
+  writes is an interactive SSH session's (`src/gateway/ssh-session.js`): an ACCESS-ONLY
+  `.credentials.json` in the channel's config dir — the relayed token, its expiry and plan facts,
+  never a refresh token, so it can rotate nothing — plus the operator's account record, both
+  written through the relay, refreshed with it, and removed when the channel's last session ends.
+  Claude Code labels a token in the environment "Claude API" and hides the plan, the usage windows
+  and the plan's default model; only a file login shows them, which is what a developer in a
+  terminal needs to see.
 - **Only admins get `--dangerously-skip-permissions`**, and only in an Admin-mode channel.
   Everyone else runs with the folder's `permissions.allow` allowlist and answers tool requests
   through the `permission_prompt` approval card (or Auto mode); headless can't answer interactive
@@ -489,6 +508,13 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   including the `licenseAdmission()` call site in `src/gateway/run.js` and the `license_usage`
   schema — is a license violation and is sent back in review. Patches to that directory, new
   tiers or limits, and any licensing/CLA/trademark text change need a prior discussion.
+- **One worktree per task; never edit a shared checkout's working tree.** Several threads,
+  schedules and background jobs run in the same folder, and two of them editing one working
+  tree silently overwrite each other. Before the first edit of any task that touches a tracked
+  file, open `.worktrees/<slug>` on its own branch from `origin/beta` and work only there; the
+  shared checkout stays on `beta`, clean, and never changes branch. Uncommitted changes you did
+  not write belong to another task — leave them and say so. Commands, landing and cleanup are
+  under **One worktree per task** in Contributor workflow.
 - **Project records:** shipped behavior lives in `FEATURES.md`; the cumulative regression lives in
   `TEST-PLAN.md`. Keep both aligned with shipped code. Do not create, consult, or update
   `TASKS.md`, and do not make a brainstorming or standalone plan-writing phase a prerequisite for
@@ -502,6 +528,49 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   must complete the applicable live release gates before declaring a release ready.
 
 ## Contributor workflow
+
+### One worktree per task — before your first edit
+
+**Never edit tracked files in a shared checkout's working tree.** Several threads, schedules and
+background jobs can run in the same folder at once, and two of them editing one working tree
+overwrite each other's uncommitted changes with no error and no trace. This is not a style
+preference and is not waived by a task being small, urgent, one file, or already started. The
+failure it prevents is real and has happened here: six unrelated features were built directly in
+the served checkout and left uncommitted, interleaved at hunk level across the same shared files,
+and could no longer be separated into the six commits they should have been.
+
+Run this before the first edit of any task that creates, modifies or deletes a tracked file
+(read-only questions, status checks and analysis need none of it):
+
+```sh
+git rev-parse --is-inside-work-tree                 # confirm this is the repo
+git fetch origin
+grep -qx '.worktrees/' .git/info/exclude 2>/dev/null || echo '.worktrees/' >> .git/info/exclude
+git worktree add -b <type>/<slug> .worktrees/<slug> origin/beta
+```
+
+- Branch from `origin/beta` — never from `main`, and never from the shared checkout's current HEAD.
+- `<type>` is `feat`, `fix`, `docs`, `chore` or `test`; `<slug>` names the work. If the branch
+  already exists, another task owns it: pick a different slug.
+- Keep worktrees in `.worktrees/` **inside** the repo folder, so they stay within the channel's
+  mounted working folder. The `info/exclude` line keeps them out of `git status` without touching
+  the tracked `.gitignore`.
+- Do every edit, test run and commit under `.worktrees/<slug>/…`, using paths inside the worktree
+  rather than the matching path at the repo root. Commit early: only committed work survives a
+  concurrent thread. Stage only your own files.
+- The shared checkout stays on `beta` and clean. Never switch its branch, and never edit its files
+  while a task worktree is open.
+- One task, one worktree. Two features are two branches, even when they touch the same file — that
+  is what keeps them separable later.
+
+Land in the shared checkout (under the deployment's landing lock where one applies): bring `beta`
+current, `git merge --no-ff <type>/<slug>`, re-run a proportionate check after any conflict
+resolution, then push. Clean up only after `git merge-base --is-ancestor <type>/<slug> beta`
+succeeds, with `git worktree remove` followed by `git branch -d` — never `rm -rf` the directory,
+which leaves git's entry `prunable` and then blocks the branch delete.
+
+If you find uncommitted changes in the shared checkout that you did not write, they are another
+task's work in progress. Leave them alone, say so in your reply, and open your own worktree.
 
 ### Beta development and stable promotion
 
@@ -533,8 +602,8 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   defaults that say to merge completed tasks into `main`. Use the deployment's serialized landing
   lock for integration; never switch a shared served checkout to `main` merely to publish a release.
 
-Use a dedicated branch and worktree from the latest upstream `beta`. Target development pull
-requests at `beta`; completed development work is merged and pushed to `beta`. Keep shared
+Open the task's own worktree first (see **One worktree per task** above; it is not optional).
+Target development pull requests at `beta`; completed development work is merged and pushed to `beta`. Keep shared
 integration checkouts clean, stage only your changes (never `git add -A` / `git commit -a`), write
 conventional imperative subjects, sign off every commit under `CLA.md` (`git commit -s`; the
 trailer is the CLA acceptance), and open a pull request with the design note and the actual check

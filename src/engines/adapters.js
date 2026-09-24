@@ -3,7 +3,7 @@ import { resolveClaudeMcpConfig } from "./claude-mcp.js";
 import { runClaude, buildClaudeEnv, buildPersistentArgs, canUseClaudeWarmPool } from "./claude.js";
 import { runCodex } from "./codex.js";
 import { runOpenCode } from "./opencode.js";
-import { discoverQwenModels, qwenCredentialState, qwenProviderEnv, QWEN_FALLBACK_MODELS, QWEN_DEFAULT_MODEL, isQwenTextModel, resolveQwenProvider } from "./qwen.js";
+import { discoverQwenModels, qwenCredentialState, qwenProviderEnv, isQwenTextModel, resolveQwenProvider, QWEN_PROVIDERS } from "./qwen.js";
 import { runPooled, abortPooled } from "./session-pool.js";
 import { compileNetworkPolicy } from "./network-policy.js";
 import { listEngineMcps, codexMcpPolicyFor } from "../gateway/mcp-discovery.js";
@@ -188,13 +188,16 @@ const claude = validateEngineAdapter({
   },
 });
 
-// Qwen, driven through the SAME `claude` binary against QwenCloud's Anthropic-compatible endpoint
-// (src/engines/qwen.js explains why this is an engine and not a per-channel env override).
+// One adapter per Anthropic-compatible PROVIDER (src/engines/qwen.js holds the table, and explains
+// why each is an engine rather than a per-channel env override): QwenCloud's Token Plan, Model
+// Studio's EU region, and whatever the table gains next. All of them are driven through the SAME
+// `claude` binary, so the factory below is the only place their shared guarantees are written.
 // Everything the CLI owns — stream protocol, tool loop, permission prompt, MCP file transport,
 // CLAUDE.md, `.claude/skills`, cold resume — is therefore literally Claude's. Everything the
 // PROVIDER owns is different and is declared here rather than inherited:
 //   • `optIn` — never enabled implicitly. A gateway that pulls this release must not suddenly
-//     offer a harness nobody configured (and whose every turn would fail for want of a key).
+//     offer a harness nobody configured (and whose every turn would fail for want of a key). This
+//     is also why a provider ADDED to the table appears in no picker until an admin switches it on.
 //   • no fallback edge (see FALLBACK_GRAPH) — a Qwen usage limit must not silently spend the
 //     operator's Anthropic quota, and Claude's must not silently spend their QwenCloud one.
 //   • `realCost: false` + the cost the CLI reports is DROPPED. Claude Code prices every turn with
@@ -204,17 +207,22 @@ const claude = validateEngineAdapter({
 //     (slug::threadKey) carries no engine, so a rotated provider key or a mid-thread harness
 //     switch would be served by a process still holding the old credential. Cold runs only, which
 //     is how Codex has always run.
-const qwen = validateEngineAdapter({
+const makeQwenAdapter = (entry) => validateEngineAdapter({
   pluginCapabilities: { manifest: "claude", components: ["skills", "commands", "agents", "hooks", "mcpServers"] },
   resolveOptionalMcpConfig: resolveClaudeMcpConfig,
-  id: "qwen", label: "Qwen (Claude Code)", cli: "claude", defaultModelKey: "defaultQwenModel",
+  id: entry.id, label: entry.label, cli: "claude", defaultModelKey: entry.defaultModelKey,
+  // The shared model-ID vocabulary these harnesses draw from (Qwen/GLM/DeepSeek/Kimi/MiniMax).
+  // Declared so the admin UI can recognise a provider harness's model without a hard-coded engine
+  // id — a provider added to the table would otherwise have its saved model silently dropped from
+  // the pickers by a client-side check that had never heard of it.
+  modelFamily: "qwen",
   // Deliberately the SAME channel-meta key as Claude: same CLI, same file transport, same catalog
   // entries. One "Cloud MCP" selection serves both, so switching a channel's harness never
   // silently drops its connectors.
   mcpMetaKey: "allowedMcps",
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
   efforts: ["low", "medium", "high", "xhigh"],
-  models: QWEN_FALLBACK_MODELS,
+  models: entry.models,
   // Shipped list until the account's own is read; `discoverModels` below replaces it with the live
   // one, so a model QwenCloud adds tomorrow is selectable without a release.
   modelCatalogSource: "fallback",
@@ -237,23 +245,23 @@ const qwen = validateEngineAdapter({
       ];
     },
   }),
-  compileConfinement: (request) => baseCompile("qwen", request, FULL_NETWORK_MODES),
+  compileConfinement: (request) => baseCompile(entry.id, request, FULL_NETWORK_MODES),
   async run(ctx) {
     const r = ctx.runtime;
     requirePluginRuntime(r.pluginRuntime, this.id);
     const target = runtimeTargetOr(ctx.target, ctx.cwd);
-    const provider = await resolveQwenProvider();
+    const provider = await resolveQwenProvider(entry.id);
     // Fail closed and name the remedy. Never fall through to the ambient Anthropic credential:
     // that would answer a Qwen-pinned thread with Claude, on the operator's Anthropic quota.
     if (!provider.configured) {
-      throw Object.assign(new Error(`The Qwen harness is selected, but ${provider.error}.`), {
+      throw Object.assign(new Error(`The ${entry.harnessLabel} harness is selected, but ${provider.error}.`), {
         details: { runtimeCredential: true, runtime: target.backend, engine: this.id },
       });
     }
     const result = await runClaude({
       cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id, isNewSession: ctx.session.fresh,
       mcpConfig: r.mcpConfigFile, strictMcp: r.strictMcp, dangerouslySkip: r.dangerouslySkip,
-      settingsFile: r.settingsFile, model: r.model || QWEN_DEFAULT_MODEL, effort: r.effort, timeoutMs: r.timeoutMs,
+      settingsFile: r.settingsFile, model: r.model || entry.models[0].value, effort: r.effort, timeoutMs: r.timeoutMs,
       maxSilenceMs: r.maxSilenceMs, signal: r.signal, onDelta: r.onDelta, onEvent: r.onEvent,
       permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs,
       instructionFile: r.instructionFile, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace,
@@ -269,15 +277,15 @@ const qwen = validateEngineAdapter({
   interrupt: () => false,
   // The same catalog Claude sees: identical CLI, identical MCP transport.
   discoverMcps: () => listEngineMcps("claude"),
-  discoverModels: () => discoverQwenModels(),
-  credentialState: () => qwenCredentialState(),
+  discoverModels: () => discoverQwenModels({ providerId: entry.id }),
+  credentialState: () => qwenCredentialState(entry.id),
   // `claude --version` answers "is the CLI installed" — true even with no QwenCloud key at all —
   // so the configured provider is reported beside it. Like the other adapters it never flips
   // `ready`: the run path fails closed with the remedy, and the admin rail says "not configured"
   // instead of leaving that to be inferred from turns that die.
   async health(options) {
     const base = await commandHealth("claude", options);
-    const auth = await qwenCredentialState().catch((error) => ({
+    const auth = await qwenCredentialState(entry.id).catch((error) => ({
       known: false, authenticated: false, method: "", detail: String(error?.message || error), source: "",
     }));
     return { ...base, auth: { known: auth.known, authenticated: auth.authenticated, method: auth.method, detail: auth.detail } };
@@ -406,4 +414,4 @@ const opencode = validateEngineAdapter({
   health: (options) => commandHealth("opencode", options),
 });
 
-export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, qwen, opencode]);
+export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, ...QWEN_PROVIDERS.map(makeQwenAdapter), opencode]);

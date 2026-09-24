@@ -1,5 +1,6 @@
 // Adopting an EXISTING local engine session into a Slack thread — the write direction of the
-// 💻 "Resume in terminal" button. That button hands out `cd "<folder>" && claude --resume <id>`;
+// resume command (Settings → Resume Session, `/menu`, `/resume`). That command is
+// `cd "<folder>" && claude --resume <id>`;
 // pasting the same line back as `/resume …` re-attaches the terminal conversation to the thread,
 // so a session started (or continued) on the gateway machine keeps going in Slack.
 //
@@ -72,7 +73,7 @@ function unwrapPastedCommand(text) {
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
 
 // Recognize the resume command each engine advertises (registry `resumeCommand`), so whatever the
-// 💻 button printed can be pasted straight back. `-r` is Claude's short form, which people who
+// Resume Session tab printed can be pasted straight back. `-r` is Claude's short form, which people who
 // live in the terminal type instead.
 const COMMAND_FORMS = [
   { engine: "claude", re: /\bclaude\b[^&|;]*?\s(?:--resume|-r)\s+("[^"]+"|'[^']+'|\S+)/i },
@@ -452,7 +453,7 @@ export async function planSessionAdoption({ arg, slug, threadKey, workDir, threa
     return {
       ok: false,
       message:
-        "I couldn't find a session id in that. Paste the command from the 💻 button, or just the id:\n" +
+        "I couldn't find a session id in that. Paste the command from Settings → Resume Session, or just the id:\n" +
         "```/resume cd \"/path/to/folder\" && claude --resume <session-id>```",
     };
   }
@@ -520,7 +521,7 @@ export async function planSessionAdoption({ arg, slug, threadKey, workDir, threa
   if (parsed.cwd && !(await pastedPathMatches(parsed.cwd, workDir))) {
     return {
       ok: false,
-      message: `The \`cd\` in that command points at \`${parsed.cwd}\`, which isn't this channel's folder (\`${workDir}\`). Paste the command exactly as the 💻 button gave it, in the channel it came from.`,
+      message: `The \`cd\` in that command points at \`${parsed.cwd}\`, which isn't this channel's folder (\`${workDir}\`). Paste the command exactly as Settings → Resume Session gave it, in the channel it came from.`,
     };
   }
 

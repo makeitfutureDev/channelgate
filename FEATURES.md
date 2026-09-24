@@ -25,6 +25,10 @@
 - The 30-second VPN health check verifies only the tunnel and its route. It never opens a
   database connection, so it cannot run up MySQL's connect-error count and get the tunnel address
   blocked (error 1129).
+- A turn-on or turn-off that the helper refuses answers with the same fixed diagnostic the status
+  row uses: a VPN image that no longer matches the gateway's source says to rebuild the image
+  instead of a generic "Could not change VPN state". Only a known failure class crosses from the
+  helper; its free text and provider output never do.
 - Admitted channel users can ask either engine to list databases/tables, describe a table, or read
   bounded matching rows using `query_channel_database`. The channel-bound extractor enforces fixed
   read operations, a read-only transaction, row/byte/time limits, fresh authorization and Network
@@ -359,7 +363,29 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Grant Tier switch is gone.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
-  setup concepts: Engine & model can be changed by every authorized user in this console; MCP Connections
+  setup concepts across five pages — **General Settings**, **Resume Session**, **MCP**, **Skills**,
+  **Secrets** — picked from a single *Page* dropdown rather than a row of buttons that wrapped onto
+  a second line as pages were added. Legacy page ids (`runtime`, `access`, `network`) still resolve,
+  so a Settings view opened before the merge keeps navigating.
+  **General Settings** is everything that decides how the conversation runs: its Engine & model
+  scopes, then **Access** (with the network switch and the VPN row). Engine & model edits in place — six dropdowns,
+  no nested form, each saving the
+  moment it is picked. It shows and edits BOTH scopes: the **channel default** (written to the
+  channel record and audited like any policy change) and, when Settings was opened from a reply
+  inside a thread, **that thread's own pins** (the per-thread overrides the `/model` wizard's "just
+  this thread" scope and the `claude`/`codex` directive write, which beat the channel at run time).
+  An unset field preselects the label of what it inherits — the gateway default, an org DM
+  template's value, or "Follow channel (…)" for a thread — so nothing reads as a blank; each
+  scope's model and effort lists follow the harness THAT scope resolves to, so a Codex-pinned
+  thread inside a Claude channel offers Codex models. Changing one field drops only the dependents
+  it invalidates (a harness change always clears the model, and the effort when the new harness
+  stops offering it), a value stored outside the current catalog stays visible instead of silently
+  reading as the default, and a pinned thread gets a **Follow channel default** button that clears
+  all three. An unpinned thread whose live session was minted by the other harness is named in the
+  tab (it keeps running there until an engine is pinned or the session is cleared) rather than
+  being moved silently — the deliberate difference from `/model` → *This channel*, which does move
+  it, because here both scopes are on screen together. Engine & model can be changed by every
+  authorized user in this console; MCP Connections
   rotates/removes the write-only Composio, Toolbox and Make MCP credentials plus inherited-token
   policy, and edits the Composio account label shared with the web setup form. Labels are shown
   in the summary and prefilled for editing; changing or clearing a label preserves the token.
@@ -367,8 +393,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Skills labels each source as Skill Template, Channel Skills, Channel Skills Including Template,
   Org Skills, or All Shared Skills, with directions to the corresponding controls. Org Skills
   explicitly require admins to add/remove them in the admin UI; both combined lists explicitly
-  explain that their summaries update automatically when their source groups change. Skills
-  supports direct grants and live template assignment; Secrets lists all supported variables with
+  explain that their summaries update automatically when their source groups change. The **Skill
+  Template** is one value out of a known list, so it is a dropdown ON the page that saves the
+  moment it is picked — not a button that pushed a second modal to show the same dropdown. With no
+  templates defined the row stays a read-out that points at the admin UI. A Settings view opened
+  before the control moved repaints onto the page instead of pushing, and a template modal that
+  was already open still saves. Skills supports direct grants and live template assignment; Secrets lists all supported variables with
   a confirmed Remove button on each row and Add/update directly on the tab. Entry forms return
   to the refreshed parent tab after saving, without duplicate manager pages or growing modal stacks.
   Deletion persists and refreshes the same page without waiting for folder/skill provisioning. Inherited and template grants are labelled and cannot be removed from
@@ -378,12 +408,38 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   so historic controls cannot retain revoked access. Cloud MCP actions additionally re-check admin
   status. Secrets can be edited in every channel mode, including through `/secrets`; file-edit
   permissions and the separate `/model` command policy are unchanged.
-  **Access** is a fifth tab, visible only to current admins/channel managers. They can edit the
-  base mode (including Admin/full access), Auto, Lean, network, use/manage policy and named guest/manager lists. Selecting
+  The **Access** section of that page is manager-only — its controls render only for current
+  admins/channel managers, and everyone else sees a line saying so while keeping the rest of the
+  page. They are live controls on the page, not a summary behind a button into a pushed form: a
+  **Mode** select (including Admin/full access), an **Auto / Lean / Network** checkbox group, a
+  **Who can use it here** and a **Who can manage this channel** select, and two member pickers for
+  named guests and named managers. Each one saves the moment it is changed, the same in-place rule
+  the engine and model rows follow. Selecting
   Full access does not grant anyone an administrator role; bypass still requires an admin author.
-  Saves acknowledge immediately with a progress view, validate named users against live human
-  channel membership, re-check management and roles at the write boundary, and audit policy changes.
-  DMs keep the existing four tabs. Work-dir and gateway-wide settings are not exposed here.
+  One dispatch describes exactly ONE field — the rest of the policy is read back from the stored
+  record, so a repainted neighbour can never resubmit a stale value — and every save keeps the
+  guarantees the submitted form had: the channel-membership lock, named users validated against
+  live human channel membership, management and roles re-checked at the write boundary, and audited
+  policy changes. A rejected value writes nothing at all.
+  The **VPN** is one row directly under that Auto/Lean/Network checkbox group rather than a
+  section of its own: `*VPN* — On / Off / Not configured / Starting / Stopping / Failed /
+  Unavailable`, its Turn on / Turn off / Refresh controls still gated to admins and channel
+  managers, and no prose restating what the state word already says. A message is kept only for
+  the two states whose label cannot explain itself — a failure and an unavailable service — which
+  is the same diagnosis a refused toggle reports. Readers who cannot see the access controls (an
+  ordinary member, and every DM) get the channel's network policy as a one-line read-out beside
+  it, since the checkbox that would otherwise show it is not rendered for them. A conversation with
+  no provisioned VPN service is answered from metadata alone — no status helper runs, and the row
+  reads *Not configured* immediately — so only a provisioned channel spends a subprocess and a
+  second view update filling in *Checking status…*.
+  **Resume Session** is a page of its own, open to every authorized user: it renders THIS thread's
+  copyable `cd "…" && <engine> --resume <id>` terminal command (the container `exec` form for a
+  containerized channel), resolved from the session at render time so a stale Settings view cannot
+  hand out a cleared session's id, plus the session id and the folder it belongs to. Opened outside
+  a thread, or in a thread that has not run a turn yet, the tab says so instead of showing a
+  command. It replaces the 💻 reply-footer button, which is gone from run footers.
+  A DM sees the same five pages, with its mode/Auto/Lean buttons at the top of General Settings and
+  no Access summary. Work-dir and gateway-wide settings are not exposed here.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
   admins are selected and locked, while explicit guest grants remain independently editable.
@@ -569,12 +625,30 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   commands are checked against stable 3.0.3.
   → TEST-PLAN: Google Chat and Teams transports. Setup: `docs/PLATFORMS.md`.
 
+- The operating guide covers host container-storage housekeeping: reading free space and per-image
+  container counts, distinguishing a live runtime root from test leftovers, and the tag-versus-image-ID
+  and dangling-HOME-volume traps. It is diagnosis-only by contract — the assistant reports what is
+  reclaimable and never deletes without an explicit request or an admin-configured schedule.
+  `npm run runtime:storage` produces that report (`--json` for machines) and removes only with
+  `--apply`: stopped channel containers created from a superseded image (never a running one),
+  runtime images other than the current, the previous spec (`--keep-previous`) and any in use,
+  untagged top-level leftovers, and another install's containers and volumes only when every
+  folder it mounted is gone — never a channel's HOME volume, never a second live gateway sharing
+  the account's store. Reclaimable space is counted per content-addressed layer, so shared layers
+  are not double-counted. → TEST-PLAN: Host container-storage housekeeping guidance.
+
 ## Engine adapter kernel
 
 - Validated `EngineAdapter` and `RunContext`/`Principal`/`Origin` contracts fail closed for unknown
   engines, unsupported network policy, or adapters without confinement and health compilers.
 - Claude pooling and Codex execution/MCP policy run behind adapters; fallback routing is a directed
   registry graph, and every registered CLI receives a boot version/readiness probe.
+- Gateway notices about a turn — the failover line, the license allowance warning, a skipped MCP
+  connection, a substituted model — are announced to the delivery layer before the answering
+  engine spawns (`announceAnswerNote`), so a streamed Slack answer leads with them instead of
+  losing them to `content`, which only non-streaming surfaces render. Delivery subtracts each
+  streamed note from what is still owed individually, so a note is shown once whatever order the
+  orchestrator assembled `content` in. → TEST-PLAN: Cross-engine failover spawn contract.
 - A cross-engine failover spawns the fallback harness under the same contract the primary would
   have received: its own reminted MCP payload materialized for its own transport (a file for
   Claude/Qwen, argv overrides for Codex), the channel permission lockdown, and the approval-prompt
@@ -590,9 +664,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   edits, external directories, plugins, MCP, and bypass modes fail closed because OpenCode
   permissions are not an OS sandbox. JSON streaming, session resume, cancellation, usage/cost, and
   health/version are supported. See `docs/OPENCODE-ADAPTER.md`. → TEST-PLAN: OpenCode proof adapter.
-- **Qwen (Claude Code)** proves the kernel a second way: a full-capability harness that reuses the
-  `claude` CLI against QwenCloud's Anthropic-compatible endpoint, added as an adapter with no
-  orchestrator or UI conditionals. → TEST-PLAN: Qwen harness.
+- **The Qwen harnesses** prove the kernel a second way: full-capability harnesses that reuse the
+  `claude` CLI against an Anthropic-compatible provider, generated from a provider table with no
+  orchestrator or UI conditionals — a second provider (Model Studio's EU region) is a table row,
+  not a second code path. → TEST-PLAN: Qwen harnesses.
 
 ## Public website
 - The marketing / early-access site (and its lead-routing contract) lives in its own
@@ -729,7 +804,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   effective working folder. Its title identifies the authoritative stored Slack channel name, and
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
   *Browse channel files* message shortcut opens it for a selected thread, and every interactive run footer carries a
-  requester-bound `📂` button beside `💻` for one-click access; managers also receive the
+  requester-bound `📂` button for one-click access; managers also receive the
   requester-bound **⚙️ Settings** snapshot button described above, and gateway admins may open a
   control attached to another user's bot reply. When an agent names up to five
   existing files inside its effective working folder for review, the same footer adds deduplicated
@@ -978,7 +1053,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `/clear` (drop the thread's session — next
   message starts fresh), `/context` (token usage + % of the context window from the last turn),
   `/resume` (the copyable `cd "…" && claude --resume <id>` terminal command for this thread's
-  session — kept out of reply footers; also behind the 💻 button on "🛑 Stopped." messages → modal.
+  session — kept out of reply footers; the same command is a tab in Slack Settings → **Resume
+  Session** and behind the 💻 buttons on `/menu` and on "🛑 Stopped." messages → modal.
   `/resume <command or session id>` runs the same trip in REVERSE: paste that line back and the
   thread adopts the existing local session, so a conversation started in a terminal on the gateway
   machine (or left behind by a cleared thread) continues in Slack. Accepts the full pasted command,
@@ -1009,7 +1085,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   them and the final card carries **Change again**, both repainting the SAME message (walking back
   writes nothing and undoes nothing — the re-pick overwrites what the wrong click stored, and the
   repainted step shows what is actually in force). Thread scope
-  writes per-thread engine/model/effort overrides that beat the channel at run time; Settings →
+  writes per-thread engine/model/effort overrides that beat the channel at run time; channel scope
+  applies to the thread it was clicked in as well as to later ones — it drops that thread's own
+  engine/model/effort overrides so nothing shadows the new channel values, and when the thread's
+  live session belongs to the OTHER harness it pins the thread to the chosen one so the switch
+  actually reaches it (the done card then says the thread restarts there with its earlier messages
+  replayed). A thread already on the chosen harness, or one with no session yet, is left unpinned
+  and keeps following the channel; Settings →
   Access & security chooses whether channel changes are admin-only (default) or available to every
   authorized channel user, while anyone approved may customize their DM; typed `@bot /model` is the command — no manifest slash command is
   registered (a thread-aware Bolt handler answers if one is ever added);
@@ -1206,14 +1288,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   links, mentions, emoji, lists, and line boundaries. A table-only message counts as content (while
   the normal channel mention gate still applies). No extra Slack scope is needed. Any allowed user.
   → TEST-PLAN: Native Slack data tables.
-- Slack **file snippets** for big/wide tables: `slack_upload_snippet` (gateway control MCP) uploads
-  `content` (CSV/TSV/markdown/code) as a FILE into the current channel + thread, so a CSV/TSV renders
-  as a **scrollable spreadsheet grid** — the right shape for a large read-only table/export vs. a
-  cramped message code block or a 100-row Slack List. Daemon-side via the workspace bot token
-  (`files:write`) using Slack's external-upload flow (`files.getUploadURLExternal` → POST bytes →
-  `files.completeUploadExternal`), so it needs no Bash/network in the channel; hard-scoped to the
-  current channel. The filename extension drives rendering (`.csv`/`.tsv` = grid; text/code = plain
-  snippet). Any allowed user. → TEST-PLAN: Slack file snippets.
+- Slack **file snippets** for sharing a file and for big/wide tables: `slack_upload_snippet` (gateway
+  control MCP) uploads `content` (CSV/TSV/markdown/code) as a FILE into the current channel + thread,
+  so a CSV/TSV renders as a **scrollable spreadsheet grid** — the right shape for a large read-only
+  table/export vs. a cramped message code block or a 100-row Slack List. Daemon-side via the
+  workspace bot token (`files:write`) using Slack's external-upload flow
+  (`files.getUploadURLExternal` → POST bytes → `files.completeUploadExternal`), so it needs no
+  Bash/network in the channel; hard-scoped to the current channel. The filename extension drives
+  rendering (`.csv`/`.tsv` = grid; text/code = plain snippet). The tool description and the
+  `gateway-usage` skill also route a **direct request for a file** ("send it here", "share the
+  file", "attach it") to this tool for any UTF-8 text file — `.md`, `.txt`, `.json`, `.html`,
+  `.yaml`, code, logs — uploaded under its real name, while images keep the automatic
+  `![alt](path.png)` upload path and binaries (PDF, PPTX, XLSX, ZIP) stay inline-code paths served by
+  the 📄 file-explorer button. Any allowed user. → TEST-PLAN: Slack file snippets.
 - Native Slack **charts**: `slack_post_chart` (gateway control MCP) posts Block Kit
   `data_visualization` blocks into the current channel + thread using the workspace bot token and
   existing `chat:write` scope. Supports line/bar/area charts (1–12 series, 1–20 shared category
@@ -1234,10 +1321,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
     or `mcp__composio-agent__*` for the agent's own account. Slack enforces the selected account's
     visibility. There is **no** separate hosted Slack MCP and no per-user `connect_slack` OAuth.
 
-## Qwen harness (opt-in, Claude Code CLI against QwenCloud)
+## Qwen harnesses (opt-in, Claude Code CLI against an Anthropic-compatible provider)
 
-- A third full-capability engine, **`qwen` — "Qwen (Claude Code)"**: the same `claude` binary the
-  image already ships, pointed at QwenCloud's Anthropic-compatible endpoint. It therefore keeps the
+- A **provider table** (`src/engines/qwen.js`), one opt-in engine generated per entry: **`qwen` —
+  "Qwen (Claude Code)"** (QwenCloud's Token Plan / pay-as-you-go endpoint) and **`qwen-eu` — "Qwen
+  EU (Claude Code)"** (Alibaba Cloud Model Studio's EU/Frankfurt region, whose catalog also carries
+  the Kimi, GLM and DeepSeek families). Each is the same `claude` binary the
+  image already ships, pointed at that provider's Anthropic-compatible endpoint. It therefore keeps the
   CLI's whole feature set — stream-json progress, the tool loop, Slack approval cards
   (`--permission-prompt-tool`), `--mcp-config` connectors, `CLAUDE.md`, `.claude/skills`, plugin
   dirs, cold session resume — while everything the PROVIDER owns is its own.
@@ -1245,12 +1335,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   OFF: pulling this release does not add a harness to any picker, and the "never lock every
   harness out" rescue restores the default harnesses only. Settings → Engine & runtime → *Harnesses
   the gateway may use* turns it on; it then appears in the admin engine selectors, the Slack
-  channel Settings → *Change engine & model* modal, and the `/model` wizard, and `qwen` works as a
+  channel Settings → *Engine & model* tab, and the `/model` wizard, and `qwen` works as a
   per-thread engine directive. Turning it off removes it from all of them.
-- **Gateway-level credential, never a channel secret.** Settings → Engine & runtime holds the
-  QwenCloud API key (write-only: `has*`/`last4` on listings, the value only through the audited
-  `POST /api/secrets/reveal`) and the base URL (Token Plan or pay-as-you-go). `ANTHROPIC_*` stays a
-  reserved prefix for per-channel secrets, so a conversation can never redirect its own provider.
+- **A card per provider, a credential per provider.** Settings renders one card per table entry
+  (rendered from `/api/settings` `qwenProviders`, never a hand-written copy of the table), each
+  holding that provider's own API key (write-only: `has*`/`last4` on listings, the value only
+  through the audited `POST /api/secrets/reveal`), its own endpoint and its own default model.
+  Saving one provider never touches another's. `ANTHROPIC_*` stays a reserved prefix for
+  per-channel secrets, so a conversation can never redirect its own provider.
+- **A provider whose endpoint is account-specific ships none.** The EU entry's endpoint is
+  per-workspace (`https://ws-<workspace>.eu-central-1.maas.aliyuncs.com/apps/anthropic`), so no
+  default is shipped: the harness stays unconfigured — failing closed with both missing halves
+  named in one message — until the operator pastes their own.
 - **The Anthropic credential never leaves with it.** A Qwen spawn drops the whole Anthropic family
   — an inherited `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` and the relayed
   `CLAUDE_CODE_OAUTH_TOKEN` — before applying the provider's own values last. With no key
@@ -1259,10 +1355,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Live model catalog.** The Anthropic-compatible path serves no `/v1/models`, so the discovery
   hook reads the account's own list from the sibling `/compatible-mode/v1/models` endpoint derived
   from the configured base URL, filtered to text/tool models (the image, video, audio and realtime
-  families cannot hold a conversation and are excluded). Settings and `/model` therefore offer what
-  the account can actually call, and a model QwenCloud adds needs no release. A shipped fallback
-  list covers a fresh install or an unreadable account, and the Settings card says which one is in
-  use.
+  families cannot hold a conversation, and neither can the single-purpose translation and OCR
+  models, so all are excluded). Each provider discovers its OWN account, so the two harnesses offer
+  different catalogs. Settings and `/model` therefore offer what the account can actually call, and
+  a model the provider adds needs no release. A shipped fallback list per provider covers a fresh
+  install or an unreadable account, and the Settings card says which one is in use.
 - **No invented cost.** Claude Code prices every turn with Anthropic's table, which is fiction for
   QwenCloud tokens, so the adapter drops that figure at the boundary and the harness declares no
   rate of its own: Qwen turns are recorded with real tokens and NO dollar amount (never Codex's
@@ -1271,9 +1368,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   and a Claude limit must not spend a QwenCloud balance. Cold runs only — a warm process holds the
   environment it launched with, and the pool key carries no engine, so a rotated provider key or a
   mid-thread harness switch could otherwise be served by a stale credential.
-- One **Cloud MCP** selection serves Claude and Qwen (same CLI, same file transport, same catalog),
-  so switching a channel's harness between them never silently drops its connectors.
-  → TEST-PLAN: Qwen harness.
+- One **Cloud MCP** selection serves Claude and every provider harness (same CLI, same file
+  transport, same catalog), so switching a channel's harness between them never silently drops its
+  connectors.
+- **An id that is a prefix of another still selects the harness the user named.** Engine ids are
+  matched longest-first, so `qwen-eu do X` in a thread pins the EU harness rather than matching
+  `qwen` and leaving `eu` in the prompt.
+  → TEST-PLAN: Qwen harnesses.
 
 ## Engines (Claude + Codex)
 - Two CLI engines: **Claude** (default — warm sessions, exact cost, skills, `/compact`) and **Codex**
@@ -1289,7 +1390,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Per-thread engine directive: a message starting with `claude` or `codex` (e.g. "@bot codex build
   the feature") switches that thread's engine; it sticks until changed (persisted per channel).
   The `/model` wizard's "just this thread" scope sets the same override (plus per-thread model +
-  effort). An explicit switch — directive, per-thread wizard scope, or per-run API override — is
+  effort), and its "this channel" scope sets it too when clicked inside a thread whose live session
+  belongs to the other harness — "this channel" includes the thread you are standing in. An
+  explicit switch — directive, either wizard scope, or per-run API override — is
   the ONLY thing that moves an existing thread to the other engine: it drops thread model/effort
   overrides that don't belong to the new engine, starts a fresh session (the new engine can't
   resume the old one's conversation), and replays the Slack thread context into it so the new
@@ -1305,9 +1408,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   non-curated id (e.g. a dated full id in settings.json) survives as an extra option so Save
   round-trips it, while an other-engine leftover is dropped. The Claude list includes Fable 5 as
   `claude-fable-5`; Fable is not offered as a GPT/Codex model. Settings also provides a confirmed,
-  admin-only reset that clears every channel's engine/model overrides so new threads inherit these
-  gateway defaults again; DMs, existing thread-owned sessions, effort, access, tools, and tokens
-  are untouched. → TEST-PLAN: Engines.
+  admin-only reset that clears every channel's engine/model/effort overrides so new threads inherit
+  these gateway defaults again (effort resets with the other two because the `/model` wizard sets
+  all three in one pass); DMs, existing thread-owned sessions, access, tools, and tokens are
+  untouched. The confirmation asks for the scope, because channel meta only decides what
+  a NEW thread inherits: **Channels only** (the default) leaves every hand-pinned thread on its own
+  harness/model, while **Channels + threads** additionally deletes the per-thread `engine`, `model`
+  and `effort` pins (`/model` → "just this thread", a `claude`/`codex` directive) for those same
+  channels and reports how many were cleared. Per-thread `clean` and `sudo` postures and DM threads
+  are out of scope for both. → TEST-PLAN: Engines.
  - A thread/channel/per-run Codex model that the provider explicitly rejects before generation
    retries once with that harness's distinct gateway-default model — Codex (`invalid_request_error`) and Claude (`model_not_found`) alike. The runner must prove there was no output
    or tool attempt; generic failures and partially executed turns are never replayed. Slack status,
@@ -1630,7 +1739,101 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   by Settings → `errorDiagnosisChannel` (slug, e.g. `gateway-slack`, whose folder is the gateway
   repo; "" = off) with the error + stderr tail + recent channel events, and runs Claude there to
   root-cause and PROPOSE a fix (never apply). 30-min global cooldown; a diagnosis thread's own
-  failures are never re-diagnosed. → TEST-PLAN: Engines.
+  failures are never re-diagnosed; and failures that are provider ACCOUNT state rather than a
+  source defect — usage/spend limit, expired or missing sign-in, billing, a rejected model, a
+  provider outage, a dropped connection, plus a user's own stop/abort — are skipped entirely, so a
+  hit quota neither notifies the dev channel nor spends the cooldown a real crash may need.
+  → TEST-PLAN: Engines.
+
+## Environment secrets: three scopes
+- **Organization, person, channel.** The same write-only secret store answers three questions, and
+  a run merges all three (`src/config/scoped-env.js`):
+  - **organization** — one credential the whole deployment shares, injected into EVERY
+    conversation's runs (the `GH_TOKEN` every channel needs to push, a company npm token). Stored
+    in `settings.json` (`orgEnv`, already 0600) and deliberately NOT in `config/settings.js`'s
+    `ENV_MAP`, so an arbitrary org name can never be copied into the daemon's own `process.env`.
+    Admin-only, because its blast radius is every channel and every author admitted there.
+  - **person** — a credential belonging to the human, not to any room. Injected only into runs
+    that person AUTHORED, in every conversation they talk in, and into nobody else's turn in those
+    same conversations. Stored on the `users` row (`data.env`), beside the personal Composio and
+    Toolbox tokens.
+  - **channel** — the conversation's own CLI logins, below, unchanged.
+- **Precedence is organization → person → channel, most specific last.** The channel deliberately
+  outranks the person: a channel's secrets ARE its project identity, and a personal token silently
+  answering for the room's account is exactly the substitution the Composio identity rules exist to
+  prevent. A personal secret therefore FILLS a name the channel does not define; it never redirects
+  one the channel does. Every attempt's preamble names which scope supplied each variable (names
+  only) so the agent can say which account it acted as.
+- **The personal scope is withheld from an unauthenticated principal.** The HTTP run API
+  authenticates its key, not the `author` it names, so that caller can never borrow someone's
+  personal secret by naming them — the same rule that already withholds their personal Composio and
+  Toolbox tokens. The organization and channel scopes are not identity claims and still apply.
+- **The warm pool keys on the merged digest**, so a process started for one author is never reused
+  for another's message in the same thread while still holding the first author's secrets. Clean
+  mode injects none of the three, for the same reason it injects no MCP servers or skills.
+- **Surfaces.** All three are managed from the same three places:
+  - **Slack** — `/secrets` and Settings → *Secrets* now render all three scopes in one modal, in
+    resolution order, each with its own rows and its own Add button. The organization's Add is
+    absent for a non-admin, and authority is re-derived from the clicked `action_id` (never from
+    the button's value) and re-checked on submit, so a forged click on an organization row is
+    refused. The entry form states which scope it writes into before you paste anything.
+  - **Admin UI** — Settings → Integrations → *Organization secrets*, and the Users drawer →
+    *Personal secrets*. One editor implementation serves all three (`public/admin-secrets.js`).
+  - **Chat tools** — one per verb, the scope an argument: `list_secrets` (all three scopes in one
+    live call — names, provider, masked tail, who set them; the organization's tails and authors
+    only for admins, the names for everyone as the run prompt already carries them; filterable
+    with `scope`), `set_secret` and `remove_secret` (`personal` by default; `organization` for
+    admins, with the approval card's tier following the scope; a conversation's own are written in
+    the Secrets modal or the admin UI, never pasted into a channel). A signed run capability is
+    what names the author, so an unverified principal gets no personal scope at all. In an SSH
+    session the env file the wrapper sourced is named by `CG_SESSION_ENV` and rewritten on every
+    change, and the session's own system-prompt note (`session.md`, appended by the wrapper with
+    `--append-system-prompt-file`; the managed block's 4 KB budget is for every run's rules) tells
+    the model to source it in the same command when it needs a credential added since its
+    `claude` started.
+  A person only ever sees their OWN personal secrets on any surface: the Slack modal is bound to
+  one owner and refuses a different clicker, and the admin UI reaches them per user record.
+
+### A channel's own
+## Getting files out of a channel folder
+
+- **Composio file staging (`stage_file_for_composio`).** Composio's file-taking tools
+  (`GOOGLEDRIVE_UPLOAD_FILE`, `GMAIL_SEND_EMAIL` attachments, `SLACK_UPLOAD_FILE`, …) accept
+  neither a path nor base64 — only a `FileUploadable` (`{name, mimetype, s3key}`) naming bytes
+  already inside Composio's own storage — and the MCP surface exposes no way to produce one. A run
+  that generated a deliverable in its container therefore could not hand it over at all. The
+  gateway now performs Composio's documented three-step upload daemon-side (`POST
+  /api/v3.1/files/upload/request` → presigned `PUT` → the returned key) and gives the model the
+  object to pass straight through. The caller names which identity will run the destination tool
+  (`user` → `composio-user`, `agent` → `composio-agent`) and the key resolved for THAT identity is
+  the one spent, through the same precedence the MCP config uses; a named identity with no key is
+  reported rather than silently replaced by the other one. The key never enters the container,
+  never reaches the model, and never appears in an error message. Nothing is published.
+  → TEST-PLAN: Composio file staging.
+- **Temporary public file links (`create_public_file_link`).** For destinations that ingest by URL
+  rather than by body, and for a person who simply wants a link. One file from the channel's own
+  working folder is served at `GET /f/<token>` — public by design, mounted outside the admin login,
+  like `/approve`. Two purposes with different rules: `upload` (5 minutes default, 15 maximum, 5
+  fetches, meant for a machine and explicitly not to be posted into the conversation) and `share`
+  (duration **required** — the model asks the person first — capped at **48 hours**, unlimited
+  fetches, and additionally gated by a human Approve card naming the file and the duration).
+  `list_public_file_links` and `revoke_public_file_link` make live links inspectable and killable.
+  → TEST-PLAN: Temporary public file links.
+- **What keeps it narrow.** The bearer token is 32 random bytes and only its SHA-256 is stored, so
+  the table yields no working link. A link records a channel and a RELATIVE path, re-resolved
+  inside that channel's working folder on every fetch through the shared confined open
+  (`src/gateway/confined-file.js`, now also used by the Slack file-download router): a path that
+  escapes the root, a symlink at the final component, or a file that has moved simply stops
+  working — so a channel whose container mounts the operator home can read that home with its file
+  tools but can never publish from it. Expiry, revocation and the fetch cap are one atomic claim.
+  `HEAD` probes (which ingest services send first) spend no download. Every failure returns one
+  identical 404, so a stranger learns nothing about which tokens were real. Every mint, fetch
+  (with IP and user agent) and revocation is audited in `events`.
+- **Off by default, and killable at once.** The whole public-link capability is dormant until an
+  admin enables it in Settings → Public file links, and it also requires the gateway's Public URL.
+  The switch is re-read on every request, not at mint time, so turning it off kills every
+  outstanding link immediately. Composio staging is unaffected by the switch — it publishes
+  nothing.
 
 ## Per-channel environment secrets
 - **A channel's own CLI logins.** Each conversation can hold its own credentials — its own Supabase
@@ -2130,6 +2333,83 @@ are retired, bullet by bullet; everything else stands.
   a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
   The lease record itself lives in daemon-owned metadata under the gateway root, never in the
   agent-writable artifact directory. → TEST-PLAN: Container runtime (v0.8 P1).
+- **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
+  registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,
+  fingerprinted like `ssh-keygen -lf`, private keys and DSA refused, RSA under 2048 bits refused);
+  a channel manager grants that person SSH on a channel (`grant_channel_ssh` / `revoke_channel_ssh`,
+  audited as the `sshUsers` policy key, never admitting anyone `isAuthorized()` would refuse);
+  `show_channel_ssh` prints the `~/.ssh/config` block. The connection goes to a dedicated,
+  unprivileged login account on the gateway host whose sshd Match block forces the
+  `cg-ssh-attach` wrapper (no pty, no forwarding, no shell; every exported key line is
+  `restrict,command=` by construction); the wrapper hands the byte stream to the daemon's attach
+  socket; the daemon authorizes key → user → channel → grant → not operator-home-mounted, takes a
+  container LEASE for the session's whole life, writes the in-container `sshd_config` +
+  `authorized_keys` into the artifact dir, refreshes the same Claude access-token relay VS Code
+  attach uses (which also marks Claude's first-run onboarding done in
+  `$CLAUDE_CONFIG_DIR/.claude.json`, merge-only; folder trust stays the developer's choice),
+  renders the container's own environment into the session with ONE `SetEnv` (sshd starts a
+  clean environment and honours only the first `SetEnv` line) plus `CG_WORKDIR`, so an SSH shell,
+  a remote command and VS Code's server see what `podman exec` sees and an interactive `claude`
+  opens on the relayed login; an interactive login starts in the channel's work folder
+  (`/etc/profile.d/channelgate-workdir.sh`, spec 1.5.1, never for Codex's non-interactive
+  `bash -lc`), and "show SSH access" prints `code --remote ssh-remote+<channel> <folder>`. **A session's
+  `claude` is a chat turn's Claude** (`src/gateway/ssh-session.js`, prepared before the shell
+  starts and refreshed every 20 minutes): the channel lockdown as `--settings`, the same MCP
+  payload assembler a turn uses (`buildEngineMcpRuntime` with a capability signed for THAT
+  developer, origin `ssh_session`, a 12-hour TTL and the `ssh` toolset — the control plane minus
+  the thread-bound background, progress and approval tools) with `composio-user` for the
+  developer's own accounts, `composio-agent` for the channel's and the selected catalog servers,
+  `--strict-mcp-config` so the operator's own claude.ai connectors never load, and the run
+  environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. The files are per
+  developer under `<artifacts>/ssh/users/<id>/`, chosen by the `CG_SSH_USER` name sshd sets from
+  the developer's authorized_keys line (`PermitUserEnvironment CG_SSH_USER`), and removed when
+  their last session ends, refreshed every 20 minutes AND within `CONFIG_REFRESH_DEBOUNCE_MS` of a
+  configuration write that concerns the session (`src/config/change-events.js`: every channel-meta,
+  user and organization-secret write emits after it commits; the broker re-prepares the sessions
+  of that channel, that developer, or all of them, coalesced per session). The login is an
+  ACCESS-ONLY `.credentials.json` in the channel's config
+  dir plus the operator's account record — never a refresh token — written through the relay and
+  removed with the channel's last session, so an interactive `claude` shows "Claude Max account",
+  the organization, the usage windows and the plan's default model instead of "Claude API".
+  Every container now runs with `DISABLE_AUTOUPDATER=1`: a self-updated Claude in
+  `~/.npm-global/bin` (first on the image PATH) had shadowed the pinned CLI and the wrapper.) The
+  daemon then runs `exec -i <container> cg-sshd` — an unprivileged inetd-mode sshd on that
+  stream, inside the container, with which the developer's own client completes a second
+  handshake. So the pty, the shell, sftp, VS Code Remote-SSH and port forwards all live in the
+  container's namespaces; no container and no extra host port ever listens; the channel is named
+  in the ProxyCommand, so one key reaches several channels at once. A container with a live
+  session is never idle-stopped or evicted, and a rebuild waits for it like for a run; a dead peer
+  is reaped by `ClientAlive` in about three minutes. Sessions are `ssh_sessions` rows and
+  `ssh_session_start`/`ssh_session_end` events; refusals are `ssh_attach_refused` with the reason
+  the developer saw. The image ships `openssh-server` (spec 1.4.0) and marks the `agent` account
+  key-only (`*`, not useradd's locked `!`). The root installer `scripts/install-ssh-access.sh`
+  creates the account, the group-shared attach directory (`/var/lib/channelgate-ssh`, overridable
+  with `CHANNELGATE_SSH_DIR`) and the sshd drop-in; the daemon binds its socket the minute the
+  directory exists, no restart needed. The installer also asks sshd (`sshd -T -C`) whether its
+  effective `AllowUsers`/`AllowGroups`/`DenyUsers`/`DenyGroups` admit the login account: an
+  allow-list that excludes it gets the account appended inside the drop-in (the lists accumulate,
+  the operator's file is untouched), a host with no allow-list gets no line at all, and a deny
+  match stops the install naming the file to edit. The attach directory is one per host, so the
+  daemon probes its socket path before touching it: a socket another process is serving is left
+  alone (and taken over within a retry once that process is gone), only a file nobody listens on
+  is replaced, the exported keys are written only by the daemon that owns the socket, and
+  shutdown removes nothing but this daemon's own socket. → TEST-PLAN: Container runtime (v0.8
+  P1); SSH installer admits the login account; SSH attach socket ownership.
+- **One VS Code server per version for the whole host, not one per channel** (image spec 1.5.0).
+  VS Code's remote extensions install a ~620 MB server plus a 34 MB CLI per client version into
+  `~/.vscode-server`, which is the per-channel HOME volume, so every channel an editor was opened in
+  carried its own copy. The image carries the pinned versions (`containers/versions.json` →
+  `vscodeServers`: 1.139.0 and 1.138.0) once, root-owned and read-only under
+  `/opt/channelgate/vscode-server/<commit>/{server,cli/code}`, each download checked against VS
+  Code's own published SHA-256 and its `product.json` commit, a mismatch failing the build.
+  `cg-init` links them into the volume on every start in both layouts VS Code looks for —
+  attach-container `bin/<commit>` and Remote-SSH `cli/servers/Stable-<commit>/server` +
+  `code-<commit>` (the CLI's own `log.txt`/`pid.txt` stay in the writable `Stable-<commit>` dir) — so
+  an attach costs the volume kilobytes; the server's state still goes to the channel's own
+  `~/.vscode-server/data`. It never replaces an install already in the volume, removes only a link
+  it made that no longer resolves (a newer image dropped that version), and skips a channel that
+  created `~/.vscode-server/.cg-no-shared-server`. An unpinned client version downloads its own
+  server exactly as before. → TEST-PLAN: Shared VS Code servers.
 - **A stale container is rebuilt before it is used, not after.** The create-time fingerprint has two
   halves. `cg.mounts` covers only what decides what the container can SEE — the work directory, the
   clean workspace, the artifact directory, the HOME volume and every bind and mask — and a mismatch
@@ -2822,7 +3102,13 @@ are retired, bullet by bullet; everything else stands.
   detection provenance and explained context warnings instead of every profile's full skill dump.
   Catalog state filters are enforced in both the API and browser, so newly served static assets do
   not expose cosmetic controls while the long-running daemon is waiting to restart.
-  → TEST-PLAN: Skills platform (Core).
+  Every search box here (catalog, per-source, usage) is commit-on-demand: typing records a draft
+  and nothing else, and the search runs on Enter, on the **Search** button beside the box
+  (highlighted while a typed query is still unsearched), or when the box is cleared with Escape or
+  the browser's own ×. Filtering per keystroke re-rendered the panel under the cursor and the
+  rebuilt input came back focused at offset 0, which scattered what was typed; a render that does
+  happen under a focused field now restores its caret.
+  → TEST-PLAN: Skills platform (Core), Skills search boxes accept typing.
 - **Governed skill discovery and mandatory loading**: every catalog row can be disabled without
   disabling its source, approved for member/agent discovery, or made mandatory in every
   conversation. Mandatory implies enabled + discoverable; effective profiles remain mandatory ∪
@@ -2962,8 +3248,10 @@ are retired, bullet by bullet; everything else stands.
   times too small),
   other Claude models 200k, Codex prefers the rollout's runtime-reported usable window (with the
   engine declaration as fallback), unknown models fall back to Settings →
-  contextWindow; no icons/unit labels). The 💻 Resume button sits on the same row (section
-  accessory). Model = the configured cascade that governed the turn (thread override → channel/DM
+  contextWindow; no icons/unit labels). The reply footer's controls are 📂 Files, 🔑 Secrets,
+  ⚙️ Settings and any 📄 review-file buttons; a single control uses the section accessory and
+  several share an actions row under the stats context. The resume command is NOT one of them —
+  it lives in Settings → **Resume Session**, `/menu` and `/resume`. Model = the configured cascade that governed the turn (thread override → channel/DM
   model → gateway default) → CLI-reported runtime model (when nothing is configured) → engine name;
   context% and Codex cost rates still key on the CLI-reported runtime model, where multi-model
   Claude `modelUsage` maps use the model with dominant output tokens, and a reported
@@ -3051,15 +3339,137 @@ are retired, bullet by bullet; everything else stands.
   first-boot password is minted whenever no OPERATOR key is in `settings.json` — the installer's
   own pre-boot `whisperEnabled` answer does not count, so `npm run setup` never skips it.
   → TEST-PLAN: A7 boundary hardening.
-- Dashboard admin tab (default landing view): usage overview for a selectable **date range** and
-  **harness** (All by default, Claude, or Codex) —
+- Dashboard admin tab (default landing view): usage overview for a selectable **date range**,
+  **harness** (All by default, Claude, or Codex) and **source** (Gateway + outside by default, chat
+  gateway only, or outside the gateway only) —
   Today, Last 7 days, Last 30 days, This month, Last month, This year, Last year
-  (`GET /api/dashboard?range=…&harness=…`, SQL rollups). The bucket granularity adapts to the range: **hour**
+  (`GET /api/dashboard?range=…&harness=…&source=…`, SQL rollups). The bucket granularity adapts to the range: **hour**
   for a single day, **day** for weeks/months, **month** for years — series gap-filled so charts stay
-  stable. KPI tiles (Token Est Cost, separate Claude and Codex costs, sessions, active users,
-  active sessions, and total tokens), per-bucket sparklines for sessions/tokens/cost, a sessions-per-user bar list
-  (descending), and a per-channel sessions+cost bar chart. Pure inline SVG + div bars — no chart
-  library, no build step. → TEST-PLAN: Admin UI.
+  stable. KPI tiles (Token Est Cost, separate Claude and Codex costs, Outside the gateway, sessions,
+  active users, active sessions, and total tokens), per-bucket charts for sessions/tokens/cost, a
+  sessions-per-user bar list (descending), and a per-channel sessions+cost bar chart. Pure inline
+  SVG + div bars — no chart library, no build step. → TEST-PLAN: Admin UI.
+- **Every Overview chart is stacked by the model that answered.** A cost, run or token line split
+  by model answers "did spend rise because we ran more, or because we moved onto a pricier model" —
+  which one undifferentiated line cannot. Attribution is per component, not per run: a Codex turn
+  whose subagent ran a different model contributes a slice to EACH, while the run itself is still
+  counted once (`MODEL_ATTRIBUTION_CTE` in `src/gateway/usage.js`). The split reconciles with the
+  headline by construction — a run whose components are only partly priced contributes no dollars
+  to any model, exactly as the canonical rollup drops it — so the bands always add up to the total
+  beside them. Model ids are normalised for display (`modelDisplayLabel`): a dated snapshot
+  (`claude-haiku-4-5-20251001`) reads as its family, a context variant keeps its `1M` marker, an
+  OpenAI id becomes `GPT-5.6 Sol`, and an unrecognised id passes through verbatim rather than being
+  forced into a family. → TEST-PLAN: Admin UI.
+- **A run that recorded no model is charted under a per-engine fallback** (Settings → Agent
+  defaults; `claude-opus-5` and `gpt-5.6-sol` by default, each editable, blank = leave unknown).
+  The gateway only began resolving the runtime model partway through its life, so older rows carry
+  none at all — 387 runs, $990 and 443M tokens on the development deployment — which would sit in
+  one undifferentiated "model unknown" band. This is ATTRIBUTION only: it decides which band an
+  already-recorded figure belongs to and never prices anything, so no spend is invented and the
+  per-model totals still reconcile to the headline exactly. The Models card reports how many runs
+  in each band were filled in this way ("… · 387 assumed") plus a note under the list, so the
+  assumption stays visible instead of passing as measurement. Attempting to RECOVER the real model
+  was tried and rejected: matching those rows to transcript turns by token counts resolved fewer
+  than 1 in 25 (most of the era's transcripts have since moved into per-channel containers), and a
+  wrong model on a spend chart is worse than a declared assumption. → TEST-PLAN: Admin UI.
+- **A dedicated Models chart**, answering "which models are used more" directly: every model in the
+  window as a bar — token cost, its share of spend, runs (and how many of them came from outside
+  the gateway) and tokens. The stacked charts above cap at the seven largest models plus a neutral
+  "Other" band, because a stacked area with a generated ninth hue stops being readable; this card
+  lists everything, so nothing is hidden by that cap. Colours come from a categorical palette
+  validated for the admin surface (lightness band, chroma floor, adjacent colourblind separation,
+  normal-vision separation and 3:1 contrast all pass) and are keyed on the MODEL, so changing range,
+  harness or source never repaints the series that survived the filter. Each chart carries a legend
+  and a crosshair tooltip breaking the hovered bucket down per model (pointer or keyboard).
+  → TEST-PLAN: Admin UI.
+- **The bar lists stack by model too**, in the same colours and the same order as the charts, so one
+  hue means one model across the whole page: Runs per user (stacked by runs), Channels (all three
+  bars — runs, token cost, tokens — each stacked by its own metric), and Where usage came from
+  (stacked by cost). A channel whose cost bar is mostly one hue while its runs bar is mostly another
+  is running a few expensive turns on a pricier model, which single-hue bars could not show. The
+  ledger and the transcript scan agree on ONE key per model (`mergeModelKey`): the ledger stores
+  what the CLI reported, including a dated snapshot, while the scanners fold those onto the billing
+  id — merging them without a shared key produced two identically-labelled "Haiku 4.5" rows and
+  broke segment lookup. A CONTEXT variant (`opus[1m]`) is deliberately kept distinct: same price,
+  different configuration. → TEST-PLAN: Admin UI.
+- **Usage the gateway never launched is counted too** (`src/gateway/external-usage.js`). The same
+  two engines, on the same machine and the same billing account, are also driven by hand — a
+  terminal `claude`/`codex` in a channel's work folder, the VS Code extension, the desktop apps, and
+  SSH or VS Code sessions INSIDE a channel container. Both CLIs keep the evidence (Claude Code a
+  transcript per session, Codex a rollout per thread, each carrying model, token counts, working
+  directory and the client that drove it), so an hourly read-only scan collects it into
+  `external_usage` and the Overview shows it beside the ledger: an "Outside the gateway" KPI, a
+  "Where usage came from" breakdown (chat gateway / terminal CLI / VS Code / desktop app /
+  headless), the same per-model stacking, and a `source` filter that partitions the totals. Three
+  rules keep it honest:
+  - **Nothing is counted twice.** Whose session a transcript belongs to is decided by one
+    classifier (`sessionAttribution`). An id recorded in the ledger is proof — `usage.session_id`
+    (schema 28), the live thread bindings, and Codex's component sessions, including a subagent
+    whose parent is a gateway run. Everything else is a PLACE argument, because the places the
+    gateway runs in are ones nobody drives an engine from by hand: inside a channel container the
+    only thing that ever runs an engine headlessly is the gateway (interactive work there arrives
+    over SSH or the VS Code lease and stamps itself `cli`/`claude-vscode`), and on the host a
+    headless session whose working directory is a channel's own folder — or the gateway runtime
+    root, which is where the Claude token-relay turn lives — is a gateway run whose session row has
+    since rotated out. The residual error is a person's own scripted `claude -p` inside a channel
+    folder being read as the gateway's, which understates outside usage rather than charging the
+    operator for the gateway's own spend. Measured over the development deployment's whole history:
+    725 of 1,146 Claude transcripts and 1,085 of 1,404 Codex rollouts identified by id, 222 more
+    recovered by folder and 98 as gateway housekeeping, leaving 251 genuinely outside sessions.
+  - **All history is read, and every pass says how it attributed it.** Because the classifier does
+    not depend on session ids alone, the scan covers a machine's entire engine history rather than
+    only what happened after ids started being recorded. The scan summary and the Overview report
+    how many sessions were recognised as the gateway's own and by which evidence — the number that
+    makes the outside figure believable. `CHANNELGATE_EXTERNAL_USAGE_SINCE` limits the window for
+    an operator who wants only recent history.
+  - **How a session was driven is reported, never inferred.** `origin` comes from the client's own
+    stamp (Claude's `entrypoint`, Codex's `originator`). Outside the places the gateway runs, a
+    headless invocation is labelled `headless` rather than presented as a person at a keyboard.
+    A transcript that records no API call at all (an interrupted turn, a test fixture) is counted
+    as neither: it is not outside usage, it is not usage.
+- **One API response is charged once.** Claude Code writes one assistant record PER CONTENT BLOCK —
+  same `requestId`, same `message.id` and the same `usage` object, differing only in `uuid` and
+  `apiBlockIndex` — so summing the records bills a single request two or three times. Usage is
+  therefore counted per request. Validated against the sessions where Claude Code recorded its OWN
+  final cost (`cost-state`): counting per record overstated spend by 21% in aggregate and up to 3x
+  on one session, while counting per request reproduces Claude Code's figure to **0.000%** across
+  every self-contained session on the development machine. → TEST-PLAN: Observability.
+- **A deployment reprocesses itself.** A pass never re-reads a bookmarked transcript, which keeps
+  the hourly scan cheap — and would otherwise freeze a wrong answer in place forever. So each pass
+  compares a fingerprint of the SCANNER (`EXTERNAL_SCAN_LOGIC_VERSION`, bumped alongside any change
+  to what the scanners extract or how a session is attributed) and of the RATE tables against the
+  one it last completed. On a mismatch — or on a gateway holding rows written before this marker
+  existed, which is exactly the build whose Claude figures were up to 3x high — it forgets its
+  bookmarks once and the ordinary incremental machinery re-reads everything over the next few
+  passes, replacing each session's rows as it goes. Updating a gateway therefore restates its own
+  history with no operator step; editing a rate table does the same. The per-MODEL breakdown needs
+  no reprocessing at all: it is computed from the existing ledger at query time, so it is correct
+  the moment the new code is running. → TEST-PLAN: Observability.
+- **`npm run usage:external`** reprocesses that history on demand: `--rescan` re-reads every
+  transcript (after a rate change, a corrected channel folder, or a new scanner release),
+  `--containers` also reads channels whose container is already running, `--since` limits the
+  window, `--limit` bounds one pass. A dry run is the DEFAULT and writes nothing — it runs the real
+  write path inside a transaction it always rolls back, so the preview exercises exactly the code
+  the apply would. It reports, per scope and engine, what was read, what was attributed back to the
+  gateway and by which evidence, what was recorded as outside usage, and the resulting cost.
+  Outside work done inside a channel's folder is charged to that channel (longest folder match
+  wins); work anywhere else stays in the totals and the origin breakdown rather than being charged
+  to a conversation that never ran it. Container scopes are read through the runtime's read-only
+  `inspectUsage` — the same door `createCodexUsageReader` uses, running the byte-identical scanner
+  on the side that owns the rootless HOME volume — and ONLY for a container that is already
+  running: a usage scan never starts a container, takes a lease, or makes a turn wait behind it.
+  Scanning is incremental (an unchanged transcript is never reopened) and bounded per pass, so a
+  large backlog drains over several passes instead of blocking one. → TEST-PLAN: Observability.
+- **Per-model Claude rates** (Settings → Agent defaults): a transcript records tokens, not dollars,
+  so outside Claude usage is priced from an editable $/1M table — input, the two cache-write TTLs
+  (5m/1h), cache read and output per model, defaults verified 2026-09-23 against Anthropic's
+  pricing. Every token class is priced separately, because an agent session is mostly cache reads
+  and charging those at the base input rate would overstate it several times over; a model with no
+  rate stays explicitly unpriced instead of guessed. These rates NEVER price a gateway run — Claude
+  Code reports a real dollar cost for those, and it is used as-is. Unlike the Codex table the model
+  list is open (Anthropic ships models between gateway releases), but a row is kept only when every
+  column is a real number, so a half-filled entry can never zero out a price.
+  → TEST-PLAN: Observability.
 - Money display: smart currency formatter — whole dollars at $100+ (no "$359.3113" on totals),
   2 decimals for normal amounts, 4 for sub-dollar per-run costs.
 - App Home tab: an orientation dashboard (your access level, connections, favourite skills, channels

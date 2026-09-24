@@ -93,7 +93,8 @@ test("readDaemonClaudeAccessToken reads the RESOLVED source and never returns th
   writeOperatorCreds({ accessToken: "operator-wins" });
   const entry = relay.readDaemonClaudeAccessToken();
   assert.equal(entry.token, "operator-wins");
-  assert.deepEqual(Object.keys(entry).sort(), ["expiresAt", "token"]);
+  // The plan facts ride along for an SSH session's access-only login file; the refresh token never.
+  assert.deepEqual(Object.keys(entry).sort(), ["expiresAt", "rateLimitTier", "scopes", "subscriptionType", "token"]);
   assert.ok(!JSON.stringify(entry).includes("never-relayed"));
   assert.equal(relay.readDaemonClaudeAccessToken({ file: "" }), null);
 });

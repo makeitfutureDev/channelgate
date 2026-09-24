@@ -27,6 +27,7 @@ import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
+import { startSshBroker, stopSshBroker } from "./gateway/ssh-broker.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
 import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
@@ -34,6 +35,7 @@ import { recoverApiRuns } from "./gateway/api-runs.js";
 import { startNudgeSweep } from "./gateway/nudges.js";
 import { startClaudeLoginWatch } from "./gateway/login-watch.js";
 import { startFollowupDigest } from "./gateway/followups.js";
+import { startExternalUsageScan } from "./gateway/external-usage.js";
 import { startDriveSync, handleDriveSyncIpc } from "./gateway/drivesync.js";
 import { configDir } from "./config/paths.js";
 import { hardenRuntimeFiles, ensureAdminPasswordOnFirstBoot, isOperatorConfigured, assertRuntimeHardening } from "./config/harden.js";
@@ -136,6 +138,11 @@ async function stopRuntimeServices(reason) {
   claudeLoginWatch = null;
   try {
     await stopMcpSocketServer();
+  } catch {
+    /* best effort */
+  }
+  try {
+    await stopSshBroker();
   } catch {
     /* best effort */
   }
@@ -248,6 +255,9 @@ async function main() {
   // below (a container cannot connect before its first run, long after boot).
   const daemonHandlers = {};
   await startMcpSocketServer({ handlers: daemonHandlers, log: console });
+  // SSH access to channel containers (src/gateway/ssh-broker.js): binds its attach socket only when
+  // the root installer has set the host up, and re-checks by itself otherwise — never fails the boot.
+  await startSshBroker({ log: console });
 
   // Daemon-owned background jobs: the run_in_background MCP tool hands long shell work here; on
   // completion we re-inject a turn into the originating thread so the agent continues on its own.
@@ -348,6 +358,11 @@ async function main() {
 
   // Scheduled two-way Google Drive ↔ channel-folder sync (dormant unless enabled + configured).
   startDriveSync();
+
+  // Hourly scan for engine usage the gateway did NOT launch — a terminal/VS Code/desktop session on
+  // this host, or one inside a channel container someone SSH'd into. Read-only, deferred past boot,
+  // and it never starts a container: a stopped channel is simply picked up on a later pass.
+  startExternalUsageScan({ log: (m) => console.log(m) });
 
   // One-shot Codex usage-history maintenance. After an update introduces accounting schema v10 (which
   // marks pre-existing codex rows legacy-unverified), reconstruct per-turn + subagent usage from

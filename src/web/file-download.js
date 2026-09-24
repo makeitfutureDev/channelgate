@@ -5,11 +5,9 @@
 // and streams from an already-open, re-confined descriptor. No filesystem path or reusable session
 // credential reaches Slack or the browser.
 import crypto from "node:crypto";
-import { constants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
-import path from "node:path";
 import express from "express";
-import { normalizeRelativePath, resolveVisiblePath } from "../slack/file-explorer.js";
+import { normalizeRelativePath } from "../slack/file-explorer.js";
+import { openConfinedFile } from "../gateway/confined-file.js";
 import { logEvent } from "../util/logger.js";
 
 export const FILE_DOWNLOAD_GRANT_TTL_MS = 10 * 60_000;
@@ -31,10 +29,6 @@ function prune(now = Date.now()) {
 
 function capGrants() {
   while (grants.size >= MAX_GRANTS) grants.delete(grants.keys().next().value);
-}
-
-function isWithin(root, target) {
-  return target === root || target.startsWith(`${root}${path.sep}`);
 }
 
 export function resetFileDownloadStateForTests() {
@@ -97,33 +91,25 @@ export function createFileDownloadRouter({ authorize, audit = logEvent } = {}) {
     let stream;
     try {
       const context = await authorize(grant);
-      const target = await resolveVisiblePath(context.root, grant.relative, { kind: "file" });
+      // Lookup-then-open is a symlink race (the folder is writable by the channel's own container
+      // between the two), so the confined open is shared with every other exporter — see
+      // gateway/confined-file.js.
+      const opened = await openConfinedFile(context.root, grant.relative);
+      handle = opened.handle;
+      const info = opened.stat;
 
-      // resolveVisiblePath proves the candidate at lookup time. Opening the resolved target with
-      // O_NOFOLLOW and then checking Linux's descriptor link closes the lookup/open symlink race:
-      // the bytes being streamed must still belong to this channel's real root.
-      handle = await open(target.path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      const [openedReal, info] = await Promise.all([
-        realpath(`/proc/self/fd/${handle.fd}`),
-        handle.stat(),
-      ]);
-      if (!info.isFile() || !isWithin(target.rootReal, openedReal)) {
-        throw new Error("That file moved outside this channel's working folder.");
-      }
-
-      const name = path.basename(target.relative);
       res.set({
         "Cache-Control": "no-store, max-age=0",
         "Content-Length": String(info.size),
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
       });
-      res.attachment(name);
+      res.attachment(opened.name);
       await audit("channel_file_downloaded", {
         channel: grant.channelId,
         author: grant.ownerId,
         slug: grant.slug,
-        file: target.relative,
+        file: opened.relative,
         bytes: info.size,
       });
 

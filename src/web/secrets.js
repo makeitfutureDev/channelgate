@@ -40,9 +40,13 @@ const READERS = {
     // host). Same terms as the Slack tokens: listings carry has*/last4 only, and an admin who needs
     // the value back re-enters the admin password here.
     containerClaudeOauthToken: (s) => s.containerClaudeOauthToken,
-    // The QwenCloud API key the opt-in `qwen` harness authenticates with. Same terms as the rest:
-    // has*/last4 on listings, the value only here, behind a re-entered admin password.
+    // The provider API keys the opt-in Qwen harnesses authenticate with (src/engines/qwen.js).
+    // Same terms as the rest: has*/last4 on listings, the value only here, behind a re-entered
+    // admin password. Listed BY HAND, one line per provider, rather than generated from the table:
+    // this allowlist is what stops the reveal endpoint becoming "read any config key", and that
+    // guarantee should survive someone adding a field to the table without reading this file.
     qwenApiKey: (s) => s.qwenApiKey,
+    qwenEuApiKey: (s) => s.qwenEuApiKey,
   },
   user: {
     composioToken: (u) => u.composioToken,

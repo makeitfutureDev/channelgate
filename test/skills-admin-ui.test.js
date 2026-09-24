@@ -31,7 +31,7 @@ test("templates and usage expose searchable selection and understandable views",
   assert.doesNotMatch(js, /Explicit skills \(comma-separated slugs\)/);
   assert.match(js, /data-view="skill"/);
   assert.match(js, /data-view="channel"/);
-  assert.match(js, /id="usage-q"/);
+  assert.match(js, /searchBox\("usage-q"/);
   assert.doesNotMatch(js, /Whole categories/);
   assert.doesNotMatch(js, /Assign a template to a conversation/);
   assert.match(js, /<th>Usage<\/th>/);
@@ -68,4 +68,32 @@ test("catalog filters keep owner and expose governance plus assignment states", 
 test("what the admin JS hides with the hidden property is actually hidden", () => {
   assert.match(js, /querySelectorAll\("\[data-source-kind\]"\)\) field\.hidden = /);
   assert.match(css, /\.field\[hidden\] \{ display: none; \}/);
+});
+
+// A search box used to filter per keystroke, and filtering re-rendered the whole panel — the
+// replacement input came back focused at offset 0, so typing a query scattered its characters.
+// Searching is now a deliberate act (Enter, the Search button, or clearing the box), and any
+// render that does happen under a focused field restores the caret.
+test("skills searches commit on Enter or the Search button, never per keystroke", () => {
+  assert.match(js, /const SEARCH_BOXES = Object\.freeze\(\{/);
+  for (const id of ["skills-q", "source-skills-q", "usage-q"]) {
+    assert.match(js, new RegExp(`"${id}": \\{ draft:`), `${id} keeps a draft separate from the committed query`);
+    assert.match(js, new RegExp(`searchBox\\("${id}"`), `${id} renders through the shared search box`);
+  }
+  assert.match(js, /data-action="search" data-search="\$\{id\}"/);
+  assert.match(js, /if \(action === "search"\) \{\n\s+await commitSearch\(el\.dataset\.search\);/);
+  // Typing records the draft and nothing else: no render, so no caret to lose.
+  assert.match(js, /state\[box\.draft\] = event\.target\.value;\n\s+markSearchPending\(event\.target\.id\);/);
+  assert.doesNotMatch(js, /state\.sourceQuery = event\.target\.value;/);
+  assert.doesNotMatch(js, /state\.usageQuery = event\.target\.value;/);
+  // Enter and Escape commit; the browser's own × on input[type=search] does too.
+  assert.match(js, /event\.key !== "Enter" && event\.key !== "Escape"/);
+  assert.match(js, /root\.addEventListener\("search"/);
+  // Blur does not search: skills-q is no longer in the change-triggered filter list.
+  assert.doesNotMatch(js, /\["skills-q", "skills-owner"/);
+  // And every render puts the caret back where the reader left it.
+  assert.match(js, /const focused = captureFocus\(\);\n\s+body\(\)\.innerHTML = /);
+  assert.match(js, /restoreFocus\(focused\);/);
+  assert.match(js, /el\.setSelectionRange\(Math\.min\(snapshot\.start, limit\)/);
+  assert.match(css, /\.skills-toolbar \.skills-search-go\.pending \{/);
 });
