@@ -6,6 +6,14 @@
 > CI passed on the exact candidate and a live smoke ran for Claude and Qwen. The owner released it
 > without Codex live acceptance (the Codex account was usage-limited until 2026-09-24) and without
 > the full live campaign; both remain open for the next release, see RELEASE-ACCEPTANCE.md.
+> 0.5.4 was published on 2026-09-24 by explicit owner decision after the full automated gate and
+> CI passed on the exact candidate. It carries one change on top of 0.5.3: Claude Opus 5.5 and
+> GPT-6 Sol / Luna reach the gateway (Claude Code `2.1.281`, Codex CLI `0.156.1`, the Codex rate
+> table). No live campaign ran; the owner is testing it on the deployment. Before the owner made
+> GPT-6 Sol the deployment's default Codex model, a one-prompt Codex smoke on `gpt-6-sol` through
+> the `0.156.1` CLI passed on Xavier. The image pins changed, so every other host must run
+> `npm run build:image` before restarting — the daemon fails a run closed on a stale image.
+> Everything 0.5.3 left open stays open.
 > 0.5.3 was published on 2026-09-24 by explicit owner decision after the full automated gate and
 > CI passed on the exact candidate and a live Claude campaign ran on Xavier through the QA actors
 > (Apps, Contact) in the `cg-qa` fixtures, recorded in TEST-PLAN.md → "0.5.3 live acceptance". Codex

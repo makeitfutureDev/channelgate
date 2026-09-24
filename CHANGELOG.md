@@ -16,7 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## 0.5.4 — 2026-09-24
 
 - Claude Opus 5.5 and GPT-6 Sol / GPT-6 Luna reach the gateway. The image pins move to Claude Code
   `2.1.281` (2.1.280 added `claude-opus-5-5` and made it the default Opus) and Codex CLI `0.156.1`
