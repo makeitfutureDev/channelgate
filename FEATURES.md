@@ -1399,8 +1399,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   round-trips it, while an other-engine leftover is dropped. The Claude list includes Fable 5 as
   `claude-fable-5`; Fable is not offered as a GPT/Codex model. Settings also provides a confirmed,
   admin-only reset that clears every channel's engine/model overrides so new threads inherit these
-  gateway defaults again; DMs, existing thread-owned sessions, effort, access, tools, and tokens
-  are untouched. → TEST-PLAN: Engines.
+  gateway defaults again; DMs, existing thread-owned sessions, channel effort, access, tools, and
+  tokens are untouched. The confirmation asks for the scope, because channel meta only decides what
+  a NEW thread inherits: **Channels only** (the default) leaves every hand-pinned thread on its own
+  harness/model, while **Channels + threads** additionally deletes the per-thread `engine`, `model`
+  and `effort` pins (`/model` → "just this thread", a `claude`/`codex` directive) for those same
+  channels and reports how many were cleared. Per-thread `clean` and `sudo` postures and DM threads
+  are out of scope for both. → TEST-PLAN: Engines.
  - A thread/channel/per-run Codex model that the provider explicitly rejects before generation
    retries once with that harness's distinct gateway-default model — Codex (`invalid_request_error`) and Claude (`model_not_found`) alike. The runner must prove there was no output
    or tool attempt; generic failures and partially executed turns are never replayed. Slack status,

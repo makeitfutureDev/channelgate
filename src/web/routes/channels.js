@@ -62,6 +62,7 @@ import { ADMIN_UI_ACTOR, logChannelPolicyChange } from "../../config/channel-aud
 import { stripDeadFields } from "../../config/dead-fields.js";
 import { cliEnvKeys, cliIntegrationIds } from "../../config/cli-catalog.js";
 import { getChannelVpnStatus, setChannelVpnEnabled } from "../../gateway/channel-vpn-control.js";
+import { clearThreadRuntimeOverrides } from "../../gateway/thread-engine.js";
 import { isAuthenticated } from "../auth.js";
 
 const WEB_ADMIN_ACTOR = "admin UI";
@@ -526,8 +527,15 @@ export function createChannelsRouter({
   // runtime again. DMs are deliberately skipped: this action says channels, and their runtime is
   // governed separately by the User/Admin DM templates. Only these two fields change; effort,
   // capabilities, access, tools and credentials are preserved. Audit-logged.
-  router.post("/channels/reset-runtime", async (_req, res, next) => {
+  //
+  // `includeThreads` widens the same reset to the threads that already exist. Channel meta only
+  // decides what a NEW thread inherits, so without it a thread someone pinned by hand (`/model` →
+  // "just this thread", or a `claude`/`codex` directive) keeps its own engine/model/effort after
+  // the reset and looks like the reset did nothing. The UI asks which of the two scopes the
+  // operator means; the narrow one stays the default so the wider blast radius is always a choice.
+  router.post("/channels/reset-runtime", async (req, res, next) => {
     try {
+      const includeThreads = Boolean(req.body?.includeThreads);
       const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im");
       let reset = 0;
       for (const ch of channels) {
@@ -537,8 +545,10 @@ export function createChannelsRouter({
         });
         if (patched) reset++;
       }
-      await logEvent("channels_runtime_reset", { count: reset });
-      res.json({ ok: true, count: reset });
+      // Same set of channels as above, so a DM's thread pins survive exactly as its meta does.
+      const threads = includeThreads ? await clearThreadRuntimeOverrides(channels.map((c) => c.slug)) : 0;
+      await logEvent("channels_runtime_reset", { count: reset, includeThreads, threads });
+      res.json({ ok: true, count: reset, threads });
     } catch (e) {
       next(e);
     }
