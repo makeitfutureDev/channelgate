@@ -99,10 +99,36 @@ command "show SSH access" prints: `code --remote ssh-remote+acme-app <channel fo
 Inside, you are user `agent` in the channel's work folder (an interactive login starts there;
 image spec 1.5.1), with the same environment an engine turn gets and the channel's persistent
 `/home/agent` (installed tools, `gh`/`vercel`/`supabase` logins, Claude and Codex history).
-`claude` uses the gateway's relayed operator login (refreshed every 20 minutes while a session is
-open, the same relay as `npm run vscode`); Codex uses the shared sign-in mount. Everyone in a
-container is that one `agent` user: set your git identity per session, and expect to see other
-sessions' processes. A daemon restart drops brokered sessions — reconnect.
+Codex uses the shared sign-in mount. Everyone in a container is that one `agent` user: set your
+git identity per session, and expect to see other sessions' processes. A daemon restart drops
+brokered sessions — reconnect.
+
+### `claude` in a session is a chat turn's Claude
+
+Before your shell starts, the daemon prepares the session the way it prepares a turn in that
+channel, and refreshes it every 20 minutes while any session is open:
+
+- **The channel's tool policy and MCP allowlist** — the same lockdown file every turn runs with.
+- **The same MCP servers a turn gets:** the gateway's control tools (memory, schedules, skills,
+  channel settings, the bot's Slack tools; not the background-job, progress and approval-card
+  tools, which speak into a thread a session does not have), `composio-user` for YOUR connected
+  accounts, `composio-agent` for the channel's, the toolboxes and the channel's selected catalog
+  servers — and nothing else (`--strict-mcp-config`): the operator's own claude.ai connectors
+  are not loaded.
+- **The run environment:** the organization's, your own and the channel's secrets, by the names a
+  turn is told about, sourced by the `claude` wrapper so Claude's tools have them. Your shell can
+  read them too (`env`), exactly as a turn's process can read its own.
+- **The gateway's Claude login, shown as the account it is:** `/status` says "Claude Max
+  account" with the operator's organization and email, `/usage` shows the plan's windows, and the
+  default model is the plan's. It is the operator's login (the same one every turn uses): your
+  session's usage counts against it. Claude reads the login from an access-only file the daemon
+  writes and refreshes; it holds no refresh token and is removed when the channel's last session
+  ends. `claude -r <session id>` resumes a thread's own session.
+
+Codex over SSH is unchanged (its login is the shared sign-in mount). "show SSH access" in the
+channel prints what a session gets. If a part could not be prepared — no Claude login on the
+host, a channel whose Composio session is unavailable — the attach still succeeds and the daemon
+log names the part.
 
 ## What the daemon checks on every connection
 
@@ -136,10 +162,18 @@ ended); `show_channel_ssh` lists the live ones.
   container with a live session, and a container rebuild waits for the session like it waits for
   a run. `ClientAlive` inside the container reaps a dead TCP peer in about three minutes, so a
   laptop that vanished cannot pin a container forever.
-- **Channel secrets are not in the session's environment** — they ride each run's private
-  env-file — but a shell shares the container with live runs and can read a running turn's
-  `/proc/<pid>/environ`, the channel's CLI logins in `/home/agent`, the Codex sign-in mount and
-  the Claude relay token file. Grant SSH as you would grant a login to the project box.
+- **A session has the channel's secrets and MCP tokens, like a turn does.** They sit in
+  per-developer files under the channel's artifact dir (`ssh/users/<id>/`), selected by the
+  `CG_SSH_USER` name sshd sets from the developer's own key line and admits nothing else for. The
+  files are per developer for correctness — your `composio-user` is yours — not for secrecy from
+  each other: everyone in the box is one uid, a shell can read a running turn's
+  `/proc/<pid>/environ`, the CLI logins in `/home/agent`, the Codex sign-in mount and the Claude
+  login file anyway. Grant SSH as you would grant a login to the project box.
+- **The Claude login file holds no refresh token.** It cannot rotate the operator's session or
+  sign the host out; it expires with the access token and is rewritten by the 20-minute refresh.
+- **Claude never self-updates inside a channel** (`DISABLE_AUTOUPDATER=1` on every container): a
+  copy it once installed into `~/.npm-global/bin` — first on the image PATH — had replaced the
+  pinned CLI for every turn in that channel and shadowed the login wrapper.
 - **Agent forwarding is off** inside the container: every session is the same uid, so a forwarded
   agent would be usable by anyone else in the box.
 

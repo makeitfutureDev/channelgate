@@ -82,13 +82,19 @@ function fakeChild() {
   children.push(child);
   return child;
 }
-const relays = [];
+// What the broker prepares for a session (gateway/ssh-session.js), and when it lets it go.
+const prepared = [];
+const released = [];
 const deps = {
   resolveTarget,
   spawnExec: (target, cliBin) => { const child = fakeChild(); child.spawnedWith = { target, cliBin }; return child; },
   cliBin: async () => "/usr/bin/podman",
   containerEnv: async () => ["PATH=/home/agent/.local/bin:/usr/bin:/bin", "CLAUDE_CONFIG_DIR=/home/agent/.claude", "HOME=/home/agent", "HOSTNAME=abc123", "container=podman"],
-  installRelay: async (target) => { relays.push(target.slug); return { source: "operator", expiresAt: 0 }; },
+  prepareSession: async ({ target, user, meta, cliBin }) => {
+    prepared.push({ slug: target.slug, user: user.id, cliBin, clean: Boolean(meta?.cleanMode) });
+    return { claude: { relayed: true, source: "operator", reason: "", account: true }, toolset: "ssh", mcpServers: ["gateway", "composio-user"], secrets: ["GITHUB_PAT"], rejectedMcps: [], problems: [] };
+  },
+  releaseSession: async ({ target, user, lastForUser, lastInChannel }) => { released.push({ slug: target.slug, user: user.id, lastForUser, lastInChannel }); },
 };
 const authorizeOptions = { settings: { fullAccessHome: false }, resolveMeta: async (e) => e.meta || (await getChannelMeta(e.slug)) };
 
@@ -135,7 +141,8 @@ test("a granted developer's connection is authorized, leased, prepared, relayed 
   assert.equal(line.ok, true, JSON.stringify(line));
   assert.equal(line.channel, entry.slug);
   assert.equal(line.container, `cg-${entry.slug}`);
-  assert.deepEqual(line.claude, { relayed: true, source: "operator", reason: "" });
+  assert.deepEqual(line.claude, { relayed: true, source: "operator", reason: "", account: true });
+  assert.deepEqual({ mcp: line.mcp, secrets: line.secrets, toolset: line.toolset }, { mcp: ["gateway", "composio-user"], secrets: ["GITHUB_PAT"], toolset: "ssh" }, "the status line says what the session got");
   assert.equal(rest.length, 0, "nothing rides behind the status line before the client speaks");
   // Prepared: files for every granted key, relay installed, exec spawned with our lease excluded from "others inside".
   const sshDir = path.join(ARTIFACTS, entry.slug, "ssh");
@@ -146,7 +153,7 @@ test("a granted developer's connection is authorized, leased, prepared, relayed 
   // ignores every later one), the channel folder as CG_WORKDIR, nothing sshd owns per session.
   const setEnv = readFileSync(path.join(sshDir, "sshd_config"), "utf8").split("\n").filter((l) => l.startsWith("SetEnv"));
   assert.deepEqual(setEnv, [`SetEnv "CG_WORKDIR=/work/${entry.slug}" "CLAUDE_CONFIG_DIR=/home/agent/.claude" "PATH=/home/agent/.local/bin:/usr/bin:/bin"`]);
-  assert.deepEqual(relays, [entry.slug]);
+  assert.deepEqual(prepared, [{ slug: entry.slug, user: DEV, cliBin: "/usr/bin/podman", clean: false }], "prepared once, for THIS developer, before sshd is spawned");
   assert.equal(ensured.at(-1).name, `cg-${entry.slug}`);
   assert.match(ensured.at(-1).leaseId, /^ssh:/, "ensureUp is told about the session's own lease so a rebuild is never deferred by it");
   const child = children.at(-1);
@@ -175,9 +182,33 @@ test("a granted developer's connection is authorized, leased, prepared, relayed 
   assert.equal(access.listSshSessions({ slug: entry.slug }).length, 0);
   assert.equal(access.listSshSessions({ slug: entry.slug, live: false })[0].endReason, "client disconnected");
   assert.equal(broker.liveSshSessions().length, 0);
+  assert.deepEqual(released.at(-1), { slug: entry.slug, user: DEV, lastForUser: true, lastInChannel: true }, "the only session's end releases the developer's files AND the channel's login file");
   clock += 11 * 60_000;
   assert.deepEqual(await reaper.tick(), [`cg-${entry.slug}`]);
   assert.ok(readEvents({ limit: 20 }).some((e) => e.event === "ssh_session_end" && e.slug === entry.slug));
+});
+
+test("two sessions of one developer share their files; the first hang-up keeps them, the last releases the login; the session is re-prepared on the refresh tick", async () => {
+  await broker.stopSshBroker();
+  const state = await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, relayRefreshMs: 40, deps, authorizeOptions });
+  assert.ok(state.server);
+  prepared.length = 0;
+  released.length = 0;
+  const a = await attach({ v: 1, key: ED25519, channel: entry.slug, client: "laptop" });
+  const b = await attach({ v: 1, key: ED25519, channel: entry.slug, client: "vscode" });
+  assert.equal(a.line.ok && b.line.ok, true);
+  assert.equal(prepared.filter((p) => p.user === DEV).length >= 2, true, "each attach prepares (idempotent) before its sshd starts");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.ok(prepared.length >= 4, `the refresh tick re-prepares while sessions are open (got ${prepared.length})`);
+  a.socket.end();
+  await settle();
+  assert.deepEqual(released.at(-1), { slug: entry.slug, user: DEV, lastForUser: false, lastInChannel: false }, "the developer's other session still needs the files");
+  b.socket.end();
+  await settle();
+  assert.deepEqual(released.at(-1), { slug: entry.slug, user: DEV, lastForUser: true, lastInChannel: true });
+  assert.equal(reaper.leaseCount(`cg-${entry.slug}`), 0);
+  await broker.stopSshBroker();
+  await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, deps, authorizeOptions });
 });
 
 test("refusals name the remedy and leave no lease, no session and no exec behind", async () => {

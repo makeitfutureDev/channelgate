@@ -166,7 +166,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   `channel_instructions`) that never expire and re-post after a restart, and signed single-use
   browser links (`/approve/<token>`: GET decides nothing, POST decides exactly once and re-checks
   authority) for surfaces without Block Kit and for automation.
-- `src/gateway/ssh-access.js` + `ssh-broker.js` + `src/mcp/tools/ssh-access.js` — SSH access to
+- `src/gateway/ssh-access.js` + `ssh-broker.js` + `ssh-session.js` + `src/mcp/tools/ssh-access.js` — SSH access to
   channel containers (`docs/SSH-ACCESS.md`): the per-person key registry (`ssh_keys`), the
   per-channel `sshUsers` grant list, the host `authorized_keys` export (every line
   `restrict,command=`), the in-container sshd files, the session records (`ssh_sessions`), and the
@@ -461,7 +461,14 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   in. A run receives a RELAY of the resolved login's ACCESS token instead, gateway-owned and
   applied last in the child env so a channel secret cannot displace it. A turn with no resolvable
   login fails closed with the remedy named; it never runs on a guessed credential. A new consumer
-  asks the resolver; it never adds a second notion of "the login".
+  asks the resolver; it never adds a second notion of "the login". The ONE login file the gateway
+  writes is an interactive SSH session's (`src/gateway/ssh-session.js`): an ACCESS-ONLY
+  `.credentials.json` in the channel's config dir — the relayed token, its expiry and plan facts,
+  never a refresh token, so it can rotate nothing — plus the operator's account record, both
+  written through the relay, refreshed with it, and removed when the channel's last session ends.
+  Claude Code labels a token in the environment "Claude API" and hides the plan, the usage windows
+  and the plan's default model; only a file login shows them, which is what a developer in a
+  terminal needs to see.
 - **Only admins get `--dangerously-skip-permissions`**, and only in an Admin-mode channel.
   Everyone else runs with the folder's `permissions.allow` allowlist and answers tool requests
   through the `permission_prompt` approval card (or Auto mode); headless can't answer interactive

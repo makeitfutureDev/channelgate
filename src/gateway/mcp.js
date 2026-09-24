@@ -110,7 +110,7 @@ export function composioIdentityPreamble({ user = false, agent = false } = {}) {
   return "";
 }
 
-export async function buildMcpConfig({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null } = {}) {
+export async function buildMcpConfig({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
   // Identity claim — fail closed on garbage instead of silently signing as Claude.
   const normalizedEngine = requireAdapter(engine || "claude").id;
   const gatewayCapability = mintGatewayCapability({
@@ -130,6 +130,7 @@ export async function buildMcpConfig({ composioUserEndpoint = null, composioEndp
     // its own to read these from (src/mcp/socket-server.js).
     toolset,
     progressReport,
+    ...(ttlMs ? { ttlMs } : {}),
   });
   // Fail closed on an unknown capability key; a target that is absent or host-backed is today's path.
   const isolated = target && runtimeSupports(target, "isolated") ? target : null;

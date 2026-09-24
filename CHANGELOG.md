@@ -18,6 +18,23 @@ product overview.
 
 ## Unreleased
 
+- Make `claude` over SSH the same Claude a Slack turn runs. A session had no MCP servers, no
+  channel secrets and a login labelled "Claude API" with no usage shown, while a turn in the same
+  channel had all of it. Now, before your shell starts, the gateway prepares the session like a
+  turn: the channel's tool policy and MCP allowlist, the gateway tools, `composio-user` for your
+  own connected accounts, `composio-agent` for the channel's, the channel's selected MCP servers
+  and its secrets by name — and nothing else, so the operator's own claude.ai connectors never
+  load. Claude reads the gateway's login from an access-only file (no refresh token, removed when
+  the channel's last session ends) and shows it as the account it is: "Claude Max account", the
+  organization, the usage windows and the plan's default model. Everything is refreshed every 20
+  minutes while a session is open; "show SSH access" says what a session gets.
+
+- Stop Claude Code updating itself inside a channel. Its interactive updater had installed a
+  newer copy into the channel's `~/.npm-global/bin`, which is first on the image PATH — so that
+  copy silently replaced the pinned CLI for every turn in the channel and hid the gateway's login
+  wrapper (the real reason one channel's `claude` still asked to log in after the onboarding
+  fix). Every container now runs with `DISABLE_AUTOUPDATER=1`.
+
 - Open interactive Claude signed in over SSH and VS Code. Connecting to a channel's container
   worked and `claude -p` answered, but plain `claude` opened the first-run theme picker and a
   login screen, so it looked signed out. Headless engine turns never finish Claude's onboarding,

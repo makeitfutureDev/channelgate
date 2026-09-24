@@ -212,5 +212,10 @@ export function containerEnvDefaults(target) {
     CG_RUNTIME: "container",
     CG_CHANNEL: String(target?.slug || ""),
     CG_PLATFORM: String(target?.platform || ""),
+    // The image pins the engines (containers/versions.json). Claude Code's interactive updater
+    // installs a newer copy into the npm prefix — ~/.npm-global/bin, FIRST on the image PATH — so
+    // one developer's `claude` over SSH silently replaced the pinned CLI for every turn in that
+    // channel and shadowed the gateway's login wrapper (2026-09-24). Off, everywhere, for good.
+    DISABLE_AUTOUPDATER: "1",
   };
 }

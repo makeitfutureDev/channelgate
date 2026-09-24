@@ -27,7 +27,7 @@ import { logEvent } from "../util/logger.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { cliEnv, defaultExec } from "../runtimes/container/cli.js";
 import { containerRuntimeStatus } from "../runtimes/container/index.js";
-import { installVscodeClaudeRelay } from "../runtimes/container/vscode.js";
+import { prepareSshSession, releaseSshSession } from "./ssh-session.js";
 import {
   closeOrphanSshSessions, closeSshSession, containerSshDir, exportHostAuthorizedKeys, findSshKeyByFingerprint, findSshKeyById,
   containerSessionEnv, keysForUsers, materializeContainerSshFiles, openSshSession, parsePublicKey, sshAccessState, sshBlockedByHomeGrant, sshUsersOf, touchSshKey,
@@ -150,6 +150,17 @@ async function runSession(socket, header, leftover, state) {
   }
   const { key, user, entry, meta } = auth;
   const id = randomUUID();
+  // How many live sessions this developer, and this channel, have: the session files are per
+  // developer and the login file per channel, and each goes when its last session ends.
+  const userKey = `${entry.slug}\u0000${user.id}`;
+  const counts = state.counts;
+  let counted = false;
+  const count = (delta) => {
+    counts.users.set(userKey, (counts.users.get(userKey) || 0) + delta);
+    counts.channels.set(entry.slug, (counts.channels.get(entry.slug) || 0) + delta);
+    if ((counts.users.get(userKey) || 0) <= 0) counts.users.delete(userKey);
+    if ((counts.channels.get(entry.slug) || 0) <= 0) counts.channels.delete(entry.slug);
+  };
   const target = deps.resolveTarget(entry.slug, meta);
   if (!target?.container?.name) {
     writeLine(socket, { ok: false, error: "this channel does not run in a container" });
@@ -167,12 +178,20 @@ async function runSession(socket, header, leftover, state) {
   let child = null;
   let timer = null;
   let done = false;
+  let cliBin = "";
   const stderrTail = [];
   const finish = async (reason) => {
     if (done) return;
     done = true;
     if (timer) clearInterval(timer);
     state.sessions.delete(id);
+    if (counted) {
+      count(-1);
+      const lastForUser = !counts.users.has(userKey);
+      const lastInChannel = !counts.channels.has(entry.slug);
+      try { await deps.releaseSession({ target, entry, user, cliBin, lastForUser, lastInChannel, log }); }
+      catch (error) { log.warn?.(`[ssh] session files for ${entry.slug}/${user.id} not released: ${error?.message || error}`); }
+    }
     lease.release();
     closeSshSession(id, { reason });
     try { socket.destroy(); } catch { /* already gone */ }
@@ -189,16 +208,21 @@ async function runSession(socket, header, leftover, state) {
   try {
     await target.runtime.ensureUp(target, { announce() {}, lease });
     const keys = await keysForUsers(sshUsersOf(meta));
-    const cliBin = await deps.cliBin(target);
+    cliBin = await deps.cliBin(target);
     let containerEnv = [];
     try { containerEnv = await deps.containerEnv(target, cliBin); }
     catch (error) { log.warn?.(`[ssh] container environment for ${entry.slug}: ${error?.message || error} — the session starts with sshd's own`); }
     materializeContainerSshFiles(target, keys, { env: containerSessionEnv(containerEnv, target) });
+    // What the session gets — prepared like a turn (ssh-session.js) and refreshed while it is open,
+    // so the relayed login, the signed capability and a rotated secret stay current.
     let claude = { relayed: false, reason: "" };
+    let prepared = { mcpServers: [], secrets: [], rejectedMcps: [], problems: [], toolset: "" };
+    count(1);
+    counted = true;
     const refresh = async () => {
       try {
-        const relay = await deps.installRelay(target, cliBin);
-        claude = { relayed: true, source: relay?.source || "", reason: "" };
+        prepared = await deps.prepareSession({ target, entry, meta, user, cliBin, log });
+        claude = prepared.claude || { relayed: true, source: "", reason: "" };
       } catch (error) {
         claude = { relayed: false, reason: String(error?.message || error) };
         log.warn?.(`[ssh] Claude relay for ${entry.slug}: ${claude.reason}`);
@@ -216,7 +240,10 @@ async function runSession(socket, header, leftover, state) {
     child.once("exit", (code, signal) => { void finish(`sshd exited (${signal || code})`); });
     socket.once("close", () => { void finish("client disconnected"); });
     socket.once("error", () => { void finish("client connection error"); });
-    writeLine(socket, { ok: true, session: id, channel: entry.slug, container: target.container.name, claude });
+    writeLine(socket, {
+      ok: true, session: id, channel: entry.slug, container: target.container.name, claude,
+      mcp: prepared.mcpServers || [], secrets: prepared.secrets || [], toolset: prepared.toolset || "", problems: prepared.problems || [],
+    });
     if (leftover?.length) child.stdin.write(leftover);
     socket.pipe(child.stdin);
     child.stdout.pipe(socket);
@@ -224,7 +251,10 @@ async function runSession(socket, header, leftover, state) {
     timer = setInterval(() => { void refresh(); }, state.relayRefreshMs);
     timer.unref?.();
     log.log?.(`[ssh] session ${id.slice(0, 8)}: ${user.id} → ${entry.slug} (${target.container.name})${client ? ` from ${client}` : ""}`);
-    await logEvent("ssh_session_start", { slug: entry.slug, channel: entry.channelId, author: user.id, session: id, fingerprint: key.fingerprint, client, claudeRelayed: claude.relayed });
+    await logEvent("ssh_session_start", {
+      slug: entry.slug, channel: entry.channelId, author: user.id, session: id, fingerprint: key.fingerprint, client,
+      claudeRelayed: claude.relayed, claudeAccount: Boolean(claude.account), mcp: prepared.mcpServers || [], secrets: prepared.secrets || [], problems: prepared.problems || [],
+    });
   } catch (error) {
     writeLine(socket, { ok: false, error: `could not attach: ${String(error?.message || error)}` });
     await finish(`failed: ${String(error?.message || error).slice(0, 200)}`);
@@ -328,12 +358,14 @@ export async function startSshBroker({ dir = sshAccessDir(), log = console, retr
     active = {
       server: null, dir, path: path.join(dir, SSH_ATTACH_SOCKET), sessions: new Map(), log, retryTimer: null, warned: false, warnedOwner: false, conns: new Set(),
       relayRefreshMs, headerTimeoutMs,
+      counts: { users: new Map(), channels: new Map() },
       deps: {
         authorize: (header) => authorizeSshAttach(header, overrides.authorizeOptions || {}),
         resolveTarget: resolveRuntime,
         cliBin: defaultCliBin,
         containerEnv: defaultContainerEnv,
-        installRelay: (target, cliBin) => installVscodeClaudeRelay(target, cliBin),
+        prepareSession: (session) => prepareSshSession(session),
+        releaseSession: (session) => releaseSshSession(session),
         spawnExec: defaultSpawnExec,
         ...(overrides.deps || {}),
       },
