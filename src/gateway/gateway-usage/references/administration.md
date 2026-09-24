@@ -354,10 +354,11 @@ was created from alive. A full disk takes the daemon, its database and every cha
 so check before it gets there.
 
 **Never delete anything automatically.** Report what you found and what it would free, then let an
-admin decide. And never *recommend* a blanket prune either: `podman system prune`
-(with or without `--volumes`), `podman volume prune` and `podman image prune -a` look like the
-routine fix, but they delete every channel HOME volume whose container happens to be stopped or
-gone — its engine sessions, CLI logins and installed tools, unrecoverably. The safe path is always
+admin decide. And never *recommend* a blanket prune either: `podman system prune` (`-a`,
+`--volumes`), `podman system reset`, `podman volume prune`, `podman image prune -a` and
+`docker system prune` look like the routine fix, but between them they can delete the HOME volume
+of any channel whose container is stopped or gone — its engine sessions, CLI logins and installed
+tools, unrecoverably — and the runtime image every channel needs. The safe path is always
 `npm run runtime:storage`, which knows which volumes are channel homes. Removal happens only on an explicit request or from a schedule an admin set up — not
 as a tidy-up you decided was helpful.
 

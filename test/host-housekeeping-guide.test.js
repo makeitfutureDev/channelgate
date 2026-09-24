@@ -73,7 +73,10 @@ test("the guide sends the agent to the gateway's own report first, and to --appl
 // and then RECOMMENDED `podman system prune -a --volumes`, which deletes every stopped channel's
 // HOME volume. "Never delete on your own" did not stop it suggesting the command. The row it does
 // read must forbid the commands by name and point at the safe report.
-test("the always-loaded routing row forbids suggesting a blanket prune and names the safe report", async () => {
+// The routing row is only read when a run opens the skill. The same rule therefore also lives in
+// the managed CLAUDE.md block's hard rules (test/folders-generator-paths.test.js), which every run
+// of every engine loads — the row alone did not stop a run that never opened the skill (OPS-DISK-01).
+test("the skill's routing row forbids suggesting a blanket prune and names the safe report", async () => {
   const cwd = tempDir("cg-housekeeping-prune-");
   try {
     for (const platform of ["slack", "msteams", "googlechat"]) {
@@ -81,8 +84,12 @@ test("the always-loaded routing row forbids suggesting a blanket prune and names
       const skill = await readFile(guidePath(cwd, "SKILL.md"), "utf8");
       const row = skill.split("\n").find((line) => line.startsWith("| Check disk space"));
       assert.ok(row, `${platform}: the routing row exists`);
-      assert.match(row, /Never run or suggest `podman system prune`, `podman volume prune` or `podman image prune -a`/, platform);
-      assert.match(row, /delete channel HOME volumes/, platform);
+      for (const command of ["podman system prune", "podman system reset", "podman volume prune", "podman image prune -a", "docker system prune"]) {
+        assert.ok(row.includes(`\`${command}\``), `${platform}: ${command}`);
+      }
+      assert.match(row, /Never run or suggest/, platform);
+      // The same TRUE consequence as the hard rule (not every command touches volumes).
+      assert.match(row, /can delete channel HOME volumes .* or the runtime image/, platform);
       assert.match(row, /npm run runtime:storage/, platform);
     }
   } finally { await rm(cwd, { recursive: true, force: true }); }

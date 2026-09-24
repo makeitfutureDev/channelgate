@@ -2880,10 +2880,18 @@ are retired, bullet by bullet; everything else stands.
   rather than by reading the shared identity that holds other people's accounts (and the mirror:
   "your X" never touches `composio-user`); that `COMPOSIO_MANAGE_CONNECTIONS` initiates connections
   rather than listing them; and that only the gateway's `run_in_background` /
-  `run_agent_in_background` / `create_schedule` can report back after a turn ends — stated here
+  `run_agent_in_background` / `create_schedule` can report back after a turn ends; and that no run
+  runs or recommends `podman system prune`/`reset`, `podman image prune -a`, `podman volume prune`
+  or `docker system prune`, each of which can delete channel homes or the runtime image — disk
+  cleanup goes through `npm run runtime:storage`, with `-- --apply` only when an admin asks — stated here
   because a skill body is read only when the model opens it, and one engine reliably did not
-  (retest, 2026-09-06). They ride clean mode too, are engine-neutral,
-  and stay under 4 KB with the switches so the always-on prompt weight is read rather than skimmed. Editable three ways: the admin UI Instructions tab (edits the real
+  (retest, 2026-09-06; the prune rule after a 2026-09-25 run that skipped the skill and recommended
+  both prunes). They ride clean mode too, are engine-neutral,
+  and stay under 4 KB with the switches so the always-on prompt weight is read rather than skimmed
+  (4,085 bytes in the measured configuration after the prune rule — the header note, the rules'
+  intro and the network line were tightened to make room; the longest switch combination, Admin +
+  Auto with Lean off, is 4,120 bytes, down from 4,126 before, and a test stops it growing. The next
+  always-on rule has to trade space for it). Editable three ways: the admin UI Instructions tab (edits the real
   file; managed block shown read-only with a Settings link; hash-guarded against concurrent
   writes), by hand, or by asking the agent — the `update_channel_instructions` gateway MCP tool
   appends a rule in any mode (replace = admin-only). New sessions and `/clear` pick the file up

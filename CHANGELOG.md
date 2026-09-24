@@ -33,6 +33,12 @@ product overview.
   the host, which the gateway would then have read and uploaded. Found by review during the
   2026-09-25 QA campaign. The tool first shipped in 0.5.3, and on a gateway using consumer keys (the
   default) no stage could complete before this release, so the gap could not have been used there.
+- The assistant no longer suggests a blanket container prune when asked about disk space. The
+  rule against `podman system prune`/`reset`, `podman image prune -a`, `podman volume prune` and
+  `docker system prune` lived only in the operating guide, and a run that answered without opening
+  the guide recommended two of them — on this host they can delete channel homes or the runtime
+  image. The rule now sits among the few hard rules every run of every engine reads, pointing at
+  `npm run runtime:storage` (removal only with `-- --apply` when an admin asks).
 
 ## 0.5.5 — 2026-09-24
 
