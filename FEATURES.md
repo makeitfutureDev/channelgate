@@ -1398,9 +1398,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   non-curated id (e.g. a dated full id in settings.json) survives as an extra option so Save
   round-trips it, while an other-engine leftover is dropped. The Claude list includes Fable 5 as
   `claude-fable-5`; Fable is not offered as a GPT/Codex model. Settings also provides a confirmed,
-  admin-only reset that clears every channel's engine/model overrides so new threads inherit these
-  gateway defaults again; DMs, existing thread-owned sessions, channel effort, access, tools, and
-  tokens are untouched. The confirmation asks for the scope, because channel meta only decides what
+  admin-only reset that clears every channel's engine/model/effort overrides so new threads inherit
+  these gateway defaults again (effort resets with the other two because the `/model` wizard sets
+  all three in one pass); DMs, existing thread-owned sessions, access, tools, and tokens are
+  untouched. The confirmation asks for the scope, because channel meta only decides what
   a NEW thread inherits: **Channels only** (the default) leaves every hand-pinned thread on its own
   harness/model, while **Channels + threads** additionally deletes the per-thread `engine`, `model`
   and `effort` pins (`/model` → "just this thread", a `claude`/`codex` directive) for those same
