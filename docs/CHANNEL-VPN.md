@@ -22,7 +22,8 @@ After the operator completes setup below, use any of these controls:
 - Ask the channel agent to “turn VPN on”, “turn VPN off”, or “check VPN status”. Claude and Codex
   use `set_channel_vpn({enabled:true|false})` and `get_channel_vpn_status` for the current channel.
 - In the admin web UI, open the channel and use **VPN** beside **Network**. Changes save immediately.
-- In Slack, open the channel's **Settings → Network** tab, then **Turn VPN on/off** or **Refresh**.
+- In Slack, open the channel's **⚙️ Settings → General Settings**; the **VPN** row sits under the
+  Auto/Lean/Network switches, with **Turn on** / **Turn off** / **Refresh**.
 
 Channel managers and organization admins may switch it; admitted members may read its status.
 Tool calls retain the gateway's normal control-plane approval policy. Every mutation rechecks

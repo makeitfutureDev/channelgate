@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Slack ⚙️ Settings: the VPN moved out of its own **Network & VPN** section and onto the row right
+  under the Auto/Lean/**Network** switches it belongs to — `VPN — On / Off / Not configured` plus
+  its controls, with the explanatory paragraphs dropped. The separate "Network use" read-out is
+  gone for anyone who can already see the network checkbox; members and DMs, who cannot, keep a
+  one-line version. A failure or an unavailable service still says why.
+
 - One tool per verb for secrets. `list_secrets` replaces `list_my_secrets` and `list_org_secrets`
   and shows every scope a run receives — organization, personal, this conversation — in one live
   call (names, provider, masked tail, who set them; never a value), filterable with `scope`.
