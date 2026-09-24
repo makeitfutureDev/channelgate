@@ -2333,7 +2333,24 @@ are retired, bullet by bullet; everything else stands.
   a remote command and VS Code's server see what `podman exec` sees and an interactive `claude`
   opens on the relayed login; an interactive login starts in the channel's work folder
   (`/etc/profile.d/channelgate-workdir.sh`, spec 1.5.1, never for Codex's non-interactive
-  `bash -lc`), and "show SSH access" prints `code --remote ssh-remote+<channel> <folder>`), and runs `exec -i <container> cg-sshd` — an unprivileged inetd-mode sshd on that
+  `bash -lc`), and "show SSH access" prints `code --remote ssh-remote+<channel> <folder>`. **A session's
+  `claude` is a chat turn's Claude** (`src/gateway/ssh-session.js`, prepared before the shell
+  starts and refreshed every 20 minutes): the channel lockdown as `--settings`, the same MCP
+  payload assembler a turn uses (`buildEngineMcpRuntime` with a capability signed for THAT
+  developer, origin `ssh_session`, a 12-hour TTL and the `ssh` toolset — the control plane minus
+  the thread-bound background, progress and approval tools) with `composio-user` for the
+  developer's own accounts, `composio-agent` for the channel's and the selected catalog servers,
+  `--strict-mcp-config` so the operator's own claude.ai connectors never load, and the run
+  environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. The files are per
+  developer under `<artifacts>/ssh/users/<id>/`, chosen by the `CG_SSH_USER` name sshd sets from
+  the developer's authorized_keys line (`PermitUserEnvironment CG_SSH_USER`), and removed when
+  their last session ends. The login is an ACCESS-ONLY `.credentials.json` in the channel's config
+  dir plus the operator's account record — never a refresh token — written through the relay and
+  removed with the channel's last session, so an interactive `claude` shows "Claude Max account",
+  the organization, the usage windows and the plan's default model instead of "Claude API".
+  Every container now runs with `DISABLE_AUTOUPDATER=1`: a self-updated Claude in
+  `~/.npm-global/bin` (first on the image PATH) had shadowed the pinned CLI and the wrapper.) The
+  daemon then runs `exec -i <container> cg-sshd` — an unprivileged inetd-mode sshd on that
   stream, inside the container, with which the developer's own client completes a second
   handshake. So the pty, the shell, sftp, VS Code Remote-SSH and port forwards all live in the
   container's namespaces; no container and no extra host port ever listens; the channel is named

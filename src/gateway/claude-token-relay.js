@@ -37,10 +37,39 @@ export function readDaemonClaudeAccessToken(source = resolveClaudeLogin()) {
     const parsed = JSON.parse(readFileSync(file, "utf8"));
     const oauth = parsed?.claudeAiOauth || {};
     if (!oauth.accessToken) return null;
-    return { token: String(oauth.accessToken), expiresAt: Number(oauth.expiresAt) || 0 };
+    return {
+      token: String(oauth.accessToken),
+      expiresAt: Number(oauth.expiresAt) || 0,
+      // The plan facts Claude Code shows beside a FILE login ("Claude Max account", the usage bars,
+      // the plan's default model). An SSH session's access-only credentials file carries them so an
+      // interactive `claude` in a container looks like the operator's own shell; never a refresh
+      // token, which is the only thing this module exists to keep out of a second file.
+      scopes: Array.isArray(oauth.scopes) ? oauth.scopes.map(String) : [],
+      subscriptionType: String(oauth.subscriptionType || ""),
+      rateLimitTier: String(oauth.rateLimitTier || ""),
+    };
   } catch {
     return null;
   }
+}
+
+// The account record Claude Code keeps beside a login (`oauthAccount` in its config file: the
+// email, organization and tiers /status prints). Claude reads $CLAUDE_CONFIG_DIR/.claude.json when
+// the variable is set and ~/.claude.json otherwise; the resolved login's own shell may use either,
+// so the record is taken from whichever of the two holds one. Null when neither does.
+export function readDaemonClaudeAccount(source = resolveClaudeLogin()) {
+  const candidates = [];
+  if (source?.configDir) candidates.push(path.join(source.configDir, ".claude.json"));
+  if (source?.home) candidates.push(path.join(source.home, ".claude.json"));
+  for (const file of candidates) {
+    try {
+      const account = JSON.parse(readFileSync(file, "utf8"))?.oauthAccount;
+      if (account && typeof account === "object" && !Array.isArray(account)) return account;
+    } catch {
+      /* absent or unreadable: try the next */
+    }
+  }
+  return null;
 }
 
 // One turn with the RESOLVED login's own HOME + CLAUDE_CONFIG_DIR. Its ANSWER is irrelevant; the
@@ -134,7 +163,10 @@ export async function resolveContainerClaudeToken({
   if (current.expiresAt && current.expiresAt <= now()) {
     return keyed || { token: "", source: login.kind, expiresAt: current.expiresAt, error: "the gateway's Claude access token is expired and the refresh turn did not renew it (check the host's Claude sign-in and usage limits)", login };
   }
-  return { token: current.token, source: login.kind, expiresAt: current.expiresAt, login };
+  return {
+    token: current.token, source: login.kind, expiresAt: current.expiresAt, login,
+    scopes: current.scopes || [], subscriptionType: current.subscriptionType || "", rateLimitTier: current.rateLimitTier || "",
+  };
 }
 
 // What the warm pool must key on so a refreshed token retires a warm process that is still holding

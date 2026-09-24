@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { processFailureMessage } from "../util/process-outcome.js";
 
-export const RUN_ORIGINS = Object.freeze(["slack_foreground", "googlechat_foreground", "msteams_foreground", "api_foreground", "schedule", "background_agent", "continuation", "recovery", "diagnosis", "memory_review"]);
+export const RUN_ORIGINS = Object.freeze(["slack_foreground", "googlechat_foreground", "msteams_foreground", "api_foreground", "ssh_session", "schedule", "background_agent", "continuation", "recovery", "diagnosis", "memory_review"]);
 export const PRINCIPAL_KINDS = Object.freeze(["user", "daemon"]);
 
 // Which principal kind each origin implies for a TRUSTED author. Explicit per-origin — the old
@@ -16,6 +16,10 @@ export const PRINCIPAL_KIND_BY_ORIGIN = Object.freeze({
   googlechat_foreground: "user",
   msteams_foreground: "user",
   api_foreground: "user",
+  // An interactive SSH / VS Code Remote-SSH session inside a channel container. The developer was
+  // authenticated by their registered key and authorized like a poster (gateway/ssh-broker.js);
+  // the gateway prepares the session the way it prepares a turn, so its tool calls are theirs.
+  ssh_session: "user",
   schedule: "daemon",
   background_agent: "daemon",
   continuation: "daemon",

@@ -106,9 +106,14 @@ export function createDirectDaemonIpc(handlers = {}) {
 const ENGINE_CLAIMS = ["claude", "codex"];
 
 // Only the exact "full" value (or no value at all) exposes the whole control plane; anything else
-// is the reduced set, so a typo can never widen a helper. The background memory review
-// (gateway/memory-review.js) exists only to save what a finished conversation taught, so it gets
-// the save tool and nothing else — no schedules, no admin switches, no Slack writes.
+// is a reduced set, so a typo can never widen a helper. "ssh" is an interactive SSH session's
+// surface (gateway/ssh-session.js): everything a turn has EXCEPT the tools that report into, or
+// wait on, the chat thread a turn belongs to — background jobs, progress, approval cards — because
+// a session has no thread; the developer answers Claude's own prompts in their terminal. The
+// background memory review (gateway/memory-review.js) exists only to save what a finished
+// conversation taught, so it gets the save tool and nothing else — no schedules, no admin
+// switches, no Slack writes.
+export const SSH_TOOLSET = "ssh";
 export function normalizeToolset(value) {
   return String(value || "full");
 }
@@ -420,10 +425,10 @@ export function createGatewayMcpServer(ctx) {
 
   // Registration order is stable within each group; the tool names/descriptions/schemas/handlers
   // are unchanged by the two-entry split.
-  if (ctx.toolset === "full") {
+  if (ctx.toolset === "full" || ctx.toolset === SSH_TOOLSET) {
     registerWorkspaceRead(server, ctx);
     registerSchedules(server, ctx);
-    registerBackground(server, ctx);
+    if (ctx.toolset === "full") registerBackground(server, ctx);
     registerChannelAdmin(server, ctx);
     registerChannelDatabase(server, ctx);
     registerTokens(server, ctx);

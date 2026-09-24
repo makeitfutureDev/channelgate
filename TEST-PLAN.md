@@ -5270,13 +5270,42 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [x] Unit: the image ships `/etc/profile.d/channelgate-workdir.sh`, which moves only an
       INTERACTIVE shell of an SSH session still in HOME into `CG_WORKDIR`, never Codex's
       `bash -lc` (automated: `test/container-durability.test.js`).
+- [x] Unit: an SSH session is prepared like a turn (`src/gateway/ssh-session.js`): the channel
+      lockdown, the MCP payload from the REAL assembler with a capability that verifies for THIS
+      developer (origin `ssh_session`, toolset `ssh`, `exp - iat` = 12 h), `composio-user` carrying
+      the developer's own token and `composio-agent` the channel's, the run environment written as
+      single-quoted `export` lines a POSIX shell reproduces byte for byte (reserved names filtered
+      like a turn's), an access-only credentials file whose keys are exactly token/expiry/scopes/
+      plan/tier (never `refreshToken`) and the account record merged into Claude's config; a Lean
+      channel prepares an empty payload; a failed login file puts the token in the environment
+      and says so; a failed turn file removes the others (the wrapper needs all three); release
+      keeps the files while the developer has another session, drops them on their last, and
+      removes the login file + account record on the channel's last; the account seed merges,
+      removes only its record, keeps onboarding done and leaves unparseable state alone; the
+      `ssh` toolset is the control plane minus exactly `run_in_background`,
+      `run_agent_in_background`, `request_approval`, `permission_prompt` (automated:
+      `test/ssh-session.test.js`).
+- [x] Unit: the broker prepares the session for the connecting developer before sshd starts,
+      re-prepares on every refresh tick, reports MCP/secrets/toolset on the status line, and
+      releases per developer and per channel (two sessions of one developer: the first hang-up
+      releases nothing, the last releases both); every authorized_keys line carries
+      `environment="CG_SSH_USER=<id>"` and the sshd_config `PermitUserEnvironment CG_SSH_USER`;
+      containers run with `DISABLE_AUTOUPDATER=1`; the shared `claude` wrapper takes the SSH
+      branch (secrets sourced, turn flags) only when that developer's files exist and the editor
+      branch otherwise (automated: `test/ssh-broker.test.js`, `test/ssh-access.test.js`,
+      `test/container-credentials.test.js`, `test/vscode-container.test.js`).
 - [ ] LIVE (Claude, editor onboarding + environment): after `npm run build:image` (spec 1.5.1),
       in a channel whose engine sessions never ran an interactive Claude, open a fresh `ssh
       <channel>` session. Pass: the prompt starts in the channel's work folder; `echo
       $CLAUDE_CONFIG_DIR` prints `/home/agent/.claude`; plain `claude` shows no theme picker and no
-      login screen (at most "trust this folder"), then the main screen names the relayed login and
-      a prompt answers; `ssh <channel> pwd` (non-interactive) still prints `/home/agent`. Repeat in
-      a VS Code Remote-SSH terminal opened with the `code --remote` command from "show SSH access".
+      login screen (at most "trust this folder"), then the header says "Claude Max" (the plan),
+      `/status` says "Login method: Claude Max account" with the operator's organization and
+      email, `/usage` shows the plan's session and weekly windows, the default model is the plan's;
+      `/mcp` lists `gateway`, `composio-user`, `composio-agent` and the channel's selected servers
+      and NO `claude.ai …` connectors; a prompt that lists the environment names starting with the
+      channel's secret prefixes sees the same names a Slack turn in that channel is told about;
+      `ssh <channel> pwd` (non-interactive) still prints `/home/agent`. Repeat in a VS Code
+      Remote-SSH terminal opened with the `code --remote` command from "show SSH access".
 - [ ] LIVE (Codex, same session): `codex exec 'Reply with exactly SSH-CODEX-OK'` answers, and a
       Codex engine turn in that channel still runs its commands where it did before (its
       `bash -lc` is not moved by the login-folder script).

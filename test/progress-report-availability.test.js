@@ -89,14 +89,18 @@ test("non-visible runMessage callers rely on the false default", async () => {
 });
 
 test("runMessage threads one per-channel Make toolbox through Claude, Codex, and fallback", async () => {
-  const [run, adapters, engineMcp] = await Promise.all([
+  const [run, adapters, engineMcp, integrations] = await Promise.all([
     source("src/gateway/run.js"),
     source("src/engines/adapters.js"),
     source("src/gateway/run-engine-mcp.js"),
+    source("src/gateway/run-integrations.js"),
   ]);
 
-  assert.match(run, /makeToolboxUrl:\s*meta\.makeToolboxUrl/);
-  assert.match(run, /makeToolboxKey:\s*meta\.makeToolboxKey/);
+  // The per-channel Make toolbox is resolved in run-integrations.js — the one resolver a turn AND
+  // an interactive SSH session share — and threaded into run.js's MCP input from there.
+  assert.match(integrations, /makeToolboxUrl:\s*meta\.makeToolboxUrl/);
+  assert.match(integrations, /makeToolboxKey:\s*meta\.makeToolboxKey/);
+  assert.match(run, /makeToolboxUrl, makeToolboxKey, composioIdentityPrefix,\s*\} = await resolveRunIntegrations\(/);
   assert.match(run, /const mcpRuntimeInput = \{[\s\S]*?makeToolboxUrl, makeToolboxKey/);
   // `target` rides alongside `engine`: mcp.js needs both to pick the gateway server entry (the
   // checkout's stdio server on the host, the in-container bridge for an isolated runtime).

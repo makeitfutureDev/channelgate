@@ -169,7 +169,7 @@ test("container side: the generated sshd_config is key-only, forwards inside, no
   const target = { artifactDir: path.join(SSH_DIR, "artifacts", "acme") };
   mkdirSync(target.artifactDir, { recursive: true });
   const config = access.renderContainerSshdConfig("/x/ssh");
-  for (const line of ["PasswordAuthentication no", "UsePAM no", "AllowUsers agent", "AllowTcpForwarding yes", "AllowAgentForwarding no", "X11Forwarding no", "ClientAliveInterval 60", "ClientAliveCountMax 3", "HostKey /x/ssh/host_key", "AuthorizedKeysFile /x/ssh/authorized_keys", "Subsystem sftp internal-sftp", "PermitRootLogin no", "PidFile none"]) {
+  for (const line of ["PasswordAuthentication no", "UsePAM no", "AllowUsers agent", "PermitUserEnvironment CG_SSH_USER", "AllowTcpForwarding yes", "AllowAgentForwarding no", "X11Forwarding no", "ClientAliveInterval 60", "ClientAliveCountMax 3", "HostKey /x/ssh/host_key", "AuthorizedKeysFile /x/ssh/authorized_keys", "Subsystem sftp internal-sftp", "PermitRootLogin no", "PidFile none"]) {
     assert.ok(config.split("\n").includes(line), `sshd_config must carry "${line}"`);
   }
   const key = (await access.addSshKey("U_FILES", ECDSA)).key;
@@ -179,7 +179,10 @@ test("container side: the generated sshd_config is key-only, forwards inside, no
   assert.equal(statSync(result.dir).mode & 0o777, 0o700);
   for (const name of ["sshd_config", "authorized_keys"]) assert.equal(statSync(path.join(result.dir, name)).mode & 0o777, 0o600, name);
   const keys = readFileSync(path.join(result.dir, "authorized_keys"), "utf8").split("\n").filter((l) => l && !l.startsWith("#"));
-  assert.deepEqual(keys, [`ecdsa-sha2-nistp256 ${ECDSA.split(" ")[1]} cg:U_FILES`]);
+  // Each line names its developer to the session (the claude wrapper picks that developer's files
+  // by it); sshd admits exactly that one name and nothing from ~/.ssh/environment.
+  assert.deepEqual(keys, [`environment="CG_SSH_USER=U_FILES" ecdsa-sha2-nistp256 ${ECDSA.split(" ")[1]} cg:U_FILES`]);
+  assert.equal(access.renderContainerAuthorizedKeys([{ type: "ssh-ed25519", base64: ED25519.split(" ")[1], userId: "bad id" }]).split("\n")[1], `ssh-ed25519 ${ED25519.split(" ")[1]} cg:bad id`, "an id sshd could not carry gets no environment option");
   assert.equal(access.containerHostKeyFingerprint(target), "");
   writeFileSync(path.join(result.dir, "host_key.pub"), `${ED25519}\n`);
   assert.equal(access.containerHostKeyFingerprint(target), ED25519_FP);
