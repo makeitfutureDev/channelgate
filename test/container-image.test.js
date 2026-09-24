@@ -131,6 +131,17 @@ test("the image refuses a VS Code download that does not match its pin", () => {
   assert.ok(containerfile.indexOf("ARG VSCODE_SERVERS") < containerfile.indexOf("COPY --chown=root:root bin/"), "the VS Code layer sits above the frequently-changing helpers");
 });
 
+test("the image carries no SSH host private key: deleted in the very step that installs sshd", () => {
+  // openssh-server's post-install writes /etc/ssh/ssh_host_*_key. cg-sshd never reads them — it
+  // makes each channel its own key and runs `sshd -h` on it — but a baked key would be the same
+  // secret in every channel container and public in the release image archive. `docker save`
+  // ships every layer, so deleting it in a LATER step would still publish it.
+  const install = containerfile.split(/\n(?=RUN )/).find((step) => /apt-get install[^\n]*\n?[^\n]*openssh-server/.test(step));
+  assert.ok(install, "a RUN step installs openssh-server");
+  assert.match(install, /rm -f \/etc\/ssh\/ssh_host_\*_key \/etc\/ssh\/ssh_host_\*_key\.pub/);
+  assert.match(read("containers/bin/cg-sshd"), /exec \/usr\/sbin\/sshd -i -e -f "\$dir\/sshd_config" -h "\$key"/);
+});
+
 test("cg-init links the shared servers into the volume without ever deleting someone's install", () => {
   const init = readFileSync(path.join(repoRoot, "containers", "bin", "cg-init"), "utf8");
   for (const layout of ['"$VSCODE_HOME/bin/$commit"', '"$VSCODE_HOME/cli/servers/Stable-$commit/server"', '"$VSCODE_HOME/code-$commit"']) {
