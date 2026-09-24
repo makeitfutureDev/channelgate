@@ -2339,10 +2339,14 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       inside the refresh window, maps model-specific effort choices, and survives the next failed
       refresh with the last good snapshot; a cold failure retains the bundled fallback
       (`test/model-discovery.test.js`).
-- [x] Automated: the bundled fallback matches the authenticated Codex CLI 0.153.4 catalog observed
-      2026-09-13 (`gpt-6-astra`, GPT-5.6 Sol/Terra/Luna, GPT-5.5 and
-      `gpt-5.3-codex-spark`, plus the unresolved `codex` sentinel); retired picker entries and the
-      rejected `gpt-5.6` alias are absent (`test/engine-registry.test.js`).
+- [x] Automated: the bundled fallback matches the authenticated Codex CLI 0.156.1 catalog observed
+      2026-09-24 (`gpt-6-astra`, GPT-6 Sol/Luna, GPT-5.6 Sol/Terra/Luna and GPT-5.5, plus the
+      unresolved `codex` sentinel); retired picker entries — `gpt-5.3-codex-spark`, dropped from
+      the catalog between 0.153.4 and 0.156.1 — and the rejected `gpt-5.6` alias are absent
+      (`test/engine-registry.test.js`). The catalog is gated on the CLI version, not the account:
+      the same login under 0.153.4 is served the GPT-5.6 line with no GPT-6 Sol/Luna, so a pin bump
+      is what exposes a new model, and `~/.codex/models_cache.json` carries `client_version` so a
+      mixed-version probe cannot leave a stale catalog behind.
 - [x] Automated: Claude's picker and browser fallback use rolling aliases (including `best`,
       `fable`, and `sonnet[1m]`); the Admin UI consumes the registry's model/effort manifests and
       keeps a valid saved same-engine custom ID available (`test/model-options.test.js`,

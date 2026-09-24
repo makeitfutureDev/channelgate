@@ -16,6 +16,18 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## 0.5.4 — 2026-09-24
+
+- Claude Opus 5.5 and GPT-6 Sol / GPT-6 Luna reach the gateway. The image pins move to Claude Code
+  `2.1.281` (2.1.280 added `claude-opus-5-5` and made it the default Opus) and Codex CLI `0.156.1`
+  (its hotfix added GPT-6 Sol and Luna to the model catalog). Claude's picker is alias-based, so
+  `opus` / `opus[1m]` resolve to Opus 5.5 with no picker change; Codex discovers its catalog live,
+  and the bundled fallback list now matches what 0.156.1 serves — GPT-6 Sol and Luna in, the
+  withdrawn `gpt-5.3-codex-spark` out. The Codex cost estimate prices `gpt-6-sol` at $2/$0.20/$10
+  and `gpt-6-luna` at $0.10/$0.01/$0.50 per 1M tokens, both with the usual 2x/1.5x uplift above
+  272K input tokens. Opus 5.5's $4/$20 rates were already in the Claude table. Existing prices are
+  unchanged, so no historical repricing runs.
+
 ## 0.5.3 — 2026-09-24
 
 - Slack ⚙️ Settings: the VPN moved out of its own **Network & VPN** section and onto the row right

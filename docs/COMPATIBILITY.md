@@ -28,8 +28,8 @@ definitions are in `TEST-PLAN.md` and `docs/RELEASE-ACCEPTANCE.md`.
 | --- | --- | --- |
 | Operating system | Linux (systemd) with rootless Podman; Ubuntu 24.04 tested | CI on Ubuntu |
 | Node.js | 22.13 minimum; 24 LTS. SQLite FTS5 (channel-memory search index) is present from the later 22.x builds and 24; on a build without it the daemon boots and memory search uses a plain scan | Full matrix CI |
-| Claude Code | Pinned nightly target `2.1.258` (official installer) | Real CLI surface + stub transport |
-| Codex CLI | Pinned nightly target `0.153.4` | Real CLI surface + stub transport |
+| Claude Code | Pinned nightly target `2.1.281` (official installer) | Real CLI surface + stub transport |
+| Codex CLI | Pinned nightly target `0.156.1` | Real CLI surface + stub transport |
 | SQLite | Built-in `node:sqlite` | Migrations + backup/restore quick-check |
 | VS Code (editor attach) | Any client. Servers for `1.139.0` and `1.138.0` are shared in the channel image (image spec 1.5.0); another version downloads its own into the channel volume as before | Live image test (`npm run test:live-container`) + a real Remote-SSH / attach connection before promotion |
 | Slack | Socket Mode Slack app manifest in repository | Real workspace canary before promotion |
