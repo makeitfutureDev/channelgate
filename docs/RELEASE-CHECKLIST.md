@@ -6,6 +6,29 @@
 > CI passed on the exact candidate and a live smoke ran for Claude and Qwen. The owner released it
 > without Codex live acceptance (the Codex account was usage-limited until 2026-09-24) and without
 > the full live campaign; both remain open for the next release, see RELEASE-ACCEPTANCE.md.
+> 0.5.3 was published on 2026-09-24 by explicit owner decision after the full automated gate and
+> CI passed on the exact candidate and a live Claude campaign ran on Xavier through the QA actors
+> (Apps, Contact) in the `cg-qa` fixtures, recorded in TEST-PLAN.md → "0.5.3 live acceptance". Codex
+> live acceptance was skipped by owner instruction: the account was usage-limited until 10:40 on
+> 2026-09-24, past the release window. SSH access was proven end to end: the container half with a
+> real `ssh` client through `cg-sshd`, the shared VS Code server over an SSH port forward, and —
+> after `scripts/install-ssh-access.sh` was rerun as root — the host-sshd hop with a GUI VS Code
+> Remote-SSH client on the owner's Mac. Live testing found and fixed three defects before promotion
+> (a guide that suggested a blanket prune; failover notices that never reached a streamed answer;
+> interactive `claude` over SSH looking signed out: first-run onboarding never recorded, and SSH
+> sessions starting without the container's environment), then made an SSH session the same
+> environment a chat turn gets (lockdown, gateway + Composio + catalog MCP, secrets, an
+> account-shaped access-only login) and stopped Claude self-updating inside channels. The image
+> is spec 1.5.1 (an interactive SSH login starts in the channel folder); Atlas must run
+> `npm run build:image`. The live re-check of the streamed
+> failover notice stays open: it needs a Codex usage-limit failover on the running daemon. Carried forward as a known issue: the content-addressed
+> `claude-plugins` cache under each channel's artifact dir is never collected (~14 GB on Xavier).
+> Four administration-UI changes landed after that campaign ran and are therefore covered by the
+> automated gate only — their `TEST-PLAN.md` live gates are still unticked: the channel-runtime
+> reset's scope choice (*Channels only* / *Channels + threads*), that reset now clearing a
+> channel's reasoning effort with its engine and model, the skill template picked in place on the
+> Slack Settings page, and the VPN moved onto the row under the network switch. All four are Block
+> Kit / admin-page interactions that only a human can exercise on a running daemon.
 > 0.5.2 was published on 2026-09-22 by explicit owner decision after the full automated gate
 > passed on the exact candidate. It carries the cross-engine failover spawn-contract fix, the VPN
 > health-check fix and on-demand Google Drive sync. The owner again released it without Codex

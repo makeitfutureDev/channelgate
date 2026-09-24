@@ -28,6 +28,8 @@ product overview.
   272K input tokens. Opus 5.5's $4/$20 rates were already in the Claude table. Existing prices are
   unchanged, so no historical repricing runs.
 
+## 0.5.3 — 2026-09-24
+
 - Slack ⚙️ Settings: the VPN moved out of its own **Network & VPN** section and onto the row right
   under the Auto/Lean/**Network** switches it belongs to — `VPN — On / Off / Not configured` plus
   its controls, with the explanatory paragraphs dropped. The separate "Network use" read-out is
