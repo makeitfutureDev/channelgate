@@ -192,10 +192,12 @@
 ## Host container-storage housekeeping guidance
 
 - [x] `test/folders-generator-paths.test.js`: the managed CLAUDE.md block (read by every run of both
-      engines, skill opened or not) forbids running or recommending `podman system prune`,
+      engines, skill opened or not) forbids running or recommending `podman system prune`/`reset`,
       `podman image prune -a`, `podman volume prune` and `docker system prune`, each named whole on
-      one line, and names `npm run runtime:storage` (report only); the gateway-owned block stays
-      under 4 KB. Live: OPS-DISK-01 (Airtable) on both engines — a 2026-09-25 Claude run never
+      one line, with a consequence true for all of them ("can delete channel homes or the runtime
+      image") and the admin path `npm run runtime:storage` (`-- --apply` only if an admin asks); the
+      header note keeps its three facts; the block stays under 4 KB in the measured configuration
+      and the worst switch combination may not exceed its current 4,120 bytes. Live: OPS-DISK-01 (Airtable) on both engines — a 2026-09-25 Claude run never
       opened the skill and recommended both prunes; the Codex run read administration.md and did not.
 - [x] `test/host-housekeeping-guide.test.js`: the materialized guide for every platform routes
       disk/stale-container/old-image questions to `references/administration.md` and carries the

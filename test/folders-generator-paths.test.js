@@ -241,13 +241,24 @@ test("the managed block carries the hard rules a run must never get wrong", () =
     assert.match(block, /A bounded "check every N minutes, K times"/);
     assert.match(block, /never an in-turn sleep\/poll loop/);
 
-    // 5. No blanket container prune, ever — in the block every run loads, not only in the skill
-    //    (OPS-DISK-01: a Claude run never opened the skill and recommended `podman system prune`).
-    assert.match(block, /Never run or recommend a blanket prune/);
+    // 5. No blanket container prune or reset, ever — in the block every run loads, not only in the
+    //    skill (OPS-DISK-01: a Claude run never opened the skill and recommended `podman system prune`).
+    //    The stated consequence must be TRUE for every command named (a model that knows podman can
+    //    argue away a false one): not all of them touch volumes, but each can remove channel homes
+    //    or the runtime image.
+    assert.match(block, /Never run or recommend `podman system prune`\/`reset`/);
     for (const command of ["podman system prune", "podman image prune -a", "podman volume prune", "docker system prune"]) {
       assert.ok(block.includes(`\`${command}\``), `${command} is named whole, on one line`);
     }
-    assert.ok(block.includes("`npm run runtime:storage` (report only)"));
+    assert.match(block, /they can delete channel homes or the runtime image/);
+    assert.doesNotMatch(block, /delete every channel's home/);
+    // The admin-approved removal path stays open.
+    assert.ok(block.includes("`npm run runtime:storage` (`-- --apply` only if an admin asks)"));
+
+    // The header note keeps its three facts through any future squeeze for budget.
+    assert.match(block, /do NOT edit between these markers/);
+    assert.match(block, /never overwritten/);
+    assert.match(block, /`update_channel_instructions`/);
 
     // Still the whole block, not a replacement for it: tonight's switches section survives.
     assert.match(block, /This conversation's switches/);
@@ -262,4 +273,13 @@ test("the managed block carries the hard rules a run must never get wrong", () =
   // future rule needs more than this, it belongs in the skill, not here.
   const owned = gatewayInstructionsBlock({ allowBash: true, cleanMode: true });
   assert.ok(Buffer.byteLength(owned, "utf8") < 4096, `managed block is ${Buffer.byteLength(owned, "utf8")} bytes — keep it under 4 KB`);
+  // The budget above is measured in one representative configuration. The longest switch lines
+  // (Admin + Auto, Lean off) already push the worst case slightly past 4 KB; it must not grow.
+  const keys = ["adminMode", "allowBash", "autoMode", "cleanMode", "allowNetwork", "isDM"];
+  let worst = 0;
+  for (let mask = 0; mask < 1 << keys.length; mask++) {
+    const meta = Object.fromEntries(keys.map((key, i) => [key, Boolean(mask & (1 << i))]));
+    worst = Math.max(worst, Buffer.byteLength(gatewayInstructionsBlock(meta), "utf8"));
+  }
+  assert.ok(worst <= 4120, `worst-case managed block is ${worst} bytes — it may shrink, never grow`);
 });

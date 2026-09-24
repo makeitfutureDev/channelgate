@@ -19,11 +19,11 @@ product overview.
 ## Unreleased
 
 - The assistant no longer suggests a blanket container prune when asked about disk space. The
-  rule against `podman system prune`, `podman image prune -a`, `podman volume prune` and
+  rule against `podman system prune`/`reset`, `podman image prune -a`, `podman volume prune` and
   `docker system prune` lived only in the operating guide, and a run that answered without opening
-  the guide recommended two of them — on this host they delete every channel's home. The rule now
-  sits among the few hard rules every run of every engine reads, pointing at the report-only
-  `npm run runtime:storage` instead.
+  the guide recommended two of them — on this host they can delete channel homes or the runtime
+  image. The rule now sits among the few hard rules every run of every engine reads, pointing at
+  `npm run runtime:storage` (removal only with `-- --apply` when an admin asks).
 
 ## 0.5.5 — 2026-09-24
 

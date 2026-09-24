@@ -105,7 +105,7 @@ function stripBlock(content, start, end) {
 const GW_START = "<!-- GATEWAY-INSTRUCTIONS:START -->";
 const GW_END = "<!-- GATEWAY-INSTRUCTIONS:END -->";
 const GW_NOTE = `> ⚙️ Gateway-managed block: do NOT edit between these markers; the gateway rewrites it. Below the
-> end marker are this channel's own standing instructions, never overwritten. To add one when
+> end marker: this channel's own standing instructions, never overwritten. To add one when
 > asked, use \`update_channel_instructions\` (or edit this file if writable).`;
 
 // What each mode actually grants, in the agent's own terms — the label alone ("Bash") does not
@@ -134,7 +134,7 @@ export function channelSwitchesNote(meta = {}) {
       ? "**on** — this conversation is meant to use the internet. There is no per-domain allow-list."
       : network === "unsupported"
         ? "requested **on**, but this conversation's engine cannot run with the network on — treat it as off."
-        : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out, and say the switch is off instead of trying. ${NETWORK_POLICY_ENFORCED ? "" : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
+        : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out; say the switch is off instead. ${NETWORK_POLICY_ENFORCED ? "" : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
   return [
     "**This conversation's switches** (an admin sets them; they apply from the next message):",
     `- Mode: **${mode}** — ${MODE_NOTE[mode]}.`,
@@ -187,8 +187,8 @@ export function channelSwitchesNote(meta = {}) {
 // while the Codex run, which read administration.md, warned against exactly those. On this host a
 // blanket prune deletes every stopped channel's HOME volume (sessions, CLI logins, memory), so the
 // one-line core belongs here.
-const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; the reasoning and the
-tool shapes are in the \`gateway-usage\` skill:
+const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; details are in the
+\`gateway-usage\` skill:
 - Use \`ask_questions\` for clarification.
 - **Two Composio identities.** \`composio-user\` = the REQUESTER's own accounts; \`composio-agent\` = the
   shared agent's own (either may appear with \`_\` for \`-\`). Reads and searches may use either or
@@ -220,9 +220,9 @@ tool shapes are in the \`gateway-usage\` skill:
   one of these too: \`create_schedule\` (or \`run_agent_in_background\` for a self-contained watcher),
   never an in-turn sleep/poll loop, a \`Monitor\`-style wait, or a harness background task — even when
   the loop would finish inside this turn.
-- **Never run or recommend a blanket prune** — \`podman system prune\`, \`podman image prune -a\`,
-  \`podman volume prune\`, \`docker system prune\` delete every channel's home. Cleanup:
-  \`npm run runtime:storage\` (report only).`;
+- **Never run or recommend \`podman system prune\`/\`reset\`, \`podman image prune -a\`, \`podman volume prune\`
+  or \`docker system prune\`**: they can delete channel homes or the runtime image. Cleanup:
+  \`npm run runtime:storage\` (\`-- --apply\` only if an admin asks).`;
 
 // Compose the managed block for a channel: the do-not-edit note, this conversation's switches, the
 // hard rules, and (outside clean mode) the admin's global instructions. Deliberately nothing about
