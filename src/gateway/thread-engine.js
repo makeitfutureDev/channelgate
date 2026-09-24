@@ -121,3 +121,22 @@ export async function getThreadSudo(slug, threadKey) {
 export async function setThreadSudo(slug, threadKey, on) {
   setOverride(slug, threadKey, "sudo", on ? "1" : "");
 }
+
+// ── Bulk clear: the admin UI's "reset every channel's runtime" ────────────────────────────────
+// Clearing meta.engine/meta.model only resets what a NEW thread inherits — a thread someone
+// pinned by hand (`/model` → "just this thread", a `claude`/`codex` directive) keeps answering on
+// its pinned harness/model forever, which is exactly what makes the reset look like it did
+// nothing. So the reset offers the wider scope too, and this is it: drop the runtime triple
+// (engine/model/effort) for the given channel slugs in one statement. `clean` and `sudo` are
+// deliberately left alone — they are thread POSTURE, not the runtime the reset is about, and a
+// clean thread's session was built on the bare context it must keep.
+// Returns the number of override rows removed (0 for an empty slug list — never "all slugs").
+export async function clearThreadRuntimeOverrides(slugs) {
+  const list = [...new Set((slugs || []).filter((s) => typeof s === "string" && s))];
+  if (!list.length) return 0;
+  const placeholders = list.map(() => "?").join(",");
+  const result = getDb()
+    .prepare(`DELETE FROM thread_overrides WHERE kind IN ('engine', 'model', 'effort') AND slug IN (${placeholders})`)
+    .run(...list);
+  return Number(result.changes || 0);
+}

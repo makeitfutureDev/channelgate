@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- The "reset all channels to gateway defaults" button now asks for the scope. Clearing a channel's
+  engine/model only decides what a NEW thread inherits, so every thread that had been pinned by
+  hand (`/model` → *just this thread*, or a `claude`/`codex` directive) kept answering on its old
+  harness and model and the reset looked like it had done nothing. The confirmation now offers
+  **Channels only** (the previous behaviour) or **Channels + threads**, which also deletes those
+  per-thread engine, model and effort pins and reports how many it cleared. Per-thread `/clean`
+  and `/sudo` postures, DMs and DM threads are untouched either way.
+
 - Open interactive Claude signed in over SSH and VS Code. Connecting to a channel's container
   worked and `claude -p` answered, but plain `claude` opened the first-run theme picker and a
   login screen, so it looked signed out. Headless engine turns never finish Claude's onboarding,

@@ -3260,6 +3260,17 @@ the bridge network and *Allow network* is only a switch the engines are told abo
       only `engine` + `model` for every channel (including a never-configured channel), skips DMs,
       preserves effort/access/skills/credentials, refreshes the conversation cache, and reports
       the affected count (`test/channel-runtime-reset.test.js`).
+- [x] Unit/integration: the reset's scope choice — the default (`{}` / "Channels only") leaves
+      per-thread `engine`/`model` pins in place, and `{"includeThreads":true}` ("Channels +
+      threads") additionally deletes the `engine`/`model`/`effort` rows for the same non-DM
+      channels, returns their count as `threads`, and leaves per-thread `clean`/`sudo` and DM
+      thread pins untouched (`test/channel-runtime-reset.test.js`).
+- [ ] Live (engine-independent): in a channel, run `/model` → *Just this thread* → pick a harness
+      and a non-default model; confirm the footer/`/status` shows it. Then Settings → Engine &
+      runtime → **Reset all…** → *Channels only*, and post again in that thread — it still answers
+      on the pinned model (expected). Re-run the reset choosing *Channels + threads*; the dialog
+      reports the cleared pin count, and the next message in that thread runs the gateway default
+      model for the engine that owns its session. A thread that was `/clean` stays clean.
 - [x] Integration (`test/transient-retry.test.js`): with failover ON, a transient failure that outlives
       every in-place retry is answered by the other harness (note "retried 2× before giving up —
       using Claude", `fellBack`, `fallbackFrom`) and the channel's next turn skips the primary for the

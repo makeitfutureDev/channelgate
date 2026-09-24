@@ -3919,20 +3919,31 @@ function bindSettings() {
 
   document.getElementById("reset-channel-runtime").addEventListener("click", async () => {
     const saved = document.getElementById("reset-channel-runtime-saved");
-    const ok = await confirmDialog({
+    // Two scopes, because clearing channel meta alone only changes what NEW threads inherit: a
+    // thread pinned by hand (/model → "just this thread", or a claude/codex directive) keeps its
+    // own harness and model until that per-thread pin is cleared too.
+    const choice = await confirmDialog({
       title: "Reset every channel to gateway defaults?",
-      body: "Every channel's engine and model overrides will be cleared. New threads will inherit the gateway engine and per-engine model shown above; existing threads keep the engine that owns their current session. Access, effort, tools, tokens and DM templates stay unchanged. Save any changed gateway defaults first. This can't be undone.",
-      confirmLabel: "Reset all channels",
+      body: "Every channel's engine and model overrides will be cleared. \"Channels only\" changes what new threads inherit; threads that were pinned by hand (/model → just this thread) keep their pinned harness and model. \"Channels + threads\" also clears those per-thread engine, model and effort pins — existing threads still keep the engine that owns their live session. Access, channel effort, tools, tokens and DM templates stay unchanged. Save any changed gateway defaults first. This can't be undone.",
+      confirmLabel: "Channels only",
+      alternativeLabel: "Channels + threads",
       danger: true,
+      alternativeDanger: true,
     });
-    if (!ok) return;
+    if (!choice) return;
+    const includeThreads = choice === "alternative";
     saved.textContent = "resetting…";
     try {
-      const r = await api("/api/channels/reset-runtime", { method: "POST", body: JSON.stringify({}) });
-      saved.textContent = `✓ reset ${r.count} channel(s)`;
+      const r = await api("/api/channels/reset-runtime", { method: "POST", body: JSON.stringify({ includeThreads }) });
+      const threadNote = includeThreads ? ` and ${r.threads} thread pin(s)` : "";
+      saved.textContent = `✓ reset ${r.count} channel(s)${threadNote}`;
       await loadConversations();
-      await infoDialog({ title: "Channel runtime reset", body: `Reset ${r.count} channel(s) to the gateway engine and model defaults.` });
-      setTimeout(() => (saved.textContent = ""), 4000);
+      await infoDialog({
+        title: "Channel runtime reset",
+        body: `Reset ${r.count} channel(s)${threadNote} to the gateway engine and model defaults.`
+          + (includeThreads ? "" : " Threads pinned with /model keep their own harness and model — re-run this and pick \"Channels + threads\" to clear those too."),
+      });
+      setTimeout(() => (saved.textContent = ""), 6000);
     } catch (e) {
       saved.textContent = "✗ " + e.message;
     }
