@@ -13,6 +13,8 @@ test("default rates cover exactly the fixed model list", () => {
   const rates = getCodexModelRates();
   assert.deepEqual(Object.keys(rates).sort(), Object.keys(DEFAULT_CODEX_RATES).sort());
   assert.deepEqual(rates["gpt-6-astra"], { input: 10, cachedInput: 1, output: 50 });
+  assert.deepEqual(rates["gpt-6-sol"], { input: 2, cachedInput: 0.2, output: 10 });
+  assert.deepEqual(rates["gpt-6-luna"], { input: 0.1, cachedInput: 0.01, output: 0.5 });
   assert.deepEqual(rates["gpt-5.6-sol"], { input: 4, cachedInput: 0.4, output: 20 });
   assert.equal(rates["gpt-5.6-terra"].output, 12);
   assert.equal(rates["gpt-5.6-luna"].cachedInput, 0.02);
@@ -49,6 +51,9 @@ test("applies long-context rates per request, never to a turn aggregate", () => 
   assert.equal(estimateCodexCost(atThreshold, "gpt-5.6-sol", [{ usage: atThreshold }]).costUSD, 1.088);
   assert.equal(estimateCodexCost(overThreshold, "gpt-5.6-sol", [{ usage: overThreshold }]).costUSD, 2.176008);
   assert.equal(estimateCodexCost(overThreshold, "gpt-6-astra", [{ usage: overThreshold }]).costUSD, 5.44002);
+  // GPT-6 Sol and Luna carry the same >272K uplift as the rest of the frontier line.
+  assert.equal(estimateCodexCost(overThreshold, "gpt-6-sol", [{ usage: overThreshold }]).costUSD, 1.088004);
+  assert.equal(estimateCodexCost(overThreshold, "gpt-6-luna", [{ usage: overThreshold }]).costUSD, 0.0544); // 6-decimal ledger rounding
 });
 
 test("supports nested cached/cache-write details and clamps malformed subsets", () => {
