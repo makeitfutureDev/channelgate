@@ -15,6 +15,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 
@@ -37,14 +38,40 @@ writeFileSync(path.join(WORKDIR, "work", "PROPOSAL.pdf"), "%PDF-1.7 proposal\n")
 mkdirSync(path.join(scratch, "elsewhere"), { recursive: true });
 writeFileSync(path.join(scratch, "elsewhere", "secret.txt"), "not yours");
 
-// A stub standing in for Composio's REST API, so the tool's real staging path is exercised.
+// A stub standing in for Composio, so the tool's real staging path is exercised on both routes:
+// the REST upload API (project API keys) and the hosted MCP's workbench (consumer `ck_` keys —
+// what this gateway actually stores). The workbench half reassembles the appended base64 chunks
+// per sandbox path and answers the final md5 check the way the real sandbox prints it.
 const staged = [];
+const sandbox = new Map();
+function workbenchReply(code) {
+  const target = (code.match(/open\('([^']+)'/) || [])[1] || "";
+  const chunk = (code.match(/b64decode\('([^']*)'\)/) || [])[1];
+  if (chunk !== undefined) {
+    const prior = code.includes("'wb'") ? Buffer.alloc(0) : (sandbox.get(target) || Buffer.alloc(0));
+    sandbox.set(target, Buffer.concat([prior, Buffer.from(chunk, "base64")]));
+    return "";
+  }
+  const data = sandbox.get(target) || Buffer.alloc(0);
+  const md5 = createHash("md5").update(data).digest("hex");
+  return `CGSTAGE${JSON.stringify({ md5, bytes: data.length, s3key: `workbench/staged/${path.basename(target)}` })}\n`;
+}
 const composio = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
-    staged.push({ url: req.url, method: req.method, key: req.headers["x-api-key"], body });
     res.setHeader("Content-Type", "application/json");
+    if (req.url.startsWith("/mcp")) {
+      const rpc = JSON.parse(body || "{}");
+      staged.push({ url: req.url, method: rpc.method, key: req.headers["x-consumer-api-key"], body });
+      res.setHeader("mcp-session-id", "stub-session");
+      if (rpc.id === undefined) return res.end("");
+      const result = rpc.method === "tools/call"
+        ? { content: [{ type: "text", text: JSON.stringify({ data: { stdout: workbenchReply(rpc.params.arguments.code_to_execute), error: "" }, successful: true }) }] }
+        : { protocolVersion: "2025-03-26", capabilities: {} };
+      return res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+    }
+    staged.push({ url: req.url, method: req.method, key: req.headers["x-api-key"], body });
     res.end(JSON.stringify(req.url.includes("/files/upload/request")
       ? { key: "org/staged/PROPOSAL.pdf", new_presigned_url: `http://127.0.0.1:${composio.address().port}/put` }
       : {}));
@@ -52,6 +79,7 @@ const composio = http.createServer((req, res) => {
 });
 await new Promise((resolve) => composio.listen(0, "127.0.0.1", resolve));
 process.env.COMPOSIO_API_BASE = `http://127.0.0.1:${composio.address().port}`;
+process.env.COMPOSIO_MCP_URL = `http://127.0.0.1:${composio.address().port}/mcp`;
 test.after(() => composio.close());
 
 function tools({ author = "U_AUTHOR", meta = {} } = {}) {
@@ -66,7 +94,7 @@ function tools({ author = "U_AUTHOR", meta = {} } = {}) {
   return map;
 }
 
-test("staging uses the named identity's key and returns the FileUploadable", async () => {
+test("a consumer key stages through the Composio workbench on the named identity's key", async () => {
   staged.length = 0;
   await setUser("U_AUTHOR", { name: "Author", approved: true, composioToken: "ck_personal" });
   const reply = await tools({ meta: { composioToken: "ck_channel" } }).get("stage_file_for_composio")({
@@ -76,13 +104,14 @@ test("staging uses the named identity's key and returns the FileUploadable", asy
   });
 
   assert.match(reply, /Staged `work\/PROPOSAL\.pdf`/);
-  assert.match(reply, /"s3key": "org\/staged\/PROPOSAL\.pdf"/);
+  assert.match(reply, /"s3key": "workbench\/staged\/PROPOSAL\.pdf"/);
   assert.match(reply, /"mimetype": "application\/pdf"/);
+  // Consumer keys are the hosted MCP's credential: the REST upload API rejects them, so nothing
+  // may be sent there — every request is a JSON-RPC call to the MCP endpoint.
+  assert.ok(staged.length >= 3 && staged.every((call) => call.url.startsWith("/mcp")), "consumer keys never hit the REST API");
   // "user" must spend the PERSONAL key, never the channel's — a file staged on one is invisible
   // to the other, and silently substituting identities is the bug this asserts against.
-  assert.equal(staged[0].key, "ck_personal");
-  assert.equal(JSON.parse(staged[0].body).tool_slug, "GOOGLEDRIVE_UPLOAD_FILE");
-  assert.equal(staged[1].method, "PUT");
+  assert.ok(staged.every((call) => call.key === "ck_personal"));
 
   staged.length = 0;
   const agentReply = await tools({ meta: { composioToken: "ck_channel" } }).get("stage_file_for_composio")({
@@ -91,7 +120,39 @@ test("staging uses the named identity's key and returns the FileUploadable", asy
     identity: "agent",
   });
   assert.match(agentReply, /composio-agent/);
-  assert.equal(staged[0].key, "ck_channel");
+  assert.ok(staged.every((call) => call.key === "ck_channel"));
+});
+
+test("a project API key keeps the REST upload route", async () => {
+  staged.length = 0;
+  await setUser("U_PROJECT", { name: "Project", approved: true, composioToken: "ak_project" });
+  const reply = await tools({ author: "U_PROJECT" }).get("stage_file_for_composio")({
+    path: "work/PROPOSAL.pdf",
+    tool: "GOOGLEDRIVE_UPLOAD_FILE",
+    identity: "user",
+  });
+  assert.match(reply, /"s3key": "org\/staged\/PROPOSAL\.pdf"/);
+  assert.equal(staged[0].key, "ak_project");
+  assert.equal(JSON.parse(staged[0].body).tool_slug, "GOOGLEDRIVE_UPLOAD_FILE");
+  assert.equal(staged[1].method, "PUT");
+});
+
+test("an upstream failure is reported as a failure, not as a refusal", async () => {
+  staged.length = 0;
+  process.env.COMPOSIO_MCP_URL = "http://127.0.0.1:9/unreachable";
+  try {
+    const reply = await tools({ meta: { composioToken: "ck_channel" } }).get("stage_file_for_composio")({
+      path: "work/PROPOSAL.pdf",
+      tool: "GOOGLEDRIVE_UPLOAD_FILE",
+      identity: "agent",
+    });
+    // "Refused" is reserved for the confinement check; the model reads it as a policy decision
+    // and, on a 401, told the user their own key was invalid.
+    assert.match(reply, /^Staging failed:/);
+    assert.ok(!reply.includes("ck_channel"), "the key never appears in the reply");
+  } finally {
+    process.env.COMPOSIO_MCP_URL = `http://127.0.0.1:${composio.address().port}/mcp`;
+  }
 });
 
 test("staging names the missing identity instead of falling back to the other one", async () => {

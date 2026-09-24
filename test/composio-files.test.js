@@ -9,7 +9,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 
 import {
   COMPOSIO_UPLOAD_REQUEST_PATH,
+  isConsumerKey,
   normalizeSlug,
+  sandboxFileName,
   stageFileForComposio,
   toolkitFromToolSlug,
 } from "../src/gateway/composio-files.js";
@@ -33,7 +35,7 @@ test("staging requests a key, uploads the bytes and returns the FileUploadable",
   const calls = [];
 
   const staged = await stageFileForComposio({
-    apiKey: "ck_secret",
+    apiKey: "ak_secret",
     absolutePath: file,
     toolSlug: "googledrive_upload_file",
     apiBase: "https://backend.example.test/",
@@ -51,7 +53,7 @@ test("staging requests a key, uploads the bytes and returns the FileUploadable",
   const [request, upload] = calls;
   assert.equal(request.url, `https://backend.example.test${COMPOSIO_UPLOAD_REQUEST_PATH}`);
   assert.equal(request.init.method, "POST");
-  assert.equal(request.init.headers["x-api-key"], "ck_secret");
+  assert.equal(request.init.headers["x-api-key"], "ak_secret");
   assert.deepEqual(JSON.parse(request.init.body), {
     // The tool slug is upper-cased and the toolkit derived from its leading segment, so a caller
     // never has to state the same thing twice.
@@ -101,7 +103,7 @@ test("a failed upload request names the step and the status without leaking the 
   const file = await scratchFile(t, "x.pdf", "x");
   await assert.rejects(
     stageFileForComposio({
-      apiKey: "ck_secret_value",
+      apiKey: "ak_secret_value",
       absolutePath: file,
       toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
       fetchImpl: async () => ({ ok: false, status: 401, text: async () => "invalid api key" }),
@@ -109,7 +111,7 @@ test("a failed upload request names the step and the status without leaking the 
     (error) => {
       assert.match(error.message, /upload request failed \(HTTP 401\)/);
       assert.match(error.message, /invalid api key/);
-      assert.ok(!error.message.includes("ck_secret_value"));
+      assert.ok(!error.message.includes("ak_secret_value"));
       return true;
     },
   );
@@ -177,4 +179,116 @@ test("unknown extensions fall back to octet-stream rather than guessing", () => 
   assert.equal(guessMimeType("deck.pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation");
   assert.equal(guessMimeType("archive.unknownext"), "application/octet-stream");
   assert.equal(guessMimeType("README"), "application/octet-stream");
+});
+
+// ── Consumer keys (`ck_…`, the hosted MCP's credential): staged through the MCP workbench ─────
+
+// A fake Composio MCP endpoint: answers initialize, swallows the notification, and executes the
+// staging code's two shapes (append a base64 chunk / verify + mint a key) against an in-memory
+// sandbox, the way the real workbench's stdout reports them.
+function fakeWorkbench({ failWith = "", corrupt = false } = {}) {
+  const calls = [];
+  const files = new Map();
+  const fetchImpl = async (url, init) => {
+    const rpc = JSON.parse(init.body);
+    calls.push({ url, key: init.headers["x-consumer-api-key"], rpc });
+    const headers = new Map([["mcp-session-id", "wb-session"]]);
+    const reply = (payload) => ({ ok: true, status: 200, headers: { get: (h) => headers.get(h) || null }, text: async () => (payload === null ? "" : JSON.stringify(payload)) });
+    if (rpc.id === undefined) return reply(null);
+    if (rpc.method !== "tools/call") return reply({ jsonrpc: "2.0", id: rpc.id, result: { capabilities: {} } });
+    assert.equal(rpc.params.name, "COMPOSIO_REMOTE_WORKBENCH");
+    const code = rpc.params.arguments.code_to_execute;
+    const target = code.match(/open\('([^']+)'/)[1];
+    let stdout = "";
+    const chunk = code.match(/b64decode\('([^']*)'\)/);
+    if (failWith) return reply({ jsonrpc: "2.0", id: rpc.id, result: { content: [{ type: "text", text: JSON.stringify({ data: { stdout: "", error: failWith }, successful: false }) }] } });
+    if (chunk) {
+      const prior = code.includes("'wb'") ? Buffer.alloc(0) : files.get(target) || Buffer.alloc(0);
+      files.set(target, Buffer.concat([prior, Buffer.from(chunk[1], "base64")]));
+    } else {
+      let data = files.get(target) || Buffer.alloc(0);
+      if (corrupt) data = data.subarray(1);
+      const md5 = createHash("md5").update(data).digest("hex");
+      stdout = `CGSTAGE${JSON.stringify({ md5, bytes: data.length, s3key: `wb/${path.basename(target)}` })}\n`;
+    }
+    return reply({ jsonrpc: "2.0", id: rpc.id, result: { content: [{ type: "text", text: JSON.stringify({ data: { stdout, error: "" }, successful: true }) }] } });
+  };
+  return { calls, files, fetchImpl };
+}
+
+test("a consumer key stages through the MCP workbench in chunks and never touches the REST API", async (t) => {
+  const contents = Buffer.from("0123456789abcdefghij"); // 20 bytes → 3 chunks of 8
+  const file = await scratchFile(t, "report.pdf", contents);
+  const wb = fakeWorkbench();
+  const staged = await stageFileForComposio({
+    apiKey: "ck_consumer",
+    absolutePath: file,
+    toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
+    mcpUrl: "https://mcp.example.test/mcp",
+    workbenchChunkBytes: 8,
+    fetchImpl: wb.fetchImpl,
+  });
+  assert.equal(staged.route, "workbench");
+  assert.deepEqual(staged.file, { name: "report.pdf", mimetype: guessMimeType("report.pdf"), s3key: "wb/report.pdf" });
+  assert.ok(wb.calls.every((call) => call.url === "https://mcp.example.test/mcp" && call.key === "ck_consumer"));
+  const codes = wb.calls.filter((call) => call.rpc.method === "tools/call").map((call) => call.rpc.params.arguments.code_to_execute);
+  assert.equal(codes.length, 4, "three chunks plus the verification call");
+  assert.match(codes[0], /'wb'/);
+  assert.ok(codes.slice(1, 3).every((code) => /'ab'/.test(code)), "later chunks append");
+  assert.deepEqual([...wb.files.values()][0], contents, "the sandbox holds exactly the file's bytes");
+  assert.match(codes[3], /get_mount_file_s3_key/);
+});
+
+test("the sandbox path cannot carry code: the file name is reduced to safe characters", async (t) => {
+  const file = await scratchFile(t, "plain.txt", "x");
+  const wb = fakeWorkbench();
+  const staged = await stageFileForComposio({
+    apiKey: "ck_consumer",
+    absolutePath: file,
+    toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
+    filename: "q'); import os; os.system('id') #.txt",
+    mcpUrl: "https://mcp.example.test/mcp",
+    fetchImpl: wb.fetchImpl,
+  });
+  const code = wb.calls.find((call) => call.rpc.method === "tools/call").rpc.params.arguments.code_to_execute;
+  assert.ok(!code.includes("import os; os.system"), "the caller's name never reaches the Python source");
+  assert.match(code, /channelgate-stage\/[0-9a-f]{16}\/q_import_os_os.system_id_.txt'/);
+  // The FileUploadable still carries the name the caller asked for.
+  assert.equal(staged.file.name, "q'); import os; os.system('id') #.txt");
+});
+
+test("an incomplete transfer is refused rather than staged", async (t) => {
+  const file = await scratchFile(t, "data.csv", "a,b\n1,2\n");
+  const wb = fakeWorkbench({ corrupt: true });
+  await assert.rejects(
+    stageFileForComposio({ apiKey: "ck_consumer", absolutePath: file, toolSlug: "GOOGLEDRIVE_UPLOAD_FILE", mcpUrl: "https://mcp.example.test/mcp", fetchImpl: wb.fetchImpl }),
+    /incomplete; nothing was staged/,
+  );
+});
+
+test("a sandbox error surfaces as an error, without the key", async (t) => {
+  const file = await scratchFile(t, "data.csv", "a,b\n");
+  const wb = fakeWorkbench({ failWith: "PermissionError: /mnt/files is read-only" });
+  await assert.rejects(
+    stageFileForComposio({ apiKey: "ck_consumer", absolutePath: file, toolSlug: "GOOGLEDRIVE_UPLOAD_FILE", mcpUrl: "https://mcp.example.test/mcp", fetchImpl: wb.fetchImpl }),
+    (error) => /PermissionError/.test(error.message) && !error.message.includes("ck_consumer"),
+  );
+});
+
+test("a consumer key has its own, lower size cap, checked before any call", async (t) => {
+  const file = await scratchFile(t, "big.bin", Buffer.alloc(64));
+  const wb = fakeWorkbench();
+  await assert.rejects(
+    stageFileForComposio({ apiKey: "ck_consumer", absolutePath: file, toolSlug: "GOOGLEDRIVE_UPLOAD_FILE", mcpUrl: "https://mcp.example.test/mcp", workbenchMaxBytes: 32, fetchImpl: wb.fetchImpl }),
+    /staging limit is 32 with a Composio consumer key/,
+  );
+  assert.equal(wb.calls.length, 0);
+});
+
+test("consumer and project keys are told apart by prefix", () => {
+  assert.equal(isConsumerKey("ck_abc"), true);
+  assert.equal(isConsumerKey("ak_abc"), false);
+  assert.equal(isConsumerKey(""), false);
+  assert.equal(sandboxFileName("../../etc/passwd"), "etc_passwd");
+  assert.equal(sandboxFileName(""), "file");
 });

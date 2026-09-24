@@ -18,7 +18,8 @@ import { z } from "zod";
 
 import { effectiveWorkDir } from "../../gateway/folders.js";
 import { openConfinedFile } from "../../gateway/confined-file.js";
-import { stageFileForComposio, COMPOSIO_STAGE_MAX_BYTES } from "../../gateway/composio-files.js";
+import { stageFileForComposio, COMPOSIO_STAGE_MAX_BYTES, COMPOSIO_WORKBENCH_STAGE_MAX_BYTES } from "../../gateway/composio-files.js";
+import { composioUrl } from "../../gateway/mcp-catalog.js";
 import {
   createPublicFileLink,
   listPublicFileLinks,
@@ -85,7 +86,8 @@ export function register(server, ctx) {
         "GMAIL_SEND_EMAIL attachments, SLACK_UPLOAD_FILE, …). Those tools accept NO path and NO base64 — this is " +
         "how a file you generated here reaches them. Pass the returned object straight through as the tool's file " +
         "argument. Nothing is made publicly reachable and the Composio key never leaves the gateway. " +
-        `Path is workspace-relative; the limit is ${formatBytes(COMPOSIO_STAGE_MAX_BYTES)}.`,
+        `Path is workspace-relative; the limit is ${formatBytes(COMPOSIO_WORKBENCH_STAGE_MAX_BYTES)} on a Composio ` +
+        `consumer (MCP) key and ${formatBytes(COMPOSIO_STAGE_MAX_BYTES)} on a project API key.`,
       inputSchema: {
         path: z.string().describe("File path relative to this channel's working folder."),
         tool: z.string().describe("The Composio tool slug the staged file is for, e.g. GOOGLEDRIVE_UPLOAD_FILE."),
@@ -116,8 +118,15 @@ export function register(server, ctx) {
         // Confine and open BEFORE anything is sent anywhere. openConfinedFile proves the file is
         // still inside this channel's folder at open time, which is what stops a model-supplied
         // path (or a symlink swapped in behind it) reaching the operator home on a channel that
-        // mounts one.
-        const opened = await openConfinedFile(workspaceFor(slug, meta), relative);
+        // mounts one. Only THIS step is a refusal; everything after it is a delivery that either
+        // worked or failed, and saying "refused" for an upstream error misleads the model into
+        // blaming the user's key.
+        let opened;
+        try {
+          opened = await openConfinedFile(workspaceFor(slug, meta), relative);
+        } catch (error) {
+          return text(`Staging refused: ${clean(error)}`);
+        }
         handle = opened.handle;
         await handle.close();
         handle = null;
@@ -128,6 +137,7 @@ export function register(server, ctx) {
           toolSlug: tool,
           filename: filename || opened.name,
           mimetype,
+          mcpUrl: composioUrl(),
         });
         await logEvent("composio_file_staged", {
           channel: channelId,
@@ -138,6 +148,7 @@ export function register(server, ctx) {
           identity,
           tool: staged.tool,
           deduplicated: staged.deduplicated,
+          route: staged.route,
         });
         return text(
           `Staged \`${opened.relative}\` (${formatBytes(staged.bytes)})${staged.deduplicated ? " — Composio already held these exact bytes" : ""} ` +
@@ -146,7 +157,7 @@ export function register(server, ctx) {
           `Run the tool on \`composio-${identity}\` — the key that staged it is the only one that can see it.`,
         );
       } catch (error) {
-        return text(`Staging refused: ${clean(error)}`);
+        return text(`Staging failed: ${clean(error)}`);
       } finally {
         await handle?.close().catch(() => {});
       }

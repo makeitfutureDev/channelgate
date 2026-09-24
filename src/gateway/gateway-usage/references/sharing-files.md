@@ -45,6 +45,19 @@ Two things that will bite you if you skip them:
 If the reply says Composio already held those bytes, that is a deduplication hit, not a failure —
 the `s3key` is good.
 
+Two answers are final, and they mean different things:
+
+- **`Staging refused:`** — the path is not a file of this conversation (outside the working folder,
+  a symlink out of it, not a regular file). That path is not exported. Tell the user so. Do **not**
+  copy the file into the working folder, or read it and re-create it, to get around the refusal.
+- **`Staging failed:`** — Composio could not take the file (network, service, size). Report the
+  failure in one line and stop. Do **not** push the file's contents through Composio's workbench,
+  code execution or any other tool yourself: that routes the bytes through the conversation, which
+  is exactly what staging exists to avoid.
+
+Size: up to 25 MB on a Composio consumer key (the kind this gateway normally stores), 100 MB on a
+project API key. Past that, say the file is too large to stage rather than splitting it.
+
 ## 3. A URL is the only way in → `create_public_file_link`
 
 Some APIs ingest by URL rather than by body (`GOOGLEDRIVE_UPLOAD_FROM_URL` and friends), and

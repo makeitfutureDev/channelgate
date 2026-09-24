@@ -66,6 +66,174 @@ function failure(step, status, body) {
   return new Error(`Composio ${step} failed (HTTP ${status})${detail ? `: ${detail}` : ""}`);
 }
 
+// ── Consumer keys: staging through the Composio MCP workbench ─────────────────────────────────
+// The tokens this gateway stores for `composio-user` / `composio-agent` are Composio CONSUMER keys
+// (`ck_…`) — the credential of Composio's hosted MCP, sent as `x-consumer-api-key`. The REST upload
+// endpoint above does not accept them under either header (401 "Invalid API key" / "No
+// authentication provided"), so with a consumer key the three-step flow cannot work, and it never
+// did: every personal-mode stage failed before this route existed. What a consumer key CAN do is
+// run code in the MCP's own workbench, whose `get_mount_file_s3_key(path)` puts a file from the
+// sandbox's /mnt/files into the same storage and returns the s3key GOOGLEDRIVE_UPLOAD_FILE & co.
+// expect — and that key is usable from any later MCP session on the same identity, which is what
+// lets the daemon stage here and the model use the result in its own session.
+//
+// It still runs in the daemon, for the same reason as the REST route: the key never reaches the
+// model, and neither do the file's bytes. They cross as base64 inside the code the daemon sends,
+// in chunks, because one request above ~5 MB of base64 is rejected (413); the sandbox keeps its
+// files for the life of one MCP session, so the chunks append to one file and a final call checks
+// the md5 before minting the key. That makes this route slower than the REST one, hence its own,
+// lower size cap.
+export const COMPOSIO_WORKBENCH_STAGE_MAX_BYTES = 25 * 1024 * 1024;
+export const COMPOSIO_WORKBENCH_CHUNK_BYTES = 768 * 1024;
+const WORKBENCH_TOOL = "COMPOSIO_REMOTE_WORKBENCH";
+const WORKBENCH_TIMEOUT_MS = 120_000;
+const STAGE_MARKER = "CGSTAGE";
+
+/** A Composio consumer (hosted-MCP) key, as opposed to a project API key the REST API accepts. */
+export function isConsumerKey(key) {
+  return /^ck_/.test(String(key || ""));
+}
+
+// The name becomes part of Python source, so it is reduced to characters that cannot end the
+// string literal or start a statement. The FileUploadable keeps the real name; only the sandbox
+// path uses this one.
+export function sandboxFileName(name) {
+  const cleaned = String(name || "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+/, "").slice(0, 80);
+  return cleaned || "file";
+}
+
+function mcpClient({ url, key, fetchImpl }) {
+  let session = "";
+  let nextId = 1;
+  async function rpc(method, params, { notify = false } = {}) {
+    const body = notify ? { jsonrpc: "2.0", method, params } : { jsonrpc: "2.0", id: nextId++, method, params };
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "x-consumer-api-key": key,
+        ...(session ? { "mcp-session-id": session } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(WORKBENCH_TIMEOUT_MS),
+    });
+    const minted = response.headers?.get?.("mcp-session-id");
+    if (minted) session = minted;
+    const raw = await response.text().catch(() => "");
+    if (notify) return null;
+    if (!response.ok) throw failure(`workbench ${method}`, response.status, raw);
+    return parseRpc(raw);
+  }
+  return {
+    async open() {
+      const init = await rpc("initialize", {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "channelgate-stage", version: "1" },
+      });
+      if (init?.error) throw new Error(`Composio workbench refused the session: ${rpcMessage(init.error)}`);
+      await rpc("notifications/initialized", {}, { notify: true });
+    },
+    async run(code) {
+      const reply = await rpc("tools/call", { name: WORKBENCH_TOOL, arguments: { code_to_execute: code, thought: "Stage a channel file for a Composio tool." } });
+      if (reply?.error) throw new Error(`Composio workbench call failed: ${rpcMessage(reply.error)}`);
+      return workbenchOutput(reply);
+    },
+  };
+}
+
+// A JSON-RPC reply arrives either as plain JSON or as one or more server-sent events; the result
+// is the last event that carries an id, a result or an error.
+function parseRpc(raw) {
+  const text = String(raw || "");
+  const events = text.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).filter(Boolean);
+  for (let i = events.length - 1; i >= 0; i--) {
+    try {
+      const message = JSON.parse(events[i]);
+      if (message.id !== undefined || message.result || message.error) return message;
+    } catch {
+      /* not JSON — keep looking */
+    }
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("Composio workbench returned an unreadable response");
+  }
+}
+
+function rpcMessage(error) {
+  return String(error?.message || JSON.stringify(error || {})).slice(0, 200);
+}
+
+// The tool's text content is itself JSON (`{ data: { stdout, error }, successful }`). Return the
+// sandbox's stdout, or throw with the sandbox's own error so a Python failure is not mistaken for
+// an empty success.
+function workbenchOutput(reply) {
+  const text = (reply?.result?.content || []).map((part) => part?.text || "").join("\n");
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  const data = parsed?.data || {};
+  const error = String(data.error || parsed?.error || "").trim();
+  if (error || parsed?.successful === false) {
+    throw new Error(`Composio workbench error: ${(error || "the sandbox reported a failure").slice(0, 200)}`);
+  }
+  return String(data.stdout ?? data.results ?? text);
+}
+
+/**
+ * Stage bytes through the Composio MCP workbench with a consumer key. `fetchImpl` is injectable so
+ * the tests drive the whole session; `chunkBytes` is injectable so they can force several chunks.
+ */
+export async function stageViaWorkbench({
+  consumerKey,
+  mcpUrl,
+  bytes,
+  name,
+  md5,
+  fetchImpl = fetch,
+  chunkBytes = COMPOSIO_WORKBENCH_CHUNK_BYTES,
+} = {}) {
+  if (!mcpUrl) throw new Error("no Composio MCP URL is configured for workbench staging");
+  const client = mcpClient({ url: mcpUrl, key: consumerKey, fetchImpl });
+  await client.open();
+  // A fresh directory per stage, so two stages in one sandbox can never append to each other.
+  const target = `/mnt/files/channelgate-stage/${createHash("md5").update(`${md5}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 16)}/${sandboxFileName(name)}`;
+  const step = Math.max(1, Math.floor(chunkBytes));
+  for (let offset = 0, first = true; offset < bytes.length || first; offset += step, first = false) {
+    const chunk = bytes.subarray(offset, offset + step).toString("base64");
+    await client.run(
+      "import base64, os\n" +
+      `os.makedirs(os.path.dirname('${target}'), exist_ok=True)\n` +
+      `with open('${target}', '${first ? "wb" : "ab"}') as handle:\n` +
+      `    handle.write(base64.b64decode('${chunk}'))\n`,
+    );
+    if (bytes.length === 0) break;
+  }
+  const output = await client.run(
+    "import hashlib, json\n" +
+    `data = open('${target}', 'rb').read()\n` +
+    `digest = hashlib.md5(data).hexdigest()\n` +
+    `key = get_mount_file_s3_key('${target}') if digest == '${md5}' else None\n` +
+    "key = key[0] if isinstance(key, (tuple, list)) else key\n" +
+    `print('${STAGE_MARKER}' + json.dumps({'md5': digest, 'bytes': len(data), 's3key': key}))\n`,
+  );
+  const line = String(output).split("\n").find((entry) => entry.startsWith(STAGE_MARKER));
+  if (!line) throw new Error("the Composio workbench did not report the staged file");
+  const report = JSON.parse(line.slice(STAGE_MARKER.length));
+  if (report.md5 !== md5 || report.bytes !== bytes.length) {
+    throw new Error("the file arrived in the Composio workbench incomplete; nothing was staged");
+  }
+  const s3key = String(report.s3key || "");
+  if (!s3key) throw new Error("the Composio workbench returned no storage key");
+  return s3key;
+}
+
 /**
  * Stage one already-resolved absolute path into Composio storage.
  *
@@ -85,7 +253,10 @@ export async function stageFileForComposio({
   filename = "",
   mimetype = "",
   apiBase = "",
+  mcpUrl = "",
   maxBytes = COMPOSIO_STAGE_MAX_BYTES,
+  workbenchMaxBytes = COMPOSIO_WORKBENCH_STAGE_MAX_BYTES,
+  workbenchChunkBytes = COMPOSIO_WORKBENCH_CHUNK_BYTES,
   fetchImpl = fetch,
 } = {}) {
   const key = String(apiKey || "");
@@ -95,9 +266,11 @@ export async function stageFileForComposio({
   const name = String(filename || path.basename(absolutePath || "")).trim();
   if (!name) throw new Error("the file to stage needs a name");
 
+  const consumer = isConsumerKey(key);
+  const limit = consumer ? Math.min(maxBytes, workbenchMaxBytes) : maxBytes;
   const info = await stat(absolutePath);
   if (!info.isFile()) throw new Error("only a regular file can be staged");
-  if (info.size > maxBytes) throw new Error(`file is ${info.size} bytes; the staging limit is ${maxBytes}`);
+  if (info.size > limit) throw new Error(`file is ${info.size} bytes; the staging limit is ${limit}${consumer ? " with a Composio consumer key" : ""}`);
 
   // O_NOFOLLOW on the final open, for the same reason the download router uses it: the caller
   // proved this path at lookup time, and a symlink swapped in between then and now must not
@@ -112,6 +285,12 @@ export async function stageFileForComposio({
 
   const type = String(mimetype || "").trim() || guessMimeType(name);
   const md5 = createHash("md5").update(bytes).digest("hex");
+
+  if (consumer) {
+    const s3key = await stageViaWorkbench({ consumerKey: key, mcpUrl, bytes, name, md5, fetchImpl, chunkBytes: workbenchChunkBytes });
+    return { file: { name, mimetype: type, s3key }, bytes: bytes.length, deduplicated: false, toolkit, tool, route: "workbench" };
+  }
+
   const base = String(apiBase || "").trim().replace(/\/+$/, "") || composioApiBase();
 
   const requested = await fetchImpl(`${base}${COMPOSIO_UPLOAD_REQUEST_PATH}`, {
@@ -141,5 +320,6 @@ export async function stageFileForComposio({
     deduplicated: !presigned,
     toolkit,
     tool,
+    route: "rest",
   };
 }

@@ -56,6 +56,17 @@
       `agent` → the channel token), a named identity with no key is reported instead of falling
       back to the other, and a path escaping the channel folder is refused before any key is spent.
       Engine-independent: the tool runs daemon-side and no harness participates.
+- [x] Consumer keys (`test/composio-files.test.js`, `test/file-sharing-tools.test.js`): a `ck_` key
+      never reaches the REST API; the file crosses as appended base64 chunks in one MCP session and
+      is md5-verified before `get_mount_file_s3_key`; an incomplete transfer, a sandbox error and an
+      oversize file (the 25 MB consumer cap) are errors without the key; a hostile file name never
+      reaches the Python source; a project (`ak_`) key keeps the REST route; an upstream failure
+      answers `Staging failed:` while only the confinement check answers `Staging refused:`.
+- [x] Live proof of the route (2026-09-25, Xavier): a `ck_` key is rejected by the REST upload under
+      both `x-api-key` and `x-consumer-api-key` (401). Through the hosted MCP on the same key: a 1 MB
+      file stages in one call; 4 MB is rejected (413); a 3 MB file sent as four 768 KB appends
+      reassembles with a matching md5; and an `s3key` minted in one MCP session uploads successfully
+      to Drive from a SEPARATE session (the daemon/model split). Probe file deleted afterwards.
 - [ ] Live acceptance, Claude and Codex: in a fixture channel with a Composio connection, ask the
       agent to put a file it generated into Drive. Require it to call `stage_file_for_composio`
       (not a base64 relay, not a public link), then `GOOGLEDRIVE_UPLOAD_FILE` on the SAME identity,
