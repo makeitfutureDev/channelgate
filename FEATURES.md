@@ -25,6 +25,10 @@
 - The 30-second VPN health check verifies only the tunnel and its route. It never opens a
   database connection, so it cannot run up MySQL's connect-error count and get the tunnel address
   blocked (error 1129).
+- A turn-on or turn-off that the helper refuses answers with the same fixed diagnostic the status
+  row uses: a VPN image that no longer matches the gateway's source says to rebuild the image
+  instead of a generic "Could not change VPN state". Only a known failure class crosses from the
+  helper; its free text and provider output never do.
 - Admitted channel users can ask either engine to list databases/tables, describe a table, or read
   bounded matching rows using `query_channel_database`. The channel-bound extractor enforces fixed
   read operations, a read-only transaction, row/byte/time limits, fresh authorization and Network

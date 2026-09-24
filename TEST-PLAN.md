@@ -366,7 +366,18 @@ unchecked live gate above.
 
 - [x] `test/channel-vpn-control.test.js`: current-channel-only tools, fresh admission/management
       checks, queued revocation, serialized toggles, secret-safe responses, start/connected
-      distinction, lost readiness and OFF cleanup of supervised/manual owned containers.
+      distinction, lost readiness and OFF cleanup of supervised/manual owned containers; a
+      refused toggle names the helper's fixed failure class (stale image → rebuild remedy) and
+      an unknown, prefixed or free-text class falls back to the generic message.
+- [ ] Live, engine-independent (the helper decides before any engine or provider traffic): on a
+      scratch gateway with a configured VPN channel, make `localhost/channelgate/vpn:2` stale
+      (tag an older build, or edit a non-test file under `services/vpn-image/` without
+      rebuilding). Action: web **VPN** toggle ON, then Slack Settings → Network → **Turn VPN on**,
+      then ask Claude and Codex once each to "turn VPN on". Expected: every path answers
+      "VPN needs its current OpenVPN 3 image and supervisor…", the `channel_vpn_control_failed`
+      event carries `errorClass: "upgrade_required"`, no container is created and no VPN session
+      opens. Pass: all four paths show the rebuild message; `npm run vpn -- build` then one ON
+      reaches Starting.
 - [x] `test/channel-vpn-web.test.js`: active admin session, CSRF and narrow boolean payload;
       real Chromium channel switch, immediate save, missing setup/Secrets, Network off,
       connecting/failure refresh, and manual-start OFF while Network is disabled.

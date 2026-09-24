@@ -7,7 +7,7 @@ import { listChannelEnv } from "../config/channel-env.js";
 import { gatewayRoot } from "../config/paths.js";
 import { logEvent } from "../util/logger.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
-import { runCommand, SECRET_REFS, vpnFailureMessage } from "./vpn-service.js";
+import { isVpnFailureClass, runCommand, SECRET_REFS, vpnFailureMessage } from "./vpn-service.js";
 
 const helper = fileURLToPath(new URL("../../scripts/channel-vpn.mjs", import.meta.url));
 const states = new Set(["off", "starting", "on", "stopping", "failed"]);
@@ -20,6 +20,15 @@ function helperEnv() {
     if (process.env[name]) env[name] = process.env[name];
   }
   return env;
+}
+
+// The helper's last stdout line names a failure by fixed class; anything else is not trusted.
+function helperFailureClass(stdout = "") {
+  const last = String(stdout).trim().split(/\r?\n/).pop();
+  try {
+    const errorClass = JSON.parse(last)?.errorClass;
+    return isVpnFailureClass(errorClass) ? errorClass : "";
+  } catch { return ""; }
 }
 
 export function createChannelVpnControl({
@@ -93,8 +102,9 @@ export function createChannelVpnControl({
       try { result = await execute(enabled ? "enable" : "disable", channelId); }
       catch { throw fail("Could not control the VPN service. Refresh its status before retrying.", 503); }
       if (result.code !== 0) {
-        await audit("channel_vpn_control_failed", { channel: channelId, slug: entry.slug, author: actor, source, enabled });
-        throw fail("Could not change VPN state. Check the service setup and refresh its status.", 503);
+        const errorClass = helperFailureClass(result.stdout);
+        await audit("channel_vpn_control_failed", { channel: channelId, slug: entry.slug, author: actor, source, enabled, ...(errorClass && { errorClass }) });
+        throw fail(errorClass ? vpnFailureMessage(errorClass) : "Could not change VPN state. Check the service setup and refresh its status.", 503);
       }
       pending.delete(channelId);
       // Do not return an in-flight read taken before the command, and never equate enabled with connected.

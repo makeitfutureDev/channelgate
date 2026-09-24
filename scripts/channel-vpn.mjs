@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { lstat, readdir } from "node:fs/promises";
 import { normalizeVpnProfile, validateVpnTarget } from "../src/gateway/vpn-profile.js";
 import { SECRET_REFS, serviceIdentity, selectedCredentials, serviceFingerprint, createVpnService,
-  plainPath, privateDirectory, readPrivate, writePrivate, runCommand, vpnUnitStatus, vpnFailureMessage, disableVpnUnit, vpnEnableRestartRequired, VPN_IMAGE, VPN_SERVICE_VERSION, vpnImageDigest, requireVpnImage } from "../src/gateway/vpn-service.js";
+  plainPath, privateDirectory, readPrivate, writePrivate, runCommand, vpnUnitStatus, vpnFailureMessage, isVpnFailureClass, disableVpnUnit, vpnEnableRestartRequired, VPN_IMAGE, VPN_SERVICE_VERSION, vpnImageDigest, requireVpnImage } from "../src/gateway/vpn-service.js";
 
 const bundleRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
@@ -259,4 +259,7 @@ main().catch(error => {
   // Never relay provider/process output: it may include credentials or profile key material.
   const message = error instanceof Error && !error.code ? error.message : "Service operation failed (filesystem or runtime access).";
   console.error(message); process.exitCode = 1;
+  // The one machine-readable failure line: a fixed class token, so the chat/web control can name
+  // the cause (a stale image, say) instead of a generic failure. Never free text.
+  if (isVpnFailureClass(error?.vpnErrorClass)) console.log(JSON.stringify({errorClass:error.vpnErrorClass}));
 });
