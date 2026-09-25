@@ -16,6 +16,53 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## 0.5.6 — 2026-09-25
+
+- Codex over SSH now gets what a chat turn's Codex gets: the gateway tools, your own and the
+  channel's Composio accounts, the channel's MCP servers and your channel secrets, starting in
+  the channel folder. `with-secrets <command>` runs any other command with those secrets.
+- Slack **⚙️ Settings** pages are tabs again: one row — General · Resume · MCP · Skills · Secrets —
+  with the open page highlighted, instead of the *Page* dropdown.
+- Google Drive sync now syncs the channel's whole folder instead of a `Drive/` subfolder. Agent
+  instructions and skills, channel memory, secrets, `.git` and dependency trees never sync, a
+  `.driveignore` file adds a channel's own exclusions, and symlinks are never followed. rclone now
+  runs in a throwaway container that sees only the channel folder, so a planted link can never
+  write onto the host (this also closes that hole in the old subfolder sync). A folder that
+  contains the home or the gateway's data is refused.
+- VS Code over SSH now starts in the channel's folder: File → Open Folder in a Remote-SSH window
+  opens at the channel folder (or its custom folder) instead of the container's home.
+- Handing a generated file to Drive, Gmail or another Composio tool now goes through the gateway's
+  staging on every engine: the rule rides each run's Composio identity notice, so Codex no longer
+  falls back to pushing the file through Composio's workbench as base64.
+- Google Drive sync no longer stalls on a folder that was empty when it was linked. The first sync
+  of two empty sides succeeded, but every later sync then failed (rclone: "Empty prior Path1
+  listing"), so files never moved. A sync record that holds no files now triggers a fresh resync.
+- Slack **⚙️ Settings** no longer claims a channel pinned to Claude inherits the Codex default
+  model (or the reverse): an unset model or effort now names what the channel's own harness would
+  actually use. The web admin's VPN status also stops saying "not configured" twice.
+
+- Sending a generated file to Drive, Gmail and other Composio tools works again — or rather, works
+  for the first time on a gateway using personal Composio tokens. `stage_file_for_composio` sent the
+  stored token to Composio's REST upload, which only accepts project API keys; the tokens stored
+  here are consumer (MCP) keys, so every stage failed with "Invalid API key" and the model told the
+  user their key was broken. With a consumer key the gateway now stages through the hosted MCP's own
+  workbench, daemon-side and in chunks, so the file still never passes through the conversation
+  (limit 25 MB there, 100 MB with a project key). A real problem now reads `Staging failed:`;
+  `Staging refused:` is kept for files that are not the conversation's own (outside its folder, a
+  symlink, not a regular file).
+- Security: staging a file for Composio now reads the exact file whose location it checked. It
+  used to check the file, close it and open it again by name, and the conversation's container can
+  write its own folder — so in that gap the name could be swapped for a link to a file elsewhere on
+  the host, which the gateway would then have read and uploaded. Found by review during the
+  2026-09-25 QA campaign. The tool first shipped in 0.5.3, and on a gateway using consumer keys (the
+  default) no stage could complete before this release, so the gap could not have been used there.
+- The assistant no longer suggests a blanket container prune when asked about disk space. The
+  rule against `podman system prune`/`reset`, `podman image prune -a`, `podman volume prune` and
+  `docker system prune` lived only in the operating guide, and a run that answered without opening
+  the guide recommended two of them — on this host they can delete channel homes or the runtime
+  image. The rule now sits among the few hard rules every run of every engine reads, pointing at
+  `npm run runtime:storage` (removal only with `-- --apply` when an admin asks).
+
 ## 0.5.5 — 2026-09-24
 
 - The runtime image no longer carries SSH host private keys. Installing `openssh-server` generated

@@ -6,6 +6,14 @@
 > CI passed on the exact candidate and a live smoke ran for Claude and Qwen. The owner released it
 > without Codex live acceptance (the Codex account was usage-limited until 2026-09-24) and without
 > the full live campaign; both remain open for the next release, see RELEASE-ACCEPTANCE.md.
+> 0.5.6 was published on 2026-09-25 by explicit owner decision after the full automated gate and
+> CI passed on the exact candidate. Live on Xavier before the cut (QA-0925, Airtable): the Composio
+> staging route for consumer keys (FSHARE-02 both engines, after the Codex handoff-rule fix), the
+> Drive empty-listing resync (the wedged channel recovered and synced), Codex over SSH with the
+> gateway, Composio and secrets (owner-verified), SSH governance SSH-GOV-01 (shell) and -03. One SSH
+> hardening item was deferred by owner decision and is tracked in the private QA base. The
+> whole-folder Drive sync's first pass on the one linked channel was still uploading at the cut
+> (its timeout cleanup verified live); the remaining QA-0925 cases continue after release.
 > 0.5.5 was published on 2026-09-24 by explicit owner decision after the full automated gate and
 > CI passed on the exact candidate. It exists to produce the first signed release artifacts since
 > 0.5.2: the `v0.5.3` Release evidence run failed its artifact scan (seven findings in the image

@@ -1771,7 +1771,11 @@ function mountChannelVpnControls(card, channelId) {
     refresh.disabled = pending;
     if (snapshot) {
       const labels = { unconfigured: "Not configured", unavailable: "Unavailable", off: "Off", starting: "Starting", on: "Connected", stopping: "Stopping", failed: "Failed" };
-      const parts = [labels[snapshot.state] || "Unknown", snapshot.message];
+      // The state word, plus the server's message only where the word cannot say why on its own (a
+      // failure, an unavailable service) — for the other states it restates the label, and for an
+      // unconfigured VPN it repeated the hint below almost word for word.
+      const explained = ["failed", "unavailable"].includes(snapshot.state) ? snapshot.message : "";
+      const parts = [labels[snapshot.state] || "Unknown", explained];
       if (!snapshot.configured) parts.push("An administrator must import the VPN profile and prepare the channel’s VPN service first.");
       if (snapshot.missingSecrets?.length) parts.push(`Add in Environment: ${snapshot.missingSecrets.join(", ")}.`);
       if (snapshot.configured && !snapshot.allowNetwork) parts.push("Enable Network and save the channel before starting VPN.");

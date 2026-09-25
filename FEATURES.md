@@ -364,9 +364,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
   setup concepts across five pages — **General Settings**, **Resume Session**, **MCP**, **Skills**,
-  **Secrets** — picked from a single *Page* dropdown rather than a row of buttons that wrapped onto
-  a second line as pages were added. Legacy page ids (`runtime`, `access`, `network`) still resolve,
-  so a Settings view opened before the merge keeps navigating.
+  **Secrets** — shown as one row of tabs (*General · Resume · MCP · Skills · Secrets*) at the top,
+  the open page highlighted; short names keep the five on one row of the modal. Legacy page ids
+  (`runtime`, `access`, `network`) and the former *Page* dropdown still resolve, so a Settings view
+  opened before either change keeps navigating.
   **General Settings** is everything that decides how the conversation runs: its Engine & model
   scopes, then **Access** (with the network switch and the VPN row). Engine & model edits in place — six dropdowns,
   no nested form, each saving the
@@ -375,7 +376,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   inside a thread, **that thread's own pins** (the per-thread overrides the `/model` wizard's "just
   this thread" scope and the `claude`/`codex` directive write, which beat the channel at run time).
   An unset field preselects the label of what it inherits — the gateway default, an org DM
-  template's value, or "Follow channel (…)" for a thread — so nothing reads as a blank; each
+  template's value, or "Follow channel (…)" for a thread — so nothing reads as a blank (an unset
+  model or effort names what the channel's OWN harness would use, so a Claude-pinned channel on a
+  Codex-default gateway reads the Claude default, never the Codex one); each
   scope's model and effort lists follow the harness THAT scope resolves to, so a Codex-pinned
   thread inside a Claude channel offers Codex models. Changing one field drops only the dependents
   it invalidates (a harness change always clears the model, and the effort when the new harness
@@ -1807,8 +1810,32 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   object to pass straight through. The caller names which identity will run the destination tool
   (`user` → `composio-user`, `agent` → `composio-agent`) and the key resolved for THAT identity is
   the one spent, through the same precedence the MCP config uses; a named identity with no key is
-  reported rather than silently replaced by the other one. The key never enters the container,
-  never reaches the model, and never appears in an error message. Nothing is published.
+  reported rather than silently replaced by the other one. Every run that has a Composio identity
+  is also told this handoff rule in its per-run identity line (not only in the gateway-usage guide),
+  so an engine that never opens the guide's sharing page still stages instead of relaying base64.
+  The key never enters the container, never reaches the model, and never appears in an error
+  message. Nothing is published.
+  The REST upload accepts only a Composio PROJECT API key. The keys this gateway stores in personal
+  mode are CONSUMER keys (`ck_…`, the hosted MCP's credential), which that endpoint rejects, so
+  with a consumer key the gateway stages through the hosted MCP's own workbench instead: the daemon
+  opens its own MCP session on the same key, writes the file into the sandbox in base64 chunks of
+  768 KB (one request above ~5 MB is rejected), checks the md5 and mints the key with
+  `get_mount_file_s3_key` — a key the model's separate session can then use. Bytes still never
+  pass through the model. The sandbox path is a random directory plus a name reduced to safe
+  characters, so a file name can never become Python source. Consumer-key staging is capped at
+  25 MB (project keys keep 100 MB), within an overall 10-minute deadline; the MCP session is ended
+  afterwards, but the sandbox copy is kept because the s3key IS that file's storage (deleting it
+  breaks the upload — verified live). A known property of this route: the copy stays in that
+  identity's Composio file storage, so on `composio-agent` backed by the organization key it is
+  listable from any conversation sharing that key (its random directory name is not a secret) —
+  stage on `composio-user`, or give the channel its own Composio key, when that matters. The bytes are read from the SAME descriptor the confinement
+  check proved (O_NOFOLLOW + /proc/self/fd), bounded to the cap: the tool used to close that
+  descriptor and reopen the file by path, so a symlink swapped in by the container between proof
+  and read could have sent any file the daemon can read. Every error text is scrubbed of the key
+  and of long base64 runs before it reaches the model. A path outside the working folder answers `Staging refused:`;
+  anything that goes wrong after that answers `Staging failed:`, and the guide tells the model a
+  refusal is final (no copying the file in to get around it) and a failure is reported, not
+  worked around by pushing the bytes through a tool itself.
   → TEST-PLAN: Composio file staging.
 - **Temporary public file links (`create_public_file_link`).** For destinations that ingest by URL
   rather than by body, and for a person who simply wants a link. One file from the channel's own
@@ -2360,7 +2387,19 @@ are retired, bullet by bullet; everything else stands.
   the thread-bound background, progress and approval tools) with `composio-user` for the
   developer's own accounts, `composio-agent` for the channel's and the selected catalog servers,
   `--strict-mcp-config` so the operator's own claude.ai connectors never load, and the run
-  environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. The files are per
+  environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. Codex gets the
+  same session through its own `codex` wrapper (QA-0925: over SSH it had no gateway MCP, no Composio
+  and no secrets): the session also writes `codex-args.sh` — exactly the `-c mcp_servers.*` /
+  `apps.*` overrides a chat turn's Codex gets, with a Codex-minted gateway capability and the
+  Composio/toolbox credentials in a 0600 `codex-secrets.json` their header helpers read, never argv
+  — and the wrapper sources the secrets, prepends the overrides and, when started from HOME, `/` or
+  a parent of the channel folder, starts Codex in the channel folder (its `AGENTS.md`); a turn's
+  sandbox/approval flags are not carried, the developer answers Codex's own prompts. As in a turn,
+  `apps._default.enabled=false` keeps the shared Codex sign-in's ChatGPT connectors (`codex_apps`,
+  the operator's) off except apps the channel selected, and a selected server with no safe
+  definition is left out. `with-secrets <command>` runs any other command with the developer's channel
+  secrets. A Codex preparation failure is reported (`codexProblem` on `ssh_session_start`) and
+  never costs the Claude session. The files are per
   developer under `<artifacts>/ssh/users/<id>/`, chosen by the `CG_SSH_USER` name sshd sets from
   the developer's authorized_keys line (`PermitUserEnvironment CG_SSH_USER`), and removed when
   their last session ends, refreshed every 20 minutes AND within `CONFIG_REFRESH_DEBOUNCE_MS` of a
@@ -2379,7 +2418,11 @@ are retired, bullet by bullet; everything else stands.
   container's namespaces; no container and no extra host port ever listens; the channel is named
   in the ProxyCommand, so one key reaches several channels at once. A container with a live
   session is never idle-stopped or evicted, and a rebuild waits for it like for a run; a dead peer
-  is reaped by `ClientAlive` in about three minutes. Sessions are `ssh_sessions` rows and
+  is reaped by `ClientAlive` in about three minutes. Each session also seeds VS Code's remote
+  machine setting `files.dialog.defaultPath` with the channel's effective work folder (a custom
+  folder included), so Remote-SSH's File → Open Folder starts there instead of `/home/agent`;
+  the merge is best effort, follows a changed folder, and never overrides a developer's own value.
+  Sessions are `ssh_sessions` rows and
   `ssh_session_start`/`ssh_session_end` events; refusals are `ssh_attach_refused` with the reason
   the developer saw. The image ships `openssh-server` (spec 1.4.0) and marks the `agent` account
   key-only (`*`, not useradd's locked `!`). It carries no SSH host private key: the package's
@@ -2859,10 +2902,18 @@ are retired, bullet by bullet; everything else stands.
   rather than by reading the shared identity that holds other people's accounts (and the mirror:
   "your X" never touches `composio-user`); that `COMPOSIO_MANAGE_CONNECTIONS` initiates connections
   rather than listing them; and that only the gateway's `run_in_background` /
-  `run_agent_in_background` / `create_schedule` can report back after a turn ends — stated here
+  `run_agent_in_background` / `create_schedule` can report back after a turn ends; and that no run
+  runs or recommends `podman system prune`/`reset`, `podman image prune -a`, `podman volume prune`
+  or `docker system prune`, each of which can delete channel homes or the runtime image — disk
+  cleanup goes through `npm run runtime:storage`, with `-- --apply` only when an admin asks — stated here
   because a skill body is read only when the model opens it, and one engine reliably did not
-  (retest, 2026-09-06). They ride clean mode too, are engine-neutral,
-  and stay under 4 KB with the switches so the always-on prompt weight is read rather than skimmed. Editable three ways: the admin UI Instructions tab (edits the real
+  (retest, 2026-09-06; the prune rule after a 2026-09-25 run that skipped the skill and recommended
+  both prunes). They ride clean mode too, are engine-neutral,
+  and stay under 4 KB with the switches so the always-on prompt weight is read rather than skimmed
+  (4,085 bytes in the measured configuration after the prune rule — the header note, the rules'
+  intro and the network line were tightened to make room; the longest switch combination, Admin +
+  Auto with Lean off, is 4,120 bytes, down from 4,126 before, and a test stops it growing. The next
+  always-on rule has to trade space for it). Editable three ways: the admin UI Instructions tab (edits the real
   file; managed block shown read-only with a Settings link; hash-guarded against concurrent
   writes), by hand, or by asking the agent — the `update_channel_instructions` gateway MCP tool
   appends a rule in any mode (replace = admin-only). New sessions and `/clear` pick the file up
@@ -2952,9 +3003,26 @@ are retired, bullet by bullet; everything else stands.
   pending (an armed *clear* toggle, a typed password or key), because a pending action captured as
   "already saved" would silently never run. → TEST-PLAN: Admin UI.
 - **Google Drive two-way sync (scheduled)**: a per-channel Drive folder link (channel settings)
-  is bisync'd on a timer into a dedicated `Drive/` subfolder of that channel's working folder —
-  never the folder root, so the confinement scaffolding (`.claude/`, `CLAUDE.md`, `MEMORY.md`,
-  `memory/`, `uploads/`) is never synced or overwritten. Auth is a Workspace service account
+  is bisync'd on a timer with that channel's WHOLE working folder (it used to be a `Drive/`
+  subfolder; QA-0925). A filters file, matched case-insensitively and applied in both directions,
+  keeps out agent instructions, skills and MCP config at any depth (`CLAUDE.md`, `AGENTS.md`,
+  `AGENTS.override.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/`, `.agents/`, `.codex/`), channel
+  memory (`MEMORY.md`, `memory/`), secrets (`.env*`, `.ssh/`, key and credential files, per-run env
+  folders), `.git` (file or folder), `.worktrees`, dependency trees and `*.rclonelink`, so a Drive
+  editor cannot plant instructions for the agent and no local secret is pushed. A `.driveignore`
+  at the folder root adds the channel's own exclusions (every line becomes an exclude). Every
+  symlink in the folder is excluded for the pass, and rclone runs in a throwaway container
+  (`podman run --rm`, all capabilities dropped) that mounts only the channel folder at its real
+  path and the sync state, filters (read-only) and key (read-only) at a random path per pass: a
+  link planted to anywhere else — even mid-pass — resolves inside that container and can never
+  write onto the host or into the sync state. A timed-out pass force-removes its container. A folder
+  that is or contains the operator's home, the gateway root or the workspace root, a hidden
+  configuration folder of the home (`~/.ssh`, `~/.config`, …), or a workspace folder that is not
+  this channel's own (another channel's, the platform parent, `.runtime`) is refused — so is a Lean
+  (clean-mode) channel, whose runs use a bare folder inside the gateway root. The first sync of a link merges both sides,
+  the newer copy winning where both hold the same path; the completed `--resync` records what it
+  was made for (local root, Drive folder, filters), and changing any of them makes the next pass a
+  fresh `--resync` from a clean state dir instead of a bisync against the old pair's listings. Auth is a Workspace service account
   (+ optional domain-wide-delegation subject), passed to `rclone bisync` via flags — no interactive
   `rclone config`, no per-user OAuth, no secret in the child env. The key is entered by **pasting
   the service-account JSON** into the settings page: stored write-only (validated as a real SA key,
@@ -2987,7 +3055,13 @@ are retired, bullet by bullet; everything else stands.
   through daemon IPC (`drivesync` kind) so the pass runs in the daemon on both MCP transports,
   shares the per-channel in-flight guard and outlives the turn; it waits ~40 s for the outcome and
   otherwise says the pass is still running. `get_channel_drive_folder` now also reports the last
-  pass (time, ok/failed, first-resync, reason). Manual passes obey the same global switch, key and
+  pass (time, ok/failed, first-resync, reason). A pass whose prior rclone listings record no file
+  (including the empty listings rclone set aside as `.lst-err` after refusing them) runs as a
+  `--resync` again, so a folder linked while empty on both sides starts syncing as soon as either
+  side gets a file instead of failing every tick with rclone's exit 7. Any other missing listing
+  stays an error: after a deliberate delete-everything rclone sets aside NON-empty listings, and a
+  resync there would copy the deleted files back.
+  Manual passes obey the same global switch, key and
   rclone checks as the schedule; a pass already running for a channel is never doubled, and a
   manual sweep never stacks on the scheduled one. Status surfaces show a concise diagnostic, never
   the raw rclone tail. Admin API: `POST /api/channels/:id/sync-now`, `GET

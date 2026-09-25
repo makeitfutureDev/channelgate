@@ -56,12 +56,41 @@
       `agent` → the channel token), a named identity with no key is reported instead of falling
       back to the other, and a path escaping the channel folder is refused before any key is spent.
       Engine-independent: the tool runs daemon-side and no harness participates.
+- [x] Staging race (`test/composio-files.test.js`): with the proven descriptor open, the file's path
+      is replaced by a symlink to a file outside the folder — the staged bytes are still the proven
+      file's; a direct caller handing a symlinked path gets ELOOP (O_NOFOLLOW); a file that grows
+      past the cap after the size check is refused without being read whole. Mutation-checked:
+      reintroducing the reopen-by-path, dropping the session header, accepting a server ping as the
+      answer, or removing the key scrub each turns a test red.
+- [x] Consumer keys (`test/composio-files.test.js`, `test/file-sharing-tools.test.js`): a `ck_` key
+      never reaches the REST API; the file crosses as appended base64 chunks in one MCP session and
+      is md5-verified before `get_mount_file_s3_key`; an incomplete transfer, a sandbox error and an
+      oversize file (the 25 MB consumer cap) are errors without the key; a hostile file name never
+      reaches the Python source; a project (`ak_`) key keeps the REST route and any other shape is
+      treated as a consumer key; every later request carries the minted MCP session id and the
+      session is ended with DELETE; SSE replies parse and a server ping (id + method) is never taken
+      for the answer; zero-length files and exact chunk multiples reassemble; a JSON-RPC error, an
+      HTTP error, `isError`, `successful:false` with and without text, and a hung server (overall
+      deadline) are all errors; an upstream body echoing the key is scrubbed on both routes; an
+      upstream failure answers `Staging failed:` while only the confinement check answers
+      `Staging refused:`.
+- [x] Live proof of the route (2026-09-25, Xavier): a `ck_` key is rejected by the REST upload under
+      both `x-api-key` and `x-consumer-api-key` (401). Through the hosted MCP on the same key: a 1 MB
+      file stages in one call; 4 MB is rejected (413); a 3 MB file sent as four 768 KB appends
+      reassembles with a matching md5; and an `s3key` minted in one MCP session uploads successfully
+      to Drive from a SEPARATE session (the daemon/model split). Probe file deleted afterwards.
 - [ ] Live acceptance, Claude and Codex: in a fixture channel with a Composio connection, ask the
       agent to put a file it generated into Drive. Require it to call `stage_file_for_composio`
       (not a base64 relay, not a public link), then `GOOGLEDRIVE_UPLOAD_FILE` on the SAME identity,
       and require the file to open in Drive with the right bytes. Repeat with "my Drive" vs "your
       Drive" and confirm the staged identity matches the one the upload ran as. Record the
       `composio_file_staged` audit event.
+- [x] Automated: every per-run Composio identity line (both, user-only, agent-only) carries the
+      handoff rule — `stage_file_for_composio` with the identity that runs the destination tool, a
+      `create_public_file_link` upload link for URL-only tools, and never file bytes as base64 or
+      chunks through the workbench to get around staging — and an identity-less run gets no line
+      (`test/composio-identity-preamble.test.js`). QA-0925 FSHARE-02: a Codex turn that read the
+      guide's front page but not its sharing page base64'd a PDF through the workbench.
 
 ## Temporary public file links
 
@@ -191,6 +220,14 @@
 
 ## Host container-storage housekeeping guidance
 
+- [x] `test/folders-generator-paths.test.js`: the managed CLAUDE.md block (read by every run of both
+      engines, skill opened or not) forbids running or recommending `podman system prune`/`reset`,
+      `podman image prune -a`, `podman volume prune` and `docker system prune`, each named whole on
+      one line, with a consequence true for all of them ("can delete channel homes or the runtime
+      image") and the admin path `npm run runtime:storage` (`-- --apply` only if an admin asks); the
+      header note keeps its three facts; the block stays under 4 KB in the measured configuration
+      and the worst switch combination may not exceed its current 4,120 bytes. Live: OPS-DISK-01 (Airtable) on both engines — a 2026-09-25 Claude run never
+      opened the skill and recommended both prunes; the Codex run read administration.md and did not.
 - [x] `test/host-housekeeping-guide.test.js`: the materialized guide for every platform routes
       disk/stale-container/old-image questions to `references/administration.md` and carries the
       instruction to report and ask, removing only via `--apply` on an admin's word, and forbids
@@ -1934,13 +1971,20 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       (`test/slack-progress.test.js`, `test/channel-settings-modal.test.js`, `test/deliver.test.js`).
 - [ ] Live General Settings (engine-independent Slack UI case): in a disposable channel with a
       manager actor and an ordinary approved member, open **⚙️ Settings** from a reply. Pass when
-      the modal opens on General Settings with one *Page* dropdown listing five pages; switching
-      pages through it repaints in place; the manager sees Engine & model, Access (summary +
+      the modal opens on General Settings with one row of five tabs (General highlighted) that
+      fits on one line; clicking a tab repaints in place and highlights it; the manager sees Engine & model, Access (summary +
       *Change access settings*) and the VPN row under the network switch on one page, while the member sees the same page
       without the access summary and cannot reach the editor; saving access settings returns to
       General Settings with its notice; and a channel with a provisioned VPN shows *Checking
       status…* replaced by the real state, while a channel without one shows *Not configured*
       immediately with no flicker.
+- [x] Automated inherited-model label (engine-independent): with the gateway default harness
+      Codex, a channel pinned to Claude with no model shows *Inherited default (<Claude default>)*,
+      not the Codex default, and offers only Claude models
+      (`test/channel-settings-modal.test.js`). The web admin's unconfigured VPN row explains the
+      missing setup once, without the server's own "VPN is not configured. …" repeated
+      (`test/channel-vpn-web.test.js`, browser case; run it from a path without a dot-directory —
+      the static server 404s any path under `.worktrees/`).
 - [ ] Live resume round trip (engine-independent Slack UI case, run once per harness where the
       session is minted by that harness): in a disposable channel, send a message, then open
       **⚙️ Settings → Resume Session** from a reply inside that thread. Pass when the tab shows the
@@ -1949,10 +1993,12 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       pasting the same line back as `/resume <command>` continues it from the thread. Then `/clear`
       the thread and reopen the tab: it must say there is no session rather than offering the
       cleared id.
-- [x] Automated page dropdown and General Settings: the modal carries exactly one *Page* control —
-      a `static_select` whose options are General Settings / Resume Session / MCP / Skills /
-      Secrets in that order, opening on the page being shown, each option bound to the view's
-      channel and owner, and no page rendered as a button any more. General Settings carries the
+- [x] Automated page tabs and General Settings: the modal carries one `actions` row of tab buttons
+      General / Resume / MCP / Skills / Secrets in that order, above the page content, exactly the
+      open page styled primary, each bound to the view's channel and owner, and no page dropdown;
+      a picked option from a view opened while the dropdown shipped still switches pages
+      (`test/channel-settings-modal.test.js`). Earlier the pages were a *Page* dropdown (Tiberiu
+      asked for tabs back, QA-0925). General Settings carries the
       Engine & model and Access headers in that order, with the VPN rendered as a single row
       immediately after the Auto/Lean/Network checkboxes rather than a section of its own. Every legacy page id
       (`runtime`, `access`, `network`) and an unknown one resolve to `general`, so a Settings view
@@ -3236,12 +3282,40 @@ structural invariants are automated; rendered navigation and feature claims also
       Test action no-op with a clear message and never throw (smoke-tested).
 - [ ] Manual (needs rclone + a Workspace service-account key): set the global key-file path +
       enable; set a channel's Drive folder link; click **Test** → "Connected". Then wait one
-      interval (or restart) → files appear in `<channel working folder>/Drive/`; a local edit there
-      propagates up to Drive and a Drive edit propagates down, on the next tick.
-- [ ] Confinement: the sync only ever writes under `Drive/` — `.claude/`, `CLAUDE.md`, `AGENTS.md`,
-      `MEMORY.md`, `memory/`, `uploads/` are never pushed to Drive nor overwritten from it.
+      interval (or restart) → the channel folder's files appear in the Drive folder and Drive files
+      appear in the channel folder; a local edit propagates up and a Drive edit down, on the next tick.
+- [x] Confinement (`test/drivesync.test.js`, real rclone): the whole folder syncs, while `.claude/`,
+      `CLAUDE.md`, `MEMORY.md`, `memory/`, `runtime/env/` and `.env` never reach Drive and a Drive-side
+      `CLAUDE.md` never overwrites the channel's; `.driveignore` lines only ever add excludes; filters
+      carry `--ignore-case`; every symlink is excluded for the pass (names glob-escaped); a folder that
+      is or contains the home, the gateway root or the workspace root, a hidden folder of the home, or a
+      workspace folder other than this channel's own is refused; the pass is launched as `podman run
+      --rm --pull=never --cap-drop ALL --name cg-drivesync-…` with the work folder at its real path and
+      the state, read-only filters and read-only key at a fresh random `/cg-sync-<hex>` path per pass
+      (no host path of the state or key exists inside), and a timed-out pass force-removes it; a changed local root, Drive folder or filter set forces
+      a fresh `--resync` (a pre-identity sentinel from the `Drive/` subfolder era resyncs once).
+      Live-verified on Xavier (QA-0925 review): with a work-folder symlink to a host folder and a
+      Drive-side payload under it, the confined pass left the host folder empty even without the
+      symlink exclude; with it, the pass succeeded, `lnk2 -> .claude` could not overwrite `.claude/`,
+      and Drive-side `Claude.md` / `AGENTS.override.md` did not come down.
+- [ ] Live (engine-independent): on a channel whose folder has a lockdown, memory and a `.env`, link
+      a Drive folder and **Sync now**. Pass: the Drive folder holds the channel's own files but none of
+      `.claude/`, `CLAUDE.md`, `AGENTS.md`, `MEMORY.md`, `memory/`, `.env`, `.git`; a file added in Drive
+      reaches the channel folder; a pattern added to `.driveignore` stops that path syncing.
 - [ ] A failed first run leaves no half-baked bisync state (the state dir is dropped, so the next
       tick retries with `--resync`).
+- [x] A prior listing that records no file (`.lst`, or the `.lst-err` rclone set aside after refusing
+      it) forces `--resync` again, and any other missing listing stays an error
+      (`test/drivesync.test.js`, with real-rclone cases that skip when rclone is absent: an empty
+      folder that later gets a file syncs; deleting every file on one side is NOT undone by a
+      forced resync; a failed forced resync keeps its state). rclone's `--resync` of two EMPTY sides
+      succeeds but leaves an empty listing, and every later pass then aborted with exit 7 "Empty
+      prior Path1 listing … Must run --resync to recover". QA-0925: a channel linked to an empty
+      shared-drive folder synced "OK" once and then failed every tick once a file appeared.
+- [ ] Live (engine-independent): link a channel to an EMPTY Drive folder with an empty local
+      `Drive/`, click **Sync now** (ok), then put a file in the local `Drive/` and click **Sync now**
+      again. Pass: the second pass succeeds and the file appears in the Drive folder; a file added
+      in Drive then reaches `Drive/` on the next pass; no `drivesync_error` event.
 - [x] Set the Drive folder link via the gateway MCP tools (`src/mcp/gateway-server.js`):
       `set_channel_drive_folder`/`clear_channel_drive_folder` are admin-gated (`requireAdmin`) and
       reuse the shared `parseDriveFolderId` (junk link → rejected before any write) + `testChannelSync`
@@ -5369,6 +5443,27 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [x] Unit: the image ships `cg-sshd` (POSIX sh clean) and the spec is 1.4.0 in both
       `containers/versions.json` and `image-paths.js` (automated: `test/container-image.test.js`,
       `test/container-durability.test.js`).
+- [x] Automated (`test/ssh-session.test.js`): session prep runs the VS Code start-folder seed in the
+      channel's container with the effective work folder; the seed creates the machine settings,
+      keeps VS Code's own keys, follows a changed work folder, never overrides a developer-set
+      `files.dialog.defaultPath`, never rewrites a non-JSON file, and a failed seed never blocks the
+      session. QA-0925: Remote-SSH landed in `/home/agent`.
+- [ ] LIVE (engine-independent): connect with VS Code Remote-SSH from its own menu to a channel with
+      a custom work folder. Pass: File → Open Folder opens at that folder (not `/home/agent`), OK
+      opens it, and a new terminal's `pwd` is that folder.
+- [x] Automated (`test/ssh-session.test.js`): an SSH session also prepares Codex — `codex-args.sh`
+      (0600) holds only `-c mcp_servers.*`/`apps.*` overrides (gateway, composio-user,
+      composio-agent), no credential and no turn sandbox/approval flags; the 0600 `codex-secrets.json`
+      bundle carries a gateway capability minted for engine `codex` and both Composio tokens; the
+      `codex` and `with-secrets` wrappers are installed; run under `sh`, the codex wrapper sources the
+      secrets, prepends the overrides before the developer's own arguments and moves into the channel
+      folder only from HOME or a parent of it (never from elsewhere), while outside an SSH session it
+      is the plain CLI. QA-0925: Codex over SSH had none of it.
+- [ ] LIVE (Codex): in a granted SSH session run `codex` from `~` and ask it to list
+      its MCP servers and whether `<a personal secret name>` is set (never its value). Pass: it starts
+      in the channel folder, `/mcp` lists `gateway`, `composio-user`, `composio-agent` (and the
+      channel's selected servers), the secret is present, and a gateway tool (e.g. list_secrets)
+      answers; `with-secrets sh -c 'test -n "$NAME" && echo set'` prints `set`.
 - [ ] LIVE (engine-independent, Airtable CTR-31): on the gateway host run `npm run build:image`, then `sudo
       CG_SSH_HOST=<host> bash scripts/install-ssh-access.sh`; within a minute the daemon log shows
       `[ssh] attach socket`. As Apps, in `cg-testing-claude-bash`, send "add my SSH key <Apps'

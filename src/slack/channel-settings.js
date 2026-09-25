@@ -49,7 +49,7 @@ export const CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID = "cg_channel_settings_se
 export const CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID = "cg_channel_settings_vpn_toggle";
 export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_refresh";
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
-// The pages the modal offers, in the order the dropdown lists them. "general" absorbed the former
+// The pages the modal offers, in the order the tab row shows them. "general" absorbed the former
 // runtime, access and network tabs (see generalBlocks); LEGACY_TABS keeps a Settings view opened
 // before that merge — its buttons still carry the old ids — landing on the page that now owns
 // those controls instead of silently falling back to the first one.
@@ -597,24 +597,31 @@ const TAB_LABELS = Object.freeze({
   secrets: "Secrets",
 });
 
-// Pages are chosen from a dropdown rather than a row of buttons: an actions row wraps onto a
-// second line in a narrow modal, and every page added made it worse. The select carries the same
-// `tab` command the buttons did, so a Settings view opened before this shipped keeps switching
-// pages through the very same handler.
-function tabSelect(state, active) {
-  const options = CHANNEL_SETTINGS_TABS.map((tab) =>
-    option(TAB_LABELS[tab], actionValue("tab", { c: state.channelId, u: state.ownerId, p: tab })));
+// The short names the tab row shows; TAB_LABELS stays the page's full name.
+const TAB_BUTTON_LABELS = Object.freeze({
+  general: "General",
+  resume: "Resume",
+  mcp: "MCP",
+  skills: "Skills",
+  secrets: "Secrets",
+});
+
+// Pages are a row of tab buttons, the current one highlighted. A dropdown replaced an earlier row
+// that wrapped onto a second line as pages were added; with five short names one row fits a
+// modal, and a tab is one click where the dropdown was two. Each button carries the same `tab`
+// command the dropdown did, so a Settings view opened before this shipped still switches pages
+// through the very same handler.
+function tabRow(state, active) {
   return {
-    type: "section",
+    type: "actions",
     block_id: "cg_channel_settings_tabs",
-    text: mrkdwn("*Page*"),
-    accessory: {
-      type: "static_select",
-      action_id: CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID,
-      placeholder: plain("Choose a page"),
-      options,
-      initial_option: options[Math.max(0, CHANNEL_SETTINGS_TABS.indexOf(active))],
-    },
+    elements: CHANNEL_SETTINGS_TABS.map((tab) => ({
+      type: "button",
+      action_id: `${CHANNEL_SETTINGS_TAB_PREFIX}${tab}`,
+      text: plain(TAB_BUTTON_LABELS[tab] || TAB_LABELS[tab]),
+      value: actionValue("tab", { c: state.channelId, u: state.ownerId, p: tab }),
+      ...(tab === active ? { style: "primary" } : {}),
+    })),
   };
 }
 
@@ -651,7 +658,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     blocks: [
       { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings and VPN controls require a channel manager or admin. Cloud MCP is admin-only.`)] },
       ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
-      tabSelect(state, active),
+      tabRow(state, active),
       { type: "divider" },
       ...content,
     ],

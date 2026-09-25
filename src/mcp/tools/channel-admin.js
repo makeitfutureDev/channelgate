@@ -371,7 +371,7 @@ export function register(server, ctx) {
 
   server.registerTool(
     "get_channel_drive_folder",
-    { description: "Show this channel's Google Drive sync folder link (the Drive folder two-way-synced into the channel's Drive/ subfolder), or that none is set.", inputSchema: {} },
+    { description: "Show this channel's Google Drive sync folder link (the Drive folder two-way-synced with the channel's whole working folder, minus agent instructions, memory and secrets), or that none is set.", inputSchema: {} },
     async () => {
       const meta = await loadMeta();
       const link = (meta?.syncDriveFolder || "").trim();
@@ -381,7 +381,7 @@ export function register(server, ctx) {
       try {
         if (daemon.available("drivesync")) last = describeDriveSyncStatus((await daemon.call("drivesync", { action: "status", slug }))?.status);
       } catch {}
-      return text(`This channel syncs with: ${link}${id ? ` (folder id ${id})` : ""}\nSynced into the channel folder's Drive/ subfolder.\n${driveSyncStatusLine()}${last ? `\n${last}` : ""}`);
+      return text(`This channel syncs with: ${link}${id ? ` (folder id ${id})` : ""}\nSynced with the whole channel folder (agent instructions, memory, secrets and anything in .driveignore stay local).\n${driveSyncStatusLine()}${last ? `\n${last}` : ""}`);
     }
   );
 
@@ -390,7 +390,7 @@ export function register(server, ctx) {
     {
       description:
         "Sync THIS channel's linked Google Drive folder NOW (two-way rclone bisync into the channel " +
-        "folder's Drive/ subfolder) instead of waiting for the next scheduled sweep. Use when someone " +
+        "folder, minus agent instructions, memory and secrets) instead of waiting for the next scheduled sweep. Use when someone " +
         "asks to 'sync Drive', 'pull the latest from Drive' or 'push my files to Drive'. Only syncs the " +
         "folder already linked to this channel (see get_channel_drive_folder); it cannot target another " +
         "channel. Waits up to ~40s for the result; a longer pass keeps running in the gateway — check it " +
@@ -417,8 +417,9 @@ export function register(server, ctx) {
     {
       description:
         "ADMIN ONLY. Link a Google Drive folder to THIS channel so it two-way-syncs (rclone bisync) on a " +
-        "timer into a dedicated Drive/ subfolder of the channel's working folder — never the folder root, " +
-        "so the confinement scaffolding stays untouched. Pass `link` as a Drive folder URL " +
+        "timer with the channel's WHOLE working folder. Agent instructions and skills (CLAUDE.md, AGENTS.md, " +
+        ".claude/, …), MEMORY.md/memory/, secrets (.env, keys), .git and dependency trees never cross, " +
+        "and a .driveignore file at the folder root adds exclusions. Pass `link` as a Drive folder URL " +
         "(https://drive.google.com/drive/folders/<id>), an ?id=<id> open link, or a bare folder id. " +
         "Runs a read-only connection test and reports the result. NOTE: also needs Drive sync enabled " +
         "globally + a service-account key configured in Settings, and the folder shared with the service " +
@@ -433,7 +434,7 @@ export function register(server, ctx) {
       if (!(await patchAuditedMeta((meta) => (meta ? { syncDriveFolder: raw } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
-      const lines = [`✅ Linked this channel to Google Drive folder id ${folderId}. It syncs into the channel folder's Drive/ subfolder on the next sweep.`];
+      const lines = [`✅ Linked this channel to Google Drive folder id ${folderId}. It syncs with the whole channel folder on the next sweep (agent instructions, memory and secrets stay local; add exclusions in .driveignore).`];
       const email = (getDriveSyncKeyEmail() || "").trim();
       if (email) lines.push(`Make sure the folder is shared (Editor) with the service account: ${email}`);
       // Same read-only `rclone lsf` check the admin UI's Test button uses — proves the service account
@@ -451,7 +452,7 @@ export function register(server, ctx) {
 
   server.registerTool(
     "clear_channel_drive_folder",
-    { description: "ADMIN ONLY. Unlink this channel's Google Drive folder (turns the scheduled two-way sync off). The already-synced Drive/ subfolder is left in place.", inputSchema: {} },
+    { description: "ADMIN ONLY. Unlink this channel's Google Drive folder (turns the scheduled two-way sync off). Already-synced files are left in place on both sides.", inputSchema: {} },
     async () => {
       if (!(await requireAdmin())) return text("Only admins can change this channel's Google Drive sync folder.");
       if (!(await patchAuditedMeta((meta) => (meta ? { syncDriveFolder: "" } : null)))) {

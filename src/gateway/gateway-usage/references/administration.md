@@ -202,7 +202,10 @@ operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) —
   the channel's agent in a real project directory instead of the default folder.
 - `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir`.
 - `get_channel_drive_folder` / `set_channel_drive_folder` (admin) / `clear_channel_drive_folder`
-  (admin) — two-way-sync a Google Drive folder into the channel folder's `Drive/` subfolder.
+  (admin) — two-way-sync a Google Drive folder with the channel's whole folder. Agent instructions
+  and skills (`CLAUDE.md`, `AGENTS.md`, `.claude/`, …), `MEMORY.md`/`memory/`, secrets (`.env`,
+  keys), `.git` and dependency trees never sync, nor do symlinks; list more exclusions, one pattern
+  per line, in `.driveignore`.
   `get_channel_drive_folder` also reports the last sync pass (time, ok/failed, the reason).
 - `sync_channel_drive` — when someone asks to sync Drive now, run THIS channel's linked folder's
   sync immediately instead of waiting for the next sweep. It waits ~40s for the outcome; a longer
@@ -354,10 +357,11 @@ was created from alive. A full disk takes the daemon, its database and every cha
 so check before it gets there.
 
 **Never delete anything automatically.** Report what you found and what it would free, then let an
-admin decide. And never *recommend* a blanket prune either: `podman system prune`
-(with or without `--volumes`), `podman volume prune` and `podman image prune -a` look like the
-routine fix, but they delete every channel HOME volume whose container happens to be stopped or
-gone — its engine sessions, CLI logins and installed tools, unrecoverably. The safe path is always
+admin decide. And never *recommend* a blanket prune either: `podman system prune` (`-a`,
+`--volumes`), `podman system reset`, `podman volume prune`, `podman image prune -a` and
+`docker system prune` look like the routine fix, but between them they can delete the HOME volume
+of any channel whose container is stopped or gone — its engine sessions, CLI logins and installed
+tools, unrecoverably — and the runtime image every channel needs. The safe path is always
 `npm run runtime:storage`, which knows which volumes are channel homes. Removal happens only on an explicit request or from a schedule an admin set up — not
 as a tidy-up you decided was helpful.
 

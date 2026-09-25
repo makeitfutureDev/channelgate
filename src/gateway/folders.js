@@ -104,12 +104,9 @@ function stripBlock(content, start, end) {
 // survives /clear (a new session re-reads the file), and never touches anything below the marker.
 const GW_START = "<!-- GATEWAY-INSTRUCTIONS:START -->";
 const GW_END = "<!-- GATEWAY-INSTRUCTIONS:END -->";
-const GW_NOTE = `> ⚙️ Gateway-managed block — do NOT edit between these markers; the gateway refreshes this
-> section automatically (this conversation's switches, the gateway's hard rules, and the admin's
-> global instructions). Everything BELOW the end marker is this channel's own standing instructions:
-> it persists across sessions and is never overwritten. To add a durable channel rule when asked,
-> use the gateway tool \`update_channel_instructions\` (or edit the file where file writes are
-> allowed).`;
+const GW_NOTE = `> ⚙️ Gateway-managed block: do NOT edit between these markers; the gateway rewrites it. Below the
+> end marker: this channel's own standing instructions, never overwritten. To add one when
+> asked, use \`update_channel_instructions\` (or edit this file if writable).`;
 
 // What each mode actually grants, in the agent's own terms — the label alone ("Bash") does not
 // tell a model what it may do.
@@ -137,7 +134,7 @@ export function channelSwitchesNote(meta = {}) {
       ? "**on** — this conversation is meant to use the internet. There is no per-domain allow-list."
       : network === "unsupported"
         ? "requested **on**, but this conversation's engine cannot run with the network on — treat it as off."
-        : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out, and say the switch is off instead of trying. ${NETWORK_POLICY_ENFORCED ? "" : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
+        : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out; say the switch is off instead. ${NETWORK_POLICY_ENFORCED ? "" : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
   return [
     "**This conversation's switches** (an admin sets them; they apply from the next message):",
     `- Mode: **${mode}** — ${MODE_NOTE[mode]}.`,
@@ -183,8 +180,15 @@ export function channelSwitchesNote(meta = {}) {
 // identities this turn actually received, next to the fresh-session memory catalog and the
 // caller's provenance note — per run, per author, so there is no shared file to race. Its text and
 // the predicate behind it live in src/gateway/mcp.js, beside the code that names those servers.
-const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; the reasoning and the
-tool shapes are in the \`gateway-usage\` skill:
+// The prune rule (OPS-DISK-01, 2026-09-25) is the same miss again. The routing row and
+// administration.md already forbade suggesting a blanket prune after 0.5.3's L3 failure — but that
+// text lives in the skill, and a Claude run asked "what can we clean up?" never opened it, measured
+// the disk with its own tools and recommended `podman image prune -a` and `podman system prune`,
+// while the Codex run, which read administration.md, warned against exactly those. On this host
+// those commands can delete channel HOME volumes (sessions, CLI logins, memory) or the runtime image
+// every channel needs, so the one-line core belongs here.
+const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; details are in the
+\`gateway-usage\` skill:
 - Use \`ask_questions\` for clarification.
 - **Two Composio identities.** \`composio-user\` = the REQUESTER's own accounts; \`composio-agent\` = the
   shared agent's own (either may appear with \`_\` for \`-\`). Reads and searches may use either or
@@ -215,7 +219,10 @@ tool shapes are in the \`gateway-usage\` skill:
   none of them, say so plainly instead of promising. A bounded "check every N minutes, K times" is
   one of these too: \`create_schedule\` (or \`run_agent_in_background\` for a self-contained watcher),
   never an in-turn sleep/poll loop, a \`Monitor\`-style wait, or a harness background task — even when
-  the loop would finish inside this turn.`;
+  the loop would finish inside this turn.
+- **Never run or recommend \`podman system prune\`/\`reset\`, \`podman image prune -a\`, \`podman volume prune\`
+  or \`docker system prune\`**: they can delete channel homes or the runtime image. Cleanup:
+  \`npm run runtime:storage\` (\`-- --apply\` only if an admin asks).`;
 
 // Compose the managed block for a channel: the do-not-edit note, this conversation's switches, the
 // hard rules, and (outside clean mode) the admin's global instructions. Deliberately nothing about

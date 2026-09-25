@@ -10,7 +10,10 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
 
-const { syncChannelNow, syncAllNow, driveSyncStatus, driveSyncStatusAll, handleDriveSyncIpc, resolveSyncConfig } = await import("../src/gateway/drivesync.js");
+const { syncChannelNow, syncAllNow, driveSyncStatus, driveSyncStatusAll, handleDriveSyncIpc, resolveSyncConfig, __setDriveSyncLauncher, HOST_LAUNCHER } = await import("../src/gateway/drivesync.js");
+// The fake rclone runs on the host; production launches the pass in a confined container
+// (drivesync.test.js covers that argv).
+__setDriveSyncLauncher(HOST_LAUNCHER);
 const { saveSettings } = await import("../src/config/settings.js");
 const { upsertChannelEntry, saveChannelMeta, defaultChannelMeta } = await import("../src/config/store.js");
 
@@ -22,8 +25,10 @@ const SA_JSON = JSON.stringify({
 });
 
 // A fake rclone: `version` succeeds; a pass waits while `block` exists, records its argv in
-// `calls`, and fails with a diagnostic while `fail` exists. Paths are baked in because the child
-// env is the gateway's curated one, not this test's.
+// `calls`, and fails with a diagnostic while `fail` exists. A successful pass leaves a one-file
+// listing in its --workdir, as a real bisync over a non-empty folder does (an EMPTY listing forces
+// the next pass to --resync, drivesync.test.js). Paths are baked in because the child env is the
+// gateway's curated one, not this test's.
 const fake = tempDir("cg-fake-rclone-");
 const bin = path.join(fake, "rclone");
 const calls = path.join(fake, "calls");
@@ -34,6 +39,8 @@ writeFileSync(bin, `#!/bin/sh
 while [ -f "${block}" ]; do sleep 0.05; done
 echo "$*" >> "${calls}"
 if [ -f "${fail}" ]; then echo "ERROR : Failed to bisync: googleapi: Error 403: insufficient permissions" >&2; exit 2; fi
+wd=""; prev=""; for a in "$@"; do [ "$prev" = "--workdir" ] && wd="$a"; prev="$a"; done
+if [ -n "$wd" ]; then for side in path1 path2; do printf '# bisync listing v1\\n-        2 - - 2026-09-25T00:00:00Z "f.txt"\\n' > "$wd/fake.$side.lst"; done; fi
 exit 0
 `);
 chmodSync(bin, 0o755);
