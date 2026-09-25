@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 
 import { logEvent } from "../util/logger.js";
-import { getChannelMeta, patchChannelMeta, isAdmin, isApproved } from "../config/store.js";
+import { getChannelMeta, patchChannelMeta, isAdmin, isAdminPrincipal, isApproved } from "../config/store.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
 import { toolTarget } from "../engines/stream.js";
@@ -209,6 +209,9 @@ async function approvalLinkChoices(entry, { durable = false, approveText = "Appr
 // same thread; a DM on a surface with no ephemeral). Best-effort by design: a card that posted is
 // answerable by its buttons, so a failure here must never fail the approval.
 async function deliverApprovalLinks(client, entry, { id, threadKey, durable = false, approveText, denyText } = {}) {
+  // A link is minted FOR a person and decides as them; the HTTP run API principal is no person to
+  // deliver one to (and could never pass canResolveApproval as a requester). Its card's buttons stay.
+  if (isApiPrincipal(entry.authorId)) return [];
   try {
     const baseUrl = approvalLinkBase({ capabilities: client?.approvalDelivery?.capabilities || slackAdapter.capabilities, requester: entry.authorId });
     if (!baseUrl || !client) return [];
@@ -251,7 +254,8 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
       // Admin outranks auto (run.js adminUnattendedTier): the admin's own runs in an adminMode
       // channel behave at least like auto mode, so their unattended turns don't stall on a click
       // nobody sees. Non-admin authors in the same channel still get buttons.
-      if (meta.adminMode && authorId && (await isAdmin(authorId))) {
+      // The AUTHOR's rank: the HTTP run API principal is an admin key (config/api-principal.js).
+      if (meta.adminMode && authorId && (await isAdminPrincipal(authorId))) {
         return { allow: true, reason: "admin mode (auto-approved for the admin author)" };
       }
       if ((meta.approvedTools || []).includes(toolName)) return { allow: true, reason: "approved forever for this channel" };

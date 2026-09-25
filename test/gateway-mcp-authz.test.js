@@ -115,9 +115,9 @@ test("admin-only MCP tools refuse a non-admin signed principal", async () => {
   });
 });
 
-// An HTTP run API capability names an author the API key never proved. The run gets the channel's
-// gateway tools like any member's message, but acts as the fixed API principal: the named (even
-// admin) id is attribution only and never becomes admin rank or anybody's personal scope.
+// An HTTP run API capability names an author the API key never proved. The key is an admin
+// credential, so the run gets the channel's gateway tools like an admin's message — but it acts as
+// the fixed API principal: the named id is attribution only and never anybody's personal scope.
 function apiCapability(author = "U_MCP_API_SPOOF") {
   return mintGatewayCapability({
     secret: "authz-test-secret",
@@ -131,19 +131,23 @@ function apiCapability(author = "U_MCP_API_SPOOF") {
   });
 }
 
-test("API-spoofed admin ids get no admin or personal authority from the gateway tools", async () => {
+test("an API run ranks as the admin API principal, never as the admin id it names, and has no personal scope", async () => {
   await setUser("U_MCP_API_SPOOF", { approved: true, isAdmin: true, composioToken: "spoofed-unchanged" });
+  ipcCalls.length = 0;
   await withGateway({ author: "U_MCP_API_SPOOF", capability: apiCapability() }, async (client) => {
+    // Admin tools work: the run API key is an admin credential.
     const folders = await client.callTool({ name: "list_folders", arguments: {} });
-    assert.match(resultText(folders), /Only admins|admin/i);
-    assert.doesNotMatch(resultText(folders), /\/Users\/|\/home\/|Slack Agent/i);
+    assert.doesNotMatch(resultText(folders), /Only admins/i);
 
-    const adminMode = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
-    assert.match(resultText(adminMode), /Only admins/i);
+    // Control-plane changes still ask a human first, crediting the API principal.
+    await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: false } });
+    const asked = ipcCalls.find((call) => call.path === "/internal/approval");
+    assert.ok(asked, "an admin-tier change still goes through its approval card");
+    assert.equal(asked.body.authorId, "api");
 
+    // No personal scope: nobody's tokens or skills can be written, including the named admin's.
     const token = await client.callTool({ name: "set_my_composio_token", arguments: { token: "api-planted-token" } });
     assert.match(resultText(token), /No verified user context/i);
-
     const mySkills = await client.callTool({ name: "add_my_skills", arguments: { slugs: ["anything"] } });
     assert.match(resultText(mySkills), /Only approved members have personal skill grants/i);
   });

@@ -5,7 +5,7 @@
 // allowed in the channel; a member's own tier needs no card. Registered via register(server, ctx).
 import { z } from "zod";
 import { readFileSync } from "node:fs";
-import { getUser, isAdmin, isApproved, getChannelMeta, getChannelEntry } from "../../config/store.js";
+import { getUser, isAdminPrincipal, isApproved, getChannelMeta, getChannelEntry } from "../../config/store.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine } from "../../config/settings.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
@@ -90,10 +90,10 @@ function publishLine(p) {
 export function register(server, ctx) {
   const { channelId, slug, createdBy, text, requireAdmin, requireManage, loadMeta } = ctx;
 
-  const isAdminUser = async () => Boolean(createdBy) && (await isAdmin(createdBy));
-  // The HTTP run API principal is an approved member for shared-library work, but it is not a
+  // The HTTP run API principal ranks as an admin (its key is an admin credential), but it is not a
   // person: it has no personal grants and cannot own a personal skill.
-  const approvedAuthor = async () => Boolean(createdBy) && (Boolean(ctx.apiPrincipal) || (await isAdminUser()) || (await isApproved(createdBy)));
+  const isAdminUser = async () => Boolean(createdBy) && (await isAdminPrincipal(createdBy));
+  const approvedAuthor = async () => Boolean(createdBy) && ((await isAdminUser()) || (await isApproved(createdBy)));
   const personalAuthor = async () => !ctx.apiPrincipal && (await approvedAuthor());
   const activeSkillSlugs = async () => {
     const stored = (await loadMeta()) || {};

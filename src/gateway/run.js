@@ -26,7 +26,7 @@ import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-to
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
-import { PROFILE_FLAGS, normalizeModeMeta, authorModeMeta, sudoModeMeta } from "./modes.js";
+import { PROFILE_FLAGS, normalizeModeMeta, authorModeMeta, sudoModeMeta, isApiPrincipal } from "./modes.js";
 import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
@@ -531,10 +531,9 @@ async function acquireRunSlotWithStatus({ signal, onEvent, origin }) {
 export { resolveComposioConnections, resolveComposioRuntime } from "./run-integrations.js";
 
 // Merge the HTTP run API's per-request overrides into the channel meta. An override may only
-// REDUCE capability, never introduce adminMode: the run-API key is not an admin credential
-// (web/auth.js) and that path's authorId is caller-supplied, so letting `mode:"full"` set
-// adminMode would hand any key holder an unsandboxed run by naming a known admin's Slack id
-// (those ids are public). A channel that is ALREADY adminMode keeps its own setting.
+// REDUCE capability, never introduce adminMode: an API run, like an admin's message, works within
+// the channel's configured mode, and only the channel's own settings change that mode. A channel
+// that is ALREADY adminMode keeps its own setting.
 //
 // It also never picks a runtime BACKEND or the container's mounts. Which machine boundary a
 // channel's turns run behind, and what that container can see, is durable configuration; letting a
@@ -573,22 +572,23 @@ export function applyRunOverrides(meta, overrides) {
 import { RUN_ORIGINS, PRINCIPAL_KIND_BY_ORIGIN } from "../engines/contract.js";
 export { RUN_ORIGINS };
 
-// The ONLY origin that may escalate: a live Slack turn, authored by a Slack-authenticated human
-// who is watching it run. Everything daemon-triggered (schedule/background/continuation/recovery/
-// diagnosis) fires a prompt persisted earlier — injected content during an admin's turn must not
-// become a silent full-machine run later. api_foreground stays out too: the run-API key
-// authenticates the caller, not the author it names (see untrustedPrincipal below).
+// The origins that may escalate: a live Slack turn, authored by a Slack-authenticated human who is
+// watching it run, and a live HTTP run API turn, whose key is an admin credential (it escalates only
+// as the API principal — never as an author the request names; see runMessage). Everything
+// daemon-triggered (schedule/background/continuation/recovery/diagnosis) fires a prompt persisted
+// earlier — injected content during an admin's turn must not become a silent full-machine run later.
 // Google Chat and Teams turns are deliberately NOT here. Both are authored by an authenticated
 // human, but escalation's other half is an interactive permission prompt the author can answer, and
 // neither surface has one wired yet (src/platforms/ingest.js). An admin-mode channel on those
 // surfaces therefore runs at the folder's allowlist like everyone else, which fails closed. This
 // set gains a platform when that platform gains an approval UI — never before.
-const ESCALATABLE_ORIGINS = new Set(["slack_foreground"]);
+const ESCALATABLE_ORIGINS = new Set(["slack_foreground", "api_foreground"]);
 
 // Escalation (--dangerously-skip-permissions + the bypass-allowing settings variant) requires an
 // escalatable origin AND an adminMode channel AND an admin author — and is refused regardless for
-// untrustedPrincipal: we never authenticated the author. Slack does that for us; the HTTP run
-// API authenticates only the CALLER and takes `author` from the request body.
+// untrustedPrincipal: we never authenticated the author's rank. Slack does that for us; the HTTP
+// run API authenticates its admin KEY, which ranks as the API principal, never as the `author` the
+// request body names.
 //
 // Refused runs still work — they use the folder's permission allowlist like every other run.
 // Unknown/missing origin fails closed here as a second layer even though runMessage already threw.
@@ -615,6 +615,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
+  // The HTTP run API principal (config/api-principal.js): its key is an ADMIN credential, but no
+  // person stands behind it. So it ranks as an admin (`rankUntrusted` stays false) while every
+  // PERSONAL lookup — grants, secrets, Composio/Toolbox tokens, the capability's principal — is
+  // withheld exactly as for an unauthenticated author. The same holds for the schedules and
+  // background work it owns, whose later runs carry it as their author.
+  const apiKeyPrincipal = isApiPrincipal(authorId);
+  const rankUntrusted = Boolean(untrustedPrincipal) && !apiKeyPrincipal;
+  if (apiKeyPrincipal) untrustedPrincipal = true;
   assertRuntimeCanStart();
   const entry = await getChannelEntry(channelId);
   if (!entry) throw new Error(`channel ${channelId} is not registered`);
@@ -651,12 +659,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // provisioning + the clean check so `mode:lean`→cleanMode is honored everywhere. `mode` expands
   // to the capability flags.
   //
-  // An override may only REDUCE capability, never introduce adminMode: the run-API key is not an
-  // admin credential (web/auth.js), and `authorId` on that path is caller-supplied, so allowing
-  // `mode:"full"` to set adminMode would let any key holder name an admin and get an unsandboxed
-  // --dangerously-skip-permissions run. The channel's own stored adminMode still stands.
-  const trustedAdminAuthor = !untrustedPrincipal && await isAdmin(authorId);
-  meta = authorModeMeta(meta, { isAdminAuthor: trustedAdminAuthor, untrustedPrincipal });
+  // An override may only REDUCE capability, never introduce adminMode: like an admin's message, an
+  // API run works within the channel's configured mode, which only the channel's settings change.
+  const trustedAdminAuthor = apiKeyPrincipal || (!rankUntrusted && await isAdmin(authorId));
+  meta = authorModeMeta(meta, { isAdminAuthor: trustedAdminAuthor, untrustedPrincipal: rankUntrusted });
   // What the channel's container is built from is the CHANNEL's posture, not this run's: a per-run
   // `mode` only narrows tools. Resolving mounts from the overridden view dropped an Admin channel's
   // operator-home grant for one API run, which changed the container's mounts — so it waited for
@@ -1046,7 +1052,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     userIdentity, composio, toolbox, composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken,
     makeToolboxUrl, makeToolboxKey, composioIdentityPrefix,
   } = await resolveRunIntegrations({ meta, channelId, authorId, threadKey, workspaceId, clean, untrustedPrincipal });
-  const authorIsAdmin = userIdentity.isAdmin;
+  const authorIsAdmin = userIdentity.isAdmin || apiKeyPrincipal;
   outputSecrets.push(composioUserToken, composioToken, toolboxToken, makeToolboxKey);
   // Engine homes are deliberately isolated. Resolve these once in the daemon and carry them into
   // the gateway MCP instead of letting its subprocess derive paths from the disposable HOME.
@@ -1105,14 +1111,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // even when the channel selects optional servers; Clean supplies an empty payload.
   const strictMcp = true;
 
-  const dangerouslySkip = mayEscalate({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal, origin });
+  const dangerouslySkip = mayEscalate({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal: rankUntrusted, origin });
   // Admin outranks auto: a non-escalated run whose STORED author is an admin in an adminMode
   // channel runs at the AUTO tier (writable work folder, auto-approved permission prompts)
   // instead of the read floor. This covers every daemon origin — background agents, their
   // continuations, schedules, recovery — which used to complete read-only in admin channels and
   // silently do nothing. A2 stands: these runs still NEVER get the permission bypass; the
   // unattended ceiling is auto, and only for the admin who authored the persisted prompt.
-  const adminUnattended = adminUnattendedTier({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal, dangerouslySkip });
+  const adminUnattended = adminUnattendedTier({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal: rankUntrusted, dangerouslySkip });
   if (adminUnattended) meta = { ...meta, autoMode: true };
   // The bypass allowance rides per-spawn: only an escalated run gets the settings variant that
   // honors --dangerously-skip-permissions; the shared channel settings file always hard-disables

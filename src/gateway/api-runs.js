@@ -9,9 +9,11 @@
 //    starts the thread, its ts is the session key), so the answer posts back and it's continuable
 //    in Slack too. If the kickoff can't post, it falls back to a headless api-keyed thread.
 //
-// Either way the run is an ordinary member's turn in that channel (Auto mode, memory, skills,
-// connectors, the gateway tools, its thread's run queue, the post-reply memory review). The API key
-// acts as the fixed API principal (./modes.js); the `author` a request names is attribution only.
+// Either way the run is an ordinary admin's turn in that channel (its mode incl. Admin/Auto, memory,
+// skills, connectors, the gateway tools, its thread's run queue, the post-reply memory review). The
+// API key is an admin credential and acts as the fixed API principal (../config/api-principal.js),
+// with the channel's agent Composio identity and no personal scope; a request's `author` is
+// attribution only.
 //
 // Jobs are tracked in memory AND persisted to the `api_jobs` table so GET keeps working after a
 // restart. In-flight work with an unknown outcome is interrupted, never replayed automatically.
@@ -726,7 +728,9 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
 
     const result = await runMessage({
       channelId: job.channelId,
-      authorId: job.author,
+      // The run acts as the API principal: the key is an admin credential with no person behind
+      // it. `job.author` (caller-named) labels the kickoff, prompt provenance and usage ledger only.
+      authorId: API_PRINCIPAL,
       workspaceId: teamId || process.env.CG_SLACK_TEAM_ID || "",
       text: textForRun,
       threadKey: job.threadKey,
@@ -734,10 +738,10 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       sessionId: job.sessionId,
       overrides,
       signal,
-      // The API key authenticates the CALLER, not `job.author`: that id is attribution only and
-      // never escalates or unlocks anyone's personal scope. Inside the run the key acts as the API
-      // principal — a member of this channel with every channel capability (gateway/modes.js).
-      // Recovery never re-enters this driver: it only delivers a saved result or interruption notice.
+      // No personal scope: nobody's personal Composio/Toolbox token, secrets or skills — the
+      // channel's (agent) identities only. Admin rank comes from the principal itself
+      // (config/api-principal.js). Recovery never re-enters this driver: it only delivers a saved
+      // result or interruption notice.
       untrustedPrincipal: true,
       origin: "api_foreground",
       progressReport: Boolean(status && client),

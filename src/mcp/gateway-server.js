@@ -129,12 +129,11 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
   const claimedAuthor = claims.authorId || "";
   const threadKey = claims.threadKey || "";
   const origin = claims.origin || "";
-  // A verified human (a Slack-authenticated author) versus the HTTP run API's key. An API run's
-  // signed capability keeps the caller-named author for ATTRIBUTION only; every tool acts as the
-  // fixed API principal (gateway/modes.js) — an approved member of this channel with no personal
-  // scope and no admin rank. Runs that API work later spawns (a schedule, a background agent)
-  // carry that principal as their author, so they resolve the same way even though the daemon
-  // minted their capability for a "trusted" origin.
+  // A verified human (a Slack-authenticated author) versus the HTTP run API's admin key. Every tool
+  // in an API run acts as the fixed API principal (config/api-principal.js): an admin of this
+  // channel with no personal scope. A capability that names any other author without vouching for
+  // it (principalTrusted false) maps there too, so a named id is never authority. Runs that API
+  // work later spawns (a schedule, a background agent) carry the principal as their author.
   const apiPrincipal = claims.principalTrusted !== true || isApiPrincipal(claimedAuthor);
   const principalTrusted = !apiPrincipal;
   const createdBy = apiPrincipal ? (claimedAuthor ? API_PRINCIPAL : "") : claimedAuthor;
@@ -146,13 +145,13 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
   // work-dir, host browse, gateway update). requireManage: the SAFE settings (MCP allowlist, bash,
   // auto) — an admin OR, when the channel opts in (manageAccess "members"/"custom"), an approved
   // member / listed manager. The author comes only from the verified run capability.
-  const requireAdmin = async () => principalTrusted && Boolean(createdBy) && (await isAdmin(createdBy));
+  // The HTTP run API principal ranks as an admin: its key is an admin credential. Control-plane
+  // changes still need a human click on their approval card, exactly as for an admin's message.
+  const requireAdmin = async () => Boolean(createdBy) && (apiPrincipal || (await isAdmin(createdBy)));
   const requireManage = async () => {
     if (!createdBy) return false;
+    if (apiPrincipal) return true;
     const meta = await loadMeta();
-    // The API principal manages exactly where an approved member would ("members" policy) — and
-    // every control-plane change still needs a human click on its approval card.
-    if (apiPrincipal) return canManage(meta || {}, { authorId: API_PRINCIPAL, isAdminUser: false, isApprovedUser: true });
     return canManage(meta || {}, {
       authorId: createdBy,
       isAdminUser: await isAdmin(createdBy),

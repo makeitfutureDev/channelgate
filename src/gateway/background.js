@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { getChannelEntry, getChannelMeta, defaultChannelMeta, isAdmin } from "../config/store.js";
+import { getChannelEntry, getChannelMeta, defaultChannelMeta, isAdminPrincipal } from "../config/store.js";
 import { buildShellEnv, serviceSecretValues } from "../engines/child-env.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
@@ -302,7 +302,7 @@ export class BackgroundJobs {
     );
     const sudoThread = await getThreadSudo(entry.slug, threadKey);
     if (sudoThread) {
-      if (!(await isAdmin(authorId))) {
+      if (!(await isAdminPrincipal(authorId))) {
         return { ok: false, error: "This is a sudo thread. Only organization admins can run background work here." };
       }
       meta = sudoModeMeta(meta);
@@ -326,7 +326,8 @@ export class BackgroundJobs {
     const runtimeNotice = shellJobRuntimeNotice({ isolated: isolatedJob, image: target?.container?.image || "" });
 
     if (!isAgent) {
-      const adminAuthorInAdminMode = meta.adminMode === true && (await isAdmin(authorId));
+      // The author's rank, where the HTTP run API principal (an admin key) counts as an admin.
+      const adminAuthorInAdminMode = meta.adminMode === true && (await isAdminPrincipal(authorId));
       const allowed = meta.autoMode === true || adminAuthorInAdminMode;
       if (adminAuthorInAdminMode && !approval.approvalGranted) {
         approvedBy = String(authorId || "").replace(/[<@>]/g, "");

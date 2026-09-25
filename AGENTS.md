@@ -157,8 +157,9 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   digests, no-response nudges, the durable `/loop` pacing (the harness's own `ScheduleWakeup`/
   `CronCreate` calls become schedule rows with a tick budget), and the HTTP run API
   (`POST /api/runs`: API-key or admin-session auth, a synthetic `api` channel or a real thread,
-  idempotency window, in-flight cap, `api_jobs`; the caller-supplied author is never trusted for
-  personal tokens or admin state).
+  idempotency window, in-flight cap, `api_jobs`; the key is an admin credential and every run acts
+  as the fixed admin `api` principal with no personal scope — the caller-supplied author is
+  attribution only, never trusted for personal tokens or admin state).
 - `src/gateway/{approval-requests,instruction-approvals,approval-link-tokens}.js` +
   `src/slack/approvals.js` + `src/web/approval-links.js` + `src/platforms/approval-delivery.js` —
   approvals: one decision path with scopes once / thread / forever ("forever" is admin-only), the
@@ -270,7 +271,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   API) and `routes/approve.js` mounted separately. `secrets.js` is the name-resolved allowlist
   behind `POST /api/secrets/reveal` (in `routes/settings.js`); `security.js` holds scrypt password
   hashing, the Host/Origin (DNS-rebinding) guard, the SSRF check over `ip-policy.js`, path
-  containment and the login limiter; `auth.js` (admin session + the narrower run-API key);
+  containment and the login limiter; `auth.js` (admin session + the run-API key, an admin
+  credential scoped to `/api/runs`);
   `file-editor.js` / `file-download.js` / `file-upload.js` (one-time grant URLs → per-editor
   cookies, re-authorized on every request); `assets.js` (content-hash cache busting for the
   build-less UI); `skills-mcp.js`.
@@ -469,8 +471,9 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   Claude Code labels a token in the environment "Claude API" and hides the plan, the usage windows
   and the plan's default model; only a file login shows them, which is what a developer in a
   terminal needs to see.
-- **Only admins get `--dangerously-skip-permissions`**, and only in an Admin-mode channel.
-  Everyone else runs with the folder's `permissions.allow` allowlist and answers tool requests
+- **Only admins get `--dangerously-skip-permissions`**, and only in an Admin-mode channel (a live
+  Slack turn by an admin author, or a live HTTP run API turn, whose key is an admin credential
+  acting as the `api` principal — `src/config/api-principal.js`). Everyone else runs with the folder's `permissions.allow` allowlist and answers tool requests
   through the `permission_prompt` approval card (or Auto mode); headless can't answer interactive
   prompts.
 - **Authorization (who may talk)** is `isAuthorized()` in `src/gateway/modes.js`, checked before
@@ -482,7 +485,8 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   (`meta.allowedUsers`, channels only, constrained to current members). Who may change a channel's
   access settings is `canManage()` (`meta.manageAccess`: admins, members, or a named list). This
   is authorization only; dangerous permissions still require an admin author **and** an admin-mode
-  channel, and the run-API caller's `author` is never trusted for either.
+  channel, and the run-API caller's `author` is never trusted for either (the run API KEY is: its
+  runs act as the admin `api` principal, never as the named author, and get no personal scope).
 - **Attachments:** image/file attachments are downloaded into the channel folder's `uploads/`
   (per-file cap in `src/util/bounded-bytes.js`, no-follow writes) and their paths handed to the
   engine as text (read via the Read tool — images render visually); a failed download is named,

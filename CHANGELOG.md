@@ -18,11 +18,14 @@ product overview.
 
 ## Unreleased
 
-- **An HTTP API run now works like a member's message in its channel.** It gets the channel's Auto
-  mode, memory (search, read and save, plus the post-reply memory review), skills, connectors and
-  the other gateway tools, and it asks for tool approval the same way. The API key still acts as a
-  member, never as the `author` it names. So it gets no admin rights and nobody's personal tokens,
-  secrets or skills. Background work and schedules it starts are owned by the API too.
+- **An HTTP API run now works like an admin's message in its channel.** The run API key is an
+  admin credential. An API run gets the channel's mode as an admin would, including Auto and, in an
+  Admin channel, the permission bypass. It also gets memory (search, read and save, plus the
+  post-reply memory review), skills, connectors, the admin gateway tools, and the same tool
+  approvals. It acts as one fixed `api` principal, never as the `author` it names. So it uses the
+  channel's shared agent Composio account and gets nobody's personal tokens, secrets, skills or SSH
+  keys. Background work and schedules it starts are owned by `api` too. Per-user API keys are
+  planned.
 - An API run joins its thread's queue. A Slack reply in a channel-backed API thread gets the usual
   Steer / Queue / Cancel choice instead of running at the same time, and a Slack stop or steer in
   that thread stops the API run.

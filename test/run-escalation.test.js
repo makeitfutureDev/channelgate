@@ -51,9 +51,11 @@ test("no overrides returns the meta untouched", () => {
 // ── Origin → escalation matrix (the 2026-08 update plan (internal repo) A2) ────────────────────────
 // Escalation is derived from principal + origin, never from an optional boolean a call site can
 // forget. Exactly one origin is escalatable: a live, watched, Slack-authenticated turn.
-test("exhaustive origin matrix: only slack_foreground escalates, and only fully-privileged", () => {
+test("exhaustive origin matrix: only live Slack and live run-API turns escalate, and only fully-privileged", () => {
+  // api_foreground escalates only as the admin API principal (runMessage passes a trusted rank for
+  // it and never for a caller-named author); every daemon-triggered origin never does.
   for (const origin of RUN_ORIGINS) {
-    const expected = origin === "slack_foreground";
+    const expected = origin === "slack_foreground" || origin === "api_foreground";
     assert.equal(
       mayEscalate({ meta: { adminMode: true }, isAdminAuthor: true, origin }),
       expected,

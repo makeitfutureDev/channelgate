@@ -3224,29 +3224,41 @@ structural invariants are automated; rendered navigation and feature claims also
 
 ### HTTP run API channel parity
 
-An API run is one more member's turn in its channel. Unit coverage:
-- [x] Gateway tools are exposed to an API run; a named admin id gets no admin tool, personal token or
-      personal skill write, and no user record is created for `api` (`test/gateway-mcp-authz.test.js`).
+An API run is an admin's turn in its channel, as the fixed `api` principal with no personal scope.
+Unit coverage:
+- [x] An API capability ranks as the admin `api` principal: admin tools work, admin-tier changes
+      still go through an approval card credited to `api`, personal token and skill writes are
+      refused, the named admin's record is untouched and no `api` user record is created
+      (`test/gateway-mcp-authz.test.js`).
+- [x] `isAdminPrincipal("api")` is true while `isAdmin("api")` is false, and an Admin channel
+      auto-approves the API principal's permission prompt without posting a card
+      (`test/approvals-layer.test.js`).
+- [x] `api_foreground` escalates like `slack_foreground` and no daemon origin does
+      (`test/run-escalation.test.js`). A Full API run in an Admin channel gets
+      `--dangerously-skip-permissions`; the same run with an untrusted capability naming a real
+      admin, or with a narrowed mode, does not (`test/runtime-integration-run.test.js`).
 - [x] The API run holds its thread's run-queue slot; the Slack stop path (`runQueue.abort` + the
       handle's controller) stops it before the engine spawns, a Slack steer supersedes it with a
       `steered` error, and a completed run returns a container `exec -it` resume command naming its
       session and queues the memory review as `api` (`test/api-runs-channel-parity.test.js`).
 - [x] A per-run `mode` of read/worker/auto/lean/full on an Admin channel resolves the runtime target
-      with the channel's Admin posture (operator-home grant unchanged) and never adds
-      `--dangerously-skip-permissions` (`test/runtime-integration-run.test.js`).
+      with the channel's Admin posture (operator-home grant unchanged)
+      (`test/runtime-integration-run.test.js`).
 
 Live acceptance (Claude and Codex each; fixture `qa-api-parity-<engine>`: a Slack channel in Worker
 mode with **Auto on**, channel memory on, one channel skill granted, the shared Composio identity
-connected, one channel secret `QA_PARITY_TOKEN`; the gateway's run API key; an admin Slack id):
+connected, one channel secret `QA_PARITY_TOKEN`; a second fixture `qa-api-admin-<engine>` in Admin
+mode; the gateway's run API key; an admin Slack id):
 - [ ] **Auto + tools.** `POST /api/runs` `{channel: "qa-api-parity-<engine>", author: "<admin id>",
       message: "Run \`ls\` in the work folder, then save to channel memory that the API parity check
       ran today, then list your skills."}`. Pass: the kickoff thread shows the run with no approval
       card (Auto), the reply lists files, `MEMORY.md` gains the fact, the channel skill is listed,
       and `GET /api/runs/:id` is `completed`.
-- [ ] **No admin or personal scope.** Same channel, Auto **off**: ask it to run `touch x`. Pass: an
-      approval card credited to "An HTTP API run" (not the admin) appears in the thread; a member's
-      Approve lets it run. Ask it to "set my Composio token to abc123": refused with "No verified user
-      context", and the admin's stored token is unchanged.
+- [ ] **Admin rank without personal scope.** In `qa-api-admin-<engine>`, ask it to run `touch x` and
+      to list the gateway folders. Pass: both happen with no approval card (Admin channel bypass /
+      admin tool). Ask it to "set my Composio token to abc123": refused with "No verified user
+      context", and the named admin's stored token is unchanged. Ask which Composio accounts it
+      has: only the shared (`composio-agent`) identity.
 - [ ] **Thread queue.** While a long API run ("count slowly to 60") is in flight, reply in its Slack
       thread with an @mention. Pass: the Steer / Queue / Cancel card appears; *Queue* runs after the API
       run finishes; repeating with `stop` makes `GET /api/runs/:id` report `stopped`.

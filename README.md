@@ -193,7 +193,9 @@ catalog, including edge cases and links to regression coverage.
 - **HTTP run API and Make.com:** trigger agent work through `POST /api/runs` or an approved,
   trusted bot posting a mention in Slack. The admin API page includes the Make.com module example,
   credential requirements and thread mapping. API runs support idempotency, status polling,
-  cancellation, attachments and completion webhooks, including headless execution.
+  cancellation, attachments and completion webhooks, including headless execution. The API key is
+  an admin credential: a run behaves like an admin's message in its channel, using the channel's
+  shared agent accounts rather than anyone's personal ones.
 
 ### Slack reports and collaboration
 
