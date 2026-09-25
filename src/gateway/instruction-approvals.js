@@ -1,6 +1,6 @@
 // A closed, exact action: no model continuation or arbitrary tool replay is needed after a
 // restart. The protected approval row holds the rule; listing surfaces expose only its preview.
-import { getChannelEntry, getChannelMeta, isAdmin, isApproved } from "../config/store.js";
+import { getChannelEntry, getChannelMeta, isAdminPrincipal, isApproved } from "../config/store.js";
 import { isAuthorized } from "./modes.js";
 import { channelInstructionsSnapshot, effectiveWorkDir, updateChannelInstructions } from "./folders.js";
 
@@ -15,7 +15,7 @@ async function authorizedTarget({ channelId, slug, authorId, mode }) {
   if (!entry || entry.slug !== slug || !meta || (meta.channelId && meta.channelId !== channelId)) {
     throw new Error("The approval's channel no longer matches its original destination.");
   }
-  const admin = await isAdmin(authorId);
+  const admin = await isAdminPrincipal(authorId);
   if (!isAuthorized(meta, authorId, Boolean(entry.isDM), { isAdminUser: admin, isApprovedUser: await isApproved(authorId) })) {
     throw new Error("The requester is no longer authorized in this channel.");
   }

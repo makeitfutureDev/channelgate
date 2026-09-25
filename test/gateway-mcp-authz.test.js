@@ -14,9 +14,16 @@ const { mintGatewayCapability } = await import("../src/gateway/mcp-capability.js
 
 // Allow-all approval stub: this file tests per-tool AUTHZ, not the A3 control-plane approval gate
 // (that has its own suite in mcp-control-plane-approval.test.js) — so approvals always pass here.
+// It records what each daemon IPC call carried, so a test can see WHO a tool asked on behalf of.
+const ipcCalls = [];
 const approvalStub = http.createServer((req, res) => {
-  res.setHeader("Content-Type", "application/json");
-  res.end(JSON.stringify({ allow: true, reason: "auto-approved by test stub" }));
+  let body = "";
+  req.on("data", (chunk) => { body += chunk; });
+  req.on("end", () => {
+    try { ipcCalls.push({ path: req.url, body: JSON.parse(body || "{}") }); } catch { /* not JSON */ }
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ allow: true, reason: "auto-approved by test stub" }));
+  });
 });
 await new Promise((resolve) => approvalStub.listen(0, "127.0.0.1", resolve));
 after(() => approvalStub.close());
@@ -108,38 +115,68 @@ test("admin-only MCP tools refuse a non-admin signed principal", async () => {
   });
 });
 
-test("API-spoofed admin ids cannot use any user/channel gateway authority", async () => {
-  await setUser("U_MCP_API_SPOOF", { approved: true, isAdmin: true });
-  const capability = mintGatewayCapability({
+// An HTTP run API capability names an author the API key never proved. The key is an admin
+// credential, so the run gets the channel's gateway tools like an admin's message — but it acts as
+// the fixed API principal: the named id is attribution only and never anybody's personal scope.
+function apiCapability(author = "U_MCP_API_SPOOF") {
+  return mintGatewayCapability({
     secret: "authz-test-secret",
     channelId: "C_MCP_CURRENT",
     slug: "mcp-authz-test",
-    authorId: "U_MCP_API_SPOOF",
+    authorId: author,
     threadKey: "1.000",
     origin: "api_foreground",
     engine: "claude",
     principalTrusted: false,
   });
-  await withGateway({ author: "U_MCP_API_SPOOF", capability }, async (client) => {
-    const result = await client.callTool({ name: "list_folders", arguments: {} });
-    assert.match(resultText(result), /trusted Slack principal/i);
-    assert.doesNotMatch(resultText(result), /\/Users\/|\/home\/|Slack Agent/i);
+}
+
+test("an API run ranks as the admin API principal, never as the admin id it names, and has no personal scope", async () => {
+  await setUser("U_MCP_API_SPOOF", { approved: true, isAdmin: true, composioToken: "spoofed-unchanged" });
+  ipcCalls.length = 0;
+  await withGateway({ author: "U_MCP_API_SPOOF", capability: apiCapability() }, async (client) => {
+    // Admin tools work: the run API key is an admin credential.
+    const folders = await client.callTool({ name: "list_folders", arguments: {} });
+    assert.doesNotMatch(resultText(folders), /Only admins/i);
+
+    // Control-plane changes still ask a human first, crediting the API principal.
+    await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: false } });
+    const asked = ipcCalls.find((call) => call.path === "/internal/approval");
+    assert.ok(asked, "an admin-tier change still goes through its approval card");
+    assert.equal(asked.body.authorId, "api");
+
+    // No personal scope: nobody's tokens or skills can be written, including the named admin's.
+    const token = await client.callTool({ name: "set_my_composio_token", arguments: { token: "api-planted-token" } });
+    assert.match(resultText(token), /No verified user context/i);
+    const mySkills = await client.callTool({ name: "add_my_skills", arguments: { slugs: ["anything"] } });
+    assert.match(resultText(mySkills), /Only approved members have personal skill grants/i);
+  });
+  const spoofed = await getUser("U_MCP_API_SPOOF");
+  assert.equal(spoofed.composioToken, "spoofed-unchanged");
+  assert.equal(await getUser("api"), null, "no personal record is ever created for the API principal");
+});
+
+test("an API run's gateway tools work like a member's (no blanket refusal)", async () => {
+  await withGateway({ author: "U_MCP_API_SPOOF", capability: apiCapability() }, async (client) => {
+    const tools = await client.listTools();
+    for (const name of ["search_channel_memory", "read_channel_memory", "update_channel_memory", "permission_prompt", "create_schedule", "run_agent_in_background", "list_skills"]) {
+      assert.ok(tools.tools.some((tool) => tool.name === name), `${name} is exposed to an API run`);
+    }
+    const memory = await client.callTool({ name: "search_channel_memory", arguments: { query: "anything" } });
+    assert.doesNotMatch(resultText(memory), /trusted Slack principal|capability rejected/i);
   });
 });
 
-test("an untrusted principal's permission prompt is refused in the shape Claude Code parses", async () => {
-  // Plain text here surfaces as "The permission prompt tool returned an invalid permission result".
-  const capability = mintGatewayCapability({
-    secret: "authz-test-secret", channelId: "C_MCP_CURRENT", slug: "mcp-authz-test",
-    authorId: "U_MCP_API_SPOOF", threadKey: "1.000", origin: "api_foreground", engine: "claude",
-    principalTrusted: false,
-  });
-  await withGateway({ author: "U_MCP_API_SPOOF", capability }, async (client) => {
+test("an API run's permission prompt asks on behalf of the API principal, never the named admin", async () => {
+  ipcCalls.length = 0;
+  await withGateway({ author: "U_MCP_API_SPOOF", capability: apiCapability() }, async (client) => {
     const result = await client.callTool({ name: "permission_prompt", arguments: { tool_name: "Bash", input: { command: "true" } } });
     const decision = JSON.parse(resultText(result));
-    assert.equal(decision.behavior, "deny");
-    assert.match(decision.message, /trusted Slack principal/i);
+    assert.equal(decision.behavior, "allow", "the stub's decision is returned in the shape Claude Code parses");
   });
+  const asked = ipcCalls.find((call) => call.path === "/internal/approval");
+  assert.ok(asked, "the permission prompt reached the daemon's approval path");
+  assert.equal(asked.body.authorId, "api", "the approval path must not see the spoofed admin id (admin-mode auto-approval keys on it)");
 });
 
 test("set_my_composio_token writes only the signed principal's record", async () => {

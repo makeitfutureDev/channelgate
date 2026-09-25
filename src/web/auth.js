@@ -87,8 +87,9 @@ function cookieAttrs(req) {
 const OPEN_PATHS = new Set(["/login", "/login.html", "/api/login", "/api/health", "/api/skills/webhook/github", "/mcp/skills"]);
 
 // The HTTP run API accepts a bearer API key as an alternative to the admin session cookie, so an
-// automation can fire runs without logging in. Scoped to /api/runs only — the key is NOT a general
-// admin credential (it can't reach the settings/token/fs-browser routes). Bearer or X-API-Key.
+// automation can fire runs without logging in. It is an admin credential for the RUNS it starts —
+// they act as the admin API principal (config/api-principal.js) — but it is scoped to /api/runs
+// only: it can't reach the settings/token/fs-browser routes. Bearer or X-API-Key.
 const API_RUN_PREFIX = "/api/runs";
 function bearerToken(req) {
   const h = String(req.headers.authorization || "");

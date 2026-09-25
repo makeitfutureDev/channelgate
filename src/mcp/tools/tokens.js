@@ -26,6 +26,9 @@ export function register(server, ctx) {
   // search) until the author deletes that message. Harden what we control: the saved token is NEVER
   // echoed back (not even a masked tail) and the reply tells the user to delete the source message
   // NOW. A DM-modal/web-only entry flow would remove the exposure entirely — out of scope here.
+  // Personal tokens belong to a verified person. An HTTP run API turn names an author it never
+  // proved, so it acts as the API principal and has no personal record to write.
+  const NO_PERSONAL_CONTEXT = "No verified user context — personal tokens can only be changed from your own Slack message.";
   const DELETE_MSG_WARNING =
     "\n⚠️ Now DELETE the Slack message that contained the token — it stays readable in Slack " +
     "history (and search) for everyone in this conversation until you do.";
@@ -41,7 +44,7 @@ export function register(server, ctx) {
       inputSchema: { token: z.string() },
     },
     async ({ token }) => {
-      if (!createdBy) return text("No user context — can't set a token here.");
+      if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
       const t = (token || "").trim();
       if (t.length < 6) return text("That doesn't look like a valid Composio token.");
       await setUser(createdBy, { composioToken: t });
@@ -53,7 +56,7 @@ export function register(server, ctx) {
     "clear_my_composio_token",
     { description: "Remove YOUR OWN Composio token.", inputSchema: {} },
     async () => {
-      if (!createdBy) return text("No user context.");
+      if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
       await setUser(createdBy, { composioToken: "" });
       return text("🗑️ Removed your Composio token.");
     }
@@ -72,7 +75,7 @@ export function register(server, ctx) {
       inputSchema: { token: z.string() },
     },
     async ({ token }) => {
-      if (!createdBy) return text("No user context — can't set a token here.");
+      if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
       const t = (token || "").trim();
       if (t.length < 6) return text("That doesn't look like a valid Toolbox token.");
       await setUser(createdBy, { toolboxToken: t });
@@ -84,7 +87,7 @@ export function register(server, ctx) {
     "clear_my_toolbox_token",
     { description: "Remove YOUR OWN Toolbox token.", inputSchema: {} },
     async () => {
-      if (!createdBy) return text("No user context.");
+      if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
       await setUser(createdBy, { toolboxToken: "" });
       return text("🗑️ Removed your Toolbox token.");
     }

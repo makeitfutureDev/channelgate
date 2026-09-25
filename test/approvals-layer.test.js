@@ -205,3 +205,19 @@ test("no shipped doc claims auto mode skips a control-plane skills approval", ()
   assert.match(guide, /\*\*always\*\* show an Approve\/Deny card/i);
   assert.match(guide, /Auto mode and admin mode do NOT skip it/i);
 });
+test("the HTTP run API principal ranks as an admin for its own permission prompts; a clicker id never does", async () => {
+  const { isAdminPrincipal, isAdmin } = await import("../src/config/store.js");
+  assert.equal(await isAdminPrincipal("api"), true, "the run API key is an admin credential");
+  assert.equal(await isAdmin("api"), false, "but no stored user — clicks and links authorize as people only");
+  assert.equal(await isAdminPrincipal(MEMBER), false);
+  assert.equal(await isAdminPrincipal(ADMIN), true);
+
+  const slug = "approvals-layer-api-admin";
+  await upsertChannelEntry("C_AL_API_ADMIN", { name: slug, type: "channel", isDM: false });
+  await saveChannelMeta(slug, { ...(await getChannelMeta(slug)), adminMode: true, autoMode: false });
+  const client = fakeClient();
+  setApprovalClient(client);
+  const auto = await requestApproval(null, { channelId: "C_AL_API_ADMIN", slug, authorId: "api", threadKey: "1700.000900", toolName: "Bash", toolInput: { command: "true" } });
+  assert.equal(auto.allow, true, "an Admin channel auto-approves the admin API principal's prompt like an admin author's");
+  assert.equal(client.posted.length, 0, "no card is posted for it");
+});

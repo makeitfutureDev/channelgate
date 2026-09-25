@@ -16,6 +16,26 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## 0.5.7 — 2026-09-25
+
+- **An HTTP API run now works like an admin's message in its channel.** The run API key is an
+  admin credential. An API run gets the channel's mode as an admin would, including Auto and, in an
+  Admin channel, the permission bypass. It also gets memory (search, read and save, plus the
+  post-reply memory review), skills, connectors, the admin gateway tools, and the same tool
+  approvals. It acts as one fixed `api` principal, never as the `author` it names. So it uses the
+  channel's shared agent Composio account and gets nobody's personal tokens, secrets, skills or SSH
+  keys. Background work and schedules it starts are owned by `api` too. Per-user API keys are
+  planned.
+- An API run joins its thread's queue. A Slack reply in a channel-backed API thread gets the usual
+  Steer / Queue / Cancel choice instead of running at the same time, and a Slack stop or steer in
+  that thread stops the API run.
+- A per-run API `mode` no longer rebuilds the channel's container. On an Admin channel with the
+  host-home switch on, a `read`/`worker`/`auto`/`lean` run used to drop the home mount, wait for
+  every run inside, and recreate the container (killing detached jobs). The next ordinary turn then
+  recreated it back. The mode now narrows tools only.
+- The `resumeCommand` an API run returns now opens the session inside the channel's container, like
+  the Slack Resume control. The old host command answered "No conversation found".
+
 ## 0.5.6 — 2026-09-25
 
 - Codex over SSH now gets what a chat turn's Codex gets: the gateway tools, your own and the

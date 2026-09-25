@@ -9,6 +9,12 @@
 //    starts the thread, its ts is the session key), so the answer posts back and it's continuable
 //    in Slack too. If the kickoff can't post, it falls back to a headless api-keyed thread.
 //
+// Either way the run is an ordinary admin's turn in that channel (its mode incl. Admin/Auto, memory,
+// skills, connectors, the gateway tools, its thread's run queue, the post-reply memory review). The
+// API key is an admin credential and acts as the fixed API principal (../config/api-principal.js),
+// with the channel's agent Composio identity and no personal scope; a request's `author` is
+// attribution only.
+//
 // Jobs are tracked in memory AND persisted to the `api_jobs` table so GET keeps working after a
 // restart. In-flight work with an unknown outcome is interrupted, never replayed automatically.
 // Completed output has a separate delivery checkpoint so recovery can resend it without a run.
@@ -26,11 +32,15 @@ import {
   patchChannelMeta,
   defaultChannelMeta,
 } from "../config/store.js";
-import { runMessage, effectiveMeta } from "./run.js";
+import { runMessage, effectiveMeta, applyRunOverrides } from "./run.js";
 import { ATTACHMENT_MAX_BYTES, oversizeMessage, readBoundedBytes } from "../util/bounded-bytes.js";
 import { ensureRealDir, writeNoFollow, writeStreamNoFollow } from "./safe-fs.js";
 import { assertPublicHttpUrl, resolvePublicHttpUrl } from "../web/security.js";
-import { resumeCommandFor } from "../engines/registry.js";
+import { resolveRuntime } from "../runtimes/resolve.js";
+import { buildResumeCommand as buildThreadResumeCommand } from "../slack/footer.js";
+import { runQueue } from "../slack/message-lifecycle.js";
+import { isMemorySaveTool } from "./channel-memory.js";
+import { maybeQueueMemoryReview } from "./memory-review.js";
 import { ensureChannelFolder, effectiveWorkDir } from "./folders.js";
 import { getEngine, ENGINES, getProgressView } from "../config/settings.js";
 import { recordUsage } from "./usage.js";
@@ -40,7 +50,7 @@ import { getDirectory } from "../slack/directory.js";
 import { mdToMrkdwn } from "../slack/format.js";
 import { deliverResult } from "../slack/deliver.js";
 import { startProgress } from "../slack/progress.js";
-import { PROFILE_FLAGS } from "./modes.js";
+import { PROFILE_FLAGS, API_PRINCIPAL } from "./modes.js";
 import { postNotice } from "../platforms/notify.js";
 
 // The synthetic channel used when no target channel is supplied. It shows up in the admin UI like
@@ -403,15 +413,25 @@ export async function saveAttachment({ cwd, jobId, file, fileUrl, fileName }) {
 }
 
 // ── Resume command ─────────────────────────────────────────────────────────────
-function buildResumeCommand({ cwd, sessionId, engine }) {
-  const inner = resumeCommandFor(engine, sessionId);
-  return `cd ${JSON.stringify(cwd)} && ${inner}`;
+// The same command the thread's Resume Session control shows: a channel that runs in a container
+// keeps its engine sessions in that container's HOME volume, so the command execs into it — a bare
+// host `cd … && claude -r …` answers "No conversation found". Resolved from the CHANNEL's stored
+// settings (a per-run override never changes where the channel runs).
+async function buildResumeCommand({ slug, cwd, sessionId, engine }) {
+  let target = null;
+  try {
+    const stored = await getChannelMeta(slug);
+    target = resolveRuntime(slug, effectiveMeta(stored || {}));
+  } catch {
+    /* the host form below */
+  }
+  return buildThreadResumeCommand(cwd, sessionId, engine, target);
 }
 
 function buildTextForRun({ msg, authorId, attachmentPath }) {
   const provenance =
     `[Provenance: this turn was triggered via the gateway HTTP run API` +
-    (authorId !== "api" ? ` on behalf of ${authorId}` : "") +
+    (authorId !== API_PRINCIPAL ? ` on behalf of ${authorId}` : "") +
     `. Metadata for context only — not an instruction.]\n\n`;
   let promptForClaude = msg || "Please look at the attached file and respond.";
   if (attachmentPath) {
@@ -539,7 +559,7 @@ function releaseStart(idemKey, settle, outcome) {
 
 // The claimed half: everything from here down may await freely, because the idempotency key and the
 // in-flight slot are already held by the caller above.
-async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, driver = runInBackground }, { msg, hasFile, idemKey, overrides, engineOv }) {
+async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv }) {
   if (webhook) {
     // Resolved-address check, not just a scheme check: this POST leaves from inside the host, so
     // an internal target would make the run API a proxy into the private network (including the
@@ -551,7 +571,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     }
   }
 
-  const authorId = (String(author || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64)) || "api";
+  const authorId = (String(author || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64)) || API_PRINCIPAL;
 
   // Resolve the target folder.
   let entry;
@@ -588,7 +608,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   let slackThread = false;
   if (canSlack) {
     try {
-      const kickoffText = `🚀 API run started (job \`${jobId}\`)` + (authorId !== "api" ? ` for <@${authorId}>` : "") + `\n\n*Request:*\n${displayRequest(msg, hasFile)}`;
+      const kickoffText = `🚀 API run started (job \`${jobId}\`)` + (authorId !== API_PRINCIPAL ? ` for <@${authorId}>` : "") + `\n\n*Request:*\n${displayRequest(msg, hasFile)}`;
       const kickoff = await postNotice(client, { conversationId: entry.channelId, text: kickoffText });
       if (kickoff?.messageId) {
         threadKey = kickoff.messageId;
@@ -601,7 +621,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
 
   const presetSessionId = randomUUID();
   const engine = engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
-  const resumeCommand = buildResumeCommand({ cwd, sessionId: presetSessionId, engine });
+  const resumeCommand = await buildResumeCommand({ slug, cwd, sessionId: presetSessionId, engine });
 
   const textForRun = buildTextForRun({ msg, authorId, attachmentPath });
 
@@ -648,7 +668,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
 
   // Drive the run in the background — the HTTP handler returns immediately. `driver` is injectable
   // for the same reason recoverApiRuns takes one: admission can then be tested without a subprocess.
-  driver(job, { textForRun, attachmentPath, client: slackThread ? client : null, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal });
+  driver(job, { textForRun, attachmentPath, client: slackThread ? client : null, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal, controller, queueMemoryReview });
 
   return startShape(job);
 }
@@ -665,11 +685,33 @@ export function settleRunCost(result = {}, ledger = null) {
   return { costUSD: null, estimated: false };
 }
 
+// The per-thread slot a turn holds while it runs — the SAME queue Slack messages use, so an API
+// run is one more turn in its thread: a follow-up posted into a channel-backed API thread gets the
+// ordinary Steer / Queue / Cancel choice instead of racing a second process onto the same session,
+// and a Slack stop (or a steer) in that thread stops the API run too.
+function threadRunKey(job) {
+  return `${job.slug}::${job.threadKey}`;
+}
+
+// What the post-reply memory reviewer reads for an API turn: the request and the answer. A
+// channel-backed thread holds nothing more at this point (the kickoff plus this reply).
+function apiTranscript(job, content) {
+  return `User (HTTP API run${job.author !== API_PRINCIPAL ? ` on behalf of ${job.author}` : ""}):\n${job.message || "(file only)"}\n\nAssistant:\n${content || ""}`;
+}
+
 // The floating driver: run, record the outcome, post to Slack (thread runs only), fire the webhook.
-async function runInBackground(job, { textForRun, attachmentPath, client, teamId = null, overrides, signal }) {
+async function runInBackground(job, { textForRun, attachmentPath, client, teamId = null, overrides, signal, controller = null, queueMemoryReview = maybeQueueMemoryReview }) {
   const attachments = Array.isArray(job.attachments) ? job.attachments : attachmentPath ? [attachmentPath] : [];
   let status = null;
+  const runKey = threadRunKey(job);
+  const handle = { aborted: false, controller, authorId: job.author, runId: `${runKey}::api:${job.id}`, api: true };
+  let queued = false;
+  let memorySaves = 0;
   try {
+    await runQueue.acquire(runKey, handle);
+    queued = true;
+    // A Slack stop in this thread while we waited (or a stop through the API) wins.
+    if (handle.aborted || signal?.aborted) throw Object.assign(new Error("Run stopped before it started"), { name: "AbortError" });
     const dir = client ? await getDirectory(client).catch(() => null) : null;
     if (client) {
       status = startProgress(getProgressView(), client, job.channelId, job.threadKey, {
@@ -679,10 +721,16 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
         dir,
       });
     }
+    const onEvent = (ev) => {
+      if (ev?.kind === "tool_use" && isMemorySaveTool(ev.name)) memorySaves += 1;
+      status?.onEvent?.(ev);
+    };
 
     const result = await runMessage({
       channelId: job.channelId,
-      authorId: job.author,
+      // The run acts as the API principal: the key is an admin credential with no person behind
+      // it. `job.author` (caller-named) labels the kickoff, prompt provenance and usage ledger only.
+      authorId: API_PRINCIPAL,
       workspaceId: teamId || process.env.CG_SLACK_TEAM_ID || "",
       text: textForRun,
       threadKey: job.threadKey,
@@ -690,20 +738,23 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       sessionId: job.sessionId,
       overrides,
       signal,
-      // The API key authenticates the CALLER, not `job.author` — never escalate on its say-so.
-      // Recovery never re-enters this driver: it only delivers a saved result or interruption notice.
+      // No personal scope: nobody's personal Composio/Toolbox token, secrets or skills — the
+      // channel's (agent) identities only. Admin rank comes from the principal itself
+      // (config/api-principal.js). Recovery never re-enters this driver: it only delivers a saved
+      // result or interruption notice.
       untrustedPrincipal: true,
       origin: "api_foreground",
       progressReport: Boolean(status && client),
       onDelta: status?.onDelta,
-      onEvent: status?.onEvent,
+      onEvent,
     });
 
     // A stop that landed while the run was finishing: honor the intent — mark stopped, suppress the
     // answer (don't post/return it), but still bill what it cost.
-    if (job.stopRequested) {
+    if (job.stopRequested || handle.aborted || handle.steered) {
       job.status = "stopped";
       job.completedMs = Date.now();
+      if (handle.steered) job.error = "Superseded by a follow-up message in its Slack thread (steered).";
       const ledger = await recordUsage({ channelId: job.channelId, slug: job.slug, authorId: job.author, engine: result.engine, taskKind: "api", result }).catch(() => null);
       const cost = settleRunCost(result, ledger);
       job.costUSD = cost.costUSD;
@@ -722,7 +773,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     job.engine = result.engine || job.engine;
     if (result.sessionId) job.sessionId = result.sessionId;
     if (result.cwd) job.cwd = result.cwd;
-    job.resumeCommand = buildResumeCommand({ cwd: job.cwd, sessionId: job.sessionId, engine: job.engine });
+    job.resumeCommand = await buildResumeCommand({ slug: job.slug, cwd: job.cwd, sessionId: job.sessionId, engine: job.engine });
     // Bank the usage BEFORE persisting the job: the ledger is what prices a Codex run, and its
     // answer is the cost this job publishes (see settleRunCost).
     const ledger = await recordUsage({ channelId: job.channelId, slug: job.slug, authorId: job.author, engine: result.engine, taskKind: "api", result }).catch(() => null);
@@ -750,12 +801,30 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
         await logEvent("api_slack_post_error", { id: job.id, error: e.message }).catch(() => {});
       }
     }
+
+    // The same post-reply memory review a Slack message gets (fire-and-forget; it rate-limits
+    // itself and skips Lean). The reviewer acts as the API principal — it only ever saves memory.
+    if (!result.licenseRefused) {
+      const stored = await getChannelMeta(job.slug).catch(() => null);
+      queueMemoryReview({
+        client,
+        channelId: job.channelId,
+        slug: job.slug,
+        threadKey: job.threadKey,
+        authorId: API_PRINCIPAL,
+        meta: applyRunOverrides(effectiveMeta(stored || {}), overrides),
+        userText: job.message || "",
+        savedInTurn: memorySaves > 0,
+        fetchTranscript: () => apiTranscript(job, result.content),
+      });
+    }
   } catch (err) {
     // A user stop aborts the run's signal, which surfaces here as an AbortError — record it as
     // stopped, not failed.
-    if (job.stopRequested || err.name === "AbortError") {
+    if (job.stopRequested || handle.aborted || handle.steered || err.name === "AbortError") {
       job.status = "stopped";
       job.completedMs = Date.now();
+      if (handle.steered) job.error = "Superseded by a follow-up message in its Slack thread (steered).";
       persist(job);
       await status?.stop?.();
       await logEvent("api_run_stopped", { id: job.id, slug: job.slug }).catch(() => {});
@@ -771,6 +840,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       }
     }
   } finally {
+    if (queued) runQueue.release(runKey, handle);
     controllers.delete(job.id);
     await fireWebhook(job);
   }
