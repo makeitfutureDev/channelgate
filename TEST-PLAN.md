@@ -1899,12 +1899,9 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       traversal or any source outside MEMORY.md / memory/*.md.
 - [x] The registered search and read MCP handlers return formatted content through their injected
       response helper (regression: neither can fail with `text is not defined`).
-- [x] Untrusted/API-spoofed principals cannot call memory retrieval tools.
-- [x] Unit: an untrusted (API-key) principal's `permission_prompt` call is refused as
-      `{ "behavior": "deny", "message": … }` — the shape Claude Code parses — rather than plain text,
-      which the CLI reported as "The permission prompt tool returned an invalid permission result"
-      (`test/gateway-mcp-authz.test.js`). Live: an API run in a non-Auto channel that asks for Bash
-      gets a clean denial naming the trusted-principal reason.
+- [x] An API-key (untrusted) principal gets the channel's memory tools like a member, and its
+      `permission_prompt` reaches the approval path as the `api` principal, never the admin id the
+      request named, answered in the shape Claude Code parses (`test/gateway-mcp-authz.test.js`).
 - [x] The channel editor exposes Access, MCP Connections, Cloud MCP, Environment tokens, Skills,
       Runtime, Instructions, and Memory as first-class pages in that order, with no nested Tools
       navigation or channel Grant Tier selector; enabled skills appear first and one shared save
@@ -3217,14 +3214,48 @@ structural invariants are automated; rendered navigation and feature claims also
       picking it back up", then promptly resumes the temporary shimmer, persistent toolbox/tool events,
       heartbeat, and answer deltas on the same session instead of staying silent until the final answer.
       → `active_runs` row exists during the run, gone after; `run_recover*` events in `logs/`.
-- [x] Unit: stale `api_jobs` rows with `running` status remain recoverable when read/listed, and
-      `recoverApiRuns()` rehydrates a persisted job, increments the attempt counter, and starts the
-      background driver without marking it `interrupted`.
+- [x] Unit: `recoverApiRuns()` marks a persisted `running`/`queued` job `interrupted` without
+      starting a driver (`test/api-runs-recovery.test.js`).
 - [ ] Live: start a Slack-channel `POST /api/runs`, verify the kickoff thread includes the full
       request text, the response uses the configured progress/streaming view, and a daemon restart
-      mid-run posts the restart note then completes in the same thread.
+      mid-run posts the "interrupted … not run again" note in the same thread.
 - [ ] Live: start a headless `POST /api/runs` with a webhook, restart the daemon mid-run, and verify
-      the job resumes silently, `/api/runs/:id` reaches `completed`, and the webhook fires once.
+      `/api/runs/:id` reaches `interrupted` and the webhook fires once with that status.
+
+### HTTP run API channel parity
+
+An API run is one more member's turn in its channel. Unit coverage:
+- [x] Gateway tools are exposed to an API run; a named admin id gets no admin tool, personal token or
+      personal skill write, and no user record is created for `api` (`test/gateway-mcp-authz.test.js`).
+- [x] The API run holds its thread's run-queue slot; the Slack stop path (`runQueue.abort` + the
+      handle's controller) stops it before the engine spawns, a Slack steer supersedes it with a
+      `steered` error, and a completed run returns a container `exec -it` resume command naming its
+      session and queues the memory review as `api` (`test/api-runs-channel-parity.test.js`).
+- [x] A per-run `mode` of read/worker/auto/lean/full on an Admin channel resolves the runtime target
+      with the channel's Admin posture (operator-home grant unchanged) and never adds
+      `--dangerously-skip-permissions` (`test/runtime-integration-run.test.js`).
+
+Live acceptance (Claude and Codex each; fixture `qa-api-parity-<engine>`: a Slack channel in Worker
+mode with **Auto on**, channel memory on, one channel skill granted, the shared Composio identity
+connected, one channel secret `QA_PARITY_TOKEN`; the gateway's run API key; an admin Slack id):
+- [ ] **Auto + tools.** `POST /api/runs` `{channel: "qa-api-parity-<engine>", author: "<admin id>",
+      message: "Run \`ls\` in the work folder, then save to channel memory that the API parity check
+      ran today, then list your skills."}`. Pass: the kickoff thread shows the run with no approval
+      card (Auto), the reply lists files, `MEMORY.md` gains the fact, the channel skill is listed,
+      and `GET /api/runs/:id` is `completed`.
+- [ ] **No admin or personal scope.** Same channel, Auto **off**: ask it to run `touch x`. Pass: an
+      approval card credited to "An HTTP API run" (not the admin) appears in the thread; a member's
+      Approve lets it run. Ask it to "set my Composio token to abc123": refused with "No verified user
+      context", and the admin's stored token is unchanged.
+- [ ] **Thread queue.** While a long API run ("count slowly to 60") is in flight, reply in its Slack
+      thread with an @mention. Pass: the Steer / Queue / Cancel card appears; *Queue* runs after the API
+      run finishes; repeating with `stop` makes `GET /api/runs/:id` report `stopped`.
+- [ ] **Container untouched by a mode override.** On an Admin channel with *Admin channels can access
+      the host home* on and a background agent running, submit an API run with `mode: "read"`. Pass: it
+      completes without "container has to be rebuilt" notices, the background agent keeps running,
+      and `podman inspect` shows the same container ID before and after.
+- [ ] **Resume.** Copy `resumeCommand` from a completed API run and run it on the host. Pass: the
+      session opens inside the channel's container with the run's conversation.
 - [x] Unit: a settled run publishes the engine's own cost when there is one, otherwise the figure
       the usage ledger settled on for the same run — the canonical component rollup where a run
       reported components — flagged `costEstimated`; `null` survives only when nothing knows, and a

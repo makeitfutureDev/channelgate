@@ -153,6 +153,19 @@ export function channelProfile(meta = {}) {
 //      "approved" → admins + approved users   ·   "admins" → admins only   ·   "none" → nobody
 //    ("none" is dormant: only the explicit allowedUsers grant above gets in — even admins must be
 //    added there.)
+// ── The HTTP run API's principal ──────────────────────────────────────────────
+// `POST /api/runs` authenticates an API KEY, never the Slack author a request body names. Inside a
+// run that key acts as ONE fixed principal: an approved member of the target channel, with every
+// channel-scoped capability a member's message gets (Auto mode, memory, skills, connectors, the
+// gateway tools) and nobody's personal scope and no admin authority. The named author is
+// attribution only. Work that outlives the run (background jobs/agents, schedules) is owned by this
+// same principal, so no later run can inherit an authority the key never proved. Not a Slack id
+// shape, and no platform namespaces a bare word, so it can never collide with a real user.
+export const API_PRINCIPAL = "api";
+export function isApiPrincipal(id) {
+  return String(id || "") === API_PRINCIPAL;
+}
+
 export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isApprovedUser = false } = {}) {
   if (!isDM && Array.isArray(meta.allowedUsers) && meta.allowedUsers.includes(authorId)) return true;
   if (isDM) return isAdminUser || isApprovedUser;

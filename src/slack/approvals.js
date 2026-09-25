@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { logEvent } from "../util/logger.js";
 import { getChannelMeta, patchChannelMeta, isAdmin, isApproved } from "../config/store.js";
 import { effectiveMeta } from "../gateway/run.js";
-import { canManage, isAuthorized } from "../gateway/modes.js";
+import { canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
 import { toolTarget } from "../engines/stream.js";
 import {
   approvalActionKey,
@@ -114,11 +114,17 @@ function fencedPreview(raw) {
 export { isSlackTs, slackThreadFor } from "./thread-keys.js";
 import { isSlackTs, slackThreadFor } from "./thread-keys.js";
 
+// Who a card credits with the request. The HTTP run API principal is not a Slack user, so a raw
+// `<@api>` would render as broken markup; name the API instead.
+function requesterLabel(authorId) {
+  return isApiPrincipal(authorId) ? "An HTTP API run" : `<@${authorId}>`;
+}
+
 function approvalBlocks(id, toolName, target, authorId, { approvalType = "permission", approveText = "Approve", denyText = "Deny", durable = false } = {}) {
   const preview = fencedPreview(target);
   if (approvalType === "agent") {
     return [
-      { type: "section", text: { type: "mrkdwn", text: `*${toolName}*${preview}\n<@${authorId}> asked for approval${durable ? ". This exact request remains actionable across gateway restarts until handled." : " before continuing."}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*${toolName}*${preview}\n${requesterLabel(authorId)} asked for approval${durable ? ". This exact request remains actionable across gateway restarts until handled." : " before continuing."}` } },
       {
         type: "actions",
         elements: [
@@ -130,7 +136,7 @@ function approvalBlocks(id, toolName, target, authorId, { approvalType = "permis
     ];
   }
   return [
-    { type: "section", text: { type: "mrkdwn", text: `🔒 *Permission needed* — \`${toolName}\`${preview}\n<@${authorId}>'s request wants to do this. Approve?` } },
+    { type: "section", text: { type: "mrkdwn", text: `🔒 *Permission needed* — \`${toolName}\`${preview}\n${isApiPrincipal(authorId) ? "An HTTP API run" : `<@${authorId}>'s request`} wants to do this. Approve?` } },
     {
       type: "actions",
       elements: [

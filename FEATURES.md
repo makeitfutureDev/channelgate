@@ -1017,12 +1017,28 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Slack channel, per-run engine/model/effort/mode overrides, idempotency keys, status polling,
   stop, and completion webhooks. Channel-backed API runs post the full request in Slack and use the
   same visible progress/streaming path as interactive turns; headless API runs stay silent and
-  finish through status/webhook. Running/queued API jobs in `api_jobs` are recovered after daemon
-  restart for both Slack-backed and headless requests, with an attempt cap. Every settled run
+  finish through status/webhook. A job whose run was in flight at a daemon restart is marked
+  `interrupted` and never run again (its external actions are unknown); a result that was already
+  saved is still delivered and its webhook still fires. Every settled run
   publishes a cost: the engine's own dollar amount when it reports one, otherwise the usage
   ledger's priced estimate for that same run (Codex reports none), flagged `costEstimated` in the
   status response and the webhook — `null` only when nothing anywhere knows.
   → TEST-PLAN: Automation.
+- **An API run behaves like a member's message in its channel.** The run API key acts as one fixed
+  principal, `api`: an approved member of the target channel. The run gets everything
+  channel-scoped that a member's Slack message gets: Auto mode (tool prompts auto-approved), channel
+  memory (search, read, save and the post-reply memory review), the channel's and organization's
+  skills, MCP connections and `composio-agent` identity, channel secrets, and the gateway tools
+  (schedules, background jobs and agents, charts/tables/Lists in its Slack thread, progress,
+  approval cards). The `author` a request names is attribution only: it never grants admin rank,
+  the permission bypass, or anyone's personal Composio/Toolbox token, secrets, skills or SSH keys.
+  Background work and schedules the run starts are owned by `api`, so no later run inherits
+  authority the key never proved. `ask_questions` stays off because no verified person could
+  answer it. A per-run `mode` override narrows tools only. The container, its mounts and the
+  operator-home grant follow the channel's own mode, so an override never recreates the container.
+  API runs join their thread's per-thread queue (Slack follow-ups get Steer / Queue / Cancel, and a
+  Slack stop or steer stops the API run), and the returned `resumeCommand` enters the channel's
+  container. → TEST-PLAN: HTTP run API channel parity.
 - Codex JSONL progress: Codex `item.started` / `item.completed` events for MCP tool calls, shell
   commands, and final agent messages feed the same Slack status/log stream as Claude, so Codex
   turns no longer look silent while tools run. Gateway-owned MCP tools are pre-approved inside Codex

@@ -536,11 +536,11 @@ export { resolveComposioConnections, resolveComposioRuntime } from "./run-integr
 // adminMode would hand any key holder an unsandboxed run by naming a known admin's Slack id
 // (those ids are public). A channel that is ALREADY adminMode keeps its own setting.
 //
-// It also never picks a runtime BACKEND. Which machine boundary a channel's turns run behind is
-// durable configuration (an admin's per-channel pin plus the gateway default); letting a request
-// body move a turn between backends would be an API caller choosing its own confinement. So
-// `runtime` is not copied here, and runMessage resolves the backend from the CHANNEL's stored
-// adminMode/runtime rather than from this overridden view.
+// It also never picks a runtime BACKEND or the container's mounts. Which machine boundary a
+// channel's turns run behind, and what that container can see, is durable configuration; letting a
+// request body change either would be an API caller choosing its own confinement (and would force
+// a container rebuild). So `runtime` is not copied here, and runMessage resolves the runtime target
+// with the CHANNEL's adminMode rather than this overridden view's.
 export function applyRunOverrides(meta, overrides) {
   if (!overrides) return meta;
   const o = {};
@@ -657,6 +657,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // --dangerously-skip-permissions run. The channel's own stored adminMode still stands.
   const trustedAdminAuthor = !untrustedPrincipal && await isAdmin(authorId);
   meta = authorModeMeta(meta, { isAdminAuthor: trustedAdminAuthor, untrustedPrincipal });
+  // What the channel's container is built from is the CHANNEL's posture, not this run's: a per-run
+  // `mode` only narrows tools. Resolving mounts from the overridden view dropped an Admin channel's
+  // operator-home grant for one API run, which changed the container's mounts — so it waited for
+  // every run inside, rebuilt it (killing detached jobs), and the next ordinary turn rebuilt it
+  // back. See the runtime resolution below.
+  const channelAdminMode = Boolean(meta.adminMode);
   meta = applyRunOverrides(meta, overrides);
 
   // Per-thread clean override (the "/clean" directive): this thread runs with channel-cleanMode
@@ -784,7 +790,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // asks "is this a container?" — it asks the target's declared capabilities.
   //
   // cleanMode is taken from the RUN meta on purpose — it changes the cwd the container mounts.
-  const target = runtimeResolver(entry.slug, meta);
+  const target = runtimeResolver(entry.slug, overrides ? { ...meta, adminMode: Boolean(meta.adminMode || channelAdminMode) } : meta);
   const isolatedRuntime = runtimeSupports(target, "isolated");
   // The engine's own credential inside an isolated runtime: the container has no access to the
   // daemon's Claude state dir, so a setup-token — or a relay of the resolved login's current access

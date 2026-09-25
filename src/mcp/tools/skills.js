@@ -91,7 +91,10 @@ export function register(server, ctx) {
   const { channelId, slug, createdBy, text, requireAdmin, requireManage, loadMeta } = ctx;
 
   const isAdminUser = async () => Boolean(createdBy) && (await isAdmin(createdBy));
-  const approvedAuthor = async () => Boolean(createdBy) && ((await isAdminUser()) || (await isApproved(createdBy)));
+  // The HTTP run API principal is an approved member for shared-library work, but it is not a
+  // person: it has no personal grants and cannot own a personal skill.
+  const approvedAuthor = async () => Boolean(createdBy) && (Boolean(ctx.apiPrincipal) || (await isAdminUser()) || (await isApproved(createdBy)));
+  const personalAuthor = async () => !ctx.apiPrincipal && (await approvedAuthor());
   const activeSkillSlugs = async () => {
     const stored = (await loadMeta()) || {};
     const user = createdBy ? (await getUser(createdBy)) || {} : {};
@@ -279,7 +282,7 @@ export function register(server, ctx) {
     "add_my_skills",
     { description: "Add catalog skills to YOUR OWN grants — they load in your runs in every conversation (like starring in a skill library). Whatever they require loads with them (as a dependency, not as a separate grant). No approval needed; only your own context changes.", inputSchema: { slugs: z.array(z.string()).min(1) } },
     async ({ slugs }) => {
-      if (!(await approvedAuthor())) return text("Only approved members have personal skill grants.");
+      if (!(await personalAuthor())) return text("Only approved members have personal skill grants.");
       const known = [];
       const unknown = [];
       for (const s of slugs) {
@@ -297,7 +300,7 @@ export function register(server, ctx) {
     "remove_my_skills",
     { description: "Remove skills from YOUR OWN grants. Organization and channel grants are unaffected.", inputSchema: { slugs: z.array(z.string()).min(1) } },
     async ({ slugs }) => {
-      if (!createdBy) return text("No user context.");
+      if (!createdBy || ctx.apiPrincipal) return text("No verified user context — personal skill grants can only be changed from your own Slack message.");
       const r = await revokeSkillsFromUser(createdBy, slugs);
       return text(`🗑️ Removed ${r.removed.length} of your grant(s)${r.removed.length ? `: ${r.removed.join(", ")}` : ""}. Yours now: ${r.names.join(", ") || "(none)"}.${stillRequiredLine(r.stillRequired)}`);
     },
@@ -365,6 +368,7 @@ export function register(server, ctx) {
     },
     async ({ slug: wanted = "", files, note = "", grant_here = true, personal = false, scope = "library" }) => {
       if (!(await approvedAuthor())) return text("Only approved members can add skills to the library.");
+      if (personal && ctx.apiPrincipal) return text("An HTTP API run has no personal catalog — create a shared skill instead (personal: false).");
       const { channelId, meta: scopeMeta } = await channelProfile();
       if (scope === "channel" && (!channelId || scopeMeta.isDM)) return text("A channel-scoped skill needs a channel: create it from the customer's channel, or use scope library.");
       try {

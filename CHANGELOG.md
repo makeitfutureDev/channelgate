@@ -16,6 +16,23 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- **An HTTP API run now works like a member's message in its channel.** It gets the channel's Auto
+  mode, memory (search, read and save, plus the post-reply memory review), skills, connectors and
+  the other gateway tools, and it asks for tool approval the same way. The API key still acts as a
+  member, never as the `author` it names. So it gets no admin rights and nobody's personal tokens,
+  secrets or skills. Background work and schedules it starts are owned by the API too.
+- An API run joins its thread's queue. A Slack reply in a channel-backed API thread gets the usual
+  Steer / Queue / Cancel choice instead of running at the same time, and a Slack stop or steer in
+  that thread stops the API run.
+- A per-run API `mode` no longer rebuilds the channel's container. On an Admin channel with the
+  host-home switch on, a `read`/`worker`/`auto`/`lean` run used to drop the home mount, wait for
+  every run inside, and recreate the container (killing detached jobs). The next ordinary turn then
+  recreated it back. The mode now narrows tools only.
+- The `resumeCommand` an API run returns now opens the session inside the channel's container, like
+  the Slack Resume control. The old host command answered "No conversation found".
+
 ## 0.5.6 — 2026-09-25
 
 - Codex over SSH now gets what a chat turn's Codex gets: the gateway tools, your own and the
