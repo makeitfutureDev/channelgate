@@ -67,7 +67,10 @@ export function register(server, ctx) {
     async ({ cron, in_minutes, run_at, prompt, description, notify, notify_user, delivery, kind, ack, ack_escalate_minutes, ack_dm_minutes }) => {
       if (!channelId) return text("No channel context — cannot schedule here.");
       const mode = notify || "channel";
-      const notifyUserId = mode === "user" ? String(notify_user || "").replace(/[<@>]/g, "").trim() || createdBy : "";
+      // The HTTP run API principal is not a person to ping: an API-created user-mode schedule must
+      // name its recipient.
+      const notifyUserId = mode === "user" ? String(notify_user || "").replace(/[<@>]/g, "").trim() || (ctx.apiPrincipal ? "" : createdBy) : "";
+      if (mode === "user" && !notifyUserId) return text("notify \"user\" needs notify_user (a Slack user id) when the schedule is created from an HTTP API run.");
       const who = mode === "channel" ? "@channel" : mode === "user" ? `<@${notifyUserId}>` : "(quiet, no ping)";
 
       // Reminder-kind fields (no-op for a plain task): a single posted message + optional ✅ chain.

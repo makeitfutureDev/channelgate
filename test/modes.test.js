@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage, modeSettingsPatch, normalizeModeMeta, authorModeMeta, sudoModeMeta } =
+const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage, modeSettingsPatch, normalizeModeMeta, authorModeMeta, sudoModeMeta, API_PRINCIPAL, isApiPrincipal, isAuthorized } =
   await import("../src/gateway/modes.js");
 const { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } = await import("../src/engines/network-policy.js");
 const { hasSudoRuntimeAuthority } = await import("../src/runtimes/sudo-authority.js");
@@ -144,4 +144,23 @@ test("canManage: custom policy grants only the listed managers", () => {
   // malformed managers list fails closed
   assert.equal(canManage({ manageAccess: "custom", managers: "U1" }, { authorId: "U1" }), false);
   assert.equal(canManage({ manageAccess: "custom" }, { authorId: "U1" }), false);
+});
+
+test("the HTTP run API principal is one fixed id that no real author can match", () => {
+  assert.equal(API_PRINCIPAL, "api");
+  assert.equal(isApiPrincipal("api"), true);
+  for (const id of ["", null, undefined, "U04ADMIN", "API", " api", "gchat:users/api", "msteams:api"]) {
+    assert.equal(isApiPrincipal(id), false, `${JSON.stringify(id)} is not the API principal`);
+  }
+  // It carries no rank of its own: a channel admits it only through the same member rules, and it
+  // is never an admin.
+  assert.equal(isAuthorized({}, API_PRINCIPAL, false, { isApprovedUser: true }), true);
+  assert.equal(isAuthorized({}, API_PRINCIPAL, false), false);
+  assert.equal(isAuthorized({ access: "admins" }, API_PRINCIPAL, false, { isApprovedUser: true }), false);
+  assert.equal(isAuthorized({ access: "none" }, API_PRINCIPAL, false, { isApprovedUser: true }), false);
+  assert.equal(isAuthorized({ access: "none", allowedUsers: [API_PRINCIPAL] }, API_PRINCIPAL, false), true);
+  assert.equal(isAuthorized({ allowedUsers: [API_PRINCIPAL] }, API_PRINCIPAL, true), false, "a guest grant never opens a DM");
+  assert.equal(isAuthorized({}, API_PRINCIPAL, true, { isApprovedUser: true }), true);
+  assert.equal(canManage({ manageAccess: "admins" }, { authorId: API_PRINCIPAL, isApprovedUser: true }), false);
+  assert.equal(canManage({ manageAccess: "members" }, { authorId: API_PRINCIPAL, isApprovedUser: true }), true);
 });

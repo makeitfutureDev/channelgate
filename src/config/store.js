@@ -14,6 +14,7 @@ import {
   slugify,
 } from "./paths.js";
 import { getDb, toJson, fromJson } from "../db/index.js";
+import { isApiPrincipal } from "./api-principal.js";
 // Retired integrations' fields are dropped on the way IN, so a record can never be re-saved with
 // one and no listing has to remember to mask it (see ./dead-fields.js).
 import { stripDeadFields } from "./dead-fields.js";
@@ -88,6 +89,13 @@ export async function setUser(userId, patch) {
 
 export async function isAdmin(userId) {
   return Boolean((await getUser(userId))?.isAdmin);
+}
+
+// Admin rank of a run's AUTHOR: a stored admin, or the HTTP run API principal, whose key is an
+// admin credential (config/api-principal.js). Only for "who asked for this work" — never for who
+// clicked, approved or signed in, where the API principal can never appear and must never count.
+export async function isAdminPrincipal(userId) {
+  return isApiPrincipal(userId) || (await isAdmin(userId));
 }
 
 // Approved = on the approved-users list. Admins are implicitly approved.

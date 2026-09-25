@@ -153,6 +153,9 @@ export function channelProfile(meta = {}) {
 //      "approved" → admins + approved users   ·   "admins" → admins only   ·   "none" → nobody
 //    ("none" is dormant: only the explicit allowedUsers grant above gets in — even admins must be
 //    added there.)
+// The HTTP run API's principal (an admin with no personal scope) — see config/api-principal.js.
+export { API_PRINCIPAL, isApiPrincipal } from "../config/api-principal.js";
+
 export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isApprovedUser = false } = {}) {
   if (!isDM && Array.isArray(meta.allowedUsers) && meta.allowedUsers.includes(authorId)) return true;
   if (isDM) return isAdminUser || isApprovedUser;

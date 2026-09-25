@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getChannelMeta, isAdmin, isApproved } from "../config/store.js";
-import { canManage, isAuthorized } from "../gateway/modes.js";
+import { API_PRINCIPAL, canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
 import { getEngine as getDefaultEngine } from "../config/settings.js";
 import { gatewayRoot } from "../config/paths.js";
 import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
@@ -126,10 +126,17 @@ export function normalizeToolset(value) {
 export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progressReport = false, daemon = null, verifyCapability = null } = {}) {
   const channelId = claims.channelId || "";
   const slug = claims.slug || "";
-  const createdBy = claims.authorId || "";
+  const claimedAuthor = claims.authorId || "";
   const threadKey = claims.threadKey || "";
   const origin = claims.origin || "";
-  const principalTrusted = claims.principalTrusted === true;
+  // A verified human (a Slack-authenticated author) versus the HTTP run API's admin key. Every tool
+  // in an API run acts as the fixed API principal (config/api-principal.js): an admin of this
+  // channel with no personal scope. A capability that names any other author without vouching for
+  // it (principalTrusted false) maps there too, so a named id is never authority. Runs that API
+  // work later spawns (a schedule, a background agent) carry the principal as their author.
+  const apiPrincipal = claims.principalTrusted !== true || isApiPrincipal(claimedAuthor);
+  const principalTrusted = !apiPrincipal;
+  const createdBy = apiPrincipal ? (claimedAuthor ? API_PRINCIPAL : "") : claimedAuthor;
   const claimedEngine = ENGINE_CLAIMS.includes(claims.engine) ? claims.engine : "";
   const activeEngine = claimedEngine || (ENGINE_CLAIMS.includes(engine) ? engine : getDefaultEngine());
 
@@ -138,9 +145,12 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
   // work-dir, host browse, gateway update). requireManage: the SAFE settings (MCP allowlist, bash,
   // auto) — an admin OR, when the channel opts in (manageAccess "members"/"custom"), an approved
   // member / listed manager. The author comes only from the verified run capability.
-  const requireAdmin = async () => principalTrusted && Boolean(createdBy) && (await isAdmin(createdBy));
+  // The HTTP run API principal ranks as an admin: its key is an admin credential. Control-plane
+  // changes still need a human click on their approval card, exactly as for an admin's message.
+  const requireAdmin = async () => Boolean(createdBy) && (apiPrincipal || (await isAdmin(createdBy)));
   const requireManage = async () => {
-    if (!principalTrusted || !createdBy) return false;
+    if (!createdBy) return false;
+    if (apiPrincipal) return true;
     const meta = await loadMeta();
     return canManage(meta || {}, {
       authorId: createdBy,
@@ -150,7 +160,9 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
   };
 
   const requireChannelAccess = async () => {
-    if (!principalTrusted || !createdBy) return false;
+    if (!createdBy) return false;
+    // The API key was accepted as this channel's caller; the capability is scoped to it.
+    if (apiPrincipal) return Boolean(await loadMeta());
     const meta = await loadMeta();
     return Boolean(meta) && isAuthorized(meta, createdBy, meta.isDM, {
       isAdminUser: await isAdmin(createdBy), isApprovedUser: await isApproved(createdBy),
@@ -165,6 +177,7 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     origin,
     activeEngine,
     principalTrusted,
+    apiPrincipal,
     // A NON-EMPTY signed toolset wins (only the daemon can mint one, and every value but "full"
     // reduces); a blank/absent one falls back to the reader's own environment, which is how the
     // stdio entry has always learned it. Neither direction can widen: "full" IS the default.
@@ -381,12 +394,9 @@ export function createGatewayMcpServer(ctx) {
       if (!capability.ok) {
         return refuse(`🚫 Gateway capability rejected (${capability.reason}). Start a fresh run and try again.`);
       }
-      // The HTTP run API authenticates a daemon key, not the caller-supplied Slack author id. Its
-      // signed capability deliberately retains that id only for attribution; it must never become
-      // authority inside this user/channel control plane (including read-only admin tools).
-      if (capability.claims.principalTrusted !== true) {
-        return refuse("🚫 Gateway tools require a trusted Slack principal; this run was authenticated only as a daemon/API caller.");
-      }
+      // An HTTP run API capability is honoured like a channel member's: ctxFromClaims already
+      // mapped it to the API principal, so the author it names never becomes authority here —
+      // personal tools refuse it, admin tools refuse it, and approvals never auto-pass as an admin.
       let humanApproved = false;
       if (gate) {
         // Fail CLOSED at the chokepoint. The precheck mirrors the handler's own authz so an

@@ -405,3 +405,44 @@ test("Stop signal reaches runtime preparation and prevents engine spawn", async 
   await assert.rejects(run, { name: "AbortError" });
   assert.equal(backend.calls.spawn.length, 0);
 });
+
+test("a per-run API mode narrows tools but never changes what the channel's container mounts", async () => {
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
+  const { operatorHomeGranted } = await import("../src/runtimes/container/lifecycle.js");
+  await channel("C_RT_API_MODE", "rt-api-mode", { adminMode: true, allowBash: true });
+  for (const mode of ["read", "worker", "auto", "lean", "full"]) {
+    const backend = createFakeRuntimeBackend();
+    const resolved = [];
+    useBackend(backend, { record: resolved });
+    await runMessage({
+      channelId: "C_RT_API_MODE", authorId: "api", text: `api ${mode}`, threadKey: `api:mode-${mode}`,
+      overrides: { mode }, untrustedPrincipal: true, origin: "api_foreground", preferCold: true,
+    });
+    assert.equal(resolved.length, 1, `${mode}: one runtime resolution per turn`);
+    // The operator-home grant is the one mount a channel's mode decides; with the gateway switch on
+    // it must follow the CHANNEL (Admin), or a single API run rebuilds the container both ways.
+    assert.equal(resolved[0].adminMode, true, `${mode}: the runtime target keeps the channel's Admin posture`);
+    assert.equal(operatorHomeGranted({ meta: resolved[0], settings: { fullAccessHome: true } }), true, `${mode}: the mount set is unchanged`);
+    assert.equal(backend.calls.spawn.length, 1);
+    // The API key is an admin credential: in this Admin channel a Full run escalates exactly like an
+    // admin's Slack message, and a narrowed mode does not.
+    const flags = backend.calls.spawn[0].args?.join?.(" ") || JSON.stringify(backend.calls.spawn[0]);
+    if (mode === "full") assert.match(flags, /--dangerously-skip-permissions/, "full: the admin API principal escalates in an Admin channel");
+    else assert.doesNotMatch(flags, /--dangerously-skip-permissions/, `${mode}: a narrowed API run never escalates`);
+  }
+});
+
+test("an API run escalates only as the API principal — a caller-named admin author never does", async () => {
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
+  await setUser("U_RT_NAMED_ADMIN", { name: "Named Admin", approved: true, isAdmin: true });
+  await channel("C_RT_API_ESC", "rt-api-esc", { adminMode: true, allowBash: true });
+  const spawned = async (authorId, threadKey) => {
+    const backend = createFakeRuntimeBackend();
+    useBackend(backend);
+    await runMessage({ channelId: "C_RT_API_ESC", authorId, text: "api escalation", threadKey, untrustedPrincipal: true, origin: "api_foreground", preferCold: true });
+    return backend.calls.spawn[0].args.join(" ");
+  };
+  assert.match(await spawned("api", "api:esc-principal"), /--dangerously-skip-permissions/);
+  assert.doesNotMatch(await spawned("U_RT_NAMED_ADMIN", "api:esc-named"), /--dangerously-skip-permissions/,
+    "an untrusted capability naming a real admin never borrows that admin's rank");
+});
