@@ -10,7 +10,10 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
 
-const { syncChannelNow, syncAllNow, driveSyncStatus, driveSyncStatusAll, handleDriveSyncIpc, resolveSyncConfig } = await import("../src/gateway/drivesync.js");
+const { syncChannelNow, syncAllNow, driveSyncStatus, driveSyncStatusAll, handleDriveSyncIpc, resolveSyncConfig, __setDriveSyncLauncher, HOST_LAUNCHER } = await import("../src/gateway/drivesync.js");
+// The fake rclone runs on the host; production launches the pass in a confined container
+// (drivesync.test.js covers that argv).
+__setDriveSyncLauncher(HOST_LAUNCHER);
 const { saveSettings } = await import("../src/config/settings.js");
 const { upsertChannelEntry, saveChannelMeta, defaultChannelMeta } = await import("../src/config/store.js");
 

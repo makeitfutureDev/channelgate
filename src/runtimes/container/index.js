@@ -307,6 +307,35 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
   return status;
 }
 
+// The argv for a ONE-SHOT confined command that daemon-side tools use when they must touch a
+// channel folder with a host credential (the Google Drive sync). It runs in the channel image with
+// the daemon user's own uid mapping, every capability dropped, no new privileges, and ONLY the
+// given binds: a symlink planted in the channel folder then resolves inside this throwaway
+// container, never onto the host (QA-0925 review: rclone on the host wrote Drive files through a
+// work-folder symlink to anywhere the daemon user could write). `binds` are
+// { source, target = source, readOnly }.
+// `name` lets the caller force-remove the container if its client is killed (a killed `podman run`
+// client leaves the container running).
+export async function confinedCommandArgv({ binds = [], entrypoint, args = [], settings = null, name = "" } = {}) {
+  const r = runtime();
+  const effective = settings || bootSettings || {};
+  const caps = await r.cli.probe(effective, { image: effective.image });
+  if (!caps.ok) throw new Error(`no usable container runtime (${caps.reason})`);
+  const image = String(effective.image || "").trim() || "channelgate/runtime:latest";
+  const argv = [caps.bin, "run", "--rm", "--pull=never"];
+  if (name) argv.push("--name", name);
+  if (caps.supportsInit) argv.push("--init");
+  if (caps.uidStrategy === "keep-id") argv.push("--userns=keep-id");
+  else if (typeof process.getuid === "function") argv.push("--user", `${process.getuid()}:${process.getgid()}`);
+  argv.push("--cap-drop", "ALL", "--security-opt", "no-new-privileges");
+  for (const bind of binds) {
+    argv.push("-v", `${bind.source}:${bind.target || bind.source}${bind.readOnly ? ":ro" : ""}`);
+  }
+  if (entrypoint) argv.push("--entrypoint", entrypoint);
+  argv.push(image, ...args);
+  return argv;
+}
+
 export function stopContainerRuntime() {
   if (!context) return;
   context.reaper.stopTimer();

@@ -688,7 +688,7 @@
                 </div>
                 <div class="setcard">
                   <h4>Google Drive sync</h4>
-                  <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and a dedicated <code>Drive/</code> subfolder inside that channel's working folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>apt install rclone</code>, or the official installer from rclone.org).</p>
+                  <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and that channel's whole working folder — except agent instructions and skills (<code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>.claude/</code>, …), channel memory, secrets (<code>.env</code>, keys), <code>.git</code> and dependency trees, plus anything listed in the folder's <code>.driveignore</code>. Symlinks are never followed, and rclone runs in a throwaway container that sees only the channel folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>apt install rclone</code>, or the official installer from rclone.org).</p>
                   <label class="toggle"><input type="checkbox" id="set-drivesync-enabled" /> <strong>Enable scheduled Drive sync</strong> — off keeps the whole feature dormant even if channels have a folder link set.</label>
                   <label class="field">
                     <span>Service-account key (JSON) <span id="drivesync-key-state" class="state"></span> — paste the downloaded key; it's stored write-only on this host and never shown again. Share your Drive folders with the service-account email shown here.</span>
@@ -1296,7 +1296,7 @@
             <span class="hint">Save to apply a folder change. Existing files stay in their current folders.</span>
           </label>
           <label class="field">
-            <span>Google Drive sync folder (blank = off — 2-way synced into a <code>Drive/</code> subfolder; set up the service account under Settings → Google Drive sync)</span>
+            <span>Google Drive sync folder (blank = off — 2-way synced with the whole working folder, minus agent instructions, memory and secrets; exclude more in <code>.driveignore</code>; set up the service account under Settings → Google Drive sync)</span>
             <div class="row">
               <input class="ch-syncdrive" type="text" placeholder="https://drive.google.com/drive/folders/…" />
               <button type="button" class="ch-synctest ghost">Test</button>

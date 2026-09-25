@@ -202,7 +202,10 @@ operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) —
   the channel's agent in a real project directory instead of the default folder.
 - `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir`.
 - `get_channel_drive_folder` / `set_channel_drive_folder` (admin) / `clear_channel_drive_folder`
-  (admin) — two-way-sync a Google Drive folder into the channel folder's `Drive/` subfolder.
+  (admin) — two-way-sync a Google Drive folder with the channel's whole folder. Agent instructions
+  and skills (`CLAUDE.md`, `AGENTS.md`, `.claude/`, …), `MEMORY.md`/`memory/`, secrets (`.env`,
+  keys), `.git` and dependency trees never sync, nor do symlinks; list more exclusions, one pattern
+  per line, in `.driveignore`.
   `get_channel_drive_folder` also reports the last sync pass (time, ok/failed, the reason).
 - `sync_channel_drive` — when someone asks to sync Drive now, run THIS channel's linked folder's
   sync immediately instead of waiting for the next sweep. It waits ~40s for the outcome; a longer

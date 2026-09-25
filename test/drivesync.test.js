@@ -5,13 +5,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { chmodSync, statSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, statSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
 
-const { parseDriveFolderId, syncSubdir, buildBisyncArgs, buildTestArgs, selectSyncChannels, isServiceAccountJson, resolveDriveSyncKeyFile, driveSyncResultOutput, needsResync, resyncSentinel, priorListingEmpty, rcloneAvailable } = await import("../src/gateway/drivesync.js");
+const { parseDriveFolderId, syncRoot, buildDriveFilters, syncIdentity, DRIVE_SYNC_EXCLUDES, symlinkExcludes, driveSyncFolderRefusal, buildBisyncArgs, buildTestArgs, selectSyncChannels, isServiceAccountJson, resolveDriveSyncKeyFile, driveSyncResultOutput, needsResync, resyncSentinel, priorListingEmpty, rcloneAvailable } = await import("../src/gateway/drivesync.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { configDir } = await import("../src/config/paths.js");
 
@@ -39,8 +39,9 @@ test("parseDriveFolderId rejects junk", () => {
   assert.equal(parseDriveFolderId(undefined), null);
 });
 
-test("syncSubdir isolates the sync into a Drive/ subfolder", () => {
-  assert.equal(syncSubdir("/work/chan-a"), path.join("/work/chan-a", "Drive"));
+test("the whole channel folder is the local side of the sync", () => {
+  // QA-0925: the owner wanted the channel in Drive, not a Drive/ subfolder of it.
+  assert.equal(syncRoot("/work/chan-a"), "/work/chan-a");
 });
 
 test("buildBisyncArgs: steady-state pass has no --resync and carries auth + scope", () => {
@@ -235,6 +236,102 @@ test("real rclone: deleting every file on one side is never undone by a forced r
   assert.equal(existsSync(path.join(a, "1.txt")), false, "the deletion still stands");
 });
 
+test("the filters keep the lockdown, memory and secrets out of Drive, and .driveignore only ever narrows", () => {
+  const dir = tempDir("drivesync-filters");
+  const base = buildDriveFilters(dir);
+  for (const pattern of [".claude/**", ".agents/**", ".codex/**", "CLAUDE.md", "AGENTS.md", "AGENTS.override.md", "CLAUDE.local.md", ".mcp.json", "/MEMORY.md", "/memory/**", "/runtime/env/**", ".env", ".env.*", ".ssh/**", "*.pem", ".git", ".git/**", "node_modules/**", "*.rclonelink", "/.driveignore"]) {
+    assert.ok(base.split("\n").includes(`- ${pattern}`), pattern);
+  }
+  assert.equal(base.split("\n").filter(Boolean).length, DRIVE_SYNC_EXCLUDES.length);
+  writeFileSync(path.join(dir, ".driveignore"), "# big intermediate data\n_reindex/**\n\n+ /.claude/**\n- *.tmp\n");
+  const custom = buildDriveFilters(dir).split("\n").filter(Boolean);
+  assert.deepEqual(custom.slice(DRIVE_SYNC_EXCLUDES.length), ["- _reindex/**", "- /.claude/**", "- *.tmp"], "every line is an exclude; a '+' can never re-include the scaffolding");
+  assert.equal(custom.some((line) => line.startsWith("+")), false);
+});
+
+test("a changed local root, Drive folder or filter set forces a fresh --resync", () => {
+  const a = syncIdentity({ localPath: "/w", folderId: "F", filters: "- x\n" });
+  assert.notEqual(a, syncIdentity({ localPath: "/w/Drive", folderId: "F", filters: "- x\n" }));
+  assert.notEqual(a, syncIdentity({ localPath: "/w", folderId: "G", filters: "- x\n" }));
+  assert.notEqual(a, syncIdentity({ localPath: "/w", folderId: "F", filters: "- y\n" }));
+  const stateDir = tempDir("drivesync-identity");
+  assert.equal(needsResync(stateDir, a), true, "no sentinel");
+  writeFileSync(resyncSentinel(stateDir), "2026-09-25T10:21:21.141Z\n");
+  assert.equal(needsResync(stateDir, a), true, "a sentinel from before identities (the Drive/ subfolder era) resyncs once");
+  assert.equal(needsResync(stateDir), false, "without an identity only the sentinel's presence counts");
+  writeFileSync(resyncSentinel(stateDir), `${JSON.stringify({ identity: a, at: "t" })}\n`);
+  assert.equal(needsResync(stateDir, a), false);
+  assert.equal(needsResync(stateDir, syncIdentity({ localPath: "/w", folderId: "G", filters: "- x\n" })), true);
+  const args = buildBisyncArgs({ localPath: "/w", folderId: "F", keyFile: "/k", subject: "", workDir: stateDir, filtersFile: "/s/filters.txt", extraExcludes: ["/lk", "/lk/**"] }).join(" ");
+  assert.match(args, /--filters-file \/s\/filters\.txt --ignore-case/, "filters match case-insensitively (a Drive-side Claude.md)");
+  assert.match(args, /--exclude \/lk --exclude \/lk\/\*\*/, "per-pass symlink excludes ride as flags, outside the filters file");
+  const source = readFileSync(new URL("../src/gateway/drivesync.js", import.meta.url), "utf8");
+  assert.match(source, /const initial = needsResync\(stateDir, identity\);/);
+});
+
+test("every symlink in the folder is excluded for the pass, with its name escaped", () => {
+  const dir = tempDir("drivesync-links");
+  mkdirSync(path.join(dir, "a b[1]"), { recursive: true });
+  mkdirSync(path.join(dir, ".git"), { recursive: true });
+  mkdirSync(path.join(dir, ".claude"), { recursive: true });
+  symlinkSync("/etc", path.join(dir, "a b[1]", "lk*"));
+  symlinkSync(".claude", path.join(dir, "lnk2"));
+  symlinkSync("/etc", path.join(dir, ".git", "not-walked"));
+  assert.deepEqual(symlinkExcludes(dir).sort(), ["/a b\\[1\\]/lk\\*", "/a b\\[1\\]/lk\\*/**", "/lnk2", "/lnk2/**"].sort());
+});
+
+test("a folder that is or contains the home, the gateway root or the workspace root is refused", () => {
+  const home = tempDir("drivesync-home");
+  const gw = path.join(home, ".gw"), ws = path.join(home, "WS");
+  for (const d of [gw, ws, path.join(ws, "slack", "chan"), path.join(home, "Code", "proj")]) mkdirSync(d, { recursive: true });
+  const own = path.join(ws, "slack", "chan");
+  const refuse = (dir) => driveSyncFolderRefusal(dir, { home, roots: [gw, ws], ownFolder: own });
+  for (const d of [path.join(home, ".ssh"), path.join(home, ".config", "x"), path.join(ws, ".runtime", "slack", "chan"), path.join(ws, "slack", "other")]) mkdirSync(d, { recursive: true });
+  assert.match(refuse(path.join(home, ".ssh")), /hidden configuration folder/, "Drive could otherwise write authorized_keys");
+  assert.match(refuse(path.join(home, ".config", "x")), /hidden configuration folder/);
+  assert.match(refuse(path.join(ws, "slack")), /not this channel's own folder/, "the parent of every Slack channel");
+  assert.match(refuse(path.join(ws, ".runtime", "slack", "chan")), /not this channel's own folder/, "secret bundles and MCP configs");
+  assert.match(refuse(path.join(ws, "slack", "other")), /not this channel's own folder/, "another channel's folder");
+  assert.match(refuse(home), /is or contains/);
+  assert.match(refuse(ws), /is or contains/);
+  assert.match(refuse("/"), /filesystem root/);
+  assert.equal(refuse(path.join(ws, "slack", "chan")), "", "a channel's own folder syncs");
+  assert.equal(refuse(path.join(home, "Code", "proj")), "", "a custom project folder syncs");
+});
+
+test("real rclone: the whole folder syncs, the scaffolding and secrets never cross in either direction", { skip: !rcloneAvailable("rclone") && "rclone not installed" }, async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = tempDir("drivesync-rclone-whole");
+  const local = path.join(root, "channel"), remote = path.join(root, "drive"), w = path.join(root, "w");
+  for (const d of [local, remote, w, path.join(local, ".claude"), path.join(local, "memory"), path.join(local, "runtime", "env"), path.join(local, "docs")]) mkdirSync(d, { recursive: true });
+  writeFileSync(path.join(local, "CLAUDE.md"), "lockdown\n");
+  writeFileSync(path.join(local, ".claude", "settings.json"), "{}\n");
+  writeFileSync(path.join(local, "MEMORY.md"), "memory\n");
+  writeFileSync(path.join(local, "memory", "topic.md"), "t\n");
+  writeFileSync(path.join(local, "runtime", "env", "run.env"), "SECRET=1\n");
+  writeFileSync(path.join(local, ".env"), "SECRET=1\n");
+  writeFileSync(path.join(local, "notes.md"), "notes\n");
+  writeFileSync(path.join(local, "docs", "a.md"), "a\n");
+  writeFileSync(path.join(remote, "from-drive.md"), "d\n");
+  writeFileSync(path.join(remote, "CLAUDE.md"), "EVIL\n"); // a Drive-side copy must never come down
+  const filtersFile = path.join(w, "filters.txt");
+  writeFileSync(filtersFile, buildDriveFilters(local));
+  const run = (resync) => spawnSync("rclone", ["bisync", local, remote, "--workdir", w, "--filters-file", filtersFile, "--create-empty-src-dirs", ...(resync ? ["--resync", "--resync-mode", "newer"] : []), "-q"], { encoding: "utf8" });
+  const first = run(true);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(readFileSync(path.join(remote, "notes.md"), "utf8"), "notes\n");
+  assert.equal(readFileSync(path.join(remote, "docs", "a.md"), "utf8"), "a\n");
+  assert.equal(readFileSync(path.join(local, "from-drive.md"), "utf8"), "d\n", "Drive files come down");
+  for (const hidden of [".claude/settings.json", "MEMORY.md", "memory/topic.md", "runtime/env/run.env", ".env"]) {
+    assert.equal(existsSync(path.join(remote, hidden)), false, `${hidden} never reaches Drive`);
+  }
+  assert.equal(readFileSync(path.join(local, "CLAUDE.md"), "utf8"), "lockdown\n", "the Drive-side CLAUDE.md never overwrites the lockdown");
+  writeFileSync(path.join(local, "notes.md"), "notes v2\n");
+  const second = run(false);
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(readFileSync(path.join(remote, "notes.md"), "utf8"), "notes v2\n", "an ordinary pass carries edits");
+});
+
 test("the resync sentinel is written only on a successful pass", () => {
   const source = readFileSync(new URL("../src/gateway/drivesync.js", import.meta.url), "utf8");
   const success = source.indexOf("if (res.ok) {");
@@ -260,5 +357,62 @@ test("rclone availability caches hits per path but retries misses after a live i
     rmSync(late, { force: true });
     assert.equal(rcloneAvailable(late), true, "successful probes remain cached for the same path");
     assert.equal(rcloneAvailable("/bin/echo"), true); // …and so is the hit
+  }
+});
+
+test("the Drive pass runs in a throwaway confined container that mounts only the folder, the state, the filters and the key", async () => {
+  const { createFakeCli } = await import("./container-fake-cli.js");
+  const { __setContainerRuntime, __resetContainerRuntime, confinedCommandArgv } = await import("../src/runtimes/container/index.js");
+  const fake = createFakeCli({ kind: "podman" });
+  __setContainerRuntime({ exec: fake.exec, log: () => {} });
+  try {
+    const argv = await confinedCommandArgv({
+      binds: [{ source: "/w/chan" }, { source: "/s/state" }, { source: "/s/state/filters.txt", readOnly: true }, { source: "/k/sa.json", readOnly: true }, { source: "/opt/rclone", target: "/usr/local/bin/cg-rclone", readOnly: true }],
+      entrypoint: "/usr/local/bin/cg-rclone",
+      args: ["bisync", "/w/chan", ":drive:"],
+      settings: { cli: "podman", image: "channelgate/runtime:latest" },
+    });
+    const line = argv.join(" ");
+    assert.equal(argv[0], "podman");
+    assert.deepEqual(argv.slice(1, 4), ["run", "--rm", "--pull=never"], "one-shot, never pulls");
+    assert.match(line, /--cap-drop ALL --security-opt no-new-privileges/);
+    assert.deepEqual(argv.filter((_, i) => argv[i - 1] === "-v"), ["/w/chan:/w/chan", "/s/state:/s/state", "/s/state/filters.txt:/s/state/filters.txt:ro", "/k/sa.json:/k/sa.json:ro", "/opt/rclone:/usr/local/bin/cg-rclone:ro"],
+      "exactly these binds: no home, no gateway root, and the filters and key read-only");
+    assert.match(line, /--entrypoint \/usr\/local\/bin\/cg-rclone channelgate\/runtime:latest bisync \/w\/chan :drive:$/);
+  } finally {
+    __resetContainerRuntime();
+  }
+  const source = readFileSync(new URL("../src/gateway/drivesync.js", import.meta.url), "utf8");
+  assert.match(source, /let launch = confinedRcloneLaunch;/, "the confined launcher is the default");
+});
+
+test("the confined launch mounts the state, filters and key at a random path per pass and names the container for cleanup", async () => {
+  const { createFakeCli } = await import("./container-fake-cli.js");
+  const { __setContainerRuntime, __resetContainerRuntime } = await import("../src/runtimes/container/index.js");
+  const { __confinedRcloneLaunch } = await import("../src/gateway/drivesync.js");
+  const fake = createFakeCli({ kind: "podman" });
+  __setContainerRuntime({ exec: fake.exec, log: () => {} });
+  const bin = path.join(tempDir("drivesync-bin"), "rclone");
+  writeFileSync(bin, "#!/bin/sh\n");
+  chmodSync(bin, 0o755);
+  try {
+    const seen = [];
+    const launch = (n) => __confinedRcloneLaunch({ bin, slug: "chan a", localPath: "/w/chan", stateDir: "/s/state", filtersFile: "/s/state/filters.txt", keyFile: "/k/sa.json",
+      buildArgs: (p) => { seen.push(p); return ["bisync", p.localPath, ":drive:", "--workdir", p.stateDir, "--filters-file", p.filtersFile, "--drive-service-account-file", p.keyFile]; } });
+    const one = await launch();
+    const two = await launch();
+    const binds = one.argv.filter((_, i) => one.argv[i - 1] === "-v");
+    const base = seen[0].stateDir.replace(/\/state$/, "");
+    assert.match(base, /^\/cg-sync-[0-9a-f]{24}$/);
+    assert.notEqual(seen[1].stateDir, seen[0].stateDir, "a new random path every pass");
+    assert.equal(seen[0].localPath, "/w/chan", "the work folder keeps its real path");
+    assert.deepEqual(binds, ["/w/chan:/w/chan", `/s/state:${base}/state`, `/s/state/filters.txt:${base}/state/filters.txt:ro`, `/k/sa.json:${base}/key.json:ro`, `${bin}:/usr/local/bin/cg-rclone:ro`]);
+    assert.ok(!binds.some((b) => b.split(":")[1].startsWith("/s/") || b.split(":")[1].startsWith("/k/")), "no host path of the state or key exists inside");
+    const name = one.argv[one.argv.indexOf("--name") + 1];
+    assert.match(name, /^cg-drivesync-chan-a-[0-9a-f]{8}$/);
+    assert.notEqual(name, two.argv[two.argv.indexOf("--name") + 1]);
+    assert.equal(typeof one.cleanup, "function", "a timed-out pass force-removes its container");
+  } finally {
+    __resetContainerRuntime();
   }
 });

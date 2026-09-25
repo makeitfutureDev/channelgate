@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Google Drive sync now syncs the channel's whole folder instead of a `Drive/` subfolder. Agent
+  instructions and skills, channel memory, secrets, `.git` and dependency trees never sync, a
+  `.driveignore` file adds a channel's own exclusions, and symlinks are never followed. rclone now
+  runs in a throwaway container that sees only the channel folder, so a planted link can never
+  write onto the host (this also closes that hole in the old subfolder sync). A folder that
+  contains the home or the gateway's data is refused.
 - VS Code over SSH now starts in the channel's folder: File → Open Folder in a Remote-SSH window
   opens at the channel folder (or its custom folder) instead of the container's home.
 - Handing a generated file to Drive, Gmail or another Composio tool now goes through the gateway's
