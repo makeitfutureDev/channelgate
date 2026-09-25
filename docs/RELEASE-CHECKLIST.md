@@ -6,6 +6,13 @@
 > CI passed on the exact candidate and a live smoke ran for Claude and Qwen. The owner released it
 > without Codex live acceptance (the Codex account was usage-limited until 2026-09-24) and without
 > the full live campaign; both remain open for the next release, see RELEASE-ACCEPTANCE.md.
+> 0.5.7 was published on 2026-09-25 by explicit owner decision after the full automated gate and
+> CI passed on the exact candidate. It makes an HTTP run API turn behave like an admin's message
+> in its channel (the API key is an admin credential acting as the `api` principal, with no
+> personal scope), joins API runs to their thread's queue, keeps a per-run mode from rebuilding a
+> channel's container and fixes the container resume command. Unit and integration coverage is
+> in TEST-PLAN.md ("HTTP run API channel parity"); its live Claude/Codex cases had not run at the
+> cut and stay open for the next release.
 > 0.5.6 was published on 2026-09-25 by explicit owner decision after the full automated gate and
 > CI passed on the exact candidate. Live on Xavier before the cut (QA-0925, Airtable): the Composio
 > staging route for consumer keys (FSHARE-02 both engines, after the Codex handoff-rule fix), the

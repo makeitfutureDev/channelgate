@@ -16,7 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## 0.5.7 — 2026-09-25
 
 - **An HTTP API run now works like an admin's message in its channel.** The run API key is an
   admin credential. An API run gets the channel's mode as an admin would, including Auto and, in an
