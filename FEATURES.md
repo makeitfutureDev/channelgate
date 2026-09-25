@@ -364,9 +364,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
   setup concepts across five pages — **General Settings**, **Resume Session**, **MCP**, **Skills**,
-  **Secrets** — picked from a single *Page* dropdown rather than a row of buttons that wrapped onto
-  a second line as pages were added. Legacy page ids (`runtime`, `access`, `network`) still resolve,
-  so a Settings view opened before the merge keeps navigating.
+  **Secrets** — shown as one row of tabs (*General · Resume · MCP · Skills · Secrets*) at the top,
+  the open page highlighted; short names keep the five on one row of the modal. Legacy page ids
+  (`runtime`, `access`, `network`) and the former *Page* dropdown still resolve, so a Settings view
+  opened before either change keeps navigating.
   **General Settings** is everything that decides how the conversation runs: its Engine & model
   scopes, then **Access** (with the network switch and the VPN row). Engine & model edits in place — six dropdowns,
   no nested form, each saving the

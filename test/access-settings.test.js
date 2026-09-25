@@ -47,7 +47,7 @@ test("only admins and current managers see the Access section of General Setting
     const headers = view.blocks.filter((block) => block.type === "header").map((block) => block.text.text);
     assert.equal(headers.includes("Access"), !meta.isDM);
     assert.equal(JSON.stringify(view).includes("Who may use and manage this channel is shown"), !expected && !meta.isDM);
-    const pages = view.blocks.find((block) => block.block_id === "cg_channel_settings_tabs").accessory.options;
+    const pages = view.blocks.find((block) => block.block_id === "cg_channel_settings_tabs").elements;
     assert.ok(pages.some((page) => JSON.parse(page.value).p === "secrets"));
   }
 });
