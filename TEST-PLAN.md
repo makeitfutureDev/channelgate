@@ -5451,6 +5451,19 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] LIVE (engine-independent): connect with VS Code Remote-SSH from its own menu to a channel with
       a custom work folder. Pass: File → Open Folder opens at that folder (not `/home/agent`), OK
       opens it, and a new terminal's `pwd` is that folder.
+- [x] Automated (`test/ssh-session.test.js`): an SSH session also prepares Codex — `codex-args.sh`
+      (0600) holds only `-c mcp_servers.*`/`apps.*` overrides (gateway, composio-user,
+      composio-agent), no credential and no turn sandbox/approval flags; the 0600 `codex-secrets.json`
+      bundle carries a gateway capability minted for engine `codex` and both Composio tokens; the
+      `codex` and `with-secrets` wrappers are installed; run under `sh`, the codex wrapper sources the
+      secrets, prepends the overrides before the developer's own arguments and moves into the channel
+      folder only from HOME or a parent of it (never from elsewhere), while outside an SSH session it
+      is the plain CLI. QA-0925: Codex over SSH had none of it.
+- [ ] LIVE (Codex): in a granted SSH session run `codex` from `~` and ask it to list
+      its MCP servers and whether `<a personal secret name>` is set (never its value). Pass: it starts
+      in the channel folder, `/mcp` lists `gateway`, `composio-user`, `composio-agent` (and the
+      channel's selected servers), the secret is present, and a gateway tool (e.g. list_secrets)
+      answers; `with-secrets sh -c 'test -n "$NAME" && echo set'` prints `set`.
 - [ ] LIVE (engine-independent, Airtable CTR-31): on the gateway host run `npm run build:image`, then `sudo
       CG_SSH_HOST=<host> bash scripts/install-ssh-access.sh`; within a minute the daemon log shows
       `[ssh] attach socket`. As Apps, in `cg-testing-claude-bash`, send "add my SSH key <Apps'

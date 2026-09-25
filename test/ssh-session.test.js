@@ -50,6 +50,7 @@ function fakes({ relayOk = true, lockdownFails = false, account = { emailAddress
       buildLockdown: async (meta) => { if (lockdownFails) throw new Error("no lockdown"); return { permissions: { allow: ["Read"], deny: [] }, allowedMcpServers: [{ serverName: "gateway" }], slug: meta._slug }; },
       readAccount: () => account,
       now: () => 1_700_000_000_000,
+      listCodexMcps: async () => [],
     },
   };
 }
@@ -262,4 +263,66 @@ test("session prep seeds the VS Code start folder with the channel's effective w
   const result = await session.prepareSshSession({ target: target("ssh-vscode-fail"), entry: { slug: "ssh-vscode-fail", channelId: "C_VF" }, meta: {}, user, cliBin: "podman", log: { warn: (m) => warnings.push(m) } }, failing.deps);
   assert.deepEqual(result.problems, [], "the session is still fully prepared");
   assert.ok(warnings.some((m) => m.includes("VS Code start folder not set")));
+});
+
+test("Codex over SSH gets the turn's MCP servers from a 0600 bundle, never a credential in the overrides", async () => {
+  // QA-0925: `codex` in an SSH session had no gateway MCP, no Composio and none of the secrets.
+  const t = target("ssh-codex");
+  const { execs, deps } = fakes();
+  const result = await session.prepareSshSession({ target: t, entry: { slug: "ssh-codex", channelId: "C_CX" }, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(result.codex.ready, true, result.codex.reason);
+  assert.deepEqual(result.codex.mcpServers, ["composio-agent", "composio-user", "gateway"]);
+  const dir = session.sshUserDir(t, user.id);
+  const argsFile = path.join(dir, "codex-args.sh");
+  assert.equal(statSync(argsFile).mode & 0o777, 0o600);
+  const script = readFileSync(argsFile, "utf8");
+  for (const secret of [`cu-${user.id}`, "ca-channel"]) assert.ok(!script.includes(secret), `${secret} never in the overrides`);
+  assert.doesNotMatch(script, /CG_GATEWAY_CAPABILITY=|eyJ/, "the capability rides the bundle, not the overrides");
+  const bundle = JSON.parse(readFileSync(path.join(dir, "codex-secrets.json"), "utf8"));
+  assert.equal(statSync(path.join(dir, "codex-secrets.json")).mode & 0o777, 0o600);
+  assert.equal(bundle.composioUserToken, `cu-${user.id}`);
+  assert.equal(bundle.composioToken, "ca-channel");
+  const verified = verifyGatewayCapability(bundle.gatewayCapability, { secret: SECRET });
+  assert.equal(verified.ok, true);
+  assert.equal(verified.claims.engine, "codex", "minted for the engine that holds it");
+  assert.equal(verified.claims.authorId, user.id);
+  assert.equal(verified.claims.toolset, SSH_TOOLSET);
+  // Sourcing the script prepends the overrides and keeps the developer's own arguments last.
+  const argv = execFileSync("sh", ["-c", `. '${argsFile}'; printf '%s\\n' "$@"`, "sh", "resume", "--last"], { encoding: "utf8" }).trim().split("\n");
+  assert.deepEqual(argv.slice(-2), ["resume", "--last"]);
+  assert.ok(argv.includes("mcp_servers.gateway.default_tools_approval_mode=\"approve\""));
+  assert.equal(argv.filter((a) => a === "-c").length * 2, argv.length - 2, "every override is one -c pair");
+  assert.ok(!argv.some((a) => /approval_policy|sandbox|--dangerously/.test(a)), "no turn-only sandbox/approval flags: the developer answers Codex's own prompts");
+  // The wrappers are installed into the channel container.
+  const installs = execs.filter((e) => String(e.args.at(-1)).includes("/home/agent/.local/bin/")).map((e) => e.args.at(-1).match(/bin\/([a-z-]+);/)?.[1]).filter(Boolean);
+  assert.ok(installs.includes("codex") && installs.includes("with-secrets"), installs.join(","));
+});
+
+test("the codex wrapper sources the secrets, applies the overrides and starts in the channel folder", async () => {
+  const { renderCodexWrapper, renderWithSecrets } = await import("../src/runtimes/container/vscode.js");
+  const root = mkdtempSync(path.join(scratch, "codex-wrapper-"));
+  const users = path.join(root, "users"), work = path.join(root, "work"), elsewhere = path.join(root, "elsewhere");
+  mkdirSync(path.join(users, "U1"), { recursive: true });
+  mkdirSync(work, { recursive: true });
+  mkdirSync(elsewhere, { recursive: true });
+  writeFileSync(path.join(users, "U1", "env"), "export MAKE_API_ADMIN='mk'\n");
+  writeFileSync(path.join(users, "U1", "codex-args.sh"), session.renderCodexArgsScript(["mcp_servers.gateway.command=\"node\"", "apps._default.enabled=false"]));
+  const fakeCodex = path.join(root, "codex");
+  writeFileSync(fakeCodex, "#!/bin/sh\nprintf 'pwd=%s\\n' \"$PWD\"; printf 'secret=%s\\n' \"${MAKE_API_ADMIN:-}\"; for a in \"$@\"; do printf 'arg=%s\\n' \"$a\"; done\n", { mode: 0o755 });
+  const wrapper = path.join(root, "wrapper");
+  writeFileSync(wrapper, renderCodexWrapper({ usersDir: users, codexBin: fakeCodex }), { mode: 0o755 });
+  const run = (envExtra, cwd = elsewhere) => execFileSync(wrapper, ["hello"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, ...envExtra } });
+  const out = run({ CG_SSH_USER: "U1", CG_WORKDIR: work, HOME: root }, root);
+  assert.match(out, new RegExp(`pwd=${work}\n`), "from HOME (or a parent of the folder) it starts in the channel folder");
+  assert.match(run({ CG_SSH_USER: "U1", CG_WORKDIR: work, HOME: "/nonexistent" }, elsewhere), new RegExp(`pwd=${elsewhere}\n`), "anywhere else it stays put: relative paths keep their meaning");
+  assert.match(out, /secret=mk/);
+  assert.match(out, /arg=-c\narg=mcp_servers\.gateway\.command="node"\narg=-c\narg=apps\._default\.enabled=false\narg=hello/);
+  const plain = run({});
+  assert.match(plain, new RegExp(`pwd=${elsewhere}`), "outside an SSH session it is the plain CLI");
+  assert.match(plain, /secret=\n/);
+  assert.doesNotMatch(plain, /arg=-c/);
+  // with-secrets runs one command with the same secrets.
+  const helper = path.join(root, "with-secrets");
+  writeFileSync(helper, renderWithSecrets({ usersDir: users }), { mode: 0o755 });
+  assert.equal(execFileSync(helper, ["sh", "-c", "printf %s \"$MAKE_API_ADMIN\""], { encoding: "utf8", env: { PATH: process.env.PATH, CG_SSH_USER: "U1" } }), "mk");
 });

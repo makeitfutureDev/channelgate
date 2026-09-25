@@ -102,7 +102,15 @@ machine settings — merge-only, and never over a value you set yourself.
 Inside, you are user `agent` in the channel's work folder (an interactive login starts there;
 image spec 1.5.1), with the same environment an engine turn gets and the channel's persistent
 `/home/agent` (installed tools, `gh`/`vercel`/`supabase` logins, Claude and Codex history).
-Codex uses the shared sign-in mount. Everyone in a container is that one `agent` user: set your
+Codex uses the shared sign-in mount, and `codex` in a session gets what a chat turn's Codex gets:
+the gateway tools, your own Composio accounts as `composio-user`, the channel's as
+`composio-agent`, the channel's selected MCP servers and your channel secrets. Started from your
+home, `/` or a parent of the channel folder it moves into the channel folder so its `AGENTS.md`
+applies. Like Claude's claude.ai connectors, the ChatGPT connectors of the shared Codex sign-in
+(`codex_apps`) are off in a session except apps the channel selected — they belong to the
+operator's account. For any other command, `with-secrets <command>`
+runs it with your channel secrets (bare `with-secrets` prints how to load them into the shell).
+Everyone in a container is that one `agent` user: set your
 git identity per session, and expect to see other sessions' processes. A daemon restart drops
 brokered sessions — reconnect.
 

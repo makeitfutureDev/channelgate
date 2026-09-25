@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Codex over SSH now gets what a chat turn's Codex gets: the gateway tools, your own and the
+  channel's Composio accounts, the channel's MCP servers and your channel secrets, starting in
+  the channel folder. `with-secrets <command>` runs any other command with those secrets.
 - Slack **⚙️ Settings** pages are tabs again: one row — General · Resume · MCP · Skills · Secrets —
   with the open page highlighted, instead of the *Page* dropdown.
 - Google Drive sync now syncs the channel's whole folder instead of a `Drive/` subfolder. Agent

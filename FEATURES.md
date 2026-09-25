@@ -2387,7 +2387,19 @@ are retired, bullet by bullet; everything else stands.
   the thread-bound background, progress and approval tools) with `composio-user` for the
   developer's own accounts, `composio-agent` for the channel's and the selected catalog servers,
   `--strict-mcp-config` so the operator's own claude.ai connectors never load, and the run
-  environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. The files are per
+  environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. Codex gets the
+  same session through its own `codex` wrapper (QA-0925: over SSH it had no gateway MCP, no Composio
+  and no secrets): the session also writes `codex-args.sh` — exactly the `-c mcp_servers.*` /
+  `apps.*` overrides a chat turn's Codex gets, with a Codex-minted gateway capability and the
+  Composio/toolbox credentials in a 0600 `codex-secrets.json` their header helpers read, never argv
+  — and the wrapper sources the secrets, prepends the overrides and, when started from HOME, `/` or
+  a parent of the channel folder, starts Codex in the channel folder (its `AGENTS.md`); a turn's
+  sandbox/approval flags are not carried, the developer answers Codex's own prompts. As in a turn,
+  `apps._default.enabled=false` keeps the shared Codex sign-in's ChatGPT connectors (`codex_apps`,
+  the operator's) off except apps the channel selected, and a selected server with no safe
+  definition is left out. `with-secrets <command>` runs any other command with the developer's channel
+  secrets. A Codex preparation failure is reported (`codexProblem` on `ssh_session_start`) and
+  never costs the Claude session. The files are per
   developer under `<artifacts>/ssh/users/<id>/`, chosen by the `CG_SSH_USER` name sshd sets from
   the developer's authorized_keys line (`PermitUserEnvironment CG_SSH_USER`), and removed when
   their last session ends, refreshed every 20 minutes AND within `CONFIG_REFRESH_DEBOUNCE_MS` of a
