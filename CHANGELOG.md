@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Slack **⚙️ Settings** pages are tabs again: one row — General · Resume · MCP · Skills · Secrets —
+  with the open page highlighted, instead of the *Page* dropdown.
 - VS Code over SSH now starts in the channel's folder: File → Open Folder in a Remote-SSH window
   opens at the channel folder (or its custom folder) instead of the container's home.
 - Handing a generated file to Drive, Gmail or another Composio tool now goes through the gateway's

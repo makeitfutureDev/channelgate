@@ -1971,8 +1971,8 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       (`test/slack-progress.test.js`, `test/channel-settings-modal.test.js`, `test/deliver.test.js`).
 - [ ] Live General Settings (engine-independent Slack UI case): in a disposable channel with a
       manager actor and an ordinary approved member, open **⚙️ Settings** from a reply. Pass when
-      the modal opens on General Settings with one *Page* dropdown listing five pages; switching
-      pages through it repaints in place; the manager sees Engine & model, Access (summary +
+      the modal opens on General Settings with one row of five tabs (General highlighted) that
+      fits on one line; clicking a tab repaints in place and highlights it; the manager sees Engine & model, Access (summary +
       *Change access settings*) and the VPN row under the network switch on one page, while the member sees the same page
       without the access summary and cannot reach the editor; saving access settings returns to
       General Settings with its notice; and a channel with a provisioned VPN shows *Checking
@@ -1993,10 +1993,12 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       pasting the same line back as `/resume <command>` continues it from the thread. Then `/clear`
       the thread and reopen the tab: it must say there is no session rather than offering the
       cleared id.
-- [x] Automated page dropdown and General Settings: the modal carries exactly one *Page* control —
-      a `static_select` whose options are General Settings / Resume Session / MCP / Skills /
-      Secrets in that order, opening on the page being shown, each option bound to the view's
-      channel and owner, and no page rendered as a button any more. General Settings carries the
+- [x] Automated page tabs and General Settings: the modal carries one `actions` row of tab buttons
+      General / Resume / MCP / Skills / Secrets in that order, above the page content, exactly the
+      open page styled primary, each bound to the view's channel and owner, and no page dropdown;
+      a picked option from a view opened while the dropdown shipped still switches pages
+      (`test/channel-settings-modal.test.js`). Earlier the pages were a *Page* dropdown (Tiberiu
+      asked for tabs back, QA-0925). General Settings carries the
       Engine & model and Access headers in that order, with the VPN rendered as a single row
       immediately after the Auto/Lean/Network checkboxes rather than a section of its own. Every legacy page id
       (`runtime`, `access`, `network`) and an unknown one resolve to `general`, so a Settings view

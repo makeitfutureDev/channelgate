@@ -134,11 +134,9 @@ const snapshot = {
 };
 
 const allButtons = (view) => view.blocks.flatMap((block) => block.elements || []).filter((item) => item.type === "button");
-const pagePicker = (view) => view.blocks.find((block) => block.block_id === "cg_channel_settings_tabs").accessory;
-// The page dropdown is navigation, not a setting; every count below is about the controls that
-// save something.
-const selects = (view) => view.blocks.filter((block) => block.accessory?.type === "static_select"
-  && block.block_id !== "cg_channel_settings_tabs");
+const tabRow = (view) => view.blocks.find((block) => block.block_id === "cg_channel_settings_tabs");
+// Every count below is about the controls that save something; the tab row is navigation.
+const selects = (view) => view.blocks.filter((block) => block.accessory?.type === "static_select");
 const rendered = (view) => JSON.stringify(view);
 
 test("Settings footer button is authorized-user-only and requester-bound", () => {
@@ -167,21 +165,21 @@ test("authorized user reply footer adds Settings after the existing workspace co
   assert.equal(ordinary.some((button) => button.action_id === CHANNEL_SETTINGS_ACTION_ID), false);
 });
 
-test("Channel Settings pages are chosen from one dropdown that shows the open page", () => {
+test("Channel Settings pages are one row of tabs with the open page highlighted", () => {
   const view = buildChannelSettingsView(snapshot, state, { channelName: "project-alpha", tab: "mcp", canManageCloudMcp: true, canEditAccess: true });
-  const picker = pagePicker(view);
-  assert.equal(picker.action_id, CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID);
-  assert.deepEqual(picker.options.map((entry) => parseActionValue(entry.value).p), [...CHANNEL_SETTINGS_TABS]);
-  assert.deepEqual(picker.options.map((entry) => entry.text.text),
-    ["General Settings", "Resume Session", "MCP", "Skills", "Secrets"]);
-  // The dropdown opens on the page being shown, and every option is bound to this view's owner.
-  assert.equal(parseActionValue(picker.initial_option.value).p, "mcp");
-  for (const entry of picker.options) {
-    assert.deepEqual({ ...parseActionValue(entry.value), p: undefined },
-      { o: "tab", c: state.channelId, u: state.ownerId, p: undefined });
+  const row = tabRow(view);
+  assert.equal(row.type, "actions", "tabs, not a dropdown (Tiberiu, QA-0925)");
+  assert.equal(view.blocks.indexOf(row) < view.blocks.findIndex((block) => block.type === "header" || block.type === "section" && block !== row && /MCP connections/.test(JSON.stringify(block))), true, "above the page content");
+  assert.deepEqual(row.elements.map((button) => parseActionValue(button.value).p), [...CHANNEL_SETTINGS_TABS]);
+  assert.deepEqual(row.elements.map((button) => button.text.text), ["General", "Resume", "MCP", "Skills", "Secrets"],
+    "short names, so the five fit one row of a modal");
+  assert.deepEqual(row.elements.map((button) => button.action_id), CHANNEL_SETTINGS_TABS.map((tab) => `cg_channel_settings_tab_${tab}`));
+  // Exactly the open page is highlighted, and every tab is bound to this view's owner.
+  assert.deepEqual(row.elements.filter((button) => button.style === "primary").map((button) => parseActionValue(button.value).p), ["mcp"]);
+  for (const button of row.elements) {
+    assert.deepEqual({ ...parseActionValue(button.value), p: undefined }, { o: "tab", c: state.channelId, u: state.ownerId, p: undefined });
   }
-  // No page is a button any more, so the row cannot wrap onto a second line.
-  assert.equal(allButtons(view).some((button) => button.action_id.startsWith("cg_channel_settings_tab_")), false);
+  assert.equal(view.blocks.some((block) => block.accessory?.action_id === CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID), false, "no page dropdown");
   assert.match(rendered(view), /MCP connections/);
   assert.match(rendered(view), /Cloud MCP/);
   assert.match(rendered(view), /github/);
@@ -191,8 +189,11 @@ test("Channel Settings pages are chosen from one dropdown that shows the open pa
 });
 
 test("a settings control's command is read from a button value or from the picked option", () => {
-  const picked = pagePicker(buildChannelSettingsView(snapshot, state, { tab: "general" })).options[2];
-  assert.deepEqual(settingsCommand({ selected_option: picked }), { o: "tab", c: state.channelId, u: state.ownerId, p: "mcp" });
+  const tab = tabRow(buildChannelSettingsView(snapshot, state, { tab: "general" })).elements[2];
+  assert.deepEqual(settingsCommand({ value: tab.value }), { o: "tab", c: state.channelId, u: state.ownerId, p: "mcp" });
+  // A Settings view opened before tabs came back still carries the dropdown: its picked option
+  // switches pages through the same command.
+  assert.deepEqual(settingsCommand({ selected_option: { value: tab.value } }), { o: "tab", c: state.channelId, u: state.ownerId, p: "mcp" });
   assert.deepEqual(settingsCommand({ value: actionValue("tab", { p: "skills" }) }), { o: "tab", p: "skills" });
   // A runtime dropdown's bare model id is not a command, and neither is a missing control.
   assert.deepEqual(settingsCommand({ selected_option: { value: "claude-opus-4-8" } }), {});
@@ -264,7 +265,7 @@ test("Resume Session tab shows this thread's copyable command, and says why when
   assert.match(text, /\/resume <command>/);
   assert.match(text, /994f6108-b405-4bbe-b96d-1641051df2fa/);
   assert.equal(parseSettingsMetadata(view.private_metadata).tab, "resume");
-  assert.ok(pagePicker(view).options.some((entry) => parseActionValue(entry.value).p === "resume"), "the page dropdown offers it");
+  assert.ok(tabRow(view).elements.some((button) => parseActionValue(button.value).p === "resume" && button.style === "primary"), "its tab is the highlighted one");
 
   const noSession = rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: true, command: "" } }, state, { tab: "resume" }));
   assert.match(noSession, /No session in this thread yet/);
