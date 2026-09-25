@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Google Drive sync no longer stalls on a folder that was empty when it was linked. The first sync
+  of two empty sides succeeded, but every later sync then failed (rclone: "Empty prior Path1
+  listing"), so files never moved. A sync record that holds no files now triggers a fresh resync.
 - Slack **⚙️ Settings** no longer claims a channel pinned to Claude inherits the Codex default
   model (or the reverse): an unset model or effort now names what the channel's own harness would
   actually use. The web admin's VPN status also stops saying "not configured" twice.

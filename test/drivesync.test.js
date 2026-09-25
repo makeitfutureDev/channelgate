@@ -11,7 +11,7 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
 
-const { parseDriveFolderId, syncSubdir, buildBisyncArgs, buildTestArgs, selectSyncChannels, isServiceAccountJson, resolveDriveSyncKeyFile, driveSyncResultOutput, needsResync, resyncSentinel, rcloneAvailable } = await import("../src/gateway/drivesync.js");
+const { parseDriveFolderId, syncSubdir, buildBisyncArgs, buildTestArgs, selectSyncChannels, isServiceAccountJson, resolveDriveSyncKeyFile, driveSyncResultOutput, needsResync, resyncSentinel, priorListingEmpty, rcloneAvailable } = await import("../src/gateway/drivesync.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { configDir } = await import("../src/config/paths.js");
 
@@ -169,6 +169,70 @@ test("a crash mid-first-sync no longer wedges a channel into permanent non-resyn
     buildBisyncArgs({ localPath: "/work/Drive", folderId: "FID", keyFile: "/keys/sa.json", subject: "", workDir: stateDir, firstRun: needsResync(stateDir) });
   assert.ok(argsFor(fresh).includes("--resync"));
   assert.ok(!argsFor(crashed).includes("--resync"));
+});
+
+test("only a listing that records no file forces another --resync; any other missing listing stays an error", () => {
+  // QA-0925: a channel linked to an empty Drive folder resynced two empty sides, then every later
+  // tick failed "Empty prior Path1 listing … Must run --resync to recover" — forever.
+  const dir = tempDir("drivesync-listing");
+  assert.equal(priorListingEmpty(path.join(dir, "absent")), false, "no state dir: the sentinel decides, not this");
+  assert.equal(priorListingEmpty(dir), false, "no listing files at all stays an error");
+  const p1 = path.join(dir, "local_Drive.._drive_.path1.lst");
+  const p2 = path.join(dir, "local_Drive.._drive_.path2.lst");
+  writeFileSync(p1, "# bisync listing v1 from 2026-09-25T10:21:21Z\n");
+  assert.equal(priorListingEmpty(dir), false, "one side missing is not the empty-resync shape");
+  writeFileSync(p2, "# bisync listing v1 from 2026-09-25T10:21:21Z\n");
+  assert.equal(priorListingEmpty(dir), true, "two header-only listings record no file");
+  writeFileSync(p1, '# bisync listing v1\n-        2 - - 2026-09-25T10:41:39Z "s.txt"\n');
+  assert.equal(priorListingEmpty(dir), false, "a listing that records a file is never resynced over");
+  // A channel ALREADY wedged in production: rclone renamed the empty listings to .lst-err.
+  const wedged = tempDir("drivesync-wedged");
+  writeFileSync(path.join(wedged, "x.path1.lst-err"), "# header\n");
+  writeFileSync(path.join(wedged, "x.path2.lst-err"), "# header\n");
+  assert.equal(priorListingEmpty(wedged), true, "header-only .lst-err on both sides recovers");
+  // A deliberate delete-everything: rclone aborts and renames NON-empty listings to .lst-err.
+  // Resyncing here would copy every deleted file back, so it must stay an error.
+  const deleted = tempDir("drivesync-deleted");
+  writeFileSync(path.join(deleted, "x.path1.lst-err"), '# header\n-  2 - - t "a.txt"\n');
+  writeFileSync(path.join(deleted, "x.path2.lst-err"), '# header\n-  2 - - t "a.txt"\n');
+  assert.equal(priorListingEmpty(deleted), false);
+  const partial = tempDir("drivesync-partial");
+  writeFileSync(path.join(partial, "x.path2.lst-new"), '-  2 - - t "a"\n');
+  assert.equal(priorListingEmpty(partial), false, "a crashed pass's .lst-new leftovers never trigger a resync");
+  const source = readFileSync(new URL("../src/gateway/drivesync.js", import.meta.url), "utf8");
+  assert.match(source, /const firstRun = initial \|\| priorListingEmpty\(stateDir\);/);
+  assert.match(source, /if \(initial\) \{ try \{ rmSync\(stateDir/, "a failed FORCED resync keeps its state");
+});
+
+test("real rclone: two empty sides, then a new file, syncs once the empty listing forces --resync", { skip: !rcloneAvailable("rclone") && "rclone not installed" }, async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = tempDir("drivesync-rclone");
+  const a = path.join(root, "a"), b = path.join(root, "b"), w = path.join(root, "w");
+  for (const d of [a, b, w]) mkdirSync(d, { recursive: true });
+  const bisync = (resync) => spawnSync("rclone", ["bisync", a, b, "--workdir", w, "--create-empty-src-dirs", ...(resync ? ["--resync", "--resync-mode", "newer"] : []), "-q"], { encoding: "utf8" });
+  assert.equal(bisync(true).status, 0, "first --resync of two empty sides succeeds");
+  assert.equal(priorListingEmpty(w), true, "…and leaves an empty prior listing behind");
+  writeFileSync(path.join(a, "x.txt"), "hi\n");
+  assert.equal(bisync(false).status, 7, "the unpatched steady-state pass is rclone's critical exit 7");
+  const fixed = bisync(priorListingEmpty(w));
+  assert.equal(fixed.status, 0, fixed.stderr);
+  assert.equal(readFileSync(path.join(b, "x.txt"), "utf8"), "hi\n", "the new file reached the other side");
+  assert.equal(priorListingEmpty(w), false, "and the next pass is an ordinary bisync");
+});
+
+test("real rclone: deleting every file on one side is never undone by a forced resync", { skip: !rcloneAvailable("rclone") && "rclone not installed" }, async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = tempDir("drivesync-rclone-delete");
+  const a = path.join(root, "a"), b = path.join(root, "b"), w = path.join(root, "w");
+  for (const d of [a, b, w]) mkdirSync(d, { recursive: true });
+  for (const n of ["1", "2", "3"]) writeFileSync(path.join(a, `${n}.txt`), n);
+  const bisync = (resync) => spawnSync("rclone", ["bisync", a, b, "--workdir", w, ...(resync ? ["--resync", "--resync-mode", "newer"] : []), "-q"], { encoding: "utf8" });
+  assert.equal(bisync(true).status, 0);
+  assert.equal(bisync(false).status, 0, "a normal pass after the baseline");
+  for (const n of ["1", "2", "3"]) rmSync(path.join(a, `${n}.txt`));
+  assert.notEqual(bisync(false).status, 0, "rclone refuses to empty a side");
+  assert.equal(priorListingEmpty(w), false, "so the gateway must NOT resync (that would restore the files)");
+  assert.equal(existsSync(path.join(a, "1.txt")), false, "the deletion still stands");
 });
 
 test("the resync sentinel is written only on a successful pass", () => {
