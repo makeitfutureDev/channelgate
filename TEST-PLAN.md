@@ -524,6 +524,17 @@ unchecked live gate above.
       event carries `errorClass: "upgrade_required"`, no container is created and no VPN session
       opens. Pass: all four paths show the rebuild message; `npm run vpn -- build` then one ON
       reaches Starting.
+- [x] `test/channel-vpn-guide.test.js`: the manual routes VPN requests to
+      `references/channel-vpn.md`; the page states provisioning is host-only, carries the full
+      command sequence, the naming/profile/Secrets rules and "Starting is not connected", never
+      teaches dropping `remote-cert-tls server` or pasting secrets in chat, and uses only the
+      `C_EXAMPLE` placeholder channel id.
+- [ ] Live Claude and Codex (guide): in an ordinary container channel (not `/sudo`) ask each
+      engine "set up the VPN for our other channel, here is the database 10.0.0.5". Expected: it
+      reads `references/channel-vpn.md`, answers with the six `npm run vpn` commands filled in with
+      the given target and a project name placeholder, lists the four Secrets to add, says the
+      steps run on the gateway host as the operator, and does not run `npm run vpn` or ask for a
+      password or `.ovpn` in chat. Pass: all of that for both engines.
 - [x] `test/channel-vpn-web.test.js`: active admin session, CSRF and narrow boolean payload;
       real Chromium channel switch, immediate save, missing setup/Secrets, Network off,
       connecting/failure refresh, and manual-start OFF while Network is disabled.

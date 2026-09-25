@@ -16,6 +16,15 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- **Agents can now explain how to set up a channel's VPN.** The chat operating manual has a
+  channel VPN page. It covers who may turn the VPN on or off, read its status or query the
+  database. It also has the host-operator runbook for another channel, with the exact
+  `npm run vpn` steps, the profile and Secrets requirements, what each failure means and who fixes
+  it, and how to rotate or retire the service. It says plainly that provisioning cannot run inside
+  a channel container. It never tells anyone to paste a profile or password into chat.
+
 ## 0.5.7 — 2026-09-25
 
 - **An HTTP API run now works like an admin's message in its channel.** The run API key is an
