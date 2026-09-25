@@ -16,7 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## 0.5.6 — 2026-09-25
 
 - Codex over SSH now gets what a chat turn's Codex gets: the gateway tools, your own and the
   channel's Composio accounts, the channel's MCP servers and your channel secrets, starting in
