@@ -3021,7 +3021,13 @@ are retired, bullet by bullet; everything else stands.
   through daemon IPC (`drivesync` kind) so the pass runs in the daemon on both MCP transports,
   shares the per-channel in-flight guard and outlives the turn; it waits ~40 s for the outcome and
   otherwise says the pass is still running. `get_channel_drive_folder` now also reports the last
-  pass (time, ok/failed, first-resync, reason). Manual passes obey the same global switch, key and
+  pass (time, ok/failed, first-resync, reason). A pass whose prior rclone listings record no file
+  (including the empty listings rclone set aside as `.lst-err` after refusing them) runs as a
+  `--resync` again, so a folder linked while empty on both sides starts syncing as soon as either
+  side gets a file instead of failing every tick with rclone's exit 7. Any other missing listing
+  stays an error: after a deliberate delete-everything rclone sets aside NON-empty listings, and a
+  resync there would copy the deleted files back.
+  Manual passes obey the same global switch, key and
   rclone checks as the schedule; a pass already running for a channel is never doubled, and a
   manual sweep never stacks on the scheduled one. Status surfaces show a concise diagnostic, never
   the raw rclone tail. Admin API: `POST /api/channels/:id/sync-now`, `GET

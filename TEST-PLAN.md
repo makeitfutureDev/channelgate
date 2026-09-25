@@ -3286,6 +3286,18 @@ structural invariants are automated; rendered navigation and feature claims also
       `MEMORY.md`, `memory/`, `uploads/` are never pushed to Drive nor overwritten from it.
 - [ ] A failed first run leaves no half-baked bisync state (the state dir is dropped, so the next
       tick retries with `--resync`).
+- [x] A prior listing that records no file (`.lst`, or the `.lst-err` rclone set aside after refusing
+      it) forces `--resync` again, and any other missing listing stays an error
+      (`test/drivesync.test.js`, with real-rclone cases that skip when rclone is absent: an empty
+      folder that later gets a file syncs; deleting every file on one side is NOT undone by a
+      forced resync; a failed forced resync keeps its state). rclone's `--resync` of two EMPTY sides
+      succeeds but leaves an empty listing, and every later pass then aborted with exit 7 "Empty
+      prior Path1 listing … Must run --resync to recover". QA-0925: a channel linked to an empty
+      shared-drive folder synced "OK" once and then failed every tick once a file appeared.
+- [ ] Live (engine-independent): link a channel to an EMPTY Drive folder with an empty local
+      `Drive/`, click **Sync now** (ok), then put a file in the local `Drive/` and click **Sync now**
+      again. Pass: the second pass succeeds and the file appears in the Drive folder; a file added
+      in Drive then reaches `Drive/` on the next pass; no `drivesync_error` event.
 - [x] Set the Drive folder link via the gateway MCP tools (`src/mcp/gateway-server.js`):
       `set_channel_drive_folder`/`clear_channel_drive_folder` are admin-gated (`requireAdmin`) and
       reuse the shared `parseDriveFolderId` (junk link → rejected before any write) + `testChannelSync`

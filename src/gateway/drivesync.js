@@ -21,7 +21,7 @@
 
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, readFileSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
 import {
   getDriveSyncEnabled,
   getDriveSyncKeyFile,
@@ -153,6 +153,33 @@ export function needsResync(stateDir) {
   return !existsSync(resyncSentinel(stateDir));
 }
 
+// rclone refuses to bisync against an EMPTY prior listing — exit 7, "Empty prior Path1 listing.
+// Cannot sync to an empty directory … Must run --resync to recover" — and a --resync of two empty
+// sides succeeds while leaving exactly such a listing behind (rclone then renames it to .lst-err on
+// the failed pass). So a channel linked to an empty Drive folder before anyone put a file on either
+// side synced "successfully" once and then failed every tick forever (QA-0925). A listing that
+// records NO file has no deletion a fresh --resync could miss, so that — and only that — resyncs
+// again. A listing that is missing for any other reason stays an error: after a deliberate
+// delete-everything, rclone aborts and renames NON-empty listings to .lst-err, and resyncing there
+// would silently copy every deleted file back.
+function listingEntries(stateDir, names, suffix) {
+  const name = names.find((entry) => entry.endsWith(suffix));
+  if (!name) return null;
+  try {
+    return readFileSync(path.join(stateDir, name), "utf8").split("\n").filter((line) => line.trim() && !line.startsWith("#")).length;
+  } catch { return null; }
+}
+export function priorListingEmpty(stateDir) {
+  let names;
+  try { names = readdirSync(stateDir); } catch { return false; }
+  const sides = [".path1", ".path2"];
+  const live = sides.map((side) => listingEntries(stateDir, names, `${side}.lst`));
+  if (live.every((n) => n !== null)) return live.every((n) => n === 0);
+  if (live.some((n) => n !== null)) return false; // one side missing: not the empty-resync shape
+  const aborted = sides.map((side) => listingEntries(stateDir, names, `${side}.lst-err`));
+  return aborted.every((n) => n === 0);
+}
+
 // Resolve the effective service-account key FILE for rclone. A pasted JSON key (write-only setting)
 // wins: it's materialized to a chmod-600 file in the runtime config dir — outside every channel
 // sandbox, and passed to rclone as a PATH so the private key never enters argv or the child env.
@@ -245,7 +272,8 @@ async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subj
     const workDir = effectiveWorkDir(slug, meta || {}); // the channel's real folder (honors a custom workDir)
     const localPath = syncSubdir(workDir);
     const stateDir = channelWorkDir(slug);
-    const firstRun = needsResync(stateDir);
+    const initial = needsResync(stateDir);
+    const firstRun = initial || priorListingEmpty(stateDir);
     mkdirSync(localPath, { recursive: true }); // both sides must exist before bisync
     mkdirSync(stateDir, { recursive: true });
     const args = buildBisyncArgs({ localPath, folderId, keyFile, subject, workDir: stateDir, conflict, firstRun });
@@ -268,7 +296,9 @@ async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subj
       // A failed first run must retry --resync next tick against a clean slate, so drop the
       // (now-stale) listing state. No sentinel was written, so the retry stays a first run either
       // way — this only removes a half-built baseline rclone would otherwise read.
-      if (firstRun) { try { rmSync(stateDir, { recursive: true, force: true }); } catch {} }
+      // Only a genuine first run may be dropped: a failed forced resync keeps the sentinel and the
+      // listings that show what happened.
+      if (initial) { try { rmSync(stateDir, { recursive: true, force: true }); } catch {} }
       await logEvent("drivesync_error", { slug, channel: channelId, trigger, code: res.code, signal: res.signal, outcome: res.outcome?.kind, tail: res.tail.slice(-800) });
       const detail = conciseProcessDiagnostic(res.tail, 300);
       console.error(`[drivesync] ${slug} bisync ${res.outcome?.summary || "failed before it completed"}${detail ? `: ${detail}` : ""}`);
