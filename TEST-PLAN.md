@@ -85,6 +85,12 @@
       and require the file to open in Drive with the right bytes. Repeat with "my Drive" vs "your
       Drive" and confirm the staged identity matches the one the upload ran as. Record the
       `composio_file_staged` audit event.
+- [x] Automated: every per-run Composio identity line (both, user-only, agent-only) carries the
+      handoff rule — `stage_file_for_composio` with the identity that runs the destination tool, a
+      `create_public_file_link` upload link for URL-only tools, and never file bytes as base64 or
+      chunks through the workbench to get around staging — and an identity-less run gets no line
+      (`test/composio-identity-preamble.test.js`). QA-0925 FSHARE-02: a Codex turn that read the
+      guide's front page but not its sharing page base64'd a PDF through the workbench.
 
 ## Temporary public file links
 
