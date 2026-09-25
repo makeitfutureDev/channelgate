@@ -5,7 +5,7 @@
   "npm": {
     "@anthropic-ai/claude-code": "2.1.281",
     "@openai/codex": "0.156.1",
-    "mcp-remote": "0.8.3",
+    "mcp-remote": "0.14.3",
     "vercel": "59.11.1",
     "supabase": "2.116.0",
     "playwright": "1.63.0",

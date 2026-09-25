@@ -24,6 +24,11 @@ product overview.
   `npm run vpn` steps, the profile and Secrets requirements, what each failure means and who fixes
   it, and how to rotate or retire the service. It says plainly that provisioning cannot run inside
   a channel container. It never tells anyone to paste a profile or password into chat.
+- Dependency refresh: the Composio SDK moves to 0.19.0 (the session API the Enterprise SDK mode
+  uses is unchanged), `mcp-remote` to 0.14.3 in both the daemon and the channel image, and `zod`
+  to 4.6.5. `hono`, pulled in by the MCP SDK, moves to 4.13.9 for its moderate advisories. After
+  updating, run `npm run build:image` (the updater does this for you) so channel containers get the
+  new `mcp-remote`.
 
 ## 0.5.7 — 2026-09-25
 
