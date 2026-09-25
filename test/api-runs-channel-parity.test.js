@@ -124,3 +124,47 @@ test("a completed API run reports the container resume command and queues the ch
   assert.equal(reviews[0].authorId, "api", "the reviewer acts as the API principal, never a caller-named author");
   assert.match(await reviews[0].fetchTranscript(), /invoices are due on the 5th[\s\S]*Assistant:/);
 });
+
+test("an API run gets the organization's and the channel's secrets, skills and folder — and nobody's personal scope", async () => {
+  const { setUser, getChannelMeta } = await import("../src/config/store.js");
+  const { patchOrgEnv, patchUserEnv } = await import("../src/config/scoped-env.js");
+  const { patchChannelEnv } = await import("../src/config/channel-env.js");
+  const { createLocalSkill } = await import("../src/gateway/skills/authoring.js");
+  const { existsSync } = await import("node:fs");
+  const skill = (slug, personal = false) => createLocalSkill({ slug, createdBy: "U_API_SCOPE_ADMIN", personal, publish: false,
+    files: [{ path: "SKILL.md", content: `---\nname: ${slug}\ndescription: API scope fixture ${slug}\n---\nbody\n` }] });
+  await skill("api-scope-org-skill");
+  await skill("api-scope-channel-skill");
+  await skill("api-scope-personal-skill", true);
+
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal", accessGrants: { skills: ["api-scope-org-skill"] } });
+  patchOrgEnv({ set: { name: "API_SCOPE_ORG_SECRET", value: "org-secret-value-123456" }, actor: "U_API_SCOPE_ADMIN" });
+  // The caller NAMES an admin who has personal secrets and skills; none of it may reach the run.
+  await setUser("U_API_SCOPE_ADMIN", { name: "Scope Admin", approved: true, isAdmin: true, skills: ["api-scope-personal-skill"] });
+  await patchUserEnv("U_API_SCOPE_ADMIN", { set: { name: "API_SCOPE_PERSONAL_SECRET", value: "personal-secret-value-123456" } });
+
+  const entry = await channel("C_API_PAR_SCOPE", "api-par-scope", { skills: ["api-scope-channel-skill"] });
+  const meta = await getChannelMeta(entry.slug);
+  await saveChannelMeta(entry.slug, { ...meta, env: patchChannelEnv(meta.env, { set: { name: "API_SCOPE_CHANNEL_SECRET", value: "channel-secret-value-123456" } }) });
+
+  const backend = createFakeRuntimeBackend();
+  const resolved = [];
+  setRuntimeResolver((slug, m) => { resolved.push(m); return fakeTarget(backend, slug, m); });
+  const started = await startApiRun({ message: "list what you can use", channel: "C_API_PAR_SCOPE", author: "U_API_SCOPE_ADMIN", queueMemoryReview: () => null });
+  const job = await settled(started.jobId);
+  assert.equal(job.status, "completed", job.error || "");
+
+  const spawn = backend.calls.spawn[0];
+  assert.equal(spawn.env.API_SCOPE_ORG_SECRET, "org-secret-value-123456", "organization secrets reach an API run");
+  assert.equal(spawn.env.API_SCOPE_CHANNEL_SECRET, "channel-secret-value-123456", "channel secrets reach an API run");
+  assert.equal(spawn.env.API_SCOPE_PERSONAL_SECRET, undefined, "no personal secret, even of the admin it names");
+
+  const workDir = resolveRuntime(entry.slug, meta).cwd;
+  assert.equal(spawn.cwd, workDir, "the run works in the channel's own folder (its files)");
+  assert.ok(existsSync(path.join(workDir, ".claude", "skills", "api-scope-org-skill", "SKILL.md")), "organization skills are materialized");
+  assert.ok(existsSync(path.join(workDir, ".claude", "skills", "api-scope-channel-skill", "SKILL.md")), "channel skills are materialized");
+  // The run's effective grant set is the org + channel (+ author) union; the API run's has no author tier.
+  const skills = resolved.at(-1).skills.map((s) => String(s).toLowerCase());
+  assert.ok(skills.includes("api-scope-org-skill") && skills.includes("api-scope-channel-skill"));
+  assert.ok(!skills.includes("api-scope-personal-skill"), "the named admin's personal skill never joins an API run");
+});

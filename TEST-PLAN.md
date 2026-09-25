@@ -3244,6 +3244,9 @@ Unit coverage:
 - [x] A per-run `mode` of read/worker/auto/lean/full on an Admin channel resolves the runtime target
       with the channel's Admin posture (operator-home grant unchanged)
       (`test/runtime-integration-run.test.js`).
+- [x] An API run naming an admin gets the organization's and the channel's secrets in its
+      environment and their skills in the channel folder, and works in the channel's own folder —
+      but never that admin's personal secret or personal skill (`test/api-runs-channel-parity.test.js`).
 
 Live acceptance (Claude and Codex each; fixture `qa-api-parity-<engine>`: a Slack channel in Worker
 mode with **Auto on**, channel memory on, one channel skill granted, the shared Composio identity
