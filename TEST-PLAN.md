@@ -3282,10 +3282,26 @@ structural invariants are automated; rendered navigation and feature claims also
       Test action no-op with a clear message and never throw (smoke-tested).
 - [ ] Manual (needs rclone + a Workspace service-account key): set the global key-file path +
       enable; set a channel's Drive folder link; click **Test** → "Connected". Then wait one
-      interval (or restart) → files appear in `<channel working folder>/Drive/`; a local edit there
-      propagates up to Drive and a Drive edit propagates down, on the next tick.
-- [ ] Confinement: the sync only ever writes under `Drive/` — `.claude/`, `CLAUDE.md`, `AGENTS.md`,
-      `MEMORY.md`, `memory/`, `uploads/` are never pushed to Drive nor overwritten from it.
+      interval (or restart) → the channel folder's files appear in the Drive folder and Drive files
+      appear in the channel folder; a local edit propagates up and a Drive edit down, on the next tick.
+- [x] Confinement (`test/drivesync.test.js`, real rclone): the whole folder syncs, while `.claude/`,
+      `CLAUDE.md`, `MEMORY.md`, `memory/`, `runtime/env/` and `.env` never reach Drive and a Drive-side
+      `CLAUDE.md` never overwrites the channel's; `.driveignore` lines only ever add excludes; filters
+      carry `--ignore-case`; every symlink is excluded for the pass (names glob-escaped); a folder that
+      is or contains the home, the gateway root or the workspace root, a hidden folder of the home, or a
+      workspace folder other than this channel's own is refused; the pass is launched as `podman run
+      --rm --pull=never --cap-drop ALL --name cg-drivesync-…` with the work folder at its real path and
+      the state, read-only filters and read-only key at a fresh random `/cg-sync-<hex>` path per pass
+      (no host path of the state or key exists inside), and a timed-out pass force-removes it; a changed local root, Drive folder or filter set forces
+      a fresh `--resync` (a pre-identity sentinel from the `Drive/` subfolder era resyncs once).
+      Live-verified on Xavier (QA-0925 review): with a work-folder symlink to a host folder and a
+      Drive-side payload under it, the confined pass left the host folder empty even without the
+      symlink exclude; with it, the pass succeeded, `lnk2 -> .claude` could not overwrite `.claude/`,
+      and Drive-side `Claude.md` / `AGENTS.override.md` did not come down.
+- [ ] Live (engine-independent): on a channel whose folder has a lockdown, memory and a `.env`, link
+      a Drive folder and **Sync now**. Pass: the Drive folder holds the channel's own files but none of
+      `.claude/`, `CLAUDE.md`, `AGENTS.md`, `MEMORY.md`, `memory/`, `.env`, `.git`; a file added in Drive
+      reaches the channel folder; a pattern added to `.driveignore` stops that path syncing.
 - [ ] A failed first run leaves no half-baked bisync state (the state dir is dropped, so the next
       tick retries with `--resync`).
 - [x] A prior listing that records no file (`.lst`, or the `.lst-err` rclone set aside after refusing

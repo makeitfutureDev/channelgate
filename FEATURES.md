@@ -2991,9 +2991,26 @@ are retired, bullet by bullet; everything else stands.
   pending (an armed *clear* toggle, a typed password or key), because a pending action captured as
   "already saved" would silently never run. → TEST-PLAN: Admin UI.
 - **Google Drive two-way sync (scheduled)**: a per-channel Drive folder link (channel settings)
-  is bisync'd on a timer into a dedicated `Drive/` subfolder of that channel's working folder —
-  never the folder root, so the confinement scaffolding (`.claude/`, `CLAUDE.md`, `MEMORY.md`,
-  `memory/`, `uploads/`) is never synced or overwritten. Auth is a Workspace service account
+  is bisync'd on a timer with that channel's WHOLE working folder (it used to be a `Drive/`
+  subfolder; QA-0925). A filters file, matched case-insensitively and applied in both directions,
+  keeps out agent instructions, skills and MCP config at any depth (`CLAUDE.md`, `AGENTS.md`,
+  `AGENTS.override.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/`, `.agents/`, `.codex/`), channel
+  memory (`MEMORY.md`, `memory/`), secrets (`.env*`, `.ssh/`, key and credential files, per-run env
+  folders), `.git` (file or folder), `.worktrees`, dependency trees and `*.rclonelink`, so a Drive
+  editor cannot plant instructions for the agent and no local secret is pushed. A `.driveignore`
+  at the folder root adds the channel's own exclusions (every line becomes an exclude). Every
+  symlink in the folder is excluded for the pass, and rclone runs in a throwaway container
+  (`podman run --rm`, all capabilities dropped) that mounts only the channel folder at its real
+  path and the sync state, filters (read-only) and key (read-only) at a random path per pass: a
+  link planted to anywhere else — even mid-pass — resolves inside that container and can never
+  write onto the host or into the sync state. A timed-out pass force-removes its container. A folder
+  that is or contains the operator's home, the gateway root or the workspace root, a hidden
+  configuration folder of the home (`~/.ssh`, `~/.config`, …), or a workspace folder that is not
+  this channel's own (another channel's, the platform parent, `.runtime`) is refused — so is a Lean
+  (clean-mode) channel, whose runs use a bare folder inside the gateway root. The first sync of a link merges both sides,
+  the newer copy winning where both hold the same path; the completed `--resync` records what it
+  was made for (local root, Drive folder, filters), and changing any of them makes the next pass a
+  fresh `--resync` from a clean state dir instead of a bisync against the old pair's listings. Auth is a Workspace service account
   (+ optional domain-wide-delegation subject), passed to `rclone bisync` via flags — no interactive
   `rclone config`, no per-user OAuth, no secret in the child env. The key is entered by **pasting
   the service-account JSON** into the settings page: stored write-only (validated as a real SA key,
