@@ -93,8 +93,11 @@ yet, and `show_channel_ssh` names the installer.
    Remote-SSH → `acme-app`. The channel rides in the ProxyCommand: one key, one config block per
    channel, several channels at once. The first connection records the channel's own host key.
 
-To open VS Code directly on the channel folder rather than browsing from `/home/agent`, use the
-command "show SSH access" prints: `code --remote ssh-remote+acme-app <channel folder>`.
+To open VS Code directly on the channel folder, use the command "show SSH access" prints:
+`code --remote ssh-remote+acme-app <channel folder>`. Connecting from Remote-SSH's own menu opens an
+empty window instead; its File → Open Folder dialog starts in the channel folder (a custom work
+folder included), because every session seeds `files.dialog.defaultPath` in the container's VS Code
+machine settings — merge-only, and never over a value you set yourself.
 
 Inside, you are user `agent` in the channel's work folder (an interactive login starts there;
 image spec 1.5.1), with the same environment an engine turn gets and the channel's persistent

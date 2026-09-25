@@ -129,6 +129,36 @@ export function renderAccessOnlyCredentials(relay) {
   }, null, 2);
 }
 
+// VS Code Remote-SSH opens an empty window in the container's HOME, and its Open Folder dialog and
+// terminal start there, so a developer had to climb out of /home/agent to reach the channel folder
+// (QA-0925). `files.dialog.defaultPath` in the REMOTE machine settings is what that dialog starts in
+// when the window has no recent folder. Merge-only: the file is the channel's own VS Code state
+// (VS Code writes to it too), a sidecar remembers the value WE wrote so a changed work folder moves
+// it, and a value the developer set themselves — or a file that is not plain JSON — is left alone.
+// argv[1] = settings file, argv[2] = sidecar, argv[3] = the channel work folder.
+export const VSCODE_MACHINE_SETTINGS = "/home/agent/.vscode-server/data/Machine/settings.json";
+export const VSCODE_FOLDER_SEED = `
+const fs = require("node:fs");
+const path = require("node:path");
+const [file, sidecar, folder] = process.argv.slice(1);
+const key = "files.dialog.defaultPath";
+let config = {};
+try { config = JSON.parse(fs.readFileSync(file, "utf8")); }
+catch (error) { if (error.code !== "ENOENT") process.exit(0); }
+if (!config || typeof config !== "object" || Array.isArray(config)) process.exit(0);
+let ours = "";
+try { ours = fs.readFileSync(sidecar, "utf8").trim(); } catch {}
+const current = config[key];
+if (current !== undefined && current !== ours) process.exit(0);
+if (current === folder && ours === folder) process.exit(0);
+config[key] = folder;
+fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+const temporary = file + ".cg-" + process.pid;
+fs.writeFileSync(temporary, JSON.stringify(config, null, "\\t") + "\\n", { mode: 0o600 });
+fs.renameSync(temporary, file);
+fs.writeFileSync(sidecar, folder + "\\n", { mode: 0o600 });
+`;
+
 /**
  * Prepare (or refresh) one developer's session in one channel. Every step past the relay is best
  * effort and REPORTED, never fatal: a session with plain Claude beats no session, and the status
@@ -178,6 +208,17 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     } catch (error) {
       claude.reason = `account login not written (${String(error?.message || error).slice(0, 120)}); the relayed token is used instead`;
       log?.warn?.(`[ssh] ${slug}/${user.id}: ${claude.reason}`);
+    }
+  }
+
+  // 2b. VS Code lands in the channel folder, not the container HOME. Best effort: a failure only
+  // costs the developer a few clicks, so it is logged and never blocks the session.
+  if (target.workDir) {
+    try {
+      await exec(["exec", target.container.name, "node", "-e", VSCODE_FOLDER_SEED,
+        VSCODE_MACHINE_SETTINGS, `${VSCODE_MACHINE_SETTINGS}.cg-default-folder`, String(target.workDir)]);
+    } catch (error) {
+      log?.warn?.(`[ssh] ${slug}/${user.id}: VS Code start folder not set (${String(error?.message || error).slice(0, 120)})`);
     }
   }
 

@@ -222,3 +222,44 @@ test("the ssh toolset is the control plane minus the thread-bound tools; ssh_ses
   assert.ok(RUN_ORIGINS.includes(session.SSH_SESSION_ORIGIN));
   assert.equal(PRINCIPAL_KIND_BY_ORIGIN[session.SSH_SESSION_ORIGIN], "user");
 });
+
+test("VS Code over SSH starts its Open Folder dialog in the channel folder, never over the developer's own choice", () => {
+  // QA-0925: Remote-SSH landed in /home/agent and the developer had to climb to the channel folder.
+  const dir = mkdtempSync(path.join(scratch, "vscode-seed-"));
+  const file = path.join(dir, "Machine", "settings.json");
+  const sidecar = `${file}.cg-default-folder`;
+  const seed = (folder) => execFileSync(process.execPath, ["-e", session.VSCODE_FOLDER_SEED, file, sidecar, folder]);
+  const read = () => JSON.parse(readFileSync(file, "utf8"));
+  seed("/home/management/ChannelGate/slack/a");
+  assert.equal(read()["files.dialog.defaultPath"], "/home/management/ChannelGate/slack/a", "absent file: created with the folder");
+  // VS Code's own entries survive the merge.
+  writeFileSync(file, JSON.stringify({ ...read(), "github.copilot.chat.codeGeneration.instructions": [{ text: "x" }] }));
+  seed("/home/management/custom-folder");
+  assert.equal(read()["files.dialog.defaultPath"], "/home/management/custom-folder", "our value follows a changed work folder");
+  assert.deepEqual(read()["github.copilot.chat.codeGeneration.instructions"], [{ text: "x" }]);
+  // The developer points it somewhere else: left alone from then on.
+  writeFileSync(file, JSON.stringify({ ...read(), "files.dialog.defaultPath": "/home/agent/projects" }));
+  seed("/home/management/ChannelGate/slack/a");
+  assert.equal(read()["files.dialog.defaultPath"], "/home/agent/projects");
+  // A file that is not plain JSON (comments) is never rewritten.
+  writeFileSync(file, "// mine\n{}\n");
+  seed("/home/management/ChannelGate/slack/a");
+  assert.equal(readFileSync(file, "utf8"), "// mine\n{}\n");
+});
+
+test("session prep seeds the VS Code start folder with the channel's effective work folder, and a failure never blocks the session", async () => {
+  const t = target("ssh-vscode");
+  const { execs, deps } = fakes();
+  await session.prepareSshSession({ target: t, entry: { slug: "ssh-vscode", channelId: "C_VS" }, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
+  const call = execs.find((e) => e.args.includes(session.VSCODE_FOLDER_SEED));
+  assert.ok(call, "the seed ran");
+  assert.deepEqual(call.args.slice(-3), [session.VSCODE_MACHINE_SETTINGS, `${session.VSCODE_MACHINE_SETTINGS}.cg-default-folder`, "/work/ssh-vscode"]);
+  assert.equal(call.args[1], "cg-ssh-vscode", "inside the channel's own container");
+  const warnings = [];
+  const failing = fakes();
+  const runCommand = failing.deps.runCommand;
+  failing.deps.runCommand = async (bin, args, options) => { if (args.includes(session.VSCODE_FOLDER_SEED)) throw new Error("exec failed"); return runCommand(bin, args, options); };
+  const result = await session.prepareSshSession({ target: target("ssh-vscode-fail"), entry: { slug: "ssh-vscode-fail", channelId: "C_VF" }, meta: {}, user, cliBin: "podman", log: { warn: (m) => warnings.push(m) } }, failing.deps);
+  assert.deepEqual(result.problems, [], "the session is still fully prepared");
+  assert.ok(warnings.some((m) => m.includes("VS Code start folder not set")));
+});

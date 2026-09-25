@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- VS Code over SSH now starts in the channel's folder: File → Open Folder in a Remote-SSH window
+  opens at the channel folder (or its custom folder) instead of the container's home.
 - Handing a generated file to Drive, Gmail or another Composio tool now goes through the gateway's
   staging on every engine: the rule rides each run's Composio identity notice, so Codex no longer
   falls back to pushing the file through Composio's workbench as base64.

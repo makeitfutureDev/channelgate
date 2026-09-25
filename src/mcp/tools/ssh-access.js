@@ -182,7 +182,7 @@ export function register(server, ctx) {
       else if (!mine && createdBy) lines.push(`• You are not granted here${myKeys.length ? "" : " and have no key registered"}.`);
       if (setup.configured) {
         lines.push("", "Once granted, add this to `~/.ssh/config` on your laptop (your usual key; nothing per channel), then `ssh " + slug + "` or open it with VS Code Remote-SSH:", "```", connectSnippet({ endpoint: setup.endpoint, channel: slug }), "```",
-          `To open VS Code straight on the channel folder: \`code --remote ssh-remote+${slug} ${effectiveWorkDir(slug, meta)}\` (the Open Folder dialog otherwise starts in /home/agent).`,
+          `To open VS Code straight on the channel folder: \`code --remote ssh-remote+${slug} ${effectiveWorkDir(slug, meta)}\` (from Remote-SSH's own connect menu, File → Open Folder starts in that folder; press OK).`,
           "Inside you are user `agent` in the channel's work folder with its `/home/agent`, CLI logins and Codex. `claude` there is this channel's Claude exactly as a message here gets it: the channel's tool policy, the gateway tools (no background jobs or approval cards — no thread to post into), your own Composio accounts as `composio-user`, the channel's as `composio-agent`, the channel's MCP servers and its secrets by name — signed in as the gateway's own account, whose usage it counts against. Everyone in the box shares that one user; set your git identity per session. A daemon restart drops sessions — just reconnect.");
       }
       return text(lines.join("\n"));

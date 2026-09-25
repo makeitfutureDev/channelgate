@@ -5425,6 +5425,14 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [x] Unit: the image ships `cg-sshd` (POSIX sh clean) and the spec is 1.4.0 in both
       `containers/versions.json` and `image-paths.js` (automated: `test/container-image.test.js`,
       `test/container-durability.test.js`).
+- [x] Automated (`test/ssh-session.test.js`): session prep runs the VS Code start-folder seed in the
+      channel's container with the effective work folder; the seed creates the machine settings,
+      keeps VS Code's own keys, follows a changed work folder, never overrides a developer-set
+      `files.dialog.defaultPath`, never rewrites a non-JSON file, and a failed seed never blocks the
+      session. QA-0925: Remote-SSH landed in `/home/agent`.
+- [ ] LIVE (engine-independent): connect with VS Code Remote-SSH from its own menu to a channel with
+      a custom work folder. Pass: File → Open Folder opens at that folder (not `/home/agent`), OK
+      opens it, and a new terminal's `pwd` is that folder.
 - [ ] LIVE (engine-independent, Airtable CTR-31): on the gateway host run `npm run build:image`, then `sudo
       CG_SSH_HOST=<host> bash scripts/install-ssh-access.sh`; within a minute the daemon log shows
       `[ssh] attach socket`. As Apps, in `cg-testing-claude-bash`, send "add my SSH key <Apps'
