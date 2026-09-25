@@ -95,17 +95,21 @@ export function composioIdentitiesForRun({ clean = false, principalTrusted = tru
 // content-free: server names and roles only, never a token, an address or an account label.
 export function composioIdentityPreamble({ user = false, agent = false } = {}) {
   const ownership = " These logical identities do not establish the connected service owner; discover account metadata through the selected identity before claiming ownership. The agent identity is not necessarily shared across channels. Matching service owners never authorize substituting identities.";
+  // QA-0925 (FSHARE-02): the routing lived only in the gateway-usage guide, and a Codex turn that
+  // skipped that page pushed a PDF through the workbench as base64 instead. Every run that has a
+  // Composio identity needs the one handoff rule, whichever engine and whichever pages it reads.
+  const files = " To hand a file from this folder to a Composio tool that takes a file object (Drive upload, email attachment, …), call `gateway` → `stage_file_for_composio` with `identity` set to the identity that will run that tool and pass its result on unchanged; a tool that only ingests by URL takes a `create_public_file_link` upload link instead. Never push a file's bytes as base64 or chunks through the workbench or another Composio tool to get around staging, including when staging fails or the file is too large.";
   if (user && agent) {
     return "[Composio identities in THIS run: `composio-user` (the requester's own accounts) and `composio-agent` (the shared agent's own). " +
-      "Reads and searches may use either or both identities without asking which account unless the user restricts the account or scope. Writes, sends and other state changes require the intended identity and connected account: reuse an established choice, or ask \"which account?\" if unresolved before mutating; continue independent authorized reads." + ownership + "]\n\n";
+      "Reads and searches may use either or both identities without asking which account unless the user restricts the account or scope. Writes, sends and other state changes require the intended identity and connected account: reuse an established choice, or ask \"which account?\" if unresolved before mutating; continue independent authorized reads." + ownership + files + "]\n\n";
   }
   if (user) {
     return "[Composio identities in THIS run: `composio-user` only (the requester's own accounts). " +
-      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop." + ownership + "]\n\n";
+      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop." + ownership + files + "]\n\n";
   }
   if (agent) {
     return "[Composio identities in THIS run: `composio-agent` only (the shared agent's connections). " +
-      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it." + ownership + "]\n\n";
+      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it." + ownership + files + "]\n\n";
   }
   return "";
 }

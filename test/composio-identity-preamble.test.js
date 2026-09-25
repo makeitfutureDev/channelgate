@@ -58,6 +58,19 @@ test("the run's identity set mirrors the servers the MCP config would carry", ()
   );
 });
 
+test("every identity variant routes a file handoff through the gateway's staging tool", () => {
+  // QA-0925 FSHARE-02: a Codex turn that never opened the guide's sharing page base64'd a PDF
+  // through the Composio workbench. The rule has to ride the per-run line every engine reads.
+  for (const ids of [{ user: true, agent: true }, { user: true }, { agent: true }]) {
+    const line = composioIdentityPreamble(ids);
+    assert.match(line, /`gateway` → `stage_file_for_composio` with `identity` set to the identity that will run that tool/);
+    assert.match(line, /only ingests by URL takes a `create_public_file_link` upload link instead/);
+    assert.match(line, /Never push a file's bytes as base64 or chunks through the workbench or another Composio tool to get around staging/);
+    assert.equal(line.trim().split("\n").length, 1, "still one line");
+  }
+  assert.equal(composioIdentityPreamble({}), "", "no identity, no rule");
+});
+
 test("the identity line names only servers and roles — never a token, an address or an account", () => {
   const both = composioIdentityPreamble({ user: true, agent: true });
   assert.match(both, /^\[Composio identities in THIS run: `composio-user`.*`composio-agent`/);

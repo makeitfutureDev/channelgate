@@ -1809,8 +1809,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   object to pass straight through. The caller names which identity will run the destination tool
   (`user` → `composio-user`, `agent` → `composio-agent`) and the key resolved for THAT identity is
   the one spent, through the same precedence the MCP config uses; a named identity with no key is
-  reported rather than silently replaced by the other one. The key never enters the container,
-  never reaches the model, and never appears in an error message. Nothing is published.
+  reported rather than silently replaced by the other one. Every run that has a Composio identity
+  is also told this handoff rule in its per-run identity line (not only in the gateway-usage guide),
+  so an engine that never opens the guide's sharing page still stages instead of relaying base64.
+  The key never enters the container, never reaches the model, and never appears in an error
+  message. Nothing is published.
   The REST upload accepts only a Composio PROJECT API key. The keys this gateway stores in personal
   mode are CONSUMER keys (`ck_…`, the hosted MCP's credential), which that endpoint rejects, so
   with a consumer key the gateway stages through the hosted MCP's own workbench instead: the daemon

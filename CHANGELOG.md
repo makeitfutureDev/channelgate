@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Handing a generated file to Drive, Gmail or another Composio tool now goes through the gateway's
+  staging on every engine: the rule rides each run's Composio identity notice, so Codex no longer
+  falls back to pushing the file through Composio's workbench as base64.
 - Slack **⚙️ Settings** no longer claims a channel pinned to Claude inherits the Codex default
   model (or the reverse): an unset model or effort now names what the channel's own harness would
   actually use. The web admin's VPN status also stops saying "not configured" twice.
