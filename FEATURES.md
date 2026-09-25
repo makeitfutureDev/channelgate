@@ -2405,7 +2405,11 @@ are retired, bullet by bullet; everything else stands.
   container's namespaces; no container and no extra host port ever listens; the channel is named
   in the ProxyCommand, so one key reaches several channels at once. A container with a live
   session is never idle-stopped or evicted, and a rebuild waits for it like for a run; a dead peer
-  is reaped by `ClientAlive` in about three minutes. Sessions are `ssh_sessions` rows and
+  is reaped by `ClientAlive` in about three minutes. Each session also seeds VS Code's remote
+  machine setting `files.dialog.defaultPath` with the channel's effective work folder (a custom
+  folder included), so Remote-SSH's File → Open Folder starts there instead of `/home/agent`;
+  the merge is best effort, follows a changed folder, and never overrides a developer's own value.
+  Sessions are `ssh_sessions` rows and
   `ssh_session_start`/`ssh_session_end` events; refusals are `ssh_attach_refused` with the reason
   the developer saw. The image ships `openssh-server` (spec 1.4.0) and marks the `agent` account
   key-only (`*`, not useradd's locked `!`). It carries no SSH host private key: the package's
