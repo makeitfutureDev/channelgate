@@ -16,6 +16,14 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- Dependency refresh: the Composio SDK moves to 0.19.0 (the session API the Enterprise SDK mode
+  uses is unchanged), `mcp-remote` to 0.14.3 in both the daemon and the channel image, and `zod`
+  to 4.6.5. `hono`, pulled in by the MCP SDK, moves to 4.13.9 for its moderate advisories. After
+  updating, run `npm run build:image` (the updater does this for you) so channel containers get the
+  new `mcp-remote`.
+
 ## 0.5.7 — 2026-09-25
 
 - **An HTTP API run now works like an admin's message in its channel.** The run API key is an
