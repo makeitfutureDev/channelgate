@@ -150,8 +150,10 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   resolved login's current ACCESS token in `CLAUDE_CODE_OAUTH_TOKEN` (behind the egress proxy, a
   placeholder the proxy swaps for it), refreshed by a cheap turn in that login's own config dir. The container credential modes, the health probe, the boot log,
   `/status` and the hourly login watch (which DMs admins at most once a day per message class
-  while the login is expiring or missing) all read the same resolver. Codex's twin is
-  `src/engines/codex-auth.js`.
+  while the login is expiring or missing) all read the same resolver. Codex's twins are
+  `src/engines/codex-auth.js` (is Codex signed in) and `src/gateway/codex-token-relay.js` (which
+  login a container run relays, its cheap-turn refresh in the login's own `CODEX_HOME`, and the
+  access-only `auth.json` a container receives).
 - `src/gateway/{background,scheduler,followups,nudges,loops,api-runs}.js` — daemon-side
   automation: background shell jobs and background agents that outlive the turn and report back
   into the thread, cron/one-time schedules (with the daily-thread delivery mode), pending-response
@@ -177,13 +179,15 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   `<root>/eg/<12 hex>/`, the per-request policy from the channel's CURRENT meta, the swap gate,
   audit, the container backend's hook), `grants.js` (migration-30 `egress_grants`: placeholder →
   scope/channel/owner/name, never a value; live value resolution; revocation;
-  `resolveEgressRunEnv` and `containerClaudeCredential` for every spawn site), `liveness.js`
+  `resolveEgressRunEnv`, `containerClaudeCredential` and `containerCodexCredential` for every spawn
+  site), `liveness.js`
   (turns, jobs, reviews, SSH sessions per channel — personal grants swap only while their owner is
   live and no other person has an SSH session open), `catalog-rules.js` (built-in rules per
   credential name + validation of an entry's "used on hosts"), `engine-hosts.js`. The container
   half: `src/runtimes/container/egress-hook.js` (the plan a target carries), `egress-env.js` (the
-  ONE proxy/CA env list) and `src/mcp/egress-forwarder.js` (staged into the image as
-  `bin/cg-egress.mjs`).
+  ONE proxy/CA env list), `src/mcp/egress-forwarder.js` (staged into the image as
+  `bin/cg-egress.mjs`) and `src/mcp/egress-connect.js` (the SSH `ProxyCommand` helper, staged as
+  `bin/cg-egress-connect.mjs` behind the POSIX shim `containers/bin/cg-egress-connect`).
 - `src/gateway/ssh-access.js` + `ssh-broker.js` + `ssh-session.js` + `src/mcp/tools/ssh-access.js` — SSH access to
   channel containers (`docs/SSH-ACCESS.md`): the per-person key registry (`ssh_keys`), the
   per-channel `sshUsers` grant list, the host `authorized_keys` export (every line
@@ -256,13 +260,14 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   each registering its tools behind the verified capability; `socket-server.js` serves it on the
   daemon side over `~/.channelgate/run/mcp.sock` (bind-mounted read-only at `/run/channelgate`, no
   DB mount, no port), `socket-bridge.js` is the container-side stdio↔socket pipe copied into the
-  image verbatim, `secret-env-bridge.js`/`remote-secret-bridge.js` launch credentialed stdio and
-  remote MCPs from a 0600 bundle so a secret never rides argv. In a container the header-bearing
+  image verbatim, `secret-env-bridge.js` launches credentialed stdio MCPs from a 0600 bundle so a
+  secret never rides argv (`remote-secret-bridge.js` was retired in container-secrets P4). In a container the header-bearing
   remotes (Composio token mode, the toolboxes) are the socket's `remote-mcp` service instead:
   `remote-mcp-registry.js` holds their URL + headers in daemon memory under the capability's jti,
   `remote-relay.js` dials them and relays the tools, so the credential never enters the container.
   `egress-forwarder.js` is the container-side half of the egress proxy (127.0.0.1:3128 → the
-  channel's egress socket), copied into the image verbatim like `socket-bridge.js`.
+  channel's egress socket), copied into the image verbatim like `socket-bridge.js`;
+  `egress-connect.js` is the SSH `ProxyCommand` over that forwarder (`CONNECT host:port`).
 - `src/platforms/` — the CHAT-SURFACE layer, to chat platforms what `src/engines/` is to engines.
   `contract.js` (the closed capability spec + fail-closed adapter validation), `registry.js` +
   `adapters.js` + `slack.js`/`googlechat.js`/`msteams.js` (per-platform FACTS: what renders, what
@@ -314,7 +319,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   `cg-ssh-attach.mjs` + `cg-ssh-authorized-keys`, `install-whisper.mjs`),
   updates (`update.sh` → `update-runner.mjs`), backup and restore (`backup-config.sh`,
   `restore-config.sh`, `restore-drill.sh`, `runtime-maintenance.mjs`), the image
-  (`build-image.mjs`), the checks (`run-tests.mjs`, `static-check.mjs`, `secret-scan.mjs`,
+  (`build-image.mjs`), the checks (`run-tests.mjs`, `static-check.mjs` + `static-secret-writes.mjs`
+  — no secret-resolver value written under an artifact dir, `secret-scan.mjs`,
   `security-coverage.mjs`, `check-dco.mjs`), the nightly CLI canaries, release
   (`release-artifacts.mjs`, `check-release-candidate.mjs`, `reviewed-artifact-fixtures.json`),
   the landing lock (`with-landing-lock.mjs`, a Git ref with liveness checks) and the one-time
@@ -494,7 +500,7 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   hosts") is only its PLACEHOLDER — stable per scope/channel/owner/name, swapped for the live value
   by the proxy on the declared hosts — so rotation no longer needs to retire anything; the
   redactor still carries every REAL value, and a secret with no rule is raw and listed unprotected
-  (withheld under `containerEgressSecretsStrict`). Every spawn site resolves through
+  (withheld under `containerEgressSecretsStrict` — on for new installs, pinned off at boot for installs that predate it; `list_secrets` reports each such name as a finding). Every spawn site resolves through
   `resolveEgressRunEnv`, never `resolveRunEnv` directly.
 - **The gateway uses the operator's own Claude login, and never copies a credential file.** Which
   login answers a turn is decided ONLY by `src/gateway/claude-login.js`; no other module may stat,
@@ -513,7 +519,14 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   written through the relay, refreshed with it, and removed when the channel's last session ends.
   Claude Code labels a token in the environment "Claude API" and hides the plan, the usage windows
   and the plan's default model; only a file login shows them, which is what a developer in a
-  terminal needs to see.
+  terminal needs to see. Codex is the twin (`src/gateway/codex-token-relay.js`): behind the egress
+  proxy a container never mounts the operator's `auth.json`; the runner writes an ACCESS-ONLY
+  `auth.json` into the channel's HOME volume before every Codex run (and an SSH session) whose
+  access token is the channel's relay placeholder in JWT shape — the real claims, `cgph_r…` as the
+  signature — and whose refresh token is empty, the proxy swaps the WHOLE token on the OpenAI/ChatGPT
+  hosts only, and the daemon renews the real login with a cheap ephemeral `codex exec` in the
+  login's own `CODEX_HOME`. It is written by rename, never through a mount. Only the legacy bridge
+  mode and an API-key login keep the shared read-write file mount.
 - **Only admins get `--dangerously-skip-permissions`**, and only in an Admin-mode channel (a live
   Slack turn by an admin author, or a live HTTP run API turn, whose key is an admin credential
   acting as the `api` principal — `src/config/api-principal.js`). Everyone else runs with the folder's `permissions.allow` allowlist and answers tool requests

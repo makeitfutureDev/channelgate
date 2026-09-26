@@ -18,6 +18,25 @@ product overview.
 
 ## Unreleased
 
+- **Codex's sign-in no longer sits in every channel container.** Until now each channel container
+  had the gateway host's real Codex login file, refresh token included, mounted read-write, so one
+  channel could read it and every channel shared it. Behind the egress proxy a container now gets
+  its own access-only sign-in: a stand-in token the proxy swaps for the real one on OpenAI's and
+  ChatGPT's servers, and no refresh token at all. The gateway keeps the real login fresh with a
+  cheap Codex turn on the host when it is two days from expiring. Keep the host signed in with
+  `codex login` as before. Each channel container is recreated once on its next turn. The legacy
+  open-network mode and an API-key Codex login still mount the real file. Rebuild the image
+  (`npm run build:image`, still spec 1.6.0): `cg-init` now also removes an old copied Codex login
+  from a channel's home.
+- **Secrets without an egress rule are withheld by default on new installs.** On a fresh install
+  *Withhold unprotected secrets* starts on: a secret with no built-in rule and no *Used on hosts* is
+  not given to channel containers. Existing installs keep their current behavior; turn it on in
+  Settings → Container runtime. `list_secrets` now ends with a **Finding** that names every secret
+  without a rule and says how to protect it.
+- **A check keeps secrets out of the files channel containers can read.** `npm run check:static`
+  now fails when code writes a token, a relay's token or a resolved run environment into a
+  channel's artifact folder. The unused `remote-secret-bridge` helper is removed.
+
 - **SSH and VS Code sessions hold placeholders, not secrets.** A developer's SSH session into a
   channel container now gets the same `cgph_…` placeholders a turn gets, and Claude's login in the
   session (and the editor's token file) is the channel's login placeholder. Nothing a session

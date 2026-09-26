@@ -361,7 +361,7 @@ runs too, and the next successful update settles it.
 | Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
 | Full-access channels see the gateway home | off by default; on = every Full-access channel's container also mounts the gateway user's whole home read-write (see below) |
 | Legacy open network (no egress proxy) | off by default (`containerEgressMode = "proxy"`); on (`"bridge"`) = the pre-proxy behavior: the open bridge network and raw secret values (see **Network** below) |
-| Withhold unprotected secrets | off by default (`containerEgressSecretsStrict`); on = a secret with no egress rule is not given to proxy-mode containers at all |
+| Withhold unprotected secrets | `containerEgressSecretsStrict`: ON for a new install, OFF for an install that existed before this default (stored once at boot; your choice is never changed); on = a secret with no egress rule is not given to proxy-mode containers at all, off = it is injected raw and listed as unprotected |
 
 Values that would reach the container CLI's argv are validated at the boundary: a flag, a space or a
 shell metacharacter in the image/memory/cpu fields is rejected with an error, not silently cleaned.
@@ -370,9 +370,11 @@ shell metacharacter in the image/memory/cpu fields is rejected with an error, no
 Claude login — its current access token, in `CLAUDE_CODE_OAUTH_TOKEN` — so keeping `claude` signed
 in on the host is all a channel needs. Nothing is copied or mounted. Optionally run
 `claude setup-token` on the gateway host and paste the value into *Claude token for container runs*:
-that token is then used instead and never needs refreshing. Codex is different — it rewrites
-`auth.json` in place, so every container shares a read-write mount of the gateway's real auth file;
-keep the host signed in with `codex login`. Codex *sessions* and history are still per channel.
+that token is then used instead and never needs refreshing. Codex is RELAYED the same way behind
+the egress proxy (see **Codex login relay** below): keep the host signed in with `codex login`;
+nothing is mounted. Only the legacy open-network mode and an API-key Codex login still bind-mount
+the gateway's real `auth.json` read-write into every container (Codex rewrites it in place, so a
+copy would fork the refresh chain). Codex *sessions* and history are per channel either way.
 
 **Network (the egress proxy).** Every channel container runs with `--network none`: its only
 interface is `lo`. The one way out is the daemon's egress proxy. `cg-init` starts a small forwarder
@@ -425,10 +427,13 @@ secret additionally only while its owner is the one working there and no other p
 session open. Everything else about a placeholder is forwarded unchanged: a placeholder sent to a
 host it was not declared for arrives as the useless string it is. Rotation is live (the proxy
 resolves the current value per request); removing a secret revokes its placeholder, and re-adding
-mints a new one. A secret with no rule is still injected raw and listed as **unprotected** in
-`list_secrets`, the admin UI and the run's own credential note — or withheld entirely with
-*Withhold unprotected secrets* on. `SUPABASE_DB_PASSWORD` and other raw-protocol passwords can
-never be swapped: they stay raw.
+mints a new one. A secret with no rule is withheld entirely while *Withhold unprotected secrets*
+is on (the default on a new install; the run's credential note names it as withheld), or injected
+raw and listed as **unprotected** in the admin UI and the run's own credential note while it is
+off. Either way `list_secrets` ends with a **Finding** naming each such secret; declare its *Used on
+hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead.
+`SUPABASE_DB_PASSWORD` and other raw-protocol passwords can never be swapped: they stay raw
+(withheld under strict).
 
 **Audit.** Every swap of a channel/organization/personal secret, every refusal, every blocked
 destination and every raw tunnel is an `egress` event (names, hosts, reasons and byte counts —
@@ -654,10 +659,12 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
 - **Per-user Codex skill grants are not delivered in containers.** The per-run Codex skill overlay
   was built for a synthetic host HOME that a container does not have; a Codex run gets the
   channel's skills through the mounted workdir, but not that overlay.
-- **Codex sessions are per channel, but the sign-in is shared.** Every container mounts the same
+- **Codex sessions are per channel; the sign-in is shared only outside the proxy.** Under the
+  legacy open-network mode (or with an API-key `auth.json`) every container mounts the same
   `auth.json` the gateway uses. A `codex login` on the host that *replaces* the file leaves a
   running container holding the old inode — `/status` and `/api/health` report the drift; restart
-  the channel's container (or let the reaper stop it) to pick the new one up.
+  the channel's container (or let the reaper stop it) to pick the new one up. Behind the proxy the
+  login is relayed and a new `codex login` takes effect on the next turn.
 - **The relayed Claude login is a placeholder in proxy mode.** A proxy-mode container's
   `CLAUDE_CODE_OAUTH_TOKEN` is the channel's relay placeholder, swapped for the current access token
   only on `api.anthropic.com` while the channel has live work. Under the legacy bridge mode it is
@@ -674,12 +681,33 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   the names of any unprotected (`egressUnprotected`) or withheld (`egressWithheld`) secrets.
   `networkEnforcedFor(target)` in `src/engines/network-policy.js` is the one question every surface
   asks.
-- **Codex's sign-in file is still the real one.** The shared `auth.json` mount is unchanged by the
-  proxy (the engine-login broker is a later phase); Codex's own traffic goes through the proxy like
-  everything else.
-- **SSH and VS Code sessions** run in the same `--network none` container with the proxy env, but
-  their secret files are not placeholders yet (a later phase): a developer session still sees raw
-  values, and SSH `-L` forwards to external hosts do not work without the network.
+- **Codex's sign-in is a placeholder in proxy mode.** See **Codex login relay** below. What remains
+  raw: the legacy bridge mode's shared file, an API-key `auth.json`, and a daemon
+  `OPENAI_API_KEY`/`CODEX_API_KEY`, which reaches the container env as `CODEX_API_KEY` unchanged.
+- **SSH and VS Code sessions** run in the same `--network none` container with the proxy env and
+  hold placeholders like a turn (container-secrets P3, `docs/SSH-ACCESS.md`); SSH `-L` forwards to
+  external hosts do not work without the network.
+
+**Codex login relay (container-secrets P4).** Behind the egress proxy a channel container never
+sees the host's Codex login. Before each Codex run (and when an SSH session is prepared) the gateway
+writes `/home/agent/.codex/auth.json` into the channel's own HOME volume: the access token is the
+channel's relay placeholder shaped like a JWT (the real token's claims, `cgph_r…` in place of the
+signature — the CLI reads the claims, the provider checks the signature), the refresh token is empty,
+`last_refresh` is now. The proxy replaces that whole token with the host's current access token in
+the `Authorization` header on `api.openai.com`, `chatgpt.com` and `auth.openai.com` only, while the
+channel has live work. The container can use the login but cannot renew, rotate or take it anywhere:
+sent elsewhere, or from another channel, it is worthless; a refresh attempt from inside is rejected
+by OpenAI (empty refresh token). The host's login is renewed by the gateway itself: when its access
+token (10-day lifetime) has less than 48 hours left, the next Codex run first spends one cheap
+`codex exec --ephemeral --ignore-user-config` turn (`gpt-5.6-luna`, low effort) in the login's own
+`CODEX_HOME` — the engine home when it holds a login, else `~/.codex` — exactly what your own shell
+does. If the CLI declines to renew a still-valid token the gateway waits 6 hours before trying
+again; a failed refresh logs `[codex-relay] host refresh turn exited …`. What to watch: a Codex turn
+that fails with "This channel runs in a container, but … Run `codex login`" means the host is signed
+out or its token expired and could not be renewed — run `codex login` on the host. The first Codex
+turn after upgrading recreates each channel's container once (the mount is gone from its
+fingerprint), and `cg-init` deletes an old copied Codex login carrying a refresh token from the
+volume. The legacy open-network mode keeps the shared read-write mount (and says so in `/status`).
 
 **Remote MCP relay (container-secrets P1).** Composio (`composio-user`, `composio-agent` in token
 mode), the MakeItFuture toolbox and the Make toolbox never reach a container with their token. The

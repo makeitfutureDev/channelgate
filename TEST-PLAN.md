@@ -1,5 +1,164 @@
 # ChannelGate — Test Plan
 
+## Codex login relay, strict secrets, static check (container-secrets P4)
+
+Fixtures: the scratch runtime root of `test/helpers.js` (real `egress_grants` rows, a real
+`settings.json`), synthetic ChatGPT `auth.json` files built at runtime (JWTs whose header, claims and
+`real-signature-*` segment are generated in the test; refresh token `rt-real-refresh-*`), the fake
+container CLI recorder (`test/container-fake-cli.js`), the fake runtime backends
+(`test/runtime-fake.js`, `test/fixtures/fake-runtime-backend.js`) with an injected `writeHomeFile`,
+a fake egress provider for an ACTIVE plan, and a fake `spawn` for the refresh turn. No podman on the
+development host: the live gates at the end are UNEXECUTED.
+
+### Spike (required before the design; executed 2026-09-26, this host, codex-cli 0.156.1, network on)
+
+Safety: scratch `CODEX_HOME`s `/tmp/cg-spike/codex-{a,b,c}` (umask 077) seeded with ONLY the
+operator's current access token, id_token and account id copied from the read-only
+`~/.codex/auth.json`, `refresh_token: ""`; all deleted afterwards; the operator's file was never
+written (mtime still 2026-09-25 07:03:42). No token value was printed.
+
+- Operator file facts: access-token claims `aud, client_id, https://api.openai.com/auth,
+  https://api.openai.com/mfa, https://api.openai.com/profile, iss, pwd_auth_time, scp, session_id,
+  sl, sub, iat, exp, jti, nbf`; `iat` 2026-09-25T04:03:42Z, `exp` 2026-10-05T04:03:42Z (240 h);
+  the id_token lives 1 h (already expired — the CLI does not care); `last_refresh` = `iat`.
+- (a) PASS — access-only file, `last_refresh` = now: `codex exec --skip-git-repo-check --ephemeral
+  --ignore-user-config -m gpt-5.6-luna -c model_reasoning_effort="low" -s read-only "Reply with
+  exactly OK" </dev/null` → exit 0, answer `OK` (1,571 tokens); `codex login status` → `Logged in
+  using ChatGPT`, exit 0; the file unchanged. (Without `</dev/null`, `codex exec` blocks on
+  `Reading additional input from stdin...`.)
+- (b) NO REFRESH ON AGE — same file with `last_refresh` 2026-09-10 (16 days), `RUST_LOG=debug`:
+  exit 0 `OK`; no connection to `auth.openai.com` at all (connections: `chatgpt.com` ×12,
+  `ab.chatgpt.com` ×1, three `*.oaiusercontent.com` file downloads), `permanent_refresh_failure:
+  None`, the file unchanged. 0.156.1 does not refresh a valid access token because of
+  `last_refresh` age.
+- (c) PLACEHOLDER JWT — access token = the real header + payload + `cgph_r` + 32 base32 as the
+  signature, id_token = real header + payload + a non-signature: `codex login status` → `Logged in
+  using ChatGPT`, exit 0 (local parsing passes). Unproxied turn → exit 1: `workspace routing
+  discovery unauthorized (401)`, `Falling back from WebSockets to HTTPS transport`, then six
+  `Failed to refresh token status=400 Bad Request … error_code: Some("empty_string") … Invalid
+  'refresh_token': empty string` and `Reconnecting... 1/5 … 5/5` — a placeholder is worthless
+  unswapped and an empty refresh token rotates nothing (that stderr line is classified
+  `authentication` by `classifyCodexLiveStderr`). Through this branch's egress proxy
+  (`createEgressProxy` on 127.0.0.1, one grant with format `jwt`, `HTTPS_PROXY` +
+  `SSL_CERT_FILE`/`CODEX_CA_CERTIFICATE` = system roots + a scratch egress CA) → exit 0 `OK`; the
+  audit shows 23 `chatgpt.com` requests with `swapped: ["CODEX_ACCESS_TOKEN"]`, among them
+  `GET /backend-api/codex/responses` → 101 (the WebSocket turn), `/backend-api/codex/models`,
+  `/backend-api/wham/accounts/check`, `/backend-api/ps/plugins/*`, `/backend-api/ps/mcp`;
+  `ab.chatgpt.com/otlp/v1/metrics` and two `*.oaiusercontent.com` downloads carried no placeholder;
+  no `auth.openai.com` request; the file still held the placeholder afterwards.
+- Consequence: the design stands (no fallback to the bind mount). Open observation for the live
+  gates: `ab.chatgpt.com` and `*.oaiusercontent.com` are not in `ENGINE_HOSTS.codex`, so with *Allow
+  network* OFF those calls are refused — the gate below checks the turn still answers.
+
+### Regression
+
+- [x] JWT placeholder and `jwt` swap (`test/codex-token-relay.test.js`): the shaped token keeps the
+      real header and claims, its signature IS the core, the real signature is gone;
+      `corePlaceholder`/`findPlaceholders`/`placeholdersInRequest` find the core inside `Bearer
+      <jwt>`; a non-JWT or a non-object header is refused. A `jwt` grant replaces the WHOLE token on
+      `chatgpt.com`, `api.openai.com` and `auth.openai.com` (the scrub map maps the live token back
+      to the whole placeholder), leaves it unchanged on another host (`host`) or another header; a
+      bare placeholder is refused by the jwt grant (`format`) and the JWT one by a bearer grant —
+      never a partial swap. `CODEX_RELAY_RULE` is jwt-only, Authorization-only, equal to
+      `ENGINE_HOSTS.codex`; `relayRuleFor` knows only the two relays.
+- [x] The daemon's login (`test/codex-token-relay.test.js`): `resolveCodexLogin` → `chatgpt` /
+      `api-key` / `none` over the candidate list; `readDaemonCodexAccessToken` returns expiry,
+      account and plan and never the refresh token; a token inside 48 h triggers ONE refresh for two
+      concurrent callers and both get the renewed token; a fresh token none; a refresh the CLI
+      declines is not retried for 6 h (then retried); an expired, unrenewed token → no token and a
+      `codex login` remedy. The refresh turn is `codex exec --ephemeral --ignore-user-config
+      --skip-git-repo-check -s read-only -m gpt-5.6-luna`, `CODEX_HOME` = the login's own dir, stdin
+      closed, cwd not the login dir. The container file has the placeholder token, the id_token's
+      claims with `CODEX_ID_TOKEN_SIGNATURE`, `refresh_token: ""`, `last_refresh` = now.
+- [x] The grant (`test/codex-token-relay.test.js`): `containerCodexCredential` binds a per-channel
+      placeholder (`codexRelayPlaceholderFor`), different per channel, whose grant resolves to the
+      LIVE token with format `jwt` on the Codex hosts; the container file carries no real signature
+      and an empty refresh token; no egress → an error, no relay → the error, never a real token.
+- [x] Modes and mounts (`test/container-credentials.test.js`): egress active + ChatGPT login →
+      `relay`, `codexAuthFile: ""`; bridge → `shared-file` with the mount; an API-key login →
+      `shared-file` even behind the proxy; `credentialError` in relay mode needs a relayable login
+      NOW (signed out → the `codex login` remedy); the notes say relay, not shared; `ensureUp`
+      under an active plan (fake provider) settles `relay`, mounts no `codex-auth` and the create
+      argv names no `auth.json`. `writeHomeFile` refuses a path outside HOME (and `..`), refuses a
+      mounted destination (`/proc/self/mountinfo` guard), stages 0600, `cp`s to `<file>.cg-tmp`,
+      `mv -f`s into place (never `cp` onto the destination) and removes the staging copy.
+- [x] The runner (`test/codex-auth.test.js`): in relay mode the file is written through
+      `writeHomeFile` to `/home/agent/.codex/auth.json` BEFORE the spawn; a missing relay fails the
+      turn pre-spawn as a replay-safe `authentication` failure (no spawn).
+      `installRelayedCodexLogin` refuses while a `codex-auth` mount is still on the target and
+      without `writeHomeFile` (`test/codex-token-relay.test.js`).
+- [x] SSH (`test/ssh-session.test.js`): a relay-mode session places the login first (Codex ready);
+      a failure to place it makes `codex.ready` false with the reason while Claude is unaffected;
+      shared-file mode writes nothing.
+- [x] `cg-init` (`test/container-image.test.js`): the Codex block, re-pointed at a scratch file,
+      leaves a refresh-token file alone outside proxy mode, removes it under `CG_EGRESS=proxy`, and
+      keeps the daemon's access-only file.
+- [x] Strict default (`test/egress-run.test.js`, `test/secrets-tool.test.js`): a pinned-off install
+      keeps `RAW_THING` raw and flagged (Claude and Codex); strict withholds it — absent from the
+      env, named in the "Withheld by the gateway's strict egress setting" line — while a ruled
+      secret stays its placeholder; `pinEgressSecretsStrictDefault` stores `false` for a configured
+      install, `true` for a new one and never touches a stored value. `list_secrets` ends with a
+      **Finding** line naming the unruled secrets (not the ruled `GITHUB_TOKEN`) as WITHHELD under
+      strict / injected RAW when off, and none when every secret is ruled.
+- [x] Static rule (`test/static-secret-writes.test.js`, `npm run check:static`): a fixture writing
+      `composioUserToken` through two derived names, `relay.token` under `sshUserDir(...)` and
+      `resolvedRunEnv` via `writePrivate` → three findings with file:line; another path, a
+      non-secret content and a marked reviewed exception → none; the repository's `src/` → none.
+- [x] Retired helper (`test/container-credentials.test.js`): `helperCommand(t, "mcp-remote")` is an
+      unknown helper; every remaining helper resolves inside the image.
+
+### Live gates — all UNEXECUTED
+
+Common setup: this branch deployed, `npm run build:image` (spec 1.6.0; `cg-init` changed), the host
+signed in with `codex login` (ChatGPT), Settings → Container runtime with *Legacy open network* OFF,
+a Slack test channel `p4-codex` on engine Codex with *Allow network* OFF, and a second channel
+`p4-other`. Note before starting: `stat -c '%y' ~/.codex/auth.json` and
+`jq -r '.tokens.access_token|split(".")[1]|@base64d|fromjson|.exp' ~/.codex/auth.json`.
+
+- [ ] UNEXECUTED (Codex) — no real login in the container. Send "reply with the word pong" in
+      `p4-codex`. Evidence: the reply `pong`; `podman inspect <container> --format '{{range
+      .Mounts}}{{.Destination}} {{end}}'` lists no `/home/agent/.codex/auth.json`; `podman exec
+      <container> sh -c "jq '{r: .tokens.refresh_token, s: (.tokens.access_token|split(\".\")[2][0:6])}'
+      /home/agent/.codex/auth.json"` → `{"r": "", "s": "cgph_r"}`; `/api/health` →
+      `containerRuntime.egress` counters show swaps for the channel; the host file's mtime and `exp`
+      unchanged by the turn. Pass: all four.
+- [ ] UNEXECUTED (Codex) — network OFF still answers. Same channel, *Allow network* OFF (the
+      default): a two-turn conversation ("remember 7", then "what number?"). Evidence: both answer;
+      `egress` events may show `ab.chatgpt.com` / `*.oaiusercontent.com` blocked
+      (`network-off`) — record which. Pass: both turns answer; if either fails, the blocked host is
+      the finding (add it to `ENGINE_HOSTS.codex`).
+- [ ] UNEXECUTED (Codex) — an existing container is recreated once. On a channel created BEFORE
+      this deploy: note `podman inspect -f '{{.Id}}' <container>`, run a Codex turn. Evidence: the
+      container ID changed exactly once (a second turn keeps it), and the file inside is the
+      access-only one. Pass: both.
+- [ ] UNEXECUTED (Codex) — the placeholder is worthless elsewhere. From `p4-other`'s container:
+      `podman exec <p4-other> sh -c 'curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization:
+      Bearer <p4-codex placeholder JWT from the first gate>" https://chatgpt.com/backend-api/codex/models'`
+      → 403 (`secret-refused`, reason `other-channel`, audited); the same `curl` from the HOST (no
+      proxy) → 401. Pass: neither succeeds.
+- [ ] UNEXECUTED (Codex) — the refresh. When the host token is inside 48 h of `exp` (or on a scratch
+      install signed in 8+ days earlier), send a Codex turn. Evidence: the daemon log shows the
+      refresh turn (or its `[codex-relay] host refresh turn exited …` warning), and either the host
+      file's `exp` moved forward, or it did not and no second refresh turn runs within 6 h while
+      turns keep answering; after the real `exp` passes, the next turn refreshes (host `exp` moves)
+      and answers. Pass: turns never fail because the relay went stale.
+- [ ] UNEXECUTED (Codex) — SSH before the first turn. On a new relay channel with SSH granted:
+      `ssh <channel>`, then `codex exec "reply pong" </dev/null`. Evidence: `pong`; `jq -r
+      .tokens.refresh_token ~/.codex/auth.json` is empty. Pass: both.
+- [ ] UNEXECUTED (Codex) — the legacy bridge keeps the documented exposure. Turn *Legacy open
+      network* ON, send a Codex turn. Evidence: the container is recreated with the
+      `/home/agent/.codex/auth.json` file mount again and the turn answers; turn it OFF again →
+      recreated without it. Pass: both directions.
+- [ ] UNEXECUTED (engine-independent) — a pre-relay leftover is removed. `podman exec <container>
+      sh -c 'printf "{\"tokens\":{\"refresh_token\":\"x\"}}" > /home/agent/.codex/auth.json'`, then
+      `podman restart <container>`: the file is gone. Pass: gone.
+- [ ] UNEXECUTED (Claude AND Codex) — strict default. On a FRESH install (empty runtime root): the
+      Settings page shows *Withhold unprotected secrets* checked; add channel secret `RAW_THING`
+      (no hosts) and ask each engine "is RAW_THING set? answer yes or no, never print it" → "no";
+      `list_secrets` ends with `**Finding:** 1 secret has no egress rule — \`RAW_THING\`: WITHHELD
+      …`. On an UPGRADED install (a pre-P4 runtime root): the box is unchecked after the first boot,
+      `RAW_THING` is set in the run, and the finding says RAW. Pass: all.
+
 ## SSH and VS Code sessions on placeholders (container-secrets P3)
 
 Fixtures: the scratch runtime root of `test/helpers.js` (real `egress_grants` rows, real org /
@@ -5757,7 +5916,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [x] Unit: the mount contract — the kinds are exactly workdir/clean/artifacts/home/socket/
       codex-auth; every bind source is absolute; nothing under `config/`, never `gateway.db`, never
       the gateway root itself, never the per-channel metadata folder; the socket mount is read-only;
-      the Codex credential is a single file mount; and workdir/clean/artifacts have IDENTICAL source
+      the Codex credential is a single file mount (only outside the egress proxy since P4 — behind
+      it Codex is relayed with no mount); and workdir/clean/artifacts have IDENTICAL source
       and target paths (automated: `test/container-lifecycle.test.js`).
 - [x] Unit: the fingerprint covers create-time configuration only — a new image ID changes it, a
       network-mode change changes it, a per-exec meta change does not (automated).
@@ -6042,7 +6202,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       copied or mounted; no token and no login anywhere is `missing`; a readable login settles to
       `relay` whether it is the OPERATOR's own `~/.claude` or one signed in to the gateway's engine
       home, with nothing copied or mounted either way; Codex resolves to `shared-file` or `missing`
-      in candidate order.
+      in candidate order (and to `relay` behind the egress proxy — see P4).
       `credentialError()` returns null when the engine can run and otherwise names the exact remedy
       per engine — including when it is called BEFORE `ensureUp` has settled the target (automated:
       `test/container-credentials.test.js`).
@@ -6051,7 +6211,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       and mounts — with no Codex login there is NO `codex-auth` mount on the run argv, and a login
       that appears between two passes brings the mount back without duplicating it (automated).
 - [x] Unit: `helperCommand()` returns image-bundle paths only and never a checkout path (the Stop
-      hook, the Codex secret-env bridge, the remote-secret bridge, and the gateway MCP bridge —
+      hook, the Codex secret-env bridge, and the gateway MCP bridge (the remote-secret bridge was
+      retired in P4) —
       which Composio SDK mode reuses as a second service); an unknown helper throws; the returned
       object is a copy, so a caller cannot corrupt the table (automated).
 - [x] Unit: spawn before `ensureUp` emits an `error` event on the child instead of throwing;
@@ -6299,8 +6460,9 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       commit, and push with the channel's own `GH_TOKEN` (or a HOME-volume `gh` login) from inside
       the container; the identical-path mount keeps every absolute path the model prints valid on
       the host.
-- [ ] Live: **Codex in a container, and honest failover** — a Codex turn answers using the shared
-      sign-in file mount; a Claude turn that hits a provider outage fails over to Codex in the same
+- [ ] Live: **Codex in a container, and honest failover** — a Codex turn answers using the relayed
+      access-only login behind the egress proxy (the shared sign-in file mount only in the legacy
+      bridge mode — see P4); a Claude turn that hits a provider outage fails over to Codex in the same
       container; and a turn on a user-PINNED harness fails with that harness's own error plus the
       manual-switch hint instead of being answered by the other engine.
 - [ ] Live: **the idle reaper and a scheduled cold start** — an idle channel's container stops after

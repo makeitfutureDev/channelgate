@@ -104,8 +104,10 @@ and pin public destination IPs.
 Claude runs authenticate with a relay of the host user's own `claude` login — its short-lived
 access token, refreshed on the host; the credentials file is never copied or mounted — or with a
 configured `claude setup-token` or the daemon's `ANTHROPIC_API_KEY`. Codex sessions are per channel
-while its host sign-in file is bind-mounted into the channel containers, so that sign-in is one
-shared identity across channels. Either way the provider identity is organization-wide: that is a
+while its host sign-in is relayed the same way behind the egress proxy (an access-only file with a
+placeholder token and no refresh token in each channel's home; the host file itself is bind-mounted
+only in the legacy open-network mode or for an API-key login), so that sign-in is one shared
+identity across channels. Either way the provider identity is organization-wide: that is a
 shared provider identity, not an assertion of independent per-user billing. Container-native CLI
 credentials persist in the channel home. Personal/shared MCP credentials are resolved for each run and may be written into
 protected transient runtime bundles; those bundles must be included in the retention assessment.

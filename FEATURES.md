@@ -2326,9 +2326,10 @@ are retired, bullet by bullet; everything else stands.
   sides: the channel's resolved workdir, the clean workspace (so clean mode works in a container),
   and the per-channel artifact dir `~/ChannelGate/.runtime/<platform>/<slug>` (0700) that holds this
   run's engine-facing files. The channel's HOME is a **named volume** at `/home/agent`; the daemon's
-  MCP socket directory is mounted **read-only** at `/run/channelgate`; the Codex `auth.json` is a
-  single-FILE mount (the one deliberate exception to "mount directories, never single files" — see
-  the credential bullet); `/tmp` and `/var/tmp` are per-channel bind mounts too, for durability (own
+  MCP socket directory is mounted **read-only** at `/run/channelgate`; outside the egress proxy the
+  Codex `auth.json` is a single-FILE mount (the one deliberate exception to "mount directories,
+  never single files" — see the credential bullet; behind the proxy Codex is relayed with no mount,
+  container-secrets P4); `/tmp` and `/var/tmp` are per-channel bind mounts too, for durability (own
   bullet below). Hardening: tmpfs `/run` only (64m, noexec — pid files and the socket mount, which
   must be fresh at every start);
   `--cap-drop ALL` plus only `DAC_OVERRIDE`/`CHOWN`/`FOWNER`; `--security-opt no-new-privileges`;
@@ -2535,12 +2536,14 @@ are retired, bullet by bullet; everything else stands.
   at all, and no forked refresh chain: an access token cannot rotate anything, whereas a copy that
   refreshes would log the gateway out (it did, live, on 2026-09-02). The daemon's own
   `ANTHROPIC_API_KEY` is the third mode, for service installs with no login. With none of them the
-  mode is **missing** and a Claude turn fails closed. Codex is the opposite case — it rewrites `auth.json`
-  IN PLACE, so a copy would fork the refresh chain and one side would eventually lose the race — and
-  therefore gets a shared read-write FILE mount of the gateway's real auth file. What is ISOLATED
+  mode is **missing** and a Claude turn fails closed. Codex rewrites `auth.json` IN PLACE, so a copy
+  would fork the refresh chain and one side would eventually lose the race; behind the egress proxy
+  it is therefore RELAYED like Claude (an access-only file with a placeholder token, written by the
+  runner — container-secrets P4), and only the legacy bridge mode or an API-key login still gets a
+  shared read-write FILE mount of the gateway's real auth file. What is ISOLATED
   per channel: the whole HOME volume — CLI logins, npm prefix, dotfiles, caches, the Claude config
   dir (transcripts, prompt history, todos, shell snapshots) and `CODEX_HOME` (sessions, history).
-  What is SHARED: the Codex sign-in file, and nothing else; `describe()` compares its inode so a
+  What is SHARED (bridge mode / API-key login only): the Codex sign-in file, and nothing else; `describe()` compares its inode so a
   container still holding a login the host has since replaced is visible rather than silently stale,
   and `/status` carries the caveat in words. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Inside the container, each engine's OWN sandbox is off** — the vendor-sanctioned pattern, and the
@@ -2752,6 +2755,52 @@ are retired, bullet by bullet; everything else stands.
   lease (`canUseGrant`), never a personal one. `show_channel_ssh` and the `gateway-usage`
   administration page say so. → TEST-PLAN: SSH and VS Code sessions on placeholders
   (container-secrets P3).
+- **The Codex login is relayed, not mounted (container-secrets P4).** Behind the egress proxy a
+  channel container no longer bind-mounts the operator's real `~/.codex/auth.json` (refresh token
+  included, one file shared by every channel). Before every Codex spawn — turn, failover, background
+  agent, schedule, update smoke — and when an SSH session is prepared, the runner writes an
+  ACCESS-ONLY `/home/agent/.codex/auth.json` into the channel's own HOME volume through the backend's
+  new optional `writeHomeFile` (staged 0600 through the artifact dir, `mv -f` into place, refused
+  while the destination is still a mount): `auth_mode: "chatgpt"`, the access token = the channel's
+  relay placeholder in JWT SHAPE (`placeholders.js`: the real token's header and claims — plan,
+  account, expiry, which the CLI reads locally — with `cgph_r…` as the signature segment, because
+  codex-cli rejects a non-JWT), the id_token's claims with a non-signature, the account id,
+  `refresh_token: ""` and `last_refresh` = now. The proxy's new `jwt` format replaces the WHOLE token
+  with the live access token in the Authorization header on `api.openai.com`, `chatgpt.com` and
+  `auth.openai.com` only (grant `relay`/`CODEX_ACCESS_TOKEN`, 60 s cache, channel-live liveness like
+  Claude's); a jwt grant never swaps a bare placeholder and a bearer grant never a JWT-shaped one.
+  The daemon owns the refresh (`src/gateway/codex-token-relay.js`, the twin of
+  `claude-token-relay.js`): when the access token has less than 48 h left it runs one cheap
+  `codex exec --ephemeral --ignore-user-config -m gpt-5.6-luna` turn in the login's own `CODEX_HOME`
+  under a keyed lock, and backs off 6 h when the CLI declines to renew a still-valid token. The
+  container's Codex mode is `relay` (`credentialError` refuses a run with no relayable ChatGPT
+  sign-in, naming `codex login`); the mount leaves the fingerprint, so each container is recreated
+  once. `cg-init` removes, under the proxy, a leftover Codex login carrying a refresh token (never a
+  mounted file). Still the shared file (the documented remaining exposure): the LEGACY bridge egress
+  mode and an API-key `auth.json`; a daemon `OPENAI_API_KEY`/`CODEX_API_KEY` still rides the
+  container env raw. Spike: codex-cli 0.156.1 runs a turn on an access-only file, does not refresh on
+  `last_refresh` age, and a refresh attempt with the empty refresh token is rejected (400
+  `empty_string`). → TEST-PLAN: Codex login relay, strict secrets, static check (container-secrets P4).
+- **Unruled secrets are withheld by default on new installs (container-secrets P4).**
+  `containerEgressSecretsStrict` reads an absent value as ON, and the daemon stores it once at boot:
+  `true` for a brand-new install, `false` for an install whose operator had configured it before
+  this release (read before the first-boot password is saved), so an upgrade never silently
+  withholds a secret a working channel uses; a stored choice is never changed. `list_secrets` ends
+  with a **Finding** line naming every listed secret that has no egress rule and what happens to it
+  (withheld under strict, raw otherwise, raw today under the legacy bridge) and how to declare its
+  hosts; the settings UI says the same. → TEST-PLAN: Codex login relay, strict secrets, static check
+  (container-secrets P4).
+- **A static check keeps secrets out of the artifact dir (container-secrets P4).**
+  `npm run check:static` runs `scripts/static-secret-writes.mjs` over `src/`: a `writeFile*` /
+  `appendFile*` / `writePrivate` / `writeSecretFile` call whose path mentions `artifactDir`,
+  `runArtifactRoot`, `sshUserDir`, `sshUsersDir`, `channelArtifactDir` or a name derived from one
+  (to a fixpoint, per file) fails the check when its content mentions `composioUserToken`,
+  `composioToken`, `toolboxToken`, `makeToolboxKey`, `relay.token`, `resolvedRunEnv` or
+  `realValues`; a reviewed exception says `static-check: allow-secret-artifact-write <why>` (today
+  only the VS Code token file, which holds the relay placeholder behind the proxy). The retired
+  `src/mcp/remote-secret-bridge.js` and its `mcp-remote` runtime helper are gone: since the P1
+  relay nothing bridged a remote MCP through them. → TEST-PLAN: Codex login relay, strict secrets,
+  static check (container-secrets P4).
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's
   pid names the host-side `exec` CLIENT, never the engine, so liveness and signals are asked of the
   backend: a probe execs `cg-probe <runId>` against the process-group leader `cg-exec` recorded
