@@ -18,9 +18,33 @@ const sign = (payload, secret) => createHmac("sha256", secret).update(payload).d
 // older build (or by a path that still relies on the env) verifies exactly as before and the
 // reader falls back to its environment. Neither can WIDEN anything: an absent/blank toolset is the
 // full control plane (today's default) and progressReport only adds one ack-only tool.
-export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+//
+// `remoteMcps` (optional, P1 of the container-secrets plan) names the header-bearing remote MCP
+// servers this run may reach through the daemon's `remote-mcp` socket relay. The names are the
+// whole claim — the URL and the credential live only in the daemon's in-memory registry
+// (src/mcp/remote-mcp-registry.js), keyed by this token's `jti` — so a container holding the token
+// can dial exactly those servers and nothing else, and never sees their headers. `jti` may be
+// fixed by the caller so it can register under the same key before handing the token out.
+export const REMOTE_MCP_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+export const MAX_REMOTE_MCPS = 16;
+const MAX_REMOTE_MCP_NAME = 64;
+
+export function validRemoteMcpName(name) {
+  return typeof name === "string" && name.length > 0 && name.length <= MAX_REMOTE_MCP_NAME && REMOTE_MCP_NAME_RE.test(name);
+}
+
+function validRemoteMcps(claims) {
+  if (claims.remoteMcps === undefined) return true; // older grants authorize no relayed servers
+  return Array.isArray(claims.remoteMcps) && claims.remoteMcps.length <= MAX_REMOTE_MCPS &&
+    claims.remoteMcps.every(validRemoteMcpName) && new Set(claims.remoteMcps).size === claims.remoteMcps.length;
+}
+
+export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
   if (!secret || !channelId || !slug || !authorId || !threadKey || !ORIGINS.has(origin)) {
     throw new Error("Cannot mint gateway capability without a complete run identity");
+  }
+  if (jti !== undefined && (typeof jti !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(jti))) {
+    throw new Error("Invalid gateway capability id");
   }
   const ttl = Math.min(Math.max(1, Number(ttlMs) || DEFAULT_TTL_MS), MAX_TTL_MS);
   const claims = {
@@ -36,12 +60,14 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     toolset: String(toolset || ""),
     progressReport: progressReport === true,
     composioSessions,
+    ...(remoteMcps !== undefined ? { remoteMcps } : {}),
     scope: "gateway-tools",
     iat: now,
     exp: now + ttl,
-    jti: randomUUID(),
+    jti: jti || randomUUID(),
   };
   if (!validComposioGrants(claims)) throw new Error("Invalid Composio session grants");
+  if (!validRemoteMcps(claims)) throw new Error("Invalid remote MCP grants");
   const payload = encode(JSON.stringify(claims));
   return `${payload}.${sign(payload, secret)}`;
 }
@@ -81,10 +107,19 @@ export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}
   // omits both is still a valid grant, and the reader falls back to its environment.
   if (claims.toolset !== undefined && typeof claims.toolset !== "string") return { ok: false, reason: "invalid capability toolset" };
   if (claims.progressReport !== undefined && typeof claims.progressReport !== "boolean") return { ok: false, reason: "invalid capability progress claim" };
+  if (!validRemoteMcps(claims)) return { ok: false, reason: "invalid remote MCP grants" };
   if (!Number.isFinite(claims.iat) || !Number.isFinite(claims.exp) || claims.iat > now + 30_000 || claims.exp <= now || claims.exp - claims.iat > MAX_TTL_MS) {
     return { ok: false, reason: "expired or invalid capability lifetime" };
   }
   return { ok: true, claims };
+}
+
+// The claims of a token THIS process just minted, without re-checking the signature — for the
+// minting caller that needs the exp/jti it has to register under (src/gateway/mcp.js). Never an
+// authorization decision: anything arriving from outside goes through verifyGatewayCapability.
+export function mintedCapabilityClaims(token) {
+  const [payload] = String(token || "").split(".");
+  return JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
 }
 
 export const GATEWAY_CAPABILITY_TTL_MS = DEFAULT_TTL_MS;
