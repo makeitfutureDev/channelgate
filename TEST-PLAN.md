@@ -1,5 +1,52 @@
 # ChannelGate — Test Plan
 
+## Egress QA campaign fixes (2026-09-27, beta `a1845f2` findings EGR-03, RELAY-01, audit noise, CTR-20 text)
+
+Fixtures: the scratch runtime root of `test/helpers.js`, temp artifact dirs with `utimes`-aged
+files and symlinks, the fake container CLI (`test/container-fake-cli.js`), the real egress service
+with its sockets, and the `test/fixtures/codex` stub.
+
+### Regression
+
+- [x] Chromium flags (`test/browser-env.test.js`, `test/container-egress-env.test.js`,
+      `test/ssh-access.test.js`, `test/ssh-session.test.js`, engine-independent):
+      `AGENT_BROWSER_ARGS` is `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=<hash>`,
+      `BROWSER_ARGS_SEPARATOR` is `,`, the value has no whitespace, splitting it on `/[,\n]/` (what
+      agent-browser 0.36.0 does) yields exactly those two flags with a `+`/`/`/`=` hash intact, and it
+      round-trips through the SSH `SetEnv` line and session env file.
+- [x] Stale per-run credential files (`test/container-lifecycle.test.js`, engine-independent): files
+      older than six hours named `cg-mcp-*.json`, `cg-mcp-review-*.json`, `run/cg-codex-secrets-*.json`
+      and `…-<server>.headers.cjs` are removed; minutes-old ones, other names, a symlink named like a
+      target (and its outside target) and a symlinked `run/` are untouched; `ensureUp` on a missing
+      container sweeps before the create and logs `[container] swept 2 stale per-run credential
+      file(s) from stale-run-create` once; `bootReconcile` sweeps a container that was already running.
+- [x] Audit policy (`test/egress-service.test.js`, `test/egress-rules.test.js`, engine-independent):
+      a canUse refusal carries its grant's `scope`; `recordAudit` of a request whose only refusals are
+      `channel-idle` on `relay` grants (Claude or Codex relay) raises `requests` and `refused` in
+      `egressStatus()` but writes no `egress` row; a relay refused for another reason, a channel
+      grant refused `channel-idle` (alone or beside an idle relay), an unknown placeholder, a scopeless
+      refusal, a block, a non-relay swap and a tunnel each still write exactly one row.
+- [x] Node proxy warning (`test/codex-auth.test.js`, `test/container-egress-env.test.js`): a
+      proxy-mode `buildCodexEnv` sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA` over a channel
+      secret and a host value of that name, a non-proxy target sets none; `codexDiagnosticLine` of the
+      warning plus its hint is empty; the stub printing them before `Killed` / exit 137 fails with
+      "forcibly stopped … Killed" and no `UNDICI-EHPA`/`EnvHttpProxyAgent`/`trace-warnings` in the
+      message or any `engine_note`, while `details.stderr` still holds the warning.
+
+### Live gates (Claude AND Codex) — UNEXECUTED
+
+- [ ] EGR-03 re-run after a daemon restart on this branch: in a proxy-mode channel with *Allow
+      network* on, ask each engine to `agent-browser open https://example.com` and snapshot the page.
+      Pass: the page title is returned, no `ERR_INTERNET_DISCONNECTED`.
+- [ ] RELAY-01 re-run: `touch -d '2 days ago'` a `cg-mcp-test.json` in the channel's artifact dir, let
+      the idle reaper stop the container, then send a turn. Pass: the file is gone, the daemon log has
+      the `swept 1 stale per-run credential file(s)` line, a fresh turn still answers with its tools.
+- [ ] Audit noise: leave a warm Claude channel idle 10 minutes. Pass: no new `egress` rows with
+      `channel-idle` for `CLAUDE_CODE_OAUTH_TOKEN`; `/api/health` → `containerRuntime.egress` counters
+      still rise.
+- [ ] Codex text: a Codex turn in a proxy-mode channel. Pass: no `[UNDICI-EHPA]` in the status row,
+      and a stopped turn's failure sentence names no Node warning.
+
 ## Codex login relay, strict secrets, static check (container-secrets P4)
 
 Fixtures: the scratch runtime root of `test/helpers.js` (real `egress_grants` rows, a real
