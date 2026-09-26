@@ -18,6 +18,7 @@ product overview.
 
 ## Unreleased
 
+- Channel image spec 1.6.1: the image now ships `bubblewrap`. Codex 0.156.1 refuses to run any command in a read-only sandbox without it ("filesystem-restricted execution requires bubblewrap"), so Read-mode Codex channels could not execute a probe since the 0.156.1 pin (found by the 2026-09-27 live campaign, EN-01/CTR-06/MD-02 on Codex). Rebuild with `npm run build:image`.
 - **The browser works behind the egress proxy.** Chromium's proxy and certificate flags were joined
   with a space, which agent-browser does not split, so every page failed with
   `ERR_INTERNET_DISCONNECTED` in a proxy-mode channel. They are now comma-separated.
