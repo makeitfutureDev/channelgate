@@ -6,6 +6,7 @@ import { getUsers, setUser } from "../../config/store.js";
 import { getDefaultNudges, userNudgesEnabled } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
 import { cleanAccessGrants } from "./helpers.js";
+import { revokeRemoteMcpsForAuthor } from "../../mcp/remote-mcp-registry.js";
 // A person's OWN environment secrets (config/scoped-env.js). Same write-only contract as a
 // channel's: listUserEnv's masked shape is the only thing that may leave the process.
 import { listUserEnv, patchUserEnv } from "../../config/scoped-env.js";
@@ -180,6 +181,9 @@ export function createUsersRouter() {
         Object.assign(patch, cleanAccessGrants(body.accessGrants));
 
       const saved = await setUser(userId, patch);
+      // The admin UI's "clear token" is the same revocation as clear_my_composio_token /
+      // clear_my_toolbox_token: in-flight container relays for that person's runs stop now.
+      if (patch.composioToken === "" || patch.toolboxToken === "") revokeRemoteMcpsForAuthor(userId);
       res.json({
         ok: true,
         user: {

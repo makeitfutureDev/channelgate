@@ -911,3 +911,14 @@ test("plugin skill catalogs replace grants independently on fresh, resumed, and 
     }
   }
 });
+
+test("a remote whose header the relay cannot carry is skipped in a container, like the Claude config drops it", () => {
+  const bundle = `${target.artifactDir}/run/codex-secrets.json`;
+  const args = argsFor({
+    composioUserEndpoint: { url: "https://composio.example/mcp", headers: { "x-consumer-api-key": "ck_bad\r\nX-Injected: 1" } },
+    composioToken: "ck_shared_fine",
+    secretBundlePath: bundle,
+  });
+  assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.composio-user.")), "no entry the socket would refuse");
+  assert.ok(args.includes(`mcp_servers.composio-agent.env.CG_MCP_SERVICE="remote-mcp"`), "the others still relay");
+});

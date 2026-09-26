@@ -54,3 +54,56 @@ test("registrations are bounded and never echo a value in their refusal", () => 
   registerRemoteMcps({ jti: "j-max", exp: NOW + 1_000, servers: { a: { url: "https://h.example/mcp", headers: { Authorization: "x".repeat(8 * 1024) } } }, now: NOW });
   clearRemoteMcps("j-max");
 });
+
+test("holds: the minting caller's release drops an unheld grant; a relay connection's hold outlives it", async () => {
+  const { releaseRemoteMcps, retainRemoteMcps, hasRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
+  const exp = Date.now() + 60_000;
+  registerRemoteMcps({ jti: "hold-cold", exp, servers });
+  releaseRemoteMcps("hold-cold");
+  assert.equal(hasRemoteMcps("hold-cold"), false, "a cold turn's grant goes when the turn settles");
+
+  registerRemoteMcps({ jti: "hold-warm", exp, servers });
+  const connection = retainRemoteMcps("hold-warm");
+  releaseRemoteMcps("hold-warm");
+  assert.equal(hasRemoteMcps("hold-warm"), true, "a warm process's open relay keeps it");
+  connection();
+  connection(); // idempotent
+  assert.equal(hasRemoteMcps("hold-warm"), false, "and it goes when that process hangs up");
+  assert.equal(typeof retainRemoteMcps("never-registered"), "function");
+});
+
+test("clearRemoteMcpsWhere drops by metadata, held or not, and sees no values", async () => {
+  const { clearRemoteMcpsWhere, retainRemoteMcps, hasRemoteMcps, revokeRemoteMcpsForAuthor } = await import("../src/mcp/remote-mcp-registry.js");
+  const exp = Date.now() + 60_000;
+  registerRemoteMcps({ jti: "w-1", exp, servers, meta: { channelId: "C1", slug: "one", authorId: "U1", origin: "ssh_session", headers: "ignored" } });
+  registerRemoteMcps({ jti: "w-2", exp, servers, meta: { channelId: "C2", slug: "two", authorId: "U1", origin: "slack_foreground" } });
+  registerRemoteMcps({ jti: "w-3", exp, servers, meta: { channelId: "C1", slug: "one", authorId: "U2", origin: "ssh_session" } });
+  retainRemoteMcps("w-1");
+  const seen = [];
+  assert.equal(clearRemoteMcpsWhere((meta, jti) => { seen.push([jti, meta]); return meta.origin === "ssh_session" && meta.authorId === "U1"; }), 1);
+  assert.ok(!hasRemoteMcps("w-1"), "held or not");
+  assert.deepEqual(Object.keys(seen[0][1]).sort(), ["authorId", "channelId", "origin", "slug"], "metadata only");
+  assert.equal(revokeRemoteMcpsForAuthor("U1"), 1);
+  assert.ok(!hasRemoteMcps("w-2") && hasRemoteMcps("w-3"));
+  assert.equal(clearRemoteMcpsWhere(() => { throw new Error("predicate bug"); }), 0, "a throwing predicate drops nothing");
+  clearRemoteMcps("w-3");
+});
+
+test("remoteMcpServerProblem judges one server at a time, value-free", async () => {
+  const { remoteMcpServerProblem } = await import("../src/mcp/remote-mcp-registry.js");
+  assert.equal(remoteMcpServerProblem(servers["composio-user"]), "");
+  const bad = [
+    { url: "http://h.example/mcp", headers: {} },
+    { url: "https://h.example/mcp", headers: { Authorization: "Bearer a\r\nX-Evil: 1" } },
+    { url: "https://h.example/mcp", headers: { Authorization: 5 } },
+    { url: "https://h.example/mcp", headers: { Authorization: "x".repeat(8 * 1024 + 1) } },
+    { url: "https://h.example/mcp", headers: { "bad name": "v" } },
+    { url: "https://h.example/mcp", headers: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`h${i}`, "v"])) },
+    { url: "https://h.example/mcp", headers: ["not", "an", "object"] },
+  ];
+  for (const server of bad) {
+    const problem = remoteMcpServerProblem(server);
+    assert.ok(problem, JSON.stringify(server).slice(0, 60));
+    assert.ok(!problem.includes("h.example") && !problem.includes("Bearer") && !problem.includes("xxx"), problem);
+  }
+});

@@ -2,6 +2,7 @@
 // A fallback is a new authority decision, not merely another runner: engine-scoped mutations are
 // authorized from this claim, so Claude's capability must never be reused by a Codex fallback.
 import { buildMcpRuntimePayload } from "./mcp.js";
+import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { requireAdapter } from "../engines/registry.js";
 import { requirePluginRuntime } from "./plugin-runtime.js";
 import { safeCodexMcpDefinition } from "./mcp-discovery.js";
@@ -18,14 +19,24 @@ const CAPABILITY_FINGERPRINT_BUCKET_MS = 5 * 60 * 60 * 1000;
 export async function buildEngineMcpRuntime({ clean = false, engine = "claude", target = null, allowedMcps = [], pluginRuntime = null, fingerprintNow = Date.now(), ...identity } = {}) {
   if (clean) {
     const mcpConfigJson = JSON.stringify({ mcpServers: {} });
-    return { mcpConfigJson, mcpConfigFingerprint: mcpConfigJson, gatewayCapability: "", rejectedMcps: [] };
+    return { mcpConfigJson, mcpConfigFingerprint: mcpConfigJson, gatewayCapability: "", relayJti: "", rejectedMcps: [] };
   }
   // Every engine's resolver answers { servers, rejected }: an optional selection it cannot admit
   // safely is dropped here rather than ending the turn, and `rejectedMcps` is what the caller
   // reports in the thread so the drop is visible to the admin who has to fix the selection.
   const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps) || {};
-  const optionalServers = optional.servers || {};
   const payload = await buildMcpRuntimePayload({ ...identity, engine, target });
+  try {
+    return finishEngineMcpRuntime({ payload, optional, engine, pluginRuntime, fingerprintNow, identity });
+  } catch (error) {
+    // A payload the caller never receives must not leave its relay registration behind.
+    if (payload.relayJti) releaseRemoteMcps(payload.relayJti);
+    throw error;
+  }
+}
+
+function finishEngineMcpRuntime({ payload, optional, engine, pluginRuntime, fingerprintNow, identity }) {
+  const optionalServers = optional.servers || {};
   // A built-in remote an isolated run could not be relayed (a non-https override) is reported the
   // same way as an unadmittable selection: dropped, named, never silently absent.
   const rejectedMcps = [...(Array.isArray(optional.rejected) ? optional.rejected : []), ...(payload.rejectedRemotes || [])];
@@ -76,6 +87,9 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
     mcpConfigJson,
     mcpConfigFingerprint: JSON.stringify(fingerprintView),
     gatewayCapability,
+    // The relay registration this payload's capability took (src/gateway/mcp.js), or "". The
+    // caller holds it and must releaseRemoteMcps() it when the run settles.
+    relayJti: payload.relayJti || "",
     pluginServers,
     rejectedMcps,
   };

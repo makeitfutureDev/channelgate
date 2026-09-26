@@ -7,6 +7,7 @@
 // The channel's own secrets are WRITTEN where they were: the Slack Secrets modal and the admin UI.
 import { z } from "zod";
 import { setUser } from "../../config/store.js";
+import { revokeRemoteMcpsForAuthor } from "../remote-mcp-registry.js";
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../../config/scoped-env.js";
 import { listChannelEnv } from "../../config/channel-env.js";
 
@@ -58,6 +59,9 @@ export function register(server, ctx) {
     async () => {
       if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
       await setUser(createdBy, { composioToken: "" });
+      // A container run relays the token daemon-side for the life of its capability; a removed
+      // token must stop working now, not in six hours (src/mcp/remote-mcp-registry.js).
+      revokeRemoteMcpsForAuthor(createdBy);
       return text("🗑️ Removed your Composio token.");
     }
   );
@@ -89,6 +93,7 @@ export function register(server, ctx) {
     async () => {
       if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
       await setUser(createdBy, { toolboxToken: "" });
+      revokeRemoteMcpsForAuthor(createdBy); // same reason as clear_my_composio_token
       return text("🗑️ Removed your Toolbox token.");
     }
   );

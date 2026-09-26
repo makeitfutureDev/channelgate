@@ -351,16 +351,32 @@ test("the codex wrapper sources the secrets, applies the overrides and starts in
   assert.equal(execFileSync(helper, ["sh", "-c", "printf %s \"$MAKE_API_ADMIN\""], { encoding: "utf8", env: { PATH: process.env.PATH, CG_SSH_USER: "U1" } }), "mk");
 });
 
-test("re-preparing a session registers a fresh relay grant; the previous one lives out its own capability", async () => {
-  const { lookupRemoteMcp } = await import("../src/mcp/remote-mcp-registry.js");
+test("a refresh releases the previous relay grant unless a running process holds it; the session's end drops them all", async () => {
+  const { hasRemoteMcps, retainRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
   const t = target("ssh-relay-refresh");
-  const jtis = [];
-  for (let i = 0; i < 2; i++) {
+  const sessionEntry = { slug: "ssh-relay-refresh", channelId: "C_RR" };
+  const prepare = async () => {
     const { deps } = fakes();
-    await session.prepareSshSession({ target: t, entry: { slug: "ssh-relay-refresh", channelId: "C_RR" }, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
-    const mcp = JSON.parse(readFileSync(path.join(session.sshUserDir(t, user.id), "mcp.json"), "utf8")).mcpServers;
-    jtis.push(verifyGatewayCapability(mcp.gateway.env.CG_GATEWAY_CAPABILITY, { secret: SECRET }).claims.jti);
-  }
-  assert.notEqual(jtis[0], jtis[1]);
-  for (const jti of jtis) assert.ok(lookupRemoteMcp(jti, "composio-agent"), "a still-running claude keeps the relay it started with");
+    await session.prepareSshSession({ target: t, entry: sessionEntry, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
+    const dir = session.sshUserDir(t, user.id);
+    const mcp = JSON.parse(readFileSync(path.join(dir, "mcp.json"), "utf8")).mcpServers;
+    const codexBundle = JSON.parse(readFileSync(path.join(dir, "codex-secrets.json"), "utf8"));
+    return [mcp.gateway.env.CG_GATEWAY_CAPABILITY, codexBundle.gatewayCapability].map((cap) => verifyGatewayCapability(cap, { secret: SECRET }).claims.jti);
+  };
+  const [claudeFirst, codexFirst] = await prepare();
+  // A `claude` the developer already started holds an open relay connection on its grant.
+  const runningClaude = retainRemoteMcps(claudeFirst);
+  const [claudeSecond, codexSecond] = await prepare();
+  assert.notEqual(claudeFirst, claudeSecond);
+  assert.ok(hasRemoteMcps(claudeFirst), "a running claude keeps the relays it started with");
+  assert.ok(!hasRemoteMcps(codexFirst), "an unused previous grant is released at the refresh, not left for 12 hours");
+  assert.ok(hasRemoteMcps(claudeSecond) && hasRemoteMcps(codexSecond), "the current preparation's grants are live");
+  runningClaude();
+  assert.ok(!hasRemoteMcps(claudeFirst), "and it goes once that process hangs up");
+
+  // The developer's last session ends: every grant it minted goes, even one a process still holds.
+  const stillRunning = retainRemoteMcps(claudeSecond);
+  await session.releaseSshSession({ target: t, entry: sessionEntry, user, cliBin: "podman", lastForUser: true, lastInChannel: false, log: { log() {} } }, { runCommand: async () => {} });
+  assert.ok(!hasRemoteMcps(claudeSecond) && !hasRemoteMcps(codexSecond));
+  stillRunning();
 });

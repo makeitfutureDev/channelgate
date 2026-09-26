@@ -17,6 +17,7 @@ import { withTemplateSkills } from "./skills/templates.js";
 import { resolveSession, resetSession, getSession, saveSession, sessionGeneration, dropMintedSession } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
+import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds } from "../engines/registry.js";
@@ -1079,6 +1080,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   let mcpConfigFingerprint = "";
   let gatewayCapability = "";
   let pluginMcpServers = [];
+  // The relay registrations this turn's capabilities took (primary and fallback; containers only):
+  // the turn holds each until it settles, and releases it in the `finally` below. A cold engine's
+  // bridges have hung up by then, so the grant goes with the run; a warm Claude process keeps it
+  // alive through its own open relay connections for exactly as long as the process lives, and a
+  // turn that only reused a warm process drops its unused grant here (src/mcp/remote-mcp-registry.js).
+  const relayJtis = [];
   // A selected optional MCP the engine cannot admit safely (missing from the host config, needs a
   // host credential, stale transport) is DROPPED from the payload by the engine's resolver instead
   // of failing the run — an optional connector is never worth the turn, and refusing to relay the
@@ -1103,7 +1110,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   };
   const mintGatewayMcpRuntime = async () => {
     let rejectedMcps = [];
-    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, pluginServers: pluginMcpServers = [], rejectedMcps = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    let relayJti = "";
+    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, relayJti = "", pluginServers: pluginMcpServers = [], rejectedMcps = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    if (relayJti) relayJtis.push(relayJti);
     mcpDropNote = await reportRejectedMcps(rejectedMcps, engine);
   };
 
@@ -1479,6 +1488,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // claim to choose allowedCodexMcps vs allowedMcps for mutations; reusing the failed engine's
     // token would cross that authority boundary even though a different runner executes.
     const fallbackMcpRuntime = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine: fallbackEngine, target, allowedMcps: meta[fallbackAdapter.mcpMetaKey] || [] });
+    if (fallbackMcpRuntime.relayJti) relayJtis.push(fallbackMcpRuntime.relayJti);
     // The fallback resolves the OTHER engine's own selections, so it reports its own drops. The
     // primary engine's note is not carried over: this answer came from the fallback.
     const fbMcpDropNote = await reportRejectedMcps(fallbackMcpRuntime.rejectedMcps, fallbackEngine);
@@ -2022,6 +2032,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // sits 0600 under the (read-denied) gateway root until the next boot sweeps it. A turn that
     // failed over wrote two — the primary engine's and the fallback's — so sweep every one.
     for (const file of mcpConfigFiles) await rm(file, { force: true }).catch(() => {});
+    for (const jti of relayJtis) releaseRemoteMcps(jti);
     await grantArtifacts.cleanup().catch(() => {});
   }
 }

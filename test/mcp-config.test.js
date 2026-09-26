@@ -281,6 +281,33 @@ test("an isolated run drops (and reports) a remote whose URL the relay cannot di
   }
 });
 
+test("one malformed header drops only that server (announced), never the whole container turn", async () => {
+  const { buildMcpRuntimePayload } = await import("../src/gateway/mcp.js");
+  const { hasRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
+  for (const headers of [
+    { "x-consumer-api-key": "ck_ok\r\nX-Injected: 1" },
+    { "x-consumer-api-key": 42 },
+    { "x-consumer-api-key": "k".repeat(8 * 1024 + 1) },
+    { "bad header": "v" },
+    Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`h${i}`, "v"])),
+  ]) {
+    const payload = await buildMcpRuntimePayload(withIdentity({
+      composioUserEndpoint: { url: "https://composio.example/mcp", headers },
+      composioToken: "ck_shared_fine",
+      toolboxToken: "tb-fine",
+      target: createFakeRuntime().target(),
+    }));
+    const servers = JSON.parse(payload.configJson).mcpServers;
+    assert.equal(servers["composio-user"], undefined, "the bad server is dropped");
+    assert.equal(servers["composio-agent"].env.CG_MCP_SERVICE, "remote-mcp", "the others still relay");
+    assert.equal(servers["makeitfuture-toolbox"].env.CG_MCP_SERVICE, "remote-mcp");
+    assert.deepEqual(payload.rejectedRemotes.map((r) => r.name), ["composio-user"]);
+    assert.doesNotMatch(payload.rejectedRemotes[0].reason, /ck_ok|composio\.example|kkkk/);
+    assert.deepEqual(payload.relayedMcps, ["composio-agent", "makeitfuture-toolbox"]);
+    assert.ok(hasRemoteMcps(payload.relayJti));
+  }
+});
+
 test("a host target keeps today's direct http entries, byte for byte, and registers nothing", async () => {
   const { remoteMcpRegistryStats } = await import("../src/mcp/remote-mcp-registry.js");
   const { toolboxUrl } = await import("../src/gateway/mcp-catalog.js");
