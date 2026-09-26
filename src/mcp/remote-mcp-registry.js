@@ -23,8 +23,11 @@ const SWEEP_INTERVAL_MS = 60 * 1000;
 
 const registrations = new Map(); // jti → { exp, servers: Map<name, { url, headers }> }
 let sweeper = null;
+let lastSweep = 0;
+const LOOKUP_SWEEP_MIN_INTERVAL_MS = 1000;
 
 function sweep(now = Date.now()) {
+  lastSweep = now;
   for (const [jti, entry] of registrations) {
     if (entry.exp <= now) registrations.delete(jti);
   }
@@ -90,11 +93,32 @@ export function registerRemoteMcps({ jti, exp, servers, now = Date.now() } = {})
 }
 
 /** `{ url, headers }` for one server of one live registration, or null. Never the stored object. */
+// Runs on every relayed request (the relay re-authorizes each one), so the full sweep is throttled;
+// the entry being asked about is always checked against its own expiry.
 export function lookupRemoteMcp(jti, name, now = Date.now()) {
-  sweep(now);
+  if (Math.abs(now - lastSweep) >= LOOKUP_SWEEP_MIN_INTERVAL_MS) sweep(now);
   const entry = typeof jti === "string" ? registrations.get(jti) : null;
+  if (entry && entry.exp <= now) {
+    registrations.delete(jti);
+    return null;
+  }
   const server = entry?.servers.get(String(name || ""));
   return server ? { url: server.url, headers: { ...server.headers } } : null;
+}
+
+/**
+ * The `remote-mcp` hello's authorization, re-run on every forwarded request: the capability must
+ * verify, its signed `remoteMcps` claim must name the server, AND the daemon must hold a live
+ * registration for that name under the capability's jti. Both, never either: the claim alone has
+ * no credential behind it, and a registration alone was never granted to this bearer.
+ * Returns `{ url, headers }`; throws one fixed sentence otherwise.
+ */
+export function authorizeRemoteMcp(checked, name, now = Date.now()) {
+  const claims = checked?.ok ? checked.claims : null;
+  const granted = claims && validRemoteMcpName(name) && Array.isArray(claims.remoteMcps) && claims.remoteMcps.includes(name);
+  const server = granted ? lookupRemoteMcp(claims.jti, name, now) : null;
+  if (!server) throw new Error("remote MCP is not authorized for this run");
+  return server;
 }
 
 export function clearRemoteMcps(jti) {

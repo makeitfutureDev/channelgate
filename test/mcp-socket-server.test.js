@@ -39,8 +39,10 @@ function shortSocketDir() {
   return dir;
 }
 
-function capability({ secret = SECRET, toolset = "", progressReport = false, author = AUTHOR, threadKey = "1700000000.000100", ttlMs } = {}) {
+function capability({ secret = SECRET, toolset = "", progressReport = false, author = AUTHOR, threadKey = "1700000000.000100", ttlMs, remoteMcps, jti } = {}) {
   return mintGatewayCapability({
+    ...(remoteMcps ? { remoteMcps } : {}),
+    ...(jti ? { jti } : {}),
     secret,
     channelId: CHANNEL,
     slug: SLUG,
@@ -69,10 +71,10 @@ function rawExchange(socketPath, line) {
 
 // One listener per test, torn down with the test: the module keeps a single active server, so a
 // leaked one from a failed test would silently serve the next test's assertions.
-async function serverOn(t, handlers = {}) {
+async function serverOn(t, handlers = {}, { connectRemote } = {}) {
   const dir = shortSocketDir();
   const socketPath = path.join(dir, "mcp.sock");
-  const active = await startMcpSocketServer({ handlers, socketPath, dir, log: { log() {}, warn() {} } });
+  const active = await startMcpSocketServer({ handlers, socketPath, dir, log: { log() {}, warn() {} }, ...(connectRemote ? { connectRemote } : {}) });
   assert.ok(active, "the socket server must bind under a short /tmp path");
   t.after(() => stopMcpSocketServer());
   return socketPath;
@@ -127,10 +129,10 @@ test("a capability this daemon did not sign is rejected — a bearer is the only
 
 // The end-to-end shape a container actually uses: the engine spawns cg-mcp-bridge as an ordinary
 // stdio MCP server, the bridge dials the socket, and the MCP client never learns the difference.
-async function withBridgeClient(socketPath, env, fn) {
+async function withBridgeClient(socketPath, env, fn, bridgeArgs = []) {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [BRIDGE],
+    args: [BRIDGE, ...bridgeArgs],
     stderr: "pipe",
     env: {
       PATH: process.env.PATH || "",
@@ -266,4 +268,125 @@ test("gateway capability alone cannot select an arbitrary SDK session on the dae
     args: ["https://app.composio.dev/tool_router/v3/trs_ungranted/mcp"],
   })}\n`);
   assert.equal(JSON.parse(reply.trim()).reason, "composio bridge unavailable");
+});
+
+// ── remote-mcp: header-bearing remote MCPs relayed by the daemon (container-secrets P1) ────────
+// The container holds only the capability; the daemon's registry holds the URL and headers. The
+// "remote" here is a real MCP server behind an in-memory transport, reached through the relay's
+// injectable connect — the HTTP leg itself is covered in mcp-remote-relay.test.js.
+const { registerRemoteMcps, clearRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
+const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
+const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+const { CallToolRequestSchema, ListToolsRequestSchema } = await import("@modelcontextprotocol/sdk/types.js");
+
+function fakeRemote() {
+  const dials = [];
+  const calls = [];
+  const connectRemote = async ({ url, headers }) => {
+    dials.push({ url, headers: { ...headers } });
+    const server = new Server({ name: "fake-remote", version: "1.0.0" }, { capabilities: { tools: {} }, instructions: "remote instructions" });
+    server.setRequestHandler(ListToolsRequestSchema, () => ({
+      tools: [{ name: "COMPOSIO_SEARCH_TOOLS", description: "search", inputSchema: { type: "object", properties: { q: { type: "string" } } } }],
+    }));
+    server.setRequestHandler(CallToolRequestSchema, (request) => {
+      calls.push(request.params);
+      return { content: [{ type: "text", text: `echo:${request.params.arguments?.q}` }] };
+    });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverSide);
+    const client = new Client({ name: "relay-under-test", version: "1.0.0" }, { capabilities: {} });
+    await client.connect(clientSide);
+    return client;
+  };
+  return { dials, calls, connectRemote };
+}
+
+const RELAYED = {
+  "composio-user": { url: "https://connect.composio.dev/mcp", headers: { "x-consumer-api-key": "ck_relay_user_secret" } },
+  "make-toolbox": { url: "https://eu1.make.com/mcp/server/abc", headers: { Authorization: "Bearer mk_relay_secret" } },
+};
+const hello = (cap, name) => `${JSON.stringify({ channelgate: "hello", v: 1, service: "remote-mcp", cap, args: [name] })}\n`;
+
+test("remote-mcp relays tools/list and tools/call through the reference bridge with headers only the daemon holds", async (t) => {
+  const remote = fakeRemote();
+  const socketPath = await serverOn(t, {}, { connectRemote: remote.connectRemote });
+  const jti = "relay-jti-list-call";
+  const cap = capability({ remoteMcps: ["composio-user"], jti });
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "composio-user": RELAYED["composio-user"] } });
+  t.after(() => clearRemoteMcps(jti));
+
+  const answer = await withBridgeClient(socketPath, { CG_GATEWAY_CAPABILITY: cap, CG_MCP_SERVICE: "remote-mcp", CG_ENGINE: "claude" }, async (client) => ({
+    tools: (await client.listTools()).tools.map((tool) => tool.name),
+    call: await client.callTool({ name: "COMPOSIO_SEARCH_TOOLS", arguments: { q: "gmail" } }),
+    instructions: client.getInstructions(),
+  }), ["composio-user"]);
+
+  assert.deepEqual(answer.tools, ["COMPOSIO_SEARCH_TOOLS"]);
+  assert.equal(answer.call.content[0].text, "echo:gmail");
+  assert.equal(answer.instructions, "remote instructions", "the remote's instructions reach the engine");
+  assert.deepEqual(remote.dials, [{ url: RELAYED["composio-user"].url, headers: RELAYED["composio-user"].headers }], "the DAEMON dialled with the registered headers");
+  assert.deepEqual(remote.calls.map((p) => p.name), ["COMPOSIO_SEARCH_TOOLS"]);
+});
+
+test("remote-mcp refuses an unregistered jti, a name outside the claim, and an expired registration", async (t) => {
+  const remote = fakeRemote();
+  const socketPath = await serverOn(t, {}, { connectRemote: remote.connectRemote });
+  const refusal = async (line) => JSON.parse((await rawExchange(socketPath, line)).trim());
+  const REFUSED = { channelgate: "error", reason: "remote MCP is not authorized for this run" };
+
+  // Claimed but never registered under this jti.
+  assert.deepEqual(await refusal(hello(capability({ remoteMcps: ["composio-user"], jti: "relay-jti-unregistered" }), "composio-user")), REFUSED);
+
+  // Registered under the jti, but the signed claim does not name it — both must hold.
+  const jti = "relay-jti-claim-scope";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: RELAYED });
+  t.after(() => clearRemoteMcps(jti));
+  const narrow = capability({ remoteMcps: ["composio-user"], jti });
+  assert.deepEqual(await refusal(hello(narrow, "make-toolbox")), REFUSED);
+  // No claim at all (an old-shaped token with the same jti): nothing is relayed.
+  assert.deepEqual(await refusal(hello(capability({ jti }), "composio-user")), REFUSED);
+  // A name that is neither claimed nor registered, and a malformed one.
+  assert.deepEqual(await refusal(hello(narrow, "makeitfuture-toolbox")), REFUSED);
+  assert.deepEqual(await refusal(hello(narrow, "../../etc/passwd")), REFUSED);
+
+  // A registration that has expired (its capability outlived it only in this test).
+  const shortJti = "relay-jti-expiring";
+  registerRemoteMcps({ jti: shortJti, exp: Date.now() + 30, servers: { "composio-user": RELAYED["composio-user"] } });
+  await new Promise((r) => setTimeout(r, 1_100)); // past the entry's exp and the lookup-sweep throttle
+  assert.deepEqual(await refusal(hello(capability({ remoteMcps: ["composio-user"], jti: shortJti }), "composio-user")), REFUSED);
+
+  // An expired CAPABILITY is refused at the signature/lifetime check, before any lookup.
+  const expired = capability({ remoteMcps: ["composio-user"], jti: "relay-jti-expired-cap", ttlMs: 1 });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match((await refusal(hello(expired, "composio-user"))).reason, /capability rejected/);
+
+  assert.equal(remote.dials.length, 0, "no refused hello ever dialled the remote");
+  for (const secret of ["ck_relay_user_secret", "mk_relay_secret", "composio.dev", "make.com"]) {
+    assert.ok(!JSON.stringify(REFUSED).includes(secret));
+  }
+});
+
+test("remote-mcp re-authorizes every forwarded request: a revoked registration stops an open relay", async (t) => {
+  const remote = fakeRemote();
+  const socketPath = await serverOn(t, {}, { connectRemote: remote.connectRemote });
+  const jti = "relay-jti-revoked-mid";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "make-toolbox": RELAYED["make-toolbox"] } });
+  const cap = capability({ remoteMcps: ["make-toolbox"], jti });
+  await withBridgeClient(socketPath, { CG_GATEWAY_CAPABILITY: cap, CG_MCP_SERVICE: "remote-mcp" }, async (client) => {
+    assert.equal((await client.listTools()).tools.length, 1);
+    clearRemoteMcps(jti);
+    await assert.rejects(client.callTool({ name: "COMPOSIO_SEARCH_TOOLS", arguments: { q: "x" } }), /not authorized/);
+  }, ["make-toolbox"]);
+  assert.equal(remote.calls.length, 0, "the revoked call never reached the remote");
+});
+
+test("a remote that cannot be dialled is refused with a fixed sentence that quotes nothing upstream", async (t) => {
+  const socketPath = await serverOn(t, {}, {
+    connectRemote: async ({ url, headers }) => { throw new Error(`boom ${url} ${JSON.stringify(headers)}`); },
+  });
+  const jti = "relay-jti-dial-fail";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "composio-user": RELAYED["composio-user"] } });
+  t.after(() => clearRemoteMcps(jti));
+  const reply = await rawExchange(socketPath, hello(capability({ remoteMcps: ["composio-user"], jti }), "composio-user"));
+  assert.deepEqual(JSON.parse(reply.trim()), { channelgate: "error", reason: "remote MCP unavailable" });
 });
