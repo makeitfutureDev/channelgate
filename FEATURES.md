@@ -2607,18 +2607,32 @@ are retired, bullet by bullet; everything else stands.
   0600 bundle), the signed capability's optional `remoteMcps` claim lists the names, and the real
   URL + headers are registered in the daemon's in-memory registry
   (`src/mcp/remote-mcp-registry.js`) under the capability's `jti`, for exactly the capability's
-  lifetime (a turn's 6 h, an SSH session's 12 h; ≤ 16 servers, header values ≤ 8 KB, never
-  logged). A hello is relayed only when the claim names the server AND the daemon holds a live
-  registration for it; the daemon then dials it (Streamable HTTP, HTTP+SSE on a 4xx; https only)
-  and forwards `tools/list` and `tools/call`, re-authorizing each, passing the engine's
-  cancellation upstream and upstream progress back (`src/mcp/remote-relay.js`). Refusals are fixed
-  sentences that quote no URL, header or upstream error. Codex's container bundle now holds ONLY
+  lifetime at most (a turn's 6 h, an SSH session's 12 h; ≤ 16 servers, header values ≤ 8 KB,
+  never logged) and usually far less: the minting turn holds it until it settles, every open relay
+  connection holds it too, and it goes when the last hold is released — so a cold turn's grant
+  ends with the turn, a warm Claude process keeps its grant exactly as long as its bridge
+  connections stay open, and a turn that merely reused a warm process drops its own unused grant.
+  An SSH refresh releases the previous preparation's grants (a `claude` already running keeps
+  its relays through its open connections); the developer's last session ending drops them all;
+  clearing a personal Composio or Toolbox token (`clear_my_*_token`, or the admin UI) drops every
+  grant minted for that person's runs at once. A hello is relayed only when the claim names the
+  server AND the daemon holds a live registration for it; at most 8 relay connections per grant
+  and server exist at once (a slot is held until the upstream dial has settled, so hello-then-hang-up
+  cannot fan out dials), and a container that hangs up mid-dial never leaves the upstream client
+  open. The daemon dials the server (Streamable HTTP, HTTP+SSE on a 4xx; https only) and forwards
+  `tools/list` and `tools/call`, re-authorizing each, passing the engine's cancellation upstream and
+  upstream progress back (`src/mcp/remote-relay.js`). Refusals are fixed sentences that quote no
+  URL, header or upstream error; a failed forwarded request reaches the engine as `remote MCP
+  request failed` unless the remote itself answered with a JSON-RPC error, which passes unchanged.
+  A gateway hello carrying arguments (a pre-1.6.0 image's broker dropped the relay selection) is
+  refused with the rebuild remedy instead of serving the control plane under a relayed name. Codex's container bundle now holds ONLY
   `gatewayCapability` and no headers helper is written; an SSH session's `mcp.json` and Codex
   bundle follow the same rule. The warm pool's fingerprint carries a value-free sha256 digest of
   each relayed URL + header, so a rotated Composio or toolbox token still retires the warm process.
-  A remote an operator pointed at plain http (a `COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override)
-  cannot be relayed: an isolated run drops it and names it in the skipped-MCP note rather than hand
-  the token to the container. Host (sudo) targets keep the direct http entries and headers
+  A remote the relay cannot carry — plain http (a `COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override) or
+  a malformed header (not text, over 8 KB, a line break, a bad name, more than 16) — is dropped
+  from an isolated run on its own and named in the skipped-MCP note; the rest of the turn is
+  unaffected and the token is never handed to the container instead. Host (sudo) targets keep the direct http entries and headers
   helpers byte for byte. Image spec 1.6.0 (the image's broker forwards `CG_MCP_SERVICE` /
   `CG_MCP_SOCKET`). Egress is still not policed (see Isolation), so a container can reach the same
   remote endpoints with a credential of its OWN — what it can no longer do is read the gateway's.
