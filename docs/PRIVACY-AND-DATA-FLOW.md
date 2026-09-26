@@ -88,9 +88,18 @@ The optional Full-access whole-home mount is off by default and deliberately exp
 user's repositories, gateway state and other channels to every author admitted to a Full-access
 channel. Operators must understand this exception before enabling it.
 
-All containers currently use bridge networking. *Allow network* expresses intended engine policy;
-it is not an egress firewall and does not constrain arbitrary destinations at the network layer.
-Host-side run-API attachment/webhook requests separately validate and pin public destination IPs.
+Channel containers run with no network of their own (`--network none`). Their only egress is the
+daemon's per-channel egress proxy, which enforces *Allow network* on every request (off: the engine
+endpoints and the channel's selected connectors only; on: public destinations only — private,
+loopback and cloud-metadata addresses are always refused) and terminates TLS with a
+deployment-local CA so it can swap placeholder credentials. The daemon therefore sees request
+headers and URLs in the clear; it audits destinations and credential use (names, hosts, reasons,
+byte counts — never a value, a header or a body) and does not store request or response bodies.
+Response bodies of text types are scanned in memory to strip a swapped real value that an upstream
+echoes back. The operator-selectable legacy mode (`containerEgressMode = "bridge"`) and a channel's
+admin-granted `rawNetwork` escape restore an open bridge network, where *Allow network* is advisory
+again and not an egress firewall. Host-side run-API attachment/webhook requests separately validate
+and pin public destination IPs.
 
 Claude runs authenticate with a relay of the host user's own `claude` login — its short-lived
 access token, refreshed on the host; the credentials file is never copied or mounted — or with a
@@ -100,8 +109,16 @@ shared identity across channels. Either way the provider identity is organizatio
 shared provider identity, not an assertion of independent per-user billing. Container-native CLI
 credentials persist in the channel home. Personal/shared MCP credentials are resolved for each run and may be written into
 protected transient runtime bundles; those bundles must be included in the retention assessment.
-Runtime secret redaction reduces accidental output leakage, but an agent given a usable credential
-can access that value and use its granted privileges. UI write-only fields do not change this fact.
+With the egress proxy active, an environment secret that has an egress rule (the built-in GitHub,
+Vercel, Supabase, Make and Composio names, or an admin's "used on hosts") and the relayed Claude
+login reach a container only as placeholders; the real value is resolved on the daemon at request
+time and inserted only on the declared hosts, while the channel has live work. The placeholder is
+recorded in the local `egress_grants` table with the secret's name and scope — never its value.
+A secret without a rule is still injected raw (flagged "unprotected"), unless the operator withholds
+such secrets. A member with a live placeholder can still use it for anything the real credential
+allows on its declared hosts: scope the credential at the provider. Runtime secret redaction
+reduces accidental output leakage, but an agent given a usable credential can use its granted
+privileges. UI write-only fields do not change this fact.
 
 An operator's ability to sign in is not a grant to share that provider account with every gateway
 user. Provider account terms and any organization agreement determine who may use it. ChannelGate

@@ -55,8 +55,10 @@ the product contracts and decision points; it does not replace either source.
 - The container is the default filesystem/process boundary. Its persistent HOME belongs to one
   conversation. Host visibility follows the resolved mounts: normally just this conversation's
   directories, or the operator's whole home when the explicit Full-access grant applies.
-  The current bridge network has no domain filtering or enforced egress cut-off, so never claim
-  that *Allow network* is a firewall.
+  The container has no network of its own (`--network none`); its egress proxy enforces *Allow
+  network* per request and refuses private/metadata addresses, but has no per-domain allow-list
+  when the switch is on. It is advisory only under the legacy bridge egress mode or a channel's
+  `rawNetwork` escape (`networkEnforcedFor`), and there it is no firewall — say which applies.
 - `<folder>/.claude/settings.json` carries policy: permissions, MCP allowlisting, memory-off, and
   the Stop hook. It carries no `sandbox` block; the container owns confinement.
 - A channel's environment credentials are write-only and channel-scoped. Never ask for a token in

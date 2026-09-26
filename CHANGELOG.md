@@ -18,6 +18,35 @@ product overview.
 
 ## Unreleased
 
+- **Channel containers now reach the internet only through the gateway's egress proxy.** Every
+  channel container runs with no network of its own. A small forwarder inside it hands each
+  connection to the gateway, which enforces the channel's *Allow network* switch on every request
+  (off: only the AI engines and the channel's selected connectors; on: public hosts, never private,
+  loopback or cloud-metadata addresses) and logs every refused or blocked destination. The switch
+  is no longer advisory, and `/mode`, `/status` and the run record say so. A flip applies to the
+  next request without recreating anything.
+- **Secrets become placeholders the container cannot use elsewhere.** A GitHub, Vercel, Supabase,
+  Make or Composio token, and any secret an admin marks with **Used on hosts**, reaches the
+  container as a `cgph_…` placeholder. The gateway swaps in the real value only on that secret's
+  hosts and only while the channel has work running; a personal secret only while its owner is the
+  one working, and never while another person has an SSH session open there. The relayed Claude
+  login is a placeholder too. Rotation takes effect on the next request; removing a secret kills
+  its placeholder. Secrets without a rule are still injected as before and are marked
+  **unprotected** in `list_secrets`, the admin UI and the agent's own credential note. The new
+  *Withhold unprotected secrets* setting keeps them out of containers entirely.
+- **New container settings.** Settings → Container runtime gains *Legacy open network (no egress
+  proxy)* — off by default; on restores the old open bridge network and raw secrets — and
+  *Withhold unprotected secrets*. The admin API accepts `rawNetwork` (a channel that needs raw
+  sockets beside the proxy) and `egressRawHosts` (hosts whose SSH/Postgres ports are tunnelled).
+  If the proxy cannot start, container runs stop with the reason instead of running unprotected.
+  TLS clients in the container trust the gateway's own CA through the usual CA variables; a tool
+  that reads none of them needs `/run/channelgate/egress-ca.pem`. After updating, run
+  `npm run build:image` (image spec 1.6.0 now also ships the forwarder; the updater does this for
+  you).
+- **Fix: Codex in Composio SDK mode works in containers.** A Codex run in a channel container with
+  Enterprise SDK-mode Composio started its Composio connection without the run's grant, so the
+  gateway refused it and Codex had no Composio tools. It now connects like the other relayed
+  servers.
 - **Composio and toolbox tokens no longer enter a channel container.** In a container, the
   `composio-user`, `composio-agent`, MakeItFuture toolbox and Make toolbox connections are now
   reached through the gateway itself: the engine holds only its signed run grant, and the daemon

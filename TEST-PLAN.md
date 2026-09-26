@@ -1,5 +1,193 @@
 # ChannelGate — Test Plan
 
+## Egress proxy, placeholders and `--network none` (container-secrets P2)
+
+Fixtures: real sockets and real TLS on 127.0.0.1 — an https upstream whose leaf chains to a
+throwaway "public root" the proxy is told to trust (`upstreamCa`), fake hostnames (`upstream.test`,
+`api.anthropic.com`, …) resolved by an injected lookup, and the TEST-ONLY `allowLoopbackHosts` that
+lets exactly those names reach loopback (production refuses loopback outright); unix listeners in
+SHORT `/tmp/cgeg-*` / `/tmp/cgfw-*` dirs; the scratch runtime root of `test/helpers.js` for the
+database; the fake container CLI (`test/container-fake-cli.js`) and the fake runtime backends
+(`test/runtime-fake.js` with an `egress` plan, `test/fixtures/fake-runtime-backend.js`); a fake
+egress provider registered through `src/runtimes/container/egress-hook.js` where the container
+side is tested alone. Token fixtures are synthetic (`ghp_*_value_*`, `real-*-value-*`); no podman
+exists on the development host, so every container-side fact below is pinned over the fake CLI and
+the live gates at the end are UNEXECUTED.
+
+### The proxy core (engine-independent: transport code, no engine in the loop)
+
+- [x] CA and leaves (`test/egress-ca.test.js`): a CA and its per-host ECDSA leaves parse, chain and
+      match their host; a client trusting only the CA completes a verified TLS handshake; `openssl`
+      verifies the chain and decodes the extensions (skipped where openssl is absent); the store
+      writes `ca.key` 0600, `ca.pem` 0644 in a 0700 dir once and reuses them; `leafFor` mints per
+      host, caches in an LRU, re-mints an hour before expiry and refuses invalid names.
+- [x] Destination policy (`test/egress-policy.test.js`): the metadata address is refused by name
+      and as a literal; private, loopback, ULA, mixed public+private answers and IPv4-mapped forms
+      are refused; a public destination is allowed with its address pinned; mode off admits only
+      engine hosts; an allowlist narrows mode on; a raw tunnel only for its exact host:port and
+      only when on; invalid names/ports, DNS failures.
+- [x] Swap rules (`test/egress-rules.test.js`): placeholder format, scope letters, the
+      `sk-ant-oat01-` shape and detection; exact and one-level wildcard hosts that never match the
+      apex; bearer, raw, basic-password (decode → swap → re-encode); another host, header or
+      position leaves the placeholder unchanged and reports why; a `canUse` refusal leaves the header
+      alone; malformed Basic never throws; never a partial swap, never a header-breaking value,
+      never across a Host-header mismatch; plain http only for an opted-in grant; query parameters
+      only when the grant lists them.
+- [x] Response scrub (`test/egress-scrub.test.js`): a value split across chunks is still replaced;
+      only a possible prefix is held back; longest value wins; multibyte survives; short values and
+      binary/unknown types pass through.
+- [x] End to end (`test/egress-proxy.test.js`): the upstream sees the REAL value while the client
+      sent the placeholder; a shaped relay token swaps whole and a streamed body goes through; a
+      non-declared host receives the placeholder unchanged; an echoed value comes back scrubbed
+      (compressed bodies untouched); a `canUse` refusal is 403 naming the secret and never reaches
+      the upstream; refused destinations are 403 with a category; an unreachable upstream is 502;
+      plain http forwarding; a raw tunnel; a WebSocket upgrade swapped then piped; a 431 for an
+      oversized head; audit events never carry a header value, placeholder or real value; `close()`
+      leaves nothing open.
+
+### The integration
+
+- [x] Grants (`test/egress-grants.test.js`): the catalog rules GitHub/Vercel/Supabase/Make/Composio
+      names and leaves `GH_REPO`, `GITHUB_REPOSITORY`, `VERCEL_ORG_ID`, `SUPABASE_DB_PASSWORD`,
+      OpenAI/Anthropic names unruled; an entry's own `hosts` win, its `headers`/`format` refine; bad
+      declarations (an IP, a two-level wildcard, 17 hosts, `host` as a header, 9 headers, an unknown
+      format) are refused; a stored rule survives a value rotation and is cleared only by an explicit
+      empty list. One stable placeholder per key; another channel → another placeholder; the
+      organization's shared by every channel; personal per channel AND author; the table has no value
+      column (migration 30 and both indexes present). Revoke kills a placeholder; re-adding mints a
+      new one. `resolveEgressRunEnv`: inactive → exactly the real resolve, clean → empty, no target →
+      real values; active → ruled names are `cgph_[ocp]…` placeholders of the right scope, the unruled
+      `SUPABASE_DB_PASSWORD` is raw and listed `unprotected`, `realValues` holds all five real values,
+      placeholders are stable across runs, another author shares the org/channel ones but not
+      Alice's, the HTTP run API (untrusted) gets no personal one; strict mode withholds the unruled
+      name (still redacted). The resolver returns the CURRENT value (rotation), and a removed secret
+      is revoked by the resolver itself and by the next run's reconcile. The Claude relay: a shaped
+      `sk-ant-oat01-cgph_r…` per channel, keeping source/expiry, the real relay when inactive or
+      API-key-only; the relay grant resolves the live token with the 60 s cache.
+- [x] Service (`test/egress-service.test.js`): boot writes the trust bundle (system roots first, then
+      the CA; 0644) and rewrites it IN PLACE (same inode) when the system roots change; container
+      targets carry an active plan with the CA's SPKI hash; one listener per channel under
+      `<root>/<12 hex>/egress.sock` (≤ 107 bytes, dir 0700, socket 0600), idempotent, whose ctx is
+      that channel. Through the socket with real TLS against the written bundle: no live work → 403
+      `secret-refused` naming `MY_API_KEY`/`channel-idle`, one `egress` event with no value and no
+      placeholder in it; a live turn → the upstream sees the real value and one `swapped` event; a
+      request with no placeholder → counted, no event; the same placeholder from ANOTHER channel's
+      socket → `other-channel`. The policy reads CURRENT meta: switch off → CONNECT refused
+      `network-off` and audited `blocked`; the engine hosts and a noted remote-MCP host stay in the
+      off policy; `github.com:22` is always a raw tunnel; switched on → the very next request passes.
+      `canUseGrant`: channel/org need live work in that channel; personal needs its owner live, and
+      is refused while another person's SSH session is open (the owner's own session is fine); an
+      SSH session alone is live work. The config-change listener revokes a removed secret's
+      placeholder. Service down: `egressError` names the remedy, the container backend's
+      `credentialError` fails the run, `ensureChannelEgress` refuses, the legacy bridge mode never
+      asks, and a fresh target keeps `--network none`. A CA that cannot load: one warning line, the
+      boot continues, runs fail closed.
+- [x] Container side (`test/container-cli.test.js`, `test/container-lifecycle.test.js`,
+      `test/container-credentials.test.js`): `--network none` for network on AND off; `bridge` only
+      under `egressMode: "bridge"` or `meta.rawNetwork`; with the provider registered the mounts
+      include `egress` (bind, ro, the channel's socket dir — never under the shared control-socket
+      dir) and `egress-ca` (bind-file, ro) and both fingerprints move with them; the create argv
+      carries both `-v …:ro` and the proxy env; `ensureUp` binds the listener before creating, never
+      creates the CA file source as a directory, and fails closed (nothing created) when the
+      listener cannot bind or the service is down; the network switch does not move the
+      fingerprint, `rawNetwork` does; `prepareTarget` stays pure with an inactive plan when no
+      service is registered.
+- [x] Environment (`test/container-egress-env.test.js`, `test/browser-env.test.js`): `egressEnv` is
+      `{}` unless active, then `HTTP(S)_PROXY`+lowercase = `http://127.0.0.1:3128`, `NO_PROXY`
+      loopback only, `NODE_USE_ENV_PROXY=1`, the ten CA variables = `/run/channelgate/egress-ca.pem`,
+      `CG_EGRESS=proxy`, no `ALL_PROXY`; every one of those names (and `SSL_CERT_DIR`) is reserved;
+      the create argv carries them; the exec env-file FORCES them over a host `HTTPS_PROXY` and drops
+      `ALL_PROXY` (legacy: the host value passes); `buildClaudeEnv` / `buildCodexEnv` apply them in
+      the last group over the daemon's own proxy and a channel secret named `HTTPS_PROXY`; Chromium
+      gets `--proxy-server` + the SPKI pin in `AGENT_BROWSER_ARGS` only with an active plan.
+- [x] Forwarder (`test/egress-forwarder.test.js`): TCP → unix → TCP round trip; a failed unix
+      connect RESETS the client (`ECONNRESET`), is logged once per category per minute, and the same
+      forwarder serves again once the socket is back; run as the image runs it (`node <file>`,
+      `CG_EGRESS_PORT`, `CG_EGRESS_SOCKET`); node built-ins only; `build-image.mjs` stages it as
+      `bin/cg-egress.mjs` and `cg-init` starts it in the background under `CG_EGRESS=proxy` before
+      `exec`.
+- [x] A turn (`test/egress-run.test.js`, Claude AND Codex through the production orchestrator on
+      the fake runtime with an active plan): the engine's env holds a `cgph_c…` placeholder for
+      `GITHUB_TOKEN` (a live grant row) and the raw value for an unruled name, never the real GitHub
+      token; Claude's `CLAUDE_CODE_OAUTH_TOKEN` is the `sk-ant-oat01-cgph_r…` relay placeholder, never
+      the setup token; the prompt names the protected name with its hosts and the unprotected one;
+      the turn is live while it spawns and released after; `run_config` records
+      `networkEnforced: true`, `egress: "proxy"`, `egressUnprotected: ["RAW_THING"]`.
+- [x] Surfaces (`test/network-policy.test.js`, `test/modes.test.js`,
+      `test/channel-credentials.test.js`, `test/channel-env.test.js`,
+      `test/channel-policy-audit.test.js`): `NETWORK_POLICY_ENFORCED` is `true`, the header names the
+      advisory exceptions and the retired "no network at all" claim stays gone;
+      `networkEnforcedFor` is true only for an active plan on `--network none`; the detailed label
+      drops the caveat with the proxy running and keeps it for `rawNetwork` and the legacy mode; the
+      credential preamble's protected / unprotected / withheld lines (names and hosts only); the
+      masked listing carries `protected` + `hosts`; an admin save that does not send `rawNetwork` /
+      `egressRawHosts` records no change to them.
+- [x] Codex Composio SDK mode in a container (`test/codex-args.test.js`,
+      `test/engine-runtime-isolated.test.js`): each SDK session is `secret-env-bridge <bundle>
+      gatewayCapability CG_GATEWAY_CAPABILITY cg-mcp-bridge <session URL>` with
+      `env.CG_MCP_SERVICE="composio-sdk"`, no `url`, no host root, no keyless SDK bridge script, and
+      no entry at all without a bundle; the sudo-host shape is unchanged.
+
+### Live gates (Claude AND Codex unless marked) — all UNEXECUTED
+
+Common setup for every gate: this branch deployed, `npm run build:image` (spec 1.6.0),
+Settings → Container runtime with *Legacy open network* OFF, a Slack test channel in Worker mode
+with Auto on, and the daemon log open. Record `podman inspect <container> --format
+'{{.HostConfig.NetworkMode}}'` (expected `none`) and the `/api/health` → `containerRuntime.egress`
+block (`running: true`) before starting.
+
+- [ ] UNEXECUTED — Engine turns under `--network none`. Network switch OFF. Send "reply with the
+      word pong" once with the thread on Claude and once on Codex (`/model`, just this thread).
+      Evidence: both answer; `podman exec <c> printenv CLAUDE_CODE_OAUTH_TOKEN` starts
+      `sk-ant-oat01-cgph_r`; `podman exec <c> sh -c 'cat /proc/net/dev'` lists only `lo`; the
+      `egress` events table has no row for `api.anthropic.com` / `chatgpt.com` (relay swaps are
+      counted, not logged). Pass: both engines answer, including Codex's WebSocket transport, with
+      no real token in the container env.
+- [ ] UNEXECUTED — `gh api user`, `git clone https://github.com/<private repo>`, `vercel whoami`.
+      Set the channel secrets `GITHUB_TOKEN` (a fine-grained PAT with read access to one private
+      repo) and `VERCEL_TOKEN`; switch network ON. Ask the agent to run the three commands.
+      Evidence: `podman exec <c> printenv GITHUB_TOKEN` is `cgph_c…`; all three succeed (the clone
+      uses Basic with the placeholder as password); three `egress` rows with
+      `swapped: [{secretName: "GITHUB_TOKEN"|"VERCEL_TOKEN"}]`. Pass: all three succeed on both
+      engines and no real token is in the container env or any reply.
+- [ ] UNEXECUTED — agent-browser on an HTTPS page (agent-browser 0.36.0 is not installed on the
+      development host, so whether it passes `AGENT_BROWSER_ARGS` to Chromium is unverified). Network
+      ON; ask "open https://example.com in the browser and read me the heading". Evidence: the
+      heading is returned; `podman exec <c> printenv AGENT_BROWSER_ARGS` shows `--proxy-server` and
+      `--ignore-certificate-errors-spki-list`. Pass: the page loads with no certificate error. Fail
+      on a certificate error or a direct-connect attempt.
+- [ ] UNEXECUTED (engine-independent) — bypass proof from inside the container. `podman exec <c>
+      sh -c 'curl --noproxy "*" -sS https://example.com; echo rc=$?'` → a connect failure (no
+      route); `podman exec <c> getent hosts example.com` → no answer; `podman exec <c> cat
+      /proc/net/dev` → only `lo`; `podman exec <c> curl -sS --max-time 5 http://10.88.0.1/`
+      (the podman bridge gateway) and `curl -sS https://169.254.169.254/` through the proxy → a
+      failure / `403 blocked-address`. Pass: every bypass fails.
+- [ ] UNEXECUTED (engine-independent) — a placeholder sent to a non-declared host arrives
+      unswapped. With a request bin you control (e.g. a `https://<bin>.example` endpoint that
+      echoes headers), `podman exec <c> sh -c 'curl -sS -H "Authorization: Bearer $GITHUB_TOKEN"
+      https://<bin>/'`. Evidence: the bin records `Bearer cgph_c…`, never the PAT; an `egress` row
+      with `refused: [{secretName: "GITHUB_TOKEN", reason: "host"}]`. Pass: the real value never
+      leaves.
+- [ ] UNEXECUTED (engine-independent) — rotation live without recreate. Note the container id,
+      rotate `GITHUB_TOKEN` in the admin UI to a second valid PAT, revoke the first at GitHub, then
+      run `gh api user` again. Evidence: same container id; the call succeeds as the second PAT's
+      user; the placeholder in `printenv` is unchanged. Then REMOVE the secret and replay the old
+      placeholder by hand (`curl -H "Authorization: Bearer <old placeholder>"
+      https://api.github.com/user`) → 401 from GitHub (the placeholder is revoked and forwarded as
+      the useless string it is). Pass: rotation needed no recreate and the removed secret's
+      placeholder is dead.
+- [ ] UNEXECUTED (engine-independent) — the switch is live and fail-closed. Network OFF: `curl -sS
+      https://example.com` → `403 {"error":"network-off"}`; flip ON in the admin UI; the same command
+      within seconds succeeds with no recreate. Stop the daemon's egress service by starting it with
+      an unreadable `config/egress-ca/ca.key` (then restore): the next message ends with `egress
+      proxy unavailable: …` before any engine starts, and the container is not recreated onto the
+      bridge. Pass: all three observations.
+- [ ] UNEXECUTED (engine-independent) — the legacy escape. Turn *Legacy open network* ON, send a
+      message: the container is recreated at its next idle moment with `NetworkMode=bridge`,
+      `printenv GITHUB_TOKEN` is the raw PAT, `/status` shows "network off (advisory — not enforced
+      for this container)" when off. Turn it OFF again and confirm the return to `none` +
+      placeholders. Pass: both transitions observed.
+
 ## Remote MCP relay (container-secrets P1)
 
 Fixtures: the fake container backend (`test/fixtures/fake-runtime-backend.js`, isolated, image
@@ -1222,8 +1410,9 @@ The skipped/live cases below remain unverified; this branch is not a release can
   Repeat the off observation in a fresh thread and, where supported, a Clean thread, without
   adding optional credentials to Clean. Restore the original switch and any owned fixture state.
   Pass requires actual policy delivery, no new outbound request under off, and an accurate final
-  explanation in each tested variant. A model refusal does not prove kernel egress isolation;
-  the container remains on the bridge network and no egress-blocking behavior is added here.
+  explanation in each tested variant. A model refusal does not prove kernel egress isolation; the
+  egress proxy's own enforcement of the switch is gated separately (Egress proxy, placeholders and
+  `--network none`), and this case stays about the delivered policy text.
 
 ## Control-plane approval receipts
 
@@ -3512,8 +3701,9 @@ mode; the gateway's run API key; an admin Slack id):
 **Retired 2026-09-03 (Linux + containers only):** the entries below that exercise Codex's host
 permission profiles, the semantic network compiler / `network_proxy`, the macOS seatbelt probes and
 the credential/toolchain re-grants describe the retired host sandbox and are kept as history. Inside
-its container Codex states `--sandbox read-only` / `danger-full-access` per mode; the container is on
-the bridge network and *Allow network* is only a switch the engines are told about.
+its container Codex states `--sandbox read-only` / `danger-full-access` per mode; the container has
+no network of its own and the egress proxy enforces *Allow network* (see Egress proxy,
+placeholders and `--network none`).
 
 - [ ] Codex 0.147+ resume state: `CODEX_HOME` is stable and contains only linked auth/session
   state; private granted skills live under the disposable synthetic `HOME/.agents/skills`; cleanup
@@ -4134,8 +4324,9 @@ the bridge network and *Allow network* is only a switch the engines are told abo
 **Retired 2026-09-03 (Linux + containers only):** the host sandbox is gone. The boundary is the
 channel's container (only the work folder mounted — `~/.ssh`, the gateway root and sibling folders do
 not exist inside it; see *Container runtime → channel isolation inside the containers*). *Allow
-network* is a per-channel switch the engines are told about — no domain filtering and, in this
-release, no egress cut-off — so the network entry has no container equivalent yet. Kept as history.
+network* is a per-channel switch with no domain filtering; since container-secrets P2 the egress proxy
+enforces it (off/on, private addresses refused) — see Egress proxy, placeholders and `--network
+none` for its cases and live gates. Kept as history.
 - [ ] Bash channel: write inside the folder works; writing `~/.ssh`, `~/.aws`, the gateway root, or a
       sibling channel folder is denied; reading the home root / gateway root is denied.
 - [ ] Network off by default; allow-network + allow-bash → `gh`/`git push` succeed, a non-allowlisted
@@ -4143,7 +4334,8 @@ release, no egress cut-off — so the network entry has no container equivalent 
 - [x] Unit (CTO-04 regression): `modeLabel` states the network switch in BOTH directions — a channel
       with it off renders `Read-only · network off`, not a bare `Read-only`, so "off" is no longer
       indistinguishable from "never configured"; `{ detail: true }` adds
-      `(advisory — not enforced by the container yet)` for the off state only, and an engine that
+      `(advisory — not enforced for this container)` for the off state only, and only where the
+      egress proxy is not the channel's network (P2), and an engine that
       does not declare the `on` mode still reads `network unsupported`
       (`test/modes.test.js`).
 - [x] Unit (CTO-04 regression): `/status` carries the channel's own switches — `formatCapabilityLine`

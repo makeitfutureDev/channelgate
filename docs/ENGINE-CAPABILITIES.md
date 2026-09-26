@@ -6,7 +6,7 @@ the Admin API/UI consume that registry.
 | Capability | Claude | Codex | Qwen harnesses (Claude Code CLI) |
 | --- | --- | --- | --- |
 | Filesystem confinement | Per-conversation container mounts by default; Claude permissions control tools. Admin-only Slack `/sudo` threads deliberately run on the host | Same default container boundary; Read-only mode adds a CLI read-only sandbox. `/sudo` deliberately runs on the host | Identical to Claude — same CLI, same lockdown file, same resolved runtime |
-| Network policy | Advisory off/on; container bridge networking by default, direct daemon-account network in `/sudo`; no domain filtering or egress firewall | Same resolved-runtime policy; CLI Read-only mode also restricts its own network access outside bypass | Same advisory off/on as Claude |
+| Network policy | Off/on enforced by the per-channel egress proxy (`--network none` container; no per-domain filtering when on); advisory under the legacy bridge egress mode or a `rawNetwork` channel; direct daemon-account network in `/sudo` | Same resolved-runtime policy; CLI Read-only mode also restricts its own network access outside bypass | Same as Claude (the configured provider endpoint is reachable with the switch off) |
 | Warm process / steer | yes | no; one-shot resume | no; cold runs only, so a rotated provider key can never be served by a warm process |
 | Session identity | gateway-minted UUID | CLI-minted thread ID, persisted after the turn | gateway-minted UUID (same CLI, same transcript layout, so session carry works unchanged) |
 | Permission prompts | Interactive Slack tool approvals; automatic approval with Auto | Headless deny or eligible automatic review with Auto | Interactive Slack tool approvals, as Claude |

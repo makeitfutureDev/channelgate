@@ -152,8 +152,10 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 - **Current network policy accompanies every attempt:** fresh, resumed, recovered and fallback
   prompts state the resolved network switch, including Clean runs. An off switch instructs the
   engine to explain the current restriction rather than present a cached response as a new request.
-  This remains advisory policy, not container egress enforcement; other tool restrictions still
-  apply. The added fact contains no credential inventory or values. → TEST-PLAN: Network policy on resumed turns.
+  The note states whether THIS attempt's container enforces the switch (the egress proxy is its
+  only network) or only advises it (the legacy bridge mode, a `rawNetwork` channel, a `/sudo` host
+  thread); other tool restrictions still apply. The added fact contains no credential inventory or
+  values. → TEST-PLAN: Network policy on resumed turns.
 
 - **Control-plane results report received human approval:** a tool that awaited an approving
   decision returns a receipt alongside its original outcome, including returned refusals or error
@@ -232,7 +234,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   await every server before its first model request. → TEST-PLAN: MCP startup budgets.
 
 - **Accurate channel-control descriptions:** MCP mode/network descriptions and confirmations
-  describe the container boundary, advisory networking and separately resolved operator-home
+  describe the container boundary, the egress proxy's enforcement of the network switch (advisory
+  only where the proxy is not the channel's network) and the separately resolved operator-home
   grant. They do not promise domain filtering or automatic access to host credentials. Auto
   distinguishes engine tool approval from explicit control-plane sign-offs.
   → TEST-PLAN: Channel-control description accuracy.
@@ -1594,7 +1597,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Retired 2026-09-03 (Linux + containers only):** the host permission profiles, the semantic network modes and the `network_proxy` compilation —
   inside its container Codex runs `--sandbox read-only` in read mode (which refuses network on its
   own) and `danger-full-access` for write modes, with no permission profiles; the container itself
-  is on the bridge network. Codex confinement mirrors the channel via Gateway-owned permission profiles (never the legacy
+  has no network of its own and goes out through the egress proxy. Codex confinement mirrors the channel via Gateway-owned permission profiles (never the legacy
   broad-read sandbox modes): `gateway-readonly` (root denied, minimal runtime paths + workspace
   readable, nothing writable) by default, `gateway-workspace` (adds workspace write + a private
   per-run scratch dir as TMPDIR; `.git`/`.codex` stay read-only) when Bash/Auto mode is on, profile
@@ -1667,9 +1670,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `NODE_USE_ENV_PROXY=1` so Node-based CLIs honor its destination-restricted network proxy; this
   changes proxy consumption, not the approved-domain boundary. → TEST-PLAN: CLI integrations.
 - **Retired 2026-09-03 (Linux + containers only):** the tool, the card and `extraNetworkDomains` went with the host sandbox's allow-list — *Allow
-  network* stays as a per-channel switch the engines are told about, with no domain filtering and,
-  in this release, no egress cut-off in the container (every container is on the bridge network;
-  a container-side egress proxy is the planned follow-up). **Per-channel domain approvals (`request_network_domain`)**: when a sandboxed command fails on a
+  network* stays as a per-channel switch the engines are told about, with no domain filtering; the
+  container-side egress proxy enforces it (off/on, private addresses always refused). **Per-channel domain approvals (`request_network_domain`)**: when a sandboxed command fails on a
   blocked host, the agent may request ONE named domain; the gateway posts an Approve/Deny card
   that ANY authorized user can approve (the human click is the control — injected content can
   request but never click). Approved domains persist in the channel meta, join that channel's
@@ -2196,18 +2198,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (Bash + Write/Edit with writes kept away from the gateway root, `.ssh`, `.aws`, `.config`,
   `.claude`, keychains and every other channel's folder) is the container boundary instead.
   → TEST-PLAN: Sandbox boundaries.
-- **Allow Network is an ADVISORY per-channel switch, not an egress boundary.** Every channel's
-  container runs on the default bridge network and the gateway polices no egress per channel, so
-  "off" does not cut the container off — it states the channel's intent. That intent is now said
-  out loud everywhere instead of being inferred from a missing suffix: the mode label carries the
-  state in BOTH directions (`Read-only · network off` / `Bash · network on`), `/mode` and `/status`
-  add the caveat (`network off (advisory — not enforced by the container yet)`), the gateway-managed
-  block at the top of every conversation's instruction file states the mode and the network switch
-  to the engine itself, and the `run_config` event records `networkEnforced: false` beside
-  `networkPolicy` so an operator reading it after an incident cannot mistake `"off"` for "this turn
-  could not reach the internet". A container-side egress proxy that actually enforces the switch is
-  a later slice; `NETWORK_POLICY_ENFORCED` in `src/engines/network-policy.js` is the one flag every
-  surface reads. → TEST-PLAN: Sandbox boundaries.
+- **Allow Network is enforced by the egress proxy, and says so where it is only advisory.** A
+  proxy-mode container (the default) has `--network none`, and the per-channel switch is the
+  proxy's live policy (see Container runtime → egress proxy). Under the legacy
+  `containerEgressMode = "bridge"`, a channel's `rawNetwork` escape or a `/sudo` host thread the
+  switch only states intent, and that is said out loud everywhere instead of being inferred from a
+  missing suffix: the mode label carries the state in BOTH directions (`Read-only · network off` /
+  `Bash · network on`), `/mode` and `/status` add the caveat (`network off (advisory — not enforced
+  for this container)`) only where it applies, the gateway-managed block at the top of every
+  conversation's instruction file states the switch AND whether it is enforced, and the
+  `run_config` event records `networkEnforced` and `egress` beside `networkPolicy` so an operator
+  reading it after an incident cannot mistake one for the other. `NETWORK_POLICY_ENFORCED` in
+  `src/engines/network-policy.js` is now `true`; every surface asks `networkEnforcedFor(target)`.
+  → TEST-PLAN: Sandbox boundaries; Egress proxy, placeholders and `--network none`.
 - **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — with no host sandbox there is no user namespace for AppArmor to restrict,
   and rootless Podman brings its own uid mapping (`--userns=keep-id`, `/etc/subuid`). **Linux hosts keep their Bash sandbox under Ubuntu's AppArmor userns restriction**: Ubuntu 23.10+
   (24.04 LTS included) stacks any unconfined process that creates a user namespace into a
@@ -2620,9 +2623,89 @@ are retired, bullet by bullet; everything else stands.
   cannot be relayed: an isolated run drops it and names it in the skipped-MCP note rather than hand
   the token to the container. Host (sudo) targets keep the direct http entries and headers
   helpers byte for byte. Image spec 1.6.0 (the image's broker forwards `CG_MCP_SERVICE` /
-  `CG_MCP_SOCKET`). Egress is still not policed (see Isolation), so a container can reach the same
-  remote endpoints with a credential of its OWN — what it can no longer do is read the gateway's.
-  → TEST-PLAN: Remote MCP relay (container-secrets P1).
+  `CG_MCP_SOCKET`). Where the egress proxy is the container's network (below) it also decides whether
+  the container can reach those endpoints at all with a credential of its OWN; either way it can no
+  longer read the gateway's. → TEST-PLAN: Remote MCP relay (container-secrets P1).
+- **The egress proxy core (container-secrets P2).** `src/gateway/egress/` is an in-house HTTP/1.1
+  proxy in Node built-ins only, served per connection over a unix socket the caller owns (the
+  socket PATH is the channel identity): `CONNECT` → the destination policy → a TLS-terminated
+  tunnel with a leaf from the per-deployment CA (`ca.js`: created once under
+  `config/egress-ca/`, `ca.key` 0600, ECDSA P-256 leaves for 24 h in a 512-entry LRU) → every
+  request forwarded over https to the PINNED address with the CONNECT host as SNI, headers swapped,
+  bodies streamed unbuffered, WebSocket upgrades swapped then piped, absolute-form plain http
+  forwarded, and a raw CONNECT tunnel (no TLS termination) for declared SSH/Postgres host:ports.
+  The policy (`policy.js`) resolves EVERY address and refuses a destination when any of them is
+  loopback, private, link-local (the metadata address included), CGNAT or reserved — IPv4-mapped
+  forms too — then dials the first address as a literal, so DNS rebinding is useless; mode off
+  admits only engine hosts. A placeholder (`placeholders.js`: `cgph_<o|c|p|r><32 base32>`, 160
+  random bits; an `sk-ant-oat01-` shape for engines that check one) is swapped (`rules.js`) only on
+  a declared host, in a declared header, at a declared position (bearer, raw, the password or user
+  half of Basic), never partially, never across a Host-header mismatch, over plain http only when
+  the grant opts in, in query parameters only when listed; anything else is forwarded unchanged. A
+  `canUse` refusal answers 403 naming the secret and the reason. A response of an uncompressed text
+  type is scrubbed (`scrub.js`) of every value swapped into its request, even across chunks. Audit
+  events carry names, counts and reasons only. HTTP/1.1 only (ALPN), request bodies are never
+  swapped, trailers are dropped. → TEST-PLAN: Egress proxy, placeholders and `--network none`.
+- **Channel containers run with `--network none` behind the egress proxy (container-secrets P2).**
+  The gateway setting `containerEgressMode` (Settings → Container runtime) is `"proxy"` by default:
+  every channel container is created with no network of its own, its channel's egress socket
+  directory (`<root>/eg/<12 hex of sha256(platform|slug)>/egress.sock`, 0700/0600 — NOT under the
+  `run/` dir every container mounts) bind-mounted read-only at `/run/channelgate/egress`, and the
+  CA trust bundle (`<root>/run/egress-ca.pem`, the host's system roots + the egress CA, written in
+  place at boot so a running container's file mount stays current) at
+  `/run/channelgate/egress-ca.pem`. `cg-init` starts the image's forwarder (`bin/cg-egress.mjs`, a
+  verbatim copy of `src/mcp/egress-forwarder.js`) on `127.0.0.1:3128` under `CG_EGRESS=proxy`; it
+  pipes each connection to the socket and RESETS the client when the daemon is unreachable. One
+  helper (`src/runtimes/container/egress-env.js`) sets `HTTP(S)_PROXY` (both cases), `NO_PROXY`
+  (loopback), `NODE_USE_ENV_PROXY=1`, ten CA variables (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
+  `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PIP_CERT`, `NPM_CONFIG_CAFILE`,
+  `CARGO_HTTP_CAINFO`, `AWS_CA_BUNDLE`, `DENO_CERT`) and `CG_EGRESS`, and removes `ALL_PROXY` — at
+  create time, FORCED in every exec env-file (a daemon `HTTPS_PROXY` cannot route a run around the
+  proxy) and in the gateway-owned last group of the Claude and Codex env; every one of those names
+  is a reserved secret name. Chromium gets `--proxy-server` and the CA's SPKI pin through
+  `AGENT_BROWSER_ARGS`. The daemon's service (`src/gateway/egress/service.js`) starts right after
+  the control socket; a failure logs ONE line and leaves the boot running, and every proxy-mode
+  run, background job and SSH container then fails before spawning with `egress proxy unavailable:
+  …` and the remedy — a down proxy never opens the bridge. `ensureUp` binds the channel's listener
+  before creating or starting the container. Per request the policy reads the channel's CURRENT
+  meta: *Allow network* off admits the engine endpoints (Claude, Codex, a configured Qwen endpoint)
+  and the remote MCP hosts this channel's runs were handed; on admits any public destination; raw
+  tunnels go to `github.com:22` and the admin-declared `egressRawHosts` on 22/5432/6543. Audit rows
+  (`egress` events) only for a swap of a channel/organization/personal secret, a refusal, a blocked
+  destination or a raw tunnel — the relayed Claude login's swap on every API call is only counted
+  (`egressStatus()`, `/api/health` → `containerRuntime.egress`). Two escapes, both reported as
+  advisory everywhere: the LEGACY `containerEgressMode = "bridge"` (the open bridge and raw values,
+  for a host that cannot run the proxy) and a channel's admin-set `rawNetwork` (the bridge beside
+  the proxy, proxy env still set). Switching either recreates the container at its next idle moment
+  (the network mode is in the create-time fingerprint; the egress mounts are in both).
+  → TEST-PLAN: Egress proxy, placeholders and `--network none`.
+- **A proxy-mode container holds placeholders, not secrets (container-secrets P2).** Every spawn site
+  — a turn, a background job, the memory reviewer — resolves its environment through
+  `resolveEgressRunEnv` (`src/gateway/egress/grants.js`): a secret with a swap rule becomes its
+  placeholder, stable per (scope, channel, owner, name) in migration 30's `egress_grants`
+  (organization: shared by every channel; channel; personal: per channel AND author) — the table
+  never holds a value. Rules are built in for credential NAMES (`catalog-rules.js`, fed by the CLI
+  catalog's new `swap` blocks: GitHub tokens and PATs on api.github.com / github.com /
+  uploads.github.com / *.githubusercontent.com incl. Basic-password for git over https; Vercel and
+  Supabase access tokens; Make API keys with `Token <key>` or x-api-key; `COMPOSIO_API_KEY`) or
+  declared by an admin on the entry ("Used on hosts" in the admin secrets editor, `hosts`/
+  `headers`/`format` on `set_secret`: ≤ 16 DNS names or `*.suffix`, ≤ 8 lowercase headers, one of
+  bearer/raw/basic-password/basic-user), kept across a value rotation. Configuration names
+  (`GH_REPO`, `VERCEL_ORG_ID`) and raw-protocol passwords (`SUPABASE_DB_PASSWORD`) have no rule. A
+  name without a rule is injected raw and flagged `unprotected` — or withheld under
+  `containerEgressSecretsStrict` ("Withhold unprotected secrets"). The proxy resolves the CURRENT
+  value per request from the store that owns it (rotation is live; the relay cached 60 s), and only
+  while `canUse` passes: the placeholder's own channel (the organization's from any), live work in
+  that channel (a turn, a job, a review or an SSH session — `liveness.js`), and for a personal
+  secret its OWNER live there with no other person's SSH session open. Removing a secret revokes
+  its placeholder (the config-change listener, every run's own reconcile, and the resolver itself);
+  re-adding mints a new one. The relayed Claude login becomes the channel's relay placeholder in
+  the `sk-ant-oat01-` shape (`containerClaudeCredential`), swapped on `api.anthropic.com` only.
+  The per-attempt credential note names each protected name with its hosts, the unprotected ones
+  and the withheld ones; `list_secrets` and the admin listings show "protected via egress proxy
+  (hosts)" / "unprotected (raw)"; the output redactor keeps every REAL value; `run_config` records
+  `networkEnforced`, `egress` (`proxy` / `proxy+raw` / `bridge` / `unavailable` / `host`) and the
+  unprotected/withheld names. → TEST-PLAN: Egress proxy, placeholders and `--network none`.
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's
   pid names the host-side `exec` CLIENT, never the engine, so liveness and signals are asked of the
   backend: a probe execs `cg-probe <runId>` against the process-group leader `cg-exec` recorded

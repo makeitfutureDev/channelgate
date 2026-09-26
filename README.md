@@ -284,14 +284,19 @@ background and scheduled engine run uses the same runtime boundary.
    work/runtime mounts. Other channel workspaces and the operator's home are excluded by default.
    An explicit, off-by-default Full-access home-sharing option exposes the operator's whole home
    to admitted authors in those channels; choose shared work folders and this option deliberately.
-2. **Network access is not an egress firewall.** Containers use bridge networking. The
-   *Allow network* switch communicates policy to the engines; there is no domain filtering or
-   container-level egress cut-off in this release.
-3. **Usable credentials have runtime exposure.** Claude's host credentials file is never copied
-   or mounted; runs receive a relay of its access token or a configured credential. Codex's host
-   sign-in file is shared with its containers while sessions stay per channel. Protected transient
-   MCP artifacts can contain credentials. Channel environment secrets have no reveal endpoint,
-   but an agent using them can access their runtime values; masking and redaction are not a vault.
+2. **Egress goes through a per-channel proxy.** Containers run with no network of their own; the
+   daemon's egress proxy is their only way out. It enforces the *Allow network* switch on every
+   request (off: engine endpoints and selected connectors only), always refuses private, loopback
+   and cloud-metadata addresses, and has no per-domain allow-list when the switch is on. The
+   legacy open-bridge mode and a channel's raw-socket escape make the switch advisory again.
+3. **Usable credentials have runtime exposure, reduced by placeholders.** Claude's host credentials
+   file is never copied or mounted; containers receive a placeholder for the relayed access token,
+   swapped in by the egress proxy on the Anthropic API only. Secrets with an egress rule (built in
+   for GitHub, Vercel, Supabase, Make and Composio tokens, or declared "used on hosts") are
+   placeholders too; any other secret is injected raw and flagged unprotected. Codex's host sign-in
+   file is still shared with its containers while sessions stay per channel. Channel environment
+   secrets have no reveal endpoint, but an agent can use whatever it is given; masking and
+   redaction are not a vault.
 4. **Authorization is checked before a run.** Channel use/manage policies and guest grants are
    enforced; unknown users without a guest grant are denied, and DMs require approval or admin status. Admin bypass needs an admin author and Admin mode. API callers cannot
    claim personal connector identities or widen a channel's durable tool permissions.

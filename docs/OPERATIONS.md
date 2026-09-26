@@ -360,6 +360,8 @@ runs too, and the next successful update settles it.
 | Process / memory / CPU limit | `--pids-limit` (default 1024), `--memory` (e.g. `2g`), `--cpus` (e.g. `1.5`); blank = no limit |
 | Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
 | Full-access channels see the gateway home | off by default; on = every Full-access channel's container also mounts the gateway user's whole home read-write (see below) |
+| Legacy open network (no egress proxy) | off by default (`containerEgressMode = "proxy"`); on (`"bridge"`) = the pre-proxy behavior: the open bridge network and raw secret values (see **Network** below) |
+| Withhold unprotected secrets | off by default (`containerEgressSecretsStrict`); on = a secret with no egress rule is not given to proxy-mode containers at all |
 
 Values that would reach the container CLI's argv are validated at the boundary: a flag, a space or a
 shell metacharacter in the image/memory/cpu fields is rejected with an error, not silently cleaned.
@@ -372,13 +374,78 @@ that token is then used instead and never needs refreshing. Codex is different �
 `auth.json` in place, so every container shares a read-write mount of the gateway's real auth file;
 keep the host signed in with `codex login`. Codex *sessions* and history are still per channel.
 
-**Network.** Every channel container runs on the default bridge network. The per-channel *Allow
-network* switch (admin UI → the channel → Advanced, or `set_channel_network` in chat) is kept and
-shown: it tells the engines whether the channel is meant to have network access (Codex read mode
-refuses network on its own), and that is all it does in this release — there is no per-domain
-filtering and no egress cut-off in the container. The boundary today is the container's
-filesystem and process isolation, not its egress; a container-side egress proxy that enforces the
-switch is the planned follow-up.
+**Network (the egress proxy).** Every channel container runs with `--network none`: its only
+interface is `lo`. The one way out is the daemon's egress proxy. `cg-init` starts a small forwarder
+(`/opt/channelgate/bin/cg-egress.mjs`) on `127.0.0.1:3128` inside the container, every HTTP(S)
+client there is pointed at it (`HTTP_PROXY`/`HTTPS_PROXY` and the lowercase twins, `NO_PROXY` for
+loopback only, `NODE_USE_ENV_PROXY=1`), and the forwarder pipes each connection to the channel's
+own unix socket — `~/.channelgate/eg/<12 hex>/egress.sock`, mounted read-only at
+`/run/channelgate/egress/`. The socket path IS the channel's identity: the proxy never trusts what
+the container says about itself, and no container can see another channel's socket. The proxy
+terminates TLS with the deployment's egress CA (created once under
+`~/.channelgate/config/egress-ca/`, `ca.key` 0600 never leaves the daemon) and applies the
+channel's policy to every request:
+
+- *Allow network* **off**: only the engine endpoints (`api.anthropic.com`, `claude.ai`,
+  `statsig.anthropic.com`, `api.openai.com`, `chatgpt.com`, `auth.openai.com`, a configured Qwen
+  endpoint) and the remote MCP servers this channel's runs were handed are reachable; anything
+  else answers `403 {"error":"network-off"}`.
+- *Allow network* **on**: any PUBLIC destination. Loopback, private, link-local (the cloud metadata
+  address included), CGNAT and reserved ranges are always refused, checked on every resolved
+  address and pinned for the connect, so DNS rebinding does not help.
+- The switch is read on every request: a flip applies to the next connection, no recreate.
+- **Raw sockets** (`ssh`, `psql`) get a plain CONNECT tunnel only while the network is on and only
+  to `github.com:22` plus the hosts an admin lists in the channel's `egressRawHosts` (admin API:
+  `PUT /api/channels/<id>/meta` with `{"egressRawHosts":["db.example.com"]}`), on ports 22, 5432
+  and 6543. A client has to be pointed at the proxy for that (a `ProxyCommand`); nothing else
+  leaves the container.
+- A channel that genuinely needs arbitrary raw sockets can be given the open bridge BESIDE the
+  proxy: `{"rawNetwork": true}` on the same admin API. The proxy env stays set, so proxy-aware
+  tools still use placeholders, but the switch is then advisory for that channel and every surface
+  says so. Changing it recreates that channel's container at its next idle moment.
+
+**The CA trust bundle.** At boot the daemon writes `~/.channelgate/run/egress-ca.pem` (0644): the
+host's own `/etc/ssl/certs/ca-certificates.crt` followed by the egress CA, rewritten in place only
+when its bytes change. It is mounted at `/run/channelgate/egress-ca.pem` and named by
+`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`,
+`PIP_CERT`, `NPM_CONFIG_CAFILE`, `CARGO_HTTP_CAINFO`, `AWS_CA_BUNDLE` and `DENO_CERT`; Chromium
+(agent-browser) gets `--proxy-server` plus the CA's SPKI pin through `AGENT_BROWSER_ARGS`. A tool
+that reads none of these fails TLS with an unknown-issuer error — point it at the bundle. Rotating
+the CA means deleting `config/egress-ca/` and restarting; every container picks the new bundle up
+at its next start.
+
+**Secrets through the proxy.** A proxy-mode container never holds a channel, organization or
+personal secret that has an egress rule, nor the relayed Claude login: it holds a placeholder
+(`cgph_…`; the Claude token keeps its `sk-ant-oat01-` shape). The proxy swaps the placeholder for
+the real value only on that secret's declared hosts and headers — GitHub, Vercel, Supabase, Make
+and Composio token names have built-in rules; any other secret is protected once an admin fills
+**Used on hosts** in the secrets editor (or passes `hosts` to `set_secret`) — and only while the
+channel has live work (a turn, a background job, a memory review or an SSH session); a personal
+secret additionally only while its owner is the one working there and no other person has an SSH
+session open. Everything else about a placeholder is forwarded unchanged: a placeholder sent to a
+host it was not declared for arrives as the useless string it is. Rotation is live (the proxy
+resolves the current value per request); removing a secret revokes its placeholder, and re-adding
+mints a new one. A secret with no rule is still injected raw and listed as **unprotected** in
+`list_secrets`, the admin UI and the run's own credential note — or withheld entirely with
+*Withhold unprotected secrets* on. `SUPABASE_DB_PASSWORD` and other raw-protocol passwords can
+never be swapped: they stay raw.
+
+**Audit.** Every swap of a channel/organization/personal secret, every refusal, every blocked
+destination and every raw tunnel is an `egress` event (names, hosts, reasons and byte counts —
+never a value, a header or a placeholder). Ordinary requests, including the relayed Claude login's
+swap on every API call, are only counted; `/api/health` → `containerRuntime.egress` shows whether
+the proxy is up and how many channel listeners it holds.
+
+**When the proxy is down.** A boot that cannot load the CA or write the bundle logs one line
+(`[egress] proxy unavailable (…)`) and carries on; every proxy-mode run, background job and SSH
+container then fails before spawning with `egress proxy unavailable: … Restart the gateway to retry,
+or … set Settings → Container runtime → Egress to "bridge"`. A down proxy never silently opens the
+bridge.
+
+**The legacy escape.** *Legacy open network* (`containerEgressMode = "bridge"`) restores the
+pre-proxy behavior for the whole gateway: containers on the default bridge network, raw secret
+values in their environment, the switch advisory again. It exists for a host that cannot run the
+proxy; leave it off otherwise. Switching it recreates each container at its next idle moment.
 
 **Admin channels run in containers too.** An admin author's live turn adds the engine's bypass
 flag; the channel's work folder is bind-mounted read-write like any other's. An admin channel
@@ -591,20 +658,28 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   `auth.json` the gateway uses. A `codex login` on the host that *replaces* the file leaves a
   running container holding the old inode — `/status` and `/api/health` report the drift; restart
   the channel's container (or let the reaper stop it) to pick the new one up.
-- **A relayed access token is readable by the channel's own agent.** It rides the exec
-  environment, so an agent in that channel can print it. It cannot rotate anything (an access token
-  carries no refresh half) and it dies within hours, but it is a live credential for that window;
-  the P3 egress proxy replaces it with an opaque token.
-- **Egress is not policed per channel.** Every container runs on the default bridge network, and
-  the per-channel *Allow network* switch does not cut it — it only tells the engines whether the
-  channel is meant to have network. The per-domain allow-list of the retired host sandbox has no
-  container equivalent; the container-side egress proxy that will enforce the switch is a later
-  slice. Because it is advisory, the switch is now STATED rather than inferred: the mode label
-  carries it in both directions (`Bash · network off`), `/mode` and `/status` add
-  "advisory — not enforced by the container yet", the gateway-managed block at the top of each
-  conversation's `CLAUDE.md` tells the engine the same thing, and every `run_config` event records
-  `networkEnforced: false` beside `networkPolicy`. `NETWORK_POLICY_ENFORCED` in
-  `src/engines/network-policy.js` is the single flag to flip when the proxy lands.
+- **The relayed Claude login is a placeholder in proxy mode.** A proxy-mode container's
+  `CLAUDE_CODE_OAUTH_TOKEN` is the channel's relay placeholder, swapped for the current access token
+  only on `api.anthropic.com` while the channel has live work. Under the legacy bridge mode it is
+  the real access token again, readable by the channel's own agent (it cannot rotate anything and
+  dies within hours). A daemon that authenticates Claude with its own `ANTHROPIC_API_KEY` still
+  passes that key through raw — the proxy does not rewrite it.
+- **Egress is policed per channel by the proxy; the switch is advisory only where the proxy is not
+  the network.** Under `containerEgressMode = "bridge"` or a channel's `rawNetwork` escape the
+  container has the open bridge and *Allow network* only tells the engines the channel's intent;
+  every surface then says so — `/mode` and `/status` add "advisory — not enforced for this
+  container", the gateway-managed block at the top of each `CLAUDE.md` and the per-attempt note tell
+  the engine, and `run_config` records `networkEnforced: false` with `egress: "bridge"` or
+  `"proxy+raw"`. In proxy mode `run_config` records `networkEnforced: true`, `egress: "proxy"`, and
+  the names of any unprotected (`egressUnprotected`) or withheld (`egressWithheld`) secrets.
+  `networkEnforcedFor(target)` in `src/engines/network-policy.js` is the one question every surface
+  asks.
+- **Codex's sign-in file is still the real one.** The shared `auth.json` mount is unchanged by the
+  proxy (the engine-login broker is a later phase); Codex's own traffic goes through the proxy like
+  everything else.
+- **SSH and VS Code sessions** run in the same `--network none` container with the proxy env, but
+  their secret files are not placeholders yet (a later phase): a developer session still sees raw
+  values, and SSH `-L` forwards to external hosts do not work without the network.
 
 **Remote MCP relay (container-secrets P1).** Composio (`composio-user`, `composio-agent` in token
 mode), the MakeItFuture toolbox and the Make toolbox never reach a container with their token. The
@@ -620,9 +695,9 @@ grant expired, or the daemon restarted since the run started: in-memory registra
 survive a restart, so the next turn simply registers again) or `remote MCP unavailable` (the
 service could not be reached; the upstream error is deliberately not repeated). A
 `COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override pointing at plain http cannot be relayed: container
-runs skip that server and say so in the thread. The relay removes the credential from the box; it
-does not police egress — a process in the container can still reach those services with a
-credential of its own. It needs image spec 1.6.0 (`npm run build:image`). Direct-host `/sudo`
+runs skip that server and say so in the thread. The relay removes the credential from the box; the
+egress proxy (above) is what polices where the box can connect. It needs image spec 1.6.0
+(`npm run build:image`), which also ships the egress forwarder. Direct-host `/sudo`
 threads keep the old shape: the engine dials the service itself.
 
 **Claude login in containers:** with no `containerClaudeOauthToken`, each container Claude run
