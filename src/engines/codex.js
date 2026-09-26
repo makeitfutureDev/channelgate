@@ -60,9 +60,8 @@ const NOTE_INTERVAL_MS = 15_000; // floor between stderr diagnostics shown to th
 // One requirement this places on an isolated backend's helper table, because Codex reaches that
 // helper THROUGH the secret bridge rather than launching it itself: "gateway-mcp" must be node +
 // a script path the bridge will accept (it validates a .js suffix), not a bare wrapper executable.
-// The image's "mcp-remote" helper is no longer part of a Codex run — remote MCPs are relayed by the
-// daemon in a container and dialled by Codex itself on the host (see addSecretRemote) — but it
-// stays in the table for the image contract and for any backend that still bridges one.
+// There is no "mcp-remote" helper any more (retired in container-secrets P4): remote MCPs are
+// relayed by the daemon in a container and dialled by Codex itself on the host (see addSecretRemote).
 function helperScriptArgv(helper) {
   return helper.args?.length ? [...helper.args] : [helper.command];
 }

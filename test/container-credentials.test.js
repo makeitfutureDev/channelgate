@@ -197,10 +197,10 @@ test("helperCommand answers with the image bundle, never a checkout path", () =>
   // separate process (which is why composio-sdk-bridge.js is not in the image at all).
   assert.deepEqual(containerBackend.helperCommand(t, "composio-sdk-bridge"), { command: "node", args: ["/opt/channelgate/bin/cg-mcp-bridge.mjs"] });
   assert.deepEqual(containerBackend.helperCommand(t, "stop-subagents-hook"), { command: "node", args: ["/opt/channelgate/gateway/hooks/stop-subagents.mjs"] });
-  // Not the raw binary: the broker reads the 0600 secret bundle, then execs the pinned mcp-remote.
-  assert.deepEqual(containerBackend.helperCommand(t, "mcp-remote"), { command: "node", args: ["/opt/channelgate/mcp/remote-secret-bridge.js"] });
+  // Retired in container-secrets P4: no backend bridges a remote MCP through a helper any more.
+  assert.throws(() => containerBackend.helperCommand(t, "mcp-remote"), /unknown runtime helper/);
   assert.throws(() => containerBackend.helperCommand(t, "warp-drive"), /unknown runtime helper/);
-  for (const name of ["gateway-mcp", "secret-env-bridge", "composio-sdk-bridge", "stop-subagents-hook", "mcp-remote"]) {
+  for (const name of ["gateway-mcp", "secret-env-bridge", "composio-sdk-bridge", "stop-subagents-hook"]) {
     const helper = containerBackend.helperCommand(t, name);
     assert.equal(helper.command, "node");
     for (const arg of helper.args) assert.ok(arg.startsWith("/opt/channelgate/"), `${name} must resolve inside the image`);

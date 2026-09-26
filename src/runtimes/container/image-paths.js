@@ -78,10 +78,6 @@ export const IMAGE_HELPERS = Object.freeze({
   // closure drags in settings.js and the database layer) never ships in the image at all.
   "composio-sdk-bridge": Object.freeze({ command: "node", args: Object.freeze([CONTAINER_MCP_BRIDGE]) }),
   "stop-subagents-hook": Object.freeze({ command: "node", args: Object.freeze(["/opt/channelgate/gateway/hooks/stop-subagents.mjs"]) }),
-  // Not the raw binary: the broker reads the 0600 secret bundle and only then execs the pinned
-  // mcp-remote (which is installed globally in the image AND resolvable from the bundle's
-  // node_modules, which is how the broker finds dist/proxy.js).
-  "mcp-remote": Object.freeze({ command: "node", args: Object.freeze(["/opt/channelgate/mcp/remote-secret-bridge.js"]) }),
 });
 
 // The paths a runner reads off `target.container` when it needs to compose an in-container path.

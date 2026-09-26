@@ -181,7 +181,6 @@ export function createFakeRuntimeBackend({
         "gateway-mcp": { command: "cg-mcp-bridge", args: [] },
         "secret-env-bridge": { command: "node", args: ["/opt/channelgate/mcp/secret-env-bridge.js"] },
         "composio-sdk-bridge": { command: "node", args: ["/opt/channelgate/mcp/composio-sdk-bridge.js"] },
-        "mcp-remote": { command: "mcp-remote", args: [] },
       };
       if (!image[name]) throw new TypeError(`unknown runtime helper "${name}"`);
       return image[name];

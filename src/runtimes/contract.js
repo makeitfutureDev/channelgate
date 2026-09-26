@@ -108,7 +108,9 @@ export const HELPER_COMMANDS = Object.freeze([
   "secret-env-bridge", // src/mcp/secret-env-bridge.js — Codex: bundle → env → exec target
   "composio-sdk-bridge", // src/mcp/composio-sdk-bridge.js — Composio SDK-mode stdio server
   "stop-subagents-hook", // src/gateway/hooks/stop-subagents.mjs — the Claude Stop hook
-  "mcp-remote", // the pinned mcp-remote bridge for header-bearing remote MCPs
+  // (No "mcp-remote": container-secrets P4 retired remote-secret-bridge.js. Header-bearing remote
+  // MCPs are relayed by the daemon over the control socket in a container and dialled by the engine
+  // itself on the host, so no backend bridges one through a helper any more.)
 ]);
 
 /**
