@@ -99,6 +99,34 @@ test("run as the image runs it: node <file>, listening on CG_EGRESS_PORT, dialin
   }
 });
 
+test("a client half-close does not truncate the answer (allowHalfOpen on both sides)", async () => {
+  const halfPath = path.join(dir, "half.sock");
+  // The daemon side answers only AFTER the client has finished sending (FIN), like a raw protocol
+  // that reads a request to EOF.
+  const upstream = net.createServer({ allowHalfOpen: true }, (socket) => {
+    let got = "";
+    socket.on("data", (c) => { got += c; });
+    socket.on("end", () => setTimeout(() => socket.end(`answer:${got}`), 20));
+  });
+  await listenUnix(upstream, halfPath);
+  const forwarder = startForwarder({ port: 0, host: "127.0.0.1", socketPath: halfPath });
+  const p = await port(forwarder);
+  try {
+    const got = await new Promise((resolve, reject) => {
+      const client = net.connect({ port: p, host: "127.0.0.1", allowHalfOpen: true });
+      let out = "";
+      client.on("data", (c) => { out += c; });
+      client.on("end", () => { client.end(); resolve(out); });
+      client.on("error", reject);
+      client.on("connect", () => client.end("request-to-eof"));
+    });
+    assert.equal(got, "answer:request-to-eof");
+  } finally {
+    await close(forwarder);
+    await close(upstream);
+  }
+});
+
 test("the forwarder imports node built-ins only (it is copied verbatim into the image)", () => {
   const source = readFileSync(FORWARDER, "utf8");
   const specifiers = [...source.matchAll(/(?:^|\n)\s*import\s[^;]*?from\s*["']([^"']+)["']/g)].map((m) => m[1]);
@@ -112,6 +140,7 @@ test("the image build stages the forwarder where cg-init starts it", () => {
   assert.equal(/const EGRESS_FORWARDER_DEST = "([^"]+)"/.exec(build)[1], "bin/cg-egress.mjs");
   const init = readFileSync(new URL("../containers/bin/cg-init", import.meta.url), "utf8");
   assert.match(init, /"\$\{CG_EGRESS:-\}" = "proxy"/, "started only when the daemon created the container in proxy mode");
-  assert.match(init, /node \/opt\/channelgate\/bin\/cg-egress\.mjs [^\n]*&/, "in the background, before exec");
+  assert.match(init, /node \/opt\/channelgate\/bin\/cg-egress\.mjs [^\n]*2>>\/run\/cg\/egress\.log &/, "in the background, its stderr kept on the /run tmpfs");
+  assert.ok(init.indexOf("/run/cg;") > -1 || /\/run\/cg\b/.test(init.slice(0, init.indexOf("cg-egress.mjs"))), "/run/cg is created before the forwarder starts");
   assert.ok(init.indexOf("cg-egress.mjs") < init.lastIndexOf('exec "$@"'));
 });

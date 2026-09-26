@@ -244,6 +244,18 @@ test("a run reconciles: a secret removed since the last run loses its placeholde
   assert.equal(grants.lookupGrant(ph), null);
 });
 
+test("a secret that briefly resolves EMPTY keeps its placeholder (grants are kept by stored names)", async () => {
+  const meta = await channel("C_GRANTS_FLAKY", { GITHUB_TOKEN: "ghp_flaky_value_000001" });
+  const first = await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_FLAKY", target: activeTarget("C_GRANTS_FLAKY") });
+  const ph = first.env.GITHUB_TOKEN;
+  // A provider hiccup: the entry is still stored, its value did not resolve this time.
+  const hiccup = await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_FLAKY", target: activeTarget("C_GRANTS_FLAKY"), deps: { resolveChannelEnv: async () => ({}) } });
+  assert.equal(hiccup.env.GITHUB_TOKEN, undefined);
+  assert.ok(grants.lookupGrant(ph), "not revoked: warm processes still hold this placeholder");
+  const after = await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_FLAKY", target: activeTarget("C_GRANTS_FLAKY") });
+  assert.equal(after.env.GITHUB_TOKEN, ph, "the same placeholder, not a new one");
+});
+
 test("the Claude relay: a shaped placeholder per channel when egress is active, the real token otherwise", () => {
   const relay = { token: "sk-ant-oat01-REAL-ACCESS-TOKEN", source: "operator", expiresAt: 123, login: { file: "/x" } };
   const shaped = grants.containerClaudeCredential({ target: activeTarget(CH_A), relay, channelId: CH_A });

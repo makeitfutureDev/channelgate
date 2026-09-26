@@ -246,17 +246,19 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   }
   const channelKey = String(channelId || meta?.channelId || "");
   const personalOwner = untrustedPrincipal ? "" : String(authorId || "");
-  // Reconcile first: a secret removed since the last run loses its placeholder now, even if the
-  // change listener never saw the write.
-  revokeMissing({ scope: "organization", present: Object.keys(org) });
-  if (channelKey) revokeMissing({ scope: "channel", channelId: channelKey, present: Object.keys(channel) });
-  if (channelKey && personalOwner) revokeMissing({ scope: "personal", channelId: channelKey, ownerId: personalOwner, present: Object.keys(user) });
-
   const entries = {
     organization: deps.orgEntries ? deps.orgEntries() : getOrgEnv(),
     personal: personalOwner ? await (deps.userEntries || getUserEnv)(personalOwner) : {},
     channel: normalizeChannelEnv(meta?.env),
   };
+  // Reconcile first: a secret REMOVED since the last run loses its placeholder now, even if the
+  // change listener never saw the write. Keyed by the STORED entry names, never by what resolved: a
+  // secret that briefly resolves empty (a provider hiccup) is still a secret, and revoking it would
+  // mint a new placeholder while warm processes hold the old, now dead, one.
+  revokeMissing({ scope: "organization", present: Object.keys(entries.organization) });
+  if (channelKey) revokeMissing({ scope: "channel", channelId: channelKey, present: Object.keys(entries.channel) });
+  if (channelKey && personalOwner) revokeMissing({ scope: "personal", channelId: channelKey, ownerId: personalOwner, present: Object.keys(entries.personal) });
+
   const strict = strictSetting(target);
   const env = {};
   const scopes = {};

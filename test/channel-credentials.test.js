@@ -63,6 +63,14 @@ test("the egress lines: proxy-protected placeholders with their hosts, unprotect
   assert.match(prompt, /Withheld by the gateway's strict egress setting[^\n]*\["LEGACY_KEY"\]/);
   assert.ok(!prompt.includes(placeholder), "the placeholder string itself is not repeated into the prompt");
   assert.ok(!prompt.includes(fixtureValue));
+  // A personal placeholder says it PAUSES while another person works here.
+  const personalPh = "cgph_pabcdefghijklmnopqrstuvwxyz234567";
+  const withPersonal = channelCredentialsPreamble(
+    { MY_PAT: personalPh },
+    { scopes: { MY_PAT: "personal" }, placeholders: { MY_PAT: personalPh }, hosts: { MY_PAT: ["api.github.com"] } },
+  );
+  assert.match(withPersonal, /Personal placeholders \["MY_PAT"\] work only while their owner is the one working in this conversation: they PAUSE[^\n]*another-author-active[^\n]*another person's turn, background job or SSH session/);
+  assert.doesNotMatch(prompt, /Personal placeholders/, "no personal line without a personal placeholder");
   // Without egress facts (legacy bridge mode, the host) none of these lines appear.
   const plain = channelCredentialsPreamble({ GITHUB_TOKEN: fixtureValue });
   assert.doesNotMatch(plain, /proxy-protected|Unprotected|Withheld/);

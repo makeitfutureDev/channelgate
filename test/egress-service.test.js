@@ -257,6 +257,8 @@ test("canUse: channel/org need live work in the channel; personal needs its owne
   assert.deepEqual(service.canUseGrant(orgGrant, { ...ctx, channelId: "C_ANYWHERE" }), { ok: false, reason: "channel-idle" }, "the org grant still needs live work in THAT channel");
   assert.deepEqual(service.canUseGrant(personal, ctx), { ok: false, reason: "owner-not-live" }, "someone else's job does not wake a personal grant");
   const turn = liveness.markLive({ channelId: "C_LIVE", ownerId: "U_OWNER", kind: "turn", id: "t9" });
+  assert.deepEqual(service.canUseGrant(personal, ctx), { ok: false, reason: "another-author-active" }, "U_OTHER's job is still running");
+  job();
   assert.deepEqual(service.canUseGrant(personal, ctx), { ok: true });
   assert.deepEqual(service.canUseGrant(personal, { ...ctx, channelId: "C_ELSEWHERE" }), { ok: false, reason: "other-channel" });
 
@@ -266,13 +268,87 @@ test("canUse: channel/org need live work in the channel; personal needs its owne
     liveness.__setSshSessionSource(() => [{ channelId: "C_LIVE", userId: "U_OWNER", slug: "c-live" }]);
     assert.deepEqual(service.canUseGrant(personal, ctx), { ok: true }, "the owner's own session is fine");
     turn();
-    job();
     assert.deepEqual(service.canUseGrant(channelGrant, ctx), { ok: true }, "an SSH session is live work too");
     assert.equal(liveness.isOwnerLive("C_LIVE", "U_OWNER"), true);
   } finally {
     liveness.__setSshSessionSource(null);
   }
   assert.equal(liveness.isChannelLive("C_LIVE"), false);
+});
+
+test("a personal grant pauses while ANOTHER author has a turn or job in the channel; ownerless work does not pause it", () => {
+  const ctx = { channelId: "C_AUTHORS", slug: "c-authors", platform: "slack" };
+  const personal = { scope: "personal", channelId: "C_AUTHORS", owner: "U_OWNER" };
+  const mine = liveness.markLive({ channelId: "C_AUTHORS", ownerId: "U_OWNER", kind: "turn", id: "mine" });
+  try {
+    assert.deepEqual(service.canUseGrant(personal, ctx), { ok: true });
+    const review = liveness.markLive({ channelId: "C_AUTHORS", ownerId: "", kind: "review", id: "r" });
+    assert.deepEqual(service.canUseGrant(personal, ctx), { ok: true }, "a memory review carries no personal env and pauses nothing");
+    review();
+    const theirs = liveness.markLive({ channelId: "C_AUTHORS", ownerId: "U_OTHER", kind: "turn", id: "theirs" });
+    assert.deepEqual(service.canUseGrant(personal, ctx), { ok: false, reason: "another-author-active" });
+    theirs();
+    const job = liveness.markLive({ channelId: "C_AUTHORS", ownerId: "U_OTHER", kind: "job", id: "j" });
+    assert.deepEqual(service.canUseGrant(personal, ctx), { ok: false, reason: "another-author-active" });
+    job();
+    assert.deepEqual(service.canUseGrant(personal, ctx), { ok: true }, "resumes when the other author's work ends");
+    const elsewhere = liveness.markLive({ channelId: "C_ELSEWHERE", ownerId: "U_OTHER", kind: "turn", id: "e" });
+    assert.deepEqual(service.canUseGrant(personal, ctx), { ok: true }, "another channel's work is irrelevant");
+    elsewhere();
+    // Channel grants are shared by design: another author's work does not pause them.
+    const other = liveness.markLive({ channelId: "C_AUTHORS", ownerId: "U_OTHER", kind: "turn", id: "o" });
+    assert.deepEqual(service.canUseGrant({ scope: "channel", channelId: "C_AUTHORS" }, ctx), { ok: true });
+    other();
+  } finally {
+    mine();
+  }
+});
+
+test("listeners: a connection ceiling per channel, a rebind when the channel id changes, a close that waits for a bind", async () => {
+  assert.equal(service.egressStatus().channels.find((c) => c.slug === entry.slug).maxConnections, service.MAX_CONNECTIONS_PER_CHANNEL);
+  assert.equal(service.MAX_CONNECTIONS_PER_CHANNEL, 256);
+
+  const moved = await registerChannel("C_EGSVC_MOVED", {});
+  const movedTarget = await targetFor("C_EGSVC_MOVED", moved.slug);
+  await service.ensureChannelEgress(movedTarget);
+  const relabelled = { ...movedTarget, meta: { ...movedTarget.meta, channelId: "C_EGSVC_REUSED" } };
+  await service.ensureChannelEgress(relabelled);
+  assert.equal(service.egressStatus().channels.find((c) => c.slug === moved.slug).channelId, "C_EGSVC_REUSED", "rebound with the new identity");
+
+  // A close racing a bind: the close waits, then removes what the bind created.
+  await service.closeChannelEgress(movedTarget);
+  const binding = service.ensureChannelEgress(movedTarget);
+  const closing = service.closeChannelEgress(movedTarget);
+  const { socketPath } = await binding;
+  await closing;
+  assert.equal(service.egressStatus().channels.some((c) => c.slug === moved.slug), false);
+  assert.throws(() => statSync(socketPath), /ENOENT/);
+});
+
+test("boot: every RUNNING proxy-mode container gets its listener back before its next turn", async () => {
+  const recovered = await registerChannel("C_EGSVC_BOOT", {});
+  const recoveredTarget = await targetFor("C_EGSVC_BOOT", recovered.slug);
+  await service.closeChannelEgress(recoveredTarget);
+  assert.equal(service.egressStatus().channels.some((c) => c.slug === recovered.slug), false);
+  const out = await service.bindRunningChannelEgress({
+    listContainers: async () => [
+      { slug: recovered.slug, platform: "slack", state: "running" },
+      { slug: "stopped-one", platform: "slack", state: "exited" },
+    ],
+    resolveTarget: async (slug, meta) => resolveRuntime(slug, meta, { settings: SETTINGS }),
+    log: { log() {}, warn() {} },
+  });
+  assert.deepEqual(out, { bound: 1, failed: 0 });
+  const restored = service.egressStatus().channels.find((c) => c.slug === recovered.slug);
+  assert.equal(restored.listening, true);
+  assert.equal(restored.channelId, "C_EGSVC_BOOT");
+  // Legacy bridge mode: nothing to bind.
+  const legacy = await service.bindRunningChannelEgress({
+    listContainers: async () => [{ slug: recovered.slug, platform: "slack", state: "running" }],
+    resolveTarget: async (slug, meta) => resolveRuntime(slug, meta, { settings: { ...SETTINGS, egressMode: "bridge" } }),
+    log: { log() {}, warn() {} },
+  });
+  assert.deepEqual(legacy, { bound: 0, failed: 0 });
 });
 
 test("a removed secret's placeholder is revoked by the config-change listener", async () => {

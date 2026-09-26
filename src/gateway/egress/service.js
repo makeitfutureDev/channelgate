@@ -36,13 +36,14 @@ import { loadOrCreateEgressCa } from "./ca.js";
 import { createEgressProxy } from "./proxy.js";
 import { normalizeHost } from "./rules.js";
 import { resolveEgressGrant, revokeMissing } from "./grants.js";
-import { isChannelLive, isOwnerLive, otherSshOpen } from "./liveness.js";
+import { isChannelLive, isOwnerLive, otherOwnerActive, otherSshOpen } from "./liveness.js";
 import { engineHostsFor, hostOfUrl } from "./engine-hosts.js";
 import { isValidRuleHost } from "./catalog-rules.js";
 
 // sockaddr_un.sun_path is 108 bytes including the terminating NUL.
 export const MAX_SOCKET_PATH_BYTES = 107;
 export const RAW_PASSTHROUGH_PORTS = Object.freeze([22, 5432, 6543]);
+export const MAX_CONNECTIONS_PER_CHANNEL = 256;
 export const ALWAYS_RAW = Object.freeze([{ host: "github.com", port: 22 }]);
 export const SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 const RUN_HOSTS_TTL_MS = 24 * 60 * 60 * 1000;
@@ -127,6 +128,7 @@ export function canUseGrant(grant, ctx) {
   if (grant.scope === "personal") {
     if (!isOwnerLive(channelId, grant.owner)) return { ok: false, reason: "owner-not-live" };
     if (otherSshOpen(channelId, grant.owner)) return { ok: false, reason: "another-person-ssh-session" };
+    if (otherOwnerActive(channelId, grant.owner)) return { ok: false, reason: "another-author-active" };
     return { ok: true };
   }
   if (!isChannelLive(channelId)) return { ok: false, reason: "channel-idle" };
@@ -279,9 +281,20 @@ export async function ensureChannelEgress(target) {
   if (!slug) throw new Error("egress proxy unavailable: the run has no channel");
   const platform = platformOr(target?.platform).id;
   const hash = channelEgressHash({ slug, platform });
-  const existing = state.servers.get(hash);
+  let existing = state.servers.get(hash);
+  if (existing?.pending) {
+    try { await existing.pending; } catch { /* a failed bind is retried below */ }
+    existing = state.servers.get(hash);
+  }
+  // A listener's ctx is the channel identity the grants are checked against. A slug that now
+  // belongs to a different channel id (a recreated conversation reusing the folder) gets a fresh
+  // listener rather than one that would refuse — or worse, admit — the wrong channel's grants.
+  const wantedId = String(target?.meta?.channelId || "");
+  if (existing?.listening && wantedId && existing.ctx.channelId !== wantedId) {
+    await closeChannelEgress(target);
+    existing = null;
+  }
   if (existing?.listening) return { socketDir: existing.dir, socketPath: existing.socketPath };
-  if (existing?.pending) return existing.pending;
   const dir = path.join(state.socketRoot, hash);
   const socketPath = path.join(dir, "egress.sock");
   if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH_BYTES) {
@@ -310,6 +323,9 @@ export async function ensureChannelEgress(target) {
       socket.once("close", () => record.conns.delete(socket));
       proxy.serveEgressConnection(socket, ctx);
     });
+    // A per-channel ceiling on concurrent client connections: one runaway container cannot exhaust
+    // the daemon's descriptors for every other channel.
+    server.maxConnections = MAX_CONNECTIONS_PER_CHANNEL;
     server.on("error", (error) => state?.log?.warn?.(`[egress] ${slug} listener error: ${error?.message || error}`));
     await new Promise((resolve, reject) => {
       server.once("error", reject);
@@ -331,11 +347,53 @@ export async function ensureChannelEgress(target) {
   }
 }
 
+// Bind the listener of every proxy-mode container that is ALREADY running when the daemon starts.
+// A container keeps running across a daemon restart, but its egress listener lived in the old
+// daemon: without this it has no network until its channel's next turn calls ensureUp. Done here,
+// for every running container, rather than in background-job recovery, because a job is not the
+// only thing that outlives the daemon — a VS Code editor attach (its lease survives a restart), a
+// process a developer left running from an SSH session, and a job whose recovery has not run yet
+// all need the network back, and none of them passes through a turn.
+// `listContainers` → [{ slug, platform, state }]; `resolveTarget(slug, meta)` → a RuntimeTarget.
+export async function bindRunningChannelEgress({ listContainers = null, resolveTarget = null, log = state?.log || console } = {}) {
+  if (!state?.running) return { bound: 0, failed: 0 };
+  const list = listContainers || (async () => (await (await import("../../runtimes/container/index.js")).containerRuntimeStatus()).containers || []);
+  const resolve = resolveTarget || (async (slug, meta) => (await import("../../runtimes/resolve.js")).resolveRuntime(slug, meta));
+  let containers = [];
+  try { containers = await list(); } catch (error) {
+    log?.warn?.(`[egress] could not list running containers to restore their egress: ${error?.message || error}`);
+    return { bound: 0, failed: 0 };
+  }
+  const index = await getChannelsIndex();
+  let bound = 0;
+  let failed = 0;
+  for (const container of containers) {
+    if (container?.state !== "running" || !container.slug) continue;
+    const platform = platformOr(container.platform).id;
+    const channelId = Object.entries(index).find(([, entry]) => entry?.slug === container.slug && platformOr(entry?.platform).id === platform)?.[0] || "";
+    const meta = (await getChannelMeta(container.slug)) || {};
+    try {
+      const target = await resolve(container.slug, { ...meta, channelId: meta.channelId || channelId, platform });
+      if (target?.container?.egress?.active !== true) continue;
+      await ensureChannelEgress(target);
+      bound += 1;
+    } catch (error) {
+      failed += 1;
+      log?.warn?.(`[egress] could not restore the egress listener of ${container.slug}: ${error?.message || error}`);
+    }
+  }
+  if (bound || failed) log?.log?.(`[egress] restored ${bound} running container listener(s)${failed ? `, ${failed} failed` : ""}`);
+  return { bound, failed };
+}
+
 export async function closeChannelEgress(target) {
   if (!state) return;
   const hash = channelEgressHash({ slug: target?.slug, platform: target?.platform });
   const record = state.servers.get(hash);
   if (!record) return;
+  // A bind still in flight would otherwise finish AFTER the close and leave a listener nobody tracks.
+  if (record.pending) { try { await record.pending; } catch { /* nothing was bound */ } }
+  if (state.servers.get(hash) !== record) return;
   state.servers.delete(hash);
   for (const socket of record.conns) socket.destroy();
   if (record.server) await new Promise((resolve) => record.server.close(() => resolve()));
@@ -415,6 +473,7 @@ export function egressStatus() {
       channelId: record.ctx.channelId,
       socketPath: record.socketPath,
       listening: record.listening,
+      maxConnections: record.server?.maxConnections ?? null,
       counters: { ...(state.counters.get(channelKey(record.ctx)) || emptyCounters()) },
     })),
   };

@@ -259,9 +259,12 @@ function mountArgs(mounts) {
 // died on `Append system prompt file not found: …/CLAUDE.md`. So the mount half is compared
 // separately and never deferred — see ensureUp.
 //
-// Deliberately NOT in here: the image, the network mode, cgroup limits, caps and the security opts.
-// They change how the container BEHAVES, not which host directories it is looking at, and the
-// existing deferral is the right answer for them.
+// Deliberately NOT in here: the image, cgroup limits, caps and the security opts. They change how
+// the container BEHAVES, not which host directories it is looking at, and the existing deferral is
+// the right answer for them. The NETWORK MODE is the one behavioural exception (egress P2): what a
+// container can reach is part of what it can see, and a deferred switch would leave a bridged
+// container — say, one whose `rawNetwork` was just cleared — serving turns that every surface
+// reports as proxy-enforced. So a network change is never deferred either.
 export function containerMountFingerprint(target) {
   const c = target?.container || {};
   const canonical = JSON.stringify({
@@ -270,6 +273,7 @@ export function containerMountFingerprint(target) {
     cleanWorkDir: target?.cleanWorkDir || "",
     artifactDir: target?.artifactDir || "",
     homeVolume: c.homeVolume || "",
+    network: c.network || "",
     mounts: (c.mounts || []).map((m) => `${m.kind}:${m.type}:${m.source}:${m.target}:${m.mode}`).sort(),
   });
   return `m1-${createHash("sha256").update(canonical).digest("hex").slice(0, 32)}`;
