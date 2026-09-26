@@ -390,3 +390,33 @@ test("a remote that cannot be dialled is refused with a fixed sentence that quot
   const reply = await rawExchange(socketPath, hello(capability({ remoteMcps: ["composio-user"], jti }), "composio-user"));
   assert.deepEqual(JSON.parse(reply.trim()), { channelgate: "error", reason: "remote MCP unavailable" });
 });
+
+// Codex's exact chain in a container: secret-env-bridge reads the capability out of the 0600 bundle
+// and launches the socket bridge with CG_MCP_SERVICE=remote-mcp and the server name.
+test("Codex's chain (secret-env-bridge → socket bridge → remote-mcp) relays with the capability from the bundle", async (t) => {
+  const remote = fakeRemote();
+  const socketPath = await serverOn(t, {}, { connectRemote: remote.connectRemote });
+  const jti = "relay-jti-codex-chain";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "make-toolbox": RELAYED["make-toolbox"] } });
+  t.after(() => clearRemoteMcps(jti));
+  const bundleDir = shortSocketDir();
+  const bundle = path.join(bundleDir, "bundle.json");
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(bundle, JSON.stringify({ gatewayCapability: capability({ remoteMcps: ["make-toolbox"], jti }) }), { mode: 0o600 });
+  const secretEnvBridge = fileURLToPath(new URL("../src/mcp/secret-env-bridge.js", import.meta.url));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [secretEnvBridge, bundle, "gatewayCapability", "CG_GATEWAY_CAPABILITY", BRIDGE, "make-toolbox"],
+    stderr: "pipe",
+    env: { PATH: process.env.PATH || "", CG_MCP_SOCKET: socketPath, CG_MCP_SERVICE: "remote-mcp", CG_ENGINE: "codex" },
+  });
+  const client = new Client({ name: "codex-chain", version: "1.0.0" }, { capabilities: {} });
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({ name: "COMPOSIO_SEARCH_TOOLS", arguments: { q: "scenarios" } });
+    assert.equal(result.content[0].text, "echo:scenarios");
+  } finally {
+    await client.close().catch(() => {});
+  }
+  assert.deepEqual(remote.dials, [{ url: RELAYED["make-toolbox"].url, headers: RELAYED["make-toolbox"].headers }]);
+});

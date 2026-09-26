@@ -7,7 +7,7 @@
 // non-isolated path is used by the explicitly admitted sudo-host runtime.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 import { createFakeRuntime } from "./fixtures/fake-runtime-backend.js";
@@ -241,15 +241,21 @@ test("Codex MCP entries in a container are composed from the runtime's helper co
     assert.equal(cfg(args, `mcp_servers.gateway.env.${key}=`), "", `${key} must not reach a container`);
   }
 
-  // A header-bearing remote MCP is Codex's own HTTP client plus a per-run headers helper beside the
-  // bundle — no image bridge, because a stdio bridge could not start fast enough to be in the tool
-  // registry of a RESUMED turn. The Composio SDK bridge is still the image's.
-  assert.equal(cfg(args, "mcp_servers.composio-user.command="), "", "an http server has no command");
-  assert.equal(cfg(args, "mcp_servers.composio-user.url="), `mcp_servers.composio-user.url="https://composio.example/mcp"`);
-  assert.equal(
-    cfg(args, "mcp_servers.composio-user.http_headers_helper="),
-    `mcp_servers.composio-user.http_headers_helper="${target.artifactDir}/run/bundle-composio-user.headers.cjs"`,
-  );
+  // A header-bearing remote MCP is relayed by the daemon (container-secrets P1): the same
+  // secret-env-bridge → socket-bridge chain as the gateway entry, naming the server, with no URL and
+  // no headers helper in the container. The Composio SDK bridge is still the image's.
+  assert.equal(cfg(args, "mcp_servers.composio-user.command="), `mcp_servers.composio-user.command="/usr/local/bin/node"`);
+  assert.deepEqual(cfgJson(args, "mcp_servers.composio-user.args="), [
+    "/opt/channelgate/mcp/secret-env-bridge.js",
+    bundle,
+    "gatewayCapability",
+    "CG_GATEWAY_CAPABILITY",
+    "/opt/channelgate/bin/cg-mcp-bridge.js",
+    "composio-user",
+  ]);
+  assert.equal(cfg(args, "mcp_servers.composio-user.env.CG_MCP_SERVICE="), `mcp_servers.composio-user.env.CG_MCP_SERVICE="remote-mcp"`);
+  assert.equal(cfg(args, "mcp_servers.composio-user.url="), "", "the container never dials the remote itself");
+  assert.equal(cfg(args, "mcp_servers.composio-user.http_headers_helper="), "", "no headers helper in a container");
   assert.deepEqual(cfgJson(args, "mcp_servers.composio-agent.args="), [
     "/opt/channelgate/mcp/composio-sdk-bridge.js",
     "https://backend.composio.dev/api/v3/tool_router/x/mcp",
@@ -290,6 +296,11 @@ test("a containerized Codex turn writes its answer file and secret bundle into t
     isNewSession: true,
     writable: true,
     gatewayCapability: "signed-cap",
+    composioUserToken: "ck-user-in-bundle?",
+    composioToken: "ck-shared-in-bundle?",
+    toolboxToken: "tb-in-bundle?",
+    makeToolboxUrl: "https://eu1.make.com/mcp/server/b",
+    makeToolboxKey: "mk-in-bundle?",
     target,
     artifactDir,
     timeoutMs: 60_000,
@@ -301,6 +312,15 @@ test("a containerized Codex turn writes its answer file and secret bundle into t
   assert.ok(outFile.startsWith(path.join(artifactDir, "tmp")), `-o must live in the mounted artifact dir, got ${outFile}`);
   const bundle = cfgJson(spec.args, "mcp_servers.gateway.args=")[1];
   assert.ok(bundle.startsWith(path.join(artifactDir, "run")), `the secret bundle must be readable inside the container, got ${bundle}`);
+  // Container-secrets P1: every process in the container can read that dir, so the bundle holds
+  // the signed capability ONLY — the remote MCP tokens are relayed by the daemon — and no headers
+  // helper is written beside it.
+  assert.deepEqual(JSON.parse(readFileSync(bundle, "utf8")), { gatewayCapability: "signed-cap" });
+  assert.deepEqual(readdirSync(path.dirname(bundle)).filter((name) => name.endsWith(".cjs")), []);
+  for (const name of ["composio-user", "composio-agent", "makeitfuture-toolbox", "make-toolbox"]) {
+    assert.equal(cfg(spec.args, `mcp_servers.${name}.env.CG_MCP_SERVICE=`), `mcp_servers.${name}.env.CG_MCP_SERVICE="remote-mcp"`, name);
+  }
+  assert.ok(!spec.args.some((arg) => /in-bundle/.test(arg)), "no token in argv either");
   assert.ok(!spec.args.some((arg) => arg.startsWith(gatewayRoot())), "nothing under the daemon root is named to the engine");
   assert.equal(spec.env.HOME, CONTAINER_HOME);
 
