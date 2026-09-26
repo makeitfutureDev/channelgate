@@ -243,7 +243,8 @@ test("Codex MCP entries in a container are composed from the runtime's helper co
 
   // A header-bearing remote MCP is relayed by the daemon (container-secrets P1): the same
   // secret-env-bridge → socket-bridge chain as the gateway entry, naming the server, with no URL and
-  // no headers helper in the container. The Composio SDK bridge is still the image's.
+  // no headers helper in the container. A Composio SDK session rides the same chain, selecting the
+  // socket's `composio-sdk` service with the session URL as the trailing argument.
   assert.equal(cfg(args, "mcp_servers.composio-user.command="), `mcp_servers.composio-user.command="/usr/local/bin/node"`);
   assert.deepEqual(cfgJson(args, "mcp_servers.composio-user.args="), [
     "/opt/channelgate/mcp/secret-env-bridge.js",
@@ -257,9 +258,14 @@ test("Codex MCP entries in a container are composed from the runtime's helper co
   assert.equal(cfg(args, "mcp_servers.composio-user.url="), "", "the container never dials the remote itself");
   assert.equal(cfg(args, "mcp_servers.composio-user.http_headers_helper="), "", "no headers helper in a container");
   assert.deepEqual(cfgJson(args, "mcp_servers.composio-agent.args="), [
-    "/opt/channelgate/mcp/composio-sdk-bridge.js",
+    "/opt/channelgate/mcp/secret-env-bridge.js",
+    bundle,
+    "gatewayCapability",
+    "CG_GATEWAY_CAPABILITY",
+    "/opt/channelgate/bin/cg-mcp-bridge.js",
     "https://backend.composio.dev/api/v3/tool_router/x/mcp",
   ]);
+  assert.equal(cfg(args, "mcp_servers.composio-agent.env.CG_MCP_SERVICE="), `mcp_servers.composio-agent.env.CG_MCP_SERVICE="composio-sdk"`);
   assert.equal(cfg(args, "mcp_servers.composio-agent.env.CHANNELGATE_DIR="), "", "the daemon root is never mounted");
   assert.ok(!args.some((arg) => arg.includes(gatewayRoot())), "no daemon-root path anywhere in the argv");
 });

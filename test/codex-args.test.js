@@ -434,24 +434,54 @@ test("the per-run headers helper resolves its credential from the run bundle alo
   }
 });
 
-test("Codex bridges SDK sessions without putting the organization key on argv", () => {
+// Composio SDK mode (Enterprise) in a container is the daemon socket's `composio-sdk` service. The
+// entry must go through the same secret-env-bridge → cg-mcp-bridge chain the relayed remotes use
+// (the capability, whose composioSessions claim grants the URL, comes out of the 0600 bundle),
+// select the service, and pass the session URL as the bridge's trailing argument. Launching the
+// bridge bare sent neither the service nor a capability, and the daemon refused every such run.
+test("Codex in a container reaches Composio SDK sessions through the socket's composio-sdk service", () => {
+  const bundle = `${target.artifactDir}/run/codex-secrets.json`;
+  const urls = {
+    "composio-user": "https://app.composio.dev/tool_router/v3/trs_user/mcp",
+    "composio-agent": "https://app.composio.dev/tool_router/v3/trs_channel/mcp",
+  };
   const args = argsFor({
-    composioUserEndpoint: {
-      mode: "sdk",
-      url: "https://app.composio.dev/tool_router/v3/trs_user/mcp",
-    },
-    composioEndpoint: {
-      mode: "sdk",
-      url: "https://app.composio.dev/tool_router/v3/trs_channel/mcp",
-    },
+    composioUserEndpoint: { mode: "sdk", url: urls["composio-user"] },
+    composioEndpoint: { mode: "sdk", url: urls["composio-agent"] },
+    secretBundlePath: bundle,
   });
   const joined = args.join("\n");
 
+  for (const [name, url] of Object.entries(urls)) {
+    assert.ok(args.includes(`mcp_servers.${name}.command="/usr/local/bin/node"`), name);
+    assert.ok(args.includes(`mcp_servers.${name}.args=${JSON.stringify(["/opt/channelgate/mcp/secret-env-bridge.js", bundle, "gatewayCapability", "CG_GATEWAY_CAPABILITY", "/opt/channelgate/bin/cg-mcp-bridge.js", url])}`), name);
+    assert.ok(args.includes(`mcp_servers.${name}.env.CG_MCP_SERVICE="composio-sdk"`), name);
+    assert.ok(args.includes(`mcp_servers.${name}.env.CG_ENGINE="codex"`), name);
+    assert.ok(args.includes(`mcp_servers.${name}.default_tools_approval_mode="approve"`), name);
+    assert.ok(!args.some((arg) => arg.startsWith(`mcp_servers.${name}.url=`)), `${name}: the container never dials Composio itself`);
+    assert.ok(!args.some((arg) => arg.startsWith(`mcp_servers.${name}.env.CHANNELGATE_DIR=`)), `${name}: no host root in a container`);
+  }
+  assert.doesNotMatch(joined, /composio-sdk-bridge\.js/, "the image's keyless SDK bridge script is never launched");
+  assert.doesNotMatch(joined, /sdk-super-secret|x-api-key/i);
+
+  // Without a bundle there is no capability to present, so no entry is emitted at all.
+  const bare = argsFor({ composioUserEndpoint: { mode: "sdk", url: urls["composio-user"] } });
+  assert.ok(!bare.some((arg) => arg.startsWith("mcp_servers.composio-user.")), "no bundle → no SDK entry");
+});
+
+test("Codex on a sudo host launches the SDK bridge directly with the gateway root", () => {
+  const host = hostBackend.prepareTarget({ slug: "sudo", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} });
+  const args = argsFor({
+    target: host,
+    cwd: "/work",
+    composioUserEndpoint: { mode: "sdk", url: "https://app.composio.dev/tool_router/v3/trs_user/mcp" },
+  });
+  const joined = args.join("\n");
   assert.match(joined, /mcp_servers\.composio-user\.command=/);
-  assert.match(joined, /mcp_servers\.composio-agent\.command=/);
   assert.match(joined, /composio-sdk-bridge\.js/);
   assert.match(joined, /trs_user/);
-  assert.match(joined, /trs_channel/);
+  assert.ok(args.some((arg) => arg.startsWith("mcp_servers.composio-user.env.CHANNELGATE_DIR=")));
+  assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.composio-user.env.CG_MCP_SERVICE=")));
   assert.doesNotMatch(joined, /sdk-super-secret|x-api-key/i);
 });
 

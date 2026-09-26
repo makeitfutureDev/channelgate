@@ -802,6 +802,23 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
 
   const addComposio = (name, endpoint, legacyToken, secretName) => {
     if (clean) return;
+    if (endpoint?.mode === "sdk" && endpoint.url && isolated) {
+      // Composio SDK mode (Enterprise) in a container is the daemon socket's `composio-sdk`
+      // service: the same secret-env-bridge → socket-bridge chain the relayed remotes use, so the
+      // signed capability (whose `composioSessions` claim grants this session URL) comes out of
+      // the 0600 bundle, CG_MCP_SERVICE selects the service, and the session URL is the bridge's
+      // trailing argument. Launching the bridge bare sent no service and no capability, and the
+      // daemon refused it. No bundle means no capability, so nothing is emitted.
+      if (!secretBundlePath) return;
+      const bridge = helper("secret-env-bridge");
+      args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(bridge.command)}`);
+      args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(bridge.args || []), secretBundlePath, "gatewayCapability", "CG_GATEWAY_CAPABILITY", ...helperScriptArgv(helper("gateway-mcp")), endpoint.url])}`);
+      args.push("-c", `mcp_servers.${name}.env.CG_MCP_SERVICE="composio-sdk"`);
+      args.push("-c", `mcp_servers.${name}.env.CG_ENGINE="codex"`);
+      args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
+      args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
+      return;
+    }
     if (endpoint?.mode === "sdk" && endpoint.url) {
       const sdk = helper("composio-sdk-bridge");
       args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(sdk.command)}`);
