@@ -204,7 +204,8 @@ test("the placeholder only works from its own channel's socket", async () => {
   try {
     const res = await request({ socketPath: otherBound.socketPath, headers: { authorization: `Bearer ${PLACEHOLDER}` } });
     assert.equal(res.status, 403);
-    assert.match(res.body, /other-channel/);
+    assert.match(res.body, /not valid from this channel/);
+    assert.doesNotMatch(res.body, /MY_API_KEY/, "another channel's secret is never named");
   } finally {
     release();
   }

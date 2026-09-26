@@ -15,9 +15,13 @@ ensureTestEnv();
 const {
   PLACEHOLDER_PREFIX, PLACEHOLDER_RE, mintPlaceholder, shapePlaceholder, findPlaceholders, corePlaceholder, placeholderScope,
 } = await import("../src/gateway/egress/placeholders.js");
-const {
-  DEFAULT_SWAP_HEADERS, hostMatches, swapHeaders, swapRequest, placeholdersInRequest,
-} = await import("../src/gateway/egress/rules.js");
+const rules = await import("../src/gateway/egress/rules.js");
+const { DEFAULT_SWAP_HEADERS, hostMatches, placeholdersInRequest } = rules;
+// Every real request carries a Host header (a missing one refuses every swap — pinned below), so
+// the cases default it to the destination; a case that sets its own Host keeps it.
+const withHost = (args) => ({ ...args, headers: { host: args.hostname, ...(args.headers || {}) } });
+const swapHeaders = (args) => rules.swapHeaders(withHost(args));
+const swapRequest = (args) => rules.swapRequest(withHost(args));
 
 const realValue = (label = "value") => `real-${label}-${crypto.randomBytes(12).toString("hex")}`;
 const b64 = (text) => Buffer.from(text, "utf8").toString("base64");
@@ -145,7 +149,7 @@ test("swapHeaders: canUse refusal leaves the header alone and carries the reason
 
 test("swapHeaders: a placeholder in a header its grant does not list is left alone", () => {
   const grant = grantFixture();
-  const headers = { "x-debug": grant.placeholder, cookie: `session=${grant.placeholder}` };
+  const headers = { host: "api.github.com", "x-debug": grant.placeholder, cookie: `session=${grant.placeholder}` };
   const out = swapHeaders({ headers, hostname: "api.github.com", resolveGrant: resolverFor(grant), canUse: allowAll });
   assert.deepEqual(out.headers, headers);
   assert.deepEqual(out.swapped, []);
@@ -155,6 +159,15 @@ test("swapHeaders: a placeholder in a header its grant does not list is left alo
   const viaDefault = swapHeaders({ headers: { "x-api-key": loose.placeholder, "x-other": loose.placeholder }, hostname: "api.github.com", resolveGrant: resolverFor(loose), canUse: allowAll });
   assert.equal(viaDefault.headers["x-api-key"], loose.value);
   assert.equal(viaDefault.headers["x-other"], loose.placeholder);
+});
+
+test("swapHeaders: a request with NO Host header swaps nothing (an absolute-form line carries its own host)", () => {
+  const grant = grantFixture();
+  const out = rules.swapHeaders({ headers: { authorization: `Bearer ${grant.placeholder}` }, hostname: "api.github.com", resolveGrant: resolverFor(grant), canUse: allowAll });
+  assert.equal(out.headers.authorization, `Bearer ${grant.placeholder}`);
+  assert.deepEqual(out.swapped, []);
+  assert.deepEqual(out.refused, [{ secretName: "GITHUB_TOKEN", reason: "host-header-mismatch" }]);
+  assert.equal(rules.hostHeaderName("API.github.com:443"), "api.github.com");
 });
 
 test("swapHeaders: malformed Basic credentials and odd values never throw and stay untouched", () => {
