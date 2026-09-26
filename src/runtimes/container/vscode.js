@@ -160,6 +160,8 @@ export async function installVscodeClaudeRelay(target, cliBin, {
   const dir = path.join(target.artifactDir, VSCODE_AUTH_DIR);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tokenFile = path.join(dir, "claude-token");
+  // static-check: allow-secret-artifact-write — the CONTAINER form of the relay: the channel's
+  // placeholder behind the egress proxy; a real access token only in the legacy bridge mode, where every turn's env holds it too.
   writeFileSync(tokenFile, relay.token, { mode: 0o600 });
   chmodSync(tokenFile, 0o600);
   const wrapper = renderClaudeWrapper({ tokenFile, usersDir });

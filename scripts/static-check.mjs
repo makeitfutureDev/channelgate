@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "acorn";
 import detectGlobals from "acorn-globals";
+import { findSecretArtifactWrites } from "./static-secret-writes.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const roots = ["src", "scripts", "test", "public"];
@@ -65,6 +66,15 @@ for (const file of files.sort()) {
     } catch (e) {
       errors.push(`${file}: no-undef parse failed: ${e.message}`);
     }
+    // Container-secrets P4: no secret-resolver value written under the container-visible artifact
+    // dir (scripts/static-secret-writes.mjs explains the rule). src/ only — that is what runs.
+    if (file.startsWith("src/")) {
+      try {
+        errors.push(...findSecretArtifactWrites(file, source));
+      } catch (e) {
+        errors.push(`${file}: secret-write parse failed: ${e.message}`);
+      }
+    }
   }
   const lines = source.split("\n");
   lines.forEach((line, index) => {
@@ -77,4 +87,4 @@ if (errors.length) {
   console.error(errors.join("\n"));
   process.exit(1);
 }
-console.log(`Static check passed: ${files.length} JavaScript files parse, no undeclared identifiers; whitespace is clean.`);
+console.log(`Static check passed: ${files.length} JavaScript files parse, no undeclared identifiers, no secret written under an artifact dir; whitespace is clean.`);
