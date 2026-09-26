@@ -28,7 +28,7 @@ import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.j
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
 import { startSshBroker, stopSshBroker } from "./gateway/ssh-broker.js";
-import { egressStatus, startEgressService, stopEgressService } from "./gateway/egress/service.js";
+import { bindRunningChannelEgress, egressStatus, startEgressService, stopEgressService } from "./gateway/egress/service.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
 import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
@@ -272,6 +272,9 @@ async function main() {
   // container runs then fail closed naming the remedy instead of running on an open network.
   try {
     await startEgressService({ log: console });
+    // Containers that kept running across the restart get their listener back now, not at their
+    // channel's next turn (a recovered background job or an attached editor needs the network).
+    await bindRunningChannelEgress({ log: console });
   } catch (error) {
     console.warn(`[egress] proxy unavailable (${error?.message || error}) — container runs in proxy mode will fail closed until it starts.`);
   }

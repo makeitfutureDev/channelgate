@@ -2657,10 +2657,20 @@ are retired, bullet by bullet; everything else stands.
   a declared host, in a declared header, at a declared position (bearer, raw, the password or user
   half of Basic), never partially, never across a Host-header mismatch, over plain http only when
   the grant opts in, in query parameters only when listed; anything else is forwarded unchanged. A
-  `canUse` refusal answers 403 naming the secret and the reason. A response of an uncompressed text
-  type is scrubbed (`scrub.js`) of every value swapped into its request, even across chunks. Audit
-  events carry names, counts and reasons only. HTTP/1.1 only (ALPN), request bodies are never
-  swapped, trailers are dropped. → TEST-PLAN: Egress proxy, placeholders and `--network none`.
+  `canUse` refusal answers 403 naming the secret and the reason (never naming it for a placeholder
+  presented from another channel). Every request is PINNED to the approved host: inside a tunnel an
+  absolute-form request line is 400 `absolute-form-in-tunnel`, a Host header naming another host
+  than the CONNECT/URL host is 403 `host-mismatch` (no domain fronting), a request without Host is
+  never swapped into, and the upstream always receives the approved host. A swapped request asks
+  for `accept-encoding: identity`, and its response is scrubbed (`scrub.js`) of every swapped value
+  in the header values and in any body that is text-like or declares no type — including a non-101
+  answer to an Upgrade, now sent through Node's HTTP client — even across chunks; declared binary
+  bodies pass through. Deadlines and caps: DNS 5 s (504 `dns-timeout`), 16 destination decisions in
+  flight per channel (503 `too-many-lookups`), connect 15 s, response headers 60 s after the request
+  was sent (504). Upstream TLS is verified (`rejectUnauthorized`) against Node's roots plus the
+  host's CA bundle. Audit events carry names, counts and reasons only. HTTP/1.1 only (ALPN), request
+  bodies are never swapped, trailers are dropped. → TEST-PLAN: Egress proxy, placeholders and
+  `--network none`.
 - **Channel containers run with `--network none` behind the egress proxy (container-secrets P2).**
   The gateway setting `containerEgressMode` (Settings → Container runtime) is `"proxy"` by default:
   every channel container is created with no network of its own, its channel's egress socket
@@ -2682,7 +2692,12 @@ are retired, bullet by bullet; everything else stands.
   the control socket; a failure logs ONE line and leaves the boot running, and every proxy-mode
   run, background job and SSH container then fails before spawning with `egress proxy unavailable:
   …` and the remedy — a down proxy never opens the bridge. `ensureUp` binds the channel's listener
-  before creating or starting the container. Per request the policy reads the channel's CURRENT
+  before creating or starting the container, holds at most 256 connections per channel socket, and
+  at boot re-binds the listener of every proxy-mode container that kept running across the restart
+  (a recovered job, an attached editor or a process left from an SSH session keeps its network).
+  The forwarder half-closes cleanly (`allowHalfOpen` both ways) and logs to `/run/cg/egress.log`.
+  The network mode is in the MOUNT fingerprint too, so a network change (clearing `rawNetwork`) is
+  never deferred behind running work. Per request the policy reads the channel's CURRENT
   meta: *Allow network* off admits the engine endpoints (Claude, Codex, a configured Qwen endpoint)
   and the remote MCP hosts this channel's runs were handed; on admits any public destination; raw
   tunnels go to `github.com:22` and the admin-declared `egressRawHosts` on 22/5432/6543. Audit rows
@@ -2712,9 +2727,15 @@ are retired, bullet by bullet; everything else stands.
   value per request from the store that owns it (rotation is live; the relay cached 60 s), and only
   while `canUse` passes: the placeholder's own channel (the organization's from any), live work in
   that channel (a turn, a job, a review or an SSH session — `liveness.js`), and for a personal
-  secret its OWNER live there with no other person's SSH session open. Removing a secret revokes
-  its placeholder (the config-change listener, every run's own reconcile, and the resolver itself);
-  re-adding mints a new one. The relayed Claude login becomes the channel's relay placeholder in
+  secret its OWNER live there with NO other person's turn, job or SSH session live there (403
+  `another-author-active` / `another-person-ssh-session`; a memory review is ownerless and pauses
+  nothing). Removing a secret revokes its placeholder (the config-change listener, every run's own
+  reconcile — keyed by the STORED names, so a secret that briefly resolves empty keeps its
+  placeholder — and the resolver itself); re-adding mints a new one. Limits: a Qwen provider key and
+  a daemon `CODEX_API_KEY` still reach a proxy-mode container raw (Codex's own sign-in is the shared
+  `auth.json`, a later phase), a self-hosted Qwen endpoint on a private address is refused by the
+  proxy, and an admin should never declare a multi-tenant suffix such as `*.vercel.app` as "Used
+  on hosts" (the editor and `set_secret` say so). The relayed Claude login becomes the channel's relay placeholder in
   the `sk-ant-oat01-` shape (`containerClaudeCredential`), swapped on `api.anthropic.com` only.
   The per-attempt credential note names each protected name with its hosts, the unprotected ones
   and the withheld ones; `list_secrets` and the admin listings show "protected via egress proxy

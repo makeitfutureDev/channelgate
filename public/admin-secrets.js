@@ -142,7 +142,7 @@ export function secretEditorMarkup() {
     <div class="secret-add">
       <input class="secret-name" type="text" autocomplete="off" spellcheck="false" />
       <input class="secret-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
-      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Used on hosts (optional) — api.example.com, *.example.com" title="Containers then receive a placeholder the egress proxy swaps for this value only on these hosts (Authorization header). Leave blank for the built-in rule (GitHub, Vercel, Supabase, Make, Composio names) or a raw value." />
+      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Used on hosts (optional) — api.example.com, *.example.com" title="Containers then receive a placeholder the egress proxy swaps for this value only on these hosts (Authorization header). Leave blank for the built-in rule (GitHub, Vercel, Supabase, Make, Composio names) or a raw value. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
       <button type="button" class="ghost secret-save">Save variable</button>
     </div>
     <em class="state secret-hint"></em>`;

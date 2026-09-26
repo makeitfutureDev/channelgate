@@ -32,7 +32,10 @@ function logOnce(category, message) {
 export function forward(client, { socketPath = SOCKET } = {}) {
   client.on("error", () => {});
   client.pause();
-  const upstream = net.connect(socketPath);
+  // allowHalfOpen on BOTH sides (the server below creates clients with it): a raw tunnel whose
+  // client half-closes (`ssh` after sending, a request piped through `nc -N`) must still receive the
+  // whole answer — without it the first FIN would tear the other direction down.
+  const upstream = net.connect({ path: socketPath, allowHalfOpen: true });
   let connected = false;
   upstream.on("error", (error) => {
     if (!connected) {
@@ -56,7 +59,7 @@ export function forward(client, { socketPath = SOCKET } = {}) {
 }
 
 export function startForwarder({ port = PORT, host = HOST, socketPath = SOCKET } = {}) {
-  const server = net.createServer((client) => forward(client, { socketPath }));
+  const server = net.createServer({ allowHalfOpen: true }, (client) => forward(client, { socketPath }));
   server.on("error", (error) => {
     logOnce(`listen:${error.code || "error"}`, `cannot listen on ${host}:${port}: ${error.code || error.message}`);
     // EADDRINUSE: another forwarder (a second cg-init, a manual start) already serves this port —

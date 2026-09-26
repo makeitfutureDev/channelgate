@@ -194,7 +194,9 @@ export async function runMemoryReview({
   const lease = target.runtime.acquireLease(target, { kind: "review", id: reviewRunId });
   // Live work in the channel for the egress proxy's swap gate (the relay placeholder swaps only
   // while something in the channel is running).
-  const releaseLive = markLive({ channelId, ownerId: authorId, kind: "review", id: reviewRunId });
+  // Ownerless on purpose: a review carries no personal environment, so it must neither wake the
+  // author's personal grants nor pause another author's.
+  const releaseLive = markLive({ channelId, ownerId: "", kind: "review", id: reviewRunId });
   let saves = 0;
   try {
     await target.runtime.ensureUp(target, { announce: () => {}, lease });

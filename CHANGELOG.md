@@ -47,7 +47,8 @@ product overview.
   Make or Composio token, and any secret an admin marks with **Used on hosts**, reaches the
   container as a `cgph_…` placeholder. The gateway swaps in the real value only on that secret's
   hosts and only while the channel has work running; a personal secret only while its owner is the
-  one working, and never while another person has an SSH session open there. The relayed Claude
+  one working, and never while another person's turn, background job or SSH session is active
+  there. The relayed Claude
   login is a placeholder too. Rotation takes effect on the next request; removing a secret kills
   its placeholder. Secrets without a rule are still injected as before and are marked
   **unprotected** in `list_secrets`, the admin UI and the agent's own credential note. The new
@@ -57,6 +58,10 @@ product overview.
   *Withhold unprotected secrets*. The admin API accepts `rawNetwork` (a channel that needs raw
   sockets beside the proxy) and `egressRawHosts` (hosts whose SSH/Postgres ports are tunnelled).
   If the proxy cannot start, container runs stop with the reason instead of running unprotected.
+  After a restart, containers that kept running get their network back immediately. Avoid
+  multi-tenant host suffixes such as `*.vercel.app` in *Used on hosts*. A Qwen provider key and a
+  daemon `CODEX_API_KEY` are still given to containers as real values, and a self-hosted Qwen
+  endpoint on a private address cannot be reached in proxy mode.
   TLS clients in the container trust the gateway's own CA through the usual CA variables; a tool
   that reads none of them needs `/run/channelgate/egress-ca.pem`. After updating, run
   `npm run build:image` (image spec 1.6.0 now also ships the forwarder; the updater does this for

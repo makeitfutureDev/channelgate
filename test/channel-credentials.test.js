@@ -63,6 +63,14 @@ test("the egress lines: proxy-protected placeholders with their hosts, unprotect
   assert.match(prompt, /Withheld by the gateway's strict egress setting[^\n]*\["LEGACY_KEY"\]/);
   assert.ok(!prompt.includes(placeholder), "the placeholder string itself is not repeated into the prompt");
   assert.ok(!prompt.includes(fixtureValue));
+  // A personal placeholder says it PAUSES while another person works here.
+  const personalPh = "cgph_pabcdefghijklmnopqrstuvwxyz234567";
+  const withPersonal = channelCredentialsPreamble(
+    { MY_PAT: personalPh },
+    { scopes: { MY_PAT: "personal" }, placeholders: { MY_PAT: personalPh }, hosts: { MY_PAT: ["api.github.com"] } },
+  );
+  assert.match(withPersonal, /Personal placeholders \["MY_PAT"\] work only while their owner is the one working in this conversation: they PAUSE[^\n]*another-author-active[^\n]*another person's turn, background job or SSH session/);
+  assert.doesNotMatch(prompt, /Personal placeholders/, "no personal line without a personal placeholder");
   // Without egress facts (legacy bridge mode, the host) none of these lines appear.
   const plain = channelCredentialsPreamble({ GITHUB_TOKEN: fixtureValue });
   assert.doesNotMatch(plain, /proxy-protected|Unprotected|Withheld/);
@@ -82,7 +90,7 @@ test("the pause line names only the personal placeholders, and only when paused"
     hosts: { MY_KEY: ["api.example.com"], GITHUB_TOKEN: ["api.github.com"] },
   };
   const paused = channelCredentialsPreamble(resolved, { ...facts, personalPaused: true });
-  assert.match(paused, /Personal secrets are PAUSED right now: another person has an SSH session open[^\n]*\["MY_KEY"\][^\n]*another-person-ssh-session/);
+  assert.match(paused, /Personal secrets are PAUSED right now: another person.s turn, background job or SSH session is active[^\n]*\["MY_KEY"\][^\n]*another-person-ssh-session/);
   assert.doesNotMatch(paused, /PAUSED[^\n]*GITHUB_TOKEN/, "a channel secret is not paused");
   assert.ok(!paused.includes(personal) && !paused.includes(channel));
   assert.doesNotMatch(channelCredentialsPreamble(resolved, { ...facts, personalPaused: false }), /PAUSED/);
