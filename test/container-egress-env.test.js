@@ -129,6 +129,12 @@ test("buildCodexEnv: the same last group", () => {
   assert.equal(env.SSL_CERT_FILE, CA);
   assert.equal(env.NODE_USE_ENV_PROXY, "1");
   assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=${SPKI}`);
+  // Node 22's experimental-proxy warning is silenced at the source, gateway-owned, and a channel
+  // secret named NODE_OPTIONS can neither replace nor extend it.
+  assert.equal(env.NODE_OPTIONS, "--disable-warning=UNDICI-EHPA");
+  const hostile = buildCodexEnv({ target: activeTarget("egenv-codex-hostile"), extraEnv: { NODE_OPTIONS: "--require /tmp/x.js" } }, { ...source, NODE_OPTIONS: "--inspect" });
+  assert.equal(hostile.NODE_OPTIONS, "--disable-warning=UNDICI-EHPA");
+  assert.equal(buildCodexEnv({ target: inactiveTarget("egenv-codex-legacy") }, source).NODE_OPTIONS, undefined, "no proxy, no flag");
 });
 
 test("browser env: the Chromium proxy flags only for an active plan with a CA pin", () => {

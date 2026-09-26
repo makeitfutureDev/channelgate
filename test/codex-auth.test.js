@@ -25,7 +25,7 @@ ensureTestEnv();
 process.env.PATH = `${fixtureBin}${path.delimiter}${process.env.PATH || ""}`;
 
 const { readCodexAuthState, codexAuthCandidates, describeCodexAuth, CODEX_LOGIN_HINT } = await import("../src/engines/codex-auth.js");
-const { runCodex, classifyCodexLiveStderr, classifyCodexFailure, codexDiagnosticLine } = await import("../src/engines/codex.js");
+const { runCodex, classifyCodexLiveStderr, classifyCodexFailure, codexDiagnosticLine, withoutNodeRuntimeNoise } = await import("../src/engines/codex.js");
 const { createFakeRuntimeBackend, fakeTarget } = await import("./runtime-fake.js");
 const { credentialError: containerCredentialError } = await import("../src/runtimes/container/credentials.js");
 
@@ -262,6 +262,42 @@ test("a diagnostic line reaches the user short, useful, and free of credentials"
   assert.doesNotMatch(shown, /eyJzdWIi/, "a token echoed into stderr must never reach Slack");
   assert.match(shown, /\[REDACTED\]/);
   assert.ok(codexDiagnosticLine("x".repeat(500)).length <= 200, "status rows are capped");
+});
+
+// Behind the egress proxy NODE_USE_ENV_PROXY=1 makes Node 22 print its experimental-proxy warning;
+// it reached the Slack status row ("Working — 1s · container · (node:54) [UNDICI-EHPA] Warning: …")
+// and led the failure sentence. It is dropped from both; the raw stderr detail keeps it.
+test("Node's UNDICI-EHPA warning never reaches the status row or the failure sentence", async () => {
+  const warning = "(node:54) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.";
+  const hint = "(Use `node --trace-warnings ...` to show where the warning was created)";
+  assert.equal(codexDiagnosticLine(`${warning}\n${hint}`), "", "noise alone is no diagnostic at all");
+  assert.equal(codexDiagnosticLine(`stream error: retrying 1/5\n${warning}\n${hint}`), "stream error: retrying 1/5");
+  assert.equal(withoutNodeRuntimeNoise(`a\n${warning}\n${hint}\nb`), "a\nb");
+
+  const notes = [];
+  const target = containerTarget(createFakeRuntimeBackend(), "codex-undici");
+  await assert.rejects(
+    runCodex({
+      cwd: fixtureBin,
+      prompt: "CODEX_STUB_NODE_PROXY_WARNING_KILLED",
+      sessionId: "",
+      isNewSession: true,
+      timeoutMs: 60_000,
+      maxSilenceMs: 60_000,
+      onEvent: (e) => notes.push(e),
+      target,
+      artifactDir: target.artifactDir,
+    }),
+    (error) => {
+      assert.match(error.message, /forcibly stopped/);
+      assert.match(error.message, /Killed/, "the real diagnostic still leads");
+      assert.doesNotMatch(error.message, /UNDICI-EHPA|EnvHttpProxyAgent|trace-warnings/);
+      assert.match(error.details?.stderr || "", /UNDICI-EHPA/, "the raw tail in the details keeps it");
+      return true;
+    },
+  );
+  const shown = notes.filter((e) => e.kind === "engine_note").map((e) => e.text).join("\n");
+  assert.doesNotMatch(shown, /UNDICI-EHPA|EnvHttpProxyAgent|trace-warnings/, "never a status-row note");
 });
 
 test("behind the egress proxy the runner places the relayed access-only login BEFORE the spawn, and a missing relay fails over pre-spawn", async () => {

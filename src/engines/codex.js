@@ -199,11 +199,22 @@ export function classifyCodexLiveStderr(line = "") {
 // signal, not severity.
 const DIAGNOSTIC_LINE_RE = /\b(?:error|warn(?:ing)?|fail(?:ed|ure)?|retry|retrying|backoff|timed? ?out|unauthori[sz]ed|forbidden|rate.?limit|quota|log(?:in|ged) in|sign(?:ed)? in|credentials?|token|stream disconnected|connection (?:refused|reset))\b/i;
 
+// Node's own runtime chatter, never Codex's: NODE_USE_ENV_PROXY=1 (behind the egress proxy) makes
+// Node 22 print `(node:N) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental…` plus the
+// `(Use \`node --trace-warnings ...\`…)` hint on every node process's stderr. The word "Warning"
+// made it the status row's "what is it stuck on?" line and the lead of a failure sentence. It is
+// dropped from everything shown to a person; the raw tail in the error details keeps it.
+const NODE_RUNTIME_NOISE_RE = /\[UNDICI-EHPA\]|Use `node --trace-warnings/;
+
+export function withoutNodeRuntimeNoise(text = "") {
+  return String(text || "").split(/\r?\n/).filter((line) => !NODE_RUNTIME_NOISE_RE.test(line)).join("\n");
+}
+
 // One short, secret-free line for a status row or an error message. Engine stderr is not a
 // trusted channel: it can echo argv, headers, or a token, so everything that leaves here goes
 // through the shared redactor and a hard length cap.
 export function codexDiagnosticLine(text = "") {
-  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = withoutNodeRuntimeNoise(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     if (DIAGNOSTIC_LINE_RE.test(lines[i])) return redactLogValue(lines[i]).slice(0, 200);
   }
@@ -216,7 +227,7 @@ export function codexDiagnosticLine(text = "") {
 // thread and stored in the event log, and a CLI that fails will happily echo a token into its own
 // error line (src/util/redact.js).
 export function codexProcessFailureMessage(kind, stderr = "") {
-  const detail = conciseProcessDiagnostic(stderr, 600);
+  const detail = conciseProcessDiagnostic(withoutNodeRuntimeNoise(stderr), 600);
   const label = { usage_limit: "Codex usage limit reached", authentication: "Codex authentication failed" }[kind] || "Codex provider error";
   return detail ? `${label}: ${detail}` : label;
 }
@@ -862,6 +873,8 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
   return args;
 }
 
+export const CODEX_PROXY_NODE_OPTIONS = "--disable-warning=UNDICI-EHPA";
+
 // See buildClaudeEnv: the channel's own secrets are re-filtered at this boundary and go in first,
 // so the gateway's TMPDIR / HOME / CODEX_HOME — and the browser namespace, which is a
 // confinement boundary, not a preference (gateway/browser-env.js) — always win.
@@ -880,13 +893,21 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       ...(source.CODEX_API_KEY || source.OPENAI_API_KEY ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
     }, source);
     // The egress proxy/CA variables are gateway-owned and applied last (see buildClaudeEnv).
-    return applyEgressEnv({
+    const env = applyEgressEnv({
       ...dropHostLocationEnv(base),
       HOME: image.home,
       CODEX_HOME: image.codexHome,
       TMPDIR: image.tmpDir,
       PATH: image.path,
     }, target);
+    // Behind the proxy NODE_USE_ENV_PROXY=1 makes Node 22 print its experimental-EnvHttpProxyAgent
+    // warning on every node process's stderr — the Codex npm launcher's and every node child a
+    // shell command starts. Gateway-owned and set LAST: NODE_OPTIONS is a reserved name a channel
+    // secret can never carry (channel-env.js, re-filtered by safeSpawnEnv above) and it is not in
+    // the host passthrough list, so there is nothing of anyone else's to merge. The image's Node 22
+    // accepts --disable-warning in NODE_OPTIONS.
+    if (env.CG_EGRESS === "proxy") env.NODE_OPTIONS = CODEX_PROXY_NODE_OPTIONS;
+    return env;
   }
   return buildChildEnv({
     ...safeSpawnEnv(extraEnv),
@@ -1223,7 +1244,7 @@ export async function runCodex({
     // honest about what a quiet turn is waiting on, and END a turn whose credential is gone
     // instead of letting it heartbeat "starting" until somebody presses stop.
     const handleStderrLine = (line) => {
-      if (!line) return;
+      if (!line || NODE_RUNTIME_NOISE_RE.test(line)) return;
       const note = codexDiagnosticLine(line);
       // First one immediately (it is the one that explains a stall), then at most one per window:
       // a retry loop whose text changes every attempt would otherwise redraw the Slack row as
@@ -1281,7 +1302,7 @@ export async function runCodex({
       watchdog.stop();
       rm(scratchDir, { recursive: true, force: true }).catch(() => {});
       for (const file of removeRunSecrets()) rm(file, { force: true }).catch(() => {});
-      reject(commandError(processFailureMessage("Codex", { spawnError: err, diagnostic: stderr }), {
+      reject(commandError(processFailureMessage("Codex", { spawnError: err, diagnostic: withoutNodeRuntimeNoise(stderr) }), {
         stderr: stderr.slice(0, 4000),
         exitCode: null,
         signal: null,
@@ -1454,7 +1475,7 @@ export async function runCodex({
             signal: exitSignal || null,
           }));
         }
-        return reject(commandError(processFailureMessage("Codex", { code, signal: exitSignal, diagnostic: stderr }), {
+        return reject(commandError(processFailureMessage("Codex", { code, signal: exitSignal, diagnostic: withoutNodeRuntimeNoise(stderr) }), {
           ...failureDetails,
           stderr: stderr.slice(0, 4000),
           exitCode: code,
