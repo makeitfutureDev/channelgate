@@ -761,7 +761,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   token never appears in Codex's argv or environment. Remote servers still get
   `startup_timeout_sec=120` (gateway control server 60) as a ceiling on the handshake itself.
   Before this, the `mcp-remote` bridge needed ~2.4 s to answer `tools/list` and made only the cold
-  window, so the SECOND turn of a Codex thread had no Composio tools at all.
+  window, so the SECOND turn of a Codex thread had no Composio tools at all. Since the
+  remote-MCP relay (below, Container runtime) this native transport is the sudo-host shape; in a
+  channel container the same servers are relayed by the daemon over the control socket.
   → TEST-PLAN: Background jobs, MCP.
 - Resilient image/file attachments: every accepted Slack trigger is hydrated from the exact
   canonical root/reply before processing; `message` and `app_mention` delivery is deduplicated by
@@ -2572,7 +2574,7 @@ are retired, bullet by bullet; everything else stands.
   anyway (every remote MCP is already bridged to stdio for it), so an HTTP control plane would have
   needed a bridge regardless. → TEST-PLAN: Container runtime (v0.8 P1).
 - **The socket's wire protocol is one line, then MCP.** The client writes a newline-terminated hello
-  (`{channelgate:"hello", v:1, service:"gateway"|"composio-sdk", cap, engine, toolset,
+  (`{channelgate:"hello", v:1, service:"gateway"|"composio-sdk"|"remote-mcp", cap, engine, toolset,
   progressReport, args, framed}`) and the daemon answers on the same socket with the MCP stream,
   preceded — only for a client that opted into `framed` — by one `{channelgate:"ready"}` line. A
   refusal is ALWAYS announced as `{channelgate:"error", reason}` before the socket closes, so the
@@ -2593,6 +2595,34 @@ are retired, bullet by bullet; everything else stands.
   container cannot see. An unbindable socket path (over the 100-byte `sockaddr_un` budget, a
   read-only root) logs one line and never fails the boot — container runs then fail closed with
   their own message. → TEST-PLAN: Container runtime (v0.8 P1).
+- **A remote MCP credential never enters a channel container (container-secrets P1).** The four
+  header-bearing remote servers a run may receive — `composio-user` and `composio-agent` (legacy
+  token mode and an explicit `endpoint.url` + `endpoint.headers`), `makeitfuture-toolbox` and
+  `make-toolbox` — used to reach a containerized engine WITH their token: Claude's `cg-mcp-*.json`
+  and Codex's per-run secret bundle (plus its `http_headers_helper` scripts) sit in the artifact
+  dir, which the container bind-mounts read-write, so any process in the box could read them. On an
+  isolated target they are now a third socket service, `remote-mcp`: the engine's entry is the same
+  socket bridge the gateway entry uses (`CG_MCP_SERVICE=remote-mcp`, the server NAME as its
+  argument; Codex reaches it through the secret-env-bridge so the capability still comes from the
+  0600 bundle), the signed capability's optional `remoteMcps` claim lists the names, and the real
+  URL + headers are registered in the daemon's in-memory registry
+  (`src/mcp/remote-mcp-registry.js`) under the capability's `jti`, for exactly the capability's
+  lifetime (a turn's 6 h, an SSH session's 12 h; ≤ 16 servers, header values ≤ 8 KB, never
+  logged). A hello is relayed only when the claim names the server AND the daemon holds a live
+  registration for it; the daemon then dials it (Streamable HTTP, HTTP+SSE on a 4xx; https only)
+  and forwards `tools/list` and `tools/call`, re-authorizing each, passing the engine's
+  cancellation upstream and upstream progress back (`src/mcp/remote-relay.js`). Refusals are fixed
+  sentences that quote no URL, header or upstream error. Codex's container bundle now holds ONLY
+  `gatewayCapability` and no headers helper is written; an SSH session's `mcp.json` and Codex
+  bundle follow the same rule. The warm pool's fingerprint carries a value-free sha256 digest of
+  each relayed URL + header, so a rotated Composio or toolbox token still retires the warm process.
+  A remote an operator pointed at plain http (a `COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override)
+  cannot be relayed: an isolated run drops it and names it in the skipped-MCP note rather than hand
+  the token to the container. Host (sudo) targets keep the direct http entries and headers
+  helpers byte for byte. Image spec 1.6.0 (the image's broker forwards `CG_MCP_SERVICE` /
+  `CG_MCP_SOCKET`). Egress is still not policed (see Isolation), so a container can reach the same
+  remote endpoints with a credential of its OWN — what it can no longer do is read the gateway's.
+  → TEST-PLAN: Remote MCP relay (container-secrets P1).
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's
   pid names the host-side `exec` CLIENT, never the engine, so liveness and signals are asked of the
   backend: a probe execs `cg-probe <runId>` against the process-group leader `cg-exec` recorded

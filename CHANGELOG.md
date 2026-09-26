@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- **Composio and toolbox tokens no longer enter a channel container.** In a container, the
+  `composio-user`, `composio-agent`, MakeItFuture toolbox and Make toolbox connections are now
+  reached through the gateway itself: the engine holds only its signed run grant, and the daemon
+  dials the service with the real token and relays the tools. Before, the token sat in a file in
+  the channel's run folder that any process in the container could read. This applies to Claude
+  and Codex turns and to SSH sessions. Direct-host `/sudo` threads are unchanged. A rotated token
+  still restarts the warm Claude process. After updating, run `npm run build:image` (image spec
+  1.6.0; the updater does this for you).
 - **Agents can now explain how to set up a channel's VPN.** The chat operating manual has a
   channel VPN page. It covers who may turn the VPN on or off, read its status or query the
   database. It also has the host-operator runbook for another channel, with the exact

@@ -606,6 +606,25 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   `networkEnforced: false` beside `networkPolicy`. `NETWORK_POLICY_ENFORCED` in
   `src/engines/network-policy.js` is the single flag to flip when the proxy lands.
 
+**Remote MCP relay (container-secrets P1).** Composio (`composio-user`, `composio-agent` in token
+mode), the MakeItFuture toolbox and the Make toolbox never reach a container with their token. The
+engine's MCP entry is the image's socket bridge naming the server (`CG_MCP_SERVICE=remote-mcp`);
+the run's signed capability lists those names, and the daemon keeps the real URL and header in
+memory (never on disk, never logged) for the capability's lifetime — 6 hours for a turn, 12 for an
+SSH session. On a `remote-mcp` hello the daemon checks the claim and its own registration, dials the
+service (https only; Streamable HTTP, falling back to HTTP+SSE on a 4xx) and relays the tools. What
+an operator sees: the artifact dir's `cg-mcp-*.json` and Codex's `run/cg-codex-secrets-*.json` hold
+no Composio or toolbox token (Codex's bundle holds only the capability), and a relay that fails
+shows in the engine's MCP log as one fixed line — `remote MCP is not authorized for this run` (the
+grant expired, or the daemon restarted since the run started: in-memory registrations do not
+survive a restart, so the next turn simply registers again) or `remote MCP unavailable` (the
+service could not be reached; the upstream error is deliberately not repeated). A
+`COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override pointing at plain http cannot be relayed: container
+runs skip that server and say so in the thread. The relay removes the credential from the box; it
+does not police egress — a process in the container can still reach those services with a
+credential of its own. It needs image spec 1.6.0 (`npm run build:image`). Direct-host `/sudo`
+threads keep the old shape: the engine dials the service itself.
+
 **Claude login in containers:** with no `containerClaudeOauthToken`, each container Claude run
 receives a RELAY of the gateway's resolved login — normally the host user's own `~/.claude` — as a
 current OAuth access token in `CLAUDE_CODE_OAUTH_TOKEN` (refreshed on the host first by a cheap

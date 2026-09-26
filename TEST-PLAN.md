@@ -1,5 +1,86 @@
 # ChannelGate — Test Plan
 
+## Remote MCP relay (container-secrets P1)
+
+Fixtures: the fake container backend (`test/fixtures/fake-runtime-backend.js`, isolated, image
+helper table), the host backend, a daemon socket under a short `/tmp/cgsock-*` dir, a fake remote
+MCP server (in-memory transport behind the relay's injectable `connectRemote`) and a loopback
+HTTP MCP server reached through an https URL plus a rewriting `fetch`. Token fixtures:
+`ck_user_*`, `ck_shared_*`, `tb-*`, `mk-*`.
+
+- [x] Capability (`test/mcp-capability.test.js`): the optional `remoteMcps` claim round-trips with a
+      caller-fixed `jti`; a token without it still verifies (no relay granted); a string, a
+      non-string member, an upper-case / leading-dash / 65-char name, a duplicate, a 17th name or an
+      object is refused at mint AND at verify (`invalid remote MCP grants`); an empty list is a valid
+      empty grant. Engine-independent: signing code only.
+- [x] Registry (`test/remote-mcp-registry.test.js`): lookups answer per jti + name and return
+      copies; an entry dies at its `exp` (swept on lookup) and on `clearRemoteMcps`; an empty
+      registry keeps no timer; > 16 servers, a header value over 8 KB, a non-string or CR/LF header,
+      plain http, credentials in the URL and a bad name are refused with messages that quote no
+      value or host. Exactly 8 KB is accepted. Engine-independent.
+- [x] Socket service (`test/mcp-socket-server.test.js`): through the real reference bridge
+      (`src/mcp/socket-bridge.js`, `CG_MCP_SERVICE=remote-mcp`, argv `composio-user`) a relayed
+      `tools/list` and `tools/call` reach the fake remote, the remote's instructions reach the client,
+      and the remote was dialled with exactly the REGISTERED URL + header. Refused with the fixed
+      `remote MCP is not authorized for this run` (and nothing dialled): a claimed name with no
+      registration under the jti; a registered name the claim omits; a claim-less token; an unknown
+      and a path-shaped name; a registration past its expiry. An expired capability is refused at
+      `capability rejected`. Clearing the registration mid-connection makes the next `tools/call`
+      fail with "not authorized" without reaching the remote. A dial failure answers only
+      `remote MCP unavailable`. Codex's exact chain (`secret-env-bridge.js` reading the capability
+      from a 0600 bundle → socket bridge → relay) completes a `tools/call`. Pass: all green, and no
+      refusal line contains a token, `composio.dev` or `make.com`.
+- [x] HTTP leg (`test/mcp-remote-relay.test.js`): Streamable HTTP carries the header on every
+      request; a 405 on the Streamable POST falls back to HTTP+SSE with the header on the GET stream
+      and every POST; a 502 is not retried on SSE and fails as `remote MCP server unavailable`
+      (the upstream body quoting a key is not surfaced); http and credential-bearing URLs are
+      refused; `runRemoteRelay` authorizes before dialling and on every forwarded request, and
+      upstream progress reaches the engine under the engine's own progress token.
+- [x] Claude config (`test/mcp-config.test.js`): an isolated target with all four remotes gives each
+      the exact entry `{command: node, args: [cg-mcp-bridge, <name>], env: {CG_MCP_SERVICE:
+      "remote-mcp", CG_GATEWAY_CAPABILITY}, default_tools_approval_mode: "approve"}`; the JSON
+      contains no token, no `x-consumer-api-key`, no `Bearer `, no `headers`; the claim lists the
+      four names and the registry holds each URL + header under the claim's jti; `relayDigest` is
+      `sha256:<64 hex>` per server with no value in it. A non-SDK endpoint with its own headers is
+      relayed while an SDK session stays on `composio-sdk`. A non-https `TOOLBOX_MCP_URL` is dropped
+      from the isolated run and listed in `rejectedRemotes`, never handed over; the host keeps it.
+      Host and local targets: the four entries are byte-identical to the pre-change shape, no relay
+      claim, nothing registered.
+- [x] Warm pool (`test/run-engine-mcp.test.js`): same headers → same fingerprint across fresh
+      capabilities; rotating any of the four tokens or the Make URL changes it; no token appears in
+      the JSON or the fingerprint.
+- [x] Codex (`test/codex-args.test.js`, `test/engine-runtime-isolated.test.js`): in a container each
+      remote is `secret-env-bridge <bundle> gatewayCapability CG_GATEWAY_CAPABILITY cg-mcp-bridge
+      <name>` with `env.CG_MCP_SERVICE="remote-mcp"`, `env.CG_ENGINE="codex"`, approval `approve`,
+      `startup_timeout_sec=120`, no `url`, no `http_headers_helper`, no helper spec; "every connector
+      secret stays out of Codex argv and child env" also asserts the isolated bundle is exactly
+      `{gatewayCapability}`; a real `runCodex` on the fake container writes a bundle equal to
+      `{"gatewayCapability":"signed-cap"}` and no `.cjs` beside it. A sudo-host target keeps the
+      native URL + headers helper shape. `test/secret-env-bridge.test.js`: the broker forwards
+      `CG_MCP_SERVICE`, `CG_MCP_SOCKET` and argv, and nothing else from its env.
+- [x] SSH (`test/ssh-session.test.js`): the session's `mcp.json` relays `composio-user` and
+      `composio-agent` with no token in the file; the registry holds the developer's and the
+      channel's tokens under the session capability's jti (12 h); the Codex bundle's only key is
+      `gatewayCapability`, no `*.headers.cjs` exists, and the overrides select `remote-mcp`; a second
+      preparation registers a fresh jti while the first stays live.
+- [x] Image contract: `imageSpecVersion` and `IMAGE_SPEC_VERSION` are both `1.6.0`
+      (`test/container-image.test.js` pins them equal).
+- [ ] UNEXECUTED live gate — Composio tool call through the relay on Claude and on Codex in a
+      container; the artifact dir grepped for token strings during the run. Setup: `npm run
+      build:image` (spec 1.6.0), a Slack test channel in Worker mode with a channel Composio token
+      and the tester's personal token set, the Toolbox token set if available. Action, once with
+      the channel on Claude and once on Codex (`/model` for the thread): "search my Gmail for the
+      last message from <known sender> and tell me its subject", then "use your own account to
+      list its Composio connections". While the turn runs, on the host: `grep -rF -e '<channel
+      token>' -e '<personal token>' -e '<toolbox token>' ~/ChannelGate/.runtime/slack/<slug>/`
+      and, inside the container, `podman exec <container> sh -c 'grep -rF <channel token> /tmp
+      /var/tmp ~ 2>/dev/null'`. Expected evidence: both answers carry real data from the right
+      identity; the `cg-mcp-*.json` (Claude) and `run/cg-codex-secrets-*.json` (Codex) exist and
+      contain `remote-mcp` / only `gatewayCapability`; every grep prints nothing. Then rotate the
+      channel token in Settings and send a second message on Claude: the warm process is retired
+      (a new `claude` pid) and the call succeeds on the new token. Pass rule: all of the above on
+      BOTH engines; any token hit, a refused relay, or a stale-token success after rotation fails.
+
 ## One worktree per task is stated as a prohibition in all three places that carry it
 
 - [x] `test/git-worktree-guide.test.js`: the always-on `gateway-usage` rule 7 says *never edit the
