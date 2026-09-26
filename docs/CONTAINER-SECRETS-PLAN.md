@@ -1,7 +1,9 @@
 # Container secrets, MCP tokens, SSH sessions and egress — implementation plan
 
-Status: design accepted in principle on 2026-09-26 (thread in #channelgate-development); not yet
-implemented. Branch `docs/container-secrets-network`. This document is the plan of record for the
+Status: design accepted on 2026-09-26 (thread in #channelgate-development); implemented the same
+day on the stacked branches `feat/mcp-relay` (P1) → `feat/egress-proxy` (P2) →
+`feat/ssh-placeholders` (P3) → `feat/engine-auth-broker` (P4), pending the live container gates
+listed in `TEST-PLAN.md`. Branch `docs/container-secrets-network`. This document is the plan of record for the
 work; `FEATURES.md` and `TEST-PLAN.md` are updated phase by phase as code lands.
 
 ## 1. Decisions
@@ -25,9 +27,11 @@ work; `FEATURES.md` and `TEST-PLAN.md` are updated phase by phase as code lands.
    policy and `NETWORK_POLICY_ENFORCED` flips to `true`.
 5. **Personal secrets are owner-bound handles.** A personal placeholder is minted per
    (channel, author) and is swapped only while that author has a live turn or SSH session in the
-   channel, and never while a *different* person has an SSH session open there. That closes the one
-   practical cross-member leak (a developer sitting in the container reading another author's
-   environment) without OS accounts. The residual — two admitted members reusing each other's
+   channel, and never while a *different* person has a turn, a background job or an SSH session
+   active there (the proxy answers 403 `another-author-active` / `another-person-ssh-session`, and
+   the turn's credential note says the personal secrets are paused). That closes the practical
+   cross-member leak (another process in the same container reading an author's environment)
+   without OS accounts. The residual — two admitted members reusing each other's
    *shared-channel* handles while both are inside — is bounded, provider-scoped, time-limited and
    audit-attributed, and both members were already trusted with those shared secrets.
 6. **In-house proxy in Node, with an explicit spike gate.** iron-proxy binds a TCP bridge gateway
