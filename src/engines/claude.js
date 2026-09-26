@@ -54,6 +54,15 @@ function applyProviderEnv(env, providerEnv) {
   return env;
 }
 
+// Essential traffic only (Claude Code 2.1.281 reads both: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+// is the "essential-traffic" level, which also skips the version lookup, feature-flag fetches and
+// claude.ai-only extras such as Projects, DesignSync and claude.ai plugin archive downloads;
+// DISABLE_TELEMETRY is the "no-telemetry" level on its own).
+export const CLAUDE_PROXY_TELEMETRY_ENV = Object.freeze({
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  DISABLE_TELEMETRY: "1",
+});
+
 // `extraEnv` is the channel's own environment secrets (config/channel-env.js). Two independent
 // guards, because `extra` beats everything inherited in buildChildEnv: it is re-filtered through
 // safeSpawnEnv HERE rather than trusting the caller to have done it (PATH is inherited, so
@@ -77,14 +86,20 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
     // The egress proxy and CA variables (runtimes/container/egress-env.js) are gateway-owned and in
     // this last group too: with the proxy as the container's only network, a daemon HTTPS_PROXY
     // passed through child-env.js would be a dead route, and ALL_PROXY a bypass attempt.
-    return applyProviderEnv(applyEgressEnv({
+    const env = applyEgressEnv({
       ...dropHostLocationEnv(base),
       HOME: image.home,
       CLAUDE_CONFIG_DIR: image.claudeConfigDir,
       PATH: image.path,
       TMPDIR: image.tmpDir,
       ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
-    }, target), providerEnv);
+    }, target);
+    // Behind the proxy, no telemetry: an idle warm process kept posting its event-log batch
+    // between turns, and with nothing live in the channel the proxy refused the relay placeholder
+    // on every attempt. Gateway-owned and in this last group (CLAUDE_ is a reserved prefix,
+    // DISABLE_TELEMETRY a reserved name), so a channel secret cannot turn it back on.
+    if (env.CG_EGRESS === "proxy") Object.assign(env, CLAUDE_PROXY_TELEMETRY_ENV);
+    return applyProviderEnv(env, providerEnv);
   }
   return applyProviderEnv(buildChildEnv({
     ...safeSpawnEnv(extraEnv),

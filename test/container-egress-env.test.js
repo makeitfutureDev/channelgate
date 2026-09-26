@@ -116,9 +116,21 @@ test("buildClaudeEnv: the proxy + CA are in the gateway-owned last group, over t
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, RELAY_PLACEHOLDER);
   assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=${SPKI}`);
 
+  // No telemetry behind the proxy: an idle warm engine's event-log batch was refused `channel-idle`
+  // on every attempt. Gateway-owned: a channel secret of either name is filtered, and both are reserved.
+  assert.equal(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
+  assert.equal(env.DISABLE_TELEMETRY, "1");
+  const hostile = buildClaudeEnv({ target: t, extraEnv: { DISABLE_TELEMETRY: "0", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "" } }, source);
+  assert.equal(hostile.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
+  assert.equal(hostile.DISABLE_TELEMETRY, "1");
+  assert.equal(isReservedEnvName("DISABLE_TELEMETRY"), true);
+  assert.equal(isReservedEnvName("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"), true);
+
   const legacy = buildClaudeEnv({ target: inactiveTarget("egenv-claude-legacy") }, source);
   assert.equal(legacy.CG_EGRESS, undefined);
   assert.equal(legacy[BROWSER_ARGS_ENV], undefined);
+  assert.equal(legacy.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, undefined, "no proxy, telemetry untouched");
+  assert.equal(legacy.DISABLE_TELEMETRY, undefined);
 });
 
 test("buildCodexEnv: the same last group", () => {
