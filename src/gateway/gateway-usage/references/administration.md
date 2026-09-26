@@ -128,7 +128,8 @@ These channel modes do not leave the container. The separate organization-admin-
   (anything else answers HTTP 403 `network-off`); on: public hosts, never private, loopback or
   cloud-metadata addresses. A flip applies to the next request. Raw sockets (`ssh`, `psql`) are
   tunnelled only to `github.com:22` and hosts an admin declared (`egressRawHosts`, admin API) and
-  need a client pointed at the proxy. Where the access note says the switch is *advisory* (the
+  need a client pointed at the proxy — for `ssh`/`git@…`:
+  `GIT_SSH_COMMAND="ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"`. Where the access note says the switch is *advisory* (the
   operator's legacy bridge mode, a channel given `rawNetwork`, a `/sudo` thread) a request may
   still succeed while it is off — that is not permission. If the switch is off and a task needs
   the network, say so and ask an admin to turn it on rather than working around it. The current
@@ -210,7 +211,9 @@ THIS channel's container, the same box you work in. One key per person, granted 
 - `show_channel_ssh` — whether the host is set up, who is granted, live sessions, and the
   `~/.ssh/config` block to paste (the channel rides in the ProxyCommand; one key reaches several
   channels). Use it for "how do I SSH in", "who has SSH here", "give me the connection info".
-A container with a live SSH session is never idle-stopped. SSH is refused while this channel is
+A session gets what a turn gets, secrets as placeholders included (behind the egress proxy), and
+while it is open every OTHER person's personal secrets are paused here. A container with a live
+SSH session is never idle-stopped. SSH is refused while this channel is
 in Admin mode and the gateway's `containerFullAccessHome` switch is on, because that container
 would expose the operator's home; `show_channel_ssh` says so. If the host is not set up, the
 operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) — no tool can.

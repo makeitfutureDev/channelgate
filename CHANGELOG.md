@@ -18,6 +18,24 @@ product overview.
 
 ## Unreleased
 
+- **SSH and VS Code sessions hold placeholders, not secrets.** A developer's SSH session into a
+  channel container now gets the same `cgph_…` placeholders a turn gets, and Claude's login in the
+  session (and the editor's token file) is the channel's login placeholder. Nothing a session
+  writes holds a real protected value. Tools such as `gh` and `vercel` work as before through the
+  gateway's egress proxy. The proxy settings reach every SSH shell, VS Code terminal and your own
+  `agent-browser`. The editor token file is now also removed when the channel's last session ends.
+- **Your personal secrets pause while someone else is attached.** While another person has an SSH
+  session open in a channel, your personal secrets stop working there. Everyone else's stop working
+  while you are attached. The agent's credential note says they are paused rather than failing
+  with an unexplained 403.
+- **Outbound SSH from a session goes through the egress proxy.** The image ships
+  `/opt/channelgate/bin/cg-egress-connect`, an SSH `ProxyCommand` through the egress proxy. A
+  session's `GIT_SSH_COMMAND` already uses it (github.com only, with *Allow network* on). For your
+  own `ssh`, add `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`. The proxy
+  cannot supply an SSH key. `ssh -L` forwards to hosts outside the container no longer work;
+  forwards to the container's own ports and `-R` are unchanged. Rebuild the image
+  (`npm run build:image`, still spec 1.6.0) to get the helper.
+
 - **Channel containers now reach the internet only through the gateway's egress proxy.** Every
   channel container runs with no network of its own. A small forwarder inside it hands each
   connection to the gateway, which enforces the channel's *Allow network* switch on every request

@@ -1,5 +1,129 @@
 # ChannelGate — Test Plan
 
+## SSH and VS Code sessions on placeholders (container-secrets P3)
+
+Fixtures: the scratch runtime root of `test/helpers.js` (real `egress_grants` rows, real org /
+channel / personal secret stores), the fake runtime backend (`test/fixtures/fake-runtime-backend.js`)
+with an ACTIVE egress plan on the target (`socketDir`, `caBundle`, `caSpki: "c3BraQ=="`), a fake
+container CLI recorder for every `exec`, the real `installVscodeClaudeRelay` with an injected relay
+(`sk-ant-oat01-test-access-token`, plan facts `max` / `default_claude_max_20x`), the egress service's
+real sockets and TLS (`test/egress-service.test.js`), the real SSH broker on a short `/tmp/cgssh-*`
+attach dir (`test/ssh-broker.test.js`) and a fake forwarder/proxy on `127.0.0.1:0`. Token fixtures
+are synthetic (`*_real_value_ssh_p3_*`, `b-personal-real-value-*`). No podman on the development
+host: the live gates at the end are UNEXECUTED.
+
+- [x] Session on placeholders (`test/ssh-session.test.js`): with an active plan the session `env`
+      holds `cgph_c…` / `cgph_o…` / `cgph_p…` for the channel, organization and personal secrets
+      (the personal grant owned by THIS developer in THIS channel), the unruled `RAW_THING` raw;
+      `result.secrets` is `{ name, scope, protected }` and `result.egress` lists the unprotected
+      name; sourcing the file under a hostile `HTTPS_PROXY` / `ALL_PROXY` yields the proxy URL, no
+      `ALL_PROXY`, the CA bundle, `CG_EGRESS=proxy`, the Chromium args and the exact
+      `GIT_SSH_COMMAND`, with the proxy block before the secrets; the `.credentials.json` written
+      into the container holds `sk-ant-oat01-cgph_r…` (a relay grant) with the REAL expiry,
+      scopes, subscription and tier; `<artifacts>/vscode/claude-token` holds the same placeholder;
+      NO file under `ssh/users/<id>/` (Codex's `codex-args.sh` and `codex-secrets.json` included),
+      the token file or the login input carries a real protected value or the real relay token, and
+      the raw value appears only in `env`; `session.md` names the proxy, the CA path, placeholders,
+      `printenv`, `another-person-ssh-session`, the ProxyCommand, "cannot add an SSH key" and the
+      unprotected name — never a value or a placeholder; release removes the developer's dir and,
+      with the channel's last session only, the token file (also when the container is gone).
+      Strict mode: the unruled name is withheld, every injected name protected, and none of the
+      resolver's `realValues` is anywhere. Another developer attached (liveness seam): the
+      session's `personalPaused` is true and the note says PAUSED; the developer's own session
+      alone does not pause. Without a plan: the resolver is called with this channel, this
+      developer, `untrustedPrincipal: false` and the target; secrets are listed unprotected and the
+      note has no proxy paragraph; `renderSessionEnvFile` keeps its exact legacy output and, with
+      an egress map, leads with the comment, `unset ALL_PROXY all_proxy` and the proxy exports,
+      which win over a same-named entry.
+- [x] sshd `SetEnv` (`test/ssh-access.test.js`): an active plan puts every `egressEnv(target)` name
+      (over a stale create-time `HTTPS_PROXY`), `AGENT_BROWSER_ARGS` and `GIT_SSH_COMMAND` into the
+      ONE `SetEnv` line and drops `ALL_PROXY`/`all_proxy`; `sessionEgressEnv` is exactly that map;
+      an inactive plan adds nothing and leaves the container's env as it was.
+- [x] Liveness reads the broker (`test/ssh-broker.test.js`): during a real brokered session the
+      developer is live (already inside `prepareSession`), the channel is live work,
+      `otherSshOpen(channel, someone else)` is true and false for the developer and for another
+      channel; the hang-up ends all of it.
+- [x] Personal pause end to end (`test/egress-service.test.js`): developer A attached, author B's
+      turn live with B's personal placeholder → `resolveEgressRunEnv` says `personalPaused`, the
+      credential preamble names `B_PERSONAL_KEY` as PAUSED, the proxy answers `403
+      secret-refused` naming `another-person-ssh-session` without reaching the upstream (audited
+      as refused), the channel's own placeholder still swaps; once A leaves the same placeholder
+      swaps to the real value on the next request. An operator's editor lease on the channel's
+      container wakes relay and channel grants (`canUseGrant`), not a personal one, not another
+      container's, and ends with the lease.
+- [x] Resolver and preamble (`test/egress-grants.test.js`, `test/channel-credentials.test.js`):
+      `personalPaused` only for an author WITH personal placeholders while another person's
+      session is open (the owner's own session does not pause; the default reads the real liveness
+      module); `clean` and inactive answers carry `personalPaused: false`; the pause line names
+      only the personal placeholders and appears only when paused.
+- [x] `cg-egress-connect` (`test/egress-connect.test.js`, `test/container-image.test.js`): exact
+      `CONNECT github.com:22 HTTP/1.1` + `Host`; bytes that ride with the 200 reach stdout; stdin →
+      tunnel → stdout; the client's EOF half-closes and the server's last bytes still arrive; a
+      tunnel closed by the far side ends the helper while stdin stays open; a 403 is one stderr line
+      `… refused example.com:22 (403 Forbidden) — network-off: …`, exit 1, empty stdout; an
+      unreachable forwarder exit 1 naming `ECONNREFUSED`; a missing port exit 2 with usage; IPv6
+      authorities are bracketed and header-injection / option-shaped hosts refused; node built-ins
+      only; `build-image.mjs` stages it as `bin/cg-egress-connect.mjs`; the shim is executable,
+      POSIX sh and `exec`s it.
+
+### Live gates (Claude AND Codex unless marked) — all UNEXECUTED
+
+Common setup: this branch deployed, `npm run build:image` (spec 1.6.0), SSH access installed
+(`scripts/install-ssh-access.sh`), Settings → Container runtime with *Legacy open network* OFF, a
+Slack test channel with *Allow network* ON, channel secrets `GITHUB_TOKEN` (fine-grained PAT with
+read access to one private repo) and `VERCEL_TOKEN`, a personal secret of developer A with *Used on
+hosts* = `api.github.com` (`A_GH_TOKEN`, a second PAT), SSH granted to developers A and B, and a
+throwaway GitHub deploy key (read-only on the private repo) whose private half A copies into the
+session's `~/.ssh/cg-deploy`. Record `podman inspect <c> --format '{{.HostConfig.NetworkMode}}'`
+(`none`).
+
+- [ ] UNEXECUTED (engine-independent) — placeholders only. A: `ssh <channel>` then
+      `printenv | grep -E '^(GITHUB_TOKEN|VERCEL_TOKEN|A_GH_TOKEN)='` and `printenv | grep cgph_`.
+      Evidence: each of the three values starts `cgph_` (`c`, `c`, `p`), `grep cgph_` shows only
+      placeholders, `printenv HTTPS_PROXY` is `http://127.0.0.1:3128`, `printenv ALL_PROXY` is
+      empty, `grep -r "<the real PAT>" <artifacts>/<platform>/<slug>/ssh <artifacts>/<platform>/<slug>/vscode`
+      on the HOST finds nothing, `jq -r .claudeAiOauth.accessToken /home/agent/.claude/.credentials.json`
+      starts `sk-ant-oat01-cgph_r`. Pass: no real value anywhere in the session or its files.
+- [ ] UNEXECUTED — `vercel whoami` and `gh api user` with placeholders. In A's session run both,
+      then start `claude` and `codex` in the channel folder and ask each "run gh api user and tell
+      me the login". Evidence: `vercel whoami` prints the token's user; `gh api user` returns the
+      PAT's login; both engines answer with it; the `egress` events show
+      `swapped: [{secretName: "GITHUB_TOKEN"}]` / `VERCEL_TOKEN` rows for this channel. Pass: all
+      succeed and no real token appears in the terminal or any reply.
+- [ ] UNEXECUTED (engine-independent) — `git clone git@github.com:…` through the helper. In A's
+      session: `GIT_SSH_COMMAND="$GIT_SSH_COMMAND -i ~/.ssh/cg-deploy" git clone
+      git@github.com:<org>/<private repo>.git /tmp/p3-clone` (accept GitHub's host key when asked).
+      Evidence: the clone completes; an `egress` event with `tunnel: true`, host `github.com`,
+      port 22. Then switch *Allow network* OFF and repeat into another folder: it fails with
+      `cg-egress-connect: the gateway's egress proxy refused github.com:22 (403 Forbidden) —
+      network-off: …`. Pass: both observations; delete the deploy key at GitHub afterwards.
+- [ ] UNEXECUTED (engine-independent) — the personal pause. Network ON. With only A attached, in
+      A's session `curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $A_GH_TOKEN"
+      https://api.github.com/user` → `200`. Now B attaches (`ssh <channel>` from B's laptop) and A
+      repeats → `403`, body names `A_GH_TOKEN` and `another-person-ssh-session`; the same call with
+      `$GITHUB_TOKEN` still `200`. Meanwhile A sends a Slack message in the channel "print the
+      credential note's paused line": the reply quotes "Personal secrets are PAUSED". B
+      disconnects; A's call → `200` again. Pass: all four observations.
+- [ ] UNEXECUTED (engine-independent) — forwards under `--network none`. From a laptop:
+      `ssh -L 5433:<some public postgres host>:5432 <channel>` then `psql -h localhost -p 5433`
+      → the forward fails (the session's sshd logs a connect failure); `python3 -m http.server
+      3000` in the session plus `ssh -L 3000:localhost:3000 <channel>` → `curl localhost:3000`
+      on the laptop works; `ssh -R 9000:localhost:22 <channel>` then `nc -z localhost 9000` in the
+      session → open. Pass: external `-L` fails, container-local `-L` and `-R` work.
+- [ ] UNEXECUTED (engine-independent) — VS Code Remote-SSH, an unlisted client version. Use a VS
+      Code client whose commit is NOT in `containers/versions.json` → `vscodeServers`, connect with
+      Remote-SSH (network ON): the server installs (its `curl` through the proxy — `egress` shows
+      `update.code.visualstudio.com`), the integrated terminal's `printenv HTTPS_PROXY` is the
+      proxy and `claude` there opens signed in as the plan's account. Network OFF, a fresh HOME
+      volume, client setting `"remote.SSH.localServerDownload": "always"` → the install still
+      succeeds. After closing every session: `ls <artifacts>/<platform>/<slug>/vscode/` on the host
+      is empty. Pass: all three observations.
+- [ ] UNEXECUTED (engine-independent) — the operator's `npm run vscode`. With no SSH session and
+      no turn: `npm run vscode -- <channel>`, in its terminal run `claude -p "reply pong"` → it
+      answers (the editor lease keeps the relay placeholder live); `cat
+      <artifacts>/<platform>/<slug>/vscode/claude-token` on the host starts `sk-ant-oat01-cgph_r`;
+      close the window → the file is gone. Pass: all three.
+
 ## Egress proxy, placeholders and `--network none` (container-secrets P2)
 
 Fixtures: real sockets and real TLS on 127.0.0.1 — an https upstream whose leaf chains to a

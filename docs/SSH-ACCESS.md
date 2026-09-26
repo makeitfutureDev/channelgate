@@ -135,18 +135,76 @@ session gets:
   are not loaded.
 - **The run environment:** the organization's, your own and the channel's secrets, by the names a
   turn is told about, sourced by the `claude` wrapper so Claude's tools have them. Your shell can
-  read them too (`env`), exactly as a turn's process can read its own.
+  read them too (`env`), exactly as a turn's process can read its own. Behind the egress proxy
+  (the default) they are **placeholders** — see "Network and secrets inside a session" below.
 - **The gateway's Claude login, shown as the account it is:** `/status` says "Claude Max
   account" with the operator's organization and email, `/usage` shows the plan's windows, and the
   default model is the plan's. It is the operator's login (the same one every turn uses): your
   session's usage counts against it. Claude reads the login from an access-only file the daemon
   writes and refreshes; it holds no refresh token and is removed when the channel's last session
-  ends. `claude -r <session id>` resumes a thread's own session.
+  ends. Behind the egress proxy its access token is the channel's relay placeholder (the plan,
+  expiry and rate tier beside it are the real login's — they are facts, not secrets), so the file
+  is useless outside the container. `claude -r <session id>` resumes a thread's own session.
 
 Codex over SSH is unchanged (its login is the shared sign-in mount). "show SSH access" in the
 channel prints what a session gets. If a part could not be prepared — no Claude login on the
 host, a channel whose Composio session is unavailable — the attach still succeeds and the daemon
 log names the part.
+
+## Network and secrets inside a session (the egress proxy)
+
+Channel containers run with `--network none` and reach the outside only through the gateway's
+egress proxy (image spec 1.6.0). An SSH session is inside that container, so the same rules apply:
+
+- **The proxy environment is set for you.** sshd starts every session with a clean environment,
+  so the daemon writes the complete proxy/CA set (`HTTP(S)_PROXY` → `http://127.0.0.1:3128`,
+  `NO_PROXY`, `NODE_USE_ENV_PROXY=1`, the CA-bundle variables → `/run/channelgate/egress-ca.pem`,
+  `CG_EGRESS=proxy`), Chromium's proxy arguments for your own `agent-browser`
+  (`AGENT_BROWSER_ARGS`) and `GIT_SSH_COMMAND` into the session's one `SetEnv` line, and again at
+  the top of the session's env file — so `. "$CG_SESSION_ENV"` (and `with-secrets`, and the
+  `claude`/`codex` wrappers) re-assert them if a shell changed them. `ALL_PROXY` is unset. The
+  channel's *Allow network* switch is enforced there: off, only the engine endpoints and the
+  channel's connectors answer (`curl` gets `403 network-off`); on, any public host.
+- **Secrets are placeholders.** Every secret with an egress rule (the built-in GitHub, Vercel,
+  Supabase, Make and Composio names, or one an admin marked *Used on hosts*) is a `cgph_…`
+  placeholder in your environment. The proxy swaps in the real value only on that secret's hosts,
+  so `gh`, `vercel`, `git` over HTTPS and `curl -H "Authorization: Bearer $TOKEN"` work as usual and
+  `printenv` shows nothing worth copying out. A secret without a rule is still the raw value and
+  flagged *unprotected* (the session status and `session.md` name it); with *Withhold unprotected
+  secrets* on it is not in the session at all.
+- **Your personal secrets pause while someone else is attached.** A personal placeholder swaps
+  only while its owner is working in the channel (a turn, a job or your own session) and **no other
+  person** has an SSH session open there. While one is, the proxy answers
+  `403 secret-refused … another-person-ssh-session` for your personal secrets — and for every other
+  member's personal secrets while you are attached — and each turn's credential note says
+  personal secrets are paused. Channel and organization secrets are not affected.
+- **`-L` forwards to external hosts no longer work.** A local forward is dialled from inside the
+  container, which has no route: `ssh -L 5432:db.example.com:5432 acme-app` fails. Forwards to
+  container-local ports (`ssh -L 3000:localhost:3000 acme-app`) and every `-R` forward are
+  unchanged. Reach an external database through the channel's VPN/database helper, or ask an admin
+  to declare its host as a raw host (`egressRawHosts`, ports 22/5432/6543) and connect from inside.
+- **Outbound SSH goes through a helper.** `git clone git@github.com:org/repo.git` works in a
+  session as is: `GIT_SSH_COMMAND` runs `ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect
+  %h %p'`, which asks the proxy for a raw tunnel. The proxy allows one only to `github.com:22` and
+  the channel's declared raw hosts, and only with *Allow network* on. For your own `ssh`, pass the
+  same option (`ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p' user@host`) or
+  add it to a config of your own — the gateway never writes the shared `~/.ssh`. The first
+  connection asks you to accept the host key as usual. The proxy **cannot inject an SSH key**: you
+  authenticate with a key you bring (agent forwarding is off, so it has to be in the box, where
+  everyone in the channel can read it — prefer a deploy key scoped to one repository), and a
+  destination-restricted key broker is a later item.
+- **VS Code servers.** Client versions the image pre-installs need no download. For any other
+  version the Remote-SSH installer's `curl` goes through the proxy environment, so it needs *Allow
+  network* on; with it off, set `"remote.SSH.localServerDownload": "always"` on your laptop so the
+  client downloads the server and copies it in over the session.
+- **The editor token file.** `<artifacts>/vscode/claude-token` (read by the `claude` wrapper
+  outside an SSH session, e.g. a `podman exec` shell or an operator's `npm run vscode` window) holds
+  the same relay placeholder, and is removed when the channel's last session ends as well as when
+  the `npm run vscode` launcher exits. An open `npm run vscode` window counts as live work for the
+  channel's own and organization secrets and the Claude login, never for anyone's personal ones.
+
+Under the legacy *Legacy open network* mode, a channel's `rawNetwork` escape or a `/sudo` thread
+none of this applies: values are real, and the network is the container's own.
 
 ## What the daemon checks on every connection
 
@@ -180,13 +238,17 @@ ended); `show_channel_ssh` lists the live ones.
   container with a live session, and a container rebuild waits for the session like it waits for
   a run. `ClientAlive` inside the container reaps a dead TCP peer in about three minutes, so a
   laptop that vanished cannot pin a container forever.
-- **A session has the channel's secrets and MCP tokens, like a turn does.** They sit in
+- **A session has the channel's secrets, like a turn does — as placeholders.** They sit in
   per-developer files under the channel's artifact dir (`ssh/users/<id>/`), selected by the
   `CG_SSH_USER` name sshd sets from the developer's own key line and admits nothing else for. The
   files are per developer for correctness — your `composio-user` is yours — not for secrecy from
-  each other: everyone in the box is one uid, a shell can read a running turn's
+  each other: everyone in the box is one uid, and a shell can read a running turn's
   `/proc/<pid>/environ`, the CLI logins in `/home/agent`, the Codex sign-in mount and the Claude
-  login file anyway. Grant SSH as you would grant a login to the project box.
+  login file anyway. Behind the egress proxy that is bounded: what anyone in the box can read is a
+  placeholder that only works from inside it, on its declared hosts, while the channel has live
+  work (a personal one only while its owner is here and nobody else is attached); the MCP tokens
+  are relayed by the daemon and never in the box at all. Unprotected secrets and the CLI logins in
+  `/home/agent` are still real. Grant SSH as you would grant a login to the project box.
 - **The Claude login file holds no refresh token.** It cannot rotate the operator's session or
   sign the host out; it expires with the access token and is rewritten by the 20-minute refresh.
 - **Claude never self-updates inside a channel** (`DISABLE_AUTOUPDATER=1` on every container): a
@@ -203,7 +265,9 @@ ended); `show_channel_ssh` lists the live ones.
 | `/var/lib/channelgate-ssh/authorized_keys` | every registered key, `restrict,command=` (daemon-written) |
 | `/var/lib/channelgate-ssh/attach.sock` | the daemon's attach socket (0660, group = login account) |
 | `/etc/ssh/sshd_config.d/channelgate.conf` | the Match block for the login account, plus an `AllowUsers`/`AllowGroups` line when the host restricts logins |
-| `<artifacts>/<platform>/<slug>/ssh/` | `sshd_config`, `authorized_keys`, `host_key` for the container (identical path inside) |
+| `<artifacts>/<platform>/<slug>/ssh/` | `sshd_config` (its one `SetEnv` carries the container env + the proxy set), `authorized_keys`, `host_key` for the container (identical path inside) |
+| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, Codex's `codex-args.sh` + `codex-secrets.json` (the capability only) |
+| `<artifacts>/<platform>/<slug>/vscode/claude-token` | the Claude login the wrapper reads outside an SSH session (the relay placeholder behind the proxy); removed with the channel's last session |
 | `gateway.db` → `ssh_keys`, `ssh_sessions`, `events` | keys, sessions, audit |
 
 - *`channelgate-ssh@…: Permission denied (publickey)`* straight away, with nothing in the daemon
@@ -244,5 +308,12 @@ ended); `show_channel_ssh` lists the live ones.
   means a second gateway on this host is using the same attach directory.
 - *Host key changed* warnings — the channel's `ssh/host_key` was removed (a deleted channel
   artifact dir); remove the stale `known_hosts` line.
+- *`403 secret-refused … another-person-ssh-session`* — someone else has an SSH session open in the
+  channel, so personal secrets are paused (above); it clears the moment they disconnect.
+  `channel-idle` means nothing is live in the channel — which a session itself is, so it only shows
+  up from a shell outside any session.
+- *`cg-egress-connect: the gateway's egress proxy refused github.com:22 (403 Forbidden) —
+  network-off …`* — outbound SSH needs *Allow network* on; any other host must be a declared raw
+  host. `kex_exchange_identification: Connection closed` right after it is ssh's own echo of that.
 - *Connection drops on daemon restart* — expected; reconnect.
 - `journalctl -u channelgate | grep '\[ssh\]'` shows binds, sessions and relay refresh failures.

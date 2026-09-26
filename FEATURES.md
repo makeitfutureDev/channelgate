@@ -2416,7 +2416,8 @@ are retired, bullet by bullet; everything else stands.
   the thread-bound background, progress and approval tools) with `composio-user` for the
   developer's own accounts, `composio-agent` for the channel's and the selected catalog servers,
   `--strict-mcp-config` so the operator's own claude.ai connectors never load, and the run
-  environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. Codex gets the
+  environment (`resolveEgressRunEnv` + `safeSpawnEnv`, placeholders behind the egress proxy — see
+  "SSH and VS Code sessions on placeholders") sourced by the `claude` wrapper. Codex gets the
   same session through its own `codex` wrapper (QA-0925: over SSH it had no gateway MCP, no Composio
   and no secrets): the session also writes `codex-args.sh` — exactly the `-c mcp_servers.*` /
   `apps.*` overrides a chat turn's Codex gets, with a Codex-minted gateway capability and the
@@ -2720,6 +2721,37 @@ are retired, bullet by bullet; everything else stands.
   (hosts)" / "unprotected (raw)"; the output redactor keeps every REAL value; `run_config` records
   `networkEnforced`, `egress` (`proxy` / `proxy+raw` / `bridge` / `unavailable` / `host`) and the
   unprotected/withheld names. → TEST-PLAN: Egress proxy, placeholders and `--network none`.
+- **SSH and VS Code sessions on placeholders (container-secrets P3).** A developer's SSH session
+  resolves its environment through the same `resolveEgressRunEnv` a turn uses (this channel, the
+  developer as a trusted principal, the session's target), so behind the egress proxy the session
+  `env` file under `<artifacts>/ssh/users/<id>/` exports a `cgph_…` placeholder for every ruled
+  secret; an unruled one stays raw and flagged (withheld under strict mode). The status line and
+  `ssh_session_start` report `secrets` as `{ name, scope, protected }`. Claude's access-only
+  `.credentials.json` and the host-side `<artifacts>/vscode/claude-token` hold the channel's relay
+  placeholder (`containerClaudeCredential`; expiry, scopes, subscription and rate tier stay the
+  real login's), and the token file is now removed when the channel's LAST SSH session ends, not
+  only when the `npm run vscode` launcher exits. Because sshd starts a clean environment, the
+  complete `egressEnv(target)` map plus `AGENT_BROWSER_ARGS` and a gateway-owned
+  `GIT_SSH_COMMAND="ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"` ride the
+  session's ONE `SetEnv` line (from the target's own plan, over a stale create-time value;
+  `ALL_PROXY` dropped) and lead the session `env` file after an `unset ALL_PROXY all_proxy`, so
+  `. "$CG_SESSION_ENV"` re-asserts them. `cg-egress-connect` (image spec 1.6.0, unreleased, no
+  separate bump: a POSIX shim over `bin/cg-egress-connect.mjs`, staged verbatim from
+  `src/mcp/egress-connect.js`, node built-ins only) speaks `CONNECT host:port` to the in-container
+  forwarder and pipes stdio, so `git@github.com` works through the proxy's raw tunnel (github.com:22
+  and the declared raw hosts, Allow network on); a refusal is one stderr line with the proxy's
+  reason and exit 1. The proxy cannot inject an SSH key. The session's `session.md` names the proxy,
+  the CA bundle, the protected/unprotected/withheld names, the personal-scope pause rule and the
+  ProxyCommand — never a value or a placeholder. Personal pause: `resolveEgressRunEnv` returns
+  `personalPaused` when the author holds personal placeholders and a DIFFERENT person's SSH session
+  is open in the channel (`liveness.otherSshOpen`, which reads the broker's `liveSshSessions()` —
+  the session is registered before its files are prepared), and the per-attempt credential note
+  then says those names are paused (the proxy answers `403 secret-refused …
+  another-person-ssh-session`). An operator's `npm run vscode` window — its own process, so no
+  liveness mark — keeps channel, organization and relay grants swapping through its signed editor
+  lease (`canUseGrant`), never a personal one. `show_channel_ssh` and the `gateway-usage`
+  administration page say so. → TEST-PLAN: SSH and VS Code sessions on placeholders
+  (container-secrets P3).
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's
   pid names the host-side `exec` CLIENT, never the engine, so liveness and signals are asked of the
   backend: a probe execs `cg-probe <runId>` against the process-group leader `cg-exec` recorded
