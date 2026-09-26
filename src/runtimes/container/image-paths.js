@@ -50,6 +50,10 @@ export const CONTAINER_EGRESS_CA = "/run/channelgate/egress-ca.pem";
 // cg-init starts it when CG_EGRESS=proxy, listening on 127.0.0.1:3128.
 export const CONTAINER_EGRESS_FORWARDER = "/opt/channelgate/bin/cg-egress.mjs";
 export const CONTAINER_EGRESS_PORT = 3128;
+// The SSH ProxyCommand helper (src/mcp/egress-connect.js, staged as bin/cg-egress-connect.mjs behind
+// the containers/bin/cg-egress-connect shim): outbound SSH from a session under `--network none`.
+// Same unreleased spec 1.6.0 as the forwarder — no separate bump.
+export const CONTAINER_EGRESS_CONNECT = "/opt/channelgate/bin/cg-egress-connect";
 
 // Where the engine finds each daemon-side helper INSIDE the image. The host backend answers the
 // same question with this checkout's script paths; no caller composes a path itself.
