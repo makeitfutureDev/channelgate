@@ -17,15 +17,28 @@
 // checkout, and their env carries the signed capability and nothing else. A container must never
 // receive CG_PORT / CG_APPROVAL_SECRET (there is no /internal/* route it could reach), nor
 // CHANNELGATE_DIR / CG_FS_ROOT / CG_WORKSPACE_DIR / PATH (host paths that do not exist inside it).
-// Remote http entries are the same with or without a target — the engine dials those itself. The
-// local runtime (daemon-internal turns) or no target at all produces the plain stdio form.
+// The local runtime (daemon-internal turns) or no target at all produces the plain stdio form.
+//
+// RELAYED REMOTES (container-secrets P1): the four header-bearing remote servers — composio-user
+// and composio-agent in token/endpoint mode, makeitfuture-toolbox, make-toolbox — are plain
+// `{type:"http", url, headers}` entries on a host target (the engine dials them itself, credential
+// in the file). On an ISOLATED target that file lives in the artifact dir every process in the
+// container can read, so there they become the SAME socket-bridge entry the SDK mode uses, with
+// `CG_MCP_SERVICE=remote-mcp` and the server name as the bridge argument: the container holds only
+// the signed capability (whose `remoteMcps` claim names the servers), and the real URL + headers
+// are registered in the daemon's in-memory registry (src/mcp/remote-mcp-registry.js) under the
+// capability's jti, for the capability's lifetime. The daemon dials them (src/mcp/remote-relay.js).
+// `buildMcpRuntimePayload` also returns a digest of the relayed URL + headers so the warm pool can
+// still retire a process when a token rotates (src/gateway/run-engine-mcp.js).
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { composioUrl, toolboxUrl } from "./mcp-catalog.js";
 import { gatewayRoot } from "../config/paths.js";
 import { requireAdapter } from "../engines/registry.js";
 import { runtimeSupports } from "../runtimes/contract.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
-import { mintGatewayCapability } from "./mcp-capability.js";
+import { mintGatewayCapability, mintedCapabilityClaims } from "./mcp-capability.js";
+import { isRelayableUrl, registerRemoteMcps } from "../mcp/remote-mcp-registry.js";
 
 const GATEWAY_PATH = fileURLToPath(new URL("../mcp/gateway-server.js", import.meta.url));
 const COMPOSIO_SDK_BRIDGE_PATH = fileURLToPath(new URL("../ee/composio-sdk-bridge.js", import.meta.url));
@@ -53,21 +66,31 @@ function composioServer(endpoint, legacyToken, { socketBridge = null, gatewayCap
       default_tools_approval_mode: "approve",
     };
   }
-  if (endpoint?.url) {
-    return {
-      type: "http",
-      url: endpoint.url,
-      headers: endpoint.headers || {},
-      default_tools_approval_mode: "approve",
-    };
-  }
-  if (!legacyToken) return null;
+  const remote = composioHttpTarget(endpoint, legacyToken);
+  if (!remote) return null;
   return {
     type: "http",
-    url: composioUrl(),
-    headers: { "x-consumer-api-key": legacyToken },
+    url: remote.url,
+    headers: remote.headers,
     default_tools_approval_mode: "approve",
   };
+}
+
+// The header-bearing form of a Composio identity (an explicit endpoint, or the legacy token against
+// the hosted URL), or null for SDK mode / no credential. One answer for both the host http entry
+// above and the relay registration an isolated target gets instead.
+function composioHttpTarget(endpoint, legacyToken) {
+  if (endpoint?.mode === "sdk" && endpoint.url) return null;
+  if (endpoint?.url) return { url: endpoint.url, headers: endpoint.headers || {} };
+  if (!legacyToken) return null;
+  return { url: composioUrl(), headers: { "x-consumer-api-key": legacyToken } };
+}
+
+// A stable, value-free digest of one relayed server's URL + headers: the warm pool's fingerprint
+// needs to CHANGE when a token rotates, but must never contain the token.
+function relayDigestOf({ url, headers }) {
+  const sorted = Object.keys(headers).sort().map((name) => [name, headers[name]]);
+  return `sha256:${createHash("sha256").update(JSON.stringify([url, sorted])).digest("hex")}`;
 }
 
 // Which Composio identities THIS run actually injects — the one predicate behind both the server
@@ -114,9 +137,51 @@ export function composioIdentityPreamble({ user = false, agent = false } = {}) {
   return "";
 }
 
-export async function buildMcpConfig({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
+// The per-run MCP config as the JSON string every existing caller writes to a file.
+export async function buildMcpConfig(options = {}) {
+  return (await buildMcpRuntimePayload(options)).configJson;
+}
+
+/**
+ * The per-run MCP payload plus what a caller needs beyond the JSON: `relayDigest` (per relayed
+ * server, a digest of its URL + headers — `{}` on a host target, where the headers are in the JSON
+ * itself) for the warm-pool fingerprint, the signed `gatewayCapability`, and `relayedMcps` (the
+ * names registered with the daemon's relay for this capability) and `rejectedRemotes` (a remote an
+ * isolated run could not be given, `[{ name, reason }]`, for the caller's rejected-MCP note).
+ */
+export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
   // Identity claim — fail closed on garbage instead of silently signing as Claude.
   const normalizedEngine = requireAdapter(engine || "claude").id;
+  // Fail closed on an unknown capability key; a target that is absent or host-backed is today's path.
+  const isolated = target && runtimeSupports(target, "isolated") ? target : null;
+  const gatewayHelper = isolated ? isolated.runtime.helperCommand(isolated, "gateway-mcp") : null;
+  // Same predicate the prompt's identity line is built from — one answer to "which identities does
+  // this run have?", never two that can drift apart.
+  const identities = composioIdentitiesForRun({ principalTrusted, composioUserEndpoint, composioUserToken, composioEndpoint, composioToken });
+  // The header-bearing remotes this run gets, in the order their entries appear below. Host: plain
+  // http entries. Isolated: relayed through the daemon, so their names go into the signed claim and
+  // their URL + headers into the daemon's registry — never into the JSON.
+  const httpRemotes = {};
+  const userRemote = identities.user ? composioHttpTarget(composioUserEndpoint, composioUserToken) : null;
+  if (userRemote) httpRemotes["composio-user"] = userRemote;
+  const sharedRemote = identities.agent ? composioHttpTarget(composioEndpoint, composioToken) : null;
+  if (sharedRemote) httpRemotes["composio-agent"] = sharedRemote;
+  if (toolboxToken) httpRemotes["makeitfuture-toolbox"] = { url: toolboxUrl(), headers: { Authorization: `Bearer ${toolboxToken}` } };
+  if (makeToolboxUrl && makeToolboxKey) httpRemotes["make-toolbox"] = { url: makeToolboxUrl, headers: { Authorization: `Bearer ${makeToolboxKey}` } };
+  // The relay dials https only. A remote an operator pointed at plain http (COMPOSIO_MCP_URL /
+  // TOOLBOX_MCP_URL overrides) cannot be relayed, and handing its credential to the container
+  // instead is exactly what this path exists to stop — so it is dropped from an isolated run and
+  // REPORTED through the same rejected-MCP note an unadmittable catalog selection gets.
+  const rejectedRemotes = [];
+  if (isolated) {
+    for (const name of Object.keys(httpRemotes)) {
+      if (isRelayableUrl(httpRemotes[name].url)) continue;
+      delete httpRemotes[name];
+      rejectedRemotes.push({ name, reason: "its URL is not https, so the gateway cannot relay it into a container" });
+    }
+  }
+  const relayedMcps = isolated ? Object.keys(httpRemotes) : [];
+  const jti = randomUUID();
   const gatewayCapability = mintGatewayCapability({
     secret: process.env.CG_APPROVAL_SECRET || "",
     channelId,
@@ -134,11 +199,25 @@ export async function buildMcpConfig({ composioUserEndpoint = null, composioEndp
     // its own to read these from (src/mcp/socket-server.js).
     toolset,
     progressReport,
+    ...(relayedMcps.length ? { remoteMcps: relayedMcps } : {}),
+    jti,
     ...(ttlMs ? { ttlMs } : {}),
   });
-  // Fail closed on an unknown capability key; a target that is absent or host-backed is today's path.
-  const isolated = target && runtimeSupports(target, "isolated") ? target : null;
-  const gatewayHelper = isolated ? isolated.runtime.helperCommand(isolated, "gateway-mcp") : null;
+  // Registered under the capability's own jti and expiry, in THIS process — the daemon that also
+  // serves the socket. Nothing else holds the credential for an isolated run.
+  const relayDigest = {};
+  if (relayedMcps.length) {
+    registerRemoteMcps({ jti, exp: mintedCapabilityClaims(gatewayCapability).exp, servers: httpRemotes });
+    for (const name of relayedMcps) relayDigest[name] = relayDigestOf(httpRemotes[name]);
+  }
+  // An isolated run's entry for a relayed remote: the gateway's own socket bridge, selecting the
+  // remote-mcp service and naming the server. The capability is the only authority it carries.
+  const relayServer = (name) => ({
+    command: gatewayHelper.command,
+    args: [...(gatewayHelper.args || []), name],
+    env: { CG_MCP_SERVICE: "remote-mcp", CG_GATEWAY_CAPABILITY: gatewayCapability },
+    default_tools_approval_mode: "approve",
+  });
   const servers = {
     gateway: isolated ? {
       command: gatewayHelper.command,
@@ -178,22 +257,18 @@ export async function buildMcpConfig({ composioUserEndpoint = null, composioEndp
     },
   };
   const composioOpts = { socketBridge: gatewayHelper, gatewayCapability };
-  // Same predicate the prompt's identity line is built from — one answer to "which identities does
-  // this run have?", never two that can drift apart.
-  const identities = composioIdentitiesForRun({ principalTrusted, composioUserEndpoint, composioUserToken, composioEndpoint, composioToken });
-  const userComposio = identities.user ? composioServer(composioUserEndpoint, composioUserToken, composioOpts) : null;
-  if (userComposio) servers["composio-user"] = userComposio;
-  const sharedComposio = identities.agent ? composioServer(composioEndpoint, composioToken, composioOpts) : null;
-  if (sharedComposio) servers["composio-agent"] = sharedComposio;
-  if (toolboxToken) {
-    servers["makeitfuture-toolbox"] = { type: "http", url: toolboxUrl(), headers: { Authorization: `Bearer ${toolboxToken}` } };
+  for (const [name, endpoint, legacyToken, present] of [
+    ["composio-user", composioUserEndpoint, composioUserToken, identities.user],
+    ["composio-agent", composioEndpoint, composioToken, identities.agent],
+  ]) {
+    if (!present) continue;
+    if (rejectedRemotes.some((rejected) => rejected.name === name)) continue;
+    const entry = isolated && httpRemotes[name] ? relayServer(name) : composioServer(endpoint, legacyToken, composioOpts);
+    if (entry) servers[name] = entry;
   }
-  if (makeToolboxUrl && makeToolboxKey) {
-    servers["make-toolbox"] = {
-      type: "http",
-      url: makeToolboxUrl,
-      headers: { Authorization: `Bearer ${makeToolboxKey}` },
-    };
+  for (const name of ["makeitfuture-toolbox", "make-toolbox"]) {
+    const remote = httpRemotes[name];
+    if (remote) servers[name] = isolated ? relayServer(name) : { type: "http", url: remote.url, headers: remote.headers };
   }
-  return JSON.stringify({ mcpServers: servers });
+  return { configJson: JSON.stringify({ mcpServers: servers }), relayDigest, gatewayCapability, relayedMcps, rejectedRemotes };
 }

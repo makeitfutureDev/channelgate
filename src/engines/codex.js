@@ -11,10 +11,10 @@
 //     config overrides, so the same flags work on fresh and resumed runs — see buildCodexArgs.
 //   - MCP injected with `-c mcp_servers.*` overrides — identical on a fresh run and on a resume,
 //     because `exec resume` reads them the same way. Header-bearing remote MCPs (Composio, the
-//     toolboxes) use Codex's native streamable-HTTP transport with a per-run `http_headers_helper`
-//     script, NOT a stdio bridge: Codex takes whichever MCP servers finished starting by the time
-//     it builds the first request, and a resumed turn reaches that point far sooner than a fresh
-//     one (see addSecretRemote).
+//     toolboxes): in a CONTAINER they are relayed by the daemon over the control socket (the
+//     `remote-mcp` service), so the container holds no credential at all; on a sudo-host turn they
+//     use Codex's native streamable-HTTP transport with a per-run `http_headers_helper` script
+//     (see addSecretRemote).
 //   - JSONL events (`--json`): thread.started carries the session id; the authoritative final
 //     message is read from the `-o` file. Token usage comes from turn.completed; no dollar cost.
 //   - timeoutMs is an inactivity watchdog, not a wall-clock runtime cap: a busy Codex turn may run
@@ -41,6 +41,7 @@ import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.j
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
+import { isRelayableUrl } from "../mcp/remote-mcp-registry.js";
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 const MAX_RETAINED = 64_000; // stdout/stderr/delta kept for error context — tail only, never unbounded
@@ -58,9 +59,9 @@ const NOTE_INTERVAL_MS = 15_000; // floor between stderr diagnostics shown to th
 // One requirement this places on an isolated backend's helper table, because Codex reaches that
 // helper THROUGH the secret bridge rather than launching it itself: "gateway-mcp" must be node +
 // a script path the bridge will accept (it validates a .js suffix), not a bare wrapper executable.
-// The image's "mcp-remote" helper is no longer part of a Codex run — remote MCPs are dialled by
-// Codex itself now (see addSecretRemote) — but it stays in the table for the image contract and
-// for any backend that still bridges one.
+// The image's "mcp-remote" helper is no longer part of a Codex run — remote MCPs are relayed by the
+// daemon in a container and dialled by Codex itself on the host (see addSecretRemote) — but it
+// stays in the table for the image contract and for any backend that still bridges one.
 function helperScriptArgv(helper) {
   return helper.args?.length ? [...helper.args] : [helper.command];
 }
@@ -100,6 +101,15 @@ if (typeof value !== "string" || !value) {
 process.stdout.write(JSON.stringify({ [HEADER]: PREFIX + value }));
 `;
 }
+// What the run's 0600 bundle holds. In a container it is ONLY the signed capability: the remote
+// MCP credentials are relayed by the daemon (see addSecretRemote), and the artifact dir the bundle
+// lives in is readable by every process in the container. A sudo-host turn keeps the tokens its
+// headers helpers read.
+export function codexSecretBundle({ isolated = false, gatewayCapability = "", composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxKey = "" } = {}) {
+  if (isolated) return { gatewayCapability };
+  return { gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey };
+}
+
 // Names that can ride in a `-c` dotted key path. TOML bare keys are exactly [A-Za-z0-9_-]; anything
 // else needs quoting, and quoting a `-c` segment does not mean what it means in a TOML file.
 const BARE_TOML_KEY = /^[A-Za-z0-9_-]{1,120}$/;
@@ -742,10 +752,21 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     args.push("-c", `mcp_servers.gateway.startup_timeout_sec=60`);
   }
 
-  // A header-bearing remote MCP (both Composio identities, the toolboxes) is reached over Codex's
-  // OWN streamable-HTTP transport, and the header value is produced by a per-run helper script
-  // (`http_headers_helper`) that reads the 0600 bundle — so the credential is still absent from
-  // Codex's argv and environment. It used to be bridged to stdio through `mcp-remote` instead,
+  // A header-bearing remote MCP (both Composio identities, the toolboxes).
+  //
+  // ISOLATED (the channel container): relayed by the DAEMON over the control socket. The entry is
+  // the same secret-env-bridge → socket-bridge chain the gateway entry uses — the signed capability
+  // comes out of the 0600 bundle, never argv/env — selecting the `remote-mcp` service and naming
+  // the server; the daemon verifies the capability's `remoteMcps` claim plus its own registration
+  // (made when the capability was minted, src/gateway/mcp.js) and dials the real URL with the real
+  // header. The bundle then holds ONLY the capability and no headers helper is written, so no
+  // process in the container can read a Composio or toolbox credential. A URL the relay cannot dial
+  // (a non-https override) is skipped here exactly as mcp.js drops and reports it.
+  //
+  // HOST (a sudo-host turn): reached over Codex's OWN streamable-HTTP transport, and the header
+  // value is produced by a per-run helper script (`http_headers_helper`) that reads the 0600 bundle
+  // — so the credential is still absent from Codex's argv and environment. It used to be bridged to
+  // stdio through `mcp-remote` instead,
   // which cost ~2.4s to answer `tools/list` (two Node bootstraps, mcp-remote's OAuth discovery
   // round trip, then a duplicated initialize). Codex does not BLOCK a turn on MCP startup — it
   // takes whichever servers finished by the time it builds the first request, and
@@ -754,8 +775,21 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
   // bridged servers made the cold window and missed every warm one: the second turn of a Codex
   // thread saw `gateway` and no `composio-user`/`composio-agent` at all. The native transport
   // answers in ~1.2s, inside both.
+  const addRelayedRemote = (name) => {
+    const bridge = helper("secret-env-bridge");
+    args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(bridge.command)}`);
+    args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(bridge.args || []), secretBundlePath, "gatewayCapability", "CG_GATEWAY_CAPABILITY", ...helperScriptArgv(helper("gateway-mcp")), name])}`);
+    args.push("-c", `mcp_servers.${name}.env.CG_MCP_SERVICE="remote-mcp"`);
+    args.push("-c", `mcp_servers.${name}.env.CG_ENGINE="codex"`);
+    args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
+    args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
+  };
   const addSecretRemote = (name, url, secretName, headerName, prefix = "") => {
     if (clean || !secretBundlePath || !secretName || !url) return;
+    if (isolated) {
+      if (isRelayableUrl(url)) addRelayedRemote(name);
+      return;
+    }
     const helperPath = headerHelperPath(secretBundlePath, name);
     args.push("-c", `mcp_servers.${name}.url=${JSON.stringify(url)}`);
     args.push("-c", `mcp_servers.${name}.http_headers_helper=${JSON.stringify(helperPath)}`);
@@ -944,12 +978,13 @@ export async function runCodex({
   const scratchDir = await mkdtemp(path.join(scratchBase, "run-"));
   const outFile = path.join(scratchDir, `cg-codex-${randomUUID()}.txt`);
   const secretDir = artifactDir ? path.join(artifactDir, "run") : runTmpDir();
-  const secretBundlePath = !clean && [gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey].some(Boolean)
+  const bundle = codexSecretBundle({ isolated, gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey });
+  const secretBundlePath = !clean && Object.values(bundle).some(Boolean)
     ? path.join(secretDir, `cg-codex-secrets-${randomUUID()}.json`)
     : "";
   if (secretBundlePath) {
     await mkdir(secretDir, { recursive: true, mode: 0o700 });
-    await writeFile(secretBundlePath, JSON.stringify({ gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey }), { mode: 0o600 });
+    await writeFile(secretBundlePath, JSON.stringify(bundle), { mode: 0o600 });
   }
   // The `http_headers_helper` scripts the argv names: written here because buildCodexArgs stays a
   // pure argv builder. They carry no credential of their own — each one reads its entry out of the

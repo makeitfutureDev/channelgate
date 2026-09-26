@@ -36,7 +36,8 @@ import { safeSpawnEnv } from "../config/channel-env.js";
 import { requireAdapter } from "../engines/registry.js";
 import { CONTAINER_CLAUDE_CONFIG_DIR } from "../runtimes/container/image-paths.js";
 import { installVscodeClaudeRelay, installSshCodexWrapper, CLAUDE_ONBOARDING_FILE, sshUsersDirOf } from "../runtimes/container/vscode.js";
-import { buildCodexArgs, headerHelperSource } from "../engines/codex.js";
+import { buildCodexArgs, codexSecretBundle, headerHelperSource } from "../engines/codex.js";
+import { isIsolatedTarget } from "../engines/runtime-target.js";
 import { listEngineMcps, codexMcpPolicyFor } from "./mcp-discovery.js";
 import { readDaemonClaudeAccount } from "./claude-token-relay.js";
 import { buildSettings } from "./folders.js";
@@ -161,10 +162,13 @@ fs.renameSync(temporary, file);
 fs.writeFileSync(sidecar, folder + "\\n", { mode: 0o600 });
 `;
 
-// Codex's half of a prepared session (codex-args.sh + its bundle and header helpers, all in the
-// developer's 0700 dir): exactly the `-c mcp_servers.*` / `apps.*` overrides a chat turn's Codex
-// gets, with the gateway capability and Composio/toolbox credentials in a 0600 bundle their helpers
-// read — never in argv. The sandbox, approval and model flags of a turn are NOT carried: the
+// Codex's half of a prepared session (codex-args.sh + its bundle, in the developer's 0700 dir):
+// exactly the `-c mcp_servers.*` / `apps.*` overrides a chat turn's Codex gets, with the gateway
+// capability in a 0600 bundle — never in argv. The Composio/toolbox servers are relayed by the
+// daemon (the `remote-mcp` socket service) exactly as in a turn, so the bundle holds the capability
+// and nothing else, no headers helper is written, and the relay registration made when the
+// capability was minted lives as long as the capability (SSH_CAPABILITY_TTL_MS); a refresh mints a
+// fresh jti and registers again, the old one simply expires. The sandbox, approval and model flags of a turn are NOT carried: the
 // developer drives an interactive Codex and answers its prompts themselves.
 export function renderCodexArgsScript(overrides) {
   const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -197,7 +201,14 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
   const policy = codexMcpPolicyFor(await listMcps(), allowed);
   for (const server of policy.servers) if (server.enabled && !server.definition) server.enabled = false;
   const gatewayCapability = runtime.gatewayCapability || "";
-  const bundle = { gatewayCapability, composioUserToken: integrations.composioUserToken || "", composioToken: integrations.composioToken || "", toolboxToken: integrations.toolboxToken || "", makeToolboxKey: integrations.makeToolboxKey || "" };
+  const bundle = codexSecretBundle({
+    isolated: isIsolatedTarget(target),
+    gatewayCapability,
+    composioUserToken: integrations.composioUserToken || "",
+    composioToken: integrations.composioToken || "",
+    toolboxToken: integrations.toolboxToken || "",
+    makeToolboxKey: integrations.makeToolboxKey || "",
+  });
   const secretBundlePath = !clean && Object.values(bundle).some(Boolean) ? path.join(userDir, "codex-secrets.json") : "";
   if (secretBundlePath) writePrivate(secretBundlePath, JSON.stringify(bundle));
   else rmSync(path.join(userDir, "codex-secrets.json"), { force: true }); // Lean: no stale tokens

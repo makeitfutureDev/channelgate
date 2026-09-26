@@ -237,7 +237,10 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   daemon side over `~/.channelgate/run/mcp.sock` (bind-mounted read-only at `/run/channelgate`, no
   DB mount, no port), `socket-bridge.js` is the container-side stdio↔socket pipe copied into the
   image verbatim, `secret-env-bridge.js`/`remote-secret-bridge.js` launch credentialed stdio and
-  remote MCPs from a 0600 bundle so a secret never rides argv.
+  remote MCPs from a 0600 bundle so a secret never rides argv. In a container the header-bearing
+  remotes (Composio token mode, the toolboxes) are the socket's `remote-mcp` service instead:
+  `remote-mcp-registry.js` holds their URL + headers in daemon memory under the capability's jti,
+  `remote-relay.js` dials them and relays the tools, so the credential never enters the container.
 - `src/platforms/` — the CHAT-SURFACE layer, to chat platforms what `src/engines/` is to engines.
   `contract.js` (the closed capability spec + fail-closed adapter validation), `registry.js` +
   `adapters.js` + `slack.js`/`googlechat.js`/`msteams.js` (per-platform FACTS: what renders, what

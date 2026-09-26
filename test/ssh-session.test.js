@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { ensureTestEnv } from "./helpers.js";
 
 const scratch = ensureTestEnv();
@@ -84,8 +84,21 @@ test("the session is prepared like a turn: lockdown, MCP payload signed for THIS
   assert.equal(verified.claims.origin, session.SSH_SESSION_ORIGIN);
   assert.equal(verified.claims.toolset, SSH_TOOLSET);
   assert.equal(verified.claims.exp - verified.claims.iat, session.SSH_CAPABILITY_TTL_MS);
-  assert.ok(JSON.stringify(mcp["composio-user"]).includes(`cu-${user.id}`), "the developer's OWN Composio identity");
-  assert.ok(JSON.stringify(mcp["composio-agent"]).includes("ca-channel"), "and the channel's");
+  // Both identities are relayed by the daemon (container-secrets P1): mcp.json lives in the
+  // artifact dir every process in the container can read, so it names the servers and carries the
+  // capability only; the developer's own token and the channel's are in the daemon's relay
+  // registry, under THIS session capability's jti, for the session's 12-hour lifetime.
+  const { lookupRemoteMcp } = await import("../src/mcp/remote-mcp-registry.js");
+  const mcpText = readFileSync(path.join(dir, "mcp.json"), "utf8");
+  assert.ok(!mcpText.includes(`cu-${user.id}`) && !mcpText.includes("ca-channel"), "no Composio credential in the session's mcp.json");
+  for (const name of ["composio-user", "composio-agent"]) {
+    assert.equal(mcp[name].env.CG_MCP_SERVICE, "remote-mcp", name);
+    assert.equal(mcp[name].args.at(-1), name);
+    assert.equal(mcp[name].env.CG_GATEWAY_CAPABILITY, mcp.gateway.env.CG_GATEWAY_CAPABILITY);
+  }
+  assert.deepEqual(verified.claims.remoteMcps, ["composio-user", "composio-agent"]);
+  assert.deepEqual(lookupRemoteMcp(verified.claims.jti, "composio-user", verified.claims.iat + 1).headers, { "x-consumer-api-key": `cu-${user.id}` }, "the developer's OWN Composio identity");
+  assert.deepEqual(lookupRemoteMcp(verified.claims.jti, "composio-agent", verified.claims.iat + 1).headers, { "x-consumer-api-key": "ca-channel" }, "and the channel's");
   // The env file: every value single-quoted so a POSIX shell reproduces it exactly; no token in it
   // when the account login was written (the file login is what Claude shows as the account).
   const envFile = readFileSync(path.join(dir, "env"), "utf8");
@@ -265,7 +278,7 @@ test("session prep seeds the VS Code start folder with the channel's effective w
   assert.ok(warnings.some((m) => m.includes("VS Code start folder not set")));
 });
 
-test("Codex over SSH gets the turn's MCP servers from a 0600 bundle, never a credential in the overrides", async () => {
+test("Codex over SSH gets the turn's MCP servers from a 0600 bundle, never a credential in the overrides or the bundle", async () => {
   // QA-0925: `codex` in an SSH session had no gateway MCP, no Composio and none of the secrets.
   const t = target("ssh-codex");
   const { execs, deps } = fakes();
@@ -280,13 +293,24 @@ test("Codex over SSH gets the turn's MCP servers from a 0600 bundle, never a cre
   assert.doesNotMatch(script, /CG_GATEWAY_CAPABILITY=|eyJ/, "the capability rides the bundle, not the overrides");
   const bundle = JSON.parse(readFileSync(path.join(dir, "codex-secrets.json"), "utf8"));
   assert.equal(statSync(path.join(dir, "codex-secrets.json")).mode & 0o777, 0o600);
-  assert.equal(bundle.composioUserToken, `cu-${user.id}`);
-  assert.equal(bundle.composioToken, "ca-channel");
+  // The bundle holds the capability and NOTHING else: Composio is relayed by the daemon, so no
+  // token and no headers helper sits in the developer's dir (container-secrets P1).
+  assert.deepEqual(Object.keys(bundle), ["gatewayCapability"]);
+  const bundleText = readFileSync(path.join(dir, "codex-secrets.json"), "utf8");
+  for (const secret of [`cu-${user.id}`, "ca-channel"]) assert.ok(!bundleText.includes(secret), `${secret} never in the bundle`);
+  assert.deepEqual(readdirSync(dir).filter((name) => name.endsWith(".headers.cjs")), [], "no headers helper is written");
+  for (const name of ["composio-user", "composio-agent"]) {
+    assert.ok(script.includes(`mcp_servers.${name}.env.CG_MCP_SERVICE="remote-mcp"`), `${name} is relayed`);
+  }
   const verified = verifyGatewayCapability(bundle.gatewayCapability, { secret: SECRET });
   assert.equal(verified.ok, true);
   assert.equal(verified.claims.engine, "codex", "minted for the engine that holds it");
   assert.equal(verified.claims.authorId, user.id);
   assert.equal(verified.claims.toolset, SSH_TOOLSET);
+  assert.deepEqual(verified.claims.remoteMcps, ["composio-user", "composio-agent"], "the Codex capability is registered for its own relays");
+  const { lookupRemoteMcp } = await import("../src/mcp/remote-mcp-registry.js");
+  assert.deepEqual(lookupRemoteMcp(verified.claims.jti, "composio-user", verified.claims.iat + 1).headers, { "x-consumer-api-key": `cu-${user.id}` });
+  assert.equal(verified.claims.exp - verified.claims.iat, session.SSH_CAPABILITY_TTL_MS, "the relay registration lives as long as the session's capability");
   // Sourcing the script prepends the overrides and keeps the developer's own arguments last.
   const argv = execFileSync("sh", ["-c", `. '${argsFile}'; printf '%s\\n' "$@"`, "sh", "resume", "--last"], { encoding: "utf8" }).trim().split("\n");
   assert.deepEqual(argv.slice(-2), ["resume", "--last"]);
@@ -325,4 +349,18 @@ test("the codex wrapper sources the secrets, applies the overrides and starts in
   const helper = path.join(root, "with-secrets");
   writeFileSync(helper, renderWithSecrets({ usersDir: users }), { mode: 0o755 });
   assert.equal(execFileSync(helper, ["sh", "-c", "printf %s \"$MAKE_API_ADMIN\""], { encoding: "utf8", env: { PATH: process.env.PATH, CG_SSH_USER: "U1" } }), "mk");
+});
+
+test("re-preparing a session registers a fresh relay grant; the previous one lives out its own capability", async () => {
+  const { lookupRemoteMcp } = await import("../src/mcp/remote-mcp-registry.js");
+  const t = target("ssh-relay-refresh");
+  const jtis = [];
+  for (let i = 0; i < 2; i++) {
+    const { deps } = fakes();
+    await session.prepareSshSession({ target: t, entry: { slug: "ssh-relay-refresh", channelId: "C_RR" }, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
+    const mcp = JSON.parse(readFileSync(path.join(session.sshUserDir(t, user.id), "mcp.json"), "utf8")).mcpServers;
+    jtis.push(verifyGatewayCapability(mcp.gateway.env.CG_GATEWAY_CAPABILITY, { secret: SECRET }).claims.jti);
+  }
+  assert.notEqual(jtis[0], jtis[1]);
+  for (const jti of jtis) assert.ok(lookupRemoteMcp(jti, "composio-agent"), "a still-running claude keeps the relay it started with");
 });
