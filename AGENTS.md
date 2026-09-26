@@ -179,7 +179,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   scope/channel/owner/name, never a value; live value resolution; revocation;
   `resolveEgressRunEnv` and `containerClaudeCredential` for every spawn site), `liveness.js`
   (turns, jobs, reviews, SSH sessions per channel — personal grants swap only while their owner is
-  live and no other person has an SSH session open), `catalog-rules.js` (built-in rules per
+  live and no other person's turn, job or SSH session is live there), `catalog-rules.js` (built-in rules per
   credential name + validation of an entry's "used on hosts"), `engine-hosts.js`. The container
   half: `src/runtimes/container/egress-hook.js` (the plan a target carries), `egress-env.js` (the
   ONE proxy/CA env list) and `src/mcp/egress-forwarder.js` (staged into the image as
