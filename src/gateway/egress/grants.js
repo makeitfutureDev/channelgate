@@ -234,7 +234,8 @@ export async function resolveEgressGrant(core, deps = {}) {
 
 function strictSetting(target) {
   if (typeof target?.settings?.egressSecretsStrict === "boolean") return target.settings.egressSecretsStrict;
-  try { return getContainerRuntime().egressSecretsStrict === true; } catch { return false; }
+  // Unreadable settings fail closed (strict): withholding a secret is recoverable, leaking it is not.
+  try { return getContainerRuntime().egressSecretsStrict !== false; } catch { return true; }
 }
 
 // Resolve a spawn's environment secrets for its runtime target. Not isolated, or egress not

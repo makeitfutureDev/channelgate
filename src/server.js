@@ -18,7 +18,7 @@ import { ensureRoot } from "./config/store.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
 import { refreshEngineModels } from "./engines/registry.js";
-import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime } from "./config/settings.js";
+import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
@@ -193,12 +193,14 @@ async function main() {
   // and failure is reported on the admin page without holding up chat or startup.
   void Promise.resolve().then(() => startSystemHealth()).catch(() => console.error("[system-health] collector startup failed"));
 
+  // Read ONCE, before this boot writes anything: both first-boot decisions below key on it.
+  const operatorConfigured = isOperatorConfigured(getSettings());
   // Brand-new install (nothing an operator wrote in settings.json — the installer's own
   // pre-boot keys don't count) → mint an admin password rather than leaving the whole API open.
   // Printed once here because it is stored hashed and can't be read back. An existing install is
   // never touched: generating one there would lock the operator out.
   const generated = await ensureAdminPasswordOnFirstBoot({
-    configured: isOperatorConfigured(getSettings()),
+    configured: operatorConfigured,
     hasPassword: Boolean(getAdminPassword()),
     generate: () => randomBytes(12).toString("base64url"),
     save: async (pw) => saveSettings({ adminPassword: await hashPassword(pw) }),
@@ -209,6 +211,14 @@ async function main() {
     console.log("[gateway] Save it now — it is stored hashed and cannot be shown again.");
     console.log("[gateway] Change it any time in the admin UI under Settings.");
     console.log("[gateway] ────────────────────────────────────────────────────────────\n");
+  }
+  // The strict-secrets default (container-secrets P4), pinned AFTER the password so a crash in
+  // between can never make a fresh install look configured and skip its password: a new install is
+  // strict, an upgraded one keeps unruled secrets raw-and-flagged until an admin turns strict on.
+  try {
+    pinEgressSecretsStrictDefault({ configured: operatorConfigured });
+  } catch (e) {
+    console.warn(`[gateway] could not store the strict-secrets default (strict applies): ${e?.message || e}`);
   }
   console.log(`[gateway] runtime root: ${root}`);
   console.log(`[gateway] singleton lock: ${lock.file}`);

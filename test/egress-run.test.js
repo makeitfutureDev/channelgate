@@ -33,9 +33,11 @@ const promptOf = (call) => call.args.find((arg) => String(arg).includes("[Gatewa
 
 for (const engine of ["claude", "codex"]) {
   test(`${engine}: a proxy-mode turn gets placeholders, the prompt names them, and the run_config says enforced`, async () => {
+    // An install that predates the strict default (pinned off at boot): an unruled secret is raw
+    // and flagged. The strict default is the next test.
     saveSettings({ engine, defaultClaudeModel: "sonnet", defaultCodexModel: "gpt-5.6-sol", engineFallback: false,
       engineEnabled: { claude: true, codex: true }, agentMemory: false, memoryReviewEvery: 0, composioMode: "personal",
-      containerClaudeOauthToken: SETUP_TOKEN });
+      containerClaudeOauthToken: SETUP_TOKEN, containerEgressSecretsStrict: false });
     const channelId = `C_EGRUN_${engine}`;
     const authorId = `U_EGRUN_${engine}`;
     await setUser(authorId, { name: "Egress run", approved: true });
@@ -79,3 +81,23 @@ for (const engine of ["claude", "codex"]) {
     assert.deepEqual(data.egressUnprotected, ["RAW_THING"]);
   });
 }
+
+test("strict (the new-install default): an unruled secret is withheld from the container and the prompt says so", async () => {
+  saveSettings({ engine: "claude", defaultClaudeModel: "sonnet", engineFallback: false,
+    engineEnabled: { claude: true, codex: true }, agentMemory: false, memoryReviewEvery: 0, composioMode: "personal",
+    containerClaudeOauthToken: SETUP_TOKEN, containerEgressSecretsStrict: true });
+  const channelId = "C_EGRUN_STRICT";
+  const authorId = "U_EGRUN_STRICT";
+  await setUser(authorId, { name: "Egress strict", approved: true });
+  const channel = await upsertChannelEntry(channelId, { name: "egrun-strict", type: "channel" });
+  await saveChannelMeta(channel.slug, { channelId, type: "channel", engine: "claude", memory: false, cleanMode: false, allowNetwork: false,
+    env: { GITHUB_TOKEN: { provider: "local", value: REAL_GH }, RAW_THING: { provider: "local", value: REAL_RAW } } });
+  const start = backend.calls.spawn.length;
+  await runMessage({ channelId, authorId, threadKey: "egrun-strict.1", origin: "slack_foreground", preferCold: true, text: "status?" });
+  const call = backend.calls.spawn.slice(start).find(promptOf);
+  assert.ok(call, "the engine was spawned");
+  assert.match(call.env.GITHUB_TOKEN, /^cgph_c[a-z2-7]{32}$/, "a ruled secret is still its placeholder");
+  assert.equal(call.env.RAW_THING, undefined, "the unruled secret is withheld, not raw");
+  assert.ok(!JSON.stringify(call.env).includes(REAL_RAW));
+  assert.match(promptOf(call), /Withheld by the gateway's strict egress setting[^\n]*\["RAW_THING"\]/);
+});

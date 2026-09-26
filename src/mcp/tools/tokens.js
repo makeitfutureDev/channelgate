@@ -26,6 +26,16 @@ function protectionNote(saved) {
   return saved.protected ? ` (protected via egress proxy on ${saved.hosts.join(", ")})` : " (unprotected: containers receive the raw value — pass `hosts` to protect it)";
 }
 
+// The remaining raw (unruled) secrets as a FINDING, not a state: what happens to each one in a
+// container and the one fix. "" when every listed secret has a rule.
+export function unruledFinding(names = [], { bridge = false, strict = true } = {}) {
+  if (!names.length) return "";
+  const list = names.sort().map((name) => `\`${name}\``).join(", ");
+  const underProxy = strict ? "WITHHELD from containers (strict mode)" : "injected RAW into containers";
+  const effect = bridge ? `injected raw today (the LEGACY bridge mode), and ${underProxy.replace(/^WITHHELD/, "withheld").replace(/^injected RAW/, "raw")} once the egress proxy is on` : underProxy;
+  return `\n\n**Finding:** ${names.length} secret${names.length === 1 ? " has" : "s have"} no egress rule — ${list}: ${effect}. Declare the hosts each is used on (\`hosts\` with set_secret, the Secrets modal or the admin UI's “Used on hosts”) to give containers a placeholder instead.`;
+}
+
 function renderVars(vars, empty) {
   if (!vars.length) return empty;
   return vars
@@ -151,28 +161,36 @@ export function register(server, ctx) {
     async ({ scope } = {}) => {
       const wanted = scopeOf(scope, "all");
       const sections = [];
+      // Names with no egress rule, across the listed scopes: reported as a FINDING below, because
+      // under the proxy each one is either withheld (strict) or the one raw value in a container.
+      const unruled = new Set();
+      const noteUnruled = (vars) => { for (const v of vars || []) if (v?.protected === false) unruled.add(v.name); return vars; };
       const admin = await requireAdmin();
       if (wanted === "all" || wanted === "organization") {
         // Every run is told the organization NAMES in its prompt already; the tails and authors
         // are the admin surface's, like the UI.
         // Protection is a rule fact, not a secret: shown to everyone who sees the names.
-        const vars = listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts }));
+        const vars = noteUnruled(listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts })));
         sections.push(`**Organization** (every conversation)\n${renderVars(vars, "_None set._")}`);
       }
       if (wanted === "all" || wanted === "personal") {
         const refusal = requireSelf();
-        sections.push(`**Personal** (yours; only runs you author)\n${refusal ? `_${refusal}_` : renderVars(await listUserEnv(createdBy), "_None set._")}`);
+        sections.push(`**Personal** (yours; only runs you author)\n${refusal ? `_${refusal}_` : renderVars(noteUnruled(await listUserEnv(createdBy)), "_None set._")}`);
       }
       if (wanted === "all" || wanted === "conversation") {
         const meta = (await loadMeta?.()) || {};
-        sections.push(`**This conversation**\n${renderVars(listChannelEnv(meta), "_None set — the Secrets modal (/secrets) or the admin UI adds one._")}`);
+        sections.push(`**This conversation**\n${renderVars(noteUnruled(listChannelEnv(meta)), "_None set — the Secrets modal (/secrets) or the admin UI adds one._")}`);
       }
       if (!sections.length) return text(`Unknown scope \`${scope}\`. Use one of: all, ${SCOPES.join(", ")}.`);
-      const bridge = getContainerRuntime().egressMode === "bridge";
+      const runtime = getContainerRuntime();
+      const bridge = runtime.egressMode === "bridge";
+      const strict = runtime.egressSecretsStrict !== false;
       const egressFootnote = bridge
         ? " The gateway runs the LEGACY open-bridge egress mode, so every value — protected or not — is injected raw into containers."
-        : " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an unprotected one is the raw value (set `hosts` with set_secret to protect it).";
-      return text(`${sections.join("\n\n")}\n\n_Most specific wins when names collide: conversation over personal over organization. A process that already started keeps its environment; a new one has these.${egressFootnote}_`);
+        : strict
+          ? " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an unprotected one is withheld (strict mode)."
+          : " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an unprotected one is the raw value (set `hosts` with set_secret to protect it).";
+      return text(`${sections.join("\n\n")}${unruledFinding([...unruled], { bridge, strict })}\n\n_Most specific wins when names collide: conversation over personal over organization. A process that already started keeps its environment; a new one has these.${egressFootnote}_`);
     }
   );
 
