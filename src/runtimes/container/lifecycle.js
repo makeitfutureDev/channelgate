@@ -16,6 +16,7 @@ import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CH
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
 import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
 import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
+import { sweepStaleRunCredentialFiles } from "./stale-run-files.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
 // fingerprint, so changing any of them recreates every container on the next run.
@@ -426,6 +427,7 @@ export function createContainerLifecycle({
   // credential-shaped is ever staged here (see credentials.js).
   function prepareHostSide(target) {
     if (target.artifactDir) mkdirSync(target.artifactDir, { recursive: true, mode: 0o700 });
+    sweepRunCredentials(target);
     for (const dir of [target.workDir, target.cleanWorkDir]) {
       if (dir) mkdirSync(dir, { recursive: true });
     }
@@ -433,6 +435,15 @@ export function createContainerLifecycle({
     // directories an operator can delete between two turns, and a missing bind source is a create
     // failure on one CLI and a silently root-owned auto-created directory on the other.
     ensureBindSources(target);
+  }
+
+  // Per-run credential files a crashed or interrupted run left in the artifact dir (see
+  // stale-run-files.js). Before every create/start — no process from before a start survives it —
+  // and at boot for the containers already running.
+  function sweepRunCredentials(target) {
+    const removed = sweepStaleRunCredentialFiles(target?.artifactDir, { now: now() });
+    if (removed) log(`[container] swept ${removed} stale per-run credential file(s) from ${target.slug || target.container?.name || target.artifactDir}`);
+    return removed;
   }
 
   // Every bind-mount SOURCE must exist before `run`, or the CLI fails the create with a bare
@@ -647,6 +658,7 @@ export function createContainerLifecycle({
         slug, platform, artifactDir: channelArtifactDir(slug, platform), container: { name: entry.name },
       } : null;
       reaper.markRunning(entry.name, leaseTarget, { lastActivity: now() });
+      if (leaseTarget) sweepRunCredentials(leaseTarget);
     }
     if (running.length) log(`[container] boot reconcile: ${running.length} running container(s) swept and registered idle`);
     return { ok: true, reason: "", running: running.map((entry) => entry.name), swept, containers };
