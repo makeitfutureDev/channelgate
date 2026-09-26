@@ -204,7 +204,11 @@ const DIAGNOSTIC_LINE_RE = /\b(?:error|warn(?:ing)?|fail(?:ed|ure)?|retry|retryi
 // `(Use \`node --trace-warnings ...\`…)` hint on every node process's stderr. The word "Warning"
 // made it the status row's "what is it stuck on?" line and the lead of a failure sentence. It is
 // dropped from everything shown to a person; the raw tail in the error details keeps it.
-const NODE_RUNTIME_NOISE_RE = /\[UNDICI-EHPA\]|Use `node --trace-warnings/;
+// The Codex CLI's own "Reading additional input from stdin..." notice is the same kind of
+// noise: it is printed whenever stdin is not a TTY, says nothing about why a turn failed, and
+// used to lead the failure sentence ("forcibly stopped before it finished: Reading additional
+// input from stdin... · Killed", 2026-09-27 campaign, EN-09).
+const NODE_RUNTIME_NOISE_RE = /\[UNDICI-EHPA\]|Use `node --trace-warnings|^\s*Reading additional input from stdin/;
 
 export function withoutNodeRuntimeNoise(text = "") {
   return String(text || "").split(/\r?\n/).filter((line) => !NODE_RUNTIME_NOISE_RE.test(line)).join("\n");

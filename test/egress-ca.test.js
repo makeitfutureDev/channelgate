@@ -148,6 +148,11 @@ test("leafFor mints per host, caches in an LRU, re-mints before expiry and rejec
   const cert = new crypto.X509Certificate(a.cert);
   assert.equal(cert.checkHost("api.github.com"), "api.github.com");
   assert.equal(cert.checkIssued(caCert), true);
+  // The served chain is leaf + CA: Chromium's --ignore-certificate-errors-spki-list only matches
+  // certificates the server presents (EGR-03, 2026-09-27).
+  const chain = a.cert.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+  assert.equal(chain.length, 2, "leaf and CA are both presented");
+  assert.equal(new crypto.X509Certificate(chain[1]).fingerprint256, caCert.fingerprint256, "the second certificate is the CA");
   assert.equal(store.leafFor("api.github.com"), a, "cached entry object is reused");
 
   const b = store.leafFor("b.example");
