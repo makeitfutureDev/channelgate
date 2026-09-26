@@ -33,12 +33,14 @@ const relay = { token: "sk-ant-oat01-test-access-token", expiresAt: 1_800_000_00
 
 function fakes({ relayOk = true, lockdownFails = false, account = { emailAddress: "op@example.com", organizationName: "Op's Org" } } = {}) {
   const execs = [];
+  const resolveCalls = [];
   const runCommand = async (bin, args, options = {}) => {
     execs.push({ bin, args, input: options.input || "" });
     if (!relayOk && args.includes("sh") && String(args.at(-1)).includes(".credentials.json")) throw new Error("exec failed");
   };
   return {
     execs,
+    resolveCalls,
     deps: {
       runCommand,
       installRelay: async (_target, _cli, opts) => { execs.push({ bin: "relay", args: [opts.usersDir], input: "" }); return { source: "operator", expiresAt: relay.expiresAt, relay }; },
@@ -46,7 +48,11 @@ function fakes({ relayOk = true, lockdownFails = false, account = { emailAddress
         composioUserToken: clean ? "" : `cu-${authorId}`, composioToken: clean ? "" : "ca-channel", composioUserEndpoint: null, composioEndpoint: null,
         toolboxToken: "", makeToolboxUrl: "", makeToolboxKey: "", threadKey,
       }),
-      resolveEnv: async ({ authorId, clean }) => ({ env: clean ? {} : { GITHUB_PAT: "it's a 'quoted'\nvalue", MAKE_API: `m-${authorId}`, LD_PRELOAD: "/evil.so" }, scopes: {} }),
+      resolveEnv: async (args) => {
+        resolveCalls.push(args);
+        const { authorId, clean } = args;
+        return clean ? { env: {}, scopes: {} } : { env: { GITHUB_PAT: "it's a 'quoted'\nvalue", MAKE_API: `m-${authorId}`, LD_PRELOAD: "/evil.so" }, scopes: { GITHUB_PAT: "channel", MAKE_API: "personal", LD_PRELOAD: "channel" } };
+      },
       buildLockdown: async (meta) => { if (lockdownFails) throw new Error("no lockdown"); return { permissions: { allow: ["Read"], deny: [] }, allowedMcpServers: [{ serverName: "gateway" }], slug: meta._slug }; },
       readAccount: () => account,
       now: () => 1_700_000_000_000,
@@ -57,19 +63,30 @@ function fakes({ relayOk = true, lockdownFails = false, account = { emailAddress
 
 test("the session is prepared like a turn: lockdown, MCP payload signed for THIS developer on the ssh toolset, sourced secrets, account login without a refresh token", async () => {
   const t = target();
-  const { execs, deps } = fakes();
+  const { execs, deps, resolveCalls } = fakes();
   const result = await session.prepareSshSession({ target: t, entry, meta: { allowedMcps: [] }, user, cliBin: "podman", log: { warn() {} } }, deps);
   assert.deepEqual(result.claude, { relayed: true, source: "operator", reason: "", account: true });
   assert.equal(result.toolset, SSH_TOOLSET);
   assert.deepEqual(result.problems, []);
   assert.deepEqual(result.mcpServers.sort(), ["composio-agent", "composio-user", "gateway"]);
-  assert.deepEqual(result.secrets, ["GITHUB_PAT", "MAKE_API"], "reserved names are filtered like a turn's (safeSpawnEnv)");
+  // Names, scopes and protection — never a value (container-secrets P3). Without the egress proxy
+  // (this target has no plan) nothing is protected.
+  assert.deepEqual(result.secrets, [
+    { name: "GITHUB_PAT", scope: "channel", protected: false },
+    { name: "MAKE_API", scope: "personal", protected: false },
+  ], "reserved names are filtered like a turn's (safeSpawnEnv)");
+  assert.deepEqual(result.egress, { active: false });
+  // The env is resolved by the SAME resolver a turn uses, for this channel, this developer as a
+  // trusted principal, and this target (which decides placeholders vs raw).
+  assert.equal(resolveCalls.length, 1);
+  assert.deepEqual({ ...resolveCalls[0], target: resolveCalls[0].target === t }, { meta: { allowedMcps: [] }, channelId: entry.channelId, authorId: user.id, untrustedPrincipal: false, clean: false, target: true });
   const dir = session.sshUserDir(t, user.id);
   assert.equal(dir, path.join(containerSshDir(t), "users", user.id), "beside the channel's sshd files, per developer");
   for (const name of ["mcp.json", "settings.json", "env", "session.md"]) assert.equal(statSync(path.join(dir, name)).mode & 0o777, 0o600, name);
   const note = readFileSync(path.join(dir, "session.md"), "utf8");
   assert.ok(note.includes(`. "$CG_SESSION_ENV"; <command>`) && note.includes(`<@${user.id}>`) && note.includes(entry.slug), "the session's own system-prompt note: source the current env file for a credential added since");
   assert.ok(!note.includes("m-U_SSH_DEV") && !note.includes("quoted"), "names, never values");
+  assert.doesNotMatch(note, /egress proxy|placeholder/i, "no proxy paragraph where the proxy is not this container's network");
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   // The lockdown is the channel's own.
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8")).slug, entry.slug);
@@ -156,6 +173,11 @@ test("release: the developer's last session drops their files; the channel's las
   const { execs, deps } = fakes();
   await session.prepareSshSession({ target: t, entry: { slug: "ssh-release", channelId: "C_REL" }, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
   const dir = session.sshUserDir(t, user.id);
+  // The host-side editor token file (vscode.js) — readable through the artifact mount, so it goes
+  // with the channel's last session, not only when the VS Code launcher exits.
+  const editorToken = path.join(t.artifactDir, "vscode", "claude-token");
+  mkdirSync(path.dirname(editorToken), { recursive: true });
+  writeFileSync(editorToken, "token");
   execs.length = 0;
   await session.releaseSshSession({ target: t, user, cliBin: "podman", lastForUser: false, lastInChannel: false, log: { log() {} } }, { runCommand: deps.runCommand });
   assert.equal(existsSync(dir), true, "another session of this developer still uses them");
@@ -163,12 +185,16 @@ test("release: the developer's last session drops their files; the channel's las
   await session.releaseSshSession({ target: t, user, cliBin: "podman", lastForUser: true, lastInChannel: false, log: { log() {} } }, { runCommand: deps.runCommand });
   assert.equal(existsSync(dir), false);
   assert.deepEqual(execs, [], "the login stays while other developers are in the channel");
+  assert.equal(existsSync(editorToken), true, "and so does the editor token");
   await session.releaseSshSession({ target: t, user, cliBin: "podman", lastForUser: true, lastInChannel: true, log: { log() {} } }, { runCommand: deps.runCommand });
+  assert.equal(existsSync(editorToken), false, "the channel's last session removes the editor token file");
   assert.equal(execs.length, 2);
   assert.match(execs[0].args.at(-1), /^rm -f \/home\/agent\/\.claude\/\.credentials\.json /);
   assert.deepEqual(execs[1].args.slice(-2), ["/home/agent/.claude/.claude.json", "-"], "the account record is removed, merge-only");
-  // A container that is already gone is not an error.
+  // A container that is already gone is not an error — and still loses the host-side token file.
+  writeFileSync(editorToken, "token");
   await session.releaseSshSession({ target: t, user, cliBin: "podman", lastForUser: true, lastInChannel: true, log: { log() {} } }, { runCommand: async () => { throw new Error("no such container"); } });
+  assert.equal(existsSync(editorToken), false);
 });
 
 test("the account seed merges the record and onboarding into Claude's config, removes only the record, and leaves unparseable state alone", () => {
@@ -201,6 +227,14 @@ test("renderSessionEnvFile: sorted, single-quoted, invalid names dropped; render
   const body = session.renderSessionEnvFile({ B: "1", A: "it's", "bad-name": "x", NL: "a\nb" });
   assert.equal(body, "# Generated by ChannelGate — this session's run environment; sourced by the claude wrapper.\nexport A='it'\\''s'\nexport B='1'\nexport NL='a\nb'\n");
   assert.ok(!body.includes("bad-name"));
+  // The egress block leads the file, unsets ALL_PROXY, and wins over a same-named entry.
+  const withProxy = session.renderSessionEnvFile({ B: "1", HTTPS_PROXY: "http://evil:1" }, { egress: { HTTPS_PROXY: "http://127.0.0.1:3128", GIT_SSH_COMMAND: "ssh -o ProxyCommand='x %h %p'" } });
+  assert.equal(withProxy, "# Generated by ChannelGate — this session's run environment; sourced by the claude wrapper.\n"
+    + "# The egress proxy: this container's only network (re-asserted whenever this file is sourced).\n"
+    + "unset ALL_PROXY all_proxy\n"
+    + "export GIT_SSH_COMMAND='ssh -o ProxyCommand='\\''x %h %p'\\'''\n"
+    + "export HTTPS_PROXY='http://127.0.0.1:3128'\n"
+    + "export B='1'\n");
   const creds = JSON.parse(session.renderAccessOnlyCredentials({ ...relay, refreshToken: "must-not-leak" }));
   assert.equal("refreshToken" in creds.claudeAiOauth, false);
   assert.equal(creds.claudeAiOauth.accessToken, relay.token);
@@ -379,4 +413,172 @@ test("a refresh releases the previous relay grant unless a running process holds
   await session.releaseSshSession({ target: t, entry: sessionEntry, user, cliBin: "podman", lastForUser: true, lastInChannel: false, log: { log() {} } }, { runCommand: async () => {} });
   assert.ok(!hasRemoteMcps(claudeSecond) && !hasRemoteMcps(codexSecond));
   stillRunning();
+});
+
+// ── Container-secrets P3: a session on placeholders ────────────────────────────────────────────
+// Where the egress proxy is the container's network, a developer's session holds what a turn's
+// process holds — placeholders for every ruled secret, the relay placeholder as Claude's login —
+// and the proxy/CA environment leads the env file. Nothing under the developer's dir, the editor
+// token file or the login written into the container may carry a REAL protected value.
+const { upsertChannelEntry, patchChannelMeta, defaultChannelMeta, getChannelMeta, setUser } = await import("../src/config/store.js");
+const { patchChannelEnv } = await import("../src/config/channel-env.js");
+const { patchOrgEnv, patchUserEnv } = await import("../src/config/scoped-env.js");
+const grants = await import("../src/gateway/egress/grants.js");
+const liveness = await import("../src/gateway/egress/liveness.js");
+const { corePlaceholder } = await import("../src/gateway/egress/placeholders.js");
+const { installVscodeClaudeRelay } = await import("../src/runtimes/container/vscode.js");
+const { SESSION_GIT_SSH_COMMAND } = await import("../src/gateway/ssh-access.js");
+
+const REAL = {
+  org: "vercel_org_real_value_ssh_p3_0001",
+  channel: "ghp_channel_real_value_ssh_p3_0001",
+  raw: "raw-unruled-real-value-ssh-p3-0001",
+  personal: "personal-real-value-ssh-p3-0001",
+};
+const EGRESS_PLAN = { mode: "proxy", active: true, network: "none", rawNetwork: false, socketDir: "/gw/eg/abc", caBundle: "/gw/run/egress-ca.pem", caSpki: "c3BraQ==" };
+
+async function egressChannel(channelId) {
+  const created = await upsertChannelEntry(channelId, { name: channelId, type: "channel", isDM: false, platform: "slack" });
+  await patchChannelMeta(created.slug, (existing) => {
+    let env = existing?.env || {};
+    env = patchChannelEnv(env, { set: { name: "GITHUB_TOKEN", value: REAL.channel } });
+    env = patchChannelEnv(env, { set: { name: "RAW_THING", value: REAL.raw } });
+    return { ...(existing || defaultChannelMeta({ channelId, name: channelId, type: "channel", isDM: false })), env };
+  });
+  return { entry: { slug: created.slug, channelId }, meta: await getChannelMeta(created.slug) };
+}
+function egressTarget(slug, channelId, { strict = false } = {}) {
+  const base = target(slug);
+  return { ...base, meta: { channelId }, settings: { ...(base.settings || {}), egressMode: "proxy", egressSecretsStrict: strict }, container: { name: `cg-${slug}`, egress: { ...EGRESS_PLAN } } };
+}
+function egressDeps() {
+  const { execs, deps } = fakes();
+  const { resolveEnv: _fake, ...rest } = deps;
+  return {
+    execs,
+    deps: { ...rest, installRelay: (t, cli, options) => installVscodeClaudeRelay(t, cli, { ...options, resolveToken: async () => relay }) },
+  };
+}
+function filesUnder(dir) {
+  const out = [];
+  for (const name of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, name.name);
+    if (name.isDirectory()) out.push(...filesUnder(full));
+    else out.push(full);
+  }
+  return out;
+}
+const sourceEnv = (file, script) => execFileSync("sh", ["-c", `. '${file}'; ${script}`], { encoding: "utf8", env: { PATH: process.env.PATH, ALL_PROXY: "socks5://leak:1", HTTPS_PROXY: "http://host-proxy:8080" } });
+
+test("under the egress proxy the session holds placeholders, the proxy env, and the relay placeholder as its login — no real value anywhere", async () => {
+  patchOrgEnv({ set: { name: "VERCEL_TOKEN", value: REAL.org } });
+  await setUser(user.id, { name: "Dev", approved: true });
+  await patchUserEnv(user.id, { set: { name: "DEV_API_KEY", value: REAL.personal, hosts: ["api.dev.example"] } });
+  const { entry: e, meta } = await egressChannel("C_SSH_EGRESS");
+  const t = egressTarget("ssh-egress", e.channelId);
+  const { execs, deps } = egressDeps();
+  const result = await session.prepareSshSession({ target: t, entry: e, meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.deepEqual(result.problems, []);
+  assert.deepEqual(result.secrets, [
+    { name: "DEV_API_KEY", scope: "personal", protected: true },
+    { name: "GITHUB_TOKEN", scope: "channel", protected: true },
+    { name: "RAW_THING", scope: "channel", protected: false },
+    { name: "VERCEL_TOKEN", scope: "organization", protected: true },
+  ]);
+  assert.deepEqual(result.egress, { active: true, unprotected: ["RAW_THING"], withheld: [], personalPaused: false });
+
+  const dir = session.sshUserDir(t, user.id);
+  const envFile = path.join(dir, "env");
+  // The env file: proxy block first, then the secrets — placeholders for every ruled name.
+  const body = readFileSync(envFile, "utf8");
+  const exports = body.split("\n").filter((line) => line.startsWith("export ")).map((line) => line.slice(7, line.indexOf("=")));
+  assert.ok(exports.indexOf("HTTPS_PROXY") < exports.indexOf("GITHUB_TOKEN") && exports.indexOf("GIT_SSH_COMMAND") < exports.indexOf("CG_SESSION_ENV"), "the proxy block leads the file");
+  const keys = { gh: "GITHUB_TOKEN", v: "VERCEL_TOKEN", p: "DEV_API_KEY", raw: "RAW_THING", https: "HTTPS_PROXY", http: "http_proxy", all: "ALL_PROXY", ca: "NODE_EXTRA_CA_CERTS", git: "GIT_SSH_COMMAND", chromium: "AGENT_BROWSER_ARGS", eg: "CG_EGRESS" };
+  const printed = sourceEnv(envFile, Object.values(keys).map((name) => `printf '%s\\n' "\${${name}:-}"`).join("; ")).split("\n");
+  const values = Object.fromEntries(Object.keys(keys).map((key, i) => [key, printed[i]]));
+  assert.match(values.gh, /^cgph_c[a-z2-7]{32}$/);
+  assert.match(values.v, /^cgph_o[a-z2-7]{32}$/);
+  assert.match(values.p, /^cgph_p[a-z2-7]{32}$/);
+  assert.equal(grants.lookupGrant(values.p).ownerId, user.id, "the personal placeholder is THIS developer's, bound to this channel");
+  assert.equal(grants.lookupGrant(values.p).channelId, e.channelId);
+  assert.equal(values.raw, REAL.raw, "an unruled name stays raw — flagged, exactly as in a turn");
+  assert.equal(values.https, "http://127.0.0.1:3128", "sourcing the file re-asserts the proxy over whatever the shell had");
+  assert.equal(values.http, "http://127.0.0.1:3128");
+  assert.equal(values.all, "", "ALL_PROXY is unset");
+  assert.equal(values.ca, "/run/channelgate/egress-ca.pem");
+  assert.equal(values.git, SESSION_GIT_SSH_COMMAND);
+  assert.equal(values.git, "ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'");
+  assert.equal(values.chromium, "--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=c3BraQ==");
+  assert.equal(values.eg, "proxy");
+
+  // The login: the access-only file holds the relay PLACEHOLDER and the real login's plan facts.
+  const creds = execs.find((x) => x.args.includes("sh") && String(x.args.at(-1)).includes(".credentials.json"));
+  const written = JSON.parse(creds.input).claudeAiOauth;
+  assert.match(written.accessToken, /^sk-ant-oat01-cgph_r[a-z2-7]{32}$/);
+  assert.equal(grants.lookupGrant(corePlaceholder(written.accessToken)).scope, "relay");
+  assert.deepEqual({ expiresAt: written.expiresAt, scopes: written.scopes, subscriptionType: written.subscriptionType, rateLimitTier: written.rateLimitTier },
+    { expiresAt: relay.expiresAt, scopes: relay.scopes, subscriptionType: relay.subscriptionType, rateLimitTier: relay.rateLimitTier }, "plan facts are not secrets");
+  // The editor token file (read through the artifact mount by the wrapper's non-SSH branch): the same placeholder.
+  const editorToken = path.join(t.artifactDir, "vscode", "claude-token");
+  assert.equal(readFileSync(editorToken, "utf8"), written.accessToken);
+  // The wrapper was rendered from that file, and the onboarding seed ran.
+  assert.ok(execs.some((x) => String(x.input).includes("exec /usr/local/bin/claude")));
+
+  // THE requirement: no REAL protected value in any file under the developer's dir, the editor
+  // token, or the login written into the container (Codex bundle and args included).
+  const everything = [...filesUnder(dir), editorToken].map((file) => ({ file, text: readFileSync(file, "utf8") }));
+  everything.push({ file: "<credentials.json input>", text: creds.input });
+  assert.ok(everything.some((f) => f.file.endsWith("codex-secrets.json")) && everything.some((f) => f.file.endsWith("mcp.json")));
+  for (const { file, text } of everything) {
+    for (const real of [REAL.org, REAL.channel, REAL.personal, relay.token]) assert.ok(!text.includes(real), `${file} carries a real value`);
+    if (!file.endsWith("/env")) assert.ok(!text.includes(REAL.raw), `${file}: the unprotected raw value lives only in the env file`);
+  }
+  // The note: the proxy, the CA, placeholders, the personal pause rule, outbound SSH — names only.
+  const note = readFileSync(path.join(dir, "session.md"), "utf8");
+  for (const phrase of ["egress proxy", "/run/channelgate/egress-ca.pem", "PLACEHOLDERS", "`printenv` shows nothing worth copying", "another-person-ssh-session", "/opt/channelgate/bin/cg-egress-connect %h %p", "cannot add an SSH key", '["RAW_THING"]']) {
+    assert.ok(note.includes(phrase), `the session note names: ${phrase}`);
+  }
+  for (const secret of [...Object.values(REAL), values.gh, values.p, values.v]) assert.ok(!note.includes(secret), "no value and no placeholder in the note");
+
+  // Release: the developer's files, then with the channel's last session the editor token too.
+  await session.releaseSshSession({ target: t, entry: e, user, cliBin: "podman", lastForUser: true, lastInChannel: false, log: { log() {} } }, { runCommand: async () => {} });
+  assert.equal(existsSync(dir), false);
+  assert.equal(existsSync(editorToken), true);
+  await session.releaseSshSession({ target: t, entry: e, user, cliBin: "podman", lastForUser: true, lastInChannel: true, log: { log() {} } }, { runCommand: async () => {} });
+  assert.equal(existsSync(editorToken), false, "release removes everything the session put on the host side");
+});
+
+test("strict egress: the unruled secret is withheld, and then NOTHING real is anywhere in the session", async () => {
+  const { entry: e, meta } = await egressChannel("C_SSH_EGRESS_STRICT");
+  const t = egressTarget("ssh-egress-strict", e.channelId, { strict: true });
+  const { execs, deps } = egressDeps();
+  const result = await session.prepareSshSession({ target: t, entry: e, meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.deepEqual(result.egress.withheld, ["RAW_THING"]);
+  assert.ok(!result.secrets.some((s) => s.name === "RAW_THING"));
+  assert.ok(result.secrets.every((s) => s.protected), "every injected name is protected");
+  const { realValues } = await grants.resolveEgressRunEnv({ meta, channelId: e.channelId, authorId: user.id, target: t });
+  assert.ok(realValues.includes(REAL.raw) && realValues.includes(REAL.channel));
+  const texts = [...filesUnder(session.sshUserDir(t, user.id)), path.join(t.artifactDir, "vscode", "claude-token")].map((file) => [file, readFileSync(file, "utf8")]);
+  texts.push(["<credentials.json input>", execs.find((x) => String(x.args.at(-1)).includes(".credentials.json")).input]);
+  for (const [file, text] of texts) for (const real of [...realValues, relay.token]) assert.ok(!text.includes(real), `${file} carries a real value`);
+  assert.match(readFileSync(path.join(session.sshUserDir(t, user.id), "session.md"), "utf8"), /Withheld by the gateway's strict egress setting[^\n]*\["RAW_THING"\]/);
+});
+
+test("with another developer attached, this developer's personal placeholders are paused — the session says so", async () => {
+  const { entry: e, meta } = await egressChannel("C_SSH_EGRESS_PAUSE");
+  const t = egressTarget("ssh-egress-pause", e.channelId);
+  liveness.__setSshSessionSource(() => [{ channelId: e.channelId, userId: "U_SOMEONE_ELSE", slug: e.slug }]);
+  try {
+    const { deps } = egressDeps();
+    const result = await session.prepareSshSession({ target: t, entry: e, meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+    assert.equal(result.egress.personalPaused, true);
+    assert.ok(result.secrets.some((s) => s.name === "DEV_API_KEY" && s.protected), "still injected — the proxy, not the file, enforces the pause");
+    assert.match(readFileSync(path.join(session.sshUserDir(t, user.id), "session.md"), "utf8"), /personal secrets are PAUSED/);
+    // Only the developer's OWN session in the channel: not paused.
+    liveness.__setSshSessionSource(() => [{ channelId: e.channelId, userId: user.id, slug: e.slug }]);
+    const own = await session.prepareSshSession({ target: t, entry: e, meta, user, cliBin: "podman", log: { warn() {} } }, egressDeps().deps);
+    assert.equal(own.egress.personalPaused, false);
+  } finally {
+    liveness.__setSshSessionSource(null);
+  }
 });

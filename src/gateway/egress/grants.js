@@ -230,8 +230,12 @@ function strictSetting(target) {
 // listed `unprotected` — unless the gateway's egressSecretsStrict is on, when it is dropped and
 // listed `withheld`. `realValues` is every real value that exists, for the output redactor (the
 // container should never see one, and a reply must never carry one either way).
+// `personalPaused` is true when the author holds personal PLACEHOLDERS that the proxy will refuse
+// right now because a DIFFERENT person has an SSH session open in the channel (liveness.js) — the
+// per-attempt credential note says so instead of letting the agent chase a 403. A snapshot at
+// resolve time: the proxy re-checks on every request.
 export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId = "", untrustedPrincipal = false, clean = false, target = null, deps = {} } = {}) {
-  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues: [] };
+  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues: [], personalPaused: false };
   if (clean) return empty;
   const [org, user, channel] = await Promise.all([
     (deps.resolveOrgEnv || resolveOrgEnv)(),
@@ -242,7 +246,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   const real = safeSpawnEnv(merged.env);
   const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel))])];
   if (!egressActive(target)) {
-    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues };
+    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues, personalPaused: false };
   }
   const channelKey = String(channelId || meta?.channelId || "");
   const personalOwner = untrustedPrincipal ? "" : String(authorId || "");
@@ -284,7 +288,13 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
     scopes[name] = scope;
     unprotected.push(name);
   }
-  return { env, scopes, placeholders, hosts, unprotected, withheld, realValues };
+  let personalPaused = false;
+  if (channelKey && personalOwner && Object.keys(placeholders).some((name) => scopes[name] === "personal")) {
+    // Imported lazily: liveness.js reads the SSH broker, whose import graph reaches back here.
+    const otherSshOpen = deps.otherSshOpen || (await import("./liveness.js")).otherSshOpen;
+    personalPaused = Boolean(otherSshOpen(channelKey, personalOwner));
+  }
+  return { env, scopes, placeholders, hosts, unprotected, withheld, realValues, personalPaused };
 }
 
 // ── The Claude relay ──────────────────────────────────────────────────────────────────────────

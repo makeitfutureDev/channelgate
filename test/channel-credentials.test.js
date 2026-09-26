@@ -66,6 +66,26 @@ test("the egress lines: proxy-protected placeholders with their hosts, unprotect
   // Without egress facts (legacy bridge mode, the host) none of these lines appear.
   const plain = channelCredentialsPreamble({ GITHUB_TOKEN: fixtureValue });
   assert.doesNotMatch(plain, /proxy-protected|Unprotected|Withheld/);
+  assert.doesNotMatch(prompt, /PAUSED/, "no pause line unless the resolver says so");
+});
+
+// Container-secrets P3: while another person has an SSH session open in the channel, the proxy
+// refuses the author's PERSONAL placeholders; the inventory says so instead of letting the agent
+// read the 403 as a broken credential.
+test("the pause line names only the personal placeholders, and only when paused", () => {
+  const personal = "cgph_pabcdefghijklmnopqrstuvwxyz234567";
+  const channel = "cgph_cabcdefghijklmnopqrstuvwxyz234567";
+  const resolved = { MY_KEY: personal, GITHUB_TOKEN: channel };
+  const facts = {
+    scopes: { MY_KEY: "personal", GITHUB_TOKEN: "channel" },
+    placeholders: { MY_KEY: personal, GITHUB_TOKEN: channel },
+    hosts: { MY_KEY: ["api.example.com"], GITHUB_TOKEN: ["api.github.com"] },
+  };
+  const paused = channelCredentialsPreamble(resolved, { ...facts, personalPaused: true });
+  assert.match(paused, /Personal secrets are PAUSED right now: another person has an SSH session open[^\n]*\["MY_KEY"\][^\n]*another-person-ssh-session/);
+  assert.doesNotMatch(paused, /PAUSED[^\n]*GITHUB_TOKEN/, "a channel secret is not paused");
+  assert.ok(!paused.includes(personal) && !paused.includes(channel));
+  assert.doesNotMatch(channelCredentialsPreamble(resolved, { ...facts, personalPaused: false }), /PAUSED/);
 });
 
 test("empty inventory clears old assumptions, while clean mode suppresses discovery", () => {

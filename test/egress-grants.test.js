@@ -146,7 +146,7 @@ test("resolveEgressRunEnv: inactive egress is exactly the real resolve", async (
   assert.deepEqual(out.placeholders, {});
   assert.deepEqual(out.unprotected, []);
   assert.ok(out.realValues.includes("ghp_plain_value_0001"));
-  assert.deepEqual(await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_PLAIN", target: inactiveTarget("C_GRANTS_PLAIN"), clean: true }), { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues: [] });
+  assert.deepEqual(await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_PLAIN", target: inactiveTarget("C_GRANTS_PLAIN"), clean: true }), { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues: [], personalPaused: false });
   // No target at all (an agent job resolves its own per turn), even with a running service: real values.
   setEgressProvider({ running: () => true, socketDirFor: () => "/x", caBundlePath: () => "/y" });
   try {
@@ -193,6 +193,30 @@ test("resolveEgressRunEnv: ruled names become placeholders, unruled are flagged,
   // An untrusted principal (the HTTP run API) gets no personal scope and mints no personal grant.
   const api = await grants.resolveEgressRunEnv({ meta, channelId: CH_A, authorId: ALICE, untrustedPrincipal: true, target: activeTarget(CH_A) });
   assert.equal(api.env.ALICE_KEY, undefined);
+  assert.equal(out.personalPaused, false, "nobody else is in the channel over SSH");
+});
+
+// Container-secrets P3: the swap rule "a personal grant never swaps while ANOTHER person has an SSH
+// session open" is surfaced at resolve time, so the turn preamble can say so up front.
+test("resolveEgressRunEnv: personalPaused while another person's SSH session is open — only for an author with personal placeholders", async () => {
+  const meta = await getChannelMeta((await getChannelEntry(CH_A)).slug);
+  const sessions = [{ channelId: CH_A, userId: BOB }];
+  const deps = { otherSshOpen: (channelId, ownerId) => sessions.some((s) => s.channelId === channelId && s.userId !== ownerId) };
+  const alice = await grants.resolveEgressRunEnv({ meta, channelId: CH_A, authorId: ALICE, target: activeTarget(CH_A), deps });
+  assert.equal(alice.personalPaused, true, "Bob is attached: Alice's personal placeholder is paused");
+  assert.equal(alice.scopes.ALICE_KEY, "personal");
+  const bob = await grants.resolveEgressRunEnv({ meta, channelId: CH_A, authorId: BOB, target: activeTarget(CH_A), deps });
+  assert.equal(bob.personalPaused, false, "Bob has no personal placeholder, so nothing of his is paused");
+  sessions[0].userId = ALICE;
+  assert.equal((await grants.resolveEgressRunEnv({ meta, channelId: CH_A, authorId: ALICE, target: activeTarget(CH_A), deps })).personalPaused, false, "her own session does not pause her");
+  // The default reads the real liveness module (the SSH broker's live sessions).
+  const liveness = await import("../src/gateway/egress/liveness.js");
+  liveness.__setSshSessionSource(() => [{ channelId: CH_A, userId: BOB }]);
+  try {
+    assert.equal((await grants.resolveEgressRunEnv({ meta, channelId: CH_A, authorId: ALICE, target: activeTarget(CH_A) })).personalPaused, true);
+  } finally {
+    liveness.__setSshSessionSource(null);
+  }
 });
 
 test("strict mode withholds unruled secrets instead of injecting them raw", async () => {

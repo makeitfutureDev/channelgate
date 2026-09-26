@@ -1007,6 +1007,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     clean, scopes: runEnvScopes,
     placeholders: egressRunEnv.placeholders, hosts: egressRunEnv.hosts,
     unprotected: egressRunEnv.unprotected, withheld: egressRunEnv.withheld,
+    personalPaused: egressRunEnv.personalPaused,
   });
   // Which browser daemon this channel's browser MCP server attaches to. Unconditional — clean
   // mode included: it injects no MCP servers, but the isolation must not depend on that staying

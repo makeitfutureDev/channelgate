@@ -274,6 +274,74 @@ test("canUse: channel/org need live work in the channel; personal needs its owne
   assert.equal(liveness.isChannelLive("C_LIVE"), false);
 });
 
+// Container-secrets P3: an operator's `npm run vscode` window (its own process, so no liveness mark
+// here) holds a signed editor lease; the relay placeholder in its Claude login file must work while
+// it is open. It wakes channel/org/relay grants, never a personal one, and ends with the lease.
+test("canUse: an operator's editor lease on the channel's container is live work for non-personal grants", async () => {
+  const { createEditorLease } = await import("../src/runtimes/container/editor-lease.js");
+  const { containerName } = await import("../src/runtimes/container/names.js");
+  const ctx = { channelId: "C_EDITOR", slug: "c-editor", platform: "slack" };
+  const relayGrant = { scope: "relay", channelId: "C_EDITOR" };
+  const personal = { scope: "personal", channelId: "C_EDITOR", owner: "U_OWNER" };
+  assert.deepEqual(service.canUseGrant(relayGrant, ctx), { ok: false, reason: "channel-idle" });
+  const lease = createEditorLease({ slug: ctx.slug, container: { name: containerName(ctx) } });
+  try {
+    assert.deepEqual(service.canUseGrant(relayGrant, ctx), { ok: true });
+    assert.deepEqual(service.canUseGrant({ scope: "channel", channelId: "C_EDITOR" }, ctx), { ok: true });
+    assert.deepEqual(service.canUseGrant(personal, ctx), { ok: false, reason: "owner-not-live" }, "an editor window has no owner");
+    assert.deepEqual(service.canUseGrant(relayGrant, { ...ctx, slug: "c-other", channelId: "C_EDITOR" }), { ok: false, reason: "channel-idle" }, "only THAT container's lease");
+  } finally {
+    lease.release();
+  }
+  assert.deepEqual(service.canUseGrant(relayGrant, ctx), { ok: false, reason: "channel-idle" }, "and it ends with the lease");
+});
+
+// Container-secrets P3, end to end: developer A is attached over SSH (the broker's live-session
+// view, which liveness.js reads); developer B's turn in the same channel is live and holds B's
+// personal placeholder — the proxy refuses to swap it ("another-person-ssh-session"), the turn's
+// credential note says personal secrets are paused, and the moment A leaves the same request passes.
+test("another developer attached over SSH: the author's personal placeholder is refused, the preamble says paused, and it swaps again once they leave", async () => {
+  const { setUser } = await import("../src/config/store.js");
+  const { patchUserEnv } = await import("../src/config/scoped-env.js");
+  const { channelCredentialsPreamble } = await import("../src/gateway/channel-credentials.js");
+  const DEV_A = "U_EGSVC_DEV_A";
+  const AUTHOR_B = "U_EGSVC_AUTHOR_B";
+  await setUser(AUTHOR_B, { name: "B", approved: true });
+  await patchUserEnv(AUTHOR_B, { set: { name: "B_PERSONAL_KEY", value: "b-personal-real-value-0001", hosts: ["upstream.test"] } });
+  const meta = await getChannelMeta(entry.slug);
+  liveness.__setSshSessionSource(() => [{ channelId: CHANNEL, userId: DEV_A, slug: entry.slug }]);
+  const release = liveness.markLive({ channelId: CHANNEL, ownerId: AUTHOR_B, kind: "turn", id: "b-turn" });
+  try {
+    const turn = await grants.resolveEgressRunEnv({ meta, channelId: CHANNEL, authorId: AUTHOR_B, target });
+    const placeholder = turn.env.B_PERSONAL_KEY;
+    assert.match(placeholder, /^cgph_p[a-z2-7]{32}$/, "B's turn still gets the personal placeholder");
+    assert.equal(turn.personalPaused, true);
+    const preamble = channelCredentialsPreamble(turn.env, { scopes: turn.scopes, placeholders: turn.placeholders, hosts: turn.hosts, personalPaused: turn.personalPaused });
+    assert.match(preamble, /Personal secrets are PAUSED right now[^\n]*\["B_PERSONAL_KEY"\]/);
+
+    const before = seen.length;
+    const refused = await request({ headers: { authorization: `Bearer ${placeholder}` } });
+    assert.equal(refused.status, 403);
+    assert.equal(JSON.parse(refused.body).error, "secret-refused");
+    assert.match(refused.body, /B_PERSONAL_KEY[^"]*another-person-ssh-session/);
+    assert.equal(seen.length, before, "the upstream never saw the request");
+    const audited = egressEvents().at(-1);
+    assert.deepEqual(audited.data.refused, [{ secretName: "B_PERSONAL_KEY", reason: "another-person-ssh-session" }]);
+    // The channel's own placeholder is NOT paused: it is not personal.
+    assert.equal((await request({ headers: { authorization: `Bearer ${PLACEHOLDER}` } })).status, 200);
+
+    // A leaves: the same placeholder swaps on the very next request, and the next resolve is unpaused.
+    liveness.__setSshSessionSource(() => []);
+    const ok = await request({ headers: { authorization: `Bearer ${placeholder}` } });
+    assert.equal(ok.status, 200);
+    assert.equal(seen.at(-1).headers.authorization, "Bearer b-personal-real-value-0001");
+    assert.equal((await grants.resolveEgressRunEnv({ meta, channelId: CHANNEL, authorId: AUTHOR_B, target })).personalPaused, false);
+  } finally {
+    release();
+    liveness.__setSshSessionSource(null);
+  }
+});
+
 test("a removed secret's placeholder is revoked by the config-change listener", async () => {
   const release = liveness.markLive({ channelId: CHANNEL, kind: "turn", id: "t3" });
   try {

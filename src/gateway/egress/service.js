@@ -37,6 +37,8 @@ import { createEgressProxy } from "./proxy.js";
 import { normalizeHost } from "./rules.js";
 import { resolveEgressGrant, revokeMissing } from "./grants.js";
 import { isChannelLive, isOwnerLive, otherSshOpen } from "./liveness.js";
+import { activeEditorLeases } from "../../runtimes/container/editor-lease.js";
+import { containerName } from "../../runtimes/container/names.js";
 import { engineHostsFor, hostOfUrl } from "./engine-hosts.js";
 import { isValidRuleHost } from "./catalog-rules.js";
 
@@ -118,6 +120,22 @@ export function rawPassthroughFor(meta = {}) {
   return out;
 }
 
+// An operator's `npm run vscode` window on this channel's container (scripts/open-vscode.mjs) is live
+// work too: that launcher runs in its OWN process, so it cannot mark liveness here, but it holds a
+// signed, pid-checked editor lease in daemon-owned state (editor-lease.js) — the same record the
+// idle reaper honours. Since container-secrets P3 its Claude login file holds the relay
+// PLACEHOLDER, which would otherwise be refused as `channel-idle`. It wakes channel, organization
+// and relay grants only: an editor window has no owner, so it never wakes a personal one.
+function editorAttached(ctx) {
+  const slug = String(ctx?.slug || "");
+  if (!slug) return false;
+  try {
+    return activeEditorLeases({ slug, container: { name: containerName({ slug, platform: ctx?.platform }) } }).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 // canUse: the swap-time gate. Channel binding first (a placeholder only swaps from the channel it
 // was issued to; the organization's from any channel), then liveness (liveness.js).
 export function canUseGrant(grant, ctx) {
@@ -129,7 +147,7 @@ export function canUseGrant(grant, ctx) {
     if (otherSshOpen(channelId, grant.owner)) return { ok: false, reason: "another-person-ssh-session" };
     return { ok: true };
   }
-  if (!isChannelLive(channelId)) return { ok: false, reason: "channel-idle" };
+  if (!isChannelLive(channelId) && !editorAttached(ctx)) return { ok: false, reason: "channel-idle" };
   return { ok: true };
 }
 

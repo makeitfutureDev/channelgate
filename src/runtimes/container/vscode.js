@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createEditorLease } from "./editor-lease.js";
 import { resolveContainerClaudeToken } from "../../gateway/claude-token-relay.js";
+import { containerClaudeCredential } from "../../gateway/egress/grants.js";
 import { CONTAINER_CLAUDE_CONFIG_DIR } from "./image-paths.js";
 
 export const VSCODE_AUTH_DIR = "vscode";
@@ -55,7 +56,9 @@ function run(bin, args, { input = "", env = process.env, stdio = null } = {}) {
 //    Claude starts exactly like a chat turn — the channel lockdown, the per-session MCP payload
 //    and nothing else (gateway/ssh-session.js). The login is the access-only credentials file the
 //    gateway wrote, so no token rides the environment and Claude shows the account itself.
-//  • an editor attach or any other shell: the relayed access token from the token file.
+//  • an editor attach or any other shell: the relayed login from the token file — the channel's
+//    relay PLACEHOLDER when the egress proxy is the container's network (container-secrets P3),
+//    so the file under the mounted artifact dir is worthless outside this container.
 // Same file for both, so the two installers can never fight over it.
 export function sshUsersDirOf(target) {
   return path.join(target.artifactDir, "ssh", "users");
@@ -133,18 +136,27 @@ export async function installSshCodexWrapper(target, cliBin, { runCommand = run,
   }
 }
 
+// The token file lives in the ARTIFACT dir, which the container mounts: every process in the box can
+// read it. So it holds exactly what a turn's CLAUDE_CODE_OAUTH_TOKEN holds — the channel's relay
+// placeholder (`containerClaudeCredential`) when the egress proxy is this container's network, the
+// relayed access token only in the legacy bridge mode — and the returned `relay` is that same
+// container-side form (the plan facts — expiry, scopes, subscription, tier — stay the real login's,
+// they are not secrets). It is removed when the editor launcher exits and when a channel's last SSH
+// session ends (gateway/ssh-session.js releaseSshSession).
 export async function installVscodeClaudeRelay(target, cliBin, {
   resolveToken = resolveContainerClaudeToken,
   runCommand = run,
   usersDir = sshUsersDirOf(target),
+  channelId = "",
 } = {}) {
-  const relay = await resolveToken();
-  if (!relay.token) {
-    if (relay.source === "api-key") {
+  const real = await resolveToken();
+  if (!real.token) {
+    if (real.source === "api-key") {
       throw new Error("Claude uses the daemon's API key, which is deliberately not exported to an interactive editor terminal. Sign in to Claude on the host or configure a claude setup-token for VS Code attach.");
     }
-    throw new Error(relay.error || "Claude has no login available for the editor container");
+    throw new Error(real.error || "Claude has no login available for the editor container");
   }
+  const relay = containerClaudeCredential({ target, relay: real, channelId: channelId || target?.meta?.channelId || "" });
   const dir = path.join(target.artifactDir, VSCODE_AUTH_DIR);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tokenFile = path.join(dir, "claude-token");

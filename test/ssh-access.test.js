@@ -210,6 +210,36 @@ test("container side: the session inherits the container's environment through O
   assert.ok(!access.renderContainerSshdConfig("/x/ssh").includes("SetEnv"), "no env, no directive");
 });
 
+// Container-secrets P3: sshd's clean session environment would lose the container's create-time
+// proxy variables, and under `--network none` a session without them has no network at all. The
+// complete egress map (egress-env.js) rides the ONE SetEnv line from the target's own plan — plus
+// Chromium's proxy arguments and the gateway-owned GIT_SSH_COMMAND — and ALL_PROXY never does.
+test("container side: under the egress proxy the ONE SetEnv line carries the proxy/CA env, Chromium's args and the git SSH command", async () => {
+  const { egressEnv } = await import("../src/runtimes/container/egress-env.js");
+  const plan = { mode: "proxy", active: true, network: "none", rawNetwork: false, socketDir: "/gw/eg/x", caBundle: "/gw/run/egress-ca.pem", caSpki: "c3BraQ==" };
+  const target = { workDir: "/w", container: { name: "cg-x", egress: plan } };
+  const env = access.containerSessionEnv(["PATH=/usr/bin", "HTTPS_PROXY=http://stale:1", "ALL_PROXY=socks5://leak:1", "all_proxy=socks5://leak:1"], target);
+  for (const [name, value] of Object.entries(egressEnv(target))) assert.equal(env[name], value, `${name} from the target's own plan`);
+  assert.equal(env.HTTPS_PROXY, "http://127.0.0.1:3128", "the plan wins over a stale create-time value");
+  assert.equal(env.ALL_PROXY, undefined);
+  assert.equal(env.all_proxy, undefined);
+  assert.equal(env.AGENT_BROWSER_ARGS, "--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=c3BraQ==");
+  assert.equal(env.GIT_SSH_COMMAND, "ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'");
+  assert.deepEqual(access.sessionEgressEnv(target), Object.fromEntries(Object.entries(env).filter(([name]) => !["PATH", "CG_WORKDIR"].includes(name))));
+  const lines = access.renderContainerSshdConfig("/x/ssh", env).split("\n").filter((l) => l.startsWith("SetEnv"));
+  assert.equal(lines.length, 1, "still ONE directive");
+  for (const pair of ['"HTTPS_PROXY=http://127.0.0.1:3128"', '"https_proxy=http://127.0.0.1:3128"', '"NO_PROXY=localhost,127.0.0.1,::1"', '"NODE_USE_ENV_PROXY=1"',
+    '"NODE_EXTRA_CA_CERTS=/run/channelgate/egress-ca.pem"', '"SSL_CERT_FILE=/run/channelgate/egress-ca.pem"', '"GIT_SSL_CAINFO=/run/channelgate/egress-ca.pem"', '"CG_EGRESS=proxy"',
+    `"GIT_SSH_COMMAND=ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"`,
+    '"AGENT_BROWSER_ARGS=--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=c3BraQ=="']) {
+    assert.ok(lines[0].includes(pair), `SetEnv carries ${pair}`);
+  }
+  assert.doesNotMatch(lines[0], /ALL_PROXY|all_proxy/);
+  // Not the proxy's egress (legacy bridge, no service): nothing added, the container's env as before.
+  assert.deepEqual(access.sessionEgressEnv({ container: { egress: { ...plan, active: false } } }), {});
+  assert.deepEqual(access.containerSessionEnv(["ALL_PROXY=socks5://kept:1"], { container: { egress: { ...plan, active: false } } }), { ALL_PROXY: "socks5://kept:1" });
+});
+
 test("sessions: open, list live per channel, close with a reason, and a restart closes the orphans", () => {
   let clock = 1_000;
   const now = () => clock;
