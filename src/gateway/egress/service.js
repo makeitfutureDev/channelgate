@@ -16,8 +16,11 @@
 //
 // Audit: the proxy reports every request; only swaps of a channel/org/personal secret, refusals,
 // blocked destinations and raw tunnels become `egress` events (the relay's own swap on every
-// Claude API call would be hundreds of rows a turn). Everything is counted per channel in memory
-// for egressStatus().
+// Claude API call would be hundreds of rows a turn). One refusal is not written either: an engine
+// LOGIN relay refused only because the channel is idle. An idle warm Claude process keeps posting
+// its telemetry batch between turns, and each attempt was a row (241 in 25 minutes across six
+// channels); those refusals are expected, carry no secret a person set, and are still counted.
+// Everything is counted per channel in memory for egressStatus().
 import crypto from "node:crypto";
 import net from "node:net";
 import path from "node:path";
@@ -153,13 +156,19 @@ export function canUseGrant(grant, ctx) {
   return { ok: true };
 }
 
-function auditWorthy(event) {
+// An idle channel's relay placeholder: refused, counted, not an events row.
+function idleRelayRefusal(refusal) {
+  return refusal?.reason === "channel-idle" && refusal?.scope === "relay";
+}
+
+export function auditWorthy(event) {
   if (event.blocked || event.tunnel) return true;
-  if (Array.isArray(event.refused) && event.refused.length) return true;
+  if (Array.isArray(event.refused) && event.refused.some((r) => !idleRelayRefusal(r))) return true;
   return Array.isArray(event.swapped) && event.swapped.some((s) => s.scope !== "relay");
 }
 
-function recordAudit(event) {
+// Exported for the audit-policy tests; the proxy reaches it as its `audit` hook.
+export function recordAudit(event) {
   const ctx = event?.ctx || {};
   const key = channelKey(ctx);
   const counters = state?.counters.get(key) || emptyCounters();

@@ -107,7 +107,7 @@ function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHead
     return verdicts.get(grant);
   }
 
-  // → { grant } or { refusal: { secretName, reason, denied? } } for a core placeholder seen at
+  // → { grant } or { refusal: { secretName, reason, denied?, scope? } } for a core placeholder seen at
   // `where` = { kind: "header", name, position } | { kind: "query", name }.
   function decide(core, where) {
     const grant = grantFor(core);
@@ -127,7 +127,9 @@ function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHead
       if (where.position === "basic-user" && grant.value.includes(":")) return refuse("invalid-value");
     }
     const verdict = allowed(grant);
-    if (!verdict.ok) return refuse(verdict.reason, { denied: true });
+    // A canUse refusal also names the grant's scope: the service's audit policy tells an idle warm
+    // engine's relay refusal (counted, not logged) from every other refusal (logged).
+    if (!verdict.ok) return refuse(verdict.reason, { denied: true, scope: grant.scope ?? null });
     return { grant };
   }
 
