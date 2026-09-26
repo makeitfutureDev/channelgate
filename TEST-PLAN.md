@@ -33,8 +33,8 @@ with its sockets, and the `test/fixtures/codex` stub.
       "forcibly stopped … Killed" and no `UNDICI-EHPA`/`EnvHttpProxyAgent`/`trace-warnings` in the
       message or any `engine_note`, while `details.stderr` still holds the warning.
 - [x] Claude telemetry off behind the proxy (`test/container-egress-env.test.js`): a proxy-mode
-      `buildClaudeEnv` sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_TELEMETRY=1`
-      over channel secrets of those names, both names are reserved, and a non-proxy target sets neither.
+      `buildClaudeEnv` sets `DISABLE_TELEMETRY=1` over a channel secret of that name (reserved) and
+      never sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`; a non-proxy target sets neither.
 - [x] Scope lines (`test/channel-credentials.test.js`, SEC-LIST-01): an organization-only run gets
       exactly the `Organization-wide variables …: ["GITHUB_PAT_ORG","VERCEL_ORG_TOKEN"].` line and no
       empty group; a personal-only run gets the personal line; organization + channel gets both; a
@@ -57,7 +57,7 @@ with its sockets, and the `test/fixtures/codex` stub.
       engine "which of your credentials are channel secrets and which are organization secrets?".
       Pass: both name them organization secrets, none "a channel credential".
 - [ ] Claude telemetry (Claude only): `podman exec <container> sh -c 'cat /proc/<warm pid>/environ | tr "\0" "\n" | grep -E "NONESSENTIAL|DISABLE_TELEMETRY"'`
-      shows both `=1`; the idle audit gate above then also shows the `requests` counter flat while idle.
+      shows only `DISABLE_TELEMETRY=1`; the idle audit gate above then also shows the `requests` counter flat while idle.
 
 ## Codex login relay, strict secrets, static check (container-secrets P4)
 

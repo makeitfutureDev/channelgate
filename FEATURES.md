@@ -2834,11 +2834,10 @@ are retired, bullet by bullet; everything else stands.
   engine-relay refusal is counted, not written as an `egress` row. A proxy-mode Codex spawn gets
   `NODE_OPTIONS=--disable-warning=UNDICI-EHPA`, and the Codex runner drops Node's `[UNDICI-EHPA]`
   warning and its `--trace-warnings` hint from the status-row note and every failure sentence (the
-  raw `details.stderr` keeps them). A proxy-mode Claude spawn gets
-  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_TELEMETRY=1` (gateway-owned, applied
-  last; `DISABLE_TELEMETRY` is a reserved secret name), so an idle warm engine sends no telemetry;
-  essential-traffic mode also turns off Claude Code's claude.ai-only extras (Projects, DesignSync,
-  claude.ai plugin archive downloads) and its version lookup there. The credential inventory's
+  raw `details.stderr` keeps them). A proxy-mode Claude spawn gets `DISABLE_TELEMETRY=1`
+  (gateway-owned, applied last, a reserved secret name), so an idle warm engine sends no telemetry;
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is deliberately not set (it would also drop feature
+  flags, the version lookup and claude.ai plugin downloads). The credential inventory's
   per-scope lines now appear whenever any injected name is organization- or personal-scoped, even
   as the only scope; a purely channel-scoped run is unchanged. → TEST-PLAN: Egress QA campaign fixes.
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's

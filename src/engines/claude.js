@@ -54,12 +54,10 @@ function applyProviderEnv(env, providerEnv) {
   return env;
 }
 
-// Essential traffic only (Claude Code 2.1.281 reads both: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-// is the "essential-traffic" level, which also skips the version lookup, feature-flag fetches and
-// claude.ai-only extras such as Projects, DesignSync and claude.ai plugin archive downloads;
-// DISABLE_TELEMETRY is the "no-telemetry" level on its own).
+// Claude Code 2.1.281's "no-telemetry" level. Deliberately NOT CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:
+// its "essential-traffic" level also drops feature flags, the version lookup and claude.ai plugin
+// archive downloads, which production channels need.
 export const CLAUDE_PROXY_TELEMETRY_ENV = Object.freeze({
-  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   DISABLE_TELEMETRY: "1",
 });
 
@@ -96,8 +94,8 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
     }, target);
     // Behind the proxy, no telemetry: an idle warm process kept posting its event-log batch
     // between turns, and with nothing live in the channel the proxy refused the relay placeholder
-    // on every attempt. Gateway-owned and in this last group (CLAUDE_ is a reserved prefix,
-    // DISABLE_TELEMETRY a reserved name), so a channel secret cannot turn it back on.
+    // on every attempt. Gateway-owned and in this last group (DISABLE_TELEMETRY is a reserved
+    // name), so a channel secret cannot turn it back on.
     if (env.CG_EGRESS === "proxy") Object.assign(env, CLAUDE_PROXY_TELEMETRY_ENV);
     return applyProviderEnv(env, providerEnv);
   }

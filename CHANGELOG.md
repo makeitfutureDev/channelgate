@@ -33,10 +33,9 @@ product overview.
   `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental` line is silenced in proxy-mode Codex
   runs and filtered out of the status row and failure messages.
 - **Claude sends no telemetry from proxy-mode channels.** Claude runs behind the egress proxy now
-  set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_TELEMETRY=1`, so an idle warm engine
-  stops sending telemetry the proxy would refuse. This also turns off Claude Code's claude.ai-only
-  extras there (Projects, DesignSync, claude.ai plugin downloads). A channel secret named
-  `DISABLE_TELEMETRY` is now refused as reserved.
+  set `DISABLE_TELEMETRY=1`, so an idle warm engine stops sending telemetry the proxy would refuse.
+  Feature flags, the version check and claude.ai plugin downloads are unaffected. A channel secret
+  named `DISABLE_TELEMETRY` is now refused as reserved.
 - **Organization secrets are named as organization secrets.** When a run's only secrets were
   organization-wide, the credential list never said so, and an engine could call them channel
   credentials. The scope is now stated whenever any secret is organization-wide or personal.
