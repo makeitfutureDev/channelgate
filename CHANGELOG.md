@@ -18,6 +18,85 @@ product overview.
 
 ## Unreleased
 
+- **Codex's sign-in no longer sits in every channel container.** Until now each channel container
+  had the gateway host's real Codex login file, refresh token included, mounted read-write, so one
+  channel could read it and every channel shared it. Behind the egress proxy a container now gets
+  its own access-only sign-in: a stand-in token the proxy swaps for the real one on OpenAI's and
+  ChatGPT's servers, and no refresh token at all. The gateway keeps the real login fresh with a
+  cheap Codex turn on the host when it is two days from expiring. Keep the host signed in with
+  `codex login` as before. Each channel container is recreated once on its next turn. The legacy
+  open-network mode and an API-key Codex login still mount the real file. Rebuild the image
+  (`npm run build:image`, still spec 1.6.0): `cg-init` now also removes an old copied Codex login
+  from a channel's home.
+- **Secrets without an egress rule are withheld by default on new installs.** On a fresh install
+  *Withhold unprotected secrets* starts on: a secret with no built-in rule and no *Used on hosts* is
+  not given to channel containers. Existing installs keep their current behavior; turn it on in
+  Settings → Container runtime. `list_secrets` now ends with a **Finding** that names every secret
+  without a rule and says how to protect it.
+- **A check keeps secrets out of the files channel containers can read.** `npm run check:static`
+  now fails when code writes a token, a relay's token or a resolved run environment into a
+  channel's artifact folder. The unused `remote-secret-bridge` helper is removed.
+
+- **SSH and VS Code sessions hold placeholders, not secrets.** A developer's SSH session into a
+  channel container now gets the same `cgph_…` placeholders a turn gets, and Claude's login in the
+  session (and the editor's token file) is the channel's login placeholder. Nothing a session
+  writes holds a real protected value. Tools such as `gh` and `vercel` work as before through the
+  gateway's egress proxy. The proxy settings reach every SSH shell, VS Code terminal and your own
+  `agent-browser`. The editor token file is now also removed when the channel's last session ends.
+- **Your personal secrets pause while someone else is attached.** While another person has an SSH
+  session open in a channel, your personal secrets stop working there. Everyone else's stop working
+  while you are attached. The agent's credential note says they are paused rather than failing
+  with an unexplained 403.
+- **Outbound SSH from a session goes through the egress proxy.** The image ships
+  `/opt/channelgate/bin/cg-egress-connect`, an SSH `ProxyCommand` through the egress proxy. A
+  session's `GIT_SSH_COMMAND` already uses it (github.com only, with *Allow network* on). For your
+  own `ssh`, add `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`. The proxy
+  cannot supply an SSH key. `ssh -L` forwards to hosts outside the container no longer work;
+  forwards to the container's own ports and `-R` are unchanged. Rebuild the image
+  (`npm run build:image`, still spec 1.6.0) to get the helper.
+
+- **Channel containers now reach the internet only through the gateway's egress proxy.** Every
+  channel container runs with no network of its own. A small forwarder inside it hands each
+  connection to the gateway, which enforces the channel's *Allow network* switch on every request
+  (off: only the AI engines and the channel's selected connectors; on: public hosts, never private,
+  loopback or cloud-metadata addresses) and logs every refused or blocked destination. The switch
+  is no longer advisory, and `/mode`, `/status` and the run record say so. A flip applies to the
+  next request without recreating anything.
+- **Secrets become placeholders the container cannot use elsewhere.** A GitHub, Vercel, Supabase,
+  Make or Composio token, and any secret an admin marks with **Used on hosts**, reaches the
+  container as a `cgph_…` placeholder. The gateway swaps in the real value only on that secret's
+  hosts and only while the channel has work running; a personal secret only while its owner is the
+  one working, and never while another person's turn, background job or SSH session is active
+  there. The relayed Claude
+  login is a placeholder too. Rotation takes effect on the next request; removing a secret kills
+  its placeholder. Secrets without a rule are still injected as before and are marked
+  **unprotected** in `list_secrets`, the admin UI and the agent's own credential note. The new
+  *Withhold unprotected secrets* setting keeps them out of containers entirely.
+- **New container settings.** Settings → Container runtime gains *Legacy open network (no egress
+  proxy)* — off by default; on restores the old open bridge network and raw secrets — and
+  *Withhold unprotected secrets*. The admin API accepts `rawNetwork` (a channel that needs raw
+  sockets beside the proxy) and `egressRawHosts` (hosts whose SSH/Postgres ports are tunnelled).
+  If the proxy cannot start, container runs stop with the reason instead of running unprotected.
+  After a restart, containers that kept running get their network back immediately. Avoid
+  multi-tenant host suffixes such as `*.vercel.app` in *Used on hosts*. A Qwen provider key and a
+  daemon `CODEX_API_KEY` are still given to containers as real values, and a self-hosted Qwen
+  endpoint on a private address cannot be reached in proxy mode.
+  TLS clients in the container trust the gateway's own CA through the usual CA variables; a tool
+  that reads none of them needs `/run/channelgate/egress-ca.pem`. After updating, run
+  `npm run build:image` (image spec 1.6.0 now also ships the forwarder; the updater does this for
+  you).
+- **Fix: Codex in Composio SDK mode works in containers.** A Codex run in a channel container with
+  Enterprise SDK-mode Composio started its Composio connection without the run's grant, so the
+  gateway refused it and Codex had no Composio tools. It now connects like the other relayed
+  servers.
+- **Composio and toolbox tokens no longer enter a channel container.** In a container, the
+  `composio-user`, `composio-agent`, MakeItFuture toolbox and Make toolbox connections are now
+  reached through the gateway itself: the engine holds only its signed run grant, and the daemon
+  dials the service with the real token and relays the tools. Before, the token sat in a file in
+  the channel's run folder that any process in the container could read. This applies to Claude
+  and Codex turns and to SSH sessions. Direct-host `/sudo` threads are unchanged. A rotated token
+  still restarts the warm Claude process. After updating, run `npm run build:image` (image spec
+  1.6.0; the updater does this for you).
 - **Agents can now explain how to set up a channel's VPN.** The chat operating manual has a
   channel VPN page. It covers who may turn the VPN on or off, read its status or query the
   database. It also has the host-operator runbook for another channel, with the exact

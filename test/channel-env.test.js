@@ -319,6 +319,8 @@ test("a masked channel meta carries names and tails, never values", () => {
   assert.equal(masked.env, undefined, "the raw bag is dropped, not just shadowed");
   assert.deepEqual(masked.envVars, [{
     name: "SUPABASE_ACCESS_TOKEN", provider: "local", last4: "2222", resolvable: true,
+    // The egress rule is a fact about the NAME (the built-in Supabase rule), never a value.
+    protected: true, hosts: ["api.supabase.com", "supabase.com"],
     setBy: "<@U1>", setAt: 1_700_000_000_000,
   }]);
 });

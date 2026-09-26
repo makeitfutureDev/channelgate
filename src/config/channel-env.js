@@ -19,6 +19,8 @@
 // nothing, which is the failure mode this rule exists to prevent.
 import { createHash } from "node:crypto";
 import { PASSTHROUGH_ENV_NAMES } from "../engines/child-env.js";
+import { EGRESS_ENV_NAMES } from "../runtimes/container/egress-env.js";
+import { assertValidSwapRuleFields, normalizeSwapRuleFields, rulesFor } from "../gateway/egress/catalog-rules.js";
 
 export const MAX_CHANNEL_ENV_VARS = 32;
 export const MAX_CHANNEL_ENV_VALUE_BYTES = 16_384;
@@ -41,6 +43,10 @@ const RESERVED_PREFIXES = ["LD_", "DYLD_", "BASH_FUNC_", "XDG_", "CG_", "CLAUDE_
 const RESERVED_EXACT = new Set([
   // Anything the daemon itself sets or passes through. One source of truth: child-env.js.
   ...PASSTHROUGH_ENV_NAMES,
+  // The egress proxy and CA variables a container is given (runtimes/container/egress-env.js).
+  // A channel secret named HTTPS_PROXY or SSL_CERT_FILE would route a run around the proxy or
+  // make it trust another CA. SSL_CERT_DIR is the directory twin of SSL_CERT_FILE.
+  ...EGRESS_ENV_NAMES, "SSL_CERT_DIR",
   // Interpreter and linker hooks that turn a variable into code.
   "NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE",
   "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
@@ -144,6 +150,8 @@ export function normalizeChannelEnv(raw) {
       provider,
       ...(typeof entry.value === "string" ? { value: entry.value } : {}),
       ...(typeof entry.ref === "string" && entry.ref ? { ref: entry.ref } : {}),
+      // The egress proxy's "used on hosts" declaration (optional; malformed parts dropped).
+      ...normalizeSwapRuleFields(entry),
       setBy: String(entry.setBy || ""),
       setAt: Number.isFinite(entry.setAt) ? entry.setAt : 0,
     };
@@ -165,11 +173,17 @@ function maskValue(value) {
 // person (config/scoped-env.js). Everything below the storage layer is scope-agnostic on purpose:
 // one set of name/value rules, one masking shape, one resolver, so a new scope can never drift
 // into a second validation story (the reason patchChannelEnv exists at all).
+//
+// `protected` / `hosts` describe the egress proxy's rule for the name (gateway/egress/
+// catalog-rules.js): protected = a container receives a placeholder the proxy swaps only on those
+// hosts; unprotected = the raw value is injected. Rules are not secrets.
 export function listEnvVars(env) {
   return Object.entries(normalizeChannelEnv(env))
     .map(([name, entry]) => ({
       name,
       provider: entry.provider,
+      protected: Boolean(rulesFor(name, entry)),
+      hosts: rulesFor(name, entry)?.hosts || [],
       // A tail only exists for a provider that stores the value here. Anything else lists as
       // "set, somewhere else" — which is also how an entry this build cannot resolve shows up,
       // rather than vanishing from the admin's view.
@@ -188,15 +202,21 @@ export function listChannelEnv(meta = {}) {
 
 // Pure: returns the NEW env map. Add and update are the same operation — a blind overwrite — so
 // there is no read-modify-write of the value anywhere, and nothing to leak on the way through.
-export function setChannelEnvVar(env, { name, value, provider = "local", ref = "", actor = "", now = Date.now(), scopeNoun = "This channel" } = {}) {
+//
+// `hosts` / `headers` / `format` are the optional egress rule ("used on hosts"). Left undefined, a
+// rewrite KEEPS the stored rule — rotating a value from a surface that does not show the rule must
+// not silently turn a protected secret into a raw one; an empty list or "" clears it.
+export function setChannelEnvVar(env, { name, value, provider = "local", ref = "", hosts, headers, format, actor = "", now = Date.now(), scopeNoun = "This channel" } = {}) {
   const key = assertValidEnvName(name);
   if (!Object.hasOwn(PROVIDERS, provider)) throw new Error(`Unknown secret provider "${provider}".`);
   const current = normalizeChannelEnv(env);
   if (!Object.hasOwn(current, key) && Object.keys(current).length >= MAX_CHANNEL_ENV_VARS) {
     throw new Error(`${scopeNoun} already ${scopeNoun === "You" ? "have" : "has"} the maximum of ${MAX_CHANNEL_ENV_VARS} variables.`);
   }
+  const rules = { ...normalizeSwapRuleFields(current[key]), ...assertValidSwapRuleFields({ hosts, headers, format }) };
+  for (const field of ["hosts", "headers", "format"]) if (Array.isArray(rules[field]) && !rules[field].length) delete rules[field];
   const stored = PROVIDERS[provider].store({ value, ref });
-  return { ...current, [key]: { provider, ...stored, setBy: String(actor || ""), setAt: now } };
+  return { ...current, [key]: { provider, ...stored, ...rules, setBy: String(actor || ""), setAt: now } };
 }
 
 export function removeChannelEnvVar(env, name, { scopeWhere = "this channel" } = {}) {
@@ -256,6 +276,16 @@ export function safeSpawnEnv(resolved = {}) {
     if (!CHANNEL_ENV_NAME_RE.test(name) || isReservedEnvName(name)) continue;
     if (typeof value !== "string" || !value) continue;
     out[name] = value;
+  }
+  return out;
+}
+
+// The optional egress rule fields ("used on hosts") a write surface forwards from a request body.
+// Absent fields stay absent (the stored rule is kept); validation is setChannelEnvVar's.
+export function swapRuleFieldsFrom(body = {}) {
+  const out = {};
+  for (const field of ["hosts", "headers", "format"]) {
+    if (body && Object.hasOwn(body, field) && body[field] !== undefined) out[field] = body[field];
   }
   return out;
 }

@@ -69,5 +69,6 @@ Run `claude mcp list` from inside the folder/container and confirm that only int
 connected. Verify both an allowed and disallowed operation, memory-off, ordinary bypass refusal,
 and that no host-only path is visible. State the remaining limit honestly: anyone able to edit the
 folder can edit project policy, while the container mounts/image remain outside the run's control;
-network egress is not domain-filtered in this release.
+network egress goes through the channel's egress proxy (the switch enforced, private addresses
+refused) but is not domain-filtered when the switch is on.
 

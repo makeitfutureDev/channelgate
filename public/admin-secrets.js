@@ -27,10 +27,11 @@ export function mountSecretEditor({
   const nameInput = root.querySelector(".secret-name");
   const valueInput = root.querySelector(".secret-value");
   const saveButton = root.querySelector(".secret-save");
+  const hostsInput = root.querySelector(".secret-hosts");
   let current = Array.isArray(vars) ? vars : [];
 
   nameInput.placeholder = namePlaceholder;
-  for (const el of [nameInput, valueInput, saveButton]) el.disabled = disabled;
+  for (const el of [nameInput, valueInput, hostsInput, saveButton]) if (el) el.disabled = disabled;
 
   const render = () => {
     state.textContent = current.length ? `${current.length} set` : "none";
@@ -53,7 +54,12 @@ export function mountSecretEditor({
         entry.setBy ? `set by ${entry.setBy}` : "",
         entry.setAt ? new Date(entry.setAt).toISOString().slice(0, 10) : "",
       ].filter(Boolean).join(" · ");
-      mask.textContent = `${entry.last4 ? `••••${entry.last4}` : "•••••••"}${trail ? ` · ${trail}` : ""}`
+      // Egress protection (src/gateway/egress/): a protected secret reaches a container only as a
+      // placeholder the proxy swaps on these hosts; an unprotected one is injected raw.
+      const egress = entry.protected === true
+        ? ` · protected via egress proxy (${(entry.hosts || []).join(", ")})`
+        : entry.protected === false ? " · unprotected (raw)" : "";
+      mask.textContent = `${entry.last4 ? `••••${entry.last4}` : "•••••••"}${trail ? ` · ${trail}` : ""}${egress}`
         + (entry.resolvable === false ? ` · ⚠️ provider "${entry.provider}" can't be resolved by this build` : "");
       row.append(name, mask);
       if (!disabled) {
@@ -108,10 +114,13 @@ export function mountSecretEditor({
     saveButton.disabled = true;
     hint.textContent = "saving…";
     try {
-      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ value }) });
+      // "Used on hosts": sent only when typed, so rotating a value keeps the stored rule.
+      const hosts = hostsInput ? hostsInput.value.trim() : "";
+      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify(hosts ? { value, hosts } : { value }) });
       current = result.vars || [];
       valueInput.value = "";
       nameInput.value = "";
+      if (hostsInput) hostsInput.value = "";
       hint.textContent = savedText(name);
       render();
     } catch (e) {
@@ -133,6 +142,7 @@ export function secretEditorMarkup() {
     <div class="secret-add">
       <input class="secret-name" type="text" autocomplete="off" spellcheck="false" />
       <input class="secret-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
+      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Used on hosts (optional) — api.example.com, *.example.com" title="Containers then receive a placeholder the egress proxy swaps for this value only on these hosts (Authorization header). Leave blank for the built-in rule (GitHub, Vercel, Supabase, Make, Composio names) or a raw value. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
       <button type="button" class="ghost secret-save">Save variable</button>
     </div>
     <em class="state secret-hint"></em>`;

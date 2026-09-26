@@ -17,6 +17,7 @@ import { withTemplateSkills } from "./skills/templates.js";
 import { resolveSession, resetSession, getSession, saveSession, sessionGeneration, dropMintedSession } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
+import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds } from "../engines/registry.js";
@@ -27,7 +28,10 @@ import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
 import { PROFILE_FLAGS, normalizeModeMeta, authorModeMeta, sudoModeMeta, isApiPrincipal } from "./modes.js";
-import { NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
+import { networkEnforcedFor } from "../engines/network-policy.js";
+import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.js";
+import { markLive } from "./egress/liveness.js";
+import { mcpConfigUrls, noteChannelMcpHosts } from "./egress/service.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
@@ -49,7 +53,6 @@ import { licenseAdmission } from "../ee/limits.js";
 import { channelEnvFingerprint, safeSpawnEnv } from "../config/channel-env.js";
 // The other two credential scopes (organization-wide, and the author's own) merged with the
 // channel's at one place, so every spawn site gets the same three-scope answer.
-import { resolveRunEnv } from "../config/scoped-env.js";
 import { browserNamespaceFor } from "./browser-env.js";
 import { serviceSecretValues } from "../engines/child-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
@@ -174,6 +177,16 @@ export function runArtifactRoot(target = null) {
 // A missing engine credential for an isolated runtime is a CONFIGURATION problem, not an engine
 // outage: failing over to the other harness would answer a question the operator did not ask and
 // hide the one thing they need to fix. Fail closed before the spawn, with the backend's own words.
+// How this turn's container reached the network, for `run_config`: "proxy" (the egress proxy is its
+// only network), "proxy+raw" (the proxy plus an admin-granted raw bridge), "bridge" (the legacy
+// egress mode), "unavailable" (proxy mode with the service down — the turn fails closed) or "host".
+function egressLabel(target, isolated) {
+  if (!isolated) return "host";
+  const plan = target?.container?.egress;
+  if (plan?.active) return plan.rawNetwork ? "proxy+raw" : "proxy";
+  return plan?.mode === "bridge" ? "bridge" : "unavailable";
+}
+
 function assertRuntimeCredentials(target, engine) {
   // A backend may answer with an Error or with a plain sentence; both are the operator-facing text.
   const reported = target?.runtime?.credentialError?.(target, engine);
@@ -813,7 +826,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const claudeCredentialFor = async (forEngine) => {
     if (forEngine !== "claude" || !isolatedRuntime) return null;
     const relay = await claudeRelayOnce();
-    if (relay.token || relay.source === "api-key") return relay;
+    // With the egress proxy as this container's network, the container gets the channel's relay
+    // PLACEHOLDER (swapped for the live access token only on api.anthropic.com), never the token.
+    if (relay.token || relay.source === "api-key") return containerClaudeCredential({ target, relay, channelId });
     throw Object.assign(new Error(`This channel runs in a container, but ${relay.error}.`), {
       details: { runtimeCredential: true, runtime: target.backend, engine: forEngine },
     });
@@ -973,15 +988,27 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // untrustedPrincipal withholds the PERSONAL scope only: the HTTP run API authenticates its key,
   // not the author it names, so that caller must not be able to borrow someone's personal token by
   // naming them. The organization and channel scopes are not identity claims and still apply.
-  const { env: resolvedRunEnv, scopes: runEnvScopes } = await resolveRunEnv({
-    meta, authorId, untrustedPrincipal, clean,
+  //
+  // Egress (src/gateway/egress/grants.js): when the proxy is this container's network, every name
+  // with a swap rule arrives as its PLACEHOLDER — stable per key, swapped for the live value only
+  // on its declared hosts — and a name without one arrives raw and is flagged unprotected (or is
+  // withheld under egressSecretsStrict). `realValues` is every real value, for the redactor.
+  const egressRunEnv = await resolveEgressRunEnv({
+    meta, channelId, authorId, untrustedPrincipal, clean, target,
   });
+  const { env: resolvedRunEnv, scopes: runEnvScopes } = egressRunEnv;
   const channelEnv = safeSpawnEnv(resolvedRunEnv);
   // The warm pool keys on this digest, so it must cover every scope: without the personal values
   // in it, a process started for one author would be reused for the next message in the thread —
-  // still holding the first author's secrets.
+  // still holding the first author's secrets. (A placeholder is stable per key, so a rotation
+  // behind one no longer retires the warm process — it does not need to: the proxy swaps live.)
   const channelEnvFp = channelEnvFingerprint(channelEnv);
-  const channelCredentialsPrefix = channelCredentialsPreamble(channelEnv, { clean, scopes: runEnvScopes });
+  const channelCredentialsPrefix = channelCredentialsPreamble(channelEnv, {
+    clean, scopes: runEnvScopes,
+    placeholders: egressRunEnv.placeholders, hosts: egressRunEnv.hosts,
+    unprotected: egressRunEnv.unprotected, withheld: egressRunEnv.withheld,
+    personalPaused: egressRunEnv.personalPaused,
+  });
   // Which browser daemon this channel's browser MCP server attaches to. Unconditional — clean
   // mode included: it injects no MCP servers, but the isolation must not depend on that staying
   // true, and a namespace costs nothing when nothing reads it. See gateway/browser-env.js.
@@ -990,7 +1017,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // a failing CLI will echo a token into its error line. Redact the values out of everything this
   // turn says, in the stream (holdback, so a value split across two deltas still matches) and in
   // the final content. Both must use the same values or finalize()'s streamed-prefix check breaks.
-  const outputSecrets = [...Object.values(channelEnv), ...serviceSecretValues()];
+  // The REAL values, not the placeholders the container may hold: a real value must never appear in
+  // a reply however it got there (defense in depth — the proxy also scrubs response bodies).
+  const placeholderValues = new Set(Object.values(egressRunEnv.placeholders));
+  const outputSecrets = [...new Set([
+    ...Object.values(channelEnv).filter((value) => !placeholderValues.has(value)),
+    ...egressRunEnv.realValues,
+    ...serviceSecretValues(),
+  ])];
   // Resolve integration credentials before constructing the streaming holdback. No engine has
   // started yet, so all values passed to either primary or fallback are covered from its first byte.
   let deltaRedactor;
@@ -1079,6 +1113,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   let mcpConfigFingerprint = "";
   let gatewayCapability = "";
   let pluginMcpServers = [];
+  // The relay registrations this turn's capabilities took (primary and fallback; containers only):
+  // the turn holds each until it settles, and releases it in the `finally` below. A cold engine's
+  // bridges have hung up by then, so the grant goes with the run; a warm Claude process keeps it
+  // alive through its own open relay connections for exactly as long as the process lives, and a
+  // turn that only reused a warm process drops its unused grant here (src/mcp/remote-mcp-registry.js).
+  const relayJtis = [];
   // A selected optional MCP the engine cannot admit safely (missing from the host config, needs a
   // host credential, stale transport) is DROPPED from the payload by the engine's resolver instead
   // of failing the run — an optional connector is never worth the turn, and refusing to relay the
@@ -1103,8 +1143,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   };
   const mintGatewayMcpRuntime = async () => {
     let rejectedMcps = [];
-    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, pluginServers: pluginMcpServers = [], rejectedMcps = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    let relayJti = "";
+    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, relayJti = "", pluginServers: pluginMcpServers = [], rejectedMcps = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    if (relayJti) relayJtis.push(relayJti);
     mcpDropNote = await reportRejectedMcps(rejectedMcps, engine);
+    // A remote MCP the container dials itself (a selected catalog server with no credential) stays
+    // reachable through the egress proxy even with the network switch off.
+    if (isolatedRuntime) noteChannelMcpHosts(target, mcpConfigUrls(mcpConfigJson));
   };
 
   // Every granted definition is explicit in the per-run payload. Keep ambient MCPs disabled
@@ -1193,11 +1238,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     allowBash: Boolean(meta.allowBash),
     allowNetwork: Boolean(meta.allowNetwork),
     networkPolicy: networkPolicy.mode,
-    // The compiled mode is what the engines are TOLD, not a boundary anything applies: the
-    // container sits on the bridge network and no egress is policed per channel. Recorded next to
-    // the mode so an operator reading `run_config` after an incident cannot mistake
-    // `networkPolicy: "off"` for "this turn could not reach the internet".
-    networkEnforced: NETWORK_POLICY_ENFORCED,
+    // Whether that mode was a real boundary for THIS turn: true when the egress proxy is the
+    // container's only network; false for the legacy bridge mode, a raw-socket channel or a sudo
+    // host turn — where the compiled mode is only what the engines are TOLD. Recorded next to the
+    // mode so an operator reading `run_config` after an incident cannot mistake one for the other.
+    networkEnforced: networkEnforcedFor(target),
+    egress: egressLabel(target, isolatedRuntime),
+    ...(egressRunEnv.unprotected.length ? { egressUnprotected: egressRunEnv.unprotected } : {}),
+    ...(egressRunEnv.withheld.length ? { egressWithheld: egressRunEnv.withheld } : {}),
     dangerouslySkip,
     adminUnattended,
     codexWritable,
@@ -1335,6 +1383,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // finally). Declared here because the retry pause hands both back for its length.
   let releaseRunSlot = null;
   let runtimeLease = null;
+  let releaseEgressLive = null;
   // A retry pause is idle time: nothing is spawned, nothing streams. Give the slot and the lease
   // back for its length so other channels' turns are not queued behind a sleeping one, then queue
   // again like a new arrival (reported as run_queued, cancellable). The container may have been
@@ -1479,9 +1528,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // claim to choose allowedCodexMcps vs allowedMcps for mutations; reusing the failed engine's
     // token would cross that authority boundary even though a different runner executes.
     const fallbackMcpRuntime = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine: fallbackEngine, target, allowedMcps: meta[fallbackAdapter.mcpMetaKey] || [] });
+    if (fallbackMcpRuntime.relayJti) relayJtis.push(fallbackMcpRuntime.relayJti);
     // The fallback resolves the OTHER engine's own selections, so it reports its own drops. The
     // primary engine's note is not carried over: this answer came from the fallback.
     const fbMcpDropNote = await reportRejectedMcps(fallbackMcpRuntime.rejectedMcps, fallbackEngine);
+    if (isolatedRuntime) noteChannelMcpHosts(target, mcpConfigUrls(fallbackMcpRuntime.mcpConfigJson));
     const fbKey = `${threadKey}::${fallbackEngine}-fallback`;
     const prior = await getSession(entry.slug, fbKey);
     // A FRESH fallback session can't resume the failed engine's conversation, so without help it
@@ -1699,6 +1750,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // through here (they spawn on the local runtime directly), which is why there is no branch.
     assertRuntimeCredentials(target, engine);
     runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
+    // The turn is live work in this channel from here to the finally: the egress proxy swaps this
+    // channel's (and, for this author, their personal) placeholders only while it is.
+    releaseEgressLive = markLive({ channelId, ownerId: untrustedPrincipal ? "" : authorId, kind: "turn", id: threadKey });
     await bringRuntimeUp();
     // Every gateway note below is part of `content` for surfaces with no stream — and ANNOUNCED, so a
     // surface that writes its answer from the live stream delivers it too (see announceAnswerNote).
@@ -2017,11 +2071,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // The turn no longer needs the run environment up. Releasing is also the activity stamp the
     // idle reaper counts from, so it must happen on every exit — answer, error, or stop.
     try { runtimeLease?.release(); } catch { /* a lease that cannot be released must not mask the turn's outcome */ }
+    try { releaseEgressLive?.(); } catch { /* liveness bookkeeping must not mask the turn's outcome */ }
     releaseRunSlot?.();
     // Best-effort: the config file only matters at spawn time. A leftover from a daemon crash
     // sits 0600 under the (read-denied) gateway root until the next boot sweeps it. A turn that
     // failed over wrote two — the primary engine's and the fallback's — so sweep every one.
     for (const file of mcpConfigFiles) await rm(file, { force: true }).catch(() => {});
+    for (const jti of relayJtis) releaseRemoteMcps(jti);
     await grantArtifacts.cleanup().catch(() => {});
   }
 }

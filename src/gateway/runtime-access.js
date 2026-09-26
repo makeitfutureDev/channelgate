@@ -3,6 +3,7 @@
 import path from "node:path";
 import { realpathSync } from "node:fs";
 import { gatewayRoot, dbFile } from "../config/paths.js";
+import { networkEnforcedFor } from "../engines/network-policy.js";
 
 function canonicalHostPath(value) {
   try { return realpathSync(value); } catch { return path.resolve(value); }
@@ -48,7 +49,7 @@ function cleanModeNote(clean) {
   return "Clean mode for this attempt is unknown because the resolved run mode was not supplied. Do not infer it from missing tools alone.";
 }
 
-function networkPolicyNote(allowNetwork, { host = false } = {}) {
+function networkPolicyNote(allowNetwork, { host = false, enforced = false, rawNetwork = false } = {}) {
   if (typeof allowNetwork !== "boolean") {
     return "Network policy for this attempt is unknown because the resolved policy was not supplied. Do not infer network permission from earlier turns or successful requests.";
   }
@@ -57,8 +58,13 @@ function networkPolicyNote(allowNetwork, { host = false } = {}) {
     : "Do not make outbound requests. When a request needs the network, explain that the current policy is off and that no fresh request was made. Do not present an earlier response as a fresh network result.";
   const enforcement = host
     ? "This direct host process has the daemon account's ordinary network reachability; the switch is an instruction to the engine, not an OS-level egress filter."
-    : "The switch is advisory, not container egress enforcement: the container remains on the bridge network, and an engine may impose its own additional restrictions.";
-  return `Network policy for THIS attempt: **${allowNetwork ? "on" : "off"}**. This current network policy supersedes earlier turns and cached results. ${policy} ${enforcement} An off policy does not prove that a connection is technically blocked.`;
+    : enforced
+      ? "The switch is ENFORCED: this container has no network of its own and reaches the internet only through the gateway's egress proxy (HTTPS_PROXY), which applies this policy on every request — off admits only the engine endpoints and this conversation's selected connectors; on admits public destinations but never private, loopback or cloud-metadata addresses. A refused request answers HTTP 403 with the reason; report it rather than retrying around it. Raw sockets (ssh, database protocols) work only to hosts an admin declared."
+      : rawNetwork
+        ? "The switch is advisory for this container: an admin gave it the raw bridge network beside the egress proxy, so a tool that ignores HTTPS_PROXY can still connect directly."
+        : "The switch is advisory, not container egress enforcement: this container is on the open bridge network (the gateway's legacy egress mode), and an engine may impose its own additional restrictions.";
+  const proof = enforced ? "" : " An off policy does not prove that a connection is technically blocked.";
+  return `Network policy for THIS attempt: **${allowNetwork ? "on" : "off"}**. This current network policy supersedes earlier turns and cached results. ${policy} ${enforcement}${proof}`;
 }
 
 export function containerAccessNote(target) {
@@ -84,7 +90,7 @@ export function runtimeAccessPreamble(target, { clean, allowNetwork } = {}) {
     + gatewayStoreAccessNote(target) + "\n"
     + "Respect the user's requested scope when checking access. For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only. Do not read file contents or create, modify, or delete probe files, even temporarily. If metadata cannot establish write access, report it as unverified; do not upgrade an access-check request into a write test.\n"
     + cleanModeNote(clean) + "\n"
-    + networkPolicyNote(allowNetwork, { host: target?.backend === "host" }) + "\n"
+    + networkPolicyNote(allowNetwork, { host: target?.backend === "host", enforced: networkEnforcedFor(target), rawNetwork: target?.container?.egress?.rawNetwork === true }) + "\n"
     + "Environment secrets, when injected into a run, are usable by its process and CLI. Write-only means masked listing/reveal surfaces and redacted outputs; it does not mean the process cannot read its environment. Do not print secret values.\n"
     + "[End gateway container access]\n\n";
 }

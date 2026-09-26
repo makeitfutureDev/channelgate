@@ -88,3 +88,35 @@ test("set_secret / remove_secret: the scope argument picks the store and the tie
   assert.equal(secretScopeTier(undefined), "any");
   assert.equal(gateAuthz({ authz: "manage" }, { scope: "organization" }), "manage", "a string tier is unchanged");
 });
+
+test("list_secrets reports the remaining raw (unruled) secrets as a FINDING, worded for the strict setting in force", async () => {
+  const { saveSettings } = await import("../src/config/settings.js");
+  const { unruledFinding } = await import("../src/mcp/tools/tokens.js");
+  // CHAN_TOKEN, ORG_TOKEN and MY_TOKEN have no egress rule; a GitHub token is ruled by the catalog.
+  await scoped.patchUserEnv(DEV, { set: { name: "GITHUB_TOKEN", value: "gh-value-1234567890" } });
+  saveSettings({ containerEgressSecretsStrict: true, containerEgressMode: "proxy" });
+  const strict = await reply(toolsFor(DEV), "list_secrets");
+  assert.match(strict, /\*\*Finding:\*\* \d+ secrets have no egress rule — [^\n]*`CHAN_TOKEN`[^\n]*: WITHHELD from containers \(strict mode\)\./);
+  assert.doesNotMatch(strict.match(/\*\*Finding:\*\*[^\n]*/)[0], /GITHUB_TOKEN/, "a ruled secret is not a finding");
+  assert.match(strict, /an unprotected one is withheld \(strict mode\)/);
+  saveSettings({ containerEgressSecretsStrict: false });
+  const raw = await reply(toolsFor(DEV), "list_secrets", { scope: "channel" });
+  assert.match(raw, /\*\*Finding:\*\* 1 secret has no egress rule — `CHAN_TOKEN`: injected RAW into containers\./);
+  assert.equal(unruledFinding([], { strict: true }), "", "nothing unruled, no finding");
+  await scoped.patchUserEnv(DEV, { remove: "GITHUB_TOKEN" });
+  saveSettings({ containerEgressSecretsStrict: true });
+});
+
+test("strict is the default when nothing is stored; the boot pin keeps an existing install off and makes a new one strict", async () => {
+  const { getContainerRuntime, pinEgressSecretsStrictDefault } = await import("../src/config/settings.js");
+  const saved = [];
+  const save = (patch) => saved.push(patch);
+  assert.equal(pinEgressSecretsStrictDefault({ configured: true, save, read: () => ({ slackBotToken: "x" }) }), false, "an upgraded install keeps raw-and-flagged");
+  assert.equal(pinEgressSecretsStrictDefault({ configured: false, save, read: () => ({}) }), true, "a brand-new install is strict");
+  assert.deepEqual(saved, [{ containerEgressSecretsStrict: false }, { containerEgressSecretsStrict: true }]);
+  assert.equal(pinEgressSecretsStrictDefault({ configured: true, save, read: () => ({ containerEgressSecretsStrict: true }) }), true, "a stored choice is never touched");
+  assert.equal(saved.length, 2);
+  const { getSettings } = await import("../src/config/settings.js");
+  assert.equal(typeof getSettings().containerEgressSecretsStrict, "boolean");
+  assert.equal(getContainerRuntime().egressSecretsStrict, getSettings().containerEgressSecretsStrict !== false);
+});

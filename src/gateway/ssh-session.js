@@ -10,17 +10,23 @@
 //     own accounts, `composio-agent` for the channel's, the toolboxes, the channel's selected
 //     catalog servers — and, through --strict-mcp-config, nothing else: not the operator's own
 //     claude.ai connectors that a recognised account would otherwise pull in;
-//   • the run environment (`resolveRunEnv` + `safeSpawnEnv`): organization, personal and channel
-//     secrets, exactly the names a turn is told about — sourced by the `claude` wrapper, so they
-//     reach Claude's tools like they reach a turn's (a shell in the box can read them too, as a
-//     turn's process can; write-only is a UI property);
+//   • the run environment (`resolveEgressRunEnv` + `safeSpawnEnv`, the resolver a turn uses):
+//     organization, personal and channel secrets, exactly the names a turn is told about — sourced
+//     by the `claude` wrapper, so they reach Claude's tools like they reach a turn's. Where the
+//     egress proxy is the container's network (container-secrets P3) every ruled name is its
+//     PLACEHOLDER, swapped for the real value only by the daemon's proxy on that secret's hosts, so
+//     a shell in the box reads nothing worth copying; an unruled name stays raw and is flagged, or
+//     is withheld in strict mode — exactly as in a turn. The proxy/CA environment itself leads the
+//     file, so `. "$CG_SESSION_ENV"` re-asserts it over anything a shell changed;
 //   • Claude's login as an ACCESS-ONLY credentials file in the channel's config dir plus the
 //     operator's account record. Claude Code cannot tell which plan a token in the environment
 //     belongs to and labels it "Claude API" with no usage and a lesser default model; a file login
 //     shows the plan, the organization, the usage windows and the plan's default model. The file
 //     never holds a refresh token, so it cannot rotate anything or sign the operator out — the one
-//     hazard the "never copy a credentials file" rule exists for (claude-token-relay.js). Claude
-//     re-reads it on every request, so the 20-minute refresh keeps a long session signed in.
+//     hazard the "never copy a credentials file" rule exists for (claude-token-relay.js) — and under
+//     the egress proxy its access token is the channel's relay PLACEHOLDER (the plan facts beside
+//     it are the real login's; they are not secrets). Claude re-reads it on every request, so the
+//     20-minute refresh keeps a long session signed in.
 //
 // The files live per DEVELOPER under <artifactDir>/ssh/users/<userId>/ (the wrapper picks the dir
 // by CG_SSH_USER, which sshd sets from the developer's key line), and are removed when that
@@ -31,19 +37,23 @@ import path from "node:path";
 import { mkdirSync, writeFileSync, chmodSync, renameSync, rmSync } from "node:fs";
 import { allowedFsRoot } from "../web/security.js";
 import { workspaceRoot } from "../config/paths.js";
-import { resolveRunEnv } from "../config/scoped-env.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
 import { requireAdapter } from "../engines/registry.js";
-import { CONTAINER_CLAUDE_CONFIG_DIR } from "../runtimes/container/image-paths.js";
-import { installVscodeClaudeRelay, installSshCodexWrapper, CLAUDE_ONBOARDING_FILE, sshUsersDirOf } from "../runtimes/container/vscode.js";
-import { buildCodexArgs, headerHelperSource } from "../engines/codex.js";
+import { CONTAINER_CLAUDE_CONFIG_DIR, CONTAINER_EGRESS_CA, CONTAINER_EGRESS_PORT } from "../runtimes/container/image-paths.js";
+import { EGRESS_UNSET_ENV_NAMES } from "../runtimes/container/egress-env.js";
+import { egressActive } from "../runtimes/container/egress-hook.js";
+import { installVscodeClaudeRelay, installSshCodexWrapper, clearVscodeClaudeRelay, CLAUDE_ONBOARDING_FILE, sshUsersDirOf } from "../runtimes/container/vscode.js";
+import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.js";
+import { buildCodexArgs, codexSecretBundle, headerHelperSource, installRelayedCodexLogin } from "../engines/codex.js";
+import { isIsolatedTarget } from "../engines/runtime-target.js";
 import { listEngineMcps, codexMcpPolicyFor } from "./mcp-discovery.js";
 import { readDaemonClaudeAccount } from "./claude-token-relay.js";
 import { buildSettings } from "./folders.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { SSH_TOOLSET } from "../mcp/gateway-server.js";
-import { containerSshDir } from "./ssh-access.js";
+import { containerSshDir, EGRESS_CONNECT_HELPER, sessionEgressEnv } from "./ssh-access.js";
+import { clearRemoteMcpsWhere, releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 
 export const SSH_SESSION_ORIGIN = "ssh_session";
 export const SSH_USERS_SUBDIR = "users";
@@ -73,6 +83,21 @@ fs.writeFileSync(temporary, JSON.stringify(config, null, 2), { mode: 0o600 });
 fs.renameSync(temporary, file);
 `;
 
+// The relay registrations (src/mcp/remote-mcp-registry.js) the CURRENT preparation of each
+// developer's session files took, per channel + developer — the Claude and the Codex capability.
+// A refresh releases the previous preparation's holds: the grant then goes as soon as no relay
+// connection holds it, so a `claude` the developer already started keeps the servers it started
+// with (the broker's contract: a running process keeps what it started with) while an unused
+// grant does not linger for its 12 hours. The session's end drops every grant it minted outright.
+const sessionRelayJtis = new Map();
+const relayKey = (slug, userId) => `${slug}\u0000${userId}`;
+function adoptSessionRelays(slug, userId, jtis) {
+  const key = relayKey(slug, userId);
+  for (const jti of sessionRelayJtis.get(key) || []) releaseRemoteMcps(jti);
+  if (jtis.length) sessionRelayJtis.set(key, jtis);
+  else sessionRelayJtis.delete(key);
+}
+
 export function sshUsersDir(target) {
   const dir = sshUsersDirOf(target);
   if (path.dirname(dir) !== containerSshDir(target)) throw new Error("SSH session files must live beside the channel's sshd files");
@@ -87,12 +112,24 @@ export function sshSessionThreadKey(userId) {
   return `ssh:${String(userId || "")}`;
 }
 
-/** `export NAME='value'` lines a POSIX shell can source; every value single-quoted, newlines included. */
-export function renderSessionEnvFile(env = {}) {
+/**
+ * `export NAME='value'` lines a POSIX shell can source; every value single-quoted, newlines
+ * included. `egress` (the session's proxy/CA map, ssh-access.js sessionEgressEnv) leads the file,
+ * after an `unset` of the names the proxy env removes, and wins over a same-named entry in `env`.
+ */
+export function renderSessionEnvFile(env = {}, { egress = {} } = {}) {
   const lines = ["# Generated by ChannelGate — this session's run environment; sourced by the claude wrapper."];
+  const valid = (name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+  const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+  const proxyNames = Object.keys(egress).filter(valid).sort();
+  if (proxyNames.length) {
+    lines.push("# The egress proxy: this container's only network (re-asserted whenever this file is sourced).");
+    lines.push(`unset ${EGRESS_UNSET_ENV_NAMES.join(" ")}`);
+    for (const name of proxyNames) lines.push(`export ${name}=${quote(egress[name])}`);
+  }
   for (const name of Object.keys(env).sort()) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
-    lines.push(`export ${name}='${String(env[name]).replaceAll("'", "'\\''")}'`);
+    if (!valid(name) || Object.hasOwn(egress, name)) continue;
+    lines.push(`export ${name}=${quote(env[name])}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -102,13 +139,24 @@ export function renderSessionEnvFile(env = {}) {
  * (`--append-system-prompt-file`) — never part of every channel's managed block, whose 4 KB budget
  * is for the rules every run shares. Named facts only; no value ever rides here.
  */
-export function renderSessionNote({ slug, userId, envFile }) {
-  return [
+export function renderSessionNote({ slug, userId, envFile, egress = null }) {
+  const lines = [
     `This is an interactive SSH session in channel \`${slug}\`, prepared by the gateway for <@${userId}> exactly like one of that channel's chat turns: the channel's tool policy, its MCP servers (\`gateway\`, \`composio-user\` = this developer's own accounts, \`composio-agent\` = the channel's) and its secrets as environment variables.`,
     `Secrets change while a session is open. \`list_secrets\` is live, but a process keeps the environment it started with — this one included. The session's CURRENT environment is rewritten within a moment of any change at \`${envFile}\` (also \`$CG_SESSION_ENV\`). When a command needs a credential added after this process started, source that file in the SAME command: \`. "$CG_SESSION_ENV"; <command>\`. Never print a value; refer to secrets by name. A newly selected MCP server needs a new \`claude\`.`,
-    "There is no chat thread behind this session: no background jobs, progress or approval cards; the developer answers your prompts in this terminal.",
-    "",
-  ].join("\n");
+  ];
+  if (egress?.active) {
+    // Names and rules only — never a value, never a placeholder string.
+    lines.push(
+      `This container has no network of its own: everything goes out through the gateway's egress proxy (\`HTTPS_PROXY=http://127.0.0.1:${CONTAINER_EGRESS_PORT}\`, CA bundle \`${CONTAINER_EGRESS_CA}\`), already set in this session's environment. The channel's Allow network switch is enforced there. Protected secrets${egress.protected?.length ? ` (${egress.protected.map((name) => `\`${name}\``).join(", ")})` : ""} hold PLACEHOLDERS (\`cgph_…\`) that only work from this container through that proxy, on each secret's declared hosts: use them exactly like the real credential — the proxy swaps them in flight — and know that \`printenv\` shows nothing worth copying.`,
+      "Personal secrets (this developer's own) are swapped only while their owner is working here and NO other person has an SSH session open in this channel; while one is, they are paused and the proxy answers 403 `another-person-ssh-session`. Do not retry or substitute another credential — say so.",
+      `Outbound SSH has no route either: \`git\` over SSH already goes through \`${EGRESS_CONNECT_HELPER}\` (GIT_SSH_COMMAND; github.com:22, and only with Allow network on); for another \`ssh\` pass \`-o ProxyCommand='${EGRESS_CONNECT_HELPER} %h %p'\`. The proxy cannot add an SSH key.`,
+    );
+    if (egress.personalPaused) lines.push("Right now another person has an SSH session open in this channel, so this developer's personal secrets are PAUSED.");
+    if (egress.unprotected?.length) lines.push(`Unprotected (the RAW value is in the environment — no egress rule declares where it may be used): ${JSON.stringify(egress.unprotected)}.`);
+    if (egress.withheld?.length) lines.push(`Withheld by the gateway's strict egress setting (not in the environment at all): ${JSON.stringify(egress.withheld)}.`);
+  }
+  lines.push("There is no chat thread behind this session: no background jobs, progress or approval cards; the developer answers your prompts in this terminal.", "");
+  return lines.join("\n");
 }
 
 function writePrivate(file, body) {
@@ -118,7 +166,8 @@ function writePrivate(file, body) {
   renameSync(temporary, file);
 }
 
-// The access-only login file: the relayed token and its plan facts, never a refresh token.
+// The access-only login file: the relayed token — under the egress proxy the channel's relay
+// PLACEHOLDER (containerClaudeCredential) — and the real login's plan facts, never a refresh token.
 export function renderAccessOnlyCredentials(relay) {
   return JSON.stringify({
     claudeAiOauth: {
@@ -161,10 +210,13 @@ fs.renameSync(temporary, file);
 fs.writeFileSync(sidecar, folder + "\\n", { mode: 0o600 });
 `;
 
-// Codex's half of a prepared session (codex-args.sh + its bundle and header helpers, all in the
-// developer's 0700 dir): exactly the `-c mcp_servers.*` / `apps.*` overrides a chat turn's Codex
-// gets, with the gateway capability and Composio/toolbox credentials in a 0600 bundle their helpers
-// read — never in argv. The sandbox, approval and model flags of a turn are NOT carried: the
+// Codex's half of a prepared session (codex-args.sh + its bundle, in the developer's 0700 dir):
+// exactly the `-c mcp_servers.*` / `apps.*` overrides a chat turn's Codex gets, with the gateway
+// capability in a 0600 bundle — never in argv. The Composio/toolbox servers are relayed by the
+// daemon (the `remote-mcp` socket service) exactly as in a turn, so the bundle holds the capability
+// and nothing else, no headers helper is written, and the relay registration made when the
+// capability was minted lives as long as the capability (SSH_CAPABILITY_TTL_MS); a refresh mints a
+// fresh jti and registers again, the old one simply expires. The sandbox, approval and model flags of a turn are NOT carried: the
 // developer drives an interactive Codex and answers its prompts themselves.
 export function renderCodexArgsScript(overrides) {
   const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -181,7 +233,14 @@ export function codexSessionOverrides(args) {
   return out;
 }
 
-async function prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps, cliBin, runCommand, installWrapper }) {
+async function prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps, cliBin, runCommand, installWrapper, installCodexLogin = installRelayedCodexLogin }) {
+  // Behind the egress proxy the container has no Codex login until one is placed: the same
+  // access-only relay file a turn writes (src/gateway/codex-token-relay.js), so an interactive
+  // `codex` works before the channel's first Codex turn — and never sees a refresh token.
+  if (target?.container?.credentialMode?.codex === "relay") {
+    const problem = await installCodexLogin(target);
+    if (problem) throw new Error(`Codex sign-in not placed: ${problem}`);
+  }
   const allowed = meta[requireAdapter("codex").mcpMetaKey] || [];
   // Minted for Codex: the capability names the engine that holds it.
   const runtime = await buildMcpRuntime({
@@ -197,7 +256,14 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
   const policy = codexMcpPolicyFor(await listMcps(), allowed);
   for (const server of policy.servers) if (server.enabled && !server.definition) server.enabled = false;
   const gatewayCapability = runtime.gatewayCapability || "";
-  const bundle = { gatewayCapability, composioUserToken: integrations.composioUserToken || "", composioToken: integrations.composioToken || "", toolboxToken: integrations.toolboxToken || "", makeToolboxKey: integrations.makeToolboxKey || "" };
+  const bundle = codexSecretBundle({
+    isolated: isIsolatedTarget(target),
+    gatewayCapability,
+    composioUserToken: integrations.composioUserToken || "",
+    composioToken: integrations.composioToken || "",
+    toolboxToken: integrations.toolboxToken || "",
+    makeToolboxKey: integrations.makeToolboxKey || "",
+  });
   const secretBundlePath = !clean && Object.values(bundle).some(Boolean) ? path.join(userDir, "codex-secrets.json") : "";
   if (secretBundlePath) writePrivate(secretBundlePath, JSON.stringify(bundle));
   else rmSync(path.join(userDir, "codex-secrets.json"), { force: true }); // Lean: no stale tokens
@@ -218,7 +284,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
   writePrivate(path.join(userDir, "codex-args.sh"), renderCodexArgsScript(overrides));
   await installWrapper(target, cliBin, runCommand ? { runCommand: (bin, a, o) => runCommand(a, o) } : {});
   const servers = [...new Set(overrides.filter((v) => v.startsWith("mcp_servers.")).map((v) => v.split(".")[1]))];
-  return { ready: true, mcpServers: servers.sort(), reason: "" };
+  return { ready: true, mcpServers: servers.sort(), reason: "", relayJti: runtime.relayJti || "" };
 }
 
 /**
@@ -231,12 +297,13 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   installRelay = installVscodeClaudeRelay,
   resolveIntegrations = resolveRunIntegrations,
   buildMcpRuntime = buildEngineMcpRuntime,
-  resolveEnv = resolveRunEnv,
+  resolveEnv = resolveEgressRunEnv,
   buildLockdown = buildSettings,
   readAccount = readDaemonClaudeAccount,
   now = Date.now,
   listCodexMcps = () => listEngineMcps("codex").catch(() => []),
   installCodexWrapper = installSshCodexWrapper,
+  installCodexLogin = installRelayedCodexLogin,
 } = {}) {
   const slug = entry.slug;
   const userDir = sshUserDir(target, user.id);
@@ -254,9 +321,11 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     });
   };
 
-  // 1. The relay (token file + wrapper + onboarding) — the one step that must succeed.
-  const relayed = await installRelay(target, cliBin, { usersDir, ...(runCommand ? { runCommand } : {}) });
-  const relay = relayed.relay || {};
+  // 1. The relay (token file + wrapper + onboarding) — the one step that must succeed. What the
+  // container receives is the CONTAINER form of the login: the channel's relay placeholder under
+  // the egress proxy (idempotent, so an installer that already converted it is unaffected).
+  const relayed = await installRelay(target, cliBin, { usersDir, channelId: entry.channelId, ...(runCommand ? { runCommand } : {}) });
+  const relay = relayed.relay?.token ? containerClaudeCredential({ target, relay: relayed.relay, channelId: entry.channelId }) : (relayed.relay || {});
   const claude = { relayed: true, source: relayed.source || "", reason: "", account: false };
 
   // 2. The account-shaped login: an access-only credentials file + the operator's account record.
@@ -294,6 +363,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   // Composio and no secrets). Best effort and separate from `problems`: a Codex failure never costs
   // the developer the Claude session.
   const result = { claude, toolset: SSH_TOOLSET, mcpServers: [], secrets: [], rejectedMcps: [], userDir, problems: [], codex: { ready: false, mcpServers: [], reason: "" } };
+  const relayJtis = [];
   mkdirSync(userDir, { recursive: true, mode: 0o700 });
   chmodSync(userDir, 0o700);
   try {
@@ -314,11 +384,14 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
       gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
       toolset: SSH_TOOLSET, ttlMs: SSH_CAPABILITY_TTL_MS,
     });
+    if (runtime.relayJti) relayJtis.push(runtime.relayJti);
     writePrivate(path.join(userDir, "mcp.json"), runtime.mcpConfigJson);
     result.mcpServers = Object.keys(JSON.parse(runtime.mcpConfigJson).mcpServers || {});
     result.rejectedMcps = runtime.rejectedMcps || [];
     try {
-      result.codex = await prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps: listCodexMcps, cliBin, runCommand: exec, installWrapper: installCodexWrapper });
+      const { relayJti: codexRelayJti = "", ...codex } = await prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps: listCodexMcps, cliBin, runCommand: exec, installWrapper: installCodexWrapper, installCodexLogin });
+      if (codexRelayJti) relayJtis.push(codexRelayJti);
+      result.codex = codex;
     } catch (error) {
       result.codex = { ready: false, mcpServers: [], reason: String(error?.message || error).slice(0, 160) };
       for (const name of ["codex-args.sh", "codex-secrets.json"]) rmSync(path.join(userDir, name), { force: true });
@@ -328,17 +401,34 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     result.problems.push(`mcp: ${String(error?.message || error).slice(0, 160)}`);
   }
   try {
-    const { env } = await resolveEnv({ meta, authorId: user.id, untrustedPrincipal: false, clean });
-    const safe = safeSpawnEnv(env);
+    // The resolver a turn uses: placeholders for ruled names when the proxy is this container's
+    // network, the real values otherwise (legacy bridge). untrustedPrincipal is false: the broker
+    // authenticated this developer's key, so their personal scope applies — and, under the proxy,
+    // swaps only while they are here and nobody else has an SSH session open (liveness.js).
+    const resolved = await resolveEnv({ meta, channelId: entry.channelId, authorId: user.id, untrustedPrincipal: false, clean, target });
+    const safe = safeSpawnEnv(resolved.env || {});
+    const scopes = resolved.scopes || {};
+    const placeholders = resolved.placeholders || {};
+    const egress = sessionEgressEnv(target);
     // Without the account login the token has to ride the environment after all (the wrapper's
-    // editor branch is skipped once the session files exist).
+    // editor branch is skipped once the session files exist) — the container form, like the file.
     // CG_SESSION_ENV names this very file: it is rewritten within a moment of a change, but a
     // process that already started keeps its environment — so a command that needs a secret
     // added since can source it first (the hard rules tell the model so).
     const sessionEnv = { ...(claude.account || !relay.token ? safe : { ...safe, CLAUDE_CODE_OAUTH_TOKEN: relay.token }), CG_SESSION_ENV: path.join(userDir, "env") };
-    writePrivate(path.join(userDir, "env"), renderSessionEnvFile(sessionEnv));
-    writePrivate(path.join(userDir, "session.md"), renderSessionNote({ slug, userId: user.id, envFile: path.join(userDir, "env") }));
-    result.secrets = Object.keys(safe).sort();
+    writePrivate(path.join(userDir, "env"), renderSessionEnvFile(sessionEnv, { egress }));
+    const names = Object.keys(safe).filter((name) => !Object.hasOwn(egress, name)).sort();
+    const egressFacts = egressActive(target) ? {
+      active: true,
+      protected: names.filter((name) => placeholders[name]),
+      unprotected: (resolved.unprotected || []).filter((name) => names.includes(name)).sort(),
+      withheld: [...(resolved.withheld || [])].sort(),
+      personalPaused: Boolean(resolved.personalPaused),
+    } : null;
+    writePrivate(path.join(userDir, "session.md"), renderSessionNote({ slug, userId: user.id, envFile: path.join(userDir, "env"), egress: egressFacts }));
+    // Names, scopes and whether the proxy protects each — never a value or a placeholder.
+    result.secrets = names.map((name) => ({ name, scope: scopes[name] || "channel", protected: Boolean(placeholders[name]) }));
+    result.egress = egressFacts ? { active: true, unprotected: egressFacts.unprotected, withheld: egressFacts.withheld, personalPaused: egressFacts.personalPaused } : { active: false };
     result.sessionEnvFile = path.join(userDir, "env");
   } catch (error) {
     result.problems.push(`secrets: ${String(error?.message || error).slice(0, 160)}`);
@@ -347,20 +437,34 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   // failed one removes the others and the session runs plain relayed Claude, reported as such.
   if (result.problems.length) {
     rmSync(userDir, { recursive: true, force: true });
+    // The files that named these grants are gone, so nothing will ever connect with them.
+    for (const jti of relayJtis.splice(0)) releaseRemoteMcps(jti);
     result.codex = { ready: false, mcpServers: [], reason: result.codex.reason || "the session files were not prepared" };
     result.mcpServers = [];
     result.secrets = [];
     log?.warn?.(`[ssh] ${slug}/${user.id}: session files not prepared — ${result.problems.join("; ")}`);
   }
+  adoptSessionRelays(slug, user.id, relayJtis);
   return result;
 }
 
-/** The developer's last session in the channel ended: drop their files; the channel's last: the login too. */
-export async function releaseSshSession({ target, user, cliBin, lastForUser = true, lastInChannel = false, log = console }, { runCommand = null } = {}) {
+/**
+ * The developer's last session in the channel ended: drop their files; the channel's last: the
+ * login too — the in-container credentials file, the account record, and the host-side editor
+ * token file (`<artifact>/vscode/claude-token`, which the container can read through its mount).
+ */
+export async function releaseSshSession({ target, entry = null, user, cliBin, lastForUser = true, lastInChannel = false, log = console }, { runCommand = null, clearEditorToken = clearVscodeClaudeRelay } = {}) {
   if (lastForUser) {
     try { rmSync(sshUserDir(target, user.id), { recursive: true, force: true }); } catch { /* already gone */ }
+    // The developer's last session here ended: every relay grant any of its preparations minted
+    // goes NOW, held or not — a process that outlived the session loses its relayed servers.
+    const slug = entry?.slug || target.slug || "";
+    sessionRelayJtis.delete(relayKey(slug, user.id));
+    clearRemoteMcpsWhere((meta) => meta.origin === SSH_SESSION_ORIGIN && meta.slug === slug && meta.authorId === user.id);
   }
   if (!lastInChannel) return;
+  // First, and host-side: it needs no container, so a container that is already gone still loses it.
+  try { clearEditorToken(target); } catch (error) { log?.log?.(`[ssh] ${target.slug}: editor token cleanup failed (${String(error?.message || error).slice(0, 120)})`); }
   const exec = async (args) => {
     if (runCommand) return runCommand(cliBin, args, {});
     const { spawn } = await import("node:child_process");

@@ -30,6 +30,8 @@ import { postNotice, automationTarget } from "../platforms/notify.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
 // A job gets the same three credential scopes a foreground turn does (config/scoped-env.js).
 import { resolveRunEnv } from "../config/scoped-env.js";
+import { resolveEgressRunEnv } from "./egress/grants.js";
+import { markLive } from "./egress/liveness.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 import { containerJobScript } from "./background-shell-log.js";
@@ -457,8 +459,15 @@ export class BackgroundJobs {
     // outlives its run, and a provider's lease may not. The author is the one the daemon PERSISTED
     // when the job was created and has already re-authorized, so the personal scope applies here
     // exactly as it did in the foreground — a job is the same person's work, continued.
-    const jobEnv = safeSpawnEnv((await resolveRunEnv({ meta, authorId })).env);
-    rec.secretValues = [...Object.values(jobEnv), ...serviceSecretValues()];
+    //
+    // Through the egress wrapper (src/gateway/egress/grants.js) with THIS job's target: in a
+    // proxy-mode container a ruled secret is its placeholder, exactly as in the foreground. The
+    // redaction set is the REAL values either way (a placeholder is not a secret).
+    const jobRunEnv = await resolveEgressRunEnv({ meta, channelId, authorId, target });
+    const jobEnv = safeSpawnEnv(jobRunEnv.env);
+    const jobPlaceholders = new Set(Object.values(jobRunEnv.placeholders));
+    const jobSecretValues = [...new Set([...Object.values(jobEnv).filter((value) => !jobPlaceholders.has(value)), ...jobRunEnv.realValues])];
+    rec.secretValues = [...jobSecretValues, ...serviceSecretValues()];
     rec.label = redactSecretValues(rec.label, rec.secretValues);
     let onChunk = writeChunk;
     let flushChunks = () => {};
@@ -472,7 +481,7 @@ export class BackgroundJobs {
       // This branch is where a CLI echoes a token into its own error line, so its output is
       // value-redacted on the way to the thread and the job log. The agent branch above needs no
       // redactor: everything it emits already came through runMessage, which redacts its own.
-      const shellRedactor = createSecretRedactor([...Object.values(jobEnv), ...serviceSecretValues()]);
+      const shellRedactor = createSecretRedactor([...jobSecretValues, ...serviceSecretValues()]);
       onChunk = (chunk) => {
         const safe = shellRedactor.push(chunk);
         if (safe) writeChunk(safe);
@@ -493,6 +502,9 @@ export class BackgroundJobs {
       }
       rec.runtime = { backend: target.backend, runId, container: target.container?.name || "" };
       rec.lease = target.runtime.acquireLease(target, { kind: "job", id: runId });
+      // A running job is live work in its channel: the egress proxy swaps the channel's (and the
+      // launching author's personal) placeholders only while something like it is running.
+      rec.releaseLive = markLive({ channelId, ownerId: authorId, kind: "job", id: runId });
       try {
         // Minimal allowlisted env plus THIS channel's own secrets — this IS agent-authored shell,
         // so the daemon's secrets must not be visible, and another channel's never are. The browser
@@ -501,7 +513,7 @@ export class BackgroundJobs {
         // outlives its run and is not confined by the Bash sandbox, so it needs the same
         // per-channel browser as the run that queued it (see gateway/browser-env.js).
         // detached → own process group, so the cap-kill takes any grandchildren too (see util/proc.js).
-        const shellEnv = { ...jobEnv, ...browserSpawnEnv(browserNamespaceFor({ platform: meta.platform, slug: entry.slug })) };
+        const shellEnv = { ...jobEnv, ...browserSpawnEnv(browserNamespaceFor({ platform: meta.platform, slug: entry.slug }), { target }) };
         child = target.runtime.spawn(target, {
           cmd: "bash",
           // Isolated: a runtime-side wrapper redacts BOTH streams before writing the durable
@@ -520,6 +532,7 @@ export class BackgroundJobs {
         });
       } catch (e) {
         rec.lease?.release?.();
+        try { rec.releaseLive?.(); } catch { /* bookkeeping only */ }
         logStream?.end();
         const outcome = describeProcessOutcome({ spawnError: e });
         return { ok: false, error: `Background job ${redactSecretValues(outcome.summary, rec.secretValues)}.` };
@@ -537,7 +550,7 @@ export class BackgroundJobs {
         // start the group and returned), so its exit says nothing about the work. Liveness comes
         // from the backend's probe on the recorded runId, and output from the log file.
         rec.runtimeChild = child;
-        rec.secretValues = [...Object.values(jobEnv), ...serviceSecretValues()];
+        rec.secretValues = [...jobSecretValues, ...serviceSecretValues()];
         child.on?.("error", (err) => {
           this._finish(rec, { spawnError: err });
         });
@@ -678,6 +691,8 @@ export class BackgroundJobs {
     // The work is over: stop holding the runtime up, and stop polling its log.
     try { rec.lease?.release?.(); } catch { /* the job is finished either way */ }
     rec.lease = null;
+    try { rec.releaseLive?.(); } catch { /* the job is finished either way */ }
+    rec.releaseLive = null;
     if (rec.tailTimer) { clearInterval(rec.tailTimer); rec.tailTimer = null; }
     if (rec.watchTimer) { clearInterval(rec.watchTimer); rec.watchTimer = null; }
     const durMs = Date.now() - rec.startedAt;
@@ -948,6 +963,8 @@ export class BackgroundJobs {
         await this._deliver(rec);
       } else if (await this._jobAlive(rec)) {
         await logEvent("bg_recover_watch", { id: rec.id, slug: rec.slug, pid: rec.pid, runtime: rec.runtime?.backend || "host" });
+        // Still running after a restart: live work again, for the egress proxy's swap gate.
+        rec.releaseLive = markLive({ channelId: rec.channelId, ownerId: rec.authorId, kind: "job", id: rec.runtime?.runId || rec.id });
         this._watchByProbe(rec, { recovered: true });
       } else {
         // Already tracked above, so _finish's guard passes → force the continuation.

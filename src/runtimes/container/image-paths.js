@@ -8,7 +8,7 @@
 // pins the two together. The daemon COMPARES it at boot: an image built from an older spec still
 // runs, but the operator is told to rebuild rather than left wondering why a channel is missing
 // this build's toolchain.
-export const IMAGE_SPEC_VERSION = "1.5.1";
+export const IMAGE_SPEC_VERSION = "1.6.0";
 
 export const CONTAINER_HOME = "/home/agent";
 // Where a channel's OWN installs land, in precedence order, ahead of the image's root-owned
@@ -38,6 +38,22 @@ export const CONTAINER_BIN_DIR = "/opt/channelgate/bin";
 export const CONTAINER_VSCODE_SERVER_DIR = "/opt/channelgate/vscode-server";
 export const CONTAINER_SOCKET_DIR = "/run/channelgate";
 export const CONTAINER_SOCKET_FILE = "/run/channelgate/mcp.sock";
+// The channel's OWN egress socket directory (read-only bind of the daemon's per-channel dir; the
+// path is the channel identity) and the CA trust bundle every TLS client in the container is
+// pointed at. Both sit inside the read-only control-socket mount: the daemon keeps an empty
+// `egress/` mountpoint and the bundle itself in its run dir, so neither nested mount needs a
+// directory created on a read-only filesystem.
+export const CONTAINER_EGRESS_DIR = "/run/channelgate/egress";
+export const CONTAINER_EGRESS_SOCKET = "/run/channelgate/egress/egress.sock";
+export const CONTAINER_EGRESS_CA = "/run/channelgate/egress-ca.pem";
+// The in-container forwarder (src/mcp/egress-forwarder.js, staged verbatim by build-image.mjs):
+// cg-init starts it when CG_EGRESS=proxy, listening on 127.0.0.1:3128.
+export const CONTAINER_EGRESS_FORWARDER = "/opt/channelgate/bin/cg-egress.mjs";
+export const CONTAINER_EGRESS_PORT = 3128;
+// The SSH ProxyCommand helper (src/mcp/egress-connect.js, staged as bin/cg-egress-connect.mjs behind
+// the containers/bin/cg-egress-connect shim): outbound SSH from a session under `--network none`.
+// Same unreleased spec 1.6.0 as the forwarder — no separate bump.
+export const CONTAINER_EGRESS_CONNECT = "/opt/channelgate/bin/cg-egress-connect";
 
 // Where the engine finds each daemon-side helper INSIDE the image. The host backend answers the
 // same question with this checkout's script paths; no caller composes a path itself.
@@ -46,6 +62,13 @@ export const CONTAINER_SOCKET_FILE = "/run/channelgate/mcp.sock";
 // through `secret-env-bridge`, which re-execs `process.execPath <script>`, so a shell shim would
 // fail there. The human-facing /opt/channelgate/bin/cg-mcp-bridge shim still exists for a person
 // who exec'd into a container by hand.
+//
+// Spec 1.6.0: the bridge and secret-env-bridge carry the `remote-mcp` socket service (the daemon
+// relays Composio and the toolboxes, so a container holds no remote MCP credential); the broker
+// forwards CG_MCP_SERVICE / CG_MCP_SOCKET. An older image's broker would drop the service
+// selection, which is why this is a contract bump and not only a toolchain change. The same spec
+// also ships the egress forwarder (bin/cg-egress.mjs) that cg-init starts under CG_EGRESS=proxy:
+// an older image has no forwarder, so its engines would find nothing on 127.0.0.1:3128.
 export const CONTAINER_MCP_BRIDGE = "/opt/channelgate/bin/cg-mcp-bridge.mjs";
 export const IMAGE_HELPERS = Object.freeze({
   "gateway-mcp": Object.freeze({ command: "node", args: Object.freeze([CONTAINER_MCP_BRIDGE]) }),
@@ -55,10 +78,6 @@ export const IMAGE_HELPERS = Object.freeze({
   // closure drags in settings.js and the database layer) never ships in the image at all.
   "composio-sdk-bridge": Object.freeze({ command: "node", args: Object.freeze([CONTAINER_MCP_BRIDGE]) }),
   "stop-subagents-hook": Object.freeze({ command: "node", args: Object.freeze(["/opt/channelgate/gateway/hooks/stop-subagents.mjs"]) }),
-  // Not the raw binary: the broker reads the 0600 secret bundle and only then execs the pinned
-  // mcp-remote (which is installed globally in the image AND resolvable from the bundle's
-  // node_modules, which is how the broker finds dist/proxy.js).
-  "mcp-remote": Object.freeze({ command: "node", args: Object.freeze(["/opt/channelgate/mcp/remote-secret-bridge.js"]) }),
 });
 
 // The paths a runner reads off `target.container` when it needs to compose an in-container path.

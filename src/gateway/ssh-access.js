@@ -16,6 +16,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, w
 import path from "node:path";
 import { getDb } from "../db/index.js";
 import { sshAccessDir } from "../config/paths.js";
+import { egressEnv, EGRESS_UNSET_ENV_NAMES } from "../runtimes/container/egress-env.js";
+import { CONTAINER_EGRESS_CONNECT } from "../runtimes/container/image-paths.js";
+import { BROWSER_ARGS_ENV, browserEgressArgs } from "./browser-env.js";
 
 // ── Public keys ───────────────────────────────────────────────────────────────────────────────
 // What a developer may register. ssh-dss is refused outright (OpenSSH itself no longer accepts
@@ -311,6 +314,31 @@ const SESSION_ENV_SKIP = new Set(["HOME", "USER", "LOGNAME", "SHELL", "MAIL", "H
 const SESSION_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SESSION_ENV_VALUE = /^[^"\\\x00-\x1f\x7f]*$/;
 
+// Outbound SSH from a session (container-secrets P3). Under `--network none` an ssh client has no
+// route of its own; this image helper speaks `CONNECT host:port` to the in-container forwarder
+// (127.0.0.1:3128) and then pipes stdio, so it works as a ProxyCommand. The proxy tunnels raw
+// only to the host:ports it allows (`github.com:22` always, plus the channel's declared raw hosts,
+// with Allow network on) and cannot add an SSH key.
+export const EGRESS_CONNECT_HELPER = CONTAINER_EGRESS_CONNECT;
+// GIT_SSH_COMMAND is a reserved name for channel secrets (channel-env.js); this value is the
+// GATEWAY's, so `git@github.com:…` works from a session without touching the shared ~/.ssh.
+export const SESSION_GIT_SSH_COMMAND = `ssh -o ProxyCommand='${EGRESS_CONNECT_HELPER} %h %p'`;
+
+/**
+ * The egress half of a session's environment: exactly the proxy/CA map every exec gets
+ * (egress-env.js), Chromium's proxy arguments for a developer's own agent-browser, and the git SSH
+ * command above — `{}` unless the proxy is this target's egress. sshd starts a session with a
+ * clean environment, so this rides the ONE SetEnv line and the top of the session env file.
+ */
+export function sessionEgressEnv(target) {
+  const env = egressEnv(target);
+  if (!Object.keys(env).length) return {};
+  const args = browserEgressArgs(target?.container?.egress);
+  if (args) env[BROWSER_ARGS_ENV] = args;
+  env.GIT_SSH_COMMAND = SESSION_GIT_SSH_COMMAND;
+  return env;
+}
+
 /** The session environment from the container's `Config.Env` (`NAME=value` strings) and the target. */
 export function containerSessionEnv(containerEnv, target) {
   const env = {};
@@ -321,6 +349,13 @@ export function containerSessionEnv(containerEnv, target) {
     env[text.slice(0, at)] = text.slice(at + 1);
   }
   if (target?.workDir) env.CG_WORKDIR = String(target.workDir);
+  // The proxy env is asserted from the target's own plan, not only inherited from the create-time
+  // env: an inspect that failed, or a container created before this spec, still gets it.
+  const egress = sessionEgressEnv(target);
+  if (Object.keys(egress).length) {
+    for (const name of EGRESS_UNSET_ENV_NAMES) delete env[name];
+    Object.assign(env, egress);
+  }
   const out = {};
   for (const [name, value] of Object.entries(env)) {
     if (SESSION_ENV_SKIP.has(name) || !SESSION_ENV_NAME.test(name) || !SESSION_ENV_VALUE.test(value)) continue;

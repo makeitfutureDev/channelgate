@@ -14,7 +14,8 @@ import { acquireKeyedLock } from "../../util/keyed-lock.js";
 import { channelArtifactDir } from "../../config/paths.js";
 import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM } from "./names.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
-import { CONTAINER_SOCKET_DIR } from "./image-paths.js";
+import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
+import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
 // fingerprint, so changing any of them recreates every container on the next run.
@@ -140,7 +141,9 @@ export function parseInspectLine(line) {
 // the daemon checkout, and the operator's ~/.claude or ~/.codex directories. The only sources under
 // the gateway root are the clean workspace (a bare workdir, mounted so clean mode works in a
 // container) and the MCP socket directory (read-only). The Codex auth FILE is the one credential
-// mount, and it is the resolved real file — see credentials.js for why it is a file and not a dir.
+// mount, and only outside the egress proxy (legacy bridge mode, or an API-key login): it is the
+// resolved real file — see credentials.js for why it is a file and not a dir. Behind the proxy
+// Codex is relayed and nothing credential-shaped is mounted.
 // The single, deliberate exception is the operator-home grant (operatorHomeMounts below): a
 // Full-access channel, while the gateway-wide switch is on, gets the daemon user's whole home.
 //
@@ -182,9 +185,26 @@ export function buildMounts(base) {
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
     { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
+    ...egressMounts(base),
     ...operatorHomeMounts(base),
   ];
   return mounts.filter((mount) => mount.type === "tmpfs" || mount.source);
+}
+
+// The egress proxy's two mounts, present only while the proxy is this target's egress
+// (egress-hook.js): the channel's OWN socket directory — the daemon's per-channel listener, whose
+// PATH is the channel identity, so it is never under the shared control-socket dir — and the CA
+// trust bundle (the host's system roots + the deployment's egress CA) that every CA variable in
+// egress-env.js names. Both read-only. The bundle is a FILE: `bind-file` renders like any bind, and
+// ensureBindSources below never mkdirs a file source (the service writes it at boot, in place, so
+// a running container's mount keeps pointing at the current bytes).
+export function egressMounts(base) {
+  const plan = base?.container?.egress;
+  if (!plan?.active) return [];
+  return [
+    { kind: "egress", type: "bind", source: plan.socketDir, target: CONTAINER_EGRESS_DIR, mode: "ro" },
+    { kind: "egress-ca", type: "bind-file", source: plan.caBundle, target: CONTAINER_EGRESS_CA, mode: "ro" },
+  ];
 }
 
 // The operator-home grant: ONLY for a channel in Full access (adminMode) and ONLY while the
@@ -241,9 +261,12 @@ function mountArgs(mounts) {
 // died on `Append system prompt file not found: …/CLAUDE.md`. So the mount half is compared
 // separately and never deferred — see ensureUp.
 //
-// Deliberately NOT in here: the image, the network mode, cgroup limits, caps and the security opts.
-// They change how the container BEHAVES, not which host directories it is looking at, and the
-// existing deferral is the right answer for them.
+// Deliberately NOT in here: the image, cgroup limits, caps and the security opts. They change how
+// the container BEHAVES, not which host directories it is looking at, and the existing deferral is
+// the right answer for them. The NETWORK MODE is the one behavioural exception (egress P2): what a
+// container can reach is part of what it can see, and a deferred switch would leave a bridged
+// container — say, one whose `rawNetwork` was just cleared — serving turns that every surface
+// reports as proxy-enforced. So a network change is never deferred either.
 export function containerMountFingerprint(target) {
   const c = target?.container || {};
   const canonical = JSON.stringify({
@@ -252,6 +275,7 @@ export function containerMountFingerprint(target) {
     cleanWorkDir: target?.cleanWorkDir || "",
     artifactDir: target?.artifactDir || "",
     homeVolume: c.homeVolume || "",
+    network: c.network || "",
     mounts: (c.mounts || []).map((m) => `${m.kind}:${m.type}:${m.source}:${m.target}:${m.mode}`).sort(),
   });
   return `m1-${createHash("sha256").update(canonical).digest("hex").slice(0, 32)}`;
@@ -386,8 +410,9 @@ export function createContainerLifecycle({
     if (!caps.cgroupLimits && (c.limits.memory || c.limits.cpus || c.limits.pidsLimit)) {
       log(`[container] cgroup limits are not delegated — ${c.name} runs without pids/memory/cpu caps`);
     }
-    const settled = settleCredentialModes(target.settings, env);
+    const settled = settleCredentialModes(target.settings, env, { egressActive: c.egress?.active === true });
     c.credentialMode = settled.modes;
+    // "" in relay mode: the real Codex login is never a mount behind the egress proxy.
     c.codexAuthFile = settled.codexAuthFile;
     // Rebuild rather than patch: ensureUp can run more than once on one target (the out-of-band
     // retry), and a credential that appeared since the last pass has to come BACK as a mount.
@@ -493,6 +518,10 @@ export function createContainerLifecycle({
       if (!caps.ok) throw new Error(caps.reason);
       const img = await image.inspect(caps, target.settings, { force: forceImage });
       if (!img.present) throw new Error(img.reason);
+      // The channel's egress listener first: its socket directory is a bind source, and a
+      // container must never come up pointing at a proxy that is not listening. Throws (fail
+      // closed, remedy named) when the service cannot bind it.
+      await ensureEgressFor(target);
       settleTarget(target, { caps, img });
       const fingerprint = containerFingerprint(target);
       const mountFingerprint = containerMountFingerprint(target);
@@ -592,6 +621,7 @@ export function createContainerLifecycle({
     const caps = await cli.probe(target.settings, { image: target.settings?.image });
     if (!caps.ok) throw new Error(caps.reason);
     await removeContainer(caps, name, { volumes: volumes ? target.container.homeVolume : "", strictVolumes });
+    await releaseEgressFor(target);
     log(`[container] removed ${name}${volumes ? " and its HOME volume" : ""}${reason ? ` (${reason})` : ""}`);
   }
 

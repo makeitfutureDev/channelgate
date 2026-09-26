@@ -947,4 +947,28 @@ export const migrations = [
       `);
     },
   },
+  {
+    // The egress proxy's placeholder grants (src/gateway/egress/grants.js). A row maps the
+    // placeholder a channel container holds to WHERE the real value lives — the scope, the channel,
+    // the owner and the secret's NAME — and never to the value itself: that is resolved live at
+    // swap time from the store that owns it, so a rotation needs no re-issue. Removing a secret
+    // revokes its row (a leaked placeholder dies with it); re-adding mints a new one. The partial
+    // unique index is what makes "the live placeholder for this key" a single row.
+    version: 30,
+    up(db) {
+      db.exec(`
+        CREATE TABLE egress_grants (
+          placeholder TEXT PRIMARY KEY,
+          scope TEXT NOT NULL,
+          channel_id TEXT NOT NULL DEFAULT '',
+          owner_id TEXT NOT NULL DEFAULT '',
+          secret_name TEXT NOT NULL,
+          created_ms INTEGER NOT NULL,
+          revoked_ms INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE UNIQUE INDEX idx_egress_grants_key ON egress_grants(scope, channel_id, owner_id, secret_name) WHERE revoked_ms = 0;
+        CREATE INDEX idx_egress_grants_channel ON egress_grants(channel_id);
+      `);
+    },
+  },
 ];

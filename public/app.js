@@ -3505,6 +3505,8 @@ function readSettingsForm() {
     containerMemory: document.getElementById("set-container-memory").value,
     containerCpus: document.getElementById("set-container-cpus").value,
     containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
+    containerEgressMode: document.getElementById("set-container-egress-bridge").checked ? "bridge" : "proxy",
+    containerEgressSecretsStrict: document.getElementById("set-container-egress-strict").checked,
     // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
     ...(tokenValue(document.getElementById("set-container-claude-token")) ? { containerClaudeOauthToken: tokenValue(document.getElementById("set-container-claude-token")) } : {}),
     ...(document.getElementById("clear-container-claude-token").classList.contains("armed") ? { clearContainerClaudeOauthToken: true } : {}),
@@ -3636,6 +3638,8 @@ function paintSettings(s) {
   document.getElementById("set-container-memory").value = s.containerMemory || "";
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
   document.getElementById("set-container-full-access-home").checked = s.containerFullAccessHome === true;
+  document.getElementById("set-container-egress-bridge").checked = s.containerEgressMode === "bridge";
+  document.getElementById("set-container-egress-strict").checked = s.containerEgressSecretsStrict === true;
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
   attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
   document.getElementById("set-adminpw").dataset.hasPassword = String(s.hasAdminPassword === true);

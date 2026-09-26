@@ -263,3 +263,30 @@ test("a diagnostic line reaches the user short, useful, and free of credentials"
   assert.match(shown, /\[REDACTED\]/);
   assert.ok(codexDiagnosticLine("x".repeat(500)).length <= 200, "status rows are capped");
 });
+
+test("behind the egress proxy the runner places the relayed access-only login BEFORE the spawn, and a missing relay fails over pre-spawn", async () => {
+  const backend = createFakeRuntimeBackend();
+  const order = [];
+  backend.writeHomeFile = async (_target, entry) => { order.push({ what: "write", seq: backend.calls.spawn.length, entry }); };
+  const target = containerTarget(backend, "codex-relay-run");
+  target.container.credentialMode = { claude: "relay", codex: "relay" };
+  target.container.mounts = [];
+  const authJson = JSON.stringify({ tokens: { access_token: "h.p.cgph_r", refresh_token: "" } });
+  // The fixture Codex answers "hello" normally; only the ordering and the file matter here.
+  await runCodex({ cwd: fixtureBin, prompt: "hello", sessionId: "", isNewSession: true, target, artifactDir: target.artifactDir, timeoutMs: 20_000, codexRelayDeps: { credential: async () => ({ authJson }) } }).catch(() => {});
+  assert.equal(order.length, 1);
+  assert.equal(order[0].seq, 0, "written before the engine process exists");
+  assert.deepEqual(order[0].entry, { file: "/home/agent/.codex/auth.json", body: authJson });
+
+  const spawnsBefore = backend.calls.spawn.length;
+  await assert.rejects(
+    runCodex({ cwd: fixtureBin, prompt: "hello", sessionId: "", isNewSession: true, target, artifactDir: target.artifactDir, timeoutMs: 5_000, codexRelayDeps: { credential: async () => ({ error: "the gateway has no Codex sign-in to relay" }) } }),
+    (error) => {
+      assert.match(error.message, /no Codex sign-in to relay/);
+      assert.equal(error.details?.providerKind, "authentication");
+      assert.equal(error.details?.replaySafe, true);
+      return true;
+    },
+  );
+  assert.equal(backend.calls.spawn.length, spawnsBefore, "no spawn without a login in place");
+});

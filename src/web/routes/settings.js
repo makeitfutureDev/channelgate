@@ -54,7 +54,7 @@ import { isValidModel } from "../../slack/util.js";
 // Organization-wide environment secrets. WRITE-ONLY, exactly like the per-channel ones:
 // listOrgEnv is the only shape that may leave the process (config/scoped-env.js).
 import { listOrgEnv, patchOrgEnv } from "../../config/scoped-env.js";
-import { normalizeEnvName } from "../../config/channel-env.js";
+import { normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
 import { detectServiceManager, requestShutdown, restartExitCode } from "../../gateway/shutdown.js";
 import { invalidateAllSessions, authEnabled } from "../auth.js";
 import { readSecret } from "../secrets.js";
@@ -380,6 +380,13 @@ export function createSettingsRouter({
       // configure, because the grant is the daemon user's own home and nothing else; an admin
       // API caller cannot turn this into "mount an arbitrary host path".
       if (typeof body.containerFullAccessHome === "boolean") patch.containerFullAccessHome = body.containerFullAccessHome;
+      // Container egress: the proxy (default) or the legacy open bridge. A closed set — anything
+      // else is refused rather than stored and read back as "proxy".
+      if (body.containerEgressMode !== undefined) {
+        if (!["proxy", "bridge"].includes(body.containerEgressMode)) return res.status(400).json({ error: "containerEgressMode must be \"proxy\" or \"bridge\"" });
+        patch.containerEgressMode = body.containerEgressMode;
+      }
+      if (typeof body.containerEgressSecretsStrict === "boolean") patch.containerEgressSecretsStrict = body.containerEgressSecretsStrict;
       // The Claude subscription token for container runs (`claude setup-token` on the host). Same
       // write-only rule as every other credential: set on a value, cleared by an empty string or
       // the explicit flag, never echoed back by any listing.
@@ -801,7 +808,7 @@ export function createSettingsRouter({
       const name = normalizeEnvName(req.params.name);
       let vars;
       try {
-        vars = patchOrgEnv({ set: { name: req.params.name, value }, actor: ORG_SECRET_ACTOR });
+        vars = patchOrgEnv({ set: { name: req.params.name, value, ...swapRuleFieldsFrom(req.body) }, actor: ORG_SECRET_ACTOR });
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }

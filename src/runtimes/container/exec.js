@@ -17,6 +17,7 @@ import { attachRuntime } from "../contract.js";
 import { channelFolder } from "../../config/paths.js";
 import { cliEnv } from "./cli.js";
 import { containerEnvDefaults } from "./credentials.js";
+import { applyEgressEnv } from "./egress-env.js";
 import { isContainerGoneError } from "./lifecycle.js";
 
 const BACKEND_TAG = Object.freeze({ id: "container" });
@@ -69,7 +70,10 @@ export function containerRunEnv(target, env = {}) {
   }
   if (!out.CG_CHANNEL) out.CG_CHANNEL = owned.CG_CHANNEL;
   if (!out.CG_PLATFORM) out.CG_PLATFORM = owned.CG_PLATFORM;
-  return out;
+  // The egress proxy and CA variables are container-owned too, and FORCED: a host HTTPS_PROXY (or
+  // an ALL_PROXY) that reached the caller's env through the passthrough list must not route this
+  // run around the proxy, and a background shell job's env never went through buildClaudeEnv.
+  return applyEgressEnv(out, target);
 }
 
 // `--env-file` is line-oriented on both CLIs: KEY=VALUE, no quoting, no continuation. A value with

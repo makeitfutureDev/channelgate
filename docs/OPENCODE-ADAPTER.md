@@ -24,7 +24,8 @@ rejected before process spawn. Unknown capabilities remain denied by the adapter
 Like every engine, OpenCode is spawned through the shared runtime target inside the channel's
 rootless Podman container. Container mounts and process isolation provide the OS boundary;
 OpenCode's read-action policy restricts access within that boundary. The network-off setting is
-engine policy, not an egress cut-off. Broader adapter admission still requires its own acceptance
+enforced by the channel's egress proxy (the container has no network of its own) unless the
+gateway runs its legacy bridge egress mode. Broader adapter admission still requires its own acceptance
 evidence; the container does not make unsupported tools or permissions available.
 
 ## Supported runtime contract

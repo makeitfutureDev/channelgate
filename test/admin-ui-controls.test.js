@@ -54,3 +54,13 @@ test("the secret editor's own classes are what it renders, so no host's classes 
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   assert.doesNotMatch(html, /class="secret-list"/, "the markup comes from secretEditorMarkup()");
 });
+
+// Egress (container-secrets P2): the "Used on hosts" field warns against multi-tenant suffixes —
+// a wildcard over *.vercel.app would let the proxy swap the real value into a request to any
+// other customer's deployment.
+test("the secret editor's hosts field and set_secret warn against multi-tenant host suffixes", () => {
+  const js = readFileSync(new URL("../public/admin-secrets.js", import.meta.url), "utf8");
+  assert.match(js, /class="secret-hosts"[^>]*Avoid multi-tenant suffixes such as \*\.vercel\.app/);
+  const tool = readFileSync(new URL("../src/mcp/tools/tokens.js", import.meta.url), "utf8");
+  assert.match(tool, /multi-tenant suffix such as \*\.vercel\.app/);
+});
