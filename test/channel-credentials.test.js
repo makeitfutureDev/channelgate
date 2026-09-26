@@ -42,6 +42,60 @@ test("credential discovery lists only sorted, usable names without values or suf
   assert.match(prompt, /never silently substitute one scope's credential for another's/);
 });
 
+// Container-secrets P2: with the egress proxy as the container's network, the inventory says which
+// names hold a placeholder (and where it works), which hold the raw value, and which strict mode
+// withheld — names and hosts only, never a value or the placeholder itself.
+test("the egress lines: proxy-protected placeholders with their hosts, unprotected raw names, withheld names", () => {
+  const placeholder = "cgph_cabcdefghijklmnopqrstuvwxyz234567";
+  const prompt = channelCredentialsPreamble(
+    { GITHUB_TOKEN: placeholder, SUPABASE_DB_PASSWORD: fixtureValue },
+    {
+      scopes: { GITHUB_TOKEN: "channel", SUPABASE_DB_PASSWORD: "channel" },
+      placeholders: { GITHUB_TOKEN: placeholder },
+      hosts: { GITHUB_TOKEN: ["api.github.com", "github.com"] },
+      unprotected: ["SUPABASE_DB_PASSWORD"],
+      withheld: ["LEGACY_KEY"],
+    },
+  );
+  assert.deepEqual(namesOf(prompt), ["GITHUB_TOKEN", "SUPABASE_DB_PASSWORD"]);
+  assert.match(prompt, /GITHUB_TOKEN is proxy-protected: its value in the environment is a placeholder that only works from this container through the gateway's egress proxy on: api\.github\.com, github\.com\./);
+  assert.match(prompt, /Unprotected \(the RAW value is in the environment[^\n]*\["SUPABASE_DB_PASSWORD"\]/);
+  assert.match(prompt, /Withheld by the gateway's strict egress setting[^\n]*\["LEGACY_KEY"\]/);
+  assert.ok(!prompt.includes(placeholder), "the placeholder string itself is not repeated into the prompt");
+  assert.ok(!prompt.includes(fixtureValue));
+  // A personal placeholder says it PAUSES while another person works here.
+  const personalPh = "cgph_pabcdefghijklmnopqrstuvwxyz234567";
+  const withPersonal = channelCredentialsPreamble(
+    { MY_PAT: personalPh },
+    { scopes: { MY_PAT: "personal" }, placeholders: { MY_PAT: personalPh }, hosts: { MY_PAT: ["api.github.com"] } },
+  );
+  assert.match(withPersonal, /Personal placeholders \["MY_PAT"\] work only while their owner is the one working in this conversation: they PAUSE[^\n]*another-author-active[^\n]*another person's turn, background job or SSH session/);
+  assert.doesNotMatch(prompt, /Personal placeholders/, "no personal line without a personal placeholder");
+  // Without egress facts (legacy bridge mode, the host) none of these lines appear.
+  const plain = channelCredentialsPreamble({ GITHUB_TOKEN: fixtureValue });
+  assert.doesNotMatch(plain, /proxy-protected|Unprotected|Withheld/);
+  assert.doesNotMatch(prompt, /PAUSED/, "no pause line unless the resolver says so");
+});
+
+// Container-secrets P3: while another person has an SSH session open in the channel, the proxy
+// refuses the author's PERSONAL placeholders; the inventory says so instead of letting the agent
+// read the 403 as a broken credential.
+test("the pause line names only the personal placeholders, and only when paused", () => {
+  const personal = "cgph_pabcdefghijklmnopqrstuvwxyz234567";
+  const channel = "cgph_cabcdefghijklmnopqrstuvwxyz234567";
+  const resolved = { MY_KEY: personal, GITHUB_TOKEN: channel };
+  const facts = {
+    scopes: { MY_KEY: "personal", GITHUB_TOKEN: "channel" },
+    placeholders: { MY_KEY: personal, GITHUB_TOKEN: channel },
+    hosts: { MY_KEY: ["api.example.com"], GITHUB_TOKEN: ["api.github.com"] },
+  };
+  const paused = channelCredentialsPreamble(resolved, { ...facts, personalPaused: true });
+  assert.match(paused, /Personal secrets are PAUSED right now: another person.s turn, background job or SSH session is active[^\n]*\["MY_KEY"\][^\n]*another-person-ssh-session/);
+  assert.doesNotMatch(paused, /PAUSED[^\n]*GITHUB_TOKEN/, "a channel secret is not paused");
+  assert.ok(!paused.includes(personal) && !paused.includes(channel));
+  assert.doesNotMatch(channelCredentialsPreamble(resolved, { ...facts, personalPaused: false }), /PAUSED/);
+});
+
 test("empty inventory clears old assumptions, while clean mode suppresses discovery", () => {
   assert.deepEqual(namesOf(channelCredentialsPreamble()), []);
   assert.match(channelCredentialsPreamble(), /not that all CLI logins or MCP connections are absent/);

@@ -18,7 +18,7 @@ import { ensureRoot } from "./config/store.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
 import { refreshEngineModels } from "./engines/registry.js";
-import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime } from "./config/settings.js";
+import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
@@ -28,6 +28,7 @@ import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.j
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
 import { startSshBroker, stopSshBroker } from "./gateway/ssh-broker.js";
+import { bindRunningChannelEgress, egressStatus, startEgressService, stopEgressService } from "./gateway/egress/service.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
 import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
@@ -115,7 +116,13 @@ async function bootContainerRuntimeOrDie() {
 // gateway control socket: a container without it would run with no gateway tools at all.
 async function containerRuntimeHealth() {
   const settings = getContainerRuntime();
-  const base = { socket: mcpSocketStatus() };
+  // `egress`: the mode, whether the proxy is up and how many channel listeners it holds — names and
+  // counts only (the per-channel counters stay on the daemon).
+  const egress = egressStatus();
+  const base = {
+    socket: mcpSocketStatus(),
+    egress: { mode: settings.egressMode, running: egress.running, error: egress.error || "", channels: egress.channels.length },
+  };
   const unavailable = (reason) => ({ ...base, cli: { ok: false, reason }, image: { ref: settings.image, present: false, reason: "" }, running: 0, containers: [] });
   const mod = await containerRuntimeModule();
   if (typeof mod.containerRuntimeStatus !== "function") return unavailable(mod.__loadError || "container runtime backend is not available in this build");
@@ -143,6 +150,11 @@ async function stopRuntimeServices(reason) {
   }
   try {
     await stopSshBroker();
+  } catch {
+    /* best effort */
+  }
+  try {
+    await stopEgressService();
   } catch {
     /* best effort */
   }
@@ -181,12 +193,14 @@ async function main() {
   // and failure is reported on the admin page without holding up chat or startup.
   void Promise.resolve().then(() => startSystemHealth()).catch(() => console.error("[system-health] collector startup failed"));
 
+  // Read ONCE, before this boot writes anything: both first-boot decisions below key on it.
+  const operatorConfigured = isOperatorConfigured(getSettings());
   // Brand-new install (nothing an operator wrote in settings.json — the installer's own
   // pre-boot keys don't count) → mint an admin password rather than leaving the whole API open.
   // Printed once here because it is stored hashed and can't be read back. An existing install is
   // never touched: generating one there would lock the operator out.
   const generated = await ensureAdminPasswordOnFirstBoot({
-    configured: isOperatorConfigured(getSettings()),
+    configured: operatorConfigured,
     hasPassword: Boolean(getAdminPassword()),
     generate: () => randomBytes(12).toString("base64url"),
     save: async (pw) => saveSettings({ adminPassword: await hashPassword(pw) }),
@@ -197,6 +211,14 @@ async function main() {
     console.log("[gateway] Save it now — it is stored hashed and cannot be shown again.");
     console.log("[gateway] Change it any time in the admin UI under Settings.");
     console.log("[gateway] ────────────────────────────────────────────────────────────\n");
+  }
+  // The strict-secrets default (container-secrets P4), pinned AFTER the password so a crash in
+  // between can never make a fresh install look configured and skip its password: a new install is
+  // strict, an upgraded one keeps unruled secrets raw-and-flagged until an admin turns strict on.
+  try {
+    pinEgressSecretsStrictDefault({ configured: operatorConfigured });
+  } catch (e) {
+    console.warn(`[gateway] could not store the strict-secrets default (strict applies): ${e?.message || e}`);
   }
   console.log(`[gateway] runtime root: ${root}`);
   console.log(`[gateway] singleton lock: ${lock.file}`);
@@ -255,6 +277,17 @@ async function main() {
   // below (a container cannot connect before its first run, long after boot).
   const daemonHandlers = {};
   await startMcpSocketServer({ handlers: daemonHandlers, log: console });
+  // The egress proxy (src/gateway/egress/service.js): the only network a proxy-mode channel
+  // container has. It never fails the boot — a service that cannot start logs one line, and
+  // container runs then fail closed naming the remedy instead of running on an open network.
+  try {
+    await startEgressService({ log: console });
+    // Containers that kept running across the restart get their listener back now, not at their
+    // channel's next turn (a recovered background job or an attached editor needs the network).
+    await bindRunningChannelEgress({ log: console });
+  } catch (error) {
+    console.warn(`[egress] proxy unavailable (${error?.message || error}) — container runs in proxy mode will fail closed until it starts.`);
+  }
   // SSH access to channel containers (src/gateway/ssh-broker.js): binds its attach socket only when
   // the root installer has set the host up, and re-checks by itself otherwise — never fails the boot.
   await startSshBroker({ log: console });

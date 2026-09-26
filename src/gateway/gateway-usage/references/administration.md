@@ -120,14 +120,31 @@ These channel modes do not leave the container. The separate organization-admin-
   Provisioning a VPN for THIS or any OTHER channel (profile import, image build, user unit,
   secrets, failure classes, rotation and retirement): `references/channel-vpn.md`. Those steps run
   on the gateway host as the operator account — a channel container cannot perform them.
-- `set_channel_network` (admin) — record whether this channel is meant to have network access
-  (needs Bash on to be useful) so `git`/`gh`/`curl` and deploy CLIs may be used; the engines are
-  told the answer (Codex read mode refuses network on its own). There is no per-domain allow-list
-  to add to. The switch is *advisory*: the container is not actually cut off, so a request may
-  succeed while the switch is off — that is not permission. If the switch is off and a task needs
-  the network, say so and ask an admin to turn it on (effective on the NEXT message) rather than
-  working around it. The current value is in the gateway-managed block at the top of this
-  conversation's instruction file.
+- `set_channel_network` (admin) — set whether this channel may use the network (needs Bash on to
+  be useful) so `git`/`gh`/`curl` and deploy CLIs work; the engines are told the answer (Codex read
+  mode refuses network on its own). There is no per-domain allow-list to add to. The container has
+  no network of its own: everything goes through the gateway's **egress proxy**, which applies the
+  switch on every request — off: only the engine endpoints and this channel's selected connectors
+  (anything else answers HTTP 403 `network-off`); on: public hosts, never private, loopback or
+  cloud-metadata addresses. A flip applies to the next request. Raw sockets (`ssh`, `psql`) are
+  tunnelled only to `github.com:22` and hosts an admin declared (`egressRawHosts`, admin API) and
+  need a client pointed at the proxy — for `ssh`/`git@…`:
+  `GIT_SSH_COMMAND="ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"`. Where the access note says the switch is *advisory* (the
+  operator's legacy bridge mode, a channel given `rawNetwork`, a `/sudo` thread) a request may
+  still succeed while it is off — that is not permission. If the switch is off and a task needs
+  the network, say so and ask an admin to turn it on rather than working around it. The current
+  value is in the gateway-managed block at the top of this conversation's instruction file.
+- **Secrets behind the proxy.** In a proxy-mode container a secret with an egress rule — GitHub,
+  Vercel, Supabase, Make and Composio token names are built in; any other one once an admin sets
+  **Used on hosts** (admin UI) or `hosts` (`set_secret`) — is a **placeholder** (`cgph_…`) that
+  only works through the proxy, on its declared hosts, while the channel has live work (a personal
+  one only while its owner is working here and no other person's turn, background job or SSH
+  session is active). Use it
+  exactly like the real credential; it is useless anywhere else. `list_secrets` and this attempt's
+  credential note say which names are protected, which are raw ("unprotected") and which the
+  operator withheld. A 403 `secret-refused` from the proxy names the secret and the reason
+  (`channel-idle`, `owner-not-live`, `another-author-active`, `another-person-ssh-session`) — report it; never try to route
+  around the proxy.
 
 ## Admin access, the container, and `/sudo` (read this before diagnosing "file not found")
 
@@ -195,7 +212,9 @@ THIS channel's container, the same box you work in. One key per person, granted 
 - `show_channel_ssh` — whether the host is set up, who is granted, live sessions, and the
   `~/.ssh/config` block to paste (the channel rides in the ProxyCommand; one key reaches several
   channels). Use it for "how do I SSH in", "who has SSH here", "give me the connection info".
-A container with a live SSH session is never idle-stopped. SSH is refused while this channel is
+A session gets what a turn gets, secrets as placeholders included (behind the egress proxy), and
+while it is open every OTHER person's personal secrets are paused here. A container with a live
+SSH session is never idle-stopped. SSH is refused while this channel is
 in Admin mode and the gateway's `containerFullAccessHome` switch is on, because that container
 would expose the operator's home; `show_channel_ssh` says so. If the host is not set up, the
 operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) — no tool can.

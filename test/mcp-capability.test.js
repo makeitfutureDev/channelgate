@@ -114,3 +114,34 @@ test("a genuinely signed token is still refused when its claims are not a grant"
   assert.equal(verifyGatewayCapability(`${signedWith(base)}.extra`, { secret }).reason, "malformed capability");
   assert.equal(verifyGatewayCapability(signedWith(base), {}).reason, "missing capability or signing secret");
 });
+
+// P1 (container secrets): the relayed remote MCP servers a run may reach are named in the signed
+// grant; the URL and the credential never are (they live in the daemon's in-memory registry).
+test("the optional remoteMcps claim round-trips, is optional, and a caller may fix the jti", async () => {
+  const { mintedCapabilityClaims } = await import("../src/gateway/mcp-capability.js");
+  const token = mintGatewayCapability({ ...identity, remoteMcps: ["composio-user", "make-toolbox"], jti: "fixed-jti-0001", now: 1_000, ttlMs: 5_000 });
+  const verified = verifyGatewayCapability(token, { secret, now: 2_000 });
+  assert.equal(verified.ok, true);
+  assert.deepEqual(verified.claims.remoteMcps, ["composio-user", "make-toolbox"]);
+  assert.equal(verified.claims.jti, "fixed-jti-0001");
+  assert.deepEqual(mintedCapabilityClaims(token), verified.claims);
+
+  // Absent: an older token (and every host run) carries no claim and still verifies.
+  const plain = verifyGatewayCapability(mintGatewayCapability(identity), { secret });
+  assert.equal(plain.ok, true);
+  assert.equal(plain.claims.remoteMcps, undefined);
+  assert.match(plain.claims.jti, /^[0-9a-f-]{36}$/, "the default jti is still a fresh random UUID");
+});
+
+test("a wrong-typed remoteMcps claim is refused at mint and at verify", () => {
+  for (const bad of ["composio-user", [5], ["Composio"], ["-lead"], ["a".repeat(65)], ["dup", "dup"], Array.from({ length: 17 }, (_, i) => `s${i}`), [{}]]) {
+    assert.throws(() => mintGatewayCapability({ ...identity, remoteMcps: bad }), /Invalid remote MCP grants/, JSON.stringify(bad));
+  }
+  assert.throws(() => mintGatewayCapability({ ...identity, jti: "short" }), /Invalid gateway capability id/);
+  assert.throws(() => mintGatewayCapability({ ...identity, jti: 12345678 }), /Invalid gateway capability id/);
+  const base = verifyGatewayCapability(mintGatewayCapability(identity), { secret }).claims;
+  for (const bad of ["composio-user", [5], ["UPPER"], null, { a: 1 }]) {
+    assert.equal(verifyGatewayCapability(signedWith({ ...base, remoteMcps: bad }), { secret }).reason, "invalid remote MCP grants", JSON.stringify(bad));
+  }
+  assert.equal(verifyGatewayCapability(signedWith({ ...base, remoteMcps: [] }), { secret }).ok, true, "an empty list is a valid (empty) grant");
+});

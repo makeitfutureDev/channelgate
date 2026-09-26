@@ -191,13 +191,22 @@ test("fingerprint: create-time config only — the image id moves it, a per-exec
   c.meta = { ...c.meta, someRuntimeThing: "changed" };
   assert.equal(containerFingerprint(c), first, "per-exec inputs are not part of the fingerprint");
 
-  // Every container is created on the bridge network, so the channel's "Allow network" switch
-  // is no longer a create-time input: flipping it must NOT retire the container (its enforcement
-  // point is the planned egress proxy, not the container's network mode).
+  // Every proxy-mode container is created with `--network none`, so the channel's "Allow network"
+  // switch is not a create-time input: flipping it must NOT retire the container — it is the egress
+  // proxy's per-request policy, live on the next connection.
   const off = target("fp-chan", { allowNetwork: false });
   off.container.imageId = "sha256:one";
-  assert.equal(off.container.network, "bridge");
+  assert.equal(off.container.network, "none");
   assert.equal(containerFingerprint(off), first, "the network switch does not move the fingerprint");
+
+  // The raw-socket escape IS create-time: it changes the container's network mode.
+  const raw = target("fp-chan", { rawNetwork: true });
+  raw.container.imageId = "sha256:one";
+  assert.equal(raw.container.network, "bridge");
+  assert.notEqual(containerFingerprint(raw), first, "granting raw sockets recreates the container on the bridge");
+  // …and never deferred: the network mode is in the MOUNT fingerprint too, so clearing rawNetwork
+  // cannot leave a bridged container serving turns that are reported as proxy-enforced.
+  assert.notEqual(containerMountFingerprint(raw), containerMountFingerprint(off));
 });
 
 test("mount fingerprint: the paths a container can SEE, and nothing about how it behaves", () => {
@@ -602,5 +611,107 @@ test("the daemon's timezone crosses into the container — at create AND on ever
   } finally {
     if (real === undefined) delete process.env.TZ;
     else process.env.TZ = real;
+  }
+});
+
+// ── Egress (container-secrets P2) ─────────────────────────────────────────────────────────────
+// With the daemon's egress service registered (a fake provider here: the real one is
+// src/gateway/egress/service.js), a proxy-mode container gets its channel's socket directory and
+// the CA trust bundle as read-only mounts, the proxy env at create, `--network none`, and the
+// listener is bound BEFORE the container is created.
+const { setEgressProvider } = await import("../src/runtimes/container/egress-hook.js");
+const { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR } = await import("../src/runtimes/container/image-paths.js");
+
+function egressProvider({ running = true, error = null, ensure = null } = {}) {
+  const root = tempDir("cg-eg-");
+  const bundle = path.join(tempDir("cg-egca-"), "egress-ca.pem");
+  const calls = [];
+  const provider = {
+    running: () => running,
+    socketDirFor: ({ slug }) => path.join(root, `h-${slug}`),
+    caBundlePath: () => bundle,
+    caSpki: () => "c3BraS1oYXNo",
+    ensure: async (t) => {
+      calls.push(t.container.name);
+      if (ensure) return ensure(t);
+      mkdirSync(path.join(root, `h-${t.slug}`), { recursive: true });
+      return { socketDir: path.join(root, `h-${t.slug}`), socketPath: path.join(root, `h-${t.slug}`, "egress.sock") };
+    },
+    error: () => error,
+    settings: () => SETTINGS,
+  };
+  return { provider, calls, root, bundle };
+}
+
+test("egress: mounts include the channel socket dir and the CA bundle, read-only, in both fingerprints", () => {
+  const eg = egressProvider();
+  setEgressProvider(eg.provider);
+  try {
+    const t = target("eg-mounts");
+    assert.equal(t.container.network, "none");
+    assert.equal(t.container.egress.active, true);
+    const egress = t.container.mounts.find((m) => m.kind === "egress");
+    const ca = t.container.mounts.find((m) => m.kind === "egress-ca");
+    assert.deepEqual(egress, { kind: "egress", type: "bind", source: path.join(eg.root, "h-eg-mounts"), target: CONTAINER_EGRESS_DIR, mode: "ro" });
+    assert.deepEqual(ca, { kind: "egress-ca", type: "bind-file", source: eg.bundle, target: CONTAINER_EGRESS_CA, mode: "ro" });
+    // The per-channel socket is never under the shared control-socket dir every container mounts.
+    assert.ok(!egress.source.startsWith(runtimeSocketDir()), "the egress socket dir must not be visible to other channels");
+
+    const caps = { uidStrategy: "keep-id", supportsInit: true };
+    const args = buildCreateArgs(t, caps, { fingerprint: "c1-eg" });
+    assert.ok(args.includes(`${egress.source}:${CONTAINER_EGRESS_DIR}:ro`));
+    assert.ok(args.includes(`${eg.bundle}:${CONTAINER_EGRESS_CA}:ro`));
+    assert.equal(args[args.indexOf("--network") + 1], "none");
+    for (const pair of ["CG_EGRESS=proxy", "HTTPS_PROXY=http://127.0.0.1:3128", "NODE_EXTRA_CA_CERTS=/run/channelgate/egress-ca.pem", "NO_PROXY=localhost,127.0.0.1,::1"]) {
+      assert.ok(args.includes(pair), `create env carries ${pair}`);
+    }
+
+    const withEgress = { full: containerFingerprint(t), mounts: containerMountFingerprint(t) };
+    setEgressProvider(null);
+    const plain = target("eg-mounts");
+    assert.equal(plain.container.mounts.some((m) => m.kind.startsWith("egress")), false, "no service → no egress mounts");
+    assert.notEqual(containerMountFingerprint(plain), withEgress.mounts);
+    assert.notEqual(containerFingerprint(plain), withEgress.full);
+  } finally {
+    setEgressProvider(null);
+  }
+});
+
+test("egress: ensureUp binds the channel listener before creating, and never mkdirs the CA file source", async () => {
+  const eg = egressProvider();
+  setEgressProvider(eg.provider);
+  try {
+    const h = harness();
+    const t = target("eg-ensure");
+    await h.lifecycle.ensureUp(t, {});
+    assert.deepEqual(eg.calls, [t.container.name]);
+    assert.ok(h.fake.last("run"), "the container is created after the listener is up");
+    assert.equal(existsSync(eg.bundle), false, "a bind-file source is never created as a directory");
+  } finally {
+    setEgressProvider(null);
+  }
+});
+
+test("egress: a listener that cannot bind, or a service that is down, fails ensureUp closed before any create", async () => {
+  const failing = egressProvider({ ensure: async () => { throw new Error("egress proxy unavailable for this channel: EADDRINUSE"); } });
+  setEgressProvider(failing.provider);
+  try {
+    const h = harness();
+    await assert.rejects(h.lifecycle.ensureUp(target("eg-bind-fail"), {}), /egress proxy unavailable for this channel/);
+    assert.equal(h.fake.calls.some((c) => c.argv[1] === "run" && c.argv[2] === "-d"), false, "nothing is created");
+  } finally {
+    setEgressProvider(null);
+  }
+  const down = egressProvider({ running: false, error: "egress proxy unavailable: CA unreadable. Restart the gateway." });
+  setEgressProvider(down.provider);
+  try {
+    const h = harness();
+    const t = target("eg-down");
+    assert.equal(t.container.egress.active, false);
+    assert.equal(t.container.network, "none", "a down service never opens the bridge");
+    await assert.rejects(h.lifecycle.ensureUp(t, {}), /egress proxy unavailable: CA unreadable/);
+    assert.equal(h.fake.calls.some((c) => c.argv[1] === "run" && c.argv[2] === "-d"), false);
+  } finally {
+    setEgressProvider(null);
   }
 });

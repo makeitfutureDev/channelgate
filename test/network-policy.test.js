@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileNetworkPolicy, requestedNetworkPolicy, NETWORK_MODES, NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../src/engines/network-policy.js";
+import { compileNetworkPolicy, requestedNetworkPolicy, NETWORK_MODES, NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED, networkEnforcedFor } from "../src/engines/network-policy.js";
 import { readFileSync } from "node:fs";
 import { adapterFor } from "../src/engines/registry.js";
 
@@ -61,16 +61,27 @@ test("an explicit admin bypass is reported honestly by the adapter, and the netw
   }
 });
 
-test("the module says out loud that the compiled policy is NOT enforced, and its header no longer claims otherwise", () => {
-  // The header used to promise that "off" runs the container with no network at all. It never did:
-  // every container is on the bridge network and no egress is policed per channel, so the switch is
-  // what the engines are TOLD. A stale comment here is how the misreading spread to the label, to
-  // /status and to the run_config event.
-  assert.equal(NETWORK_POLICY_ENFORCED, false);
+test("the policy is enforced by the egress proxy, and advisory only where the proxy is not the network", () => {
+  // Container-secrets P2: a proxy-mode container has `--network none` and reaches out only through
+  // the daemon's egress proxy, whose policy IS this switch. The header must say where that stops
+  // being true (legacy bridge egress, raw sockets, a host thread), and every surface asks
+  // networkEnforcedFor(target) instead of assuming.
+  assert.equal(NETWORK_POLICY_ENFORCED, true);
   assert.match(NETWORK_ADVISORY_NOTE, /advisory/i);
   assert.match(NETWORK_ADVISORY_NOTE, /not enforced/i);
   const source = readFileSync(new URL("../src/engines/network-policy.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /runs the container with no\s+network at all/, "the retired claim must not come back");
   assert.match(source, /ADVISORY/);
-  assert.match(source, /bridge network/);
+  assert.match(source, /egress proxy/);
+});
+
+test("networkEnforcedFor: only an active proxy plan on a --network none container is enforcement", () => {
+  const plan = (over = {}) => ({ backend: "container", container: { egress: { mode: "proxy", active: true, network: "none", rawNetwork: false, ...over } } });
+  assert.equal(networkEnforcedFor(plan()), true);
+  assert.equal(networkEnforcedFor(plan({ network: "bridge", rawNetwork: true })), false, "raw sockets beside the proxy");
+  assert.equal(networkEnforcedFor(plan({ active: false })), false, "service down or legacy mode");
+  assert.equal(networkEnforcedFor({ backend: "host", container: null }), false, "a sudo host thread");
+  assert.equal(networkEnforcedFor({ meta: { sudoMode: true } }), false);
+  // A meta-only question with no egress service registered in this process: not enforced.
+  assert.equal(networkEnforcedFor({ meta: {} }), false);
 });

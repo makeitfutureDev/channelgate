@@ -86,7 +86,6 @@ export function createFakeRuntime({
         "secret-env-bridge": { command: nodeBin, args: [`${IMAGE_BIN}/mcp/secret-env-bridge.js`] },
         "composio-sdk-bridge": { command: nodeBin, args: [`${IMAGE_BIN}/mcp/composio-sdk-bridge.js`] },
         "stop-subagents-hook": { command: nodeBin, args: [`${IMAGE_BIN}/hooks/stop-subagents.mjs`] },
-        "mcp-remote": { command: nodeBin, args: [`${IMAGE_BIN}/mcp/remote-secret-bridge.js`] },
       };
       const helper = helpers[name];
       if (!helper) throw new TypeError(`unknown runtime helper "${name}"`);

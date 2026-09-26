@@ -39,10 +39,17 @@ container. Deleting a conversation is the exceptional operation that may remove 
 
 ## Honest network model
 
-Containers use the bridge network. *Allow network* records policy intent and is passed to engines;
-Codex read mode refuses network itself. This release has neither domain filtering nor a reliable
-container egress cut-off. Do not describe the switch as a firewall or promise host-level network
-isolation.
+Containers run with `--network none`; their only egress is the daemon's per-channel egress proxy
+(`src/gateway/egress/`) over a read-only unix socket whose path is the channel identity. The proxy
+enforces *Allow network* on every request (off: engine endpoints + the channel's selected remote
+MCPs; on: public destinations), always refuses private, loopback and metadata addresses (every
+resolved address checked and pinned), terminates TLS with a per-deployment CA, and swaps
+placeholder credentials for real ones only on their declared hosts while the channel has live
+work. There is no per-domain allow-list when the switch is on. The legacy `containerEgressMode =
+"bridge"` and a channel's `rawNetwork` restore the open bridge, where the switch is advisory again;
+`networkEnforcedFor(target)` is the one answer every surface uses. Codex read mode refuses network
+itself. Do not promise more than that: a member with a live placeholder can use the real credential
+on its declared hosts, and request-signing or raw-protocol secrets stay raw.
 
 ## Permission modes
 

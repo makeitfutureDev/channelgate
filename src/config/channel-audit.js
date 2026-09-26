@@ -34,6 +34,8 @@ export const POLICY_KEYS = Object.freeze([
   "autoMode", // permission prompts auto-approved
   "allowBash", // shell + file-edit tools
   "allowNetwork", // network egress for the channel's runs
+  "rawNetwork", // raw sockets on the open bridge beside the egress proxy (admin escape)
+  "egressRawHosts", // hosts whose SSH/Postgres ports get a raw tunnel through the proxy
   "cleanMode", // run bare (no MCP servers, no skills)
   "noDefaultTokens", // refuse the org-default token fallback here
   "engine", // per-channel engine override
@@ -56,7 +58,7 @@ export const POLICY_KEYS = Object.freeze([
 
 // Keys whose value is a list. Reported as a sorted array of plain strings so a reordered list is
 // not a "change" and an MCP selection object never drags its transport/config fields into the row.
-const LIST_KEYS = new Set(["managers", "allowedUsers", "sshUsers", "allowedMcps", "allowedCodexMcps"]);
+const LIST_KEYS = new Set(["managers", "allowedUsers", "sshUsers", "allowedMcps", "allowedCodexMcps", "egressRawHosts"]);
 
 // A whole row's `changes` blob stays bounded: a 400-member allowedUsers list must not turn one
 // audit event into a document. Over the cap, list values collapse to their counts.

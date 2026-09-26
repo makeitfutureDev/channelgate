@@ -14,6 +14,7 @@ import { appendTail } from "../util/tail.js";
 import { trackEngineChild } from "./process-registry.js";
 import { containerPaths, dropHostLocationEnv, isIsolatedTarget, probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
+import { applyEgressEnv } from "../runtimes/container/egress-env.js";
 import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 import { QWEN_PROVIDERS } from "./qwen.js";
 
@@ -72,15 +73,18 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
   // and the gateway-owned values are still applied LAST so a channel secret cannot displace them.
   if (isIsolatedTarget(target)) {
     const image = containerPaths(target);
-    const base = buildChildEnv({ ...safeSpawnEnv(extraEnv), ...browserSpawnEnv(browserNamespace) }, source);
-    return applyProviderEnv({
+    const base = buildChildEnv({ ...safeSpawnEnv(extraEnv), ...browserSpawnEnv(browserNamespace, { target }) }, source);
+    // The egress proxy and CA variables (runtimes/container/egress-env.js) are gateway-owned and in
+    // this last group too: with the proxy as the container's only network, a daemon HTTPS_PROXY
+    // passed through child-env.js would be a dead route, and ALL_PROXY a bypass attempt.
+    return applyProviderEnv(applyEgressEnv({
       ...dropHostLocationEnv(base),
       HOME: image.home,
       CLAUDE_CONFIG_DIR: image.claudeConfigDir,
       PATH: image.path,
       TMPDIR: image.tmpDir,
       ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
-    }, providerEnv);
+    }, target), providerEnv);
   }
   return applyProviderEnv(buildChildEnv({
     ...safeSpawnEnv(extraEnv),

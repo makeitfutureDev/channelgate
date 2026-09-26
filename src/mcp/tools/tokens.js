@@ -7,14 +7,39 @@
 // The channel's own secrets are WRITTEN where they were: the Slack Secrets modal and the admin UI.
 import { z } from "zod";
 import { setUser } from "../../config/store.js";
+import { revokeRemoteMcpsForAuthor } from "../remote-mcp-registry.js";
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../../config/scoped-env.js";
 import { listChannelEnv } from "../../config/channel-env.js";
+import { getContainerRuntime } from "../../config/settings.js";
 
 // Masked, never valued — the same write-only shape every other secret surface returns.
+// The egress proxy's view of one secret (config/channel-env.js listEnvVars): protected = a proxy-mode
+// container receives a placeholder swapped only on these hosts; unprotected = the raw value.
+function egressNote(v) {
+  if (v.protected === true) return ` — protected via egress proxy (${(v.hosts || []).join(", ")})`;
+  if (v.protected === false) return " — unprotected (raw)";
+  return "";
+}
+
+function protectionNote(saved) {
+  if (!saved) return "";
+  return saved.protected ? ` (protected via egress proxy on ${saved.hosts.join(", ")})` : " (unprotected: containers receive the raw value — pass `hosts` to protect it)";
+}
+
+// The remaining raw (unruled) secrets as a FINDING, not a state: what happens to each one in a
+// container and the one fix. "" when every listed secret has a rule.
+export function unruledFinding(names = [], { bridge = false, strict = true } = {}) {
+  if (!names.length) return "";
+  const list = names.sort().map((name) => `\`${name}\``).join(", ");
+  const underProxy = strict ? "WITHHELD from containers (strict mode)" : "injected RAW into containers";
+  const effect = bridge ? `injected raw today (the LEGACY bridge mode), and ${underProxy.replace(/^WITHHELD/, "withheld").replace(/^injected RAW/, "raw")} once the egress proxy is on` : underProxy;
+  return `\n\n**Finding:** ${names.length} secret${names.length === 1 ? " has" : "s have"} no egress rule — ${list}: ${effect}. Declare the hosts each is used on (\`hosts\` with set_secret, the Secrets modal or the admin UI's “Used on hosts”) to give containers a placeholder instead.`;
+}
+
 function renderVars(vars, empty) {
   if (!vars.length) return empty;
   return vars
-    .map((v) => `• \`${v.name}\`${v.last4 ? ` (…${v.last4})` : ""}${v.provider && v.provider !== "local" ? ` via ${v.provider}` : ""}${v.setBy ? ` — set by <@${v.setBy}>` : ""}${v.resolvable ? "" : " ⚠️ unresolvable provider"}`)
+    .map((v) => `• \`${v.name}\`${v.last4 ? ` (…${v.last4})` : ""}${v.provider && v.provider !== "local" ? ` via ${v.provider}` : ""}${v.setBy ? ` — set by <@${v.setBy}>` : ""}${egressNote(v)}${v.resolvable === false ? " ⚠️ unresolvable provider" : ""}`)
     .join("\n");
 }
 
@@ -58,6 +83,9 @@ export function register(server, ctx) {
     async () => {
       if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
       await setUser(createdBy, { composioToken: "" });
+      // A container run relays the token daemon-side for the life of its capability; a removed
+      // token must stop working now, not in six hours (src/mcp/remote-mcp-registry.js).
+      revokeRemoteMcpsForAuthor(createdBy);
       return text("🗑️ Removed your Composio token.");
     }
   );
@@ -89,6 +117,7 @@ export function register(server, ctx) {
     async () => {
       if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
       await setUser(createdBy, { toolboxToken: "" });
+      revokeRemoteMcpsForAuthor(createdBy); // same reason as clear_my_composio_token
       return text("🗑️ Removed your Toolbox token.");
     }
   );
@@ -132,23 +161,36 @@ export function register(server, ctx) {
     async ({ scope } = {}) => {
       const wanted = scopeOf(scope, "all");
       const sections = [];
+      // Names with no egress rule, across the listed scopes: reported as a FINDING below, because
+      // under the proxy each one is either withheld (strict) or the one raw value in a container.
+      const unruled = new Set();
+      const noteUnruled = (vars) => { for (const v of vars || []) if (v?.protected === false) unruled.add(v.name); return vars; };
       const admin = await requireAdmin();
       if (wanted === "all" || wanted === "organization") {
         // Every run is told the organization NAMES in its prompt already; the tails and authors
         // are the admin surface's, like the UI.
-        const vars = listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable }));
+        // Protection is a rule fact, not a secret: shown to everyone who sees the names.
+        const vars = noteUnruled(listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts })));
         sections.push(`**Organization** (every conversation)\n${renderVars(vars, "_None set._")}`);
       }
       if (wanted === "all" || wanted === "personal") {
         const refusal = requireSelf();
-        sections.push(`**Personal** (yours; only runs you author)\n${refusal ? `_${refusal}_` : renderVars(await listUserEnv(createdBy), "_None set._")}`);
+        sections.push(`**Personal** (yours; only runs you author)\n${refusal ? `_${refusal}_` : renderVars(noteUnruled(await listUserEnv(createdBy)), "_None set._")}`);
       }
       if (wanted === "all" || wanted === "conversation") {
         const meta = (await loadMeta?.()) || {};
-        sections.push(`**This conversation**\n${renderVars(listChannelEnv(meta), "_None set — the Secrets modal (/secrets) or the admin UI adds one._")}`);
+        sections.push(`**This conversation**\n${renderVars(noteUnruled(listChannelEnv(meta)), "_None set — the Secrets modal (/secrets) or the admin UI adds one._")}`);
       }
       if (!sections.length) return text(`Unknown scope \`${scope}\`. Use one of: all, ${SCOPES.join(", ")}.`);
-      return text(`${sections.join("\n\n")}\n\n_Most specific wins when names collide: conversation over personal over organization. A process that already started keeps its environment; a new one has these._`);
+      const runtime = getContainerRuntime();
+      const bridge = runtime.egressMode === "bridge";
+      const strict = runtime.egressSecretsStrict !== false;
+      const egressFootnote = bridge
+        ? " The gateway runs the LEGACY open-bridge egress mode, so every value — protected or not — is injected raw into containers."
+        : strict
+          ? " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an unprotected one is withheld (strict mode)."
+          : " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an unprotected one is the raw value (set `hosts` with set_secret to protect it).";
+      return text(`${sections.join("\n\n")}${unruledFinding([...unruled], { bridge, strict })}\n\n_Most specific wins when names collide: conversation over personal over organization. A process that already started keeps its environment; a new one has these.${egressFootnote}_`);
     }
   );
 
@@ -162,25 +204,37 @@ export function register(server, ctx) {
         "team's account. A conversation's own secret of the same name still wins there. Write-only: " +
         "nothing can read the value back. IMPORTANT: send it in a DM with the bot, never in a shared " +
         "channel, and DELETE the message containing it immediately after. A conversation's own " +
-        "secrets are set in its Secrets modal or the admin UI, not here.",
-      inputSchema: { name: z.string(), value: z.string(), scope: z.enum(["personal", "organization", "my", "org"]).optional() },
+        "secrets are set in its Secrets modal or the admin UI, not here. Optional `hosts` (with " +
+        "`headers`, `format`) declares where the gateway's egress proxy may use it: a container then " +
+        "holds only a placeholder, swapped for the real value on those hosts alone. Well-known names " +
+        "(GitHub, Vercel, Supabase, Make, Composio tokens) are protected without it. Never declare a " +
+        "multi-tenant suffix such as *.vercel.app or *.github.io — it covers other customers' sites.",
+      inputSchema: {
+        name: z.string(),
+        value: z.string(),
+        scope: z.enum(["personal", "organization", "my", "org"]).optional(),
+        hosts: z.array(z.string()).max(16).optional(),
+        headers: z.array(z.string()).max(8).optional(),
+        format: z.enum(["bearer", "raw", "basic-password", "basic-user"]).optional(),
+      },
     },
-    async ({ name, value, scope }) => {
+    async ({ name, value, scope, hosts, headers, format }) => {
+      const rules = { ...(hosts !== undefined ? { hosts } : {}), ...(headers !== undefined ? { headers } : {}), ...(format !== undefined ? { format } : {}) };
       const target = scopeOf(scope, "personal");
       try {
         if (target === "organization") {
           const refusal = await requireOrgAdmin();
           if (refusal) return text(refusal);
-          const vars = patchOrgEnv({ set: { name, value }, actor: createdBy });
+          const vars = patchOrgEnv({ set: { name, value, ...rules }, actor: createdBy });
           const saved = vars.find((v) => v.name === String(name || "").trim().toUpperCase());
-          return text(`✅ Saved the organization secret \`${saved?.name || name}\`. Every conversation's next run receives it.${DELETE_MSG_WARNING}`);
+          return text(`✅ Saved the organization secret \`${saved?.name || name}\`${protectionNote(saved)}. Every conversation's next run receives it.${DELETE_MSG_WARNING}`);
         }
         if (target !== "personal") return text(`\`set_secret\` writes the personal or organization scope; a conversation's own secrets are set in its Secrets modal or the admin UI.`);
         const refusal = requireSelf();
         if (refusal) return text(refusal);
-        const vars = await patchUserEnv(createdBy, { set: { name, value } });
+        const vars = await patchUserEnv(createdBy, { set: { name, value, ...rules } });
         const saved = vars.find((v) => v.name === String(name || "").trim().toUpperCase());
-        return text(`✅ Saved your personal secret \`${saved?.name || name}\`. It'll be injected into runs you author.${DELETE_MSG_WARNING}`);
+        return text(`✅ Saved your personal secret \`${saved?.name || name}\`${protectionNote(saved)}. It'll be injected into runs you author.${DELETE_MSG_WARNING}`);
       } catch (e) {
         return text(`❌ ${e.message}`);
       }

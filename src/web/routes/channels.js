@@ -53,7 +53,7 @@ import {
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
-import { listChannelEnv, normalizeEnvName, patchChannelEnv } from "../../config/channel-env.js";
+import { listChannelEnv, normalizeEnvName, patchChannelEnv, swapRuleFieldsFrom } from "../../config/channel-env.js";
 // Per-channel POLICY changes (Allow-network, Full access, work folder, access lists, engine…) are
 // audited by diffing the record that was replaced against the one now stored — see config/channel-audit.js.
 import { ADMIN_UI_ACTOR, logChannelPolicyChange } from "../../config/channel-audit.js";
@@ -61,6 +61,7 @@ import { ADMIN_UI_ACTOR, logChannelPolicyChange } from "../../config/channel-aud
 // — which is precisely why they must not ride out on a spread of the whole record.
 import { stripDeadFields } from "../../config/dead-fields.js";
 import { cliEnvKeys, cliIntegrationIds } from "../../config/cli-catalog.js";
+import { assertValidEgressRawHosts } from "../../gateway/egress/catalog-rules.js";
 import { getChannelVpnStatus, setChannelVpnEnabled } from "../../gateway/channel-vpn-control.js";
 import { clearThreadRuntimeOverrides } from "../../gateway/thread-engine.js";
 import { isAuthenticated } from "../auth.js";
@@ -337,6 +338,14 @@ export function createChannelsRouter({
       // Validated HERE for the same reason as workDir: the merge callback below runs synchronously
       // inside the store transaction and cannot answer the request. A malformed entry rejects the
       // whole save (400) instead of quietly wiping the channel's approved egress list.
+      let egressRawHostsPatch;
+      if (body.egressRawHosts !== undefined) {
+        try {
+          egressRawHostsPatch = assertValidEgressRawHosts(body.egressRawHosts);
+        } catch (e) {
+          return res.status(400).json({ error: e.message });
+        }
+      }
       // Atomic read-modify-write: the merge callback runs inside the store's BEGIN IMMEDIATE
       // transaction, so a concurrent writer (Slack /mode, an MCP channel-admin tool) can't be
       // clobbered by this save reading stale meta.
@@ -378,6 +387,11 @@ export function createChannelsRouter({
             model: typeof body.model === "string" ? body.model.trim() : current.model,
             effort: typeof body.effort === "string" ? body.effort.trim() : current.effort,
           };
+          // Egress escapes (src/gateway/egress/): raw sockets on the open bridge beside the proxy,
+          // and the hosts whose SSH/Postgres ports get a raw tunnel through it. Admin API only, and
+          // written only when sent, so an unrelated save records no change to them.
+          if (typeof body.rawNetwork === "boolean") out.rawNetwork = body.rawNetwork;
+          if (egressRawHostsPatch !== undefined) out.egressRawHosts = egressRawHostsPatch;
           // Capability profile: a preset expands to (and OVERRIDES) the four capability flags, so the
           // preset is authoritative even if a stale checkbox was also sent. "custom" keeps whatever
           // flags were set above (the individual toggles). An unknown/absent profile leaves things as-is.
@@ -602,7 +616,7 @@ export function createChannelsRouter({
         // Function form: read-modify-write inside the store transaction, so two admins adding
         // different variables at the same time can't clobber each other's entry.
         saved = await patchChannelMeta(ctx.entry.slug, (existing) => ({
-          env: patchChannelEnv(existing?.env, { set: { name: req.params.name, value }, actor: WEB_ADMIN_ACTOR }),
+          env: patchChannelEnv(existing?.env, { set: { name: req.params.name, value, ...swapRuleFieldsFrom(req.body) }, actor: WEB_ADMIN_ACTOR }),
         }));
       } catch (e) {
         return res.status(400).json({ error: e.message });

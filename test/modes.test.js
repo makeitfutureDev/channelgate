@@ -7,6 +7,7 @@ const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, P
   await import("../src/gateway/modes.js");
 const { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } = await import("../src/engines/network-policy.js");
 const { hasSudoRuntimeAuthority } = await import("../src/runtimes/sudo-authority.js");
+const { setEgressProvider } = await import("../src/runtimes/container/egress-hook.js");
 
 // modes.js is the mode/profile → capability-flag mapping plus the "who may manage a channel"
 // authz check. Both feed directly into what a spawned engine is allowed to do, so the exact
@@ -45,8 +46,9 @@ test("modeLabel states the network in BOTH directions, never by omission", () =>
 });
 
 test("the detailed label admits the switch is advisory, and only where it matters", () => {
-  assert.equal(NETWORK_POLICY_ENFORCED, false, "flip this only when a container-side egress proxy actually enforces the switch");
-  // OFF is the state people misread as a boundary, so that is the one that carries the caveat.
+  assert.equal(NETWORK_POLICY_ENFORCED, true, "the egress proxy enforces the switch by default");
+  // With no egress service (this process registers none) the switch is advisory for the channel,
+  // and OFF — the state people misread as a boundary — is the one that carries the caveat.
   assert.equal(modeLabel({}, { detail: true }), `Read-only · network off (${NETWORK_ADVISORY_NOTE})`);
   assert.match(NETWORK_ADVISORY_NOTE, /not enforced/i);
   // ON is simply true — the container is on the bridge network — so it gains nothing.
@@ -54,6 +56,18 @@ test("the detailed label admits the switch is advisory, and only where it matter
   assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }, { detail: true }), "Worker · network unsupported");
   // The compact form is the default: it rides the app-home channel list.
   assert.equal(modeLabel({}), "Read-only · network off");
+});
+
+test("with the egress proxy running, the label drops the caveat — except for raw-socket or legacy channels", () => {
+  setEgressProvider({ running: () => true, socketDirFor: () => "/gw/eg/abc", caBundlePath: () => "/gw/run/egress-ca.pem", caSpki: () => "spki", settings: () => ({}) });
+  try {
+    assert.equal(modeLabel({}, { detail: true }), "Read-only · network off", "enforced: no caveat");
+    assert.equal(networkLabel({ rawNetwork: true }, { detail: true }), `network off (${NETWORK_ADVISORY_NOTE})`, "raw bridge beside the proxy: advisory");
+    setEgressProvider({ running: () => true, socketDirFor: () => "/gw/eg/abc", caBundlePath: () => "/gw/run/egress-ca.pem", settings: () => ({ egressMode: "bridge" }) });
+    assert.equal(networkLabel({}, { detail: true }), `network off (${NETWORK_ADVISORY_NOTE})`, "legacy bridge egress: advisory");
+  } finally {
+    setEgressProvider(null);
+  }
 });
 
 test("networkState/networkLabel are the one derivation every surface shares", () => {

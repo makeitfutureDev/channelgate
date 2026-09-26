@@ -17,6 +17,7 @@ import { logEvent } from "../../util/logger.js";
 import { logChannelPolicyChange } from "../../config/channel-audit.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../../gateway/mcp-discovery.js";
 import { engineLabel, requireAdapter } from "../../engines/registry.js";
+import { networkEnforcedFor } from "../../engines/network-policy.js";
 import { getDriveSyncEnabled, getDriveSyncKeyJson, getDriveSyncKeyFile, getDriveSyncKeyEmail } from "../../config/settings.js";
 import { parseDriveFolderId, testChannelSync } from "../../gateway/drivesync.js";
 
@@ -199,10 +200,12 @@ export function register(server, ctx) {
     "set_channel_network",
     {
       description:
-        "ADMIN ONLY. Set this channel's allowed network policy. On permits internet use; off tells the " +
-        "engine not to use the network. This policy is advisory: containers remain on the bridge network, " +
-        "with no domain allowlist or enforced egress cutoff. It grants no host credential files or mounts. " +
-        "Takes effect on the next message.",
+        "ADMIN ONLY. Set this channel's allowed network policy. On permits internet use (any public host, " +
+        "no domain allowlist); off limits the channel to the engine endpoints and its selected connectors. " +
+        "Enforced by the gateway's egress proxy (the container has no network of its own) unless the gateway " +
+        "runs the legacy open-bridge egress mode or this channel was given raw sockets — then it is advisory. " +
+        "Private, loopback and cloud-metadata addresses are never reachable through the proxy. It grants no " +
+        "host credential files or mounts. Takes effect on the next request.",
       inputSchema: { enabled: z.boolean() },
     },
     async ({ enabled }) => {
@@ -210,10 +213,13 @@ export function register(server, ctx) {
       if (!(await patchAuditedMeta((meta) => (meta ? { allowNetwork: Boolean(enabled) } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
+      const enforced = networkEnforcedFor({ meta: (await loadMeta()) || {} });
       return text(
         enabled
-          ? "✅ Network ON — policy permits internet use, with no domain allowlist. Effective next message."
-          : "✅ Network OFF — policy instructs the engine not to use the network; this is advisory, not an egress cutoff. Effective next message."
+          ? `✅ Network ON — public internet allowed, with no domain allowlist${enforced ? " (through the egress proxy: private and metadata addresses stay blocked)" : ""}. Effective on the next request.`
+          : enforced
+            ? "✅ Network OFF — enforced by the egress proxy: only the engine endpoints and this channel's selected connectors are reachable. Effective on the next request."
+            : "✅ Network OFF — policy instructs the engine not to use the network; for this channel it is advisory, not an egress cutoff (legacy bridge egress or raw sockets). Effective next message."
       );
     }
   );

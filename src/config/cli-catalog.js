@@ -12,6 +12,14 @@
 // 2026-09-03: the product runs Linux + containers only, a container has no domain allow-list, and
 // its image ships the CLIs. `domains` stay as documentation of what each CLI talks to.
 //
+// `swap` (container-secrets P2) is the egress proxy's rule for this CLI's credential: which env
+// NAMES carry it (exact strings, or RegExps for a family), and on which hosts / headers / header
+// format the proxy may swap the placeholder a container holds for the real value
+// (src/gateway/egress/catalog-rules.js turns these into SECRET_NAME_RULES). A name with no rule
+// anywhere is injected raw and listed as unprotected. Deliberately narrow: a name family that also
+// covers non-secret configuration (VERCEL_ORG_ID, VERCEL_PROJECT_ID) would turn that configuration
+// into a placeholder the CLI then sends somewhere no rule swaps it.
+//
 // This module is PURE data + functions (no imports, no settings access) so config, gateway, and
 // web layers can all use it without import cycles.
 
@@ -22,6 +30,7 @@ export const CLI_INTEGRATIONS = {
     desc: "vercel CLI deploys (`vercel`, `vercel deploy`)",
     domains: ["vercel.com", "api.vercel.com", "*.vercel.app"],
     envKeys: ["VERCEL_TOKEN"],
+    swap: { names: ["VERCEL_TOKEN", /^VERCEL_[A-Z0-9_]*TOKEN$/], hosts: ["api.vercel.com", "vercel.com"], headers: ["authorization"], format: ["bearer"] },
     credentialHomePaths: [
       // Current CLI: per-platform data dir. Legacy CLI: ~/.vercel/auth.json.
       "Library/Application Support/com.vercel.cli",
@@ -36,6 +45,9 @@ export const CLI_INTEGRATIONS = {
     desc: "supabase CLI management operations (link, functions deploy, db push over HTTPS)",
     domains: ["supabase.com", "api.supabase.com", "*.supabase.co"],
     envKeys: ["SUPABASE_ACCESS_TOKEN", "SUPABASE_DB_PASSWORD"],
+    // SUPABASE_DB_PASSWORD is a Postgres password: it rides the raw 5432/6543 protocol, which no
+    // HTTP proxy can swap, so it has NO rule and stays raw (listed as unprotected).
+    swap: { names: ["SUPABASE_ACCESS_TOKEN"], hosts: ["api.supabase.com", "supabase.com"], headers: ["authorization"], format: ["bearer"] },
     // The CLI's keychain-less token store — the one a headless Linux host uses.
     credentialHomePaths: [".supabase"],
   },
@@ -45,6 +57,9 @@ export const CLI_INTEGRATIONS = {
     desc: "Make.com API calls (scenarios, blueprints) — token comes from env/config, not a home file",
     domains: ["make.com", "*.make.com"],
     envKeys: ["MAKE_API_TOKEN"],
+    // Make sends `Authorization: Token <key>` (the proxy's "bearer" position: any scheme word, and
+    // only the placeholder is replaced, so the prefix survives) or the bare key in x-api-key (raw).
+    swap: { names: ["MAKE_API_TOKEN", /^MAKE_API_(TOKEN|KEY)[A-Z0-9_]*$/], hosts: ["*.make.com", "make.com"], headers: ["authorization", "x-api-key"], format: ["bearer", "raw"] },
     credentialHomePaths: [],
   },
 };

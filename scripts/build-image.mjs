@@ -28,7 +28,6 @@ const containersDir = path.join(repoRoot, "containers");
 // The engine-spawned helpers that must exist inside the image. Anything they import comes along.
 const BUNDLE_ENTRIES = [
   "src/mcp/secret-env-bridge.js", // Codex: bundle → env → exec the real MCP command
-  "src/mcp/remote-secret-bridge.js", // header-bearing remote MCPs: reads the 0600 bundle, execs mcp-remote
   "src/gateway/hooks/stop-subagents.mjs", // the Claude Stop hook
 ];
 
@@ -40,10 +39,20 @@ const BUNDLE_ENTRIES = [
 // same socket, so this one file serves both.
 const SOCKET_BRIDGE_SOURCE = "src/mcp/socket-bridge.js";
 const SOCKET_BRIDGE_DEST = "bin/cg-mcp-bridge.mjs";
+// The container-side half of the egress proxy (container-secrets P2), staged the same way: a
+// verbatim, dependency-free copy that cg-init starts under CG_EGRESS=proxy.
+const EGRESS_FORWARDER_SOURCE = "src/mcp/egress-forwarder.js";
+const EGRESS_FORWARDER_DEST = "bin/cg-egress.mjs";
+// The SSH ProxyCommand helper (container-secrets P3), staged the same way; containers/bin/
+// cg-egress-connect is its POSIX shim.
+const EGRESS_CONNECT_SOURCE = "src/mcp/egress-connect.js";
+const EGRESS_CONNECT_DEST = "bin/cg-egress-connect.mjs";
 
-// Packages the bundle needs that no `import` statement names: remote-secret-bridge resolves
-// mcp-remote's proxy with createRequire, so it has to be resolvable from /opt/channelgate.
-const BUNDLE_EXTRA_PACKAGES = ["mcp-remote"];
+// Packages the bundle needs that no `import` statement names. Empty since container-secrets P4
+// retired remote-secret-bridge (the only helper that resolved mcp-remote with createRequire):
+// header-bearing remote MCPs are relayed by the daemon, so no bundled helper bridges one. The image
+// still installs the pinned mcp-remote globally (containers/Containerfile) as a tool.
+const BUNDLE_EXTRA_PACKAGES = [];
 
 const IMPORT_PATTERNS = [
   /(?:^|[\n;])\s*(?:import|export)\s[^;]*?from\s*["']([^"']+)["']/g,
@@ -117,6 +126,12 @@ function stageContext({ closure }) {
   const bridge = path.join(repoRoot, SOCKET_BRIDGE_SOURCE);
   if (!existsSync(bridge)) throw new Error(`${SOCKET_BRIDGE_SOURCE} is missing — the container half of the gateway MCP cannot be staged`);
   cpSync(bridge, path.join(dir, SOCKET_BRIDGE_DEST));
+  const forwarder = path.join(repoRoot, EGRESS_FORWARDER_SOURCE);
+  if (!existsSync(forwarder)) throw new Error(`${EGRESS_FORWARDER_SOURCE} is missing — the container half of the egress proxy cannot be staged`);
+  cpSync(forwarder, path.join(dir, EGRESS_FORWARDER_DEST));
+  const connect = path.join(repoRoot, EGRESS_CONNECT_SOURCE);
+  if (!existsSync(connect)) throw new Error(`${EGRESS_CONNECT_SOURCE} is missing — the SSH ProxyCommand helper cannot be staged`);
+  cpSync(connect, path.join(dir, EGRESS_CONNECT_DEST));
   const bundleDir = path.join(dir, "bundle");
   for (const rel of closure.files) {
     // Strip the leading `src/` so /opt/channelgate mirrors src/ — every relative import inside the

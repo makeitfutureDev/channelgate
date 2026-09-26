@@ -111,3 +111,28 @@ test("selected Claude MCP definitions reach the isolated payload and warm finger
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
+
+// Container-secrets P1: on an isolated target a relayed remote's token is no longer in the JSON
+// (the daemon's relay registry holds it), yet a rotated token must still retire the warm process.
+test("a rotated relayed header changes the warm fingerprint; the same headers keep it", async () => {
+  const { createFakeRuntime } = await import("./fixtures/fake-runtime-backend.js");
+  const target = createFakeRuntime().target();
+  const input = {
+    channelId: "C_RELAY_FP", slug: "relay-fp", authorId: "U_RELAY_FP", threadKey: "9.1", origin: "slack_foreground",
+    principalTrusted: true, engine: "claude", fingerprintNow: 10_000, target,
+    composioUserToken: "ck_user_v1", composioToken: "ck_shared_v1", toolboxToken: "tb_v1",
+    makeToolboxUrl: "https://eu1.make.com/mcp/server/fp", makeToolboxKey: "mk_v1",
+  };
+  const first = await buildEngineMcpRuntime(input);
+  const same = await buildEngineMcpRuntime(input);
+  assert.notEqual(first.gatewayCapability, same.gatewayCapability, "a fresh grant (and jti) per run");
+  assert.equal(first.mcpConfigFingerprint, same.mcpConfigFingerprint, "same headers, same warm process");
+  for (const secret of ["ck_user_v1", "ck_shared_v1", "tb_v1", "mk_v1"]) {
+    assert.ok(!first.mcpConfigJson.includes(secret), `${secret} never in the container's config`);
+    assert.ok(!first.mcpConfigFingerprint.includes(secret), `${secret} never in the fingerprint either`);
+  }
+  for (const [key, value] of [["composioUserToken", "ck_user_v2"], ["composioToken", "ck_shared_v2"], ["toolboxToken", "tb_v2"], ["makeToolboxKey", "mk_v2"], ["makeToolboxUrl", "https://eu2.make.com/mcp/server/fp"]]) {
+    const rotated = await buildEngineMcpRuntime({ ...input, [key]: value });
+    assert.notEqual(rotated.mcpConfigFingerprint, first.mcpConfigFingerprint, `${key} rotation retires the warm process`);
+  }
+});

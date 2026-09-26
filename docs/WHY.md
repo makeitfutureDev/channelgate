@@ -598,10 +598,10 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **What:** opt-in shell+writes inside the channel's container (which mounts only the channel's
   own folder — the gateway root, the operator's `.ssh`/`.aws`/keychain paths and other channels'
   folders are simply absent) and an opt-in network switch that tells the engines whether the
-  channel is meant to have network (enables git push / gh / deploy CLIs). Every container is on
-  the bridge network; the switch does no per-domain filtering and, in this release, no egress
-  cut-off — the boundary is filesystem and process isolation, with a container-side egress proxy
-  as the planned follow-up.
+  channel is meant to have network (enables git push / gh / deploy CLIs). Every container runs
+  with `--network none` behind the daemon's per-channel egress proxy, which enforces the switch on
+  every request (no per-domain filtering when it is on; private and metadata addresses always
+  refused) and swaps placeholder credentials for real ones only on their declared hosts.
 - **Value:** real development workflows (clone, edit, test, push) in channels that need them,
   while the daemon's own config and the host's secrets remain out of reach.
 - **Reason:** bash and network are the two big escape vectors; making each an explicit, separately

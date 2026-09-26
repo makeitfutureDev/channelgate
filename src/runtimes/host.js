@@ -15,7 +15,6 @@ const HOST_HELPERS = Object.freeze({
   "secret-env-bridge": () => ({ command: process.execPath, args: [path.join(SRC_ROOT, "mcp", "secret-env-bridge.js")] }),
   "composio-sdk-bridge": () => ({ command: process.execPath, args: [path.join(SRC_ROOT, "ee", "composio-sdk-bridge.js")] }),
   "stop-subagents-hook": () => ({ command: process.execPath, args: [path.join(SRC_ROOT, "gateway", "hooks", "stop-subagents.mjs")] }),
-  "mcp-remote": () => ({ command: process.execPath, args: [path.join(SRC_ROOT, "mcp", "remote-secret-bridge.js")] }),
 });
 
 export const hostBackend = Object.freeze({

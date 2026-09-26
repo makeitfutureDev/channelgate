@@ -211,6 +211,40 @@ test("two sessions of one developer share their files; the first hang-up keeps t
   await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, deps, authorizeOptions });
 });
 
+// Container-secrets P3: the egress proxy's swap gate (src/gateway/egress/liveness.js) reads the
+// BROKER's live sessions — no second registry. While this developer is attached, the channel is
+// live work, the developer is live, and every OTHER person's personal placeholder is paused; the
+// hang-up ends all three. The session is visible to liveness before it is prepared, so the
+// preparation's own resolve already sees it.
+test("liveness reads the broker: an attached developer is live work, pauses other people's personal secrets, and the hang-up ends it", async () => {
+  const liveness = await import("../src/gateway/egress/liveness.js");
+  liveness.__resetLiveness();
+  const seenDuringPrepare = [];
+  const state = await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, deps, authorizeOptions });
+  const prepareSession = state.deps.prepareSession;
+  state.deps.prepareSession = async (session) => {
+    seenDuringPrepare.push(liveness.isOwnerLive(CHANNEL_ID, DEV));
+    return prepareSession(session);
+  };
+  try {
+    assert.equal(liveness.isChannelLive(CHANNEL_ID), false);
+    const { socket, line } = await attach({ v: 1, key: ED25519, channel: entry.slug, client: "liveness" });
+    assert.equal(line.ok, true, JSON.stringify(line));
+    assert.deepEqual(seenDuringPrepare, [true], "the session counts as live before its files are prepared");
+    assert.equal(liveness.isChannelLive(CHANNEL_ID), true, "an SSH session is live work in the channel");
+    assert.equal(liveness.isOwnerLive(CHANNEL_ID, DEV), true);
+    assert.equal(liveness.otherSshOpen(CHANNEL_ID, STRANGER), true, "someone else's personal placeholder is paused");
+    assert.equal(liveness.otherSshOpen(CHANNEL_ID, DEV), false, "the developer's own is not");
+    assert.equal(liveness.otherSshOpen("C_SOMEWHERE_ELSE", STRANGER), false, "only in THIS channel");
+    socket.end();
+    await settle();
+    assert.equal(liveness.isChannelLive(CHANNEL_ID), false);
+    assert.equal(liveness.otherSshOpen(CHANNEL_ID, STRANGER), false);
+  } finally {
+    state.deps.prepareSession = prepareSession;
+  }
+});
+
 test("a configuration write that concerns a live session re-prepares it at once; an unrelated one does not", async () => {
   const { emitConfigChange } = await import("../src/config/change-events.js");
   const { socket, line } = await attach({ v: 1, key: ED25519, channel: entry.slug, client: "laptop" });
