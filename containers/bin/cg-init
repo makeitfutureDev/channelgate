@@ -49,9 +49,11 @@ fi
 # `--network none`: its only way out is 127.0.0.1:3128 (HTTPS_PROXY), which cg-egress pipes to the
 # daemon's per-channel egress socket. Started in the background on EVERY start (a stop kills it with
 # everything else), only when the daemon created this container with CG_EGRESS=proxy. It never
-# exits on an error, and a second copy just finds the port taken.
+# exits on an error, and a second copy just finds the port taken. Its failure lines (at most one
+# per category a minute) go to /run/cg/egress.log on the /run tmpfs: readable with `podman exec`,
+# gone at the next start.
 if [ "${CG_EGRESS:-}" = "proxy" ] && [ -f /opt/channelgate/bin/cg-egress.mjs ]; then
-  node /opt/channelgate/bin/cg-egress.mjs </dev/null >/dev/null 2>&1 &
+  node /opt/channelgate/bin/cg-egress.mjs </dev/null >/dev/null 2>>/run/cg/egress.log &
 fi
 
 # Codex behind the egress proxy (container-secrets P4) is RELAYED: before each Codex run the daemon

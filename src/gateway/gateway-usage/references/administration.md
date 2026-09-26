@@ -138,11 +138,12 @@ These channel modes do not leave the container. The separate organization-admin-
   Vercel, Supabase, Make and Composio token names are built in; any other one once an admin sets
   **Used on hosts** (admin UI) or `hosts` (`set_secret`) — is a **placeholder** (`cgph_…`) that
   only works through the proxy, on its declared hosts, while the channel has live work (a personal
-  one only while its owner is working here and nobody else has an SSH session open). Use it
+  one only while its owner is working here and no other person's turn, background job or SSH
+  session is active). Use it
   exactly like the real credential; it is useless anywhere else. `list_secrets` and this attempt's
   credential note say which names are protected, which are raw ("unprotected") and which the
   operator withheld. A 403 `secret-refused` from the proxy names the secret and the reason
-  (`channel-idle`, `owner-not-live`, `another-person-ssh-session`) — report it; never try to route
+  (`channel-idle`, `owner-not-live`, `another-author-active`, `another-person-ssh-session`) — report it; never try to route
   around the proxy.
 
 ## Admin access, the container, and `/sudo` (read this before diagnosing "file not found")

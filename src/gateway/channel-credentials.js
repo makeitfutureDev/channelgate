@@ -34,11 +34,15 @@ function egressLines(names, { scopes = {}, placeholders = {}, hosts = {}, unprot
     const on = (hosts[name] || []).join(", ") || "its declared hosts";
     lines.push(`${name} is proxy-protected: its value in the environment is a placeholder that only works from this container through the gateway's egress proxy on: ${on}. Use it exactly as you would the real credential (the CLI or HTTP client sends it; the proxy swaps it in flight); it is worthless anywhere else.`);
   }
-  // A personal placeholder swaps only while no OTHER person has an SSH session open in this
-  // channel (src/gateway/egress/liveness.js). Say so up front: the agent otherwise reads the 403 as
-  // a bad credential and goes hunting for another one.
-  const paused = personalPaused ? names.filter((name) => placeholders[name] && scopes[name] === "personal") : [];
-  if (paused.length) lines.push(`Personal secrets are PAUSED right now: another person has an SSH session open in this conversation's container, so the egress proxy refuses to use ${JSON.stringify(paused)} (403 "another-person-ssh-session") until that session ends. Do not retry or substitute another credential; tell the author, or use a conversation/organization credential they approve.`);
+  // A personal placeholder swaps only while its owner is the one working here and no OTHER person
+  // has a turn, a background job or an SSH session active in this channel
+  // (src/gateway/egress/liveness.js). Say so up front: the agent otherwise reads the 403 as a bad
+  // credential and goes hunting for another one.
+  const personal = names.filter((name) => placeholders[name] && scopes[name] === "personal");
+  if (personal.length) {
+    lines.push(`Personal placeholders ${JSON.stringify(personal)} work only while their owner is the one working in this conversation: they PAUSE (the proxy answers 403 another-author-active or another-person-ssh-session) while another person's turn, background job or SSH session is active here. Say so and retry later rather than asking for the raw value.`);
+  }
+  if (personalPaused && personal.length) lines.push(`Personal secrets are PAUSED right now: another person's turn, background job or SSH session is active in this conversation's container, so the egress proxy refuses to use ${JSON.stringify(personal)} (403 "another-author-active" or "another-person-ssh-session") until it ends. Do not retry or substitute another credential; tell the author, or use a conversation/organization credential they approve.`);
   const raw = unprotected.filter((name) => names.includes(name));
   if (raw.length) lines.push(`Unprotected (the RAW value is in the environment — no egress rule declares where it may be used): ${JSON.stringify(raw)}.`);
   if (withheld.length) lines.push(`Withheld by the gateway's strict egress setting (no egress rule, so not injected at all): ${JSON.stringify([...withheld].sort())}. Ask an admin to declare "used on hosts" for them if this task needs them.`);

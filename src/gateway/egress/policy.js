@@ -45,13 +45,29 @@ function defaultLookup(hostname, options) {
   return dns.promises.lookup(hostname, options);
 }
 
-async function resolveAll(hostname, lookup) {
+export const DNS_LOOKUP_TIMEOUT_MS = 5_000;
+
+// A lookup runs on libuv's small shared thread pool; one that never answers must not hold a CONNECT
+// (or a pool thread's worth of other channels' work) forever. Racing it against a deadline frees
+// the request; the stuck lookup itself finishes or fails in the background.
+function withDeadline(promise, ms) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error("DNS lookup timed out"), { code: "CG_DNS_TIMEOUT" })), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+async function resolveAll(hostname, lookup, timeoutMs = DNS_LOOKUP_TIMEOUT_MS) {
   if (isIP(hostname)) return [{ address: hostname, family: isIP(hostname) }];
   const fn = lookup || defaultLookup;
   // Support both a promise-returning lookup and the callback style of dns.lookup.
-  const result = fn.length >= 3
-    ? await new Promise((resolve, reject) => fn(hostname, { all: true, verbatim: true }, (err, addrs) => (err ? reject(err) : resolve(addrs))))
-    : await fn(hostname, { all: true, verbatim: true });
+  const pending = fn.length >= 3
+    ? new Promise((resolve, reject) => fn(hostname, { all: true, verbatim: true }, (err, addrs) => (err ? reject(err) : resolve(addrs))))
+    : Promise.resolve().then(() => fn(hostname, { all: true, verbatim: true }));
+  pending.catch(() => {}); // a lookup that loses the race may still reject later
+  const result = await withDeadline(pending, timeoutMs);
   const list = Array.isArray(result) ? result : result ? [result] : [];
   return list.map((entry) => (typeof entry === "string" ? { address: entry, family: isIP(entry) } : entry));
 }
@@ -59,7 +75,7 @@ async function resolveAll(hostname, lookup) {
 // → { ok, category?, reason?, address, family?, tunnel }.
 // `allowLoopbackHosts` is TEST-ONLY: names listed there may resolve to loopback (the end-to-end
 // suite points a fake hostname at a 127.0.0.1 upstream). Production callers never pass it.
-export async function checkDestination({ hostname, port, mode, allowHosts = null, rawPassthrough = [], engineHosts = [], lookup, allowLoopbackHosts = [] }) {
+export async function checkDestination({ hostname, port, mode, allowHosts = null, rawPassthrough = [], engineHosts = [], lookup, allowLoopbackHosts = [], lookupTimeoutMs = DNS_LOOKUP_TIMEOUT_MS }) {
   const host = normalizeHost(hostname);
   const portNumber = Number(port);
   if (!isValidDestinationHost(host) || !Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
@@ -80,8 +96,9 @@ export async function checkDestination({ hostname, port, mode, allowHosts = null
 
   let addresses;
   try {
-    addresses = await resolveAll(host, lookup);
-  } catch {
+    addresses = await resolveAll(host, lookup, lookupTimeoutMs);
+  } catch (error) {
+    if (error?.code === "CG_DNS_TIMEOUT") return refuse("dns-timeout", `${host} did not resolve in time.`);
     return refuse("dns-failure", `${host} could not be resolved.`);
   }
   if (!addresses.length) return refuse("dns-failure", `${host} could not be resolved.`);

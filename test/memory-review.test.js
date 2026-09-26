@@ -142,6 +142,29 @@ test("E2E: a 'nothing to save' review stays silent and a second review for the s
   assert.equal(client.posted.length, 0, "no notice when nothing was saved");
 });
 
+// Egress liveness: a review is live work in its channel (the relay placeholder may swap while it
+// runs) but carries NO personal environment, so it is marked ownerless — it must neither wake the
+// author's personal grants nor pause another author's.
+test("a review marks the channel live WITHOUT an owner, and releases it after", async () => {
+  review.resetMemoryReviewState();
+  saveSettings({ agentMemory: true, memoryReviewEvery: 1, memoryReviewNotify: false });
+  const { liveSnapshot } = await import("../src/gateway/egress/liveness.js");
+  const { entry, meta } = await channel("C_MEM_REVIEW_LIVE", "mem-review-live");
+  let during = null;
+  await review.runMemoryReview({
+    channelId: "C_MEM_REVIEW_LIVE", slug: entry.slug, threadKey: "7000.009", authorId: "U_MEM_REVIEW", meta, resolveTarget,
+    fetchTranscript: async () => "Alex: hi\nRobin: hello",
+    run: async () => {
+      during = liveSnapshot().filter((e) => e.channelId === "C_MEM_REVIEW_LIVE");
+      return { content: "NOTHING_TO_SAVE", durationMs: 1, costUSD: 0, usage: {} };
+    },
+  });
+  assert.equal(during.length, 1);
+  assert.equal(during[0].kind, "review");
+  assert.equal(during[0].ownerId, "", "a review is not the author's personal work");
+  assert.equal(liveSnapshot().some((e) => e.channelId === "C_MEM_REVIEW_LIVE"), false);
+});
+
 test("memory off for the channel → no review, ever", async () => {
   review.resetMemoryReviewState();
   saveSettings({ agentMemory: true, memoryReviewEvery: 1 });

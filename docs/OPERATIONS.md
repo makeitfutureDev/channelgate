@@ -423,9 +423,14 @@ the real value only on that secret's declared hosts and headers — GitHub, Verc
 and Composio token names have built-in rules; any other secret is protected once an admin fills
 **Used on hosts** in the secrets editor (or passes `hosts` to `set_secret`) — and only while the
 channel has live work (a turn, a background job, a memory review or an SSH session); a personal
-secret additionally only while its owner is the one working there and no other person has an SSH
-session open. Everything else about a placeholder is forwarded unchanged: a placeholder sent to a
-host it was not declared for arrives as the useless string it is. Rotation is live (the proxy
+secret additionally only while its owner is the one working there and NO other person has live
+work there — another author's turn, background job or SSH session pauses it (`403
+another-author-active` / `another-person-ssh-session`) until that work ends. Everything else about
+a placeholder is forwarded unchanged: a placeholder sent to a host it was not declared for arrives
+as the useless string it is. When declaring **Used on hosts**, avoid multi-tenant suffixes such as
+`*.vercel.app`, `*.herokuapp.com` or `*.github.io`: a wildcard there covers every other customer's
+deployment too, and a container could have the real value swapped into a request to a site it
+controls. Rotation is live (the proxy
 resolves the current value per request); removing a secret revokes its placeholder, and re-adding
 mints a new one. A secret with no rule is withheld entirely while *Withhold unprotected secrets*
 is on (the default on a new install; the run's credential note names it as withheld), or injected
@@ -434,6 +439,23 @@ off. Either way `list_secrets` ends with a **Finding** naming each such secret; 
 hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead.
 `SUPABASE_DB_PASSWORD` and other raw-protocol passwords can never be swapped: they stay raw
 (withheld under strict).
+
+**What the proxy refuses on the way.** Inside a tunnel the request target must be a path (an
+absolute-form `GET https://other/…` line is `400 absolute-form-in-tunnel`); a `Host` header naming
+another host than the one the connection was approved for is `403 host-mismatch` (no domain
+fronting through an allowed CDN host); a request with no `Host` gets the approved host and no
+secret. A request that carried a swapped secret asks the upstream for an uncompressed answer, and
+the real value is scrubbed back to the placeholder in response headers and in any readable body
+(text, JSON, or no declared type) — a declared binary body, or one the upstream compresses anyway,
+passes through unscrubbed. Deadlines: DNS 5 s (`504 dns-timeout`), at most 16 destination lookups
+in flight per channel (`503 too-many-lookups`), 256 open connections per channel socket, connect
+15 s, response headers 60 s after the request was sent (`504 upstream-timeout`). Upstream TLS is
+always verified, against Node's bundled roots plus the host's `/etc/ssl/certs/ca-certificates.crt`.
+
+**After a daemon restart** the running proxy-mode containers get their channel listeners back at
+boot (`[egress] restored N running container listener(s)`), so a recovered background job, an
+attached editor or a process left running from an SSH session keeps its network without waiting
+for the channel's next turn.
 
 **Audit.** Every swap of a channel/organization/personal secret, every refusal, every blocked
 destination and every raw tunnel is an `egress` event (names, hosts, reasons and byte counts —
@@ -671,6 +693,15 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   the real access token again, readable by the channel's own agent (it cannot rotate anything and
   dies within hours). A daemon that authenticates Claude with its own `ANTHROPIC_API_KEY` still
   passes that key through raw — the proxy does not rewrite it.
+- **Engine keys that still reach a proxy-mode container raw.** A Qwen harness's provider key
+  (`ANTHROPIC_AUTH_TOKEN` pointed at the provider) and a daemon `CODEX_API_KEY`/`OPENAI_API_KEY`
+  handed to Codex are real values in the container environment; Codex's own sign-in is the shared
+  `auth.json` mount (the engine-login broker is a later phase). They are reachable only on their
+  engine endpoints through the proxy, but a process in the container can read them.
+- **A self-hosted Qwen endpoint on a private address is refused in proxy mode.** The proxy never
+  connects to loopback, private, link-local or CGNAT addresses, and a configured Qwen base URL is no
+  exception: point the harness at a public endpoint, or run that channel under the legacy bridge
+  mode.
 - **Egress is policed per channel by the proxy; the switch is advisory only where the proxy is not
   the network.** Under `containerEgressMode = "bridge"` or a channel's `rawNetwork` escape the
   container has the open bridge and *Allow network* only tells the engines the channel's intent;

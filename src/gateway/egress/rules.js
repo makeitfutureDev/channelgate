@@ -68,7 +68,7 @@ function grantHeaders(grant) {
 }
 
 // The host half of a Host header ("example.com:8443" → "example.com", "[::1]:443" → "::1").
-function hostHeaderName(value) {
+export function hostHeaderName(value) {
   const text = String(value ?? "").trim();
   if (text.startsWith("[")) return normalizeHost(text.slice(0, text.indexOf("]") + 1));
   const colons = text.split(":").length - 1;
@@ -79,7 +79,10 @@ function hostHeaderName(value) {
 // token repeated across headers is decided once, and swapped/refused are reported once per secret.
 function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHeader }) {
   const host = normalizeHost(hostname);
-  const mismatch = hostHeader !== undefined && hostHeader !== null && hostHeaderName(hostHeader) !== host;
+  // A MISSING Host header is a mismatch too: nothing then ties the request to the host the
+  // connection is pinned to (an absolute-form request line inside a tunnel carries its own host),
+  // so no placeholder is swapped into it. HTTP/1.1 clients always send one.
+  const mismatch = hostHeader === undefined || hostHeader === null || hostHeaderName(hostHeader) !== host;
   const grants = new Map();
   const verdicts = new Map();
   const swapped = new Map();

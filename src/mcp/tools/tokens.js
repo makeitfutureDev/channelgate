@@ -207,7 +207,8 @@ export function register(server, ctx) {
         "secrets are set in its Secrets modal or the admin UI, not here. Optional `hosts` (with " +
         "`headers`, `format`) declares where the gateway's egress proxy may use it: a container then " +
         "holds only a placeholder, swapped for the real value on those hosts alone. Well-known names " +
-        "(GitHub, Vercel, Supabase, Make, Composio tokens) are protected without it.",
+        "(GitHub, Vercel, Supabase, Make, Composio tokens) are protected without it. Never declare a " +
+        "multi-tenant suffix such as *.vercel.app or *.github.io — it covers other customers' sites.",
       inputSchema: {
         name: z.string(),
         value: z.string(),

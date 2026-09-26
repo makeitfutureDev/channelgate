@@ -411,6 +411,46 @@ the live gates at the end are UNEXECUTED.
       `env.CG_MCP_SERVICE="composio-sdk"`, no `url`, no host root, no keyless SDK bridge script, and
       no entry at all without a bundle; the sudo-host shape is unchanged.
 
+### Review fixes (2026-09-26)
+
+- [x] Pinning, scrub, deadlines, trust (`test/egress-proxy-hardening.test.js`, engine-independent):
+      an absolute-form `GET https://tenant.vercel.app/…` inside the tunnel is 400
+      `absolute-form-in-tunnel` and never reaches the upstream; no Host header → the placeholder
+      arrives unswapped and the upstream Host is `upstream.test:<port>`; `Host: front.test` over a
+      CONNECT to `upstream.test` (and over plain http against the absolute URL's host) is 403
+      `host-mismatch`, audited as blocked; a wrong-channel placeholder's 403 names no secret; a
+      swapped request reaches the upstream with `accept-encoding: identity` and the real value is
+      scrubbed out of `Location` and `WWW-Authenticate`; a body with no Content-Type is scrubbed,
+      `application/octet-stream` is not; a 401 answer to an Upgrade is scrubbed in header and body;
+      a lookup that never answers is 504 `dns-timeout`, a second concurrent lookup over the per-channel
+      cap is 503 `too-many-lookups` and the slot frees afterwards; an upstream that never answers is
+      504 `upstream-timeout`; an upstream is trusted through a root in the host bundle and refused
+      (502 `upstream-tls`) without it. `test/egress-rules.test.js`: a request with no Host swaps
+      nothing (`host-header-mismatch`).
+- [x] Integration (`test/egress-service.test.js`, `test/egress-grants.test.js`,
+      `test/memory-review.test.js`, `test/channel-credentials.test.js`,
+      `test/container-lifecycle.test.js`, `test/egress-forwarder.test.js`,
+      `test/admin-ui-controls.test.js`): a personal grant is refused `another-author-active` while
+      another author's turn or job is live in the channel, resumes when it ends, ignores other
+      channels and ownerless work, and a memory review is marked live with an EMPTY owner; each
+      channel socket has `maxConnections` 256; a listener is rebound when the channel id changes and
+      a close waits for an in-flight bind; `bindRunningChannelEgress` restores the listener of a
+      running proxy-mode container (and skips stopped ones and the legacy mode); a secret that
+      briefly resolves empty keeps its placeholder and the next run gets the same one; the preamble
+      says personal placeholders pause; the network mode moves the MOUNT fingerprint; the forwarder
+      delivers the whole answer after a client half-close (fails without `allowHalfOpen`) and
+      `cg-init` logs it to `/run/cg/egress.log`; the hosts field and `set_secret` warn against
+      `*.vercel.app`.
+- [ ] UNEXECUTED (engine-independent) — restart restore. Start a background job that curls a public
+      URL every 10 s through the proxy (`run_in_background`, network ON), restart the gateway, and
+      within 30 s check the job log: the requests keep succeeding and the daemon log shows
+      `[egress] restored 1 running container listener(s)`. Pass: no gap longer than one interval
+      after the daemon is back.
+- [ ] UNEXECUTED (Claude) — personal pause. Author A sets a personal `GH_TOKEN`; in the same channel
+      author B starts a long turn (`sleep 60 then say done`) while A asks for `gh api user`. Expected:
+      A's call answers 403 `another-author-active` naming the reason and A's reply says the personal
+      secret is paused; the same request after B's turn ends succeeds.
+
 ### Live gates (Claude AND Codex unless marked) — all UNEXECUTED
 
 Common setup for every gate: this branch deployed, `npm run build:image` (spec 1.6.0),

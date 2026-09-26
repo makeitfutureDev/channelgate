@@ -6,8 +6,9 @@
 //     turn, a background job, a memory review or an SSH session. A container with nothing live has
 //     no business talking to a credentialed API.
 //   • a PERSONAL grant swaps only while its OWNER has live work in that channel, and never while a
-//     DIFFERENT person has an SSH session open there (a developer sitting in the container could
-//     otherwise drive another author's personal token while that author's turn is running).
+//     DIFFERENT person has live work there — a turn, a background job or an SSH session (the
+//     container is shared, so another author's process could otherwise drive the owner's personal
+//     token while the owner's turn is running).
 //
 // In-memory on purpose: liveness is a fact about THIS daemon's processes, and a restart ends
 // every one of them (a recovered background job re-marks itself). SSH sessions come from the
@@ -56,6 +57,19 @@ export function isOwnerLive(channelId, ownerId) {
   if (!channel || !owner) return false;
   for (const entry of live.values()) if (entry.channelId === channel && entry.ownerId === owner) return true;
   return sshSessionsIn(channel).some((session) => String(session.userId || "") === owner);
+}
+
+// Is a DIFFERENT person working in this channel right now — a turn, a background job or an SSH
+// session with a non-empty owner that is not `ownerId`? Ownerless work (a memory review, an HTTP
+// run-API turn, which carries no personal scope) does not count.
+export function otherOwnerActive(channelId, ownerId) {
+  const channel = String(channelId || "");
+  const owner = String(ownerId || "");
+  if (!channel) return false;
+  for (const entry of live.values()) {
+    if (entry.channelId === channel && entry.ownerId && entry.ownerId !== owner) return true;
+  }
+  return sshSessionsIn(channel).some((session) => session.userId && String(session.userId) !== owner);
 }
 
 // Is a DIFFERENT person's SSH session open in this channel?

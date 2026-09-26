@@ -55,6 +55,26 @@ function compile(map) {
   return { re, lookup, holdback };
 }
 
+// One complete string (a response HEADER value: Location, WWW-Authenticate, a debug header) with
+// every value in `map` replaced by its placeholder. Values shorter than MIN_SCRUB_LENGTH are left,
+// exactly as in the body scrubber.
+export function scrubText(map, text) {
+  const plan = compile(map);
+  if (!plan || typeof text !== "string" || !text) return text;
+  const latin = Buffer.from(text, "utf8").toString("latin1");
+  plan.re.lastIndex = 0;
+  const out = latin.replace(plan.re, (m) => plan.lookup.get(m));
+  return out === latin ? text : Buffer.from(out, "latin1").toString("utf8");
+}
+
+// Is this response body scrubbed? Text-like types always; a MISSING content type is treated as
+// text (an upstream that omits it must not be a way around the scrub); anything declared binary
+// (octet-stream, images, archives) passes through.
+export function shouldScrubContentType(contentType) {
+  if (contentType === undefined || contentType === null || String(contentType).trim() === "") return true;
+  return isScrubbableContentType(contentType);
+}
+
 // A Transform that scrubs `map`'s values out of the stream; a PassThrough when the content type is
 // not text-like or the map has nothing to scrub. `contentType` undefined means "treat as text".
 export function createScrubber(map, contentType) {

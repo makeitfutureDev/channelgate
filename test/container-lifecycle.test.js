@@ -204,6 +204,9 @@ test("fingerprint: create-time config only — the image id moves it, a per-exec
   raw.container.imageId = "sha256:one";
   assert.equal(raw.container.network, "bridge");
   assert.notEqual(containerFingerprint(raw), first, "granting raw sockets recreates the container on the bridge");
+  // …and never deferred: the network mode is in the MOUNT fingerprint too, so clearing rawNetwork
+  // cannot leave a bridged container serving turns that are reported as proxy-enforced.
+  assert.notEqual(containerMountFingerprint(raw), containerMountFingerprint(off));
 });
 
 test("mount fingerprint: the paths a container can SEE, and nothing about how it behaves", () => {
