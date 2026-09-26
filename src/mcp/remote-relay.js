@@ -18,8 +18,10 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
   CallToolResultSchema,
+  ErrorCode,
   ListToolsRequestSchema,
   ListToolsResultSchema,
+  McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 
 // The upstream ceiling for ONE forwarded request. The engine owns the real tool timeout (Claude's
@@ -95,18 +97,41 @@ function upstreamParams(params) {
   return out;
 }
 
+export const RELAY_REQUEST_FAILED = "remote MCP request failed";
+export const RELAY_NOT_AUTHORIZED = "remote MCP is not authorized for this run";
+
+// What of an upstream failure may reach the container. A JSON-RPC error the REMOTE SERVER answered
+// with (McpError — including the SDK's own fixed-text timeout and connection-closed errors) is
+// protocol, and passes unchanged so the engine can act on it. Anything else is transport — the
+// SDK builds e.g. "Error POSTing to endpoint: <response body>", which can quote an upstream page, a
+// header or a URL — and becomes one fixed sentence.
+function scrubUpstreamError(error) {
+  if (error instanceof McpError) throw error;
+  throw new McpError(ErrorCode.InternalError, RELAY_REQUEST_FAILED);
+}
+
+function authorized(authorize) {
+  try {
+    authorize();
+  } catch {
+    throw new McpError(ErrorCode.InvalidRequest, RELAY_NOT_AUTHORIZED);
+  }
+}
+
 /** The two forwarded methods, each re-authorized before it leaves the daemon. */
 export function createRelayHandlers(remote, authorize) {
   if (typeof authorize !== "function") throw new Error("remote MCP relay requires an authorization check");
+  const forward = async (method, schema, params, extra) => {
+    authorized(authorize);
+    try {
+      return await remote.request({ method, params: upstreamParams(params) }, schema, forwardOptions(params, extra));
+    } catch (error) {
+      return scrubUpstreamError(error);
+    }
+  };
   return {
-    listTools: (params, extra) => {
-      authorize();
-      return remote.request({ method: "tools/list", params: upstreamParams(params) }, ListToolsResultSchema, forwardOptions(params, extra));
-    },
-    callTool: (params, extra) => {
-      authorize();
-      return remote.request({ method: "tools/call", params: upstreamParams(params) }, CallToolResultSchema, forwardOptions(params, extra));
-    },
+    listTools: (params, extra) => forward("tools/list", ListToolsResultSchema, params, extra),
+    callTool: (params, extra) => forward("tools/call", CallToolResultSchema, params, extra),
   };
 }
 

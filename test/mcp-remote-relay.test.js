@@ -137,3 +137,36 @@ test("runRemoteRelay authorizes before dialling and on every forwarded request, 
   await assert.rejects(engine.listTools(), /not authorized/);
   await engine.close();
 });
+
+test("an upstream transport error reaches the engine as one fixed sentence; a protocol error passes unchanged", async (t) => {
+  const { McpError, ErrorCode } = await import("@modelcontextprotocol/sdk/types.js");
+  let failure = null;
+  const remote = {
+    request: async () => { throw failure; },
+    close: async () => {},
+  };
+  const [engineSide, relaySide] = InMemoryTransport.createLinkedPair();
+  const { close } = await runRemoteRelay({ url: "https://remote.example/mcp", transport: relaySide, authorize: () => {}, remote });
+  t.after(close);
+  const engine = new Client({ name: "engine", version: "1.0.0" }, { capabilities: {} });
+  await engine.connect(engineSide);
+  t.after(() => engine.close());
+
+  // What the SDK's Streamable HTTP transport actually throws on a non-2xx POST: the upstream body.
+  failure = Object.assign(new Error("Error POSTing to endpoint (HTTP 401): {\"error\":\"bad key ck_leak_123 for https://connect.composio.dev/mcp\"}"), { code: 401 });
+  await assert.rejects(engine.callTool({ name: "x", arguments: {} }), (error) => {
+    assert.match(error.message, /remote MCP request failed/);
+    assert.doesNotMatch(error.message, /ck_leak|composio\.dev|POSTing|401/);
+    return true;
+  });
+  failure = new TypeError("fetch failed: getaddrinfo ENOTFOUND secret-host.internal");
+  await assert.rejects(engine.listTools(), (error) => !/secret-host/.test(error.message) && /remote MCP request failed/.test(error.message));
+
+  // The remote server's own JSON-RPC answer is protocol: the engine needs it to correct the call.
+  failure = new McpError(ErrorCode.InvalidParams, "Unknown tool: GMAIL_FETCH");
+  await assert.rejects(engine.callTool({ name: "GMAIL_FETCH", arguments: {} }), (error) => {
+    assert.match(error.message, /Unknown tool: GMAIL_FETCH/);
+    assert.equal(error.code, ErrorCode.InvalidParams);
+    return true;
+  });
+});
