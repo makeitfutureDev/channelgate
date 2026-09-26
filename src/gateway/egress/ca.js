@@ -64,7 +64,13 @@ export function loadOrCreateEgressCa({ dir, commonName, cacheMax = LEAF_CACHE_MA
   const cache = new Map(); // hostname → { key, cert, expiresAt } in LRU order (oldest first)
 
   function mint(hostname) {
-    const { certPem: cert, keyPem: key, notAfter } = issueLeafWith({ caCert, caKey, hostname, days: leafHours / 24, now: new Date(now()) });
+    const { certPem: leafPem, keyPem: key, notAfter } = issueLeafWith({ caCert, caKey, hostname, days: leafHours / 24, now: new Date(now()) });
+    // Serve the CHAIN (leaf, then our CA), not the leaf alone. Clients that trust the CA file
+    // (Node, curl, Go, Rust) do not need it, but Chromium's --ignore-certificate-errors-spki-list
+    // only matches public keys of certificates the server actually PRESENTS: with a leaf-only
+    // handshake agent-browser's CA pin never matched and every page failed with
+    // ERR_CERT_AUTHORITY_INVALID (2026-09-27 live campaign, EGR-03).
+    const cert = `${leafPem.trimEnd()}\n${certPem.trimEnd()}\n`;
     return { key, cert, expiresAt: notAfter.getTime() };
   }
 

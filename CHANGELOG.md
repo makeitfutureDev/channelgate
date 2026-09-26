@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- The egress proxy now presents its CA after the per-host leaf, so the in-container browser's CA pin matches and agent-browser loads HTTPS pages without `--ignore-https-errors` (EGR-03, 2026-09-27). Codex failure messages no longer lead with the CLI's "Reading additional input from stdin..." notice (EN-09).
+
 - Channel image spec 1.6.1: the image now ships `bubblewrap`. Codex 0.156.1 refuses to run any command in a read-only sandbox without it ("filesystem-restricted execution requires bubblewrap"), so Read-mode Codex channels could not execute a probe since the 0.156.1 pin (found by the 2026-09-27 live campaign, EN-01/CTR-06/MD-02 on Codex). Rebuild with `npm run build:image`.
 - **The browser works behind the egress proxy.** Chromium's proxy and certificate flags were joined
   with a space, which agent-browser does not split, so every page failed with

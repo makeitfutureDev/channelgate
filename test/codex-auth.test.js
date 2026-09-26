@@ -273,6 +273,9 @@ test("Node's UNDICI-EHPA warning never reaches the status row or the failure sen
   assert.equal(codexDiagnosticLine(`${warning}\n${hint}`), "", "noise alone is no diagnostic at all");
   assert.equal(codexDiagnosticLine(`stream error: retrying 1/5\n${warning}\n${hint}`), "stream error: retrying 1/5");
   assert.equal(withoutNodeRuntimeNoise(`a\n${warning}\n${hint}\nb`), "a\nb");
+  // The Codex CLI's own non-TTY stdin notice is dropped the same way (EN-09, 2026-09-27).
+  assert.equal(withoutNodeRuntimeNoise("Reading additional input from stdin...\nKilled"), "Killed");
+  assert.equal(codexDiagnosticLine("Reading additional input from stdin..."), "");
 
   const notes = [];
   const target = containerTarget(createFakeRuntimeBackend(), "codex-undici");
