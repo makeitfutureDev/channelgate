@@ -42,6 +42,32 @@ test("credential discovery lists only sorted, usable names without values or suf
   assert.match(prompt, /never silently substitute one scope's credential for another's/);
 });
 
+// Container-secrets P2: with the egress proxy as the container's network, the inventory says which
+// names hold a placeholder (and where it works), which hold the raw value, and which strict mode
+// withheld — names and hosts only, never a value or the placeholder itself.
+test("the egress lines: proxy-protected placeholders with their hosts, unprotected raw names, withheld names", () => {
+  const placeholder = "cgph_cabcdefghijklmnopqrstuvwxyz234567";
+  const prompt = channelCredentialsPreamble(
+    { GITHUB_TOKEN: placeholder, SUPABASE_DB_PASSWORD: fixtureValue },
+    {
+      scopes: { GITHUB_TOKEN: "channel", SUPABASE_DB_PASSWORD: "channel" },
+      placeholders: { GITHUB_TOKEN: placeholder },
+      hosts: { GITHUB_TOKEN: ["api.github.com", "github.com"] },
+      unprotected: ["SUPABASE_DB_PASSWORD"],
+      withheld: ["LEGACY_KEY"],
+    },
+  );
+  assert.deepEqual(namesOf(prompt), ["GITHUB_TOKEN", "SUPABASE_DB_PASSWORD"]);
+  assert.match(prompt, /GITHUB_TOKEN is proxy-protected: its value in the environment is a placeholder that only works from this container through the gateway's egress proxy on: api\.github\.com, github\.com\./);
+  assert.match(prompt, /Unprotected \(the RAW value is in the environment[^\n]*\["SUPABASE_DB_PASSWORD"\]/);
+  assert.match(prompt, /Withheld by the gateway's strict egress setting[^\n]*\["LEGACY_KEY"\]/);
+  assert.ok(!prompt.includes(placeholder), "the placeholder string itself is not repeated into the prompt");
+  assert.ok(!prompt.includes(fixtureValue));
+  // Without egress facts (legacy bridge mode, the host) none of these lines appear.
+  const plain = channelCredentialsPreamble({ GITHUB_TOKEN: fixtureValue });
+  assert.doesNotMatch(plain, /proxy-protected|Unprotected|Withheld/);
+});
+
 test("empty inventory clears old assumptions, while clean mode suppresses discovery", () => {
   assert.deepEqual(namesOf(channelCredentialsPreamble()), []);
   assert.match(channelCredentialsPreamble(), /not that all CLI logins or MCP connections are absent/);

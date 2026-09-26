@@ -52,7 +52,7 @@ import { allowMatchesFor, gatewayToolRefs, namespacesFor } from "./mcp-catalog.j
 import { applyGatewayGuide } from "./guide.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
 import { channelMode, networkState } from "./modes.js";
-import { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
+import { NETWORK_ADVISORY_NOTE, networkEnforcedFor } from "../engines/network-policy.js";
 import { getAgentsFile, getAgentsInstructions, getComposioMode, getOrgAccessGrants } from "../config/settings.js";
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
 import { isLibraryStub, splitFavorites, ensureCodexSkillsLink, pruneLegacyLibraryStubs } from "./library-skills.js";
@@ -122,19 +122,21 @@ const MODE_NOTE = {
 // whether this channel was meant to use the network — so it guessed, and guessed differently each
 // turn. Both switches are named in both directions.
 //
-// The network line is deliberately honest about being ADVISORY (see engines/network-policy.js):
-// the container is on the bridge network and no egress is policed per channel, so "off" is an
-// instruction to obey, not a wall that will stop a request. A model told "you have no network"
-// would call the switch broken the first time curl succeeded; a model told the truth respects it.
+// The network line says what the switch IS for this conversation (engines/network-policy.js): with
+// the egress proxy as the container's network it is enforced — "off" reaches only the engine
+// endpoints — and where the proxy is not the network (legacy bridge mode, raw sockets) it is an
+// instruction to obey, not a wall. A model told "you have no network" would call the switch broken
+// the first time curl succeeded; a model told the truth respects it.
 export function channelSwitchesNote(meta = {}) {
   const mode = channelMode(meta);
   const network = networkState(meta);
+  const enforced = networkEnforcedFor({ meta });
   const networkLine =
     network === "on"
-      ? "**on** — this conversation is meant to use the internet. There is no per-domain allow-list."
+      ? `**on** — this conversation is meant to use the internet. There is no per-domain allow-list${enforced ? "; requests go through the gateway's egress proxy, which refuses private, loopback and cloud-metadata addresses" : ""}.`
       : network === "unsupported"
         ? "requested **on**, but this conversation's engine cannot run with the network on — treat it as off."
-        : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out; say the switch is off instead. ${NETWORK_POLICY_ENFORCED ? "" : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
+        : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out; say the switch is off instead. ${enforced ? "The gateway's egress proxy enforces this: only the engine endpoints and this conversation's selected connectors are reachable, and any other request is refused." : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
   return [
     "**This conversation's switches** (an admin sets them; they apply from the next message):",
     `- Mode: **${mode}** — ${MODE_NOTE[mode]}.`,

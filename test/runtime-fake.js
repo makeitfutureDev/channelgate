@@ -27,6 +27,9 @@ export function createFakeRuntimeBackend({
   ensureUpError = null,
   ensureUpDelayMs = 0,
   helpers = {},
+  // An egress plan (src/runtimes/container/egress-hook.js) to stamp on every target: what the real
+  // backend carries when the daemon's egress proxy is the container's network.
+  egress = null,
 } = {}) {
   // One shared counter so "did ensureUp happen before the spawn?" is answerable, not inferable.
   let seq = 0;
@@ -73,6 +76,7 @@ export function createFakeRuntimeBackend({
             // lands in the fake's stand-in filesystem instead; see fakeContainerPath().
             claudeConfigDir: "/home/agent/.claude",
             codexHome: "/home/agent/.codex",
+            ...(egress ? { egress: { ...egress }, network: egress.network || "none" } : {}),
           }
           : null,
       };

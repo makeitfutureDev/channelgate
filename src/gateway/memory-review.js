@@ -24,6 +24,8 @@ import { effectiveWorkDir } from "./folders.js";
 import { createRunGrantArtifacts } from "./run-grant-artifacts.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { resolveContainerClaudeToken } from "./claude-token-relay.js";
+import { containerClaudeCredential } from "./egress/grants.js";
+import { markLive } from "./egress/liveness.js";
 import { newRunId } from "../runtimes/contract.js";
 import { channelSettingsFile, workspaceRoot } from "../config/paths.js";
 import { getMemoryReviewEvery, getMemoryReviewModel, getMemoryReviewNotify } from "../config/settings.js";
@@ -164,7 +166,8 @@ export async function runMemoryReview({
     console.warn(`[memory] review skipped in ${slug}: ${relay.error}`);
     return { skipped: "no-container-claude-credential", saved: 0 };
   }
-  const claudeOauthToken = relay.token || "";
+  // Through the egress proxy, the channel's relay PLACEHOLDER rather than the access token itself.
+  const claudeOauthToken = containerClaudeCredential({ target, relay, channelId })?.token || "";
 
   // The reviewer's MCP config: the gateway control server ONLY, narrowed to the save tool. No
   // Composio/Skills/Toolbox identities — it has no business acting as anyone. A 0600 file under
@@ -189,6 +192,9 @@ export async function runMemoryReview({
   // same piece of work, and a shared handle is what lets a stuck review be found from either side.
   const reviewRunId = newRunId("review");
   const lease = target.runtime.acquireLease(target, { kind: "review", id: reviewRunId });
+  // Live work in the channel for the egress proxy's swap gate (the relay placeholder swaps only
+  // while something in the channel is running).
+  const releaseLive = markLive({ channelId, ownerId: authorId, kind: "review", id: reviewRunId });
   let saves = 0;
   try {
     await target.runtime.ensureUp(target, { announce: () => {}, lease });
@@ -224,6 +230,7 @@ export async function runMemoryReview({
     return { saved: saves, summary, result };
   } finally {
     try { lease.release(); } catch { /* the review is over either way */ }
+    try { releaseLive(); } catch { /* bookkeeping only */ }
     await rm(mcpConfigFile, { force: true }).catch(() => {});
     await artifacts?.cleanup().catch(() => {});
   }

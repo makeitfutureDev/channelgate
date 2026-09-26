@@ -151,7 +151,8 @@ test("create argv: podman keep-id vs docker --user, with the hardening flags and
   assert.ok(podmanArgs.includes("--pids-limit") && podmanArgs.includes("1024"));
   assert.ok(podmanArgs.includes("--memory") && podmanArgs.includes("2g"));
   assert.ok(podmanArgs.includes("--cpus") && podmanArgs.includes("4"));
-  assert.ok(podmanArgs.includes("--network") && podmanArgs.includes("bridge"));
+  // Egress proxy mode (the default): the container has no network of its own.
+  assert.equal(podmanArgs[podmanArgs.indexOf("--network") + 1], "none");
 
   const dockerCaps = await createContainerCli({ exec: createFakeCli({ kind: "docker", available: ["docker"] }).exec }).probe(SETTINGS, { image: SETTINGS.image });
   const dockerArgs = buildCreateArgs(t, dockerCaps, { fingerprint: "c1-abc" });
@@ -160,18 +161,27 @@ test("create argv: podman keep-id vs docker --user, with the hardening flags and
   assert.equal(dockerArgs[dockerArgs.indexOf("--user") + 1], `${t.container.uid}:${t.container.gid}`);
 });
 
-test("create argv: every container sits on the bridge network regardless of the channel switch, and cgroup limits are dropped when the probe failed", async () => {
-  // The per-channel "Allow network" switch is not enforced by the container's network mode (an
-  // egress proxy is the planned enforcement point), so a network-off channel is created on the
-  // bridge exactly like a network-on one — never `--network none`.
-  const off = target("net-off", { allowNetwork: false });
-  off.container.appliedLimits = null;
+test("create argv: always --network none unless the raw bridge, and cgroup limits are dropped when the probe failed", async () => {
+  // Container-secrets P2: the channel's only network is the daemon's egress proxy over its
+  // per-channel socket, so EVERY channel — network switch on or off — is created with
+  // `--network none`; the switch is proxy policy, live per request. The open bridge exists only
+  // for the legacy `containerEgressMode = "bridge"` escape and a channel an admin gave raw sockets.
   const caps = await createContainerCli({ exec: createFakeCli({ kind: "podman", cgroupLimits: false }).exec }).probe(SETTINGS, { image: SETTINGS.image });
   assert.equal(caps.cgroupLimits, false);
   assert.match(caps.reason, /cgroup cpu\/memory limits are not delegated/);
+  const networkOf = (t) => {
+    t.container.appliedLimits = null;
+    const args = buildCreateArgs(t, caps, { fingerprint: "c1-x" });
+    return args[args.indexOf("--network") + 1];
+  };
+  const off = target("net-off", { allowNetwork: false });
+  assert.equal(networkOf(off), "none");
+  assert.equal(networkOf(target("net-on", { allowNetwork: true })), "none", "the switch is proxy policy, not the container's network mode");
+  const legacy = resolveRuntime("net-legacy", { platform: "slack", channelId: "C1" }, { settings: { ...SETTINGS, egressMode: "bridge" } });
+  assert.equal(networkOf(legacy), "bridge", "the legacy egress mode keeps the open bridge");
+  assert.equal(networkOf(target("net-raw", { rawNetwork: true })), "bridge", "an admin-granted raw-socket channel gets the bridge");
+
   const args = buildCreateArgs(off, caps, { fingerprint: "c1-x" });
-  assert.equal(args[args.indexOf("--network") + 1], "bridge");
-  assert.ok(!args.includes("none"));
   assert.ok(!args.includes("--memory"));
   assert.ok(!args.includes("--cpus"));
   assert.ok(!args.includes("--pids-limit"));

@@ -14,7 +14,8 @@ import { acquireKeyedLock } from "../../util/keyed-lock.js";
 import { channelArtifactDir } from "../../config/paths.js";
 import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM } from "./names.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
-import { CONTAINER_SOCKET_DIR } from "./image-paths.js";
+import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
+import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
 // fingerprint, so changing any of them recreates every container on the next run.
@@ -182,9 +183,26 @@ export function buildMounts(base) {
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
     { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
+    ...egressMounts(base),
     ...operatorHomeMounts(base),
   ];
   return mounts.filter((mount) => mount.type === "tmpfs" || mount.source);
+}
+
+// The egress proxy's two mounts, present only while the proxy is this target's egress
+// (egress-hook.js): the channel's OWN socket directory — the daemon's per-channel listener, whose
+// PATH is the channel identity, so it is never under the shared control-socket dir — and the CA
+// trust bundle (the host's system roots + the deployment's egress CA) that every CA variable in
+// egress-env.js names. Both read-only. The bundle is a FILE: `bind-file` renders like any bind, and
+// ensureBindSources below never mkdirs a file source (the service writes it at boot, in place, so
+// a running container's mount keeps pointing at the current bytes).
+export function egressMounts(base) {
+  const plan = base?.container?.egress;
+  if (!plan?.active) return [];
+  return [
+    { kind: "egress", type: "bind", source: plan.socketDir, target: CONTAINER_EGRESS_DIR, mode: "ro" },
+    { kind: "egress-ca", type: "bind-file", source: plan.caBundle, target: CONTAINER_EGRESS_CA, mode: "ro" },
+  ];
 }
 
 // The operator-home grant: ONLY for a channel in Full access (adminMode) and ONLY while the
@@ -493,6 +511,10 @@ export function createContainerLifecycle({
       if (!caps.ok) throw new Error(caps.reason);
       const img = await image.inspect(caps, target.settings, { force: forceImage });
       if (!img.present) throw new Error(img.reason);
+      // The channel's egress listener first: its socket directory is a bind source, and a
+      // container must never come up pointing at a proxy that is not listening. Throws (fail
+      // closed, remedy named) when the service cannot bind it.
+      await ensureEgressFor(target);
       settleTarget(target, { caps, img });
       const fingerprint = containerFingerprint(target);
       const mountFingerprint = containerMountFingerprint(target);
@@ -592,6 +614,7 @@ export function createContainerLifecycle({
     const caps = await cli.probe(target.settings, { image: target.settings?.image });
     if (!caps.ok) throw new Error(caps.reason);
     await removeContainer(caps, name, { volumes: volumes ? target.container.homeVolume : "", strictVolumes });
+    await releaseEgressFor(target);
     log(`[container] removed ${name}${volumes ? " and its HOME volume" : ""}${reason ? ` (${reason})` : ""}`);
   }
 

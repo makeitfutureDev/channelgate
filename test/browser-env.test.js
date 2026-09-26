@@ -81,3 +81,17 @@ test("a channel secret cannot name the browser namespace — stripped on write A
   assert.equal(buildClaudeEnv({ extraEnv: hostile, browserNamespace: mine }, SOURCE)[BROWSER_NAMESPACE_ENV], mine);
   assert.equal(buildCodexEnv({ extraEnv: hostile, browserNamespace: mine, target: container }, SOURCE)[BROWSER_NAMESPACE_ENV], mine);
 });
+
+// Container-secrets P2: under `--network none` Chromium must be told the egress proxy and must
+// accept exactly the proxy's certificates (pinned by the egress CA's SPKI hash) — and a channel
+// secret can never supply those arguments itself (AGENT_BROWSER_ is a reserved prefix).
+test("the browser gets the proxy and the CA pin only when the target's egress is the proxy", () => {
+  const spki = "q83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJq80=";
+  const proxied = { ...container, container: { ...container.container, egress: { active: true, caSpki: spki } } };
+  const env = browserSpawnEnv("cg-slack-a", { target: proxied });
+  assert.equal(env.AGENT_BROWSER_ARGS, `--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=${spki}`);
+  assert.equal(env[BROWSER_NAMESPACE_ENV], "cg-slack-a");
+  assert.deepEqual(browserSpawnEnv("cg-slack-a", { target: container }), { [BROWSER_NAMESPACE_ENV]: "cg-slack-a" }, "no plan, no flags");
+  assert.equal(isReservedEnvName("AGENT_BROWSER_ARGS"), true);
+  assert.deepEqual(safeSpawnEnv({ AGENT_BROWSER_ARGS: "--no-sandbox" }), {});
+});

@@ -45,6 +45,15 @@ if [ -d "$VSCODE_SHARED" ] && [ ! -e "$VSCODE_HOME/.cg-no-shared-server" ]; then
   done
 fi
 
+# The egress forwarder (container-secrets P2). A proxy-mode container is created with
+# `--network none`: its only way out is 127.0.0.1:3128 (HTTPS_PROXY), which cg-egress pipes to the
+# daemon's per-channel egress socket. Started in the background on EVERY start (a stop kills it with
+# everything else), only when the daemon created this container with CG_EGRESS=proxy. It never
+# exits on an error, and a second copy just finds the port taken.
+if [ "${CG_EGRESS:-}" = "proxy" ] && [ -f /opt/channelgate/bin/cg-egress.mjs ]; then
+  node /opt/channelgate/bin/cg-egress.mjs </dev/null >/dev/null 2>&1 &
+fi
+
 # Claude credentials are NEVER copied in here: the daemon hands the engine a `claude setup-token`
 # value through the exec environment (CLAUDE_CODE_OAUTH_TOKEN). A copy of the gateway's own login
 # would refresh, rotate the refresh token and log the gateway itself out (2026-09-02 incident).

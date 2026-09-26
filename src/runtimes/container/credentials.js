@@ -29,6 +29,8 @@ import { daemonTimeZone } from "../../util/timezone.js";
 // folder contract, and this direction never reverses.
 import { gatewayClaudeCredentialsFile, hasClaudeApiKey, resolveClaudeLogin } from "../../gateway/claude-login.js";
 import { CONTAINER_CLAUDE_CONFIG_DIR, CONTAINER_CODEX_AUTH_FILE, CONTAINER_CODEX_HOME, CONTAINER_HOME } from "./image-paths.js";
+import { egressEnv } from "./egress-env.js";
+import { egressErrorFor } from "./egress-hook.js";
 
 export const AGENT_HOME = CONTAINER_HOME;
 export const CLAUDE_CONTAINER_CONFIG_DIR = CONTAINER_CLAUDE_CONFIG_DIR;
@@ -147,6 +149,10 @@ export function settleCredentialModes(settings = {}, env = process.env) {
 // caller that gates earlier than expected must still get the right answer, so the two
 // file-dependent modes are re-checked here. One stat, on a path that is about to be used anyway.
 export function credentialError(target, engineId, env = process.env) {
+  // The egress proxy is the only network a proxy-mode container has. With it down, every engine
+  // would hang on its first connect — so the run ends here, before spawn, naming the remedy.
+  const egress = egressErrorFor(target);
+  if (egress) return new Error(egress);
   const modes = target?.container?.credentialMode || {};
   if (engineId === "claude") {
     // A setup-token, or a RELAY of the daemon's own access token — never a copy of the login file:
@@ -217,5 +223,8 @@ export function containerEnvDefaults(target) {
     // one developer's `claude` over SSH silently replaced the pinned CLI for every turn in that
     // channel and shadowed the gateway's login wrapper (2026-09-24). Off, everywhere, for good.
     DISABLE_AUTOUPDATER: "1",
+    // The egress proxy and CA environment (egress-env.js) — {} unless the proxy is this target's
+    // egress. At create time it is what cg-init reads to start the forwarder (CG_EGRESS=proxy).
+    ...egressEnv(target),
   };
 }

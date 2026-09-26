@@ -17,9 +17,12 @@ import { createContainerState } from "./state.js";
 import { createContainerReaper } from "./reaper.js";
 import { codexAuthCandidates, codexAuthIdentity, credentialError, credentialNotes, intendedCredentialModes } from "./credentials.js";
 import { containerImagePaths, IMAGE_HELPERS, IMAGE_SPEC_VERSION } from "./image-paths.js";
+import { egressPlanFor } from "./egress-hook.js";
 
 export { credentialError, credentialNotes } from "./credentials.js";
 export { containerFingerprint } from "./lifecycle.js";
+export { egressActive, egressErrorFor, egressModeOf, egressPlanFor, setEgressProvider } from "./egress-hook.js";
+export { egressEnv } from "./egress-env.js";
 export * from "./image-paths.js";
 
 let logFn = (message) => console.log(message);
@@ -85,14 +88,18 @@ export const containerBackend = Object.freeze({
     persistentHome: true,
   }),
 
-  // PURE. Everything here is derivable from the base target, its settings snapshot and the daemon's
-  // own uid/gid. The three facts that need I/O — the resolved image id, whether cgroup limits are
+  // PURE. Everything here is derivable from the base target, its settings snapshot, the daemon's
+  // own uid/gid and the egress service's registered state (egress-hook.js — in-memory, no I/O). The three facts that need I/O — the resolved image id, whether cgroup limits are
   // actually delegated, and which engine credentials exist — are SETTLED by ensureUp() before the
   // fingerprint is computed and before anything is created.
   prepareTarget(base) {
     const settings = base.settings || {};
     const name = containerName(base);
     const uid = typeof process.getuid === "function" ? process.getuid() : null;
+    // The egress plan: whether the daemon's per-channel proxy is this container's network, and
+    // which network mode it is created with. Asked with the base's own backend identity (this
+    // backend is isolated by definition).
+    const egress = egressPlanFor({ ...base, backend: "container", runtime: containerBackend });
     const gid = typeof process.getgid === "function" ? process.getgid() : null;
     const container = {
       name,
@@ -101,10 +108,13 @@ export const containerBackend = Object.freeze({
       // runtime; this location is commonly unreadable under rootless Podman.
       homeVolumeHostPath: volumeHostPath(runtime().cli.peek(), homeVolumeName(base)),
       image: String(settings.image || ""),
-      // Always the bridge network for now: the per-channel "Allow network" switch is enforced by the
-      // egress proxy planned as the next slice, not by the container's network mode. Only that
-      // proxy can keep the daemon-socket bridges and remote MCPs reachable while cutting egress.
-      network: "bridge",
+      // `--network none` by default: the container's only way out is the daemon's egress proxy over
+      // its per-channel socket (the control MCP and the remote-MCP relay ride the other socket), so
+      // a tool that ignores HTTPS_PROXY has no network at all and the "Allow network" switch is
+      // proxy POLICY, live on the next request. "bridge" only for the legacy `containerEgressMode`
+      // escape or a channel an admin gave raw sockets (`rawNetwork`); the proxy env stays set there.
+      network: egress.network,
+      egress,
       uid,
       gid,
       uidStrategy: "user", // settled from the CLI probe

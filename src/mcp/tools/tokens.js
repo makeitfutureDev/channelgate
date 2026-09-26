@@ -9,12 +9,26 @@ import { z } from "zod";
 import { setUser } from "../../config/store.js";
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../../config/scoped-env.js";
 import { listChannelEnv } from "../../config/channel-env.js";
+import { getContainerRuntime } from "../../config/settings.js";
 
 // Masked, never valued — the same write-only shape every other secret surface returns.
+// The egress proxy's view of one secret (config/channel-env.js listEnvVars): protected = a proxy-mode
+// container receives a placeholder swapped only on these hosts; unprotected = the raw value.
+function egressNote(v) {
+  if (v.protected === true) return ` — protected via egress proxy (${(v.hosts || []).join(", ")})`;
+  if (v.protected === false) return " — unprotected (raw)";
+  return "";
+}
+
+function protectionNote(saved) {
+  if (!saved) return "";
+  return saved.protected ? ` (protected via egress proxy on ${saved.hosts.join(", ")})` : " (unprotected: containers receive the raw value — pass `hosts` to protect it)";
+}
+
 function renderVars(vars, empty) {
   if (!vars.length) return empty;
   return vars
-    .map((v) => `• \`${v.name}\`${v.last4 ? ` (…${v.last4})` : ""}${v.provider && v.provider !== "local" ? ` via ${v.provider}` : ""}${v.setBy ? ` — set by <@${v.setBy}>` : ""}${v.resolvable ? "" : " ⚠️ unresolvable provider"}`)
+    .map((v) => `• \`${v.name}\`${v.last4 ? ` (…${v.last4})` : ""}${v.provider && v.provider !== "local" ? ` via ${v.provider}` : ""}${v.setBy ? ` — set by <@${v.setBy}>` : ""}${egressNote(v)}${v.resolvable === false ? " ⚠️ unresolvable provider" : ""}`)
     .join("\n");
 }
 
@@ -136,7 +150,8 @@ export function register(server, ctx) {
       if (wanted === "all" || wanted === "organization") {
         // Every run is told the organization NAMES in its prompt already; the tails and authors
         // are the admin surface's, like the UI.
-        const vars = listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable }));
+        // Protection is a rule fact, not a secret: shown to everyone who sees the names.
+        const vars = listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts }));
         sections.push(`**Organization** (every conversation)\n${renderVars(vars, "_None set._")}`);
       }
       if (wanted === "all" || wanted === "personal") {
@@ -148,7 +163,11 @@ export function register(server, ctx) {
         sections.push(`**This conversation**\n${renderVars(listChannelEnv(meta), "_None set — the Secrets modal (/secrets) or the admin UI adds one._")}`);
       }
       if (!sections.length) return text(`Unknown scope \`${scope}\`. Use one of: all, ${SCOPES.join(", ")}.`);
-      return text(`${sections.join("\n\n")}\n\n_Most specific wins when names collide: conversation over personal over organization. A process that already started keeps its environment; a new one has these._`);
+      const bridge = getContainerRuntime().egressMode === "bridge";
+      const egressFootnote = bridge
+        ? " The gateway runs the LEGACY open-bridge egress mode, so every value — protected or not — is injected raw into containers."
+        : " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an unprotected one is the raw value (set `hosts` with set_secret to protect it).";
+      return text(`${sections.join("\n\n")}\n\n_Most specific wins when names collide: conversation over personal over organization. A process that already started keeps its environment; a new one has these.${egressFootnote}_`);
     }
   );
 
@@ -162,25 +181,36 @@ export function register(server, ctx) {
         "team's account. A conversation's own secret of the same name still wins there. Write-only: " +
         "nothing can read the value back. IMPORTANT: send it in a DM with the bot, never in a shared " +
         "channel, and DELETE the message containing it immediately after. A conversation's own " +
-        "secrets are set in its Secrets modal or the admin UI, not here.",
-      inputSchema: { name: z.string(), value: z.string(), scope: z.enum(["personal", "organization", "my", "org"]).optional() },
+        "secrets are set in its Secrets modal or the admin UI, not here. Optional `hosts` (with " +
+        "`headers`, `format`) declares where the gateway's egress proxy may use it: a container then " +
+        "holds only a placeholder, swapped for the real value on those hosts alone. Well-known names " +
+        "(GitHub, Vercel, Supabase, Make, Composio tokens) are protected without it.",
+      inputSchema: {
+        name: z.string(),
+        value: z.string(),
+        scope: z.enum(["personal", "organization", "my", "org"]).optional(),
+        hosts: z.array(z.string()).max(16).optional(),
+        headers: z.array(z.string()).max(8).optional(),
+        format: z.enum(["bearer", "raw", "basic-password", "basic-user"]).optional(),
+      },
     },
-    async ({ name, value, scope }) => {
+    async ({ name, value, scope, hosts, headers, format }) => {
+      const rules = { ...(hosts !== undefined ? { hosts } : {}), ...(headers !== undefined ? { headers } : {}), ...(format !== undefined ? { format } : {}) };
       const target = scopeOf(scope, "personal");
       try {
         if (target === "organization") {
           const refusal = await requireOrgAdmin();
           if (refusal) return text(refusal);
-          const vars = patchOrgEnv({ set: { name, value }, actor: createdBy });
+          const vars = patchOrgEnv({ set: { name, value, ...rules }, actor: createdBy });
           const saved = vars.find((v) => v.name === String(name || "").trim().toUpperCase());
-          return text(`✅ Saved the organization secret \`${saved?.name || name}\`. Every conversation's next run receives it.${DELETE_MSG_WARNING}`);
+          return text(`✅ Saved the organization secret \`${saved?.name || name}\`${protectionNote(saved)}. Every conversation's next run receives it.${DELETE_MSG_WARNING}`);
         }
         if (target !== "personal") return text(`\`set_secret\` writes the personal or organization scope; a conversation's own secrets are set in its Secrets modal or the admin UI.`);
         const refusal = requireSelf();
         if (refusal) return text(refusal);
-        const vars = await patchUserEnv(createdBy, { set: { name, value } });
+        const vars = await patchUserEnv(createdBy, { set: { name, value, ...rules } });
         const saved = vars.find((v) => v.name === String(name || "").trim().toUpperCase());
-        return text(`✅ Saved your personal secret \`${saved?.name || name}\`. It'll be injected into runs you author.${DELETE_MSG_WARNING}`);
+        return text(`✅ Saved your personal secret \`${saved?.name || name}\`${protectionNote(saved)}. It'll be injected into runs you author.${DELETE_MSG_WARNING}`);
       } catch (e) {
         return text(`❌ ${e.message}`);
       }

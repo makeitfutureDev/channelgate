@@ -40,6 +40,10 @@ const BUNDLE_ENTRIES = [
 // same socket, so this one file serves both.
 const SOCKET_BRIDGE_SOURCE = "src/mcp/socket-bridge.js";
 const SOCKET_BRIDGE_DEST = "bin/cg-mcp-bridge.mjs";
+// The container-side half of the egress proxy (container-secrets P2), staged the same way: a
+// verbatim, dependency-free copy that cg-init starts under CG_EGRESS=proxy.
+const EGRESS_FORWARDER_SOURCE = "src/mcp/egress-forwarder.js";
+const EGRESS_FORWARDER_DEST = "bin/cg-egress.mjs";
 
 // Packages the bundle needs that no `import` statement names: remote-secret-bridge resolves
 // mcp-remote's proxy with createRequire, so it has to be resolvable from /opt/channelgate.
@@ -117,6 +121,9 @@ function stageContext({ closure }) {
   const bridge = path.join(repoRoot, SOCKET_BRIDGE_SOURCE);
   if (!existsSync(bridge)) throw new Error(`${SOCKET_BRIDGE_SOURCE} is missing — the container half of the gateway MCP cannot be staged`);
   cpSync(bridge, path.join(dir, SOCKET_BRIDGE_DEST));
+  const forwarder = path.join(repoRoot, EGRESS_FORWARDER_SOURCE);
+  if (!existsSync(forwarder)) throw new Error(`${EGRESS_FORWARDER_SOURCE} is missing — the container half of the egress proxy cannot be staged`);
+  cpSync(forwarder, path.join(dir, EGRESS_FORWARDER_DEST));
   const bundleDir = path.join(dir, "bundle");
   for (const rel of closure.files) {
     // Strip the leading `src/` so /opt/channelgate mirrors src/ — every relative import inside the

@@ -9,7 +9,7 @@ import { cleanAccessGrants } from "./helpers.js";
 // A person's OWN environment secrets (config/scoped-env.js). Same write-only contract as a
 // channel's: listUserEnv's masked shape is the only thing that may leave the process.
 import { listUserEnv, patchUserEnv } from "../../config/scoped-env.js";
-import { listEnvVars, normalizeEnvName } from "../../config/channel-env.js";
+import { listEnvVars, normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
 // a stored user record can carry secrets this file has never heard of — a personal token from an
@@ -128,7 +128,7 @@ export function createUsersRouter() {
       const name = normalizeEnvName(req.params.name);
       let vars;
       try {
-        vars = await patchUserEnv(userId, { set: { name: req.params.name, value }, actor: USER_SECRET_ACTOR });
+        vars = await patchUserEnv(userId, { set: { name: req.params.name, value, ...swapRuleFieldsFrom(req.body) }, actor: USER_SECRET_ACTOR });
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }

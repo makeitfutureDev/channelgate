@@ -29,6 +29,7 @@ import { safeSpawnEnv } from "../config/channel-env.js";
 import { browserSpawnEnv } from "../gateway/browser-env.js";
 import { appendTail } from "../util/tail.js";
 import { trackEngineChild } from "./process-registry.js";
+import { applyEgressEnv } from "../runtimes/container/egress-env.js";
 import { containerPaths, dropHostLocationEnv, isIsolatedTarget, probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
 import { isProgressReportTool, normalizeProgressReport } from "./progress-report.js";
@@ -871,17 +872,18 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
     const image = containerPaths(target);
     const base = buildChildEnv({
       ...safeSpawnEnv(extraEnv),
-      ...browserSpawnEnv(browserNamespace),
+      ...browserSpawnEnv(browserNamespace, { target }),
       NODE_USE_ENV_PROXY: "1",
       ...(source.CODEX_API_KEY || source.OPENAI_API_KEY ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
     }, source);
-    return {
+    // The egress proxy/CA variables are gateway-owned and applied last (see buildClaudeEnv).
+    return applyEgressEnv({
       ...dropHostLocationEnv(base),
       HOME: image.home,
       CODEX_HOME: image.codexHome,
       TMPDIR: image.tmpDir,
       PATH: image.path,
-    };
+    }, target);
   }
   return buildChildEnv({
     ...safeSpawnEnv(extraEnv),

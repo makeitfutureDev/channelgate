@@ -28,6 +28,7 @@ import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.j
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
 import { startSshBroker, stopSshBroker } from "./gateway/ssh-broker.js";
+import { egressStatus, startEgressService, stopEgressService } from "./gateway/egress/service.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
 import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
@@ -115,7 +116,13 @@ async function bootContainerRuntimeOrDie() {
 // gateway control socket: a container without it would run with no gateway tools at all.
 async function containerRuntimeHealth() {
   const settings = getContainerRuntime();
-  const base = { socket: mcpSocketStatus() };
+  // `egress`: the mode, whether the proxy is up and how many channel listeners it holds — names and
+  // counts only (the per-channel counters stay on the daemon).
+  const egress = egressStatus();
+  const base = {
+    socket: mcpSocketStatus(),
+    egress: { mode: settings.egressMode, running: egress.running, error: egress.error || "", channels: egress.channels.length },
+  };
   const unavailable = (reason) => ({ ...base, cli: { ok: false, reason }, image: { ref: settings.image, present: false, reason: "" }, running: 0, containers: [] });
   const mod = await containerRuntimeModule();
   if (typeof mod.containerRuntimeStatus !== "function") return unavailable(mod.__loadError || "container runtime backend is not available in this build");
@@ -143,6 +150,11 @@ async function stopRuntimeServices(reason) {
   }
   try {
     await stopSshBroker();
+  } catch {
+    /* best effort */
+  }
+  try {
+    await stopEgressService();
   } catch {
     /* best effort */
   }
@@ -255,6 +267,14 @@ async function main() {
   // below (a container cannot connect before its first run, long after boot).
   const daemonHandlers = {};
   await startMcpSocketServer({ handlers: daemonHandlers, log: console });
+  // The egress proxy (src/gateway/egress/service.js): the only network a proxy-mode channel
+  // container has. It never fails the boot — a service that cannot start logs one line, and
+  // container runs then fail closed naming the remedy instead of running on an open network.
+  try {
+    await startEgressService({ log: console });
+  } catch (error) {
+    console.warn(`[egress] proxy unavailable (${error?.message || error}) — container runs in proxy mode will fail closed until it starts.`);
+  }
   // SSH access to channel containers (src/gateway/ssh-broker.js): binds its attach socket only when
   // the root installer has set the host up, and re-checks by itself otherwise — never fails the boot.
   await startSshBroker({ log: console });

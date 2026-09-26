@@ -58,7 +58,10 @@ test("prepareTarget is pure: same inputs, same target, no container touched", ()
   assert.equal(a.container.name, `cg-${currentInstallId()}-slack-pure-chan`);
   assert.equal(a.container.homeVolume, `${a.container.name}-home`);
   assert.equal(a.container.image, "channelgate/runtime:latest");
-  assert.equal(a.container.network, "bridge");
+  // Egress proxy mode (the default): no network of its own. With no egress service registered
+  // (this test) the plan is inactive — no proxy mounts, no proxy env — but never the open bridge.
+  assert.equal(a.container.network, "none");
+  assert.deepEqual(a.container.egress, { mode: "proxy", active: false, network: "none", rawNetwork: false, socketDir: "", caBundle: "", caSpki: "" });
   assert.equal(a.container.uid, process.getuid());
   assert.equal(a.container.gid, process.getgid());
   assert.deepEqual(a.container.limits, { pidsLimit: 1024, memory: "2g", cpus: "4" });
