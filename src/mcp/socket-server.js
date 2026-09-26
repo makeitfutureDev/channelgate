@@ -146,8 +146,8 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
       remoteName = Array.isArray(frame.args) ? String(frame.args[0] || "").slice(0, 80) : "";
       try {
         remoteTarget = authorizeRemoteMcp(checked, remoteName);
-      } catch (error) {
-        return refuse(socket, String(error?.message || "remote MCP is not authorized for this run"));
+      } catch {
+        return refuse(socket, "remote MCP is not authorized for this run");
       }
     }
 
