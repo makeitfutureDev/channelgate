@@ -8,7 +8,7 @@
 // pins the two together. The daemon COMPARES it at boot: an image built from an older spec still
 // runs, but the operator is told to rebuild rather than left wondering why a channel is missing
 // this build's toolchain.
-export const IMAGE_SPEC_VERSION = "1.5.1";
+export const IMAGE_SPEC_VERSION = "1.6.0";
 
 export const CONTAINER_HOME = "/home/agent";
 // Where a channel's OWN installs land, in precedence order, ahead of the image's root-owned
@@ -46,6 +46,11 @@ export const CONTAINER_SOCKET_FILE = "/run/channelgate/mcp.sock";
 // through `secret-env-bridge`, which re-execs `process.execPath <script>`, so a shell shim would
 // fail there. The human-facing /opt/channelgate/bin/cg-mcp-bridge shim still exists for a person
 // who exec'd into a container by hand.
+//
+// Spec 1.6.0: the bridge and secret-env-bridge carry the `remote-mcp` socket service (the daemon
+// relays Composio and the toolboxes, so a container holds no remote MCP credential); the broker
+// forwards CG_MCP_SERVICE / CG_MCP_SOCKET. An older image's broker would drop the service
+// selection, which is why this is a contract bump and not only a toolchain change.
 export const CONTAINER_MCP_BRIDGE = "/opt/channelgate/bin/cg-mcp-bridge.mjs";
 export const IMAGE_HELPERS = Object.freeze({
   "gateway-mcp": Object.freeze({ command: "node", args: Object.freeze([CONTAINER_MCP_BRIDGE]) }),
