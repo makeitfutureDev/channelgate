@@ -114,11 +114,22 @@ test("buildClaudeEnv: the proxy + CA are in the gateway-owned last group, over t
   assert.equal(env.CG_EGRESS, "proxy");
   assert.equal(env.GITHUB_TOKEN, "cgph_cabcdefghijklmnopqrstuvwxyz234567", "the placeholder rides like any secret");
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, RELAY_PLACEHOLDER);
-  assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=${SPKI}`);
+  assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=${SPKI}`);
+
+  // No telemetry behind the proxy: an idle warm engine's event-log batch was refused `channel-idle`
+  // on every attempt. Gateway-owned: a channel secret of that name is filtered, and it is reserved.
+  // Essential-traffic mode is deliberately NOT set: it would also drop feature flags, the version
+  // lookup and claude.ai plugin downloads.
+  assert.equal(env.DISABLE_TELEMETRY, "1");
+  assert.equal(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, undefined);
+  const hostile = buildClaudeEnv({ target: t, extraEnv: { DISABLE_TELEMETRY: "0" } }, source);
+  assert.equal(hostile.DISABLE_TELEMETRY, "1");
+  assert.equal(isReservedEnvName("DISABLE_TELEMETRY"), true);
 
   const legacy = buildClaudeEnv({ target: inactiveTarget("egenv-claude-legacy") }, source);
   assert.equal(legacy.CG_EGRESS, undefined);
   assert.equal(legacy[BROWSER_ARGS_ENV], undefined);
+  assert.equal(legacy.DISABLE_TELEMETRY, undefined, "no proxy, telemetry untouched");
 });
 
 test("buildCodexEnv: the same last group", () => {
@@ -128,7 +139,13 @@ test("buildCodexEnv: the same last group", () => {
   assert.equal(env.all_proxy, undefined);
   assert.equal(env.SSL_CERT_FILE, CA);
   assert.equal(env.NODE_USE_ENV_PROXY, "1");
-  assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=${SPKI}`);
+  assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=${SPKI}`);
+  // Node 22's experimental-proxy warning is silenced at the source, gateway-owned, and a channel
+  // secret named NODE_OPTIONS can neither replace nor extend it.
+  assert.equal(env.NODE_OPTIONS, "--disable-warning=UNDICI-EHPA");
+  const hostile = buildCodexEnv({ target: activeTarget("egenv-codex-hostile"), extraEnv: { NODE_OPTIONS: "--require /tmp/x.js" } }, { ...source, NODE_OPTIONS: "--inspect" });
+  assert.equal(hostile.NODE_OPTIONS, "--disable-warning=UNDICI-EHPA");
+  assert.equal(buildCodexEnv({ target: inactiveTarget("egenv-codex-legacy") }, source).NODE_OPTIONS, undefined, "no proxy, no flag");
 });
 
 test("browser env: the Chromium proxy flags only for an active plan with a CA pin", () => {
@@ -138,6 +155,6 @@ test("browser env: the Chromium proxy flags only for an active plan with a CA pi
   assert.deepEqual(browserSpawnEnv("cg-slack-x"), { AGENT_BROWSER_NAMESPACE: "cg-slack-x" });
   assert.deepEqual(browserSpawnEnv("cg-slack-x", { target: activeTarget("egenv-browser") }), {
     AGENT_BROWSER_NAMESPACE: "cg-slack-x",
-    AGENT_BROWSER_ARGS: `--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=${SPKI}`,
+    AGENT_BROWSER_ARGS: `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=${SPKI}`,
   });
 });

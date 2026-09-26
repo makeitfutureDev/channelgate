@@ -56,6 +56,8 @@ const RESERVED_EXACT = new Set([
   "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR",
   "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_COUNT",
   "PAGER", "EDITOR", "VISUAL",
+  // Gateway-owned in a proxy-mode Claude spawn (engines/claude.js CLAUDE_PROXY_TELEMETRY_ENV).
+  "DISABLE_TELEMETRY",
 ]);
 
 export function isReservedEnvName(name) {

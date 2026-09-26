@@ -50,9 +50,19 @@ export const BROWSER_ARGS_ENV = "AGENT_BROWSER_ARGS";
 // deployment's egress CA, which Chromium does not read from SSL_CERT_FILE. Pinning that CA's SPKI
 // hash accepts exactly the proxy's certificates and nothing else. `caSpki` is
 // base64(sha256(SubjectPublicKeyInfo)), carried on the target's egress plan.
+//
+// agent-browser splits AGENT_BROWSER_ARGS on ',' and '\n' — never on a space (0.36.0:
+// cli/src/native/actions.rs `v.split([',', '\n'])`, and main.rs for `--args`). Space-joined, Chromium
+// received ONE malformed flag, ran with no proxy, and every page failed ERR_INTERNET_DISCONNECTED in
+// the `--network none` namespace. Comma, not newline: an SSH session carries this value on sshd's
+// one SetEnv line and in its env file, which drop any value with a control character
+// (ssh-access.js SESSION_ENV_VALUE). Neither the proxy URL nor a base64 SPKI hash contains a comma
+// — which also means the pin list holds exactly ONE hash; Chromium's own comma list is unusable here.
+export const BROWSER_ARGS_SEPARATOR = ",";
+
 export function browserEgressArgs(plan) {
   if (plan?.active !== true || !plan.caSpki) return "";
-  return `--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=${plan.caSpki}`;
+  return ["--proxy-server=http://127.0.0.1:3128", `--ignore-certificate-errors-spki-list=${plan.caSpki}`].join(BROWSER_ARGS_SEPARATOR);
 }
 
 // The spawn-site form: an env fragment to merge into a child's environment. Takes either a

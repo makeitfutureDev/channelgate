@@ -140,7 +140,7 @@ test("swapHeaders: canUse refusal leaves the header alone and carries the reason
   const headers = { authorization: `Bearer ${grant.placeholder}` };
   const out = swapHeaders({ headers, hostname: "api.github.com", resolveGrant: resolverFor(grant), canUse: () => ({ ok: false, reason: "owner-not-live" }) });
   assert.equal(out.headers.authorization, `Bearer ${grant.placeholder}`);
-  assert.deepEqual(out.refused, [{ secretName: "GITHUB_TOKEN", reason: "owner-not-live", denied: true }]);
+  assert.deepEqual(out.refused, [{ secretName: "GITHUB_TOKEN", reason: "owner-not-live", denied: true, scope: "personal" }]);
   // A throwing canUse is a refusal, never an exception.
   const thrown = swapHeaders({ headers, hostname: "api.github.com", resolveGrant: resolverFor(grant), canUse: () => { throw new Error("boom"); } });
   assert.equal(thrown.headers.authorization, `Bearer ${grant.placeholder}`);

@@ -223,7 +223,7 @@ test("container side: under the egress proxy the ONE SetEnv line carries the pro
   assert.equal(env.HTTPS_PROXY, "http://127.0.0.1:3128", "the plan wins over a stale create-time value");
   assert.equal(env.ALL_PROXY, undefined);
   assert.equal(env.all_proxy, undefined);
-  assert.equal(env.AGENT_BROWSER_ARGS, "--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=c3BraQ==");
+  assert.equal(env.AGENT_BROWSER_ARGS, "--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=c3BraQ==");
   assert.equal(env.GIT_SSH_COMMAND, "ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'");
   assert.deepEqual(access.sessionEgressEnv(target), Object.fromEntries(Object.entries(env).filter(([name]) => !["PATH", "CG_WORKDIR"].includes(name))));
   const lines = access.renderContainerSshdConfig("/x/ssh", env).split("\n").filter((l) => l.startsWith("SetEnv"));
@@ -231,7 +231,7 @@ test("container side: under the egress proxy the ONE SetEnv line carries the pro
   for (const pair of ['"HTTPS_PROXY=http://127.0.0.1:3128"', '"https_proxy=http://127.0.0.1:3128"', '"NO_PROXY=localhost,127.0.0.1,::1"', '"NODE_USE_ENV_PROXY=1"',
     '"NODE_EXTRA_CA_CERTS=/run/channelgate/egress-ca.pem"', '"SSL_CERT_FILE=/run/channelgate/egress-ca.pem"', '"GIT_SSL_CAINFO=/run/channelgate/egress-ca.pem"', '"CG_EGRESS=proxy"',
     `"GIT_SSH_COMMAND=ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"`,
-    '"AGENT_BROWSER_ARGS=--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=c3BraQ=="']) {
+    '"AGENT_BROWSER_ARGS=--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=c3BraQ=="']) {
     assert.ok(lines[0].includes(pair), `SetEnv carries ${pair}`);
   }
   assert.doesNotMatch(lines[0], /ALL_PROXY|all_proxy/);

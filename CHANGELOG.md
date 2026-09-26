@@ -18,6 +18,27 @@ product overview.
 
 ## Unreleased
 
+- **The browser works behind the egress proxy.** Chromium's proxy and certificate flags were joined
+  with a space, which agent-browser does not split, so every page failed with
+  `ERR_INTERNET_DISCONNECTED` in a proxy-mode channel. They are now comma-separated.
+- **Leftover credential files are cleaned out of channel containers.** A crashed or interrupted run
+  could leave its MCP config or Codex secret bundle in the channel's artifact folder, where later
+  turns could read it (files from before the MCP relay held real Composio and toolbox tokens). The
+  gateway now deletes such files older than six hours before a channel container is created or
+  started, and at boot for containers already running.
+- **Idle channels no longer flood the audit log.** An idle warm Claude process's telemetry, refused
+  because nothing is running in the channel, is counted in the egress status instead of written as
+  an audit row for every attempt. Every other refusal is still logged.
+- **Codex status and error text no longer shows Node's proxy warning.** The
+  `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental` line is silenced in proxy-mode Codex
+  runs and filtered out of the status row and failure messages.
+- **Claude sends no telemetry from proxy-mode channels.** Claude runs behind the egress proxy now
+  set `DISABLE_TELEMETRY=1`, so an idle warm engine stops sending telemetry the proxy would refuse.
+  Feature flags, the version check and claude.ai plugin downloads are unaffected. A channel secret
+  named `DISABLE_TELEMETRY` is now refused as reserved.
+- **Organization secrets are named as organization secrets.** When a run's only secrets were
+  organization-wide, the credential list never said so, and an engine could call them channel
+  credentials. The scope is now stated whenever any secret is organization-wide or personal.
 - **Codex's sign-in no longer sits in every channel container.** Until now each channel container
   had the gateway host's real Codex login file, refresh token included, mounted read-write, so one
   channel could read it and every channel shared it. Behind the egress proxy a container now gets

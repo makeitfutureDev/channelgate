@@ -2706,7 +2706,8 @@ are retired, bullet by bullet; everything else stands.
   tunnels go to `github.com:22` and the admin-declared `egressRawHosts` on 22/5432/6543. Audit rows
   (`egress` events) only for a swap of a channel/organization/personal secret, a refusal, a blocked
   destination or a raw tunnel — the relayed Claude login's swap on every API call is only counted
-  (`egressStatus()`, `/api/health` → `containerRuntime.egress`). Two escapes, both reported as
+  (`egressStatus()`, `/api/health` → `containerRuntime.egress`), and so is a request whose only
+  refusal is an engine-login relay refused `channel-idle` (an idle warm process's telemetry). Two escapes, both reported as
   advisory everywhere: the LEGACY `containerEgressMode = "bridge"` (the open bridge and raw values,
   for a host that cannot run the proxy) and a channel's admin-set `rawNetwork` (the bridge beside
   the proxy, proxy env still set). Switching either recreates the container at its next idle moment
@@ -2822,6 +2823,23 @@ are retired, bullet by bullet; everything else stands.
   `src/mcp/remote-secret-bridge.js` and its `mcp-remote` runtime helper are gone: since the P1
   relay nothing bridged a remote MCP through them. → TEST-PLAN: Codex login relay, strict secrets,
   static check (container-secrets P4).
+- **Egress QA campaign fixes (2026-09-27).** `AGENT_BROWSER_ARGS` is comma-joined
+  (`--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=<hash>`), the
+  separator agent-browser 0.36.0 splits on (a newline is too, but an SSH session's `SetEnv` line
+  drops control characters). The container backend removes `cg-mcp-*.json`,
+  `cg-mcp-review-*.json`, `cg-codex-secrets-*.json` and `cg-codex-secrets-*.headers.cjs` older than
+  six hours from a channel's artifact dir and its `run/` before every create/start and, for running
+  containers, at boot (`src/runtimes/container/stale-run-files.js`; lstat, links skipped; one
+  `[container] swept N stale per-run credential file(s) from <slug>` line). An idle channel's
+  engine-relay refusal is counted, not written as an `egress` row. A proxy-mode Codex spawn gets
+  `NODE_OPTIONS=--disable-warning=UNDICI-EHPA`, and the Codex runner drops Node's `[UNDICI-EHPA]`
+  warning and its `--trace-warnings` hint from the status-row note and every failure sentence (the
+  raw `details.stderr` keeps them). A proxy-mode Claude spawn gets `DISABLE_TELEMETRY=1`
+  (gateway-owned, applied last, a reserved secret name), so an idle warm engine sends no telemetry;
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is deliberately not set (it would also drop feature
+  flags, the version lookup and claude.ai plugin downloads). The credential inventory's
+  per-scope lines now appear whenever any injected name is organization- or personal-scoped, even
+  as the only scope; a purely channel-scoped run is unchanged. → TEST-PLAN: Egress QA campaign fixes.
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's
   pid names the host-side `exec` CLIENT, never the engine, so liveness and signals are asked of the
   backend: a probe execs `cg-probe <runId>` against the process-group leader `cg-exec` recorded

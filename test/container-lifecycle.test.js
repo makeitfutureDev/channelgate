@@ -577,6 +577,89 @@ test("stale env files are swept when a new one is written", async () => {
   runner.discardEnvFile(fresh);
 });
 
+// RELAY-01: per-run MCP configs and Codex secret bundles (real tokens before P1) that a crashed or
+// interrupted run left in the bind-mounted artifact dir must not stay readable by later turns.
+test("stale per-run credential files: old ones removed, fresh ones kept, links and look-alikes skipped", async () => {
+  const { sweepStaleRunCredentialFiles, STALE_RUN_FILE_MS } = await import("../src/runtimes/container/stale-run-files.js");
+  const { symlinkSync, utimesSync, readFileSync } = await import("node:fs");
+  const dir = tempDir("cg-stale-run-");
+  const run = path.join(dir, "run");
+  mkdirSync(run, { mode: 0o700 });
+  const outside = tempDir("cg-stale-outside-");
+  const nowMs = Date.now();
+  const age = (file, ms) => utimesSync(file, (nowMs - ms) / 1000, (nowMs - ms) / 1000);
+  const put = (file, ms) => { writeFileSync(file, "{\"token\":\"real\"}", { mode: 0o600 }); age(file, ms); return file; };
+  const old = STALE_RUN_FILE_MS + 60_000;
+  const stale = [
+    put(path.join(dir, "cg-mcp-11111111-1111-4111-8111-111111111111.json"), old),
+    put(path.join(dir, "cg-mcp-review-22222222-2222-4222-8222-222222222222.json"), old),
+    put(path.join(run, "cg-codex-secrets-33333333-3333-4333-8333-333333333333.json"), old),
+    put(path.join(run, "cg-codex-secrets-33333333-3333-4333-8333-333333333333-composio.headers.cjs"), old),
+    put(path.join(dir, "cg-codex-secrets-44444444-4444-4444-8444-444444444444.json"), old),
+  ];
+  const kept = [
+    put(path.join(dir, "cg-mcp-55555555-5555-4555-8555-555555555555.json"), 5 * 60_000), // a live turn's
+    put(path.join(run, "cg-codex-secrets-66666666-6666-4666-8666-666666666666.json"), 60_000),
+    put(path.join(dir, "notes.json"), old), // not a per-run name
+    put(path.join(dir, "cg-mcp-77777777.txt"), old),
+  ];
+  // A link named like a target, pointing at an old file OUTSIDE: the link is skipped, the target untouched.
+  const victim = put(path.join(outside, "victim.json"), old);
+  const link = path.join(dir, "cg-mcp-88888888-8888-4888-8888-888888888888.json");
+  symlinkSync(victim, link);
+  // A `run` subdir an agent replaced with a link is not descended into.
+  const linkedRun = tempDir("cg-stale-linked-run-");
+  const linkedStale = put(path.join(linkedRun, "cg-codex-secrets-99999999-9999-4999-8999-999999999999.json"), old);
+
+  assert.equal(sweepStaleRunCredentialFiles(dir, { now: nowMs }), stale.length);
+  for (const file of stale) assert.equal(existsSync(file), false, `${path.basename(file)} must be swept`);
+  for (const file of kept) assert.equal(existsSync(file), true, `${path.basename(file)} must be kept`);
+  const { lstatSync, rmSync } = await import("node:fs");
+  assert.ok(lstatSync(link).isSymbolicLink(), "a symlink named like a target is skipped, not unlinked");
+  assert.equal(readFileSync(victim, "utf8"), "{\"token\":\"real\"}", "the link's target is never touched");
+
+  rmSync(run, { recursive: true, force: true });
+  symlinkSync(linkedRun, run);
+  assert.equal(sweepStaleRunCredentialFiles(dir, { now: nowMs }), 0);
+  assert.equal(existsSync(linkedStale), true, "a symlinked run/ is never followed");
+  assert.equal(sweepStaleRunCredentialFiles(path.join(dir, "missing"), { now: nowMs }), 0, "a missing dir is a no-op");
+});
+
+test("stale per-run credential files: swept before a create/start and at boot, with one log line per channel", async () => {
+  const { STALE_RUN_FILE_MS } = await import("../src/runtimes/container/stale-run-files.js");
+  const { utimesSync } = await import("node:fs");
+  const oldSec = (Date.now() - STALE_RUN_FILE_MS - 60_000) / 1000;
+  const h = harness();
+  const t = target("stale-run-create");
+  mkdirSync(path.join(t.artifactDir, "run"), { recursive: true, mode: 0o700 });
+  const leaked = [path.join(t.artifactDir, "cg-mcp-aaaa.json"), path.join(t.artifactDir, "run", "cg-codex-secrets-bbbb.json")];
+  for (const file of leaked) { writeFileSync(file, "{}", { mode: 0o600 }); utimesSync(file, oldSec, oldSec); }
+  await h.lifecycle.ensureUp(t, {});
+  for (const file of leaked) assert.equal(existsSync(file), false);
+  assert.equal(h.logs.filter((m) => m === "[container] swept 2 stale per-run credential file(s) from stale-run-create").length, 1);
+
+  // Boot: a container that is ALREADY running (no create/start will happen) is swept too.
+  const bootTarget = target("stale-run-boot");
+  mkdirSync(bootTarget.artifactDir, { recursive: true, mode: 0o700 });
+  const bootLeak = path.join(bootTarget.artifactDir, "cg-mcp-review-cccc.json");
+  writeFileSync(bootLeak, "{}", { mode: 0o600 });
+  utimesSync(bootLeak, oldSec, oldSec);
+  const fake = createFakeCli({
+    kind: "podman",
+    routes: [
+      { match: (a) => a[1] === "ps", result: { code: 0, stdout: "ddd\n" } },
+      { match: (a) => a[1] === "inspect" && a.length > 5, result: { code: 0, stdout: inspectLine({ name: "cg-boot", status: "running", install: currentInstallId(), channel: "stale-run-boot", platform: "slack" }) } },
+      { match: (a) => a[1] === "exec" && a.includes("cg-sweep"), result: { code: 0, stdout: "" } },
+    ],
+  });
+  const logs = [];
+  const cli = createContainerCli({ exec: fake.exec });
+  const lifecycle = createContainerLifecycle({ cli, image: createContainerImage({ cli }), reaper: createContainerReaper({ log: () => {} }), log: (m) => logs.push(m) });
+  await lifecycle.bootReconcile(SETTINGS);
+  assert.equal(existsSync(bootLeak), false, "a leftover in a container that was already running at boot is swept");
+  assert.ok(logs.includes("[container] swept 1 stale per-run credential file(s) from stale-run-boot"));
+});
+
 test("the daemon's timezone crosses into the container — at create AND on every exec", async () => {
   const { buildCreateArgs } = await import("../src/runtimes/container/lifecycle.js");
   const { containerRunEnv } = await import("../src/runtimes/container/exec.js");

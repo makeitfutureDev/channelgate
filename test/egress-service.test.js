@@ -173,6 +173,43 @@ test("no live work: the channel's placeholder is refused (403 naming the secret)
   assert.ok(!JSON.stringify(events[0]).includes(PLACEHOLDER), "no placeholder in the audit either");
 });
 
+// An idle warm Claude process keeps posting its telemetry batch between turns; the relay refusal
+// each attempt earns is expected, so it is COUNTED but not written (241 rows in 25 minutes before).
+// Every other refusal — including a relay refused for another reason, or an idle refusal of any
+// other scope sharing the request — still writes its row.
+test("audit policy: an idle channel's relay refusal is counted, not logged; every other refusal is logged", () => {
+  const ctx = { channelId: CHANNEL, slug: entry.slug, platform: "slack" };
+  const counters = () => ({ ...service.egressStatus().channels.find((c) => c.slug === entry.slug).counters });
+  const idleRelay = { secretName: "CLAUDE_CODE_OAUTH_TOKEN", reason: "channel-idle", denied: true, scope: "relay" };
+  const base = { ctx, hostname: "api.anthropic.com", port: 443, method: "POST", path: "/api/event_logging/v2/batch", status: 403, swapped: [] };
+
+  const before = egressEvents().length;
+  const counted = counters();
+  service.recordAudit({ ...base, refused: [idleRelay] });
+  service.recordAudit({ ...base, refused: [{ ...idleRelay, secretName: "CODEX_ACCESS_TOKEN" }] });
+  assert.equal(egressEvents().length, before, "an idle relay refusal writes no events row");
+  const after = counters();
+  assert.equal(after.requests, counted.requests + 2);
+  assert.equal(after.refused, counted.refused + 2, "…but it is counted");
+
+  const logged = [
+    { refused: [{ ...idleRelay, reason: "other-channel" }] }, // a relay refused for any other reason
+    { refused: [{ secretName: "MY_API_KEY", reason: "channel-idle", denied: true, scope: "channel" }] },
+    { refused: [idleRelay, { secretName: "MY_API_KEY", reason: "channel-idle", denied: true, scope: "channel" }] },
+    { refused: [idleRelay, { secretName: null, reason: "unknown-placeholder" }] },
+    { refused: [{ secretName: "CLAUDE_CODE_OAUTH_TOKEN", reason: "channel-idle" }] }, // no scope: not provably the relay
+    { refused: [idleRelay], blocked: { reason: "network-off" } },
+    { refused: [idleRelay], swapped: [{ secretName: "MY_API_KEY", scope: "channel" }] },
+    { refused: [], tunnel: true },
+  ];
+  for (const extra of logged) service.recordAudit({ ...base, ...extra });
+  const rows = egressEvents().slice(before);
+  assert.equal(rows.length, logged.length, "every other refusal, block, swap and tunnel still writes its row");
+  assert.deepEqual(rows[0].data.refused, [{ secretName: "CLAUDE_CODE_OAUTH_TOKEN", reason: "other-channel" }], "names and reasons only in the row");
+  // A relay's own successful swap stays unlogged, as before.
+  assert.equal(service.auditWorthy({ ...base, status: 200, refused: [], swapped: [{ secretName: "CLAUDE_CODE_OAUTH_TOKEN", scope: "relay" }] }), false);
+});
+
 test("a live turn: the upstream sees the real value; a request with no placeholder writes no audit row", async () => {
   const release = liveness.markLive({ channelId: CHANNEL, ownerId: "U1", kind: "turn", id: "t1" });
   try {
