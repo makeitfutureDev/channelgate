@@ -12,14 +12,17 @@
 //            query: ["token"]?, body: boolean (reserved, not swapped here), plainHttp: boolean? }
 // Formats: `bearer` = the header is `<scheme> <token>`; `raw` = the header value IS the token;
 // `basic-password` / `basic-user` = `Authorization: Basic base64(user:password)` with the token as
-// exactly that half. A grant without `format` accepts bearer and raw; one without `headers` accepts
+// exactly that half; `jwt` = the token (bearer or the whole value) is a JWT-SHAPED placeholder
+// (`<header>.<payload>.cgph_…`, placeholders.js) and the WHOLE three-segment token is replaced by the
+// real one — only a grant that lists `jwt` accepts it, and a jwt-only grant refuses a bare
+// placeholder. A grant without `format` accepts bearer and raw; one without `headers` accepts
 // DEFAULT_SWAP_HEADERS.
 //
 // Invariants: never throws on a malformed header, never mutates its input, and never swaps part
 // of a header — if any placeholder in one header value is refused, that whole value is left as is.
 // Results name secrets and reasons only; the `scrub` map (value → token) is for the response
 // scrubber and must never reach an audit event or a log.
-import { PLACEHOLDER_PREFIX, PLACEHOLDER_RE } from "./placeholders.js";
+import { JWT_PLACEHOLDER_RE, PLACEHOLDER_PREFIX, PLACEHOLDER_RE } from "./placeholders.js";
 
 export const DEFAULT_SWAP_HEADERS = Object.freeze([
   "authorization", "x-api-key", "apikey", "x-consumer-api-key", "x-auth-token", "private-token", "x-vercel-token",
@@ -184,29 +187,43 @@ function swapBasic(name, value, session) {
   return { results, value: `${m[1]}${m[2]}${Buffer.from(`${out["basic-user"]}:${out["basic-password"]}`, "utf8").toString("base64")}${m[4]}` };
 }
 
-// Swap in one plain header value (not Basic): `raw` = the whole value, `bearer` = `<scheme> <token>`.
+// A JWT-shaped placeholder standing alone as `text`, whose core is `core` → the whole token, else "".
+function jwtToken(text, core) {
+  const m = JWT_PLACEHOLDER_RE.exec(String(text ?? ""));
+  return m && m[1] === core ? m[0] : "";
+}
+
+// Swap in one plain header value (not Basic): `raw` = the whole value, `bearer` = `<scheme> <token>`,
+// `jwt` = a JWT-shaped placeholder in either of those places, replaced whole.
 function swapPlain(name, value, session) {
   const tokens = tokensIn(value);
   if (!tokens.length) return null;
   let position = "embedded";
   let prefix = "";
   let suffix = "";
-  if (tokens.length === 1 && tokens[0].token === value.trim()) {
+  let whole = "";
+  const bearer = BEARER_RE.exec(value);
+  if (tokens.length === 1 && (whole = jwtToken(value.trim(), tokens[0].core))) {
+    position = "jwt";
+    prefix = value.slice(0, value.indexOf(whole));
+    suffix = value.slice(prefix.length + whole.length);
+  } else if (tokens.length === 1 && bearer && (whole = jwtToken(bearer[3], tokens[0].core))) {
+    position = "jwt";
+    prefix = `${bearer[1]}${bearer[2]}`;
+    suffix = bearer[4];
+  } else if (tokens.length === 1 && tokens[0].token === value.trim()) {
     position = "raw";
     prefix = value.slice(0, value.indexOf(tokens[0].token));
     suffix = value.slice(prefix.length + tokens[0].token.length);
-  } else {
-    const bearer = BEARER_RE.exec(value);
-    if (tokens.length === 1 && bearer && bearer[3] === tokens[0].token) {
-      position = "bearer";
-      prefix = `${bearer[1]}${bearer[2]}`;
-      suffix = bearer[4];
-    }
+  } else if (tokens.length === 1 && bearer && bearer[3] === tokens[0].token) {
+    position = "bearer";
+    prefix = `${bearer[1]}${bearer[2]}`;
+    suffix = bearer[4];
   }
   if (position === "embedded") return { results: tokens.map((t) => session.decide(t.core, { kind: "header", name, position })), value };
   const verdict = session.decide(tokens[0].core, { kind: "header", name, position });
   if (!verdict.grant) return { results: [verdict], value };
-  return { results: [{ grant: verdict.grant, token: tokens[0].token }], value: `${prefix}${verdict.grant.value}${suffix}` };
+  return { results: [{ grant: verdict.grant, token: whole || tokens[0].token }], value: `${prefix}${verdict.grant.value}${suffix}` };
 }
 
 function swapHeaderValue(name, value, session) {

@@ -118,7 +118,7 @@ export const containerBackend = Object.freeze({
       uid,
       gid,
       uidStrategy: "user", // settled from the CLI probe
-      credentialMode: intendedCredentialModes(settings),
+      credentialMode: intendedCredentialModes(settings, { egressActive: egress.active === true }),
       limits: {
         pidsLimit: Number(settings.pidsLimit) || 1024,
         memory: String(settings.memory || ""),
@@ -143,8 +143,9 @@ export const containerBackend = Object.freeze({
       artifactDir: base.artifactDir || channelArtifactDir(base.slug, base.platform),
       socketDir: runtimeSocketDir(),
       // The declared credential source; ensureUp replaces it with the resolved real path, or drops
-      // the mount when the gateway has no Codex login at all.
-      codexAuthFile: codexAuthCandidates()[0],
+      // the mount when the gateway has no Codex login at all. Behind the egress proxy there is no
+      // mount to declare: Codex is relayed (credentials.js "relay").
+      codexAuthFile: egress.active ? "" : codexAuthCandidates()[0],
       container,
     };
     container.mounts = buildMounts(target);
@@ -260,6 +261,12 @@ export const containerBackend = Object.freeze({
 
   async copyOut(target, entries) {
     return runtime().carry.copyOut(target, entries);
+  },
+
+  // The relayed Codex login file (contract.js OPTIONAL_METHODS): staged through the artifact dir
+  // and renamed into place inside the HOME volume, which the daemon cannot open directly.
+  async writeHomeFile(target, entry) {
+    return runtime().carry.writeHomeFile(target, entry);
   },
 
   // The read-only twin (contract.js OPTIONAL_METHODS): which engine state files this channel's

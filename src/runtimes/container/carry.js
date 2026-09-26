@@ -14,7 +14,7 @@
 // lets the receiving side apply a carry by walking, with no second copy of the path arithmetic and
 // no knowledge of which entry a staged file came from — which matters because the container side
 // expands wildcards the daemon cannot (a Codex rollout's timestamped filename).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { carrySegments, copyCarryPair, expandCarryEntry, hasWildcard, splitCarryPath, walkFiles } from "../copy.js";
@@ -209,5 +209,40 @@ export function createContainerCarry({ exec, lifecycle, log = () => {} } = {}) {
     }
   }
 
-  return { copyIn, copyOut, carryStagingDir };
+  // One engine-login file into the HOME volume (contract.js writeHomeFile). Staged 0600 under the
+  // artifact dir like a carry, then copied to a temp name BESIDE the destination and RENAMED over
+  // it — never `cp` onto the destination itself: if the destination were still a bind mount (a
+  // container created before the relay, with the operator's real auth.json mounted there), a write
+  // THROUGH it would overwrite the operator's login. The script refuses a mounted destination
+  // outright, and a rename over a mountpoint fails (EBUSY) as a second guard.
+  async function writeHomeFile(target, { file, body } = {}) {
+    const home = String(target?.container?.home || "/home/agent");
+    const to = path.posix.normalize(String(file || ""));
+    if (!to.startsWith(`${home}/`) || to.includes("/../")) throw new Error(`refusing to write ${to || "(no path)"} outside the runtime HOME`);
+    if (!target?.artifactDir) throw new Error("this target has no artifact dir — a home file has nowhere to stage");
+    const stagingDir = carryStagingDir(target, newCarryId());
+    try {
+      mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
+      const staged = path.join(stagingDir, "file");
+      writeFileSync(staged, String(body ?? ""), { mode: 0o600 });
+      const temporary = `${to}.cg-tmp`;
+      const script = [
+        "set -e",
+        "umask 077",
+        `if grep -q ${shellQuote(` ${to} `)} /proc/self/mountinfo 2>/dev/null; then echo "refusing: ${to} is a mount" >&2; exit 3; fi`,
+        `mkdir -p ${shellQuote(path.posix.dirname(to))}`,
+        `cp ${shellQuote(staged)} ${shellQuote(temporary)}`,
+        `chmod 600 ${shellQuote(temporary)}`,
+        `mv -f ${shellQuote(temporary)} ${shellQuote(to)}`,
+      ].join("\n");
+      const result = await runScript(target, script);
+      if (result.code !== 0) {
+        throw new Error(`writing ${to} into ${target.container.name} failed: ${String(result.stderr || "").trim() || `exit ${result.code}`}`);
+      }
+    } finally {
+      cleanup(stagingDir);
+    }
+  }
+
+  return { copyIn, copyOut, carryStagingDir, writeHomeFile };
 }

@@ -78,6 +78,11 @@ export const OPTIONAL_METHODS = Object.freeze([
   // MCP argument; args contain state paths/session counters only. Return minimized usage/identity,
   // never raw transcripts. Called while the run lease holds; no lifecycle reconfiguration.
   "inspectUsage",
+  // writeHomeFile(target, { file, body }) → Promise<void> — place ONE small engine-login file in
+  // the runtime's persistent HOME (the relayed Codex auth.json, src/gateway/codex-token-relay.js):
+  // written 0600 and RENAMED into place, never through a mount (a mounted destination refuses).
+  // `file` is an absolute in-runtime path under the HOME; `body` is never a real credential.
+  "writeHomeFile",
 ]);
 
 // Whether a backend can move engine state in and out of itself. Both halves or neither: a backend

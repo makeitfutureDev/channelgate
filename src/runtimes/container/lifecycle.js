@@ -141,7 +141,9 @@ export function parseInspectLine(line) {
 // the daemon checkout, and the operator's ~/.claude or ~/.codex directories. The only sources under
 // the gateway root are the clean workspace (a bare workdir, mounted so clean mode works in a
 // container) and the MCP socket directory (read-only). The Codex auth FILE is the one credential
-// mount, and it is the resolved real file — see credentials.js for why it is a file and not a dir.
+// mount, and only outside the egress proxy (legacy bridge mode, or an API-key login): it is the
+// resolved real file — see credentials.js for why it is a file and not a dir. Behind the proxy
+// Codex is relayed and nothing credential-shaped is mounted.
 // The single, deliberate exception is the operator-home grant (operatorHomeMounts below): a
 // Full-access channel, while the gateway-wide switch is on, gets the daemon user's whole home.
 //
@@ -404,8 +406,9 @@ export function createContainerLifecycle({
     if (!caps.cgroupLimits && (c.limits.memory || c.limits.cpus || c.limits.pidsLimit)) {
       log(`[container] cgroup limits are not delegated — ${c.name} runs without pids/memory/cpu caps`);
     }
-    const settled = settleCredentialModes(target.settings, env);
+    const settled = settleCredentialModes(target.settings, env, { egressActive: c.egress?.active === true });
     c.credentialMode = settled.modes;
+    // "" in relay mode: the real Codex login is never a mount behind the egress proxy.
     c.codexAuthFile = settled.codexAuthFile;
     // Rebuild rather than patch: ensureUp can run more than once on one target (the out-of-band
     // retry), and a credential that appeared since the last pass has to come BACK as a mount.

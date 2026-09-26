@@ -4,7 +4,9 @@
 // a class of bug that otherwise only shows up as an MCP server silently failing to start.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -422,4 +424,28 @@ test("image diagnostics expose built and desired toolchains and detect legacy un
   assert.deepEqual(current.toolchain, desired.toolchain);
   const custom = await image.inspect({}, { image: "private.example/runtime:custom" }, { force: true });
   assert.equal(custom.managed, false);
+});
+
+test("cg-init removes a pre-relay Codex login (one with a refresh token) under the proxy, and nothing else", () => {
+  // Run ONLY the Codex block, re-pointed at a scratch file: cg-init itself writes under /home/agent.
+  const init = readFileSync(path.join(repoRoot, "containers", "bin", "cg-init"), "utf8");
+  const start = init.indexOf("CODEX_AUTH=/home/agent/.codex/auth.json");
+  const end = init.indexOf("\nfi\n", start) + 4;
+  assert.ok(start > 0 && end > start, "the block exists");
+  const dir = mkdtempSync(path.join(os.tmpdir(), "cg-init-codex-"));
+  const file = path.join(dir, "auth.json");
+  const block = init.slice(start, end).replace("CODEX_AUTH=/home/agent/.codex/auth.json", `CODEX_AUTH=${file}`);
+  const run = (egress) => spawnSync("sh", ["-c", block], { env: { PATH: process.env.PATH, CG_EGRESS: egress } });
+  try {
+    writeFileSync(file, JSON.stringify({ tokens: { access_token: "a", refresh_token: "a-real-looking-refresh" } }));
+    run("");
+    assert.ok(existsSync(file), "outside proxy mode it is the shared file's business");
+    run("proxy");
+    assert.ok(!existsSync(file), "a refresh token under the proxy is a leftover: removed");
+    writeFileSync(file, JSON.stringify({ tokens: { access_token: "h.p.cgph_r", refresh_token: "" } }, null, 2));
+    run("proxy");
+    assert.ok(existsSync(file), "the daemon's access-only file stays");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

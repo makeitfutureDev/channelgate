@@ -30,6 +30,19 @@ const FORBIDDEN_HEADERS = new Set(["host", "connection", "proxy-authorization", 
 // only in the Authorization header on the Anthropic API.
 export const RELAY_SECRET_NAME = "CLAUDE_CODE_OAUTH_TOKEN";
 export const RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthropic.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
+// The relayed Codex login (scope `relay`, the twin): the container's auth.json holds a JWT-SHAPED
+// placeholder (placeholders.js) — the CLI parses its access token as a JWT — and the proxy replaces
+// that WHOLE token with the live access token in the Authorization header on the OpenAI/ChatGPT
+// endpoints Codex authenticates to. `jwt` is the only format it accepts: a bare `cgph_` there is
+// never swapped. Kept in step with ENGINE_HOSTS.codex (engine-hosts.js).
+export const CODEX_RELAY_SECRET_NAME = "CODEX_ACCESS_TOKEN";
+export const CODEX_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com", "chatgpt.com", "auth.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["jwt"]) });
+const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE });
+
+// The swap rule of a relay grant, by its secret name, or null for a name no relay uses.
+export function relayRuleFor(secretName) {
+  return Object.hasOwn(RELAY_RULES, secretName) ? RELAY_RULES[secretName] : null;
+}
 
 function freezeRule(id, { names, hosts, headers, format }) {
   return Object.freeze({

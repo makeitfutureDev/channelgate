@@ -14,16 +14,19 @@
 // background job and the next turn all hold the same string, and the pool fingerprint does not
 // churn on a rotation. Scopes (DB spelling → placeholder letter): organization → o (channel ''),
 // channel → c, personal → p (per channel AND author: another author's turn never receives it),
-// relay → r (the Claude access-token relay, per channel).
+// relay → r (an engine login relay, per channel: the Claude access token `CLAUDE_CODE_OAUTH_TOKEN`,
+// and its Codex twin `CODEX_ACCESS_TOKEN` — codex-token-relay.js — keyed by secret name).
 import { getDb } from "../../db/index.js";
-import { getChannelEntry, getChannelMeta } from "../../config/store.js";
+import { getChannelEntry, getChannelMeta, getChannelsIndex } from "../../config/store.js";
+import { platformOr } from "../../platforms/registry.js";
 import { normalizeChannelEnv, resolveChannelEnv, safeSpawnEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv, mergeRunEnv, resolveOrgEnv, resolveUserEnv } from "../../config/scoped-env.js";
 import { getContainerRuntime } from "../../config/settings.js";
 import { resolveContainerClaudeToken } from "../claude-token-relay.js";
+import { renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-token-relay.js";
 import { egressActive } from "../../runtimes/container/egress-hook.js";
-import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES } from "./placeholders.js";
-import { RELAY_RULE, RELAY_SECRET_NAME, rulesFor } from "./catalog-rules.js";
+import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder } from "./placeholders.js";
+import { CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
 
 export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
 const MINT_SCOPE = { organization: "org", channel: "channel", personal: "personal", relay: "relay" };
@@ -134,19 +137,26 @@ export function revokeMissing({ scope, channelId, ownerId, present, now = Date.n
 
 // ── Live values ───────────────────────────────────────────────────────────────────────────────
 
-let relayCache = null; // { at, promise }
-async function cachedRelayToken(deps) {
+// One cache per relay (secret name): the live token behind the channel placeholders, resolved —
+// and refreshed when it is about to expire — at most once a minute.
+const relayCaches = new Map(); // secret name → { at, promise }
+async function cachedRelayToken(secretName, deps) {
+  const resolve = secretName === CODEX_RELAY_SECRET_NAME
+    ? (deps.codexRelayToken || resolveContainerCodexToken)
+    : (deps.relayToken || resolveContainerClaudeToken);
   const now = Date.now();
-  if (!relayCache || now - relayCache.at > RELAY_CACHE_MS) {
-    relayCache = { at: now, promise: Promise.resolve().then(() => (deps.relayToken || resolveContainerClaudeToken)()) };
-    relayCache.promise.catch(() => { relayCache = null; });
+  let cache = relayCaches.get(secretName);
+  if (!cache || now - cache.at > RELAY_CACHE_MS) {
+    cache = { at: now, promise: Promise.resolve().then(() => resolve()) };
+    relayCaches.set(secretName, cache);
+    cache.promise.catch(() => { if (relayCaches.get(secretName) === cache) relayCaches.delete(secretName); });
   }
-  const relay = await relayCache.promise;
+  const relay = await cache.promise;
   return String(relay?.token || "");
 }
 
 export function __resetGrantCaches() {
-  relayCache = null;
+  relayCaches.clear();
   materialCache.clear();
 }
 
@@ -160,7 +170,10 @@ async function channelMetaFor(channelId, deps) {
 // rules come from. `exists` false means the secret itself is gone (the caller revokes).
 export async function resolveGrantMaterial(row, deps = {}) {
   const name = row.secretName;
-  if (row.scope === "relay") return { value: await cachedRelayToken(deps), entry: null, exists: true };
+  if (row.scope === "relay") {
+    if (!relayRuleFor(name)) return { value: "", entry: null, exists: false };
+    return { value: await cachedRelayToken(name, deps), entry: null, exists: true };
+  }
   if (row.scope === "organization") {
     const entry = (deps.orgEntries ? deps.orgEntries() : getOrgEnv())[name] || null;
     const values = await (deps.resolveOrgEnv || resolveOrgEnv)();
@@ -202,7 +215,7 @@ export async function resolveEgressGrant(core, deps = {}) {
     revokeGrants({ scope: row.scope, channelId: row.channelId, ownerId: row.ownerId, secretName: row.secretName });
     return null;
   }
-  const rule = row.scope === "relay" ? RELAY_RULE : rulesFor(row.secretName, material.entry);
+  const rule = row.scope === "relay" ? relayRuleFor(row.secretName) : rulesFor(row.secretName, material.entry);
   if (!rule || !material.value) return null;
   return {
     placeholder: row.placeholder,
@@ -314,4 +327,41 @@ export function containerClaudeCredential({ target, relay, channelId = "" }) {
   if (!key) return relay;
   const placeholder = relayPlaceholderFor({ channelId: key });
   return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholder}`, placeholder: true };
+}
+
+// ── The Codex relay (the twin) ────────────────────────────────────────────────────────────────
+
+// The channel id a target's grants bind to when its meta does not carry one (a legacy meta): the
+// channels index, slug + platform → id — the same lookup the egress listener binds with, never a
+// guess.
+async function channelIdOfTarget(target) {
+  const slug = String(target?.slug || "");
+  if (!slug) return "";
+  const platform = platformOr(target?.platform).id;
+  const index = await getChannelsIndex();
+  return Object.entries(index).find(([, entry]) => entry?.slug === slug && platformOr(entry?.platform).id === platform)?.[0] || "";
+}
+
+export function codexRelayPlaceholderFor({ channelId }) {
+  return placeholderFor({ scope: "relay", channelId, secretName: CODEX_RELAY_SECRET_NAME });
+}
+
+// What a containerized Codex reads as its sign-in: the body of the ACCESS-ONLY auth.json the
+// runner writes into the channel's HOME volume (codex-token-relay.js renderContainerCodexAuth).
+// Needs the proxy as this target's egress — with no swap, a placeholder cannot authenticate, and
+// the legacy bridge mode keeps the shared-file mount instead. → { authJson, expiresAt, placeholder,
+// source } or { error } when there is nothing to relay. Never returns a real token.
+export async function containerCodexCredential({ target, channelId = "", resolveRelay = resolveContainerCodexToken, now = Date.now } = {}) {
+  if (!egressActive(target)) return { error: "the egress proxy is not this container's network, so Codex cannot use a relayed sign-in" };
+  const key = String(channelId || target?.meta?.channelId || "") || (await channelIdOfTarget(target));
+  if (!key) return { error: "the run has no channel to bind Codex's relayed sign-in to" };
+  const relay = await resolveRelay();
+  if (!relay?.token) return { error: relay?.error || "the gateway has no Codex sign-in to relay", source: relay?.source || "none" };
+  const accessToken = wrapPlaceholder(codexRelayPlaceholderFor({ channelId: key }), { shape: "jwt", claimsFrom: relay.token });
+  return {
+    authJson: renderContainerCodexAuth({ accessToken, idToken: relay.idToken, accountId: relay.accountId, now }),
+    expiresAt: relay.expiresAt || 0,
+    source: relay.source,
+    placeholder: true,
+  };
 }

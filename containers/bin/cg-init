@@ -54,6 +54,17 @@ if [ "${CG_EGRESS:-}" = "proxy" ] && [ -f /opt/channelgate/bin/cg-egress.mjs ]; 
   node /opt/channelgate/bin/cg-egress.mjs </dev/null >/dev/null 2>&1 &
 fi
 
+# Codex behind the egress proxy (container-secrets P4) is RELAYED: before each Codex run the daemon
+# writes an ACCESS-ONLY auth.json here (a placeholder token, an EMPTY refresh token). So under the
+# proxy a Codex login file in this volume that carries a refresh token is never the daemon's — it is
+# a leftover from before the relay (an old copy of a real login) — and is removed on every start.
+# A mounted file (the shared-file mode an API-key login keeps) is never touched.
+CODEX_AUTH=/home/agent/.codex/auth.json
+if [ "${CG_EGRESS:-}" = "proxy" ] && [ -f "$CODEX_AUTH" ] && ! grep -q " $CODEX_AUTH " /proc/self/mountinfo 2>/dev/null \
+   && grep -q '"refresh_token"[[:space:]]*:[[:space:]]*"[^"]' "$CODEX_AUTH" 2>/dev/null; then
+  rm -f "$CODEX_AUTH"
+fi
+
 # Claude credentials are NEVER copied in here: the daemon hands the engine a `claude setup-token`
 # value through the exec environment (CLAUDE_CODE_OAUTH_TOKEN). A copy of the gateway's own login
 # would refresh, rotate the refresh token and log the gateway itself out (2026-09-02 incident).

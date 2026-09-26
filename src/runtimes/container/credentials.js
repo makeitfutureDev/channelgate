@@ -11,14 +11,23 @@
 // `tasks/` and `session-env/` are symlinks into the operator's real ~/.claude, and mounting it
 // would put every transcript on the box inside a channel container.
 //
-// CODEX writes `auth.json` IN PLACE through that same symlink and has done so for eight days, so a
-// copy would fork the refresh chain and one side would eventually lose the race. Codex therefore
-// gets a FILE bind mount of the real auth file — the one deliberate exception to "mount
-// directories, never single files" (plan §6), justified by the observed in-place writes. Sessions
+// CODEX, behind the egress proxy (the default), is RELAYED like Claude (container-secrets P4,
+// src/gateway/codex-token-relay.js): no mount at all. Before each Codex run the runner writes an
+// ACCESS-ONLY auth.json into the channel's own HOME volume — the channel's relay placeholder in
+// JWT shape, the account id, an EMPTY refresh token — and the proxy swaps the placeholder for the
+// live access token on the OpenAI/ChatGPT hosts. The daemon renews the real login with a cheap turn
+// in its own CODEX_HOME. Mode "relay".
+//
+// The shared FILE bind mount of the real auth.json (mode "shared-file") survives only where a
+// relay cannot work: the LEGACY bridge egress mode (no proxy to swap a placeholder) and an API-key
+// login (auth.json holding OPENAI_API_KEY, which the relay does not carry). Codex writes that file
+// IN PLACE through the engine-home symlink, so a copy would fork the refresh chain; the file mount
+// is the one deliberate exception to "mount directories, never single files" (plan §6). Sessions
 // and history still land in the per-channel HOME volume, which is what isolates channels; only the
-// sign-in is shared. `cg-init` must create /home/agent/.codex and must never rename over the
-// mounted path (a rename across a bind mount fails with EBUSY / EXDEV, and would break the chain
-// for every channel at once).
+// sign-in is shared — the documented remaining exposure of those two configurations. `cg-init`
+// must create /home/agent/.codex and must never rename over a mounted path (a rename across a bind
+// mount fails with EBUSY / EXDEV, and would break the chain for every channel at once) — which is
+// also why the relay's writer only ever RENAMES into place and refuses a mounted destination.
 import { accessSync, constants, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,9 +66,11 @@ export const CLAUDE_API_KEY_NOTE =
 // the precedence lives in exactly one file.
 export { hasClaudeApiKey };
 export const CODEX_MISSING_MESSAGE =
-  "Codex is not signed in — run `codex login` on the gateway host. Container channels share the gateway's Codex sign-in file.";
+  "Codex is not signed in — run `codex login` on the gateway host. Container channels use the gateway's Codex sign-in (relayed through the egress proxy; the login file itself is never mounted there).";
 export const CLAUDE_RELAY_NOTE =
   "relaying the host user's own Claude access token (refreshed on the host before each run; the login file is never copied)";
+export const CODEX_RELAY_NOTE =
+  "relaying the host's Codex sign-in: the container holds an access-only auth.json whose token is a placeholder the egress proxy swaps (no refresh token; the real file is never mounted)";
 export const CODEX_SHARED_NOTE =
   "Codex sessions are per channel, but its sign-in file is shared with the gateway and every other container channel";
 
@@ -111,31 +122,50 @@ export function resolveCodexAuthFile(env = process.env) {
   return "";
 }
 
+// Can the relay carry this login? Only a ChatGPT sign-in (a JWT access token) — an API-key login
+// keeps the shared file. Mirrors src/gateway/codex-token-relay.js resolveCodexLogin (kept local for
+// the same import-direction reason as codexAuthCandidates above). Unreadable → false.
+export function codexLoginRelayable(file) {
+  if (!file) return false;
+  try {
+    const access = JSON.parse(readFileSync(file, "utf8"))?.tokens?.access_token;
+    return typeof access === "string" && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(access.trim());
+  } catch {
+    return false;
+  }
+}
+
 // PURE — what prepareTarget() can know from the target alone. The Codex side is an INTENT that
 // ensureUp() settles against the filesystem (settleCredentialModes below); Claude's "token" is
 // decided by configuration alone, which is why it is exact here.
-export function intendedCredentialModes(settings = {}) {
+// `egressActive`: the proxy is this target's egress (egress-hook.js) — the only way a relayed
+// placeholder can authenticate, so it decides Codex's intent.
+export function intendedCredentialModes(settings = {}, { egressActive = false } = {}) {
   return {
     // "relay" is the intent when no setup-token is configured: the daemon relays its own current
     // ACCESS token at spawn (src/gateway/claude-token-relay.js). Settled to "missing" below when
     // there is no readable gateway login at all.
     claude: settings?.hasClaudeOauthToken ? "token" : "relay",
-    codex: "shared-file",
+    // Behind the proxy: the access-only relay file (no mount). Otherwise the shared-file mount.
+    codex: egressActive ? "relay" : "shared-file",
   };
 }
 
 // I/O — called by ensureUp before the container is created, so the fingerprint and the mount list
-// reflect what is actually available.
-export function settleCredentialModes(settings = {}, env = process.env) {
+// reflect what is actually available. `codexAuthFile` is the file to MOUNT — "" in relay mode, so
+// the real login never becomes a mount; `codexLoginFile` is the resolved login either way.
+export function settleCredentialModes(settings = {}, env = process.env, { egressActive = false } = {}) {
   const claudeSource = settings?.hasClaudeOauthToken ? "" : resolveClaudeCredentialSource(env);
-  const codexAuthFile = resolveCodexAuthFile(env);
+  const codexLoginFile = resolveCodexAuthFile(env);
+  const relay = Boolean(egressActive && codexLoginFile && codexLoginRelayable(codexLoginFile));
   return {
     modes: {
       claude: settings?.hasClaudeOauthToken ? "token" : claudeSource ? "relay" : hasClaudeApiKey(env) ? "api-key" : "missing",
-      codex: codexAuthFile ? "shared-file" : "missing",
+      codex: !codexLoginFile ? "missing" : relay ? "relay" : "shared-file",
     },
     claudeSource,
-    codexAuthFile,
+    codexAuthFile: relay ? "" : codexLoginFile,
+    codexLoginFile,
   };
 }
 
@@ -169,6 +199,10 @@ export function credentialError(target, engineId, env = process.env) {
   }
   if (engineId === "codex") {
     if (modes.codex === "missing") return new Error(CODEX_MISSING_MESSAGE);
+    // The relay needs a ChatGPT sign-in to stand for, read now (the runner resolves the live token
+    // right after this gate). A login that turned into an API key or vanished since the container
+    // was settled refuses here with the remedy instead of spawning a Codex that cannot sign in.
+    if (modes.codex === "relay") return codexLoginRelayable(resolveCodexAuthFile(env)) ? null : new Error(CODEX_MISSING_MESSAGE);
     const file = target?.container?.codexAuthFile || resolveCodexAuthFile(env);
     return file ? null : new Error(CODEX_MISSING_MESSAGE);
   }
@@ -181,6 +215,7 @@ export function credentialNotes(target) {
   if (modes.claude === "relay") notes.push(CLAUDE_RELAY_NOTE);
   if (modes.claude === "api-key") notes.push(CLAUDE_API_KEY_NOTE);
   if (modes.claude === "missing") notes.push(CLAUDE_MISSING_MESSAGE);
+  if (modes.codex === "relay") notes.push(CODEX_RELAY_NOTE);
   if (modes.codex === "shared-file") notes.push(CODEX_SHARED_NOTE);
   if (modes.codex === "missing") notes.push(CODEX_MISSING_MESSAGE);
   return notes;

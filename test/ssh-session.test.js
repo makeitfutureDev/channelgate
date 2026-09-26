@@ -582,3 +582,28 @@ test("with another developer attached, this developer's personal placeholders ar
     liveness.__setSshSessionSource(null);
   }
 });
+
+test("Codex over SSH behind the egress proxy: the relayed access-only login is placed first, and a failure to place it is reported, never fatal to the session", async () => {
+  const t = target("ssh-codex-relay");
+  t.container.credentialMode = { claude: "relay", codex: "relay" };
+  const placed = [];
+  const { deps } = fakes();
+  const ok = await session.prepareSshSession({ target: t, entry: { slug: "ssh-codex-relay", channelId: "C_CXR" }, meta: {}, user, cliBin: "podman", log: { warn() {} } },
+    { ...deps, installCodexLogin: async (tgt) => { placed.push(tgt.container.name); return null; } });
+  assert.deepEqual(placed, [t.container.name], "the relay login is written into this channel's container");
+  assert.equal(ok.codex.ready, true, ok.codex.reason);
+
+  const refused = await session.prepareSshSession({ target: t, entry: { slug: "ssh-codex-relay", channelId: "C_CXR" }, meta: {}, user, cliBin: "podman", log: { warn() {} } },
+    { ...deps, installCodexLogin: async () => "the gateway has no Codex sign-in to relay" });
+  assert.equal(refused.codex.ready, false);
+  assert.match(refused.codex.reason, /Codex sign-in not placed: the gateway has no Codex sign-in to relay/);
+  assert.equal(refused.claude.relayed, true, "Claude is unaffected");
+
+  // The shared-file mode (legacy bridge) writes nothing.
+  const bridged = target("ssh-codex-bridge");
+  bridged.container.credentialMode = { claude: "relay", codex: "shared-file" };
+  const none = [];
+  await session.prepareSshSession({ target: bridged, entry: { slug: "ssh-codex-bridge", channelId: "C_CXB" }, meta: {}, user, cliBin: "podman", log: { warn() {} } },
+    { ...deps, installCodexLogin: async () => { none.push(1); return null; } });
+  assert.deepEqual(none, []);
+});

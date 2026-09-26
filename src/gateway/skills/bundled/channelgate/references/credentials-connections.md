@@ -65,10 +65,14 @@ Claude daemon authentication uses supported organization API credentials resolve
 files and legacy setup-token settings are not relayed. If missing, name the service-environment
 remedy rather than attempting to copy host credentials or create a second refresh chain.
 
-Codex uses the daemon's `CODEX_API_KEY` (before `OPENAI_API_KEY`), or an independent native login
-in that channel's persistent HOME. There is no shared writable host `auth.json` mount. A native
-channel login may be unknown to daemon health until the engine runs; a failure in one channel
-must not mark every other channel's login unusable.
+Codex uses the daemon's `CODEX_API_KEY` (before `OPENAI_API_KEY`), or the host's ChatGPT sign-in
+RELAYED like Claude's (`src/gateway/codex-token-relay.js`): behind the egress proxy the runner writes
+an ACCESS-ONLY `auth.json` into the channel's HOME volume before each Codex run — the access token is
+the channel's relay placeholder in JWT shape (real claims, `cgph_r…` as the signature), the refresh
+token is empty — and the proxy swaps the whole token on the OpenAI/ChatGPT hosts. The daemon renews
+the real login with a cheap turn in its own `CODEX_HOME`. Only the legacy bridge egress mode and an
+API-key `auth.json` still bind-mount the host's real file (the documented remaining exposure). Never
+copy a host `auth.json`, and never ask for one to be mounted: a copy forks the refresh chain.
 
 VS Code attaches to the existing channel container/workdir and holds an editor lease in daemon
 metadata. It sees that channel's existing native CLI sessions, but no daemon auth or channel

@@ -896,6 +896,24 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
   }, source);
 }
 
+// Write the relayed Codex login into an isolated runtime's HOME. → null when placed, else the
+// operator-facing sentence. The credential module is imported lazily: it reaches the egress grants
+// (and the database) that a host-only or test import of this runner must not pull in.
+export async function installRelayedCodexLogin(target, deps = null) {
+  if (typeof target?.runtime?.writeHomeFile !== "function") {
+    return "this runtime cannot hold a relayed Codex sign-in (no writeHomeFile)";
+  }
+  if ((target.container?.mounts || []).some((mount) => mount.kind === "codex-auth")) {
+    return "the container still mounts the shared Codex sign-in file; it is recreated on the next run";
+  }
+  const credential = deps?.credential || (await import("../gateway/egress/grants.js")).containerCodexCredential;
+  const relayed = await credential({ target, channelId: target?.meta?.channelId || "" });
+  if (!relayed?.authJson) return `${CODEX_CONTAINER_LOGIN_PREFIX}${relayed?.error || "the gateway has no Codex sign-in to relay"}. Run \`codex login\` on the gateway host.`;
+  await target.runtime.writeHomeFile(target, { file: `${containerPaths(target).codexHome}/auth.json`, body: relayed.authJson });
+  return null;
+}
+export const CODEX_CONTAINER_LOGIN_PREFIX = "This channel runs in a container, but ";
+
 function commandError(message, details = {}) {
   const err = new Error(message);
   err.details = details;
@@ -946,6 +964,8 @@ export async function runCodex({
   onDelta = null,
   onEvent = null,
   onSessionResolved = null,
+  // TEST SEAM: { credential } replaces containerCodexCredential (src/gateway/egress/grants.js).
+  codexRelayDeps = null,
 }) {
   // Sign-in is checked BEFORE anything is spawned. A logged-out Codex is not reliably a fast
   // failure — depending on build and credential shape it can sit there refreshing or waiting,
@@ -966,6 +986,14 @@ export async function runCodex({
   } else if (!isolated) {
     const state = await readCodexAuthState({ codexHome: codexStateDir });
     if (state.known && !state.authenticated) credentialFailure = describeCodexAuth(state);
+  }
+  // Behind the egress proxy the container has no Codex login of its own: it gets the channel's
+  // ACCESS-ONLY auth.json (a JWT-shaped relay placeholder, no refresh token — see
+  // src/gateway/codex-token-relay.js), written into its HOME volume right here, before every spawn,
+  // so the claims it carries follow the daemon's current token. Failing to place it is a
+  // credential failure like any other: replay-safe, before any work exists to lose.
+  if (!credentialFailure && isolated && runtime.container?.credentialMode?.codex === "relay") {
+    credentialFailure = await installRelayedCodexLogin(runtime, codexRelayDeps).catch((error) => `Codex could not be signed in inside the container: ${error?.message || error}`);
   }
   // A backend may answer with an Error or with the sentence itself; both mean the same thing here.
   const authDetail = typeof credentialFailure === "string" ? credentialFailure : String(credentialFailure?.message || "");

@@ -44,7 +44,7 @@ import { EGRESS_UNSET_ENV_NAMES } from "../runtimes/container/egress-env.js";
 import { egressActive } from "../runtimes/container/egress-hook.js";
 import { installVscodeClaudeRelay, installSshCodexWrapper, clearVscodeClaudeRelay, CLAUDE_ONBOARDING_FILE, sshUsersDirOf } from "../runtimes/container/vscode.js";
 import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.js";
-import { buildCodexArgs, codexSecretBundle, headerHelperSource } from "../engines/codex.js";
+import { buildCodexArgs, codexSecretBundle, headerHelperSource, installRelayedCodexLogin } from "../engines/codex.js";
 import { isIsolatedTarget } from "../engines/runtime-target.js";
 import { listEngineMcps, codexMcpPolicyFor } from "./mcp-discovery.js";
 import { readDaemonClaudeAccount } from "./claude-token-relay.js";
@@ -233,7 +233,14 @@ export function codexSessionOverrides(args) {
   return out;
 }
 
-async function prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps, cliBin, runCommand, installWrapper }) {
+async function prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps, cliBin, runCommand, installWrapper, installCodexLogin = installRelayedCodexLogin }) {
+  // Behind the egress proxy the container has no Codex login until one is placed: the same
+  // access-only relay file a turn writes (src/gateway/codex-token-relay.js), so an interactive
+  // `codex` works before the channel's first Codex turn — and never sees a refresh token.
+  if (target?.container?.credentialMode?.codex === "relay") {
+    const problem = await installCodexLogin(target);
+    if (problem) throw new Error(`Codex sign-in not placed: ${problem}`);
+  }
   const allowed = meta[requireAdapter("codex").mcpMetaKey] || [];
   // Minted for Codex: the capability names the engine that holds it.
   const runtime = await buildMcpRuntime({
@@ -296,6 +303,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   now = Date.now,
   listCodexMcps = () => listEngineMcps("codex").catch(() => []),
   installCodexWrapper = installSshCodexWrapper,
+  installCodexLogin = installRelayedCodexLogin,
 } = {}) {
   const slug = entry.slug;
   const userDir = sshUserDir(target, user.id);
@@ -381,7 +389,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     result.mcpServers = Object.keys(JSON.parse(runtime.mcpConfigJson).mcpServers || {});
     result.rejectedMcps = runtime.rejectedMcps || [];
     try {
-      const { relayJti: codexRelayJti = "", ...codex } = await prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps: listCodexMcps, cliBin, runCommand: exec, installWrapper: installCodexWrapper });
+      const { relayJti: codexRelayJti = "", ...codex } = await prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps: listCodexMcps, cliBin, runCommand: exec, installWrapper: installCodexWrapper, installCodexLogin });
       if (codexRelayJti) relayJtis.push(codexRelayJti);
       result.codex = codex;
     } catch (error) {

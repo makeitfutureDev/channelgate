@@ -2,7 +2,7 @@
 // the daemon calls: helperCommand, spawn/probe/signal, boot and health.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createFakeCli, inspectLine } from "./container-fake-cli.js";
@@ -454,6 +454,131 @@ test("describe reports state, credential modes and the shared-Codex caveat", asy
     assert.ok(described.notes.some((n) => /sign-in file is shared/.test(n)));
     assert.equal(described.codexAuth.shared, true);
     assert.equal(described.codexAuth.current, false, "a different inode inside means the container holds an older login");
+  } finally {
+    __resetContainerRuntime();
+  }
+});
+
+// ── Codex relay (container-secrets P4) ───────────────────────────────────────────────────────
+// A ChatGPT sign-in, built at runtime so the source holds nothing shaped like a real token.
+function chatgptAuthJson({ exp = Math.floor(Date.now() / 1000) + 9 * 86400 } = {}) {
+  const seg = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const jwt = (payload) => `${seg({ alg: "RS256", typ: "JWT" })}.${seg(payload)}.${Buffer.from("real-signature").toString("base64url")}`;
+  return JSON.stringify({
+    auth_mode: "chatgpt",
+    OPENAI_API_KEY: null,
+    tokens: { id_token: jwt({ email: "op@example.com" }), access_token: jwt({ exp }), refresh_token: "rt-real-refresh-token-value", account_id: "acct-1" },
+    last_refresh: new Date().toISOString(),
+  });
+}
+
+test("Codex behind the egress proxy: a ChatGPT sign-in is RELAYED — no mount; bridge mode and API-key logins keep the shared file", () => {
+  const engineAuth = path.join(codexEngineHome(), "auth.json");
+  mkdirSync(codexEngineHome(), { recursive: true });
+  try {
+    writeFileSync(engineAuth, chatgptAuthJson(), { mode: 0o600 });
+    const relayed = credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true });
+    assert.equal(relayed.modes.codex, "relay");
+    assert.equal(relayed.codexAuthFile, "", "the real login is never a mount behind the proxy");
+    assert.equal(relayed.codexLoginFile, engineAuth);
+    assert.equal(credentials.intendedCredentialModes(BASE, { egressActive: true }).codex, "relay");
+    assert.equal(credentials.intendedCredentialModes(BASE).codex, "shared-file");
+
+    // The legacy bridge has no proxy to swap a placeholder: the shared file stays (documented exposure).
+    const bridged = credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: false });
+    assert.equal(bridged.modes.codex, "shared-file");
+    assert.equal(bridged.codexAuthFile, engineAuth);
+
+    // An API-key login is not relayable: the shared file stays even behind the proxy.
+    writeFileSync(engineAuth, JSON.stringify({ OPENAI_API_KEY: "sk-test-not-a-key" }), { mode: 0o600 });
+    assert.equal(credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true }).modes.codex, "shared-file");
+    assert.equal(credentials.codexLoginRelayable(engineAuth), false);
+  } finally {
+    rmSync(engineAuth, { force: true });
+  }
+});
+
+test("Codex relay: credentialError needs a relayable sign-in NOW, and the notes say the file is not mounted", () => {
+  const engineAuth = path.join(codexEngineHome(), "auth.json");
+  mkdirSync(codexEngineHome(), { recursive: true });
+  const t = target("codex-relay-gate");
+  t.container.credentialMode = { claude: "token", codex: "relay" };
+  const saved = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = NO_CODEX_ENV.CODEX_HOME;
+  try {
+    writeFileSync(engineAuth, chatgptAuthJson(), { mode: 0o600 });
+    assert.equal(credentialError(t, "codex"), null);
+    assert.ok(credentials.credentialNotes(t).includes(credentials.CODEX_RELAY_NOTE));
+    assert.ok(!credentials.credentialNotes(t).includes(credentials.CODEX_SHARED_NOTE));
+    // Signed out since the container was settled → the remedy, before any spawn.
+    rmSync(engineAuth, { force: true });
+    assert.match(String(credentialError(t, "codex")?.message), /codex login/);
+    assert.doesNotMatch(credentials.CODEX_MISSING_MESSAGE, /share the gateway's Codex sign-in file/);
+  } finally {
+    process.env.CODEX_HOME = saved;
+    rmSync(engineAuth, { force: true });
+  }
+});
+
+test("Codex relay: ensureUp behind an active egress plan settles to relay and mounts nothing credential-shaped", async () => {
+  const { setEgressProvider } = await import("../src/runtimes/container/egress-hook.js");
+  const socketDir = tempDir("cg-egress-sock-");
+  const caBundle = path.join(tempDir("cg-egress-ca-"), "ca.pem");
+  writeFileSync(caBundle, "test bundle\n");
+  setEgressProvider({ running: () => true, socketDirFor: () => socketDir, caBundlePath: () => caBundle, caSpki: () => "spki", ensure: async () => ({ socketDir, socketPath: path.join(socketDir, "egress.sock") }), error: () => null });
+  const fake = createFakeCli({
+    kind: "podman",
+    routes: [
+      { match: (a) => a[1] === "image" && a[2] === "inspect", result: { code: 0, stdout: "sha256:settled|1.0.0" } },
+      { match: (a) => a[1] === "inspect", result: { code: 125, stderr: "no such container" } },
+    ],
+  });
+  __setContainerRuntime({ exec: fake.exec, log: () => {} });
+  const engineAuth = path.join(codexEngineHome(), "auth.json");
+  mkdirSync(codexEngineHome(), { recursive: true });
+  writeFileSync(engineAuth, chatgptAuthJson(), { mode: 0o600 });
+  const saved = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = NO_CODEX_ENV.CODEX_HOME;
+  try {
+    const t = target("codex-relay-up", { ...BASE, egressMode: "proxy" });
+    assert.equal(t.container.egress.active, true);
+    assert.equal(t.container.credentialMode.codex, "relay", "the pure intent already says relay");
+    assert.ok(!t.container.mounts.some((m) => m.kind === "codex-auth"), "prepareTarget declares no Codex mount");
+    await containerBackend.ensureUp(t, {});
+    assert.equal(t.container.credentialMode.codex, "relay");
+    assert.ok(!t.container.mounts.some((m) => m.kind === "codex-auth"));
+    const run = fake.last("run");
+    assert.ok(!run.some((arg) => typeof arg === "string" && arg.includes("auth.json")), "the real auth.json is not in the create argv");
+  } finally {
+    process.env.CODEX_HOME = saved;
+    rmSync(engineAuth, { force: true });
+    setEgressProvider(null);
+    __resetContainerRuntime();
+  }
+});
+
+test("writeHomeFile stages 0600, renames into place, refuses a mounted destination and paths outside HOME", async () => {
+  const fake = createFakeCli({
+    kind: "podman",
+    routes: [
+      { match: (a) => a[1] === "image" && a[2] === "inspect", result: { code: 0, stdout: "sha256:settled|1.0.0" } },
+      { match: (a) => a[1] === "inspect", result: { code: 125, stderr: "no such container" } },
+    ],
+  });
+  __setContainerRuntime({ exec: fake.exec, log: () => {} });
+  try {
+    const t = target("home-file");
+    await assert.rejects(containerBackend.writeHomeFile(t, { file: "/etc/passwd", body: "x" }), /outside the runtime HOME/);
+    await assert.rejects(containerBackend.writeHomeFile(t, { file: "/home/agent/../etc/x", body: "x" }), /outside the runtime HOME/);
+    await containerBackend.writeHomeFile(t, { file: "/home/agent/.codex/auth.json", body: '{"placeholder":true}' });
+    const exec = fake.last("exec");
+    const script = exec[exec.length - 1];
+    assert.match(script, /grep -q ' \/home\/agent\/\.codex\/auth\.json ' \/proc\/self\/mountinfo/, "a mounted destination is refused");
+    assert.match(script, /mv -f \/home\/agent\/\.codex\/auth\.json\.cg-tmp \/home\/agent\/\.codex\/auth\.json/, "renamed into place");
+    assert.doesNotMatch(script, /cp [^\n]* \/home\/agent\/\.codex\/auth\.json$/m, "never copied ONTO the destination (a write through a mount)");
+    assert.match(script, /umask 077/);
+    const carry = path.join(t.artifactDir, "carry");
+    assert.deepEqual(existsSync(carry) ? readdirSync(carry) : [], [], "the staged copy is removed");
   } finally {
     __resetContainerRuntime();
   }
