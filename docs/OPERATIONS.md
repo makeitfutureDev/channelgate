@@ -685,15 +685,20 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
 mode), the MakeItFuture toolbox and the Make toolbox never reach a container with their token. The
 engine's MCP entry is the image's socket bridge naming the server (`CG_MCP_SERVICE=remote-mcp`);
 the run's signed capability lists those names, and the daemon keeps the real URL and header in
-memory (never on disk, never logged) for the capability's lifetime — 6 hours for a turn, 12 for an
-SSH session. On a `remote-mcp` hello the daemon checks the claim and its own registration, dials the
+memory (never on disk, never logged) for no longer than the capability's lifetime — 6 hours for a
+turn, 12 for an SSH session — and normally only while something uses it: a cold turn's grant ends
+with the turn, a warm Claude process's when the process retires, an SSH session's at its end, and a
+person clearing their Composio or Toolbox token drops every grant minted for their runs at once. On a `remote-mcp` hello the daemon checks the claim and its own registration, dials the
 service (https only; Streamable HTTP, falling back to HTTP+SSE on a 4xx) and relays the tools. What
 an operator sees: the artifact dir's `cg-mcp-*.json` and Codex's `run/cg-codex-secrets-*.json` hold
 no Composio or toolbox token (Codex's bundle holds only the capability), and a relay that fails
 shows in the engine's MCP log as one fixed line — `remote MCP is not authorized for this run` (the
-grant expired, or the daemon restarted since the run started: in-memory registrations do not
-survive a restart, so the next turn simply registers again) or `remote MCP unavailable` (the
-service could not be reached; the upstream error is deliberately not repeated). A
+grant expired or was revoked, or the daemon restarted since the run started: in-memory
+registrations do not survive a restart, so the next turn simply registers again), `too many remote
+MCP connections for this run` (more than 8 at once for one server on one grant) or `remote MCP
+unavailable` (the service could not be reached; the upstream error is deliberately not repeated,
+and a failed tool call reads `remote MCP request failed`). `the gateway service takes no arguments`
+means the channel image predates spec 1.6.0. A
 `COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override pointing at plain http cannot be relayed: container
 runs skip that server and say so in the thread. The relay removes the credential from the box; the
 egress proxy (above) is what polices where the box can connect. It needs image spec 1.6.0

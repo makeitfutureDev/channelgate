@@ -42,7 +42,7 @@ import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.j
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
-import { isRelayableUrl } from "../mcp/remote-mcp-registry.js";
+import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 const MAX_RETAINED = 64_000; // stdout/stderr/delta kept for error context — tail only, never unbounded
@@ -761,8 +761,9 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
   // the server; the daemon verifies the capability's `remoteMcps` claim plus its own registration
   // (made when the capability was minted, src/gateway/mcp.js) and dials the real URL with the real
   // header. The bundle then holds ONLY the capability and no headers helper is written, so no
-  // process in the container can read a Composio or toolbox credential. A URL the relay cannot dial
-  // (a non-https override) is skipped here exactly as mcp.js drops and reports it.
+  // process in the container can read a Composio or toolbox credential. A server the relay cannot
+  // carry (a non-https override, a malformed header) is skipped here exactly as mcp.js drops and
+  // reports it.
   //
   // HOST (a sudo-host turn): reached over Codex's OWN streamable-HTTP transport, and the header
   // value is produced by a per-run helper script (`http_headers_helper`) that reads the 0600 bundle
@@ -785,10 +786,13 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
     args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
   };
-  const addSecretRemote = (name, url, secretName, headerName, prefix = "") => {
+  // `relayHeaders` is what the daemon registered for this server (src/gateway/mcp.js builds the
+  // same map): checked with the registry's own rule so a server mcp.js dropped and announced is
+  // skipped here too, instead of starting as an entry the socket will refuse.
+  const addSecretRemote = (name, url, secretName, headerName, prefix = "", relayHeaders = {}) => {
     if (clean || !secretBundlePath || !secretName || !url) return;
     if (isolated) {
-      if (isRelayableUrl(url)) addRelayedRemote(name);
+      if (!remoteMcpServerProblem({ url, headers: relayHeaders })) addRelayedRemote(name);
       return;
     }
     const helperPath = headerHelperPath(secretBundlePath, name);
@@ -832,18 +836,18 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     const url = endpoint?.url || composioUrl();
     const token = endpoint?.headers?.["x-consumer-api-key"] || legacyToken;
     if (!token) return;
-    addSecretRemote(name, url, secretName, "x-consumer-api-key");
+    addSecretRemote(name, url, secretName, "x-consumer-api-key", "", endpoint?.url ? (endpoint.headers || {}) : { "x-consumer-api-key": legacyToken });
   };
   addComposio("composio-user", composioUserEndpoint, composioUserToken, "composioUserToken");
   addComposio("composio-agent", composioEndpoint, composioToken, "composioToken");
 
   // Toolbox MCP, same native transport, carrying this run's token as a Bearer header.
   if (!clean && toolboxToken) {
-    addSecretRemote("makeitfuture-toolbox", toolboxUrl(), "toolboxToken", "Authorization", "Bearer ");
+    addSecretRemote("makeitfuture-toolbox", toolboxUrl(), "toolboxToken", "Authorization", "Bearer ", { Authorization: `Bearer ${toolboxToken}` });
   }
 
   if (!clean && makeToolboxUrl && makeToolboxKey) {
-    addSecretRemote("make-toolbox", makeToolboxUrl, "makeToolboxKey", "Authorization", "Bearer ");
+    addSecretRemote("make-toolbox", makeToolboxUrl, "makeToolboxKey", "Authorization", "Bearer ", { Authorization: `Bearer ${makeToolboxKey}` });
   }
 
   // Prompt must come before image flags: Codex's `-i/--image <FILE>...` option is variadic, so any

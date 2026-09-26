@@ -251,6 +251,31 @@ HTTP MCP server reached through an https URL plus a rewriting `fetch`. Token fix
       channel's tokens under the session capability's jti (12 h); the Codex bundle's only key is
       `gatewayCapability`, no `*.headers.cjs` exists, and the overrides select `remote-mcp`; a second
       preparation registers a fresh jti while the first stays live.
+- [x] Review fixes (engine-independent unless noted):
+      `test/mcp-socket-server.test.js` — a client that says hello and hangs up while the upstream
+      dial is pending: once the dial settles the upstream client is closed and the relay slot freed;
+      8 in-flight dials per grant + server, the 9th hello refused with `too many remote MCP
+      connections for this run` and nothing dialled, another server on the same grant unaffected;
+      an open relay keeps its grant after the minting caller releases it and the grant goes when
+      the connection closes; hellos with a crafted object in `args[0]` (remote-mcp, composio-sdk)
+      or as `service` are refused and closed (no unhandled rejection, which a mutation of the
+      catch reproduces); a `gateway` hello with `args` is refused naming `npm run build:image`;
+      `clear_my_composio_token` / `clear_my_toolbox_token` (approved control-plane call over the
+      socket) drop the author's grants and nobody else's. `test/remote-mcp-revocation.test.js` —
+      a real cold `runMessage` on the fake container backend relays both Composio identities while
+      the engine runs and leaves the registry empty once it settles (red with the `finally`
+      release removed); the admin UI's `PUT /api/users/:id` with `clearToolboxToken` drops every
+      grant for that author in every channel and origin, an unrelated edit drops nothing.
+      `test/remote-mcp-registry.test.js` — holds, `clearRemoteMcpsWhere` (held or not, metadata
+      only, a throwing predicate drops nothing), `remoteMcpServerProblem` per server and value-free.
+      `test/mcp-remote-relay.test.js` — an upstream `Error POSTing to endpoint (HTTP 401): …ck_…` and
+      a DNS failure reach the engine only as `remote MCP request failed`; an upstream `McpError`
+      (`Unknown tool`) passes with its code. `test/mcp-config.test.js` / `test/codex-args.test.js`
+      — a CR/LF, non-string, > 8 KB, badly named or 17-header endpoint drops only `composio-user`
+      (reported in `rejectedRemotes`, reason value-free) while `composio-agent` and the toolbox still
+      relay, and Codex skips the same server. `test/ssh-session.test.js` — a refresh releases the
+      previous Claude and Codex grants unless a running process holds one, and the session's end
+      drops them all, held or not.
 - [x] Image contract: `imageSpecVersion` and `IMAGE_SPEC_VERSION` are both `1.6.0`
       (`test/container-image.test.js` pins them equal).
 - [ ] UNEXECUTED live gate — Composio tool call through the relay on Claude and on Codex in a

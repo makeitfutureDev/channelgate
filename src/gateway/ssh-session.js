@@ -45,6 +45,7 @@ import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { SSH_TOOLSET } from "../mcp/gateway-server.js";
 import { containerSshDir } from "./ssh-access.js";
+import { clearRemoteMcpsWhere, releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 
 export const SSH_SESSION_ORIGIN = "ssh_session";
 export const SSH_USERS_SUBDIR = "users";
@@ -73,6 +74,21 @@ const temporary = file + ".cg-" + process.pid;
 fs.writeFileSync(temporary, JSON.stringify(config, null, 2), { mode: 0o600 });
 fs.renameSync(temporary, file);
 `;
+
+// The relay registrations (src/mcp/remote-mcp-registry.js) the CURRENT preparation of each
+// developer's session files took, per channel + developer — the Claude and the Codex capability.
+// A refresh releases the previous preparation's holds: the grant then goes as soon as no relay
+// connection holds it, so a `claude` the developer already started keeps the servers it started
+// with (the broker's contract: a running process keeps what it started with) while an unused
+// grant does not linger for its 12 hours. The session's end drops every grant it minted outright.
+const sessionRelayJtis = new Map();
+const relayKey = (slug, userId) => `${slug}\u0000${userId}`;
+function adoptSessionRelays(slug, userId, jtis) {
+  const key = relayKey(slug, userId);
+  for (const jti of sessionRelayJtis.get(key) || []) releaseRemoteMcps(jti);
+  if (jtis.length) sessionRelayJtis.set(key, jtis);
+  else sessionRelayJtis.delete(key);
+}
 
 export function sshUsersDir(target) {
   const dir = sshUsersDirOf(target);
@@ -229,7 +245,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
   writePrivate(path.join(userDir, "codex-args.sh"), renderCodexArgsScript(overrides));
   await installWrapper(target, cliBin, runCommand ? { runCommand: (bin, a, o) => runCommand(a, o) } : {});
   const servers = [...new Set(overrides.filter((v) => v.startsWith("mcp_servers.")).map((v) => v.split(".")[1]))];
-  return { ready: true, mcpServers: servers.sort(), reason: "" };
+  return { ready: true, mcpServers: servers.sort(), reason: "", relayJti: runtime.relayJti || "" };
 }
 
 /**
@@ -305,6 +321,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   // Composio and no secrets). Best effort and separate from `problems`: a Codex failure never costs
   // the developer the Claude session.
   const result = { claude, toolset: SSH_TOOLSET, mcpServers: [], secrets: [], rejectedMcps: [], userDir, problems: [], codex: { ready: false, mcpServers: [], reason: "" } };
+  const relayJtis = [];
   mkdirSync(userDir, { recursive: true, mode: 0o700 });
   chmodSync(userDir, 0o700);
   try {
@@ -325,11 +342,14 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
       gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
       toolset: SSH_TOOLSET, ttlMs: SSH_CAPABILITY_TTL_MS,
     });
+    if (runtime.relayJti) relayJtis.push(runtime.relayJti);
     writePrivate(path.join(userDir, "mcp.json"), runtime.mcpConfigJson);
     result.mcpServers = Object.keys(JSON.parse(runtime.mcpConfigJson).mcpServers || {});
     result.rejectedMcps = runtime.rejectedMcps || [];
     try {
-      result.codex = await prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps: listCodexMcps, cliBin, runCommand: exec, installWrapper: installCodexWrapper });
+      const { relayJti: codexRelayJti = "", ...codex } = await prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps: listCodexMcps, cliBin, runCommand: exec, installWrapper: installCodexWrapper });
+      if (codexRelayJti) relayJtis.push(codexRelayJti);
+      result.codex = codex;
     } catch (error) {
       result.codex = { ready: false, mcpServers: [], reason: String(error?.message || error).slice(0, 160) };
       for (const name of ["codex-args.sh", "codex-secrets.json"]) rmSync(path.join(userDir, name), { force: true });
@@ -358,18 +378,26 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   // failed one removes the others and the session runs plain relayed Claude, reported as such.
   if (result.problems.length) {
     rmSync(userDir, { recursive: true, force: true });
+    // The files that named these grants are gone, so nothing will ever connect with them.
+    for (const jti of relayJtis.splice(0)) releaseRemoteMcps(jti);
     result.codex = { ready: false, mcpServers: [], reason: result.codex.reason || "the session files were not prepared" };
     result.mcpServers = [];
     result.secrets = [];
     log?.warn?.(`[ssh] ${slug}/${user.id}: session files not prepared — ${result.problems.join("; ")}`);
   }
+  adoptSessionRelays(slug, user.id, relayJtis);
   return result;
 }
 
 /** The developer's last session in the channel ended: drop their files; the channel's last: the login too. */
-export async function releaseSshSession({ target, user, cliBin, lastForUser = true, lastInChannel = false, log = console }, { runCommand = null } = {}) {
+export async function releaseSshSession({ target, entry = null, user, cliBin, lastForUser = true, lastInChannel = false, log = console }, { runCommand = null } = {}) {
   if (lastForUser) {
     try { rmSync(sshUserDir(target, user.id), { recursive: true, force: true }); } catch { /* already gone */ }
+    // The developer's last session here ended: every relay grant any of its preparations minted
+    // goes NOW, held or not — a process that outlived the session loses its relayed servers.
+    const slug = entry?.slug || target.slug || "";
+    sessionRelayJtis.delete(relayKey(slug, user.id));
+    clearRemoteMcpsWhere((meta) => meta.origin === SSH_SESSION_ORIGIN && meta.slug === slug && meta.authorId === user.id);
   }
   if (!lastInChannel) return;
   const exec = async (args) => {

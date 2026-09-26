@@ -21,7 +21,7 @@ process.env.CG_APPROVAL_SECRET = "mcp-socket-signing-secret";
 
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { mintGatewayCapability } = await import("../src/gateway/mcp-capability.js");
-const { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } = await import("../src/mcp/socket-server.js");
+const { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus, relaySlotStats, MAX_RELAYS_PER_GRANT_SERVER } = await import("../src/mcp/socket-server.js");
 
 const SECRET = "mcp-socket-signing-secret";
 const SLUG = "mcp-socket-test";
@@ -274,7 +274,7 @@ test("gateway capability alone cannot select an arbitrary SDK session on the dae
 // The container holds only the capability; the daemon's registry holds the URL and headers. The
 // "remote" here is a real MCP server behind an in-memory transport, reached through the relay's
 // injectable connect — the HTTP leg itself is covered in mcp-remote-relay.test.js.
-const { registerRemoteMcps, clearRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
+const { registerRemoteMcps, clearRemoteMcps, releaseRemoteMcps, hasRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
 const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
 const { CallToolRequestSchema, ListToolsRequestSchema } = await import("@modelcontextprotocol/sdk/types.js");
@@ -419,4 +419,123 @@ test("Codex's chain (secret-env-bridge → socket bridge → remote-mcp) relays 
     await client.close().catch(() => {});
   }
   assert.deepEqual(remote.dials, [{ url: RELAYED["make-toolbox"].url, headers: RELAYED["make-toolbox"].headers }]);
+});
+
+// ── Review fixes (container-secrets P1) ───────────────────────────────────────────────────────
+const waitFor = async (predicate, what, timeoutMs = 3_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
+// A raw client that says hello and then hangs up without waiting for any answer.
+function helloThenHangUp(socketPath, line) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(socketPath);
+    socket.on("error", reject);
+    socket.on("connect", () => { socket.write(line); setTimeout(() => { socket.destroy(); resolve(); }, 20); });
+  });
+}
+
+test("a container that hangs up during the upstream dial never leaves that upstream client open", async (t) => {
+  const pending = [];
+  const upstreamClosed = [];
+  const connectRemote = () => new Promise((resolve) => {
+    pending.push(() => resolve({
+      close: async () => { upstreamClosed.push(true); },
+      getInstructions: () => undefined,
+      request: async () => ({ tools: [] }),
+    }));
+  });
+  const socketPath = await serverOn(t, {}, { connectRemote });
+  const jti = "relay-jti-early-close";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "composio-user": RELAYED["composio-user"] } });
+  t.after(() => clearRemoteMcps(jti));
+  await helloThenHangUp(socketPath, hello(capability({ remoteMcps: ["composio-user"], jti }), "composio-user"));
+  await waitFor(() => pending.length === 1, "the upstream dial to start");
+  assert.equal(relaySlotStats().open, 1, "the dial holds a slot while it is in flight");
+  pending[0](); // the upstream answers only after the container is gone
+  await waitFor(() => upstreamClosed.length === 1, "the orphaned upstream client to be closed");
+  await waitFor(() => relaySlotStats().open === 0, "the slot to be released");
+});
+
+test(`at most ${MAX_RELAYS_PER_GRANT_SERVER} relay connections per grant and server: hello-then-close cannot fan out dials`, async (t) => {
+  const pending = [];
+  const connectRemote = () => new Promise((resolve) => { pending.push(() => resolve({ close: async () => {}, request: async () => ({ tools: [] }) })); });
+  const socketPath = await serverOn(t, {}, { connectRemote });
+  const jti = "relay-jti-cap";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: RELAYED });
+  t.after(() => clearRemoteMcps(jti));
+  const cap = capability({ remoteMcps: ["composio-user", "make-toolbox"], jti });
+  for (let i = 0; i < MAX_RELAYS_PER_GRANT_SERVER; i++) await helloThenHangUp(socketPath, hello(cap, "composio-user"));
+  await waitFor(() => pending.length === MAX_RELAYS_PER_GRANT_SERVER, "eight dials in flight");
+  const refused = JSON.parse((await rawExchange(socketPath, hello(cap, "composio-user"))).trim());
+  assert.deepEqual(refused, { channelgate: "error", reason: "too many remote MCP connections for this run" });
+  assert.equal(pending.length, MAX_RELAYS_PER_GRANT_SERVER, "the refused hello dialled nothing");
+  // Another server on the same grant has its own budget (an SSH session shares one capability
+  // between every claude the developer starts).
+  await helloThenHangUp(socketPath, hello(cap, "make-toolbox"));
+  await waitFor(() => pending.length === MAX_RELAYS_PER_GRANT_SERVER + 1, "the other server's dial");
+  for (const settle of pending) settle();
+  await waitFor(() => relaySlotStats().open === 0, "every slot to be freed once the dials settle");
+});
+
+test("an open relay connection keeps its grant alive after the minting turn releases it, and drops it on hang-up", async (t) => {
+  const remote = fakeRemote();
+  const socketPath = await serverOn(t, {}, { connectRemote: remote.connectRemote });
+  const jti = "relay-jti-held";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "composio-user": RELAYED["composio-user"] } });
+  t.after(() => clearRemoteMcps(jti));
+  const cap = capability({ remoteMcps: ["composio-user"], jti });
+  await withBridgeClient(socketPath, { CG_GATEWAY_CAPABILITY: cap, CG_MCP_SERVICE: "remote-mcp" }, async (client) => {
+    assert.equal((await client.listTools()).tools.length, 1);
+    releaseRemoteMcps(jti); // the turn that minted it settles; its warm process lives on
+    assert.ok(hasRemoteMcps(jti), "the warm process's open relay still holds the grant");
+    const answer = await client.callTool({ name: "COMPOSIO_SEARCH_TOOLS", arguments: { q: "after-turn" } });
+    assert.equal(answer.content[0].text, "echo:after-turn");
+  }, ["composio-user"]);
+  await waitFor(() => !hasRemoteMcps(jti), "the grant to go once the process hung up");
+});
+
+test("a hello with crafted non-string fields is refused and closed, never left hanging", async (t) => {
+  const socketPath = await serverOn(t);
+  const jti = "relay-jti-crafted";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "composio-user": RELAYED["composio-user"] } });
+  t.after(() => clearRemoteMcps(jti));
+  const cap = capability({ remoteMcps: ["composio-user"], jti });
+  const crafted = { toString: 1, valueOf: 1 }; // String() on this throws
+  for (const frame of [
+    { channelgate: "hello", v: 1, service: "remote-mcp", cap, args: [crafted] },
+    { channelgate: "hello", v: 1, service: "composio-sdk", cap, args: [crafted] },
+    { channelgate: "hello", v: 1, service: crafted, cap },
+  ]) {
+    const reply = await rawExchange(socketPath, `${JSON.stringify(frame)}\n`); // resolves only on close
+    assert.equal(JSON.parse(reply.trim().split("\n")[0]).channelgate, "error", JSON.stringify(frame.service));
+  }
+});
+
+test("a gateway hello carrying arguments is refused: an old image's broker dropped the relay service", async (t) => {
+  const socketPath = await serverOn(t);
+  const reply = JSON.parse((await rawExchange(socketPath, `${JSON.stringify({ channelgate: "hello", v: 1, service: "gateway", cap: capability(), args: ["composio-user"] })}\n`)).trim());
+  assert.equal(reply.channelgate, "error");
+  assert.match(reply.reason, /takes no arguments/);
+  assert.match(reply.reason, /npm run build:image/);
+  // An argument-free gateway hello is untouched (the other tests in this file prove it serves).
+});
+
+test("clear_my_composio_token / clear_my_toolbox_token drop every relay grant minted for that author", async (t) => {
+  // The control-plane gate asks for a human click; the daemon handler here approves it.
+  const socketPath = await serverOn(t, { approval: () => ({ allow: true, reason: "Approved by test", decidedBy: AUTHOR }) });
+  const exp = Date.now() + 60_000;
+  const servers = { "composio-user": RELAYED["composio-user"] };
+  for (const tool of ["clear_my_composio_token", "clear_my_toolbox_token"]) {
+    registerRemoteMcps({ jti: `mine-${tool}`, exp, servers, meta: { authorId: AUTHOR, slug: SLUG, channelId: CHANNEL, origin: "slack_foreground" } });
+    registerRemoteMcps({ jti: `theirs-${tool}`, exp, servers, meta: { authorId: "U_SOMEONE_ELSE", slug: SLUG, channelId: CHANNEL, origin: "slack_foreground" } });
+    const answer = await withBridgeClient(socketPath, { CG_GATEWAY_CAPABILITY: capability() }, (client) => client.callTool({ name: tool, arguments: {} }));
+    assert.match(answer.content[0].text, /Removed your/);
+    assert.ok(!hasRemoteMcps(`mine-${tool}`), `${tool}: the author's relayed token stops working now`);
+    assert.ok(hasRemoteMcps(`theirs-${tool}`), `${tool}: nobody else's grant`);
+    clearRemoteMcps(`theirs-${tool}`);
+  }
 });
