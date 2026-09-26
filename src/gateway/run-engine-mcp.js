@@ -1,7 +1,7 @@
 // Build the MCP payload and signed gateway capability for the engine that will actually spawn.
 // A fallback is a new authority decision, not merely another runner: engine-scoped mutations are
 // authorized from this claim, so Claude's capability must never be reused by a Codex fallback.
-import { buildMcpConfig } from "./mcp.js";
+import { buildMcpRuntimePayload } from "./mcp.js";
 import { requireAdapter } from "../engines/registry.js";
 import { requirePluginRuntime } from "./plugin-runtime.js";
 import { safeCodexMcpDefinition } from "./mcp-discovery.js";
@@ -25,8 +25,11 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
   // reports in the thread so the drop is visible to the admin who has to fix the selection.
   const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps) || {};
   const optionalServers = optional.servers || {};
-  const rejectedMcps = Array.isArray(optional.rejected) ? optional.rejected : [];
-  const parsed = JSON.parse(await buildMcpConfig({ ...identity, engine, target }));
+  const payload = await buildMcpRuntimePayload({ ...identity, engine, target });
+  // A built-in remote an isolated run could not be relayed (a non-https override) is reported the
+  // same way as an unadmittable selection: dropped, named, never silently absent.
+  const rejectedMcps = [...(Array.isArray(optional.rejected) ? optional.rejected : []), ...(payload.rejectedRemotes || [])];
+  const parsed = JSON.parse(payload.configJson);
   for (const [name, definition] of Object.entries(optionalServers)) {
     if (Object.hasOwn(parsed.mcpServers, name)) throw new Error("Selected MCP server conflicts with a built-in identity.");
     parsed.mcpServers[name] = definition;
@@ -48,8 +51,14 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
   // the warm process on every message. Replace only that token in the FINGERPRINT view with its
   // stable authority scope plus a bounded renewal bucket. Actual argv/config still receives the
   // authentic signed token; author/origin/engine/trust changes continue to force a safe drain.
+  //
+  // The same token also rides every socket-bridged entry (the SDK-mode Composio sessions and, on an
+  // isolated target, the relayed remotes), so it is replaced wherever it appears. A relayed remote's
+  // credential is NOT in the JSON any more (it is in the daemon's relay registry), so its URL +
+  // header digest is added instead: a rotated Composio/toolbox token must still retire the warm
+  // process, exactly as it did when the token itself was part of the JSON.
   const fingerprintView = structuredClone(parsed);
-  fingerprintView.mcpServers.gateway.env.CG_GATEWAY_CAPABILITY = JSON.stringify({
+  const stableCapability = JSON.stringify({
     channelId: identity.channelId || "",
     slug: identity.slug || "",
     authorId: identity.authorId || "",
@@ -59,6 +68,10 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
     principalTrusted: identity.principalTrusted !== false,
     renewalBucket: Math.floor(Number(fingerprintNow) / CAPABILITY_FINGERPRINT_BUCKET_MS),
   });
+  for (const server of Object.values(fingerprintView.mcpServers)) {
+    if (server?.env?.CG_GATEWAY_CAPABILITY === gatewayCapability) server.env.CG_GATEWAY_CAPABILITY = stableCapability;
+  }
+  if (Object.keys(payload.relayDigest || {}).length) fingerprintView.relayDigest = payload.relayDigest;
   return {
     mcpConfigJson,
     mcpConfigFingerprint: JSON.stringify(fingerprintView),

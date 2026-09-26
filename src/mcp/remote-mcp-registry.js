@@ -43,6 +43,11 @@ function ensureSweeper() {
   sweeper.unref?.();
 }
 
+/** Whether the relay would accept this URL at all (https, no embedded credentials, bounded). */
+export function isRelayableUrl(value) {
+  return validUrl(value);
+}
+
 function validUrl(value) {
   if (typeof value !== "string" || !value || value.length > MAX_URL_LENGTH) return false;
   try {
