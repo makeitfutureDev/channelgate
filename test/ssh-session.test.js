@@ -508,7 +508,7 @@ test("under the egress proxy the session holds placeholders, the proxy env, and 
   assert.equal(values.ca, "/run/channelgate/egress-ca.pem");
   assert.equal(values.git, SESSION_GIT_SSH_COMMAND);
   assert.equal(values.git, "ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'");
-  assert.equal(values.chromium, "--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=c3BraQ==");
+  assert.equal(values.chromium, "--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=c3BraQ==");
   assert.equal(values.eg, "proxy");
 
   // The login: the access-only file holds the relay PLACEHOLDER and the real login's plan facts.

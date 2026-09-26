@@ -114,7 +114,7 @@ test("buildClaudeEnv: the proxy + CA are in the gateway-owned last group, over t
   assert.equal(env.CG_EGRESS, "proxy");
   assert.equal(env.GITHUB_TOKEN, "cgph_cabcdefghijklmnopqrstuvwxyz234567", "the placeholder rides like any secret");
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, RELAY_PLACEHOLDER);
-  assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=${SPKI}`);
+  assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=${SPKI}`);
 
   const legacy = buildClaudeEnv({ target: inactiveTarget("egenv-claude-legacy") }, source);
   assert.equal(legacy.CG_EGRESS, undefined);
@@ -128,7 +128,7 @@ test("buildCodexEnv: the same last group", () => {
   assert.equal(env.all_proxy, undefined);
   assert.equal(env.SSL_CERT_FILE, CA);
   assert.equal(env.NODE_USE_ENV_PROXY, "1");
-  assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=${SPKI}`);
+  assert.equal(env[BROWSER_ARGS_ENV], `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=${SPKI}`);
 });
 
 test("browser env: the Chromium proxy flags only for an active plan with a CA pin", () => {
@@ -138,6 +138,6 @@ test("browser env: the Chromium proxy flags only for an active plan with a CA pi
   assert.deepEqual(browserSpawnEnv("cg-slack-x"), { AGENT_BROWSER_NAMESPACE: "cg-slack-x" });
   assert.deepEqual(browserSpawnEnv("cg-slack-x", { target: activeTarget("egenv-browser") }), {
     AGENT_BROWSER_NAMESPACE: "cg-slack-x",
-    AGENT_BROWSER_ARGS: `--proxy-server=http://127.0.0.1:3128 --ignore-certificate-errors-spki-list=${SPKI}`,
+    AGENT_BROWSER_ARGS: `--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=${SPKI}`,
   });
 });
