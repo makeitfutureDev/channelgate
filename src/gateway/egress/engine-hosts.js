@@ -7,7 +7,10 @@
 // wildcard here would quietly widen every off-network channel.
 export const ENGINE_HOSTS = Object.freeze({
   claude: Object.freeze(["api.anthropic.com", "claude.ai", "statsig.anthropic.com"]),
-  codex: Object.freeze(["api.openai.com", "chatgpt.com", "auth.openai.com"]),
+  // ab.chatgpt.com and *.oaiusercontent.com were observed on a real codex-cli 0.156.1 turn (the
+  // 2026-09-26 spike): experiment flags and the user-content downloads a turn may fetch. They are
+  // reachable, but the login relay swaps only on the API hosts (catalog-rules.js CODEX_RELAY_RULE).
+  codex: Object.freeze(["api.openai.com", "chatgpt.com", "ab.chatgpt.com", "auth.openai.com", "*.oaiusercontent.com"]),
 });
 
 // The union for the given engines (default: every engine). The proxy's policy uses the union: which

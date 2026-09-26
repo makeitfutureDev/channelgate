@@ -125,7 +125,9 @@ test("jwt format: a bare placeholder is refused by a jwt grant, and a JWT-shaped
 test("the Codex relay rule: jwt only, Authorization only, the Codex engine hosts", () => {
   assert.deepEqual([...CODEX_RELAY_RULE.format], ["jwt"]);
   assert.deepEqual([...CODEX_RELAY_RULE.headers], ["authorization"]);
-  assert.deepEqual([...CODEX_RELAY_RULE.hosts], [...ENGINE_HOSTS.codex], "kept in step with the engine hosts");
+  assert.deepEqual([...CODEX_RELAY_RULE.hosts], ["api.openai.com", "chatgpt.com", "auth.openai.com"]);
+  for (const host of CODEX_RELAY_RULE.hosts) assert.ok(ENGINE_HOSTS.codex.includes(host), `${host} must stay reachable with the network off`);
+  assert.ok(!CODEX_RELAY_RULE.hosts.some((host) => host.startsWith("*")), "the login is never swapped on a wildcard host");
   assert.equal(relayRuleFor(CODEX_RELAY_SECRET_NAME), CODEX_RELAY_RULE);
   assert.equal(relayRuleFor("CLAUDE_CODE_OAUTH_TOKEN"), RELAY_RULE);
   assert.equal(relayRuleFor("toString"), null);
