@@ -7,9 +7,11 @@ import { safeSpawnEnv } from "../config/channel-env.js";
 function scopeLines(names, scopes) {
   const by = { organization: [], personal: [], channel: [] };
   for (const name of names) by[scopes[name] || "channel"].push(name);
-  // Only worth saying when there is something to tell apart. With one scope in play the list
-  // above already names every variable, and a second line repeating it is prompt noise.
-  if (Object.values(by).filter((group) => group.length).length < 2) return [];
+  // Said whenever a name is NOT the conversation's own. The list above is headed "channel
+  // environment variable names", so a run whose only secrets were organization-wide got no line
+  // saying so, and Codex told the user an organization secret was "a channel credential"
+  // (SEC-LIST-01). Only a purely channel-scoped run skips it: there the heading already is the scope.
+  if (!by.organization.length && !by.personal.length) return [];
   const lines = [];
   if (by.organization.length) {
     lines.push(`Organization-wide variables (shared by every conversation in this deployment): ${JSON.stringify(by.organization)}.`);

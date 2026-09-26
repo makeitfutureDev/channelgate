@@ -96,6 +96,36 @@ test("the pause line names only the personal placeholders, and only when paused"
   assert.doesNotMatch(channelCredentialsPreamble(resolved, { ...facts, personalPaused: false }), /PAUSED/);
 });
 
+// SEC-LIST-01: a run whose ONLY secrets were organization-wide got no scope line (the rule wanted
+// two scopes), the inventory heading said "channel", and Codex called an organization secret "a
+// channel credential". A non-channel scope is now always named; a purely channel run stays quiet.
+test("the scope lines appear whenever any name is organization- or personal-scoped, even as the only scope", () => {
+  const orgOnly = channelCredentialsPreamble(
+    { GITHUB_PAT_ORG: fixtureValue, VERCEL_ORG_TOKEN: fixtureValue },
+    { scopes: { GITHUB_PAT_ORG: "organization", VERCEL_ORG_TOKEN: "organization" } },
+  );
+  assert.match(orgOnly, /^Organization-wide variables \(shared by every conversation in this deployment\): \["GITHUB_PAT_ORG","VERCEL_ORG_TOKEN"\]\.$/m);
+  assert.doesNotMatch(orgOnly, /This conversation's own variables|Personal variables/, "no empty group is named");
+
+  const personalOnly = channelCredentialsPreamble({ MY_PAT: fixtureValue }, { scopes: { MY_PAT: "personal" } });
+  assert.match(personalOnly, /^Personal variables belonging to the author of THIS message[^\n]*\["MY_PAT"\]\.$/m);
+
+  const orgAndChannel = channelCredentialsPreamble(
+    { GITHUB_PAT_ORG: fixtureValue, SUPABASE_TOKEN: fixtureValue },
+    { scopes: { GITHUB_PAT_ORG: "organization", SUPABASE_TOKEN: "channel" } },
+  );
+  assert.match(orgAndChannel, /Organization-wide variables[^\n]*\["GITHUB_PAT_ORG"\]/);
+  assert.match(orgAndChannel, /This conversation's own variables[^\n]*\["SUPABASE_TOKEN"\]/);
+
+  for (const channelOnly of [
+    channelCredentialsPreamble({ SUPABASE_TOKEN: fixtureValue }, { scopes: { SUPABASE_TOKEN: "channel" } }),
+    channelCredentialsPreamble({ SUPABASE_TOKEN: fixtureValue }), // no scope facts: channel by default
+  ]) {
+    assert.doesNotMatch(channelOnly, /Organization-wide variables|Personal variables|This conversation's own variables/, "a purely channel run is unchanged");
+  }
+  assert.ok(!orgOnly.includes(fixtureValue), "names only");
+});
+
 test("empty inventory clears old assumptions, while clean mode suppresses discovery", () => {
   assert.deepEqual(namesOf(channelCredentialsPreamble()), []);
   assert.match(channelCredentialsPreamble(), /not that all CLI logins or MCP connections are absent/);
