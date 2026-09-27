@@ -2555,13 +2555,16 @@ are retired, bullet by bullet; everything else stands.
   workspace scan, the channel listing and the toolchain/credential carve-outs that only existed to
   build it are skipped; Codex states `--sandbox danger-full-access` for write modes and `read-only`
   in read mode (as the `sandbox_mode=` config twin on resume, where the flag is rejected), with no
-  permission profiles, no `network_proxy` compilation and no `sqlite_home`. A stated mode also
-  states the MECHANISM that can enforce it in here — `features.use_legacy_landlock=true`: Codex's
-  default is bubblewrap, which cannot start under `--cap-drop ALL` + no-new-privileges
-  (`bwrap: Unexpected capabilities but not setuid`) and failed every command, so Read mode could not
-  even read; Landlock gives the same posture in-container (reads succeed, writes get "Permission
-  denied"). The flag is deprecated-but-functional in the pinned CLI (`containers/versions.json`) and
-  is re-checked on every Codex bump; the admin bypass has no sandbox and states no mechanism. Everything that is
+  permission profiles, no `network_proxy` compilation and no `sqlite_home`. The read-only sandbox's MECHANISM is bubblewrap (the pinned CLI no longer
+  honours the old `features.use_legacy_landlock` fallback, so argv names no mechanism). bwrap refuses
+  to start while the process holds capabilities without being setuid, and the container's
+  `--cap-add DAC_OVERRIDE,CHOWN,FOWNER` reaches the agent user as AMBIENT caps — which failed every
+  Read-mode command, reads included. A container Codex run whose sandbox Codex enforces (read-only:
+  not the admin bypass, not `danger-full-access`) is therefore exec'd through
+  `setpriv --ambient-caps=-all --inh-caps=-all` inside `cg-exec` (spawn spec `dropCapabilities`,
+  container backend only): reads succeed, writes get "Read-only file system", and the recorded
+  session leader is still the engine because setpriv execs it in place. The admin bypass and write
+  modes keep the caps and have no sandbox to start. Everything that is
   POLICY rather than confinement is unchanged on both backends: `permissions.allow` +
   `permissions.ask` (the shell for any channel that did not grant it — never the admin-run variant,
   which grants it), the mode →

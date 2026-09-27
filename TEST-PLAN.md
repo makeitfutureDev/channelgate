@@ -6432,15 +6432,21 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       helper commands with `CG_FS_ROOT`/`CG_WORKSPACE_DIR`/`CHANNELGATE_DIR`/`PATH` absent; its
       answer file and secret bundle live under the artifact mount, nothing names a path under the
       gateway root, and the bundle is deleted when the turn ends (automated).
-- [x] Unit: every isolated Codex turn that states a sandbox mode also states
-      `features.use_legacy_landlock=true` (fresh and resume, read and write posture), and an admin
-      bypass — which has no sandbox — states no mechanism. Codex's default bubblewrap cannot start
-      under the container's `--cap-drop ALL` + no-new-privileges and failed every command, which
-      left Read mode unable to read (automated: `test/codex-args.test.js`).
-- [ ] LIVE: in a Read-mode Codex channel inside a container, a read command (`ls`, `cat`) succeeds
-      and a write (`touch`) is refused with "Permission denied" — not `bwrap: Unexpected
-      capabilities but not setuid` on everything. Re-run after any Codex CLI bump: the Landlock
-      feature flag is deprecated-but-functional in the pinned version.
+- [x] Unit: no Codex argv names a sandbox mechanism (the pinned CLI ignores the deprecated
+      `features.use_legacy_landlock` switch and always uses bubblewrap). Only an isolated run whose
+      sandbox Codex enforces — read-only, not the admin bypass, not `danger-full-access` — asks the
+      backend for `dropCapabilities`, and the container exec then runs
+      `cg-exec <id> setpriv --ambient-caps=-all --inh-caps=-all -- codex …` (foreground and
+      detached); nothing else carries setpriv (automated: `test/codex-args.test.js`,
+      `test/container-cli.test.js`).
+- [ ] LIVE (Codex; engine-specific — Claude has no in-container sandbox): in the Read-mode Codex
+      fixture (`cg-qa-private-read`), author contact, prompt "run `pwd` and `ls` in the working
+      folder, then try `touch cg-ro-probe` and report each command's exact output". Pass: `pwd`
+      and `ls` print normally, `touch` fails with "Read-only file system" (or "Permission denied"),
+      no `bwrap: Unexpected capabilities but not setuid` anywhere, and no `cg-ro-probe` file exists
+      afterwards (host: `ls <workdir>/cg-ro-probe` → ENOENT). Host evidence:
+      `podman exec <c> sh -c 'ps -o pid,args -C codex; grep CapAmb /proc/$(pgrep -n codex)/status'`
+      during the turn shows `CapAmb: 0000000000000000`. Re-run after every Codex CLI bump.
 - [x] Unit: the runner seam — a cold turn is spawned BY THE BACKEND with the contract spec
       (`stdio`, `detached`, `kind`, a `run-` id); a probe that THROWS is reported as a quiet event
       and never ends the turn; a definite `false` ends it and the kill goes back through the backend
@@ -7708,7 +7714,8 @@ acceptance gates; no production restart or external message was performed by the
 
 - [x] Native provider probe (2026-09-07, Codex 0.153.4, gpt-6-astra/high): a synthetic personal
   catalog pointed outside the disposable cwd to SKILL.md and references/proof.txt. With the
-  gateway's read-only sandbox and `features.use_legacy_landlock=true`, the real engine read
+  gateway's read-only sandbox and `features.use_legacy_landlock=true` (since ignored by the CLI;
+  superseded by the capability drop, 2026-09-27), the real engine read
   both files successfully and returned the exact marker CG_PERSONAL_REFERENCE_OK_7319. The
   fixture was removed. This verifies catalog/reference readability in an existing container;
   the deployed author-grant, resume/revocation and Slack cases above remain unexecuted.

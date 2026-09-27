@@ -12,7 +12,7 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 import { createFakeRuntime } from "./fixtures/fake-runtime-backend.js";
 
 const scratch = ensureTestEnv();
-const { buildCodexArgs, buildCodexEnv, codexSecretBundle, createCodexProgressState, headerHelperPath, headerHelperSource, progressFromCodexEvent } = await import("../src/engines/codex.js");
+const { buildCodexArgs, buildCodexEnv, codexSecretBundle, codexSpawnDropsCapabilities, createCodexProgressState, headerHelperPath, headerHelperSource, progressFromCodexEvent } = await import("../src/engines/codex.js");
 const { CONTAINER_HOME, CONTAINER_PATH } = await import("../src/engines/runtime-target.js");
 const { hostBackend } = await import("../src/runtimes/host.js");
 const { workspaceRoot } = await import("../src/config/paths.js");
@@ -68,25 +68,25 @@ test("read-only Codex runs keep Codex's own read-only sandbox as defence in dept
   assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");
 });
 
-// Codex's DEFAULT sandbox mechanism is bubblewrap, which cannot start under the container's
-// `--cap-drop ALL` + no-new-privileges ("bwrap: Unexpected capabilities but not setuid") and fails
-// every command — read mode included, which made Read channels answer nothing at all. Landlock is
-// the mechanism that works under those caps, so every run that states a sandbox mode also states
-// the mechanism that can enforce it.
-test("a stated sandbox mode also states the mechanism that works inside the container", () => {
-  for (const options of [{ writable: false }, { writable: true }, { writable: false, isNewSession: false }, { writable: true, isNewSession: false }]) {
+// Codex's sandbox mechanism is bubblewrap, and the pinned CLI no longer honours the Landlock
+// fallback. bwrap refuses to start while the process holds the container's added (ambient)
+// capabilities, which failed every Read-mode command, reads included (live, EN-01 2026-09-27). The
+// fix is at spawn time — the backend execs a sandboxed run without those caps — so argv names no
+// mechanism at all.
+test("no sandbox mechanism is named in argv: the deprecated Landlock switch is gone", () => {
+  for (const options of [{ writable: false }, { writable: true }, { writable: false, isNewSession: false }, { dangerouslySkip: true, writable: true }]) {
     const args = argsFor({ ...options, clean: false });
-    assert.ok(cfgValues(args).includes("features.use_legacy_landlock=true"),
-      `bubblewrap cannot start in the container: ${JSON.stringify(options)} must pick Landlock`);
+    assert.ok(!cfgValues(args).some((value) => value.startsWith("features.use_legacy_landlock")), JSON.stringify(options));
   }
 });
 
-test("the admin bypass has no sandbox, so it never picks a sandbox mechanism", () => {
-  for (const isNewSession of [true, false]) {
-    const args = argsFor({ dangerouslySkip: true, writable: true, isNewSession });
-    assert.ok(!cfgValues(args).some((value) => value.startsWith("features.use_legacy_landlock")),
-      "a bypassed run has no sandbox for a mechanism to enforce");
-  }
+test("only a container run whose sandbox Codex enforces drops the container's added capabilities", () => {
+  const container = target;
+  assert.equal(codexSpawnDropsCapabilities({ target: container, writable: false }), true, "read-only sandbox → bwrap → no ambient caps");
+  assert.equal(codexSpawnDropsCapabilities({ target: container, writable: true }), false, "danger-full-access has no sandbox to start");
+  assert.equal(codexSpawnDropsCapabilities({ target: container, writable: true, dangerouslySkip: true }), false, "the admin bypass has no sandbox");
+  const host = hostBackend.prepareTarget({ slug: "sudo", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} });
+  assert.equal(codexSpawnDropsCapabilities({ target: host, writable: false }), false, "a host process has no container caps to drop");
 });
 
 test("explicit admin bypass drops Codex's own sandbox entirely — the container is still the boundary", () => {
@@ -119,7 +119,6 @@ test("sudo-host Codex uses host helpers and the direct host environment", () => 
   assert.ok(args.includes("--dangerously-bypass-approvals-and-sandbox"));
   assert.ok(args.some((value) => value.includes("src/mcp/secret-env-bridge.js")), "host helper comes from this checkout");
   assert.ok(cfgValues(args).some((value) => value.startsWith("mcp_servers.gateway.env.CHANNELGATE_DIR=")));
-  assert.ok(!cfgValues(args).includes("features.use_legacy_landlock=true"), "the container-only sandbox mechanism is absent");
 
   const env = buildCodexEnv({ target: host }, { HOME: "/home/operator", CODEX_HOME: "/home/operator/.codex", PATH: "/usr/bin", SLACK_BOT_TOKEN: "never" });
   assert.equal(env.HOME, "/home/operator");
