@@ -67,11 +67,11 @@ export function buildSecretHostAction({ channelId, slug, authorId = "", threadKe
 }
 
 function describe(action) {
-  const where = action.scope === "organization" ? "organization-wide secret"
-    : action.scope === "personal" ? `personal secret of <@${action.ownerId}>`
-      : "this channel's secret";
+  const where = action.scope === "organization" ? "the organization-wide secret"
+    : action.scope === "personal" ? `<@${action.ownerId}>'s personal secret`
+      : "this conversation's secret";
   const reach = action.scope === "organization" ? " It is shared by every conversation, so approving applies in all of them." : "";
-  return `Allow the ${where} \`${action.secretName}\` to be sent to \`${action.host}\`?${reach}\n\n`
+  return `Allow ${where} \`${action.secretName}\` to be sent to \`${action.host}\`?${reach}\n\n`
     + `A program in this channel's container (a turn in this thread, a background job or an SSH session) just tried to use it there. Approving remembers ${action.host} for this secret: `
     + "every later run, schedule and SSH session may use it on that server (and only the servers approved so far). "
     + "Deny if you do not recognise the server — the request was refused and nothing was sent.";
