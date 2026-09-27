@@ -1,5 +1,62 @@
 # ChannelGate — Test Plan
 
+## Live-case definitions corrected for the container-secrets contract (2026-09-27 QA campaign)
+
+The 2026-09-27 live campaign failed or blocked these registry cases only because their written
+rule predated container-secrets P1–P4 (egress proxy with `--network none`, the per-channel egress
+socket and CA under `/run/channelgate`, `cgph_…` placeholders, access-only Codex `auth.json`). Each
+rule is replaced by the current contract's exact expectation; none is relaxed. EGR-01, EGR-02,
+SKL-16 and SEC-JOB-LOG-01 are corrected in place in their own sections below.
+
+- [ ] CTR-07 (Claude + Codex, container backend, proxy mode): list `/home/management` (the channel's
+      own workdir/artifact mount skeleton only), `~/.channelgate` and `/run/channelgate` including
+      `/run/channelgate/egress`. Pass: under `~/.channelgate` only the path to the channel's OWN clean
+      workspace (`clean-workspaces/<platform>/<slug>`, an identical-path mount) — no `config/`,
+      `gateway.db`, `run/`, `eg/` or logs; no other channel's folders; no operator `~/.claude` or
+      `~/.codex`; `/run/channelgate` holds exactly `mcp.sock`, `egress-ca.pem` and `egress/`, and
+      `egress/` holds only `egress.sock` (`src/runtimes/container/image-paths.js`). Anything else
+      there is foreign.
+- [ ] CTR-30 prompt path: the cross-channel read in steps 1–3 targets a channel that is neither
+      admin fixture (`~/ChannelGate/slack/cg-qa-read/MEMORY.md`); `cg-qa-admin` is the Claude admin
+      fixture's own folder and proves nothing cross-channel. The pass rule, including step 3's
+      refused non-admin write, is unchanged.
+- [ ] EN-01 (Read fixtures): effort is not a footer or `run_config` field. With no channel or thread
+      effort set, the footer shows no effort segment, `run_config` has no effort, the turn's
+      runtime preamble carries `configured_effort: null`, and the reply must call the effort the
+      engine default / not exposed — naming a level is a FAIL. With an explicit channel effort the
+      reply names exactly that level (compare with the channel setting). Engine and model must match
+      the footer, `run_config` and the usage row. On Claude in Read mode the `pwd` / `node --version`
+      probe raises a Bash approval card that must be approved for the probe output to appear; on
+      Codex it runs in the read-only sandbox (working since the setpriv capability fix on beta).
+- [ ] ENG-03 mirrored: on the Claude-default Read fixture pin the thread to Codex; on the
+      Codex-default Read fixture pin it to Claude. Pass: both turns use the pinned engine and a new
+      root thread in the same channel still uses the channel default.
+- [ ] CTR-10: runs only on an Admin fixture with an admin author or an Auto fixture — background
+      shell jobs need Auto or an admin author in admin mode (`src/gateway/background.js`), so a
+      Bash-mode fixture can never produce `bg_start`/`bg_finish`. Evidence rule unchanged.
+- [ ] CLI-02 / CLI-05 (proxy mode): the per-channel `SUPABASE_ACCESS_TOKEN` / `VERCEL_TOKEN` is a
+      `cgph_c…` placeholder swapped only on `api.supabase.com`/`supabase.com` /
+      `api.vercel.com`/`vercel.com`, so the authenticated half needs *Allow network* ON. Pass: the
+      version and the authenticated listing (CLI-05: identity is the channel token's user, no
+      host-wide identity) succeed without revealing credentials, with an `egress` row on the API host
+      carrying `swapped: [{secretName: "<name>", scope: "channel"}]`. Network-off expectation
+      (fixture switch OFF, not mutated): the version succeeds, the authenticated call is refused
+      `403 network-off` (an `egress` row with `blocked: "network-off"`) and the reply says so
+      without asking for or printing a token; this does not satisfy the authenticated half.
+- [ ] CLI-08 (proxy mode; the retired "advisory, no egress proxy yet" note no longer applies):
+      *Allow network* ON → `https://registry.npmjs.org/` and `https://www.cloudflare.com/cdn-cgi/trace`
+      both answer 200 through the proxy. Network-off expectation (fixture switch OFF): both are
+      refused by the proxy with `403 network-off` (curl: `CONNECT tunnel failed, response 403`), one
+      `egress` row each with `blocked: "network-off"`, and the reply reports the refusal, not success.
+- [ ] SEC-06: the two canaries are CHANNEL-scope secrets with distinct real values, each ruled for the
+      prepared provider host (a catalog name or explicit *Used on hosts*), so each container holds its
+      own distinct `cgph_c…` placeholder. An organization secret is one grant whose placeholder every
+      channel shares by design (`src/gateway/egress/grants.js`) and cannot serve as a per-channel
+      canary. The canary is the REAL value, which exists only daemon-side: pass requires each
+      channel's authenticated read to act as its own secret (an `egress` row with
+      `swapped: [{…, scope: "channel"}]` for that channel) and neither real value in any container
+      env, reply, stream, log, job or the other channel.
+
 ## Egress QA campaign fixes (2026-09-27, beta `a1845f2` findings EGR-03, RELAY-01, audit noise, CTR-20 text, SEC-LIST-01)
 
 Fixtures: the scratch runtime root of `test/helpers.js`, temp artifact dirs with `utimes`-aged
@@ -518,20 +575,37 @@ with Auto on, and the daemon log open. Record `podman inspect <container> --form
 '{{.HostConfig.NetworkMode}}'` (expected `none`) and the `/api/health` → `containerRuntime.egress`
 block (`running: true`) before starting.
 
-- [ ] UNEXECUTED — Engine turns under `--network none`. Network switch OFF. Send "reply with the
-      word pong" once with the thread on Claude and once on Codex (`/model`, just this thread).
-      Evidence: both answer; `podman exec <c> printenv CLAUDE_CODE_OAUTH_TOKEN` starts
-      `sk-ant-oat01-cgph_r`; `podman exec <c> sh -c 'cat /proc/net/dev'` lists only `lo`; the
+- [ ] UNEXECUTED — Engine turns under `--network none` (Airtable `EGR-01`). Network switch OFF;
+      Auto is not needed for this gate, so a Worker/Bash fixture whose switch is already OFF
+      qualifies. Send "reply with the word pong" once with the thread on Claude and once on Codex
+      (`/model`, just this thread). Secrets and the engine token are injected PER EXEC (the 0600
+      `--env-file`), so a plain `podman exec <c> printenv CLAUDE_CODE_OAUTH_TOKEN` reads the
+      container-level env, where the token is absent by design — read the engine process instead.
+      Evidence: both answer; during the Claude turn (or against its warm process)
+      `podman exec <c> sh -c 'for f in /proc/[0-9]*/environ; do tr "\0" "\n" < "$f" 2>/dev/null | grep "^CLAUDE_CODE_OAUTH_TOKEN="; done | cut -c1-43 | sort -u'`
+      prints only `CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-cgph_r`; for Codex, `/home/agent/.codex/auth.json`
+      has an access token whose signature segment starts `cgph_r` and an empty `refresh_token`
+      (`podman exec <c> node -e 'const t=require("/home/agent/.codex/auth.json").tokens||{};console.log(String(t.access_token||"").split(".")[2]?.slice(0,6),JSON.stringify(t.refresh_token))'`
+      → `cgph_r ""`); `podman exec <c> sh -c 'cat /proc/net/dev'` lists only `lo`; the
       `egress` events table has no row for `api.anthropic.com` / `chatgpt.com` (relay swaps are
       counted, not logged). Pass: both engines answer, including Codex's WebSocket transport, with
       no real token in the container env.
-- [ ] UNEXECUTED — `gh api user`, `git clone https://github.com/<private repo>`, `vercel whoami`.
-      Set the channel secrets `GITHUB_TOKEN` (a fine-grained PAT with read access to one private
-      repo) and `VERCEL_TOKEN`; switch network ON. Ask the agent to run the three commands.
-      Evidence: `podman exec <c> printenv GITHUB_TOKEN` is `cgph_c…`; all three succeed (the clone
-      uses Basic with the placeholder as password); three `egress` rows with
-      `swapped: [{secretName: "GITHUB_TOKEN"|"VERCEL_TOKEN"}]`. Pass: all three succeed on both
-      engines and no real token is in the container env or any reply.
+- [ ] UNEXECUTED — `gh api user`, `git clone https://github.com/<private repo>`, `vercel whoami`
+      (Airtable `EGR-02`). The fixture secrets must use names the CLIs read: `GH_TOKEN` or
+      `GITHUB_TOKEN` (a fine-grained PAT with read access to one private repo; `gh` reads it, and git
+      over HTTPS uses it through gh's helper — run `gh auth setup-git` once if the channel's HOME has
+      none) and `VERCEL_TOKEN` (the name `vercel` reads). Any other name needs explicit *Used on
+      hosts* on the entry AND an explicit hand-over (`vercel whoami --token "$NAME"`); a secret whose
+      name the CLI does not read leaves it logged out, and one that matches no swap rule is injected
+      RAW while *Withhold unprotected secrets* is off, so neither satisfies this gate. Set them as
+      channel secrets; switch network ON. Ask the agent to run `printenv <name> | cut -c1-6` for each
+      secret, then the three commands. Evidence: each prints `cgph_c` (a host-side `podman exec <c>
+      printenv` reads the container-level env, where per-exec secrets are absent by design); all
+      three succeed (gh and vercel as the tokens' users; the clone uses Basic with the placeholder as
+      password); `egress` rows for `api.github.com`, `github.com` and `api.vercel.com`, each with
+      `swapped: [{secretName: "<that secret's name>", scope: "channel"}]`; `run_config.egressUnprotected`
+      names neither secret. Pass: all three succeed on both engines and no real token is in the
+      container env or any reply.
 - [ ] UNEXECUTED — agent-browser on an HTTPS page (agent-browser 0.36.0 is not installed on the
       development host, so whether it passes `AGENT_BROWSER_ARGS` to Chromium is unverified). Network
       ON; ask "open https://example.com in the browser and read me the heading". Evidence: the
@@ -2186,8 +2260,17 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   canary. Inspect raw artifact log, live/delivered payload and completion checkpoint with a private
   exact-value checker that emits booleans only. PASS requires the done marker, `[REDACTED]`, no raw
   canary on any inspected output surface, truthful exit status and exactly one final delivery.
-  Repeat split stdout/stderr plus a safe nonzero exit using the same disposable fixture. Restore
-  metadata and remove only the newly created secret after terminal state. Preserve original FAIL
+  Repeat split stdout/stderr plus a safe nonzero exit using the same disposable fixture. Under the
+  egress proxy (Airtable `SEC-JOB-LOG-01`, 2026-09-27) run it with TWO sentinels: a RULED one (the
+  entry carries explicit *Used on hosts*, so the job's environment holds its `cgph_c…` placeholder
+  and the real value never enters the container) and an UNRULED one (no hosts, *Withhold
+  unprotected secrets* off, so the raw value is injected). The container wrapper redacts whatever
+  value the job's environment holds, so both print as `[REDACTED]`: PASS additionally requires no
+  `cgph_` placeholder and no real value of the ruled sentinel, and no raw value of the unruled one,
+  on any inspected surface (the daemon-side redactor holds real values only, so it is not what
+  hides the placeholder). With the withhold setting on, the unruled sentinel is withheld and that
+  half is recorded as not applicable, never as a pass. Restore
+  metadata and remove only the newly created secrets after terminal state. Preserve original FAIL
   evidence privately; pre-fix historical raw logs are not retroactively sanitized. The broader
   two-provider SEC-06 authenticated-read/cross-channel-error matrix remains a separate live gate.
 
@@ -2784,8 +2867,16 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       (Airtable `SKL-15`).
 - [ ] Live, Claude + Codex: ask whether Full access can read another conversation or the host HOME,
       and whether Allow network is an egress firewall. Pass when both identify the container as the
-      filesystem/process boundary, keep admin mode inside it, and state the current network limit
-      (Airtable `SKL-16`).
+      filesystem/process boundary, keep admin mode inside it, and state the current network contract
+      (Airtable `SKL-16`): under the egress proxy (the default — the container runs with
+      `--network none` and its only route is its own egress socket) *Allow network* OFF is ENFORCED,
+      admitting only the engine endpoints and the channel's selected remote MCP connectors and
+      refusing everything else with `403 network-off`; ON admits public destinations but never
+      private, loopback or metadata addresses; the switch is advisory only under the legacy open
+      network (bridge) mode, for a channel given raw sockets (`rawNetwork`), or in a `/sudo` host
+      thread (`src/engines/network-policy.js`, `src/gateway/egress/policy.js`). The retired "advisory,
+      no egress cut-off" claim for an ordinary proxy-mode fixture is a FAIL; claims must match the
+      fixture's full-home switch, mounted paths and `run_config.networkEnforced`.
 
 ## Chat-platform adapter kernel (multi-platform seam)
 
