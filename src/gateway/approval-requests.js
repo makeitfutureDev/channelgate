@@ -23,6 +23,7 @@ export function approvalActionKey(action = {}) {
     exact.scope = String(action.scope || "");
     exact.ownerId = String(action.ownerId || "");
     exact.host = String(action.host || "");
+    exact.entrySetAt = Number(action.entrySetAt) || 0;
     // One pending card per secret + server, whichever thread or author tripped it.
     exact.threadKey = "";
     exact.authorId = "";

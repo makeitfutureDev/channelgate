@@ -72,7 +72,7 @@ test("the catalog: GitHub, Vercel, Supabase, Make and Composio names are ruled; 
 test("rulesFor: an entry's own hosts win; its headers/format refine; malformed declarations are refused on write", () => {
   // No destination known or declared: a web-looking name is HIDDEN behind an approval rule (its
   // hosts are only what an admin approved), a password-looking one stays readable (null).
-  assert.deepEqual(rulesFor("MY_API_KEY", {}), { hosts: [], headers: ["*"], query: ["*"], format: ["bearer", "raw", "basic-user", "basic-password"], source: "approval", approval: true });
+  assert.deepEqual(rulesFor("MY_API_KEY", {}), { hosts: [], headers: ["~credential"], query: ["~credential"], format: ["bearer", "raw", "basic-user", "basic-password"], source: "approval", approval: true });
   assert.deepEqual(rulesFor("MY_API_KEY", { approvedHosts: ["api.example.com"] }).hosts, ["api.example.com"]);
   assert.equal(rulesFor("SMTP_PASSWORD", {}), null);
   assert.equal(rulesFor("MY_API_KEY", { exposure: "readable" }), null, "an explicit readable choice wins");

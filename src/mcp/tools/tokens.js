@@ -323,10 +323,10 @@ export function register(server, ctx) {
     "allow_secret_host",
     {
       description:
-        "ADMIN ONLY. Approve a server for a HIDDEN secret without waiting for its approval card — for work that has no " +
-        "chat thread to ask in (an SSH session, a background job). After this the egress proxy swaps the secret's " +
-        "placeholder for the real value on that exact host. A single host name, never a wildcard; the engines' own " +
-        "APIs are refused. `scope`: organization, personal (yours) or conversation.",
+        "ADMIN ONLY. Approve a server for a HIDDEN secret without waiting for its approval card — for work that posted " +
+        "no card (an SSH session or a background job with no chat thread): run it from this conversation's chat. After " +
+        "this the egress proxy swaps the secret's placeholder for the real value on that exact host. A single host " +
+        "name, never a wildcard; model APIs are refused. `scope`: organization, personal (yours) or conversation.",
       inputSchema: { name: z.string(), host: z.string(), scope: z.enum(["personal", "organization", "conversation", "my", "org", "channel"]).optional() },
     },
     async ({ name, host, scope }) => {
@@ -334,7 +334,9 @@ export function register(server, ctx) {
       const target = await scopeTarget(scope);
       if (target.refusal) return text(target.refusal);
       const wanted = String(host || "").trim().toLowerCase().replace(/\.$/, "");
-      if (engineHostsFor().some((pattern) => hostMatches(pattern, wanted))) return text(`❌ ${wanted} is an engine API: a secret is never swapped there.`);
+      let modelHosts = engineHostsFor();
+      try { modelHosts = (await import("../../gateway/egress/service.js")).modelApiHosts(); } catch { /* the fixed engine list */ }
+      if (modelHosts.some((pattern) => hostMatches(pattern, wanted))) return text(`❌ ${wanted} is a model API: a secret is never swapped there.`);
       try {
         const row = await patchSecretEntry({ ...target, name, addApprovedHost: wanted });
         if (row && !row.approval) return text(`ℹ️ Recorded, but \`${row.name}\` is not a hidden-with-approval secret${egressNote(row)} — its known or declared servers decide where it is swapped.`);

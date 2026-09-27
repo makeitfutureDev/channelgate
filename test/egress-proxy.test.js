@@ -97,7 +97,7 @@ const grants = new Map([
   [PH, { placeholder: PH, value: REAL, secretName: "GITHUB_TOKEN", scope: "channel", owner: "C_EGRESS", hosts: ["upstream.test", "plain.test"], headers: ["authorization"], format: "bearer" }],
   [PERSONAL_PH, { placeholder: PERSONAL_PH, value: PERSONAL_REAL, secretName: "MY_TOKEN", scope: "personal", owner: "U_OWNER", hosts: ["upstream.test"], headers: ["x-api-key"], format: "raw" }],
   // A hidden secret with no known destination: approved for upstream.test only (catalog-rules.js).
-  [APPROVAL_PH, { placeholder: APPROVAL_PH, value: APPROVAL_REAL, secretName: "PAY_API_TOKEN", scope: "organization", owner: null, hosts: ["upstream.test"], headers: ["*"], query: ["*"], format: ["bearer", "raw", "basic-user", "basic-password"], approval: true, neverHosts: ["api.anthropic.com"] }],
+  [APPROVAL_PH, { placeholder: APPROVAL_PH, value: APPROVAL_REAL, secretName: "PAY_API_TOKEN", scope: "organization", owner: null, hosts: ["upstream.test"], headers: ["~credential"], query: ["~credential"], format: ["bearer", "raw", "basic-user", "basic-password"], approval: true, neverHosts: ["api.anthropic.com"] }],
   [corePlaceholder(RELAY_TOKEN), { placeholder: corePlaceholder(RELAY_TOKEN), value: RELAY_REAL, secretName: "CLAUDE_CODE_OAUTH_TOKEN", scope: "relay", owner: null, hosts: ["upstream.test"], headers: ["authorization"], format: "bearer" }],
 ]);
 

@@ -126,7 +126,8 @@ test("strict is the default when nothing is stored; the boot pin keeps an existi
 // Hidden/readable and approved servers (src/gateway/secret-host-approvals.js, 2026-09-27).
 test("set_secret_mode and allow_secret_host: scoped authority, the value untouched, engine APIs refused", async () => {
   const { secretModeTier } = await import("../src/mcp/gateway-server.js");
-  assert.deepEqual(["organization", "conversation", "personal", undefined].map(secretModeTier), ["admin", "manage", "any", "any"]);
+  assert.deepEqual(["organization", "conversation", "personal", undefined].map((scope) => secretModeTier(scope)), ["admin", "manage", "any", "any"]);
+  assert.equal(secretModeTier("personal", "readable"), "admin", "a bystander can never approve making someone's secret readable");
   await scoped.patchUserEnv(DEV, { set: { name: "MY_PAY_TOKEN", value: "my-pay-value-1234567" } });
   assert.match(await reply(toolsFor(DEV), "list_secrets", { scope: "personal" }), /`MY_PAY_TOKEN`[^\n]*hidden \(placeholder\); approved servers: none yet/);
   assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "MY_PAY_TOKEN", mode: "readable" }), /now readable/);
@@ -137,7 +138,7 @@ test("set_secret_mode and allow_secret_host: scoped authority, the value untouch
   assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "CHAN_TOKEN", mode: "readable", scope: "conversation" }), /managers/);
   // allow_secret_host is admin-only, exact hosts only, never an engine API.
   assert.match(await reply(toolsFor(DEV), "allow_secret_host", { name: "MY_PAY_TOKEN", host: "api.pay.example" }), /Only organization admins/);
-  assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "api.anthropic.com", scope: "organization" }), /engine API/);
+  assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "api.anthropic.com", scope: "organization" }), /model API/);
   assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "*.pay.example", scope: "organization" }), /single host name/);
   assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "API.pay.example", scope: "organization" }), /may now be used on api\.pay\.example/);
   assert.deepEqual(scoped.getOrgEnv().ORG_TOKEN.approvedHosts, ["api.pay.example"]);

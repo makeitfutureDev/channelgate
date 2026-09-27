@@ -438,7 +438,7 @@ raw and listed as **unprotected** in the admin UI and the run's own credential n
 off. Either way `list_secrets` ends with a **Finding** naming each such secret; declare its *Used on
 hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead.
 **A secret with no rule is decided by its kind.** One that looks like a web API token is
-**hidden**: containers get a placeholder the proxy swaps in any header or query parameter, but only
+**hidden**: containers get a placeholder the proxy swaps in a credential-like header or query parameter (Authorization, x-api-key, `api_key=`, `token=`…), but only
 on servers an admin approved for it. The first time a program sends it to a new server, the proxy
 refuses that request (403, nothing sent) and posts an approval card in the conversation's active
 thread: *Use secret X on api.example.com?* Only an admin's click counts. Approving remembers the

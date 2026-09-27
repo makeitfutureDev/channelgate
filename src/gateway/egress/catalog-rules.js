@@ -111,7 +111,9 @@ export function isValidRuleHost(value) {
 
 export function isValidRuleHeader(value) {
   const header = String(value ?? "").trim().toLowerCase();
-  return HEADER_NAME.test(header) && !FORBIDDEN_HEADERS.has(header);
+  // `*` and `~…` are legal header-name characters but not declarations: a wildcard would silently
+  // widen a rule, and `~credential` is the approval rule's own marker (never a stored header).
+  return HEADER_NAME.test(header) && !FORBIDDEN_HEADERS.has(header) && !header.includes("*") && !header.startsWith("~");
 }
 
 const listOf = (value) => (Array.isArray(value) ? value : typeof value === "string" ? value.split(/[\s,]+/) : []).map((v) => String(v ?? "").trim()).filter(Boolean);
@@ -172,17 +174,23 @@ export function normalizeSwapRuleFields(entry = {}) {
 // ── Hidden or readable: the kind of a secret with no known destination ──────────────────────
 
 // Secrets used OUTSIDE an HTTP request the proxy can see: a placeholder there would reach the
-// program that needs the real value (an SMTP login, a database driver, an HMAC signer) and fail.
-// Matched on name words (split on `_`), so MAKE_API_PASSWORD is readable and PASSAGE_TOKEN is not.
-export const READABLE_NAME_WORDS = Object.freeze([
-  "PASSWORD", "PASSWD", "PASS", "PWD", "SMTP", "IMAP", "POP3",
-  "DB", "DATABASE", "DSN", "POSTGRES", "POSTGRESQL", "PG", "MYSQL", "MARIADB", "MONGO", "MONGODB", "REDIS", "AMQP", "RABBITMQ",
-  "SIGNING", "HMAC", "ENCRYPTION", "SSH", "PGP", "GPG",
+// program that needs the real value (an SMTP login, a database driver, a request signer) and fail.
+// When unsure the rule errs HIDDEN — a wrongly hidden secret fails visibly and one switch makes it
+// readable; a wrongly readable one is a raw credential in the container. Matched on name words
+// (split on `_`), so MAKE_API_PASSWORD is readable and PASSAGE_TOKEN is not.
+export const READABLE_NAME_WORDS = Object.freeze(["PASSWORD", "PASSWD", "PASS", "PWD", "SMTP", "IMAP", "POP3", "SIGNING", "HMAC", "ENCRYPTION", "SSH", "PGP", "GPG"]);
+// Database words mark a readable secret only when the name does not END as a web credential:
+// REDIS_URL-style connection secrets are readable, UPSTASH_REDIS_REST_TOKEN or TURSO_DB_AUTH_TOKEN
+// (HTTP APIs) are hidden.
+export const DATABASE_NAME_WORDS = Object.freeze(["DB", "DATABASE", "DSN", "POSTGRES", "POSTGRESQL", "PG", "MYSQL", "MARIADB", "MONGO", "MONGODB", "REDIS", "AMQP", "RABBITMQ"]);
+const WEB_CREDENTIAL_LAST_WORDS = new Set(["TOKEN", "KEY", "APIKEY", "PAT", "BEARER"]);
+// Name ENDINGS of secrets that sign or encrypt locally (a session/JWT secret, an S3/R2 SigV4 key, an
+// Azure storage key, a webhook signature secret). STRIPE_SECRET_KEY, API_SECRET and *_CLIENT_SECRET
+// deliberately stay hidden: they travel in HTTP auth headers.
+export const READABLE_NAME_ENDINGS = Object.freeze([
+  ["WEBHOOK", "SECRET"], ["SIGNING", "SECRET"], ["AUTH", "SECRET"], ["APP", "SECRET"], ["JWT", "SECRET"], ["SESSION", "SECRET"], ["COOKIE", "SECRET"],
+  ["SECRET", "ACCESS", "KEY"], ["STORAGE", "KEY"], ["ENCRYPTION", "KEY"],
 ]);
-// Word PAIRS that mark a readable secret where either word alone would not (a GitLab PRIVATE_TOKEN
-// and a WEBHOOK_URL are web credentials; a PRIVATE_KEY and a WEBHOOK_SECRET sign things). An OAuth
-// CLIENT_SECRET usually travels in a form body, which the proxy does not rewrite.
-export const READABLE_NAME_PAIRS = Object.freeze([["PRIVATE", "KEY"], ["WEBHOOK", "SECRET"], ["CLIENT", "SECRET"], ["SECRET", "KEY"]]);
 // Configuration that rides along in a secret store but is not a credential (a repo, an org or
 // project id, a region): tools put it in URL paths and command lines where no swap happens, so a
 // placeholder would only break them. Matched on the LAST word, so VERCEL_ORG_ID is readable and
@@ -191,12 +199,13 @@ export const IDENTIFIER_LAST_WORDS = Object.freeze([
   "ID", "IDS", "SID", "REPO", "REPOSITORY", "ORG", "ORGANIZATION", "TEAM", "PROJECT", "REGION", "ZONE", "HOST", "HOSTNAME", "PORT",
   "USER", "USERNAME", "EMAIL", "NAME", "ENV", "ENVIRONMENT", "URL", "URI", "DOMAIN", "BRANCH", "OWNER", "SLUG", "VERSION", "PATH", "BUCKET",
 ]);
-// Whole-name matches for the few well-known signing credentials that carry none of the words above.
-export const READABLE_NAMES = Object.freeze(["AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "JWT_SECRET", "SESSION_SECRET", "APP_KEY", "SECRET_KEY_BASE"]);
+// Whole names: single-word database passwords and well-known local signing/config secrets.
+export const READABLE_NAMES = Object.freeze(["PGPASSWORD", "MYSQL_PWD", "NEXTAUTH_SECRET", "AWS_SESSION_TOKEN", "KUBECONFIG", "GOOGLE_APPLICATION_CREDENTIALS"]);
 // A value that is a URL — a connection string (postgres://, redis://, smtp://…) or a web address
-// with the credential inside it (a Slack webhook URL) — is readable, whatever its name: a program
-// needs the real address to connect at all, so a placeholder there could never reach the proxy.
+// with the credential inside it (a Slack webhook URL) — or a file path is readable, whatever its
+// name: a program needs the real address or file to work at all.
 const URL_VALUE_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const PATH_VALUE_RE = /^(~\/|\/)[^\s]*$/;
 
 export const EXPOSURES = Object.freeze(["hidden", "readable"]);
 
@@ -208,19 +217,25 @@ export function secretExposure(secretName, entry = null, value = undefined) {
   const name = String(secretName || "").toUpperCase();
   if (READABLE_NAMES.includes(name)) return { exposure: "readable", reason: "name" };
   const words = name.split("_").filter(Boolean);
+  const last = words[words.length - 1] || "";
   if (words.some((word) => READABLE_NAME_WORDS.includes(word))) return { exposure: "readable", reason: "name" };
-  if (words.length && IDENTIFIER_LAST_WORDS.includes(words[words.length - 1])) return { exposure: "readable", reason: "identifier" };
-  if (READABLE_NAME_PAIRS.some(([a, b]) => words.some((word, i) => word === a && words[i + 1] === b))) return { exposure: "readable", reason: "name" };
-  const text = typeof value === "string" ? value : typeof entry?.value === "string" ? entry.value : "";
-  if (URL_VALUE_RE.test(text.trim())) return { exposure: "readable", reason: "value" };
+  if (!WEB_CREDENTIAL_LAST_WORDS.has(last) && words.some((word) => DATABASE_NAME_WORDS.includes(word))) return { exposure: "readable", reason: "name" };
+  if (READABLE_NAME_ENDINGS.some((ending) => ending.length <= words.length && ending.every((word, i) => words[words.length - ending.length + i] === word))) return { exposure: "readable", reason: "name" };
+  if (IDENTIFIER_LAST_WORDS.includes(last)) return { exposure: "readable", reason: "identifier" };
+  const text = (typeof value === "string" ? value : typeof entry?.value === "string" ? entry.value : "").trim();
+  if (URL_VALUE_RE.test(text) || PATH_VALUE_RE.test(text)) return { exposure: "readable", reason: "value" };
   return { exposure: "hidden", reason: "default" };
 }
 
-// An approval rule accepts its placeholder in ANY header and ANY query parameter, in any of the
+// An approval rule accepts its placeholder in any CREDENTIAL-LIKE header or query parameter (a name
+// saying auth, token, key, secret, session, signature…, plus the known auth headers), in any of the
 // whole-value positions: the gateway does not know how this API authenticates, only that a human
-// approved sending this secret to this server.
-export const APPROVAL_HEADERS = Object.freeze(["*"]);
-export const APPROVAL_QUERY = Object.freeze(["*"]);
+// approved sending this secret to this server. Never in an ordinary field (User-Agent, a search
+// term) a server might store and echo back later, unscrubbed. `~credential` is the marker rules.js
+// reads; it is only honoured on an approval grant and can never be written as a declared header.
+export const CREDENTIAL_FIELD_MARKER = "~credential";
+export const APPROVAL_HEADERS = Object.freeze([CREDENTIAL_FIELD_MARKER]);
+export const APPROVAL_QUERY = Object.freeze([CREDENTIAL_FIELD_MARKER]);
 export const APPROVAL_FORMATS = Object.freeze(["bearer", "raw", "basic-user", "basic-password"]);
 
 // The servers an admin approved for an approval-rule secret (the entry's own approvedHosts).

@@ -26,7 +26,7 @@
 // define; it never redirects one the channel does. The preamble names which scope each variable
 // came from (gateway/channel-credentials.js) so the agent can say which account it used.
 import { getSettings, saveSettings } from "./settings.js";
-import { getUser, patchChannelMeta, setUser } from "./store.js";
+import { getChannelMeta, getUser, patchChannelMeta, setUser } from "./store.js";
 import { listEnvVars, normalizeChannelEnv, patchChannelEnv, patchEnvEntry, resolveChannelEnv, resolveEnvMap } from "./channel-env.js";
 import { emitConfigChange } from "./change-events.js";
 
@@ -89,6 +89,15 @@ export async function resolveUserEnv(userId, { untrustedPrincipal = false } = {}
 }
 
 // ── Approval metadata, any scope ─────────────────────────────────────────────────────────────
+
+// One stored entry (normalized; it carries the value, so callers use metadata only) or null.
+export async function getSecretEntry({ scope, slug = "", userId = "", name } = {}) {
+  const key = String(name || "").toUpperCase();
+  if (scope === "organization") return getOrgEnv()[key] || null;
+  if (scope === "personal") return (await getUserEnv(userId))[key] || null;
+  if (scope === "channel") return normalizeChannelEnv((await getChannelMeta(slug))?.env)[key] || null;
+  return null;
+}
 
 // Change ONE secret's approval metadata (an approved server, the hidden/readable choice) in the
 // scope that owns it, without touching its value. scope: "organization" | "channel" (slug) |

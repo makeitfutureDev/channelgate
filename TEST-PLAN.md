@@ -654,8 +654,10 @@ block (`running: true`) before starting.
       `GH_REPO`, `AWS_REGION`, `SMTP_USER`) and URL values (`postgres://…`, a Slack webhook URL) are
       readable; an explicit `exposure` wins, `readable` even over a catalog rule; catalog and declared
       rules are unchanged.
-- [x] Unit — swap core: an approval grant swaps on an approved server in ANY header (bearer, raw,
-      Basic user/password) and ANY query parameter, never `proxy-authorization`; any other server is
+- [x] Unit — swap core: an approval grant swaps on an approved server in any CREDENTIAL-LIKE header
+      (bearer, raw, Basic user/password) or query parameter, never `user-agent`/`referer`/`q` or
+      `proxy-authorization`; the `~credential` marker and `*` are refused as declared headers and never
+      honoured on a declared grant; a model API is never swapped even when approved; any other server is
       refused `approval-required` (a denial naming the host, nothing swapped); a placeholder embedded
       in other text is a `format` refusal (no card); the engines' APIs are `engine-host` (not swapped,
       no card); a channel-binding or liveness denial wins over asking.

@@ -102,6 +102,12 @@ function writeTrustBundle(file, caPem, systemBundle) {
   return { systemRoots: Boolean(system) };
 }
 
+// Every model API a turn may talk to (the engines' and the configured Qwen endpoints): a hidden
+// secret is never swapped there nor approvable for it (secret-host-approvals.js).
+export function modelApiHosts() {
+  return [...new Set([...engineHostsFor(), ...qwenHosts()])];
+}
+
 function qwenHosts() {
   const hosts = [];
   for (const entry of QWEN_PROVIDERS) {
@@ -281,7 +287,12 @@ export async function startEgressService({
     state.proxy = createEgressProxy({
       ca,
       policyFor: policyForCtx,
-      resolveGrant: (core) => resolveEgressGrant(core),
+      resolveGrant: async (core) => {
+        const grant = await resolveEgressGrant(core);
+        // An approval grant also never swaps into a configured Qwen endpoint (grants.js knows only
+        // the engines' fixed hosts).
+        return grant?.approval ? { ...grant, neverHosts: modelApiHosts() } : grant;
+      },
       canUse: (grant, ctx) => canUseGrant(grant, ctx),
       audit: recordAudit,
       // A hidden secret presented to a server nobody approved yet: ask an admin (lazy import —

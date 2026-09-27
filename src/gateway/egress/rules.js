@@ -76,14 +76,22 @@ function grantHeaders(grant) {
 // Never a swap target, even for a "*" grant: the proxy's own routing fields.
 const NEVER_SWAP_HEADERS = new Set(["host", "proxy-authorization"]);
 
+// The approval rule's `~credential` marker: a field whose NAME says it carries a credential. Only
+// honoured on an approval grant (catalog-rules.js APPROVAL_HEADERS / APPROVAL_QUERY).
+const CREDENTIAL_MARKER = "~credential";
+const CREDENTIAL_FIELD_RE = /(auth|token|key|secret|session|credential|passw|signature|^sig$|^code$|bearer|jwt|apikey|access)/i;
+function credentialField(grant, list, name) {
+  return grant?.approval === true && Array.isArray(list) && list.includes(CREDENTIAL_MARKER)
+    && (DEFAULT_SWAP_HEADERS.includes(name) || CREDENTIAL_FIELD_RE.test(name));
+}
+
 function headerAllowed(grant, name) {
   if (NEVER_SWAP_HEADERS.has(name)) return false;
-  const set = grantHeaders(grant);
-  return set.has("*") || set.has(name);
+  return grantHeaders(grant).has(name) || credentialField(grant, grant?.headers, name);
 }
 
 function queryAllowed(grant, name) {
-  return Array.isArray(grant?.query) && (grant.query.includes("*") || grant.query.includes(name));
+  return Array.isArray(grant?.query) && (grant.query.includes(name) || credentialField(grant, grant.query, name));
 }
 
 function neverSwapHere(grant, host) {
@@ -141,6 +149,9 @@ function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHead
     if (mismatch) return refuse("host-header-mismatch");
     // An approval grant checks WHERE the token sits before WHERE it goes: a placeholder in a place
     // it could never be swapped (embedded in other text) must not raise an approval card.
+    // The engines' own APIs never receive an approval grant's value, approved or not: a swapped
+    // value there would land in the model's context.
+    if (grant.approval && neverSwapHere(grant, host)) return refuse("engine-host");
     const hostOk = grantAllowsHost(grant, host);
     if (!hostOk && !grant.approval) return refuse("host");
     if (where.kind === "query") {
@@ -153,8 +164,6 @@ function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHead
       if (where.position === "basic-user" && grant.value.includes(":")) return refuse("invalid-value");
     }
     if (!hostOk) {
-      // Not denied: the engines' own APIs simply never receive this value.
-      if (neverSwapHere(grant, host)) return refuse("engine-host");
       const verdict = allowed(grant);
       // The channel binding and liveness still come first: a placeholder from another channel, or
       // an idle channel, never raises an approval card.

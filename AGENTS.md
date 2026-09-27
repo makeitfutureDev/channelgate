@@ -501,7 +501,7 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   by the proxy on the declared hosts — so rotation no longer needs to retire anything; the
   redactor still carries every REAL value. A secret with NO known or declared destination is decided
   by its kind (`secretExposure` in `catalog-rules.js`): a web-API-looking one is HIDDEN — a
-  placeholder swapped in any header or query parameter, but only on servers an admin APPROVED for
+  placeholder swapped in a credential-like header or query parameter, but only on servers an admin APPROVED for
   that secret (`approvedHosts` on its entry); its first request to any other server is refused with
   a 403 while a durable admin-only approval card is posted in the live thread
   (`src/gateway/secret-host-approvals.js`), never swapped into the engines' own APIs — while a
