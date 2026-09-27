@@ -32,7 +32,7 @@ import { findAckByMessage, deleteAck } from "../config/acks.js";
 
 import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
-import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
+import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../gateway/skills/authoring.js";
 import { listSkills } from "../gateway/skills/catalog.js";
 import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
@@ -876,7 +876,9 @@ function skillManagerItems(meta, { userId = "", userIsAdmin = false } = {}) {
   const template = templateOfMeta(meta);
   const templateSummary = template ? listTemplateSummaries().find((entry) => entry.slug === template.slug) : null;
   const fromTemplate = new Set((templateSummary?.resolved || []).map((value) => String(value).toLowerCase()));
-  const active = new Set([...direct, ...organization, ...scoped, ...fromTemplate]);
+  // A template or channel-section skill this conversation deactivated (meta.skillsOff) is off here.
+  const off = channelSkillsOff(meta);
+  const active = new Set([...direct, ...organization, ...[...scoped, ...fromTemplate].filter((key) => !off.has(key))]);
   const rows = new Map();
   for (const skill of listSkills({ viewer: userIsAdmin ? "*" : userId || "" })) {
     const key = skill.slug.toLowerCase();
@@ -888,8 +890,8 @@ function skillManagerItems(meta, { userId = "", userIsAdmin = false } = {}) {
       description: skill.description || "",
       direct: direct.has(key),
       inherited: organization.has(key),
-      template: fromTemplate.has(key),
-      scoped: scoped.has(key),
+      template: fromTemplate.has(key) && !off.has(key),
+      scoped: scoped.has(key) && !off.has(key),
       active: active.has(key),
     });
   }
@@ -1641,7 +1643,7 @@ async function connectAndWire(app) {
           }
           await grantSkillsToChannel(entry.slug, [skill.slug]);
         } else {
-          await revokeSkillsFromChannel(entry.slug, [key]);
+          await revokeSkillsFromChannel(entry.slug, [key], { deactivate: true });
         }
         meta = await getChannelMeta(entry.slug);
         await ensureChannelFolder(entry.slug, effectiveMeta(meta));

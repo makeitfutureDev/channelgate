@@ -82,9 +82,10 @@ gateway applies them; explicitly exempt tools do not receive a human-approval re
 - `list_channel_mcps` — what's allowed here now.
 - `add_channel_mcps` / `remove_channel_mcps` — allow/stop MCP servers here (by name).
 
-## Skills granted in this channel (managers)
+## Skills in this channel (any member, no card)
 - `show_channel_skills` — what is active here, by tier, with the context cost.
-- `add_channel_skills` / `remove_channel_skills` — grant/revoke catalog skills here (by slug).
+- `add_channel_skills` / `remove_channel_skills` — activate/deactivate skills here (by slug),
+  including a template or channel skill turned off for this conversation only.
 - `set_channel_skill_template` — make this channel follow a template (Development, Sales, …) live.
 - `add_my_skills` / `remove_my_skills` — any member's OWN tier (their runs only, no card).
 - Authoring, proposals, usage, sources, publishing and the organization tier: `references/skills.md`.

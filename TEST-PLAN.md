@@ -7143,6 +7143,56 @@ Manual checks for the daemon-level behavior:
 - [ ] Live Claude + Codex: search for a discoverable skill, grant/revoke it in the channel, change
       the template, and confirm a mandatory skill materializes on the next turn in both harnesses.
 
+### Skills platform (skill ownership without approvals)
+
+Operator decision 2026-09-27: personal and channel skills need nobody's approval; admins moderate
+only the organization tier; a catalog delete is an admin's; read-only sources are extended with a
+companion skill; every change is announced in the reply.
+
+- [x] Automated (both engine contexts, `test/mcp-control-plane-approval.test.js`): an admin's
+      `create_skill` with no scope makes a channel skill of the current channel, `scope:
+      "organization"` a library skill granted here, `personal: true` a personal skill; the admin
+      updates channel and organization skills, deactivates and reactivates a channel skill
+      (`remove_channel_skills` / `add_channel_skills`, no duplicate explicit grant) and deletes an
+      organization skill — with ZERO approval requests. A member creates a channel skill, edits a
+      channel skill an admin wrote, gets a channel skill plus a pending `promote` proposal for an
+      organization request, a pending `change` proposal (revision unchanged) for an organization
+      edit, and a deactivation plus a pending `delete` proposal (skill not deleted) for
+      `delete_skill`; `set_skill_scope` refuses a member — again with zero approval requests. The
+      admin's `decide_skill_proposal` still posts one admin-tier card and then tombstones the
+      skill. Every write result carries "Mention this skill change in your reply".
+- [x] Automated (`test/skills-platform.test.js`): `skillEditability` — local and
+      publish-repository skills are editable, another repository's is not (`updateLocalSkill`
+      names the companion-skill route); a publish-repository edit is pushed back to
+      `skills/<slug>/…` with ownership unchanged and no pin; a failed push pins the edit and a later
+      sync of the old bytes does not revert it. `skillsOff`: a template skill and a section skill
+      deactivated in one channel stay active in another channel on the same template and in the
+      catalog; `grantSkillsToChannel` reactivates without storing an explicit grant; an approved
+      `promote` moves a channel skill into the library; an approved `delete` tombstones.
+      `test/skills-standalone.test.js`: a shared skill's author cannot catalog-delete it; the
+      author of a personal skill and an admin can.
+- [ ] Live Claude + Codex (Slack test channel, an approved NON-admin member, network on, no Auto
+      mode). Setup: a channel with no skill template; publishing configured to the test skills
+      repository. Prompts, each in a new thread:
+      1. "Create a skill called `<prefix>-release-notes` that tells you to write release notes as
+         three bullet points." Expect: no Approve card, no clarifying question about where it goes;
+         the reply names the new channel skill; `show_channel_skills` lists it as from this
+         channel's section; the repository gains `channels/<channel id>/<prefix>-release-notes/`.
+      2. "Update `<prefix>-release-notes` to use five bullets." Expect: no card, revision 2, the
+         reply announces the update; the next turn follows five bullets.
+      3. "Delete the `<prefix>-release-notes` skill." Expect: no card; it is deactivated here (not
+         listed by `show_channel_skills`), the reply says a delete request was filed; the admin
+         UI Review tab shows a pending `delete` proposal; the skill still exists in the catalog.
+      4. "Create an organization-level skill `<prefix>-org-check`." Expect: a channel skill plus a
+         pending `promote` proposal; not in the shared library until an admin approves.
+      5. "Add a reference with our escalation contacts to `<bundled or other-repo skill>`."
+         Expect: no in-place edit; the agent creates a companion channel skill with
+         `requires: [<that skill>]`.
+      Repeat 1–2 as an ADMIN with "…organization-level skill…": expect no card at all, the skill in
+      the library (`skills/<slug>/`), active here. Pass only when no step shows an Approve card
+      except the admin's `decide_skill_proposal`, and every create/update/deactivate is mentioned
+      in the reply. Record thread links, proposal ids and repository commits.
+
 ### Update regression path isolation
 
 - Automated fixture: supply conflicting canonical/legacy DIR and DB selectors pointing at a
