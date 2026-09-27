@@ -251,26 +251,18 @@ export function buildControlPlane({ loadMeta }) {
     ["clear_channel_drive_folder", { authz: "admin", details: () => "Unlink this channel's Google Drive sync folder (sync off)." }],
     ["add_channel_mcps", { authz: "manage", details: ({ names }) => `Allow MCP server(s) in this channel: ${summarize((names || []).join(", "))}` }],
     ["remove_channel_mcps", { authz: "manage", details: ({ names }) => `Remove MCP server(s) from this channel: ${summarize((names || []).join(", "))}` }],
-    // Skills (src/mcp/tools/skills.js): a conversation's grant list and the shared catalog are
-    // persistent state. Reads, previews and proposals are open; grants, templates, authoring and
-    // admin decisions carry a card.
-    ["add_channel_skills", { authz: "manage", details: ({ slugs }) => `Grant skill(s) in this channel: ${summarize((slugs || []).join(", "))}` }],
-    ["remove_channel_skills", { authz: "manage", details: ({ slugs }) => `Remove skill grant(s) from this channel: ${summarize((slugs || []).join(", "))}` }],
-    ["set_channel_skill_template", { authz: "manage", details: ({ template }) => (String(template || "").toLowerCase() === "none" ? "Stop this channel from following a skill template." : `Make this channel follow the "${summarize(template)}" skill template (live).`) }],
-    ["create_skill", { authz: "any", details: ({ slug, files, personal = false, scope = "library", grant_here = true }) => {
-      const name = slug ? ` (\`${summarize(slug)}\`)` : "";
-      const bundle = `${name} with ${(files || []).length} file(s)`;
-      if (personal && scope === "channel") return `A personal skill${bundle} cannot be created in a channel section. This combination will be rejected.`;
-      if (personal) return `Create a personal skill${bundle} and automatically grant it to your own runs. It will not be published to shared skill sources.`;
-      if (scope === "channel") return `Create a shared skill in this channel's section${bundle}; it will be active here automatically.`;
-      return `Create a skill in the shared library${bundle}${grant_here ? " and grant it in this channel" : " without adding a channel grant"}.`;
-    } }],
-    ["update_skill", { authz: "any", details: ({ skill, files }) => `Publish a new revision of skill \`${summarize(skill)}\` (${(files || []).length} changed file(s)).` }],
+    // Skills (src/mcp/tools/skills.js). Operator decision 2026-09-27: personal and channel skills
+    // belong to their author / the channel's members and never wait for anyone — create_skill,
+    // update_skill, delete_skill, add_/remove_channel_skills and set_channel_skill_template are
+    // OPEN; their handlers enforce who may change which tier, file an admin proposal for a
+    // non-admin's organization request, and tell the model to announce every change in its reply.
+    // Accepted residual risk: injected content inside an authorized turn can write a skill that
+    // loads in this channel's (or this author's) later turns — never the organization tier, which
+    // stays admin-only. The organization-wide admin tools below keep their card.
     ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => `${decision === "approve" ? "APPROVE" : "Reject"} skill proposal #${Number(id) || "?"}.` }],
     ["sync_skill_sources", { authz: "admin", details: ({ id }) => `Sync ${id ? `skill source #${Number(id)}` : "every skill source"} into the catalog now.` }],
-    ["delete_skill", { authz: "any", details: ({ skill }) => `Remove skill \`${summarize(skill)}\` from the catalog (tombstone; an admin can restore it).` }],
     ["publish_skill", { authz: "manage", details: ({ skill }) => `Push skill \`${summarize(skill)}\` to the configured Git repository now.` }],
-    ["set_skill_scope", { authz: "manage", details: ({ skill, scope, channel }) => `Move skill \`${summarize(skill)}\` to ${scope === "channel" ? `the ${channel ? summarize(channel) : "current"} channel's section (that customer only)` : "the shared library (every conversation)"}; its files move in the skills repository.` }],
+    ["set_skill_scope", { authz: "admin", details: ({ skill, scope, channel }) => `Move skill \`${summarize(skill)}\` to ${scope === "channel" ? `the ${channel ? summarize(channel) : "current"} channel's section (that customer only)` : "the shared library (every conversation)"}; its files move in the skills repository.` }],
     ["add_org_skills", { authz: "admin", details: ({ slugs }) => `Grant skill(s) ORGANIZATION-WIDE (every conversation): ${summarize((slugs || []).join(", "))}` }],
     ["remove_org_skills", { authz: "admin", details: ({ slugs }) => `Remove organization-wide skill grant(s): ${summarize((slugs || []).join(", "))}` }],
     ["add_skill_source", { authz: "admin", details: ({ kind, url }) => `Add a ${summarize(kind)} skill source and sync it: ${summarize(url)}` }],

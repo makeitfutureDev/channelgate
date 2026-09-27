@@ -3374,8 +3374,9 @@ are retired, bullet by bullet; everything else stands.
 - **Repository sections (`channel_scope`)**: the skills repository is one shared library plus
   `channels/<channel id>/<slug>/` per channel; a skill in a channel's section is in that channel's
   tier automatically (`channelSkillGrants` = template ∪ section ∪ own), derived from the synced
-  path or the scope a local skill was created with. `create_skill` defaults to the library and
-  takes `scope: "channel"` for customer-specific skills (the agent asks first); `set_skill_scope`,
+  path or the scope a local skill was created with. `create_skill` from a channel defaults to a
+  channel skill in that section (personal in a DM; `scope: "organization"` for the library — see
+  *Skill ownership without approvals*); `set_skill_scope` (admins),
   the admin *Section* control and `POST /api/skills/catalog/:slug/scope` move a skill either way —
   files move in the repository (`moveSkillFiles`), promotion leaves the channel an explicit grant.
   → TEST-PLAN: Skills platform (round two).
@@ -3424,15 +3425,15 @@ are retired, bullet by bullet; everything else stands.
   costs in every conversation whatever the template says, and the effective union measured against
   the soft cap. (2026-09-05, replacing the earlier snapshot-copy apply.)
   → TEST-PLAN: Skills platform (Core).
-- **Chat verbs** (`src/mcp/tools/skills.js`, in the lockdown allowlist and the control-plane
-  approval map): `list_skills`, `show_channel_skills` (tiers, dependencies, missing/staged, context
-  cost), `get_skill_file`, `list_skill_templates`, `preview_skill_template` (open);
-  `add_channel_skills`, `remove_channel_skills`, `apply_skill_template` (managers, approval card —
-  a grant answers with the conversation's resulting always-on cost and any warning it crossed, e.g.
-  the context soft cap, so the person who caused it hears about it);
-  `create_skill` (any approved member → a local skill granted in the conversation),
-  `update_skill` (author / manager / admin, local skills only, partial files merge over the current
-  revision), `propose_skill_change` (`change` with files, or `promote` organization-wide),
+- **Chat verbs** (`src/mcp/tools/skills.js`, in the lockdown allowlist; the organization-tier admin
+  verbs are in the control-plane approval map): `list_skills`, `show_channel_skills` (tiers,
+  dependencies, missing/staged, context cost), `get_skill_file`, `list_skill_templates`,
+  `preview_skill_template` (open); `add_channel_skills`, `remove_channel_skills`,
+  `set_channel_skill_template` (any member, no card — a grant answers with the conversation's
+  resulting always-on cost and any warning it crossed, e.g. the context soft cap, so the person who
+  caused it hears about it); `create_skill`, `update_skill`, `delete_skill` (tiered ownership, no
+  card — see *Skill ownership without approvals*; partial files merge over the current revision),
+  `propose_skill_change` (`change` with files, `promote`, `delete`, `feedback`),
   `list_skill_proposals` / `decide_skill_proposal` (admins; an approved change on a source-owned
   skill becomes a **pinned local override** so the source keeps flowing and the pin holds until
   unpinned; an approved promotion adds the skill to the organization tier), `skill_usage_report`,
@@ -3441,6 +3442,31 @@ are retired, bullet by bullet; everything else stands.
   update/proposal input: omitted files remain, and `update_skill.remove` explicitly deletes files.
   Every resulting revision remains a complete immutable package.
   → TEST-PLAN: Skills platform (Core).
+- **Skill ownership without approvals** (operator decision 2026-09-27). Three tiers, three owners:
+  a **personal** skill is its author's, a **channel** (project) skill — one in a channel's section —
+  belongs to that channel's members, and the **organization** library is moderated by admins.
+  `create_skill`, `update_skill`, `delete_skill`, `add_channel_skills`, `remove_channel_skills` and
+  `set_channel_skill_template` are OUT of the control-plane approval map: personal and channel
+  changes apply at once with no card, even for a non-admin, and every result tells the model to
+  announce the change in its reply (audited as `skill_created` / `skill_updated` /
+  `skill_revoked` / `skill_removed`). `create_skill` without a scope makes a channel skill (a
+  personal one in a DM) — the agent no longer asks where it goes; `scope: "organization"` is an
+  admin's direct library write, and for anyone else a channel skill plus a `promote` proposal
+  (approving it moves the channel skill into the library). `update_skill`: personal → its author,
+  channel → any member of that channel, organization → an admin (a non-admin's edit is filed as a
+  `change` proposal automatically). Edits in place cover local skills AND skills synced from the
+  configured publish repository (`skillEditability`: the new revision is pushed back to the skill's
+  own folder; a failed push pins it so a sync cannot revert it; a pinned skill is re-pinned to the
+  edit). Bundled, host-folder, other-repository and peer-gateway skills are read-only: the tool
+  explains how to extend one with a companion skill that `requires:` it. Deactivating is not
+  deleting: `remove_channel_skills` turns a template or section skill off for that conversation only
+  (`meta.skillsOff`, honored by `channelSkillGrants` and the Slack skills manager) and
+  `add_channel_skills` turns it back on; a catalog delete is an admin's (or a personal skill's
+  author's), and anyone else's `delete_skill` deactivates here and files a `delete` proposal.
+  `set_skill_scope` is admin-only. The organization-wide admin verbs (`decide_skill_proposal`,
+  org grants, sources, governance, exclusion, `publish_skill`, `set_skill_scope`) keep their card.
+  Accepted residual risk: injected content in an authorized turn can write a channel or personal
+  skill, never an organization one. → TEST-PLAN: Skills platform (skill ownership without approvals).
 - **Usage telemetry** (`usage.js`, on the run event stream in `run.js`): Claude's `Skill` tool call
   is an **exact** signal (the stream parser now names the skill as the tool target); a Codex/shell
   read of `…/skills/<slug>/SKILL.md` is **inferred** and labelled so; one row per run/skill/signal
@@ -3487,7 +3513,7 @@ are retired, bullet by bullet; everything else stands.
   published or exported; a `promote` proposal, once approved, makes it an organization skill.
   `add_my_skills` / `remove_my_skills` let any approved member carry catalog skills in their OWN
   runs (the user tier of the grant union — Skills Manager's "stars"), no card needed; `delete_skill`
-  removes a skill you authored (tombstone). Proposals gain `kind: feedback` (a note without files).
+  removes your own personal skill, or any local skill for an admin (tombstone). Proposals gain `kind: feedback` (a note without files).
   Admins get chat verbs for the organization tier (`add_org_skills` / `remove_org_skills`), the
   sources (`list_skill_sources`, `add_skill_source`, `set_skill_source`, `remove_skill_source`),
   exclusions (`set_skill_excluded`) and `get_skill_info`. → TEST-PLAN: Skills platform (round two).

@@ -76,18 +76,35 @@ export function channelScopedSkills(channelId) {
   return listSkills({ channelScope: id, viewer: "" }).map((s) => s.slug);
 }
 
+// The skills a conversation turned OFF for itself: template and section skills it does not want.
+// Stored as meta.skillsOff (catalog slugs). An explicit grant of the conversation's own is revoked
+// instead, so this list only ever names skills something else would have brought in.
+export function channelSkillsOff(meta = {}) {
+  return new Set(sanitizeSkillGrantNames(meta?.skillsOff || []).map((s) => s.toLowerCase()));
+}
+
+// The skills a conversation gets without granting them itself: its template's CURRENT skills and
+// the skills in its own repository section — before its own deactivations are applied.
+export function channelProvidedSkills(meta = {}) {
+  const template = templateOfMeta(meta);
+  const fromTemplate = template ? resolveTemplateSkills(template).skills.map((s) => s.slug) : [];
+  return [...fromTemplate, ...channelScopedSkills(meta?.channelId)];
+}
+
 // The conversation's own tier: the assigned template's CURRENT skills, the skills in the
-// channel's own repository section, plus the skills added to the conversation itself. This is
-// what the grant union takes as the channel tier.
+// channel's own repository section, plus the skills added to the conversation itself, minus the
+// template/section skills the conversation deactivated. This is what the grant union takes as the
+// channel tier.
 export function channelSkillGrants(meta = {}) {
   const own = sanitizeSkillGrantNames(meta?.skills || []);
   const template = templateOfMeta(meta);
   const scoped = channelScopedSkills(meta?.channelId);
   if (!template && !scoped.length) return own;
   const fromTemplate = template ? resolveTemplateSkills(template).skills.map((s) => s.slug) : [];
+  const off = channelSkillsOff(meta);
   const seen = new Set();
   const out = [];
-  for (const s of [...fromTemplate, ...scoped, ...own]) {
+  for (const s of [...fromTemplate.filter((x) => !off.has(x.toLowerCase())), ...scoped.filter((x) => !off.has(x.toLowerCase())), ...own]) {
     const k = s.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);

@@ -4,15 +4,15 @@ description: >-
   Create a new reusable skill, update one you authored, or propose a change to a shared skill
   from this conversation using the gateway's skill tools. Use when someone asks to "save this as
   a skill", "turn this procedure into a skill", "add a skill to the library", "improve the X
-  skill", or when a task has become a repeatable procedure worth keeping for every channel.
+  skill", or when a task has become a repeatable procedure worth keeping.
 category: Skills
-version: 1.0.1
+version: 1.1.0
 tags:
   - skills
   - authoring
 ---
 
-# Authoring skills for the shared library
+# Authoring skills
 
 Skills are folders with a `SKILL.md` (YAML frontmatter + Markdown body) plus optional
 `references/`, `scripts/` and `assets/` files. The gateway keeps them in its local catalog and
@@ -49,12 +49,18 @@ Rules for a description that actually fires:
 
 - `list_skills` / `get_skill_file` — see what already exists before writing a duplicate. Read a
   skill's `SKILL.md` and references with `get_skill_file`.
-- `create_skill` — add a new skill to the library with its files; it is granted to this channel
-  immediately (managers or admins can grant it elsewhere or add it to a template).
-- `update_skill` — new revision of a skill you created (or any local skill, for managers/admins).
-- `propose_skill_change` — for a shared skill you may not edit directly (synced from a
-  repository, bundled, or authored by someone else): send the changed files plus a note; an admin
-  reviews and approves it into a new revision.
+- `create_skill` — add a new skill with its files. Omit `scope`: in a channel it becomes a
+  **channel skill** (active here, any member may edit or deactivate it); in a DM, the
+  requester's personal skill. Pass `scope: "organization"` only when the user explicitly asked
+  for an organization-level skill (an admin's lands in the shared library at once; anyone else's
+  starts as a channel skill with a promotion request for an admin).
+- `update_skill` — new revision. Personal: its author; channel: any member of that channel;
+  organization: an admin (a non-admin's edit is filed as a proposal automatically).
+- A skill whose source this gateway cannot write to (bundled, another repository, a host folder,
+  a peer gateway) is not edited in place: create a **companion skill** that lists the original
+  under `requires:` and carries the extra references.
+- `propose_skill_change` — ask an admin for an organization-level change: files plus a note, a
+  promotion, or a catalog delete; an admin reviews it.
 - `show_channel_skills` — what is active here, what it costs in context, and what is missing.
 
 ## Workflow
@@ -69,8 +75,10 @@ Rules for a description that actually fires:
    approval merges them with the existing package. The proposal tool has no file-removal argument.
    Each resulting revision stores the complete folder; partial input does not replace prior
    revisions or discard unspecified files.
-4. Tell the user what was created and where it applies. If a proposal was filed, say that an
-   admin has to approve it before it becomes active.
+4. Personal and channel skills need no approval — when the user asked for the skill, create or
+   update it without asking again. Then tell the conversation what was created or changed and
+   where it applies. If a proposal was filed, say that an admin has to approve it before it
+   becomes active.
 
 Never put secrets, tokens, or personal data in a skill. Scripts run with the channel's normal
 permissions only.

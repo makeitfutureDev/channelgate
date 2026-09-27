@@ -809,7 +809,7 @@ export function usageByAuthor({ channelSlug = "", since = "", until = "", slugs 
 // ── Proposals ───────────────────────────────────────────────────────────────────────────────
 
 export function createProposal({ slug, kind = "change", files = [], note = "", proposedBy = "", channelSlug = "", now = nowIso() } = {}) {
-  if (!["change", "promote", "feedback"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
+  if (!["change", "promote", "feedback", "delete"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
   const s = normalizeSlug(slug);
   if (!isValidSlug(s)) throw new SkillCatalogError("a proposal needs a valid skill slug");
   const stored = (Array.isArray(files) ? files : []).map((f) => {

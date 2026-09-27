@@ -106,9 +106,14 @@ test("self-service and organization tiers: add/remove for a user, grant/revoke o
   assert.deepEqual(orgDrop.stillRequired, [{ slug: "tier-dep", requiredBy: ["tier-skill"] }], "and the caller is told why it stays active");
   assert.deepEqual(orgDrop.names, ["tier-skill"]);
 
-  const own = await authoring.createLocalSkill({ files: [md("Delete Me", "mine")], createdBy: "U_SELF", publish: false });
-  assert.throws(() => authoring.deleteOwnSkill({ skill: own.skill, userId: "U_OTHER" }), /only the author/);
+  // Operator decision 2026-09-27: deleting from the whole catalog is an admin's call, except a
+  // person's own PERSONAL skill; a shared skill's author asks an admin (a "delete" proposal).
+  const own = await authoring.createLocalSkill({ files: [md("Delete Me", "mine")], createdBy: "U_SELF", publish: false, personal: true });
+  assert.throws(() => authoring.deleteOwnSkill({ skill: own.skill, userId: "U_OTHER" }), /only an admin/);
   assert.equal(authoring.deleteOwnSkill({ skill: own.skill, userId: "U_SELF" }).deleted, true);
+  const shared = await authoring.createLocalSkill({ files: [md("Shared Delete", "shared")], createdBy: "U_SELF", publish: false });
+  assert.throws(() => authoring.deleteOwnSkill({ skill: shared.skill, userId: "U_SELF" }), /only an admin/, "authoring a shared skill does not make its deletion yours");
+  assert.equal(authoring.deleteOwnSkill({ skill: shared.skill, userId: "U_ADMIN", isAdmin: true }).deleted, true);
   const src = catalog.addSource({ kind: "git", url: "https://github.com/example/undeletable", mode: "auto" });
   catalog.putSkillRevision({ files: [md("Synced One", "from a source")], ownerKind: "git", sourceId: src.id });
   assert.throws(() => authoring.deleteOwnSkill({ skill: catalog.getSkill("synced-one"), userId: "U_SELF", isAdmin: true }), /cannot be deleted/);

@@ -35,12 +35,14 @@ Every skill has one **owner**:
 | -------- | ------------------------------------------------------------------------------ | ----------------------------------------------- |
 | bundled  | shipped in this checkout (`src/gateway/skills/bundled/`), imported at boot     | a new gateway release                            |
 | folder   | the host's `~/.claude/skills`, `~/.agents/skills` or `GATEWAY_SKILL_SOURCES`, imported at boot and re-read by content | edit the folder; the next boot / re-import picks it up |
-| git      | a GitHub source (below)                                                        | the source's next sync                           |
-| local    | authored from chat (`create_skill`) or the admin UI                            | `update_skill` by its author, a manager or an admin |
+| git      | a GitHub source (below)                                                        | the source's next sync; a skill of the gateway's own publish repository also takes `update_skill` (pushed back) |
+| local    | authored from chat (`create_skill`) or the admin UI                            | `update_skill` — see *Who may change what* below  |
 
 A slug is owned by exactly one owner. A sync or an import that finds a slug another owner holds
-reports a **conflict** and writes nothing. Changing a source-owned skill goes through a
-**proposal** (below). Removing a skill is a **tombstone**: its revisions stay, a conversation that
+reports a **conflict** and writes nothing. A skill whose source this gateway cannot write to
+(bundled, a host folder, another repository, a peer gateway) is never edited in place — it is
+extended with a companion skill that `requires:` it, or changed by an admin-approved **proposal**
+(below). Removing a skill is a **tombstone**: its revisions stay, a conversation that
 still grants it sees why it is missing, and a returning source restores it. A skill an admin
 removed (the Skills view, `set_skill_excluded`, a migrated Skills Manager exclusion) is an
 **exclusion**: it stays out across syncs and imports until an admin restores it.
@@ -75,9 +77,13 @@ every gateway that syncs the repository and hosts the channel; nothing is stored
 Skills in a section are ordinary catalog skills otherwise: an admin can still grant one to a second
 channel of the same customer.
 
-New skills go to the library by default. `create_skill` with `scope: "channel"` — for a skill
-that only makes sense for one customer or project; the agent asks first — keeps it in the
-channel's section. `set_skill_scope` (managers), the admin UI's *Section* control and
+New skills created from a channel are **channel skills** by default: `create_skill` without a
+scope keeps them in that channel's section (in a DM, the requester's personal tier), with no
+question asked. `scope: "organization"` puts a skill in the shared library — directly for an
+admin, and for anyone else as a channel skill plus a `promote` proposal an admin decides.
+A conversation turns any of its template or section skills off **for itself** with
+`remove_channel_skills` (stored as `skillsOff` in its metadata; the skill stays in the catalog and
+in every other conversation) and back on with `add_channel_skills`. `set_skill_scope` (admins), the admin UI's *Section* control and
 `POST /api/skills/catalog/:slug/scope` move a skill either way: **promoting** a customer skill to
 the library moves its files in the repository and leaves the channel with an explicit grant, so
 nothing changes there; demoting keeps it for that channel only. Only skills the publish
@@ -102,10 +108,10 @@ template too. Preview first to see what a conversation would gain, keep or drop.
 Templates store explicit skill selections; category is catalog metadata used for filtering, not a
 bulk template selector. From chat: `list_skill_templates`, `preview_skill_template` and
 `show_channel_skills` (which names the template and marks which skills come from it) are open
-reads. `set_channel_skill_template`, `add_channel_skills` and `remove_channel_skills` (managers, or
-an admin) change persistent state, so they **always** post an Approve/Deny card and block until
-someone eligible clicks. Auto mode does not bypass it: auto-approval applies to tool permission
-prompts only, never to control-plane changes.
+reads. `set_channel_skill_template`, `add_channel_skills` and `remove_channel_skills` are open to
+any member of the conversation and post no approval card (operator decision 2026-09-27: a
+channel's skill set is its members'); every change is audited (`skill_granted`,
+`skill_revoked`, `skill_template_assigned`) and announced in the reply.
 
 ## Plugin packages in the same library
 
@@ -184,20 +190,49 @@ names, so every stored grant still resolves. *Re-import host folders* refreshes 
 
 ## Authoring and proposals
 
-Anyone approved to use a conversation can add a skill to the shared catalog from chat:
+### Who may change what
+
+| tier         | where it lives                              | create / edit                           | deactivate here | delete from the catalog |
+| ------------ | ------------------------------------------- | --------------------------------------- | --------------- | ----------------------- |
+| personal     | the author's own tier                       | its author                              | —               | its author, or an admin |
+| channel      | the channel's section (`channels/<id>/…`)   | any member of that channel              | any member      | an admin (a member files a `delete` request) |
+| organization | the shared library                          | an admin; anyone else files a proposal  | any member (for their conversation) | an admin |
+
+Personal and channel changes never post an approval card and never wait for anyone (operator
+decision 2026-09-27); the tool result tells the model to announce the change in its reply, and
+every write is audited (`skill_created`, `skill_updated`, `skill_revoked`, `skill_removed`).
+Admins moderate only the organization tier; the organization-wide admin verbs
+(`decide_skill_proposal`, `add_org_skills` / `remove_org_skills`, sources, governance, exclusion,
+`set_skill_scope`, `publish_skill`) **always** post an Approve/Deny card.
+Auto mode does not bypass it: auto-approval applies to tool permission prompts only, never to
+control-plane changes.
+Accepted residual risk: content injected into an
+authorized turn can write a skill that loads in that channel's (or that author's) later turns;
+it can never reach the organization tier.
 
 - `create_skill` — files (a `SKILL.md` with name + description, plus references/scripts) → a
-  local skill, granted in that conversation at once. The bundled `skill-authoring` skill teaches
-  the contract and how to write a description that triggers.
-- `update_skill` — a new revision of a local skill you created (managers and admins: any local
-  skill). Pass only the files that change; the rest are carried over (`remove` drops files).
-- `propose_skill_change` — for a skill you may not edit directly: the changed files and a note
-  (`kind: change`), or a request to grant a skill organization-wide (`kind: promote`).
+  channel skill by default (personal in a DM, `scope: "organization"` for the shared library as
+  above). The bundled `skill-authoring` skill teaches the contract and how to write a
+  description that triggers.
+- `update_skill` — a new revision. Pass only the files that change; the rest are carried over
+  (`remove` drops files). A local skill is revised in place; a skill synced from the configured
+  publish repository is revised and pushed back to its own folder (if the push fails the new
+  revision is pinned, so the next sync cannot revert it). A skill pinned to an older revision is
+  re-pinned to the new one. A non-admin's edit of an organization skill becomes a `change`
+  proposal automatically. Any other source is read-only: `update_skill` explains how to extend
+  it with a companion skill.
+- `delete_skill` — a catalog tombstone: an admin, or the author of a personal skill. Anyone else
+  deactivates the skill in their conversation and files a `delete` proposal.
+- `propose_skill_change` — ask an admin: the changed files and a note (`kind: change`), a
+  promotion (`kind: promote` — a personal or channel skill becomes an organization skill; an
+  organization skill gets granted everywhere), a catalog delete (`kind: delete`), or feedback.
 - Admins review with `list_skill_proposals` / `decide_skill_proposal` in chat, or in the admin UI
   (Skills → Review). An approved change becomes one revision; when the skill is source-owned the
   revision is **pinned** as a local override, so the source keeps flowing into later revisions
-  and the pin holds until an admin unpins. An approved promotion adds the skill to the
-  organization tier.
+  and the pin holds until an admin unpins. An approved promotion moves a channel skill into the
+  library (the channel keeps it as an explicit grant), makes a personal skill an organization
+  skill, or adds an organization skill to the organization tier; an approved `delete` tombstones
+  the skill.
 - Pins double as **rollback**: pin any active revision from the catalog view; *follow current*
   unpins.
 

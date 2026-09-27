@@ -365,10 +365,10 @@ test("every registered gateway tool is consciously classified as gated or open (
     // SSH access (src/gateway/ssh-access.js): a registered key is what a grant turns into a shell
     // inside a container, and a grant IS that shell — persistent, and never on the model's word alone.
     "add_my_ssh_key", "remove_my_ssh_key", "grant_channel_ssh", "revoke_channel_ssh",
-    // skills platform: grants, templates, catalog writes and admin decisions are persistent state
-    "add_channel_skills", "remove_channel_skills", "set_channel_skill_template",
-    "create_skill", "update_skill", "decide_skill_proposal", "sync_skill_sources",
-    "delete_skill", "publish_skill", "add_org_skills", "remove_org_skills",
+    // skills platform: the ORGANIZATION tier (admin decisions, org grants, sources, governance,
+    // moving a skill in or out of the shared library) and Git publishing keep their card
+    "decide_skill_proposal", "sync_skill_sources",
+    "publish_skill", "add_org_skills", "remove_org_skills",
     "add_skill_source", "set_skill_source", "remove_skill_source", "set_skill_excluded", "set_skill_governance", "set_skill_scope",    // Publishing bytes outside the gateway: a "share" link puts a channel file at an
     // unauthenticated URL for up to 48h and cannot be recalled once fetched. Its `details()`
     // returns null for the short machine-facing "upload" purpose, the same conditional shape
@@ -403,6 +403,12 @@ test("every registered gateway tool is consciously classified as gated or open (
     // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
     // self-service like starring in a skill library — reversible, affects nobody else, no card.
     "add_my_skills", "remove_my_skills",
+    // operator decision 2026-09-27: personal and CHANNEL skills are their author's / the channel
+    // members' and never wait for anyone. The handlers enforce the tier (a non-admin's organization
+    // request becomes a channel skill plus an admin proposal; a full catalog delete is an admin's)
+    // and tell the model to announce every change in its reply.
+    "create_skill", "update_skill", "delete_skill",
+    "add_channel_skills", "remove_channel_skills", "set_channel_skill_template",
     // sends ONE already-readable channel file to Composio's storage for a tool call the user asked
     // for; publishes nothing, spends only the identity the caller named, and the destination tool
     // call is separately visible. Path is confined to the channel folder.
@@ -427,132 +433,122 @@ test("every registered gateway tool is consciously classified as gated or open (
   });
 });
 
-const creationVariants = [
-  { key: "default", args: {}, visibility: "org", channelGrant: true, details: /shared library.*grant it in this channel/i },
-  { key: "shared-grant", args: { personal: false, scope: "library", grant_here: true }, visibility: "org", channelGrant: true, details: /shared library.*grant it in this channel/i },
-  { key: "shared-ungranted", args: { personal: false, scope: "library", grant_here: false }, visibility: "org", channelGrant: false, details: /shared library.*without.*grant/i },
-  { key: "personal-grant", args: { personal: true, scope: "library", grant_here: true }, visibility: "personal", channelGrant: false, details: /personal skill.*your own runs/i },
-  { key: "personal-ungranted-flag", args: { personal: true, scope: "library", grant_here: false }, visibility: "personal", channelGrant: false, details: /personal skill.*your own runs/i },
-  { key: "channel-grant", args: { personal: false, scope: "channel", grant_here: true }, visibility: "org", channelGrant: false, channelScope: true, details: /this channel.s section.*automatically/i },
-  { key: "channel-ungranted-flag", args: { personal: false, scope: "channel", grant_here: false }, visibility: "org", channelGrant: false, channelScope: true, details: /this channel.s section.*automatically/i },
-];
-const creationFiles = slug => [{ path: "SKILL.md", content: `---\nname: ${slug}\ndescription: Harmless approval preview fixture.\n---\n\nReturn the fixture name.\n` }];
+const creationFiles = slug => [{ path: "SKILL.md", content: `---\nname: ${slug}\ndescription: Harmless skill authoring fixture.\n---\n\nReturn the fixture name.\n` }];
+const announce = /Mention this skill change in your reply/;
 
-test("both engine approval previews describe actual creation visibility and grants before denial", async () => {
-  const { getSkill } = await import("../src/gateway/skills/catalog.js");
-  for (const engine of ["claude", "codex"]) {
-    await withGateway({ engine }, async client => {
-      for (const variant of creationVariants) {
-        approvalRequests.length = 0;
-        approvalResponse = { allow: false, reason: "preview only" };
-        const slug = `preview-${engine}-${variant.key}`;
-        const args = { slug, files: creationFiles(slug), ...variant.args };
-        const result = await client.callTool({ name: "create_skill", arguments: args });
-        assert.match(resultText(result), /not approved/);
-        assert.equal(approvalRequests.length, 1);
-        const preview = approvalRequests[0].body.toolInput.details;
-        assert.match(preview, variant.details, variant.key);
-        assert.match(preview, new RegExp(slug));
-        assert.match(preview, /1 file/);
-        if (variant.visibility === "personal") assert.doesNotMatch(preview, /shared catalog|grant it here|grant it in this channel/);
-        assert.equal(getSkill(slug), null, "a preview denial creates no skill");
-      }
-    });
-  }
-});
-
-test("approved creation matches preview semantics and invalid personal channel scope stays rejected", async () => {
+test("both engines: an admin's skill writes land at once with no approval card, channel by default", async () => {
   const { getSkill } = await import("../src/gateway/skills/catalog.js");
   const { getUser } = await import("../src/config/store.js");
-  for (const engine of ["claude", "codex"]) {
-    await withGateway({ engine }, async client => {
-      for (const variant of creationVariants) {
-        approvalRequests.length = 0;
-        approvalResponse = { allow: true };
-        const slug = `created-${engine}-${variant.key}`;
-        const result = await client.callTool({ name: "create_skill", arguments: { slug, files: creationFiles(slug), ...variant.args } });
-        assert.match(resultText(result), /Created/);
-        assert.match(approvalRequests[0].body.toolInput.details, variant.details);
-        const actual = getSkill(slug);
-        assert.equal(actual.visibility, variant.visibility);
-        assert.equal(actual.channelScope || "", variant.channelScope ? CHANNEL : "");
-        assert.equal((await getUser("U_CTRL_ADMIN")).skills?.includes(slug) || false, variant.visibility === "personal");
-        assert.equal((await getChannelMeta(SLUG)).skills?.includes(slug) || false, variant.channelGrant);
-        if (variant.visibility === "personal") assert.match(resultText(result), /granted to your own runs/);
-        if (variant.channelScope) assert.match(resultText(result), /granted here automatically/);
-      }
-      const invalid = `invalid-personal-channel-${engine}`;
-      approvalRequests.length = 0;
-      const result = await client.callTool({ name: "create_skill", arguments: { slug: invalid, files: creationFiles(invalid), personal: true, scope: "channel", grant_here: false } });
-      assert.match(approvalRequests[0].body.toolInput.details, /personal.*cannot.*channel/i);
-      assert.match(resultText(result), /personal skill cannot be scoped to a channel/);
-      assert.equal(getSkill(invalid), null);
-    });
-  }
-});
-
-
-test("Auto mode skill receipts attest an explicit human decision in both engine contexts", async () => {
-  const { getSkill } = await import("../src/gateway/skills/catalog.js");
-  const original = await getChannelMeta(SLUG);
-  await saveChannelMeta(SLUG, { ...original, autoMode: true });
-  try {
-    for (const engine of ["claude", "codex"]) {
-      approvalRequests.length = 0;
-      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
-        const slug = `explicit-human-${engine}`;
-        const request = { name: "create_skill", arguments: { slug, files: creationFiles(slug), personal: true } };
-        approvalResponse = { allow: false, reason: "denied by the human" };
-        const denied = await client.callTool(request);
-        assert.match(resultText(denied), /not approved/);
-        assert.doesNotMatch(resultText(denied), approvalReceipt);
-        assert.equal(getSkill(slug), null, "Auto cannot create the denied skill");
-
-        approvalResponse = { allow: true };
-        const approved = await client.callTool(request);
-        assert.match(resultText(approved), /Created/);
-        assert.match(resultText(approved), /This receipt records an explicit human decision; channel Auto mode did not supply it\./);
-        assert.deepEqual(approvalRequests.map(r => r.body.approvalType), ["agent", "agent"]);
-        assert.equal(getSkill(slug).createdBy, "U_CTRL_MEMBER");
-      });
-    }
-  } finally {
-    await saveChannelMeta(SLUG, original);
-  }
-});
-
-test("both engine contexts receive an approval receipt for actual skill creation, update and deletion", async () => {
-  const { getSkill } = await import("../src/gateway/skills/catalog.js");
+  const { channelSkillGrants } = await import("../src/gateway/skills/templates.js");
   for (const engine of ["claude", "codex"]) {
     approvalRequests.length = 0;
-    approvalResponse = { allow: true, reason: "private decision context must not be repeated", decidedBy: "PRIVATE_ACTOR" };
-    await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
-      const slug = `approval-receipt-${engine}`;
-      for (const [name, args, expected] of [
-        ["create_skill", { slug, files: creationFiles(slug), personal: true }, /Created/],
-        ["update_skill", { skill: slug, files: [{ path: "references/marker.md", content: "approved update fixture" }] }, /now revision 2/],
-        ["delete_skill", { skill: slug }, /Removed/],
-      ]) {
-        const result = await client.callTool({ name, arguments: args });
-        assert.match(resultText(result), expected);
-        assert.match(resultText(result), approvalReceipt);
-        assert.match(resultText(result), /does not mean approval was bypassed/);
-        assert.doesNotMatch(resultText(result), /private decision context|PRIVATE_ACTOR/);
-        assert.notEqual(result.isError, true);
+    approvalResponse = { allow: false, reason: "no card may be posted" };
+    await withGateway({ engine }, async client => {
+      const call = async (name, args) => resultText(await client.callTool({ name, arguments: args }));
+      const channelSkill = `admin-channel-${engine}`;
+      let out = await call("create_skill", { slug: channelSkill, files: creationFiles(channelSkill) });
+      assert.match(out, /Created channel skill/);
+      assert.match(out, announce);
+      assert.equal(getSkill(channelSkill).channelScope, CHANNEL, "no scope named = this channel's own skill");
+      assert.equal(getSkill(channelSkill).visibility, "org");
+
+      const orgSkill = `admin-org-${engine}`;
+      out = await call("create_skill", { slug: orgSkill, files: creationFiles(orgSkill), scope: "organization" });
+      assert.match(out, /Created organization skill/);
+      assert.equal(getSkill(orgSkill).channelScope, "", "an admin's organization skill goes straight into the shared library");
+      assert.ok((await getChannelMeta(SLUG)).skills.includes(orgSkill));
+
+      const personalSkill = `admin-personal-${engine}`;
+      out = await call("create_skill", { slug: personalSkill, files: creationFiles(personalSkill), personal: true });
+      assert.match(out, /Created personal skill/);
+      assert.ok((await getUser("U_CTRL_ADMIN")).skills.includes(personalSkill));
+
+      const invalid = `invalid-personal-channel-${engine}`;
+      out = await call("create_skill", { slug: invalid, files: creationFiles(invalid), personal: true, scope: "channel" });
+      assert.match(out, /personal skill cannot be scoped to a channel/);
+      assert.equal(getSkill(invalid), null);
+
+      for (const skill of [channelSkill, orgSkill]) {
+        out = await call("update_skill", { skill, files: [{ path: "references/marker.md", content: "edit" }] });
+        assert.match(out, /now revision 2/);
+        assert.match(out, announce);
       }
-      assert.equal(getSkill(slug).deleted, true);
-      assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.approvalType, r.body.requiredTier]), [
-        ["create_skill", "agent", ""], ["update_skill", "agent", ""], ["delete_skill", "agent", ""],
-      ]);
-      const rejected = await client.callTool({ name: "delete_skill", arguments: { skill: slug } });
-      assert.match(resultText(rejected), /No catalog skill/);
-      assert.match(resultText(rejected), approvalReceipt, "approval is distinct from the handler's refusal");
-      assert.equal(rejected.content[0].text, `No catalog skill named "${slug}".`);
-      approvalRequests.length = 0;
-      const open = await client.callTool({ name: "remove_my_skills", arguments: { slugs: [slug] } });
-      assert.doesNotMatch(resultText(open), approvalReceipt);
-      assert.equal(approvalRequests.length, 0, "own grant cleanup remains ungated");
+      out = await call("remove_channel_skills", { slugs: [channelSkill] });
+      assert.match(out, /Deactivated here: `/);
+      assert.ok(!channelSkillGrants(await getChannelMeta(SLUG)).includes(channelSkill), "a channel skill deactivates in this conversation");
+      assert.equal(getSkill(channelSkill).deleted, false, "deactivating is not deleting");
+      out = await call("add_channel_skills", { slugs: [channelSkill] });
+      assert.match(out, /turned back on/);
+      assert.ok(channelSkillGrants(await getChannelMeta(SLUG)).includes(channelSkill));
+      assert.deepEqual((await getChannelMeta(SLUG)).skillsOff, [], "turning a section skill back on clears its deactivation");
+
+      out = await call("delete_skill", { skill: orgSkill });
+      assert.match(out, /Removed `/);
+      assert.equal(getSkill(orgSkill).deleted, true);
     });
+    assert.equal(approvalRequests.length, 0, `${engine}: no skill write by an admin posted an approval card`);
+  }
+});
+
+test("both engines: a member owns channel and personal skills without approval; the organization tier goes to an admin", async () => {
+  const { getSkill, getProposal } = await import("../src/gateway/skills/catalog.js");
+  const { channelSkillGrants } = await import("../src/gateway/skills/templates.js");
+  for (const engine of ["claude", "codex"]) {
+    const adminChannelSkill = `shared-channel-${engine}`;
+    const adminOrgSkill = `shared-org-${engine}`;
+    await withGateway({ engine }, async client => {
+      await client.callTool({ name: "create_skill", arguments: { slug: adminChannelSkill, files: creationFiles(adminChannelSkill) } });
+      await client.callTool({ name: "create_skill", arguments: { slug: adminOrgSkill, files: creationFiles(adminOrgSkill), scope: "organization" } });
+    });
+    approvalRequests.length = 0;
+    approvalResponse = { allow: false, reason: "no card may be posted" };
+    let deleteRequest = 0;
+    await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+      const call = async (name, args) => resultText(await client.callTool({ name, arguments: args }));
+      const own = `member-channel-${engine}`;
+      let out = await call("create_skill", { slug: own, files: creationFiles(own) });
+      assert.match(out, /Created channel skill/);
+      assert.equal(getSkill(own).createdBy, "U_CTRL_MEMBER");
+
+      out = await call("update_skill", { skill: adminChannelSkill, files: [{ path: "references/member.md", content: "member edit" }] });
+      assert.match(out, /now revision 2/, "any member edits the channel's skills, whoever wrote them");
+
+      const wantedOrg = `member-org-${engine}`;
+      out = await call("create_skill", { slug: wantedOrg, files: creationFiles(wantedOrg), scope: "organization" });
+      assert.match(out, /Created channel skill/);
+      assert.match(out, /promotion request #(\d+) is filed/);
+      assert.equal(getSkill(wantedOrg).channelScope, CHANNEL, "a member's organization request starts as a channel skill");
+      const promote = getProposal(Number(out.match(/promotion request #(\d+)/)[1]));
+      assert.equal(promote.kind, "promote");
+      assert.equal(promote.status, "pending");
+
+      const orgRevision = getSkill(adminOrgSkill).currentRevisionId;
+      out = await call("update_skill", { skill: adminOrgSkill, files: [{ path: "references/member.md", content: "member edit" }] });
+      assert.match(out, /change proposal #\d+ is filed/);
+      assert.equal(getSkill(adminOrgSkill).currentRevisionId, orgRevision);
+      assert.doesNotMatch(out, /now revision/, "an organization skill does not change on a member's word");
+
+      out = await call("delete_skill", { skill: adminChannelSkill });
+      assert.match(out, /Deactivated `/);
+      assert.match(out, /delete request #(\d+) is filed/);
+      deleteRequest = Number(out.match(/delete request #(\d+)/)[1]);
+      assert.equal(getSkill(adminChannelSkill).deleted, false, "only an admin deletes from the whole catalog");
+      assert.ok(!channelSkillGrants(await getChannelMeta(SLUG)).includes(adminChannelSkill));
+
+      out = await call("set_skill_scope", { skill: own, scope: "library" });
+      assert.match(out, /Only admins/);
+    });
+    assert.equal(approvalRequests.length, 0, `${engine}: nothing a member did with channel/personal skills posted a card`);
+
+    // The admin's decision is the one skill step that still carries a card.
+    approvalResponse = { allow: true };
+    await withGateway({ engine }, async client => {
+      const out = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: deleteRequest, decision: "approve" } }));
+      assert.match(out, /removed from the catalog/);
+      assert.match(out, approvalReceipt);
+    });
+    assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.requiredTier]), [["decide_skill_proposal", "admin"]]);
+    assert.equal(getSkill(adminChannelSkill).deleted, true);
   }
 });
 

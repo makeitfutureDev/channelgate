@@ -1,8 +1,16 @@
 // Skills tools for the gateway control MCP server: what is active in this conversation, the
 // catalog, templates, personal and channel grants, authoring, proposals, usage, and (admins)
-// sources, organization grants and publishing. Shaped like the channel MCP tools — manager-safe
-// changes go through requireManage and the control-plane approval card; reads are open to anyone
-// allowed in the channel; a member's own tier needs no card. Registered via register(server, ctx).
+// sources, organization grants and publishing. Registered via register(server, ctx).
+//
+// Who may change what (operator decision 2026-09-27): a PERSONAL skill is its author's, a CHANNEL
+// skill (one in a channel's own section) and the channel's skill set are its members', and
+// neither needs anyone's approval — no card, the change is announced in the reply instead. Admins
+// moderate only the ORGANIZATION tier: an admin creates and edits shared library skills directly;
+// anyone else's organization request becomes a channel skill here plus a proposal an admin
+// decides. Deleting a skill from the whole catalog is an admin's call too (a member's "delete"
+// deactivates it in their conversation). A skill whose source this gateway cannot write to is
+// never edited in place: it is extended with a companion skill. The organization-wide admin tools
+// (org grants, governance, sources, proposal decisions) keep their control-plane card.
 import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { getUser, isAdminPrincipal, isApproved, getChannelMeta, getChannelEntry } from "../../config/store.js";
@@ -16,6 +24,8 @@ import { fileToApi } from "../../gateway/skills/files.js";
 import {
   createLocalSkill,
   updateLocalSkill,
+  skillEditability,
+  skillTier,
   deleteOwnSkill,
   grantSkillsToChannel,
   revokeSkillsFromChannel,
@@ -89,6 +99,10 @@ function publishLine(p) {
 
 export function register(server, ctx) {
   const { channelId, slug, createdBy, text, requireAdmin, requireManage, loadMeta } = ctx;
+  // Anyone this conversation admits may change ITS skills (the handler re-checks the verified
+  // author against the channel's access policy; the run itself was already authorized).
+  const memberHere = async () => (ctx.requireChannelAccess ? ctx.requireChannelAccess() : requireManage());
+  const ANNOUNCE = "Mention this skill change in your reply so the conversation sees it.";
 
   // The HTTP run API principal ranks as an admin (its key is an admin credential), but it is not a
   // person: it has no personal grants and cannot own a personal skill.
@@ -230,11 +244,11 @@ export function register(server, ctx) {
   server.registerTool(
     "add_channel_skills",
     {
-      description: "ADMINS / CHANNEL MANAGERS. Grant one or more catalog skills in this conversation (by slug from list_skills). Whatever they require loads with them (as a dependency, not as a separate grant). Takes effect on the next message.",
+      description: "Any member of this conversation. Activate one or more catalog skills here (by slug from list_skills) — also turns a deactivated template or channel skill back on. Whatever they require loads with them (as a dependency, not as a separate grant). No approval needed; takes effect on the next message.",
       inputSchema: { slugs: z.array(z.string()).min(1) },
     },
     async ({ slugs }) => {
-      if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its skills.");
+      if (!(await memberHere())) return text("Only people allowed in this conversation can change its skills.");
       const known = [];
       const unknown = [];
       for (const s of slugs) {
@@ -255,24 +269,25 @@ export function register(server, ctx) {
       // channel over the cap was the one person who never heard about it.
       const { sharedProfile: profile } = await channelProfile();
       const { warnings } = skillGrantContextChange(beforeProfile, profile);
-      return text(`✅ Granted here: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.${warnings.length ? `\n⚠️ ${warnings.join("\n⚠️ ")}` : ""}`);
+      const changed = [...r.added, ...(r.reactivated || []).filter((x) => !r.added.some((a) => a.toLowerCase() === x.toLowerCase()))];
+      return text(`✅ Active here: ${changed.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${r.reactivated?.length ? ` (turned back on: ${r.reactivated.join(", ")})` : ""}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown or personal (ignored): ${unknown.join(", ")}` : ""}${profile.staged.length ? `\nAwaiting admin review before they activate: ${profile.staged.map((s) => s.slug).join(", ")}` : ""}\nActive on the next message. Always-on context now ~${profile.contextTokens} tokens.${warnings.length ? `\n⚠️ ${warnings.join("\n⚠️ ")}` : ""}${changed.length ? `\n${ANNOUNCE}` : ""}`);
     },
   );
 
   server.registerTool(
     "remove_channel_skills",
     {
-      description: "ADMINS / CHANNEL MANAGERS. Stop granting one or more skills in this conversation (by slug). Organization-wide grants — and skills that load only because another granted skill requires them — cannot be removed here. Takes effect on the next message.",
+      description: "Any member of this conversation. Deactivate one or more skills HERE (by slug): an explicit grant is removed, and a skill this channel's template or its own channel section brings in is turned off for this conversation only — the skill stays in the catalog. This is what \"delete this skill\" means for a channel member. Organization-wide grants — and skills that load only because another granted skill requires them — cannot be removed here. No approval needed; takes effect on the next message.",
       inputSchema: { slugs: z.array(z.string()).min(1) },
     },
     async ({ slugs }) => {
-      if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its skills.");
-      const r = await revokeSkillsFromChannel(slug, slugs);
+      if (!(await memberHere())) return text("Only people allowed in this conversation can change its skills.");
+      const r = await revokeSkillsFromChannel(slug, slugs, { deactivate: true });
       if (!r) return text("Channel isn't set up yet.");
-      if (r.removed.length) await logEvent("skill_revoked", { channel: channelId, slug, skills: r.removed, author: createdBy });
+      if (r.removed.length) await logEvent("skill_revoked", { channel: channelId, slug, skills: r.removed, deactivated: r.deactivated, author: createdBy });
       const org = new Set((getOrgAccessGrants().skills || []).map((s) => String(s).toLowerCase()));
       const stillOrg = slugs.filter((s) => org.has(String(s).toLowerCase()));
-      return text(`🗑️ Removed ${r.removed.length} grant(s)${r.removed.length ? `: ${r.removed.map((s) => `\`${s}\``).join(", ")}` : ""}.${stillOrg.length ? `\nStill active from the organization tier (an admin changes that with remove_org_skills): ${stillOrg.join(", ")}` : ""}${stillRequiredLine(r.stillRequired)}\nNow granted here: ${r.names.join(", ") || "(none)"}. Active on the next message.`);
+      return text(`🗑️ Deactivated here: ${r.removed.map((s) => `\`${s}\``).join(", ") || "(nothing)"}.${r.deactivated?.length ? ` (${r.deactivated.join(", ")} stay in the catalog and in other conversations; add_channel_skills turns them back on here.)` : ""}${stillOrg.length ? `\nStill active from the organization tier (an admin changes that with remove_org_skills): ${stillOrg.join(", ")}` : ""}${stillRequiredLine(r.stillRequired)}\nNow granted here: ${r.names.join(", ") || "(none)"}. Active on the next message.${r.removed.length ? `\n${ANNOUNCE}` : ""}`);
     },
   );
 
@@ -337,11 +352,11 @@ export function register(server, ctx) {
   server.registerTool(
     "set_channel_skill_template",
     {
-      description: "ADMINS / CHANNEL MANAGERS. Make this conversation follow a skill template (Development, Sales, …): it gets the template's CURRENT skills, live, plus whatever add_channel_skills adds on top. `template: \"none\"` stops following. Active on the next message.",
+      description: "Any member of this conversation. Make this conversation follow a skill template (Development, Sales, …): it gets the template's CURRENT skills, live, plus whatever add_channel_skills adds on top. `template: \"none\"` stops following. No approval needed; active on the next message.",
       inputSchema: { template: z.string() },
     },
     async ({ template }) => {
-      if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its skills.");
+      if (!(await memberHere())) return text("Only people allowed in this conversation can change its skills.");
       const r = await assignTemplateToChannel(slug, template);
       if (!r) return text(`Could not assign "${template}": unknown template, or this channel isn't set up yet.`);
       // Same event kind the admin UI's template route writes, so both surfaces read alike.
@@ -356,25 +371,56 @@ export function register(server, ctx) {
   server.registerTool(
     "create_skill",
     {
-      description: "Create a NEW skill from files (SKILL.md with name + description frontmatter is required; add references/*, scripts/* as needed). Shared library skills are granted here by default; grant_here:false leaves them ungranted. Personal skills are automatically granted to your own runs and are not published; channel-scoped shared skills are automatically active here. Any approved member may create skills. Read the skill-authoring skill first.",
+      description: "Create a NEW skill from files (SKILL.md with name + description frontmatter is required; add references/*, scripts/* as needed). Where it lives: by default a CHANNEL skill of this conversation (active here automatically, editable by its members; in a DM, a personal skill). Only when the user explicitly asks for an organization-wide skill pass scope \"organization\": an admin's goes straight into the shared library; anyone else's is created here as a channel skill and an admin is asked to promote it. personal:true keeps it private to you. No approval card for channel or personal skills. Read the skill-authoring skill first.",
       inputSchema: {
         slug: z.string().optional().describe("Folder name; defaults to the frontmatter name, slugified"),
         files: z.array(FILE_INPUT).min(1),
         note: z.string().optional(),
-        grant_here: z.boolean().optional().describe("For shared library skills, add a grant in this conversation (default true). Personal and channel-scoped skills activate automatically regardless of this flag."),
-        personal: z.boolean().optional().describe("Personal visibility and automatic grant to your own runs (default false); admins retain catalog visibility. Cannot be combined with scope channel."),
-        scope: z.enum(["library", "channel"]).optional().describe("library (default): catalog placement; visibility follows personal. Shared library skills can be granted across conversations. channel: a shared skill specific to THIS channel's customer or project, kept in its repository section and active here automatically; incompatible with personal. Ask the user before choosing channel."),
+        grant_here: z.boolean().optional().describe("For an organization skill an admin creates, also activate it in this conversation (default true). Channel and personal skills are active automatically."),
+        personal: z.boolean().optional().describe("Private to you and active in your own runs everywhere (default false). Cannot be combined with scope channel."),
+        scope: z.enum(["channel", "organization", "library"]).optional().describe("Omit unless the user said where it belongs. channel (the default in a channel): this conversation's own skill. organization (alias library): the shared library for every conversation — only when the user explicitly asked for an organization-level skill."),
       },
     },
-    async ({ slug: wanted = "", files, note = "", grant_here = true, personal = false, scope = "library" }) => {
-      if (!(await approvedAuthor())) return text("Only approved members can add skills to the library.");
+    async ({ slug: wanted = "", files, note = "", grant_here = true, personal = false, scope }) => {
+      if (!(await approvedAuthor())) return text("Only approved members can add skills.");
       if (personal && ctx.apiPrincipal) return text("An HTTP API run has no personal catalog — create a shared skill instead (personal: false).");
       const { channelId, meta: scopeMeta } = await channelProfile();
-      if (scope === "channel" && (!channelId || scopeMeta.isDM)) return text("A channel-scoped skill needs a channel: create it from the customer's channel, or use scope library.");
+      const inChannel = Boolean(channelId) && !scopeMeta.isDM;
+      const admin = await isAdminUser();
+      const wantsOrg = scope === "organization" || scope === "library";
+      // A personal skill with scope channel is still refused by createLocalSkill, with its reason.
+      let tier = personal ? "personal" : wantsOrg ? "organization" : scope === "channel" ? "channel" : inChannel ? "channel" : ctx.apiPrincipal ? "organization" : "personal";
+      if (tier === "channel" && !personal && !inChannel) return text("A channel skill needs a channel: create it from that channel, make it personal, or ask for an organization skill.");
+      // Admins moderate the organization tier: anyone else's organization skill starts life where
+      // they are (a channel skill here, or personal in a DM) with a promotion request for an admin.
+      let promoteRequest = false;
+      if (tier === "organization" && !admin) {
+        promoteRequest = true;
+        tier = inChannel ? "channel" : "personal";
+        if (tier === "personal" && !(await personalAuthor())) return text("Only admins can add organization skills from here.");
+      }
       try {
-        const r = await createLocalSkill({ slug: wanted, files, note, createdBy, grantTo: grant_here ? slug : "", personal, channelId: scope === "channel" ? channelId : "" });
-        const where = personal ? "granted to your own runs" : scope === "channel" ? "kept in this channel's section (granted here automatically)" : r.granted ? `granted here${r.granted.dependencies?.length ? ` (it requires ${r.granted.dependencies.map((d) => d.slug).join(", ")}, which load with it)` : ""}` : "not granted anywhere yet";
-        return text(`✅ Created \`${r.skill.slug}\` (revision ${r.revision.revisionNo}, ${r.revision.fileCount} file(s), ${personal ? "personal" : "organization"} skill), ${where} — active on the next message.${publishLine(r.published)}\n${personal ? "Promote it to the organization later with propose_skill_change (kind promote)." : "Other channels can add it with add_channel_skills; an admin can add it to a template or grant it organization-wide."}`);
+        const r = await createLocalSkill({
+          slug: wanted,
+          files,
+          note,
+          createdBy,
+          grantTo: tier === "organization" && grant_here ? slug : "",
+          personal: tier === "personal",
+          channelId: tier === "channel" || (personal && scope === "channel") ? channelId : "",
+        });
+        let proposalLine = "";
+        if (promoteRequest) {
+          try {
+            const { proposal } = proposeSkillChange({ skill: r.skill.slug, kind: "promote", note: note || `Requested as an organization skill by ${createdBy}.`, proposedBy: createdBy, channelSlug: slug });
+            proposalLine = `\n📝 Organization-wide use needs an admin: promotion request #${proposal.id} is filed (list_skill_proposals / decide_skill_proposal, or the admin UI under Skills → Review). Until then it works ${tier === "channel" ? "in this conversation" : "in your own runs"}.`;
+          } catch (err) {
+            proposalLine = `\n⚠️ Could not file the promotion request: ${err?.message || err}`;
+          }
+        }
+        const label = tier === "personal" ? "personal skill" : tier === "channel" ? "channel skill" : "organization skill";
+        const where = tier === "personal" ? "active in your own runs" : tier === "channel" ? "active in this conversation automatically; any member here can edit or deactivate it" : r.granted ? `in the shared library and active here${r.granted.dependencies?.length ? ` (it requires ${r.granted.dependencies.map((d) => d.slug).join(", ")}, which load with it)` : ""}` : "in the shared library, not active anywhere yet";
+        return text(`✅ Created ${label} \`${r.skill.slug}\` (revision ${r.revision.revisionNo}, ${r.revision.fileCount} file(s)) — ${where}. Takes effect on the next message.${publishLine(r.published)}${proposalLine}\n${ANNOUNCE}`);
       } catch (err) {
         return text(`🚫 Could not create the skill: ${err?.message || err}`);
       }
@@ -384,18 +430,38 @@ export function register(server, ctx) {
   server.registerTool(
     "update_skill",
     {
-      description: "Publish a new revision of a locally authored skill you created (managers/admins: any local skill). Pass only the files that change; the rest of the current revision is kept. Bundled/imported/synced skills are changed through propose_skill_change.",
+      description: "Publish a new revision of a skill (pass only the files that change; the rest is kept). Personal skills: their author. Channel skills: any member of that channel. Organization skills: admins directly — anyone else's edit is filed as a change proposal for an admin. No approval card otherwise. A skill whose source this gateway cannot write to (bundled, another repository, a host folder, a peer gateway) is never edited in place: create a companion skill instead.",
       inputSchema: { skill: z.string(), files: z.array(FILE_INPUT).min(1), remove: z.array(z.string()).optional(), note: z.string().optional() },
     },
     async ({ skill: key, files, remove = [], note = "" }) => {
       const skill = await visibleSkill(key);
       if (!skill || skill.deleted) return text(`No catalog skill named "${key}".`);
-      if (skill.ownerKind !== "local") return text(`\`${skill.slug}\` is ${describeOwner(skill)} — send a proposal instead (propose_skill_change).`);
-      const own = skill.createdBy && skill.createdBy === createdBy;
-      if (!own && !(await requireManage())) return text(`\`${skill.slug}\` was authored by someone else; propose a change (propose_skill_change) or ask a manager/admin.`);
+      const edit = skillEditability(skill);
+      if (!edit.editable) {
+        return text(`\`${skill.slug}\` is ${describeOwner(skill)} — this gateway cannot write to that source, so it is not edited in place (a sync would bring the old files back). Extend it instead: create_skill a companion skill (e.g. \`${skill.slug}-extras\`, a channel skill by default) whose SKILL.md says when to use it together with \`${skill.slug}\`, lists \`requires: [${skill.slug}]\` in its frontmatter so the original loads with it, and carries the additional references/scripts.`);
+      }
+      const tier = skillTier(skill);
+      const admin = await isAdminUser();
+      let allowed = admin;
+      if (!allowed && tier === "personal") allowed = Boolean(createdBy) && skill.createdBy === createdBy;
+      if (!allowed && tier === "channel") allowed = skill.channelScope === ((await loadMeta())?.channelId || channelId) && (await memberHere());
+      if (!allowed) {
+        if (tier === "organization" && (await approvedAuthor())) {
+          try {
+            const { proposal } = proposeSkillChange({ skill: skill.slug, kind: "change", files, note: note || `Edit requested by ${createdBy}.`, proposedBy: createdBy, channelSlug: slug });
+            return text(`📝 \`${skill.slug}\` is an organization skill, so an admin approves edits to it: change proposal #${proposal.id} is filed with your files${remove.length ? " (file removals cannot ride a proposal — mention them to the admin)" : ""}. Nothing changes until an admin approves it.`);
+          } catch (err) {
+            return text(`🚫 Could not file the change proposal: ${err?.message || err}`);
+          }
+        }
+        if (tier === "channel") return text(`\`${skill.slug}\` belongs to another channel; its members (or an admin) change it. propose_skill_change sends them your edit.`);
+        return text(`\`${skill.slug}\` is someone else's; propose a change (propose_skill_change).`);
+      }
       try {
         const r = await updateLocalSkill({ skill, files, remove, note, createdBy });
-        return text(r.changed ? `✅ \`${skill.slug}\` is now revision ${r.revision.revisionNo} (${r.revision.fileCount} file(s)). Channels that grant it get the new files on their next message.${publishLine(r.published)}` : `\`${skill.slug}\` is unchanged — those files match the current revision.`);
+        if (!r.changed) return text(`\`${skill.slug}\` is unchanged — those files match the current revision.`);
+        const pinNote = r.pinned && r.via === "repository" && !r.published?.published ? " It is pinned here until the repository has these files, so a sync cannot revert it." : "";
+        return text(`✅ \`${skill.slug}\` is now revision ${r.revision.revisionNo} (${r.revision.fileCount} file(s)). Conversations that use it get the new files on their next message.${publishLine(r.published)}${pinNote}\n${ANNOUNCE}`);
       } catch (err) {
         return text(`🚫 Could not update the skill: ${err?.message || err}`);
       }
@@ -404,15 +470,37 @@ export function register(server, ctx) {
 
   server.registerTool(
     "delete_skill",
-    { description: "Remove a locally authored skill you created (admins: any local skill) from the catalog. Its revisions are kept and an admin can restore it.", inputSchema: { skill: z.string() } },
+    {
+      description: "Delete a skill from the WHOLE catalog (tombstone; an admin can restore it). Admins: any locally authored skill; anyone: their own personal skill. For anyone else it deactivates the skill in this conversation and files a delete request for an admin. When a member says \"delete this skill\" about a channel skill they usually mean remove_channel_skills (deactivate it here).",
+      inputSchema: { skill: z.string() },
+    },
     async ({ skill: key }) => {
       const skill = await visibleSkill(key);
       if (!skill || skill.deleted) return text(`No catalog skill named "${key}".`);
+      const admin = await isAdminUser();
+      const ownPersonal = skill.visibility === "personal" && Boolean(createdBy) && skill.createdBy === createdBy;
+      if (admin || ownPersonal) {
+        try {
+          deleteOwnSkill({ skill, userId: createdBy, isAdmin: admin });
+          return text(`🗑️ Removed \`${skill.slug}\` from the catalog. Conversations that used it drop it on their next message; an admin can restore it in the admin UI.\n${ANNOUNCE}`);
+        } catch (err) {
+          return text(`🚫 ${err?.message || err}`);
+        }
+      }
+      if (!(await approvedAuthor())) return text("Only approved members can ask for a skill to be deleted.");
+      let here = "";
+      if (await memberHere()) {
+        const r = await revokeSkillsFromChannel(slug, [skill.slug], { deactivate: true });
+        if (r?.removed?.length) {
+          await logEvent("skill_revoked", { channel: channelId, slug, skills: r.removed, deactivated: r.deactivated, author: createdBy });
+          here = `Deactivated \`${skill.slug}\` in this conversation. `;
+        }
+      }
       try {
-        deleteOwnSkill({ skill, userId: createdBy, isAdmin: await isAdminUser() });
-        return text(`🗑️ Removed \`${skill.slug}\` from the catalog. Conversations that granted it drop it on their next message; an admin can restore it in the admin UI.`);
+        const { proposal } = proposeSkillChange({ skill: skill.slug, kind: "delete", note: `Delete requested by ${createdBy}.`, proposedBy: createdBy, channelSlug: slug });
+        return text(`🗑️ ${here}Deleting it from the whole catalog is an admin's decision: delete request #${proposal.id} is filed.${here ? `\n${ANNOUNCE}` : ""}`);
       } catch (err) {
-        return text(`🚫 ${err?.message || err}`);
+        return text(`🚫 ${here}Could not file the delete request: ${err?.message || err}`);
       }
     },
   );
@@ -420,8 +508,8 @@ export function register(server, ctx) {
   server.registerTool(
     "propose_skill_change",
     {
-      description: "Propose a change to a shared skill you cannot edit directly (kind change: the changed files + a note), leave feedback (kind feedback: note only), or ask for a skill to be promoted (kind promote: a personal skill becomes an organization skill; an organization skill gets granted everywhere). An admin reviews it with decide_skill_proposal or in the admin UI.",
-      inputSchema: { skill: z.string(), note: z.string(), files: z.array(FILE_INPUT).optional(), kind: z.enum(["change", "feedback", "promote"]).optional() },
+      description: "Ask an admin for a change you cannot make yourself: kind change (the changed files + a note) for an organization skill, feedback (note only), promote (a personal or channel skill becomes an organization skill; an organization skill gets granted everywhere), or delete (remove a shared skill from the whole catalog). An admin reviews it with decide_skill_proposal or in the admin UI.",
+      inputSchema: { skill: z.string(), note: z.string(), files: z.array(FILE_INPUT).optional(), kind: z.enum(["change", "feedback", "promote", "delete"]).optional() },
     },
     async ({ skill: key, note, files = [], kind = "change" }) => {
       if (!(await approvedAuthor())) return text("Only approved members can file proposals.");
@@ -456,7 +544,7 @@ export function register(server, ctx) {
       try {
         const r = await decideSkillProposal(id, { decision, decidedBy: createdBy, note });
         if (decision === "reject") return text(`Proposal #${id} rejected.`);
-        return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a local override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}.${publishLine(r.published)}`);
+        return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a local override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}${r.deleted ? ` — \`${r.proposal.slug}\` removed from the catalog (restorable in the admin UI)` : ""}.${publishLine(r.published)}`);
       } catch (err) {
         return text(`🚫 ${err?.message || err}`);
       }
@@ -466,7 +554,7 @@ export function register(server, ctx) {
   server.registerTool(
     "set_skill_scope",
     {
-      description: "MANAGERS. Move a skill between the shared library and a channel's section of the skills repository: scope library makes it available to every conversation (the channel it leaves keeps it as an explicit grant); scope channel keeps it for one customer/project only. Moves the files in the repository too.",
+      description: "ADMINS. Move a skill between the shared library and a channel's section of the skills repository: scope library makes it available to every conversation (the channel it leaves keeps it as an explicit grant); scope channel keeps it for one customer/project only. Moves the files in the repository too.",
       inputSchema: {
         skill: z.string(),
         scope: z.enum(["library", "channel"]),
@@ -482,7 +570,9 @@ export function register(server, ctx) {
         channelId = stored?.channelId || "";
         if (!channelId || stored?.isDM) return text(channel ? `No channel "${channel}".` : "A channel section needs a channel: run this from the customer's channel or name it with channel.");
       }
-      if (!(await requireManage(`Move skill ${skill.slug} to ${scope === "channel" ? `the ${channel || slug} channel section` : "the shared library"}`))) return text("Not allowed here.");
+      // Either direction changes the organization tier (a skill joins or leaves the shared library),
+      // which admins moderate; a member asks for it with propose_skill_change kind promote.
+      if (!(await requireAdmin())) return text("Only admins move skills between the shared library and a channel (a member can ask with propose_skill_change, kind promote).");
       try {
         const r = await moveSkillScope({ slug: skill.slug, channelId, actor: createdBy });
         if (!r.moved) return text(`\`${skill.slug}\` is already ${scope === "channel" ? "in that channel's section" : "in the shared library"}.`);
