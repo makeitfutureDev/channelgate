@@ -499,8 +499,14 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   secret with an egress rule (`src/gateway/egress/catalog-rules.js`, or the entry's own "used on
   hosts") is only its PLACEHOLDER — stable per scope/channel/owner/name, swapped for the live value
   by the proxy on the declared hosts — so rotation no longer needs to retire anything; the
-  redactor still carries every REAL value, and a secret with no rule is raw and listed unprotected
-  (withheld under `containerEgressSecretsStrict` — on for new installs, pinned off at boot for installs that predate it; `list_secrets` reports each such name as a finding). Every spawn site resolves through
+  redactor still carries every REAL value. A secret with NO known or declared destination is decided
+  by its kind (`secretExposure` in `catalog-rules.js`): a web-API-looking one is HIDDEN — a
+  placeholder swapped in any header or query parameter, but only on servers an admin APPROVED for
+  that secret (`approvedHosts` on its entry); its first request to any other server is refused with
+  a 403 while a durable admin-only approval card is posted in the live thread
+  (`src/gateway/secret-host-approvals.js`), never swapped into the engines' own APIs — while a
+  password, connection string, signing key or configuration value stays READABLE: raw and listed
+  unprotected (withheld under `containerEgressSecretsStrict` — on for new installs, pinned off at boot for installs that predate it; `list_secrets` reports each such name as a finding). `set_secret_mode` forces hidden or readable; `allow_secret_host` (admin) approves a server without a card. Every spawn site resolves through
   `resolveEgressRunEnv`, never `resolveRunEnv` directly.
 - **The gateway uses the operator's own Claude login, and never copies a credential file.** Which
   login answers a turn is decided ONLY by `src/gateway/claude-login.js`; no other module may stat,

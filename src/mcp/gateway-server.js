@@ -233,6 +233,19 @@ export function secretScopeTier(scope) {
   return s === "organization" || s === "org" ? "admin" : "any";
 }
 
+// set_secret_mode: the organization's secrets need an admin, a conversation's its managers, your own
+// only you.
+export function secretModeTier(scope) {
+  const s = String(scope || "personal").trim().toLowerCase();
+  if (s === "organization" || s === "org") return "admin";
+  if (s === "conversation" || s === "channel") return "manage";
+  return "any";
+}
+function secretModeLabel(scope) {
+  const tier = secretModeTier(scope);
+  return tier === "admin" ? "ORGANIZATION-WIDE" : tier === "manage" ? "this conversation's" : "YOUR personal";
+}
+
 /** A gate's tier: a string, or a function of the call's arguments (see set_secret). */
 export function gateAuthz(gate, args = {}) {
   return typeof gate?.authz === "function" ? gate.authz(args ?? {}) : gate?.authz;
@@ -321,6 +334,12 @@ export function buildControlPlane({ loadMeta }) {
     ["remove_secret", { authz: ({ scope }) => secretScopeTier(scope), details: ({ name, scope }) => secretScopeTier(scope) === "admin"
       ? `Remove the organization-wide environment secret ${summarize(name)} — every conversation stops receiving it.`
       : `Remove YOUR personal environment secret ${summarize(name)}.` }],
+    // Hidden/readable and approved servers: making a secret readable hands containers its raw value,
+    // and an approved server is where its real value may go — both gated like the secret itself.
+    ["set_secret_mode", { authz: ({ scope }) => secretModeTier(scope), details: ({ name, mode, scope }) =>
+      `Make the ${secretModeLabel(scope)} secret ${summarize(name)} ${mode === "auto" ? "hidden or readable automatically" : mode.toUpperCase()}${mode === "readable" ? " — containers will receive its RAW value" : ""}.` }],
+    ["allow_secret_host", { authz: "admin", details: ({ name, host, scope }) =>
+      `Allow the ${secretModeLabel(scope)} secret ${summarize(name)} to be sent to ${summarize(host)} — the egress proxy will swap in its real value on that server.` }],
     // SSH access to channel containers (src/gateway/ssh-access.js): a registered key is what a
     // later grant turns into a shell inside a container, and a grant IS that shell. Never echo the
     // key material in the card — the fingerprint is computed after approval.

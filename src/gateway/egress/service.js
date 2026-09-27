@@ -284,6 +284,12 @@ export async function startEgressService({
       resolveGrant: (core) => resolveEgressGrant(core),
       canUse: (grant, ctx) => canUseGrant(grant, ctx),
       audit: recordAudit,
+      // A hidden secret presented to a server nobody approved yet: ask an admin (lazy import —
+      // the approval module reaches the stores, which must not load with the proxy core).
+      onApprovalNeeded: async (refusals, { ctx, hostname }) => {
+        const { requestSecretHostApprovals } = await import("../secret-host-approvals.js");
+        return requestSecretHostApprovals(refusals, { channelId: ctx?.channelId, slug: ctx?.slug, hostname });
+      },
       log,
       ...(lookup ? { lookup } : {}),
       ...(upstreamCa ? { upstreamCa } : {}),

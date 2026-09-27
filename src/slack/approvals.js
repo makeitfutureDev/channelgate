@@ -29,6 +29,7 @@ import { platformOfConversation } from "../platforms/ids.js";
 import { platformOr } from "../platforms/registry.js";
 import { postPrivately } from "../platforms/notify.js";
 import { INSTRUCTION_ACTION } from "../gateway/instruction-approvals.js";
+import { SECRET_HOST_ACTION } from "../gateway/secret-host-approvals.js";
 
 // The live Slack client of the currently-connected app (set from connectAndWire); the approval
 // flow is driven by the daemon's /internal/approval route rather than an event, so it can't take
@@ -242,7 +243,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
   const delivery = approvalDeliveryFor(channelId);
   const client = delivery ? { approvalDelivery: delivery } : adapter.capabilities.richCards === "block-kit" ? slack?.getClient?.() || currentClient : null;
   const cardThread = (key) => delivery ? key : slackThreadFor(key);
-  const durable = ["background_shell", INSTRUCTION_ACTION].includes(durableAction?.kind);
+  const durable = ["background_shell", INSTRUCTION_ACTION, SECRET_HOST_ACTION].includes(durableAction?.kind);
   if (durableAction && !durable) return { allow: false, reason: "unsupported durable approval action" };
   if (!channelId || !threadKey) return { allow: false, reason: `gateway can't reach ${adapter.label} to ask for approval` };
   const runKey = `${slug}::${threadKey}`;

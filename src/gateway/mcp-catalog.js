@@ -108,6 +108,8 @@ export const GATEWAY_TOOL_NAMES = [
   "list_secrets",
   "set_secret",
   "remove_secret",
+  "set_secret_mode",
+  "allow_secret_host",
   "add_my_ssh_key",
   "list_my_ssh_keys",
   "remove_my_ssh_key",

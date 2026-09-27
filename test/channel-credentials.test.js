@@ -59,7 +59,7 @@ test("the egress lines: proxy-protected placeholders with their hosts, unprotect
   );
   assert.deepEqual(namesOf(prompt), ["GITHUB_TOKEN", "SUPABASE_DB_PASSWORD"]);
   assert.match(prompt, /GITHUB_TOKEN is proxy-protected: its value in the environment is a placeholder that only works from this container through the gateway's egress proxy on: api\.github\.com, github\.com\./);
-  assert.match(prompt, /Unprotected \(the RAW value is in the environment[^\n]*\["SUPABASE_DB_PASSWORD"\]/);
+  assert.match(prompt, /Readable \(the RAW value is in the environment[^\n]*\["SUPABASE_DB_PASSWORD"\]/);
   assert.match(prompt, /Withheld by the gateway's strict egress setting[^\n]*\["LEGACY_KEY"\]/);
   assert.ok(!prompt.includes(placeholder), "the placeholder string itself is not repeated into the prompt");
   assert.ok(!prompt.includes(fixtureValue));

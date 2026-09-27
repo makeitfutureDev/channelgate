@@ -21,7 +21,7 @@ const DEV = "U_SEC_DEV";
 await store.setUser(ADMIN, { name: "Admin", isAdmin: true, approved: true });
 await store.setUser(DEV, { name: "Dev", approved: true });
 const SLUG = "secrets-chan";
-await store.saveChannelMeta(SLUG, { ...store.defaultChannelMeta({ channelId: "C_SEC", name: "secrets", type: "channel", isDM: false }), env: { CHAN_TOKEN: { provider: "local", value: "chan-value-1234567890", setBy: ADMIN, setAt: 1 } } });
+await store.saveChannelMeta(SLUG, { ...store.defaultChannelMeta({ channelId: "C_SEC", name: "secrets", type: "channel", isDM: false }), env: { CHAN_TOKEN: { provider: "local", value: "chan-value-1234567890", setBy: ADMIN, setAt: 1 }, CHAN_DB_PASSWORD: { provider: "local", value: "chan-db-password-12345", setBy: ADMIN, setAt: 1 } } });
 
 function toolsFor(authorId, { trusted = true } = {}) {
   const tools = new Map();
@@ -31,9 +31,9 @@ function toolsFor(authorId, { trusted = true } = {}) {
 }
 const reply = async (tools, name, args = {}) => (await tools.get(name).handler(args)).content[0].text;
 
-test("the tool set is three, on the allowlist, and the old six are gone", () => {
+test("the tool set is five, on the allowlist, and the old six are gone", () => {
   const names = [...toolsFor(DEV).keys()].filter((n) => n.includes("secret"));
-  assert.deepEqual(names.sort(), ["list_secrets", "remove_secret", "set_secret"]);
+  assert.deepEqual(names.sort(), ["allow_secret_host", "list_secrets", "remove_secret", "set_secret", "set_secret_mode"]);
   for (const name of names) assert.ok(GATEWAY_TOOL_NAMES.includes(name), `${name} on the Claude permission allowlist`);
   for (const old of ["list_my_secrets", "list_org_secrets", "set_my_secret", "set_org_secret", "remove_my_secret", "remove_org_secret"]) {
     assert.ok(!GATEWAY_TOOL_NAMES.includes(old), `${old} retired`);
@@ -92,16 +92,18 @@ test("set_secret / remove_secret: the scope argument picks the store and the tie
 test("list_secrets reports the remaining raw (unruled) secrets as a FINDING, worded for the strict setting in force", async () => {
   const { saveSettings } = await import("../src/config/settings.js");
   const { unruledFinding } = await import("../src/mcp/tools/tokens.js");
-  // CHAN_TOKEN, ORG_TOKEN and MY_TOKEN have no egress rule; a GitHub token is ruled by the catalog.
+  // CHAN_DB_PASSWORD is READABLE (a password); CHAN_TOKEN, ORG_TOKEN and MY_TOKEN are HIDDEN behind
+  // approval rules and a GitHub token is ruled by the catalog — none of those is a finding.
   await scoped.patchUserEnv(DEV, { set: { name: "GITHUB_TOKEN", value: "gh-value-1234567890" } });
   saveSettings({ containerEgressSecretsStrict: true, containerEgressMode: "proxy" });
   const strict = await reply(toolsFor(DEV), "list_secrets");
-  assert.match(strict, /\*\*Finding:\*\* \d+ secrets have no egress rule — [^\n]*`CHAN_TOKEN`[^\n]*: WITHHELD from containers \(strict mode\)\./);
-  assert.doesNotMatch(strict.match(/\*\*Finding:\*\*[^\n]*/)[0], /GITHUB_TOKEN/, "a ruled secret is not a finding");
+  assert.match(strict, /\*\*Finding:\*\* 1 secret is READABLE — `CHAN_DB_PASSWORD`: WITHHELD from containers \(strict mode\)\./);
+  assert.doesNotMatch(strict.match(/\*\*Finding:\*\*[^\n]*/)[0], /GITHUB_TOKEN|CHAN_TOKEN/, "a ruled or hidden secret is not a finding");
+  assert.match(strict, /`CHAN_TOKEN`[^\n]*hidden \(placeholder\); approved servers: none yet/);
   assert.match(strict, /an unprotected one is withheld \(strict mode\)/);
   saveSettings({ containerEgressSecretsStrict: false });
   const raw = await reply(toolsFor(DEV), "list_secrets", { scope: "channel" });
-  assert.match(raw, /\*\*Finding:\*\* 1 secret has no egress rule — `CHAN_TOKEN`: injected RAW into containers\./);
+  assert.match(raw, /\*\*Finding:\*\* 1 secret is READABLE — `CHAN_DB_PASSWORD`: injected RAW into containers\./);
   assert.equal(unruledFinding([], { strict: true }), "", "nothing unruled, no finding");
   await scoped.patchUserEnv(DEV, { remove: "GITHUB_TOKEN" });
   saveSettings({ containerEgressSecretsStrict: true });
@@ -119,4 +121,26 @@ test("strict is the default when nothing is stored; the boot pin keeps an existi
   const { getSettings } = await import("../src/config/settings.js");
   assert.equal(typeof getSettings().containerEgressSecretsStrict, "boolean");
   assert.equal(getContainerRuntime().egressSecretsStrict, getSettings().containerEgressSecretsStrict !== false);
+});
+
+// Hidden/readable and approved servers (src/gateway/secret-host-approvals.js, 2026-09-27).
+test("set_secret_mode and allow_secret_host: scoped authority, the value untouched, engine APIs refused", async () => {
+  const { secretModeTier } = await import("../src/mcp/gateway-server.js");
+  assert.deepEqual(["organization", "conversation", "personal", undefined].map(secretModeTier), ["admin", "manage", "any", "any"]);
+  await scoped.patchUserEnv(DEV, { set: { name: "MY_PAY_TOKEN", value: "my-pay-value-1234567" } });
+  assert.match(await reply(toolsFor(DEV), "list_secrets", { scope: "personal" }), /`MY_PAY_TOKEN`[^\n]*hidden \(placeholder\); approved servers: none yet/);
+  assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "MY_PAY_TOKEN", mode: "readable" }), /now readable/);
+  assert.equal((await scoped.getUserEnv(DEV)).MY_PAY_TOKEN.value, "my-pay-value-1234567", "the value is untouched");
+  assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "MY_PAY_TOKEN", mode: "auto" }), /now hidden \(decided automatically\)/);
+  // A member cannot change the organization's, nor this conversation's without managing it.
+  assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "ORG_TOKEN", mode: "readable", scope: "organization" }), /Only organization admins/);
+  assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "CHAN_TOKEN", mode: "readable", scope: "conversation" }), /managers/);
+  // allow_secret_host is admin-only, exact hosts only, never an engine API.
+  assert.match(await reply(toolsFor(DEV), "allow_secret_host", { name: "MY_PAY_TOKEN", host: "api.pay.example" }), /Only organization admins/);
+  assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "api.anthropic.com", scope: "organization" }), /engine API/);
+  assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "*.pay.example", scope: "organization" }), /single host name/);
+  assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "API.pay.example", scope: "organization" }), /may now be used on api\.pay\.example/);
+  assert.deepEqual(scoped.getOrgEnv().ORG_TOKEN.approvedHosts, ["api.pay.example"]);
+  assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "CHAN_TOKEN", host: "api.pay.example", scope: "conversation" }), /may now be used on api\.pay\.example/);
+  await scoped.patchUserEnv(DEV, { remove: "MY_PAY_TOKEN" });
 });

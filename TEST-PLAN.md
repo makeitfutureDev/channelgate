@@ -644,6 +644,46 @@ block (`running: true`) before starting.
       for this container)" when off. Turn it OFF again and confirm the return to `none` +
       placeholders. Pass: both transitions observed.
 
+### Hidden secrets and admin-approved servers (2026-09-27)
+
+- [x] Unit — kind detection (`test/egress-secret-approval.test.js`): web-token names
+      (`MAKE_API`, `VERCEL_PAY_MAKEITFUTURE`, `TRIGGER_ACCESS_TOKEN_DEV`, `MAILGUN_API_KEY`,
+      `GITLAB_PRIVATE_TOKEN`) are hidden; passwords, mail/database and signing names
+      (`GMAIL_APP_PASSWORD`, `DATABASE_URL`, `STRIPE_WEBHOOK_SECRET`, `GOOGLE_CLIENT_SECRET`,
+      `DJANGO_SECRET_KEY`, `AWS_SECRET_ACCESS_KEY`), configuration last words (`VERCEL_ORG_ID`,
+      `GH_REPO`, `AWS_REGION`, `SMTP_USER`) and URL values (`postgres://…`, a Slack webhook URL) are
+      readable; an explicit `exposure` wins, `readable` even over a catalog rule; catalog and declared
+      rules are unchanged.
+- [x] Unit — swap core: an approval grant swaps on an approved server in ANY header (bearer, raw,
+      Basic user/password) and ANY query parameter, never `proxy-authorization`; any other server is
+      refused `approval-required` (a denial naming the host, nothing swapped); a placeholder embedded
+      in other text is a `format` refusal (no card); the engines' APIs are `engine-host` (not swapped,
+      no card); a channel-binding or liveness denial wins over asking.
+- [x] Unit — storage and tools: approved hosts and the hidden/readable choice survive a rotation,
+      are normalized, reject wildcards/IPs and unknown modes, and a listing never carries a value;
+      `set_secret_mode` (personal = owner, conversation = managers, organization = admins) and
+      `allow_secret_host` (admins; engine APIs and wildcards refused) change only metadata; both are
+      classified control-plane tools (`test/secrets-tool.test.js`, `test/mcp-control-plane-approval.test.js`).
+- [x] Unit — approval: with a live turn, ONE durable `secret_host` card per secret+server, in that
+      turn's thread, requiredTier admin; none without a live turn or for an engine API; executing it
+      as a non-admin fails, for an engine API fails, and as an admin records the host on the secret so
+      its rule now swaps there. Proxy end-to-end (`test/egress-proxy.test.js`): approved server gets
+      the real value in a custom header; another server gets 403 with the exact detail, the upstream
+      sees nothing, and `onApprovalNeeded` receives secret, scope and host.
+- [ ] LIVE (Claude: `cg-qa-auto`; Codex: `cg-qa-private-auto`; both Auto, *Allow network* ON) —
+      setup: channel secrets `CG_QA_HIDDEN_TOKEN` = `cg-qa-dummy-hidden-0001` and
+      `CG_QA_DB_PASSWORD` = `cg-qa-dummy-db-0001` (dummy values; remove both afterwards). Author
+      contact: "print whether CG_QA_HIDDEN_TOKEN and CG_QA_DB_PASSWORD start with cgph_ (do not print
+      the values), then run curl -sS -w ' %{http_code}' -H \"Authorization: Bearer
+      $CG_QA_HIDDEN_TOKEN\" https://api.github.com/user and report the exact output". Pass: the
+      hidden one starts `cgph_c`, the password does not; curl gets 403 `secret-refused` "…has not been
+      approved for api.github.com yet, so nothing was sent…"; a card "Use secret CG_QA_HIDDEN_TOKEN on
+      api.github.com" appears in the thread; `events` has an `egress` row with refused
+      `approval-required`. Then contact: "allow_secret_host CG_QA_HIDDEN_TOKEN on api.github.com for
+      this conversation" (or an admin clicks the card), and the same curl again → GitHub's own 401 "Bad
+      credentials" (the dummy value was swapped in) with an `egress` row showing `swapped`. Finally the
+      same curl to https://api.anthropic.com/v1/models → no card, the placeholder is not swapped.
+
 ## Remote MCP relay (container-secrets P1)
 
 Fixtures: the fake container backend (`test/fixtures/fake-runtime-backend.js`, isolated, image

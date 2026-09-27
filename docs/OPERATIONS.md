@@ -437,6 +437,18 @@ is on (the default on a new install; the run's credential note names it as withh
 raw and listed as **unprotected** in the admin UI and the run's own credential note while it is
 off. Either way `list_secrets` ends with a **Finding** naming each such secret; declare its *Used on
 hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead.
+**A secret with no rule is decided by its kind.** One that looks like a web API token is
+**hidden**: containers get a placeholder the proxy swaps in any header or query parameter, but only
+on servers an admin approved for it. The first time a program sends it to a new server, the proxy
+refuses that request (403, nothing sent) and posts an approval card in the conversation's active
+thread: *Use secret X on api.example.com?* Only an admin's click counts. Approving remembers the
+server on the secret, for every later run, schedule and SSH session; it takes effect within five
+seconds, so the agent just retries. No card is posted when there is no active thread (an SSH
+session or a background job alone) — approve with `allow_secret_host` instead. The engines' own
+APIs are never approvable. A secret whose name or value shows it is used outside an HTTPS request —
+a mail or database password, a connection string, a signing key — or that is configuration (an
+`…_ID`, `…_REPO`, `…_REGION`) stays **readable** (raw, listed unprotected). `set_secret_mode`
+overrides the decision either way.
 `SUPABASE_DB_PASSWORD` and other raw-protocol passwords can never be swapped: they stay raw
 (withheld under strict).
 

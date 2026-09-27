@@ -442,7 +442,7 @@ async function egressChannel(channelId) {
   await patchChannelMeta(created.slug, (existing) => {
     let env = existing?.env || {};
     env = patchChannelEnv(env, { set: { name: "GITHUB_TOKEN", value: REAL.channel } });
-    env = patchChannelEnv(env, { set: { name: "RAW_THING", value: REAL.raw } });
+    env = patchChannelEnv(env, { set: { name: "RAW_THING_PASSWORD", value: REAL.raw } });
     return { ...(existing || defaultChannelMeta({ channelId, name: channelId, type: "channel", isDM: false })), env };
   });
   return { entry: { slug: created.slug, channelId }, meta: await getChannelMeta(created.slug) };
@@ -482,10 +482,10 @@ test("under the egress proxy the session holds placeholders, the proxy env, and 
   assert.deepEqual(result.secrets, [
     { name: "DEV_API_KEY", scope: "personal", protected: true },
     { name: "GITHUB_TOKEN", scope: "channel", protected: true },
-    { name: "RAW_THING", scope: "channel", protected: false },
+    { name: "RAW_THING_PASSWORD", scope: "channel", protected: false },
     { name: "VERCEL_TOKEN", scope: "organization", protected: true },
   ]);
-  assert.deepEqual(result.egress, { active: true, unprotected: ["RAW_THING"], withheld: [], personalPaused: false });
+  assert.deepEqual(result.egress, { active: true, unprotected: ["RAW_THING_PASSWORD"], withheld: [], personalPaused: false });
 
   const dir = session.sshUserDir(t, user.id);
   const envFile = path.join(dir, "env");
@@ -493,7 +493,7 @@ test("under the egress proxy the session holds placeholders, the proxy env, and 
   const body = readFileSync(envFile, "utf8");
   const exports = body.split("\n").filter((line) => line.startsWith("export ")).map((line) => line.slice(7, line.indexOf("=")));
   assert.ok(exports.indexOf("HTTPS_PROXY") < exports.indexOf("GITHUB_TOKEN") && exports.indexOf("GIT_SSH_COMMAND") < exports.indexOf("CG_SESSION_ENV"), "the proxy block leads the file");
-  const keys = { gh: "GITHUB_TOKEN", v: "VERCEL_TOKEN", p: "DEV_API_KEY", raw: "RAW_THING", https: "HTTPS_PROXY", http: "http_proxy", all: "ALL_PROXY", ca: "NODE_EXTRA_CA_CERTS", git: "GIT_SSH_COMMAND", chromium: "AGENT_BROWSER_ARGS", eg: "CG_EGRESS" };
+  const keys = { gh: "GITHUB_TOKEN", v: "VERCEL_TOKEN", p: "DEV_API_KEY", raw: "RAW_THING_PASSWORD", https: "HTTPS_PROXY", http: "http_proxy", all: "ALL_PROXY", ca: "NODE_EXTRA_CA_CERTS", git: "GIT_SSH_COMMAND", chromium: "AGENT_BROWSER_ARGS", eg: "CG_EGRESS" };
   const printed = sourceEnv(envFile, Object.values(keys).map((name) => `printf '%s\\n' "\${${name}:-}"`).join("; ")).split("\n");
   const values = Object.fromEntries(Object.keys(keys).map((key, i) => [key, printed[i]]));
   assert.match(values.gh, /^cgph_c[a-z2-7]{32}$/);
@@ -535,7 +535,7 @@ test("under the egress proxy the session holds placeholders, the proxy env, and 
   }
   // The note: the proxy, the CA, placeholders, the personal pause rule, outbound SSH — names only.
   const note = readFileSync(path.join(dir, "session.md"), "utf8");
-  for (const phrase of ["egress proxy", "/run/channelgate/egress-ca.pem", "PLACEHOLDERS", "`printenv` shows nothing worth copying", "another-person-ssh-session", "/opt/channelgate/bin/cg-egress-connect %h %p", "cannot add an SSH key", '["RAW_THING"]']) {
+  for (const phrase of ["egress proxy", "/run/channelgate/egress-ca.pem", "PLACEHOLDERS", "`printenv` shows nothing worth copying", "another-person-ssh-session", "/opt/channelgate/bin/cg-egress-connect %h %p", "cannot add an SSH key", '["RAW_THING_PASSWORD"]']) {
     assert.ok(note.includes(phrase), `the session note names: ${phrase}`);
   }
   for (const secret of [...Object.values(REAL), values.gh, values.p, values.v]) assert.ok(!note.includes(secret), "no value and no placeholder in the note");
@@ -553,15 +553,15 @@ test("strict egress: the unruled secret is withheld, and then NOTHING real is an
   const t = egressTarget("ssh-egress-strict", e.channelId, { strict: true });
   const { execs, deps } = egressDeps();
   const result = await session.prepareSshSession({ target: t, entry: e, meta, user, cliBin: "podman", log: { warn() {} } }, deps);
-  assert.deepEqual(result.egress.withheld, ["RAW_THING"]);
-  assert.ok(!result.secrets.some((s) => s.name === "RAW_THING"));
+  assert.deepEqual(result.egress.withheld, ["RAW_THING_PASSWORD"]);
+  assert.ok(!result.secrets.some((s) => s.name === "RAW_THING_PASSWORD"));
   assert.ok(result.secrets.every((s) => s.protected), "every injected name is protected");
   const { realValues } = await grants.resolveEgressRunEnv({ meta, channelId: e.channelId, authorId: user.id, target: t });
   assert.ok(realValues.includes(REAL.raw) && realValues.includes(REAL.channel));
   const texts = [...filesUnder(session.sshUserDir(t, user.id)), path.join(t.artifactDir, "vscode", "claude-token")].map((file) => [file, readFileSync(file, "utf8")]);
   texts.push(["<credentials.json input>", execs.find((x) => String(x.args.at(-1)).includes(".credentials.json")).input]);
   for (const [file, text] of texts) for (const real of [...realValues, relay.token]) assert.ok(!text.includes(real), `${file} carries a real value`);
-  assert.match(readFileSync(path.join(session.sshUserDir(t, user.id), "session.md"), "utf8"), /Withheld by the gateway's strict egress setting[^\n]*\["RAW_THING"\]/);
+  assert.match(readFileSync(path.join(session.sshUserDir(t, user.id), "session.md"), "utf8"), /Withheld by the gateway's strict egress setting[^\n]*\["RAW_THING_PASSWORD"\]/);
 });
 
 test("with another developer attached, this developer's personal placeholders are paused — the session says so", async () => {

@@ -2740,9 +2740,28 @@ are retired, bullet by bullet; everything else stands.
   declared by an admin on the entry ("Used on hosts" in the admin secrets editor, `hosts`/
   `headers`/`format` on `set_secret`: ≤ 16 DNS names or `*.suffix`, ≤ 8 lowercase headers, one of
   bearer/raw/basic-password/basic-user), kept across a value rotation. Configuration names
-  (`GH_REPO`, `VERCEL_ORG_ID`) and raw-protocol passwords (`SUPABASE_DB_PASSWORD`) have no rule. A
-  name without a rule is injected raw and flagged `unprotected` — or withheld under
-  `containerEgressSecretsStrict` ("Withhold unprotected secrets"). The proxy resolves the CURRENT
+  (`GH_REPO`, `VERCEL_ORG_ID`) and raw-protocol passwords (`SUPABASE_DB_PASSWORD`) have no rule.
+  **A name without a rule is decided by its kind (2026-09-27, `secretExposure`):** READABLE when a
+  name word marks a password, mail/database or signing secret (PASSWORD, PASS, SMTP, DB, DSN,
+  POSTGRES, REDIS, SIGNING, HMAC, SSH…, the pairs PRIVATE_KEY / WEBHOOK_SECRET / CLIENT_SECRET /
+  SECRET_KEY, a few whole names such as AWS_SECRET_ACCESS_KEY), when its last word marks
+  configuration (…_ID, _REPO, _ORG, _REGION, _USER, _URL…), or when its value is a URL (a
+  connection string, a webhook URL); otherwise HIDDEN. A readable name is injected raw and flagged
+  `unprotected` — or withheld under `containerEgressSecretsStrict` ("Withhold unprotected
+  secrets"). A hidden one gets a placeholder behind an **approval rule**: any header or query
+  parameter, the bearer/raw/Basic positions, and only the servers an admin approved for that secret
+  (`approvedHosts` on its entry, kept across a rotation). Presented to any other server the proxy
+  answers 403 `secret-refused` "…has not been approved for <host> yet, so nothing was sent" and
+  posts ONE durable card per secret+server in the channel's live thread
+  (`src/gateway/secret-host-approvals.js`, kind `secret_host`, requiredTier admin — the run's own
+  author never approves their own leak); approving records the host on the secret, effective within
+  the 5 s grant cache, for every later run, schedule and SSH session. Never for the engines' own
+  APIs (a swapped value there would land in the model's context), never for a wildcard, and a
+  channel binding or liveness denial still wins over asking. With no live thread (an SSH session or
+  a job alone) no card is posted; an admin uses `allow_secret_host`. `set_secret_mode`
+  (hidden/readable/auto; personal = the owner, conversation = its managers, organization = admins,
+  all approval-gated) overrides the kind; `list_secrets` shows "hidden (placeholder); approved
+  servers: …" / "readable (raw)". Request bodies and URL paths are never rewritten. The proxy resolves the CURRENT
   value per request from the store that owns it (rotation is live; the relay cached 60 s), and only
   while `canUse` passes: the placeholder's own channel (the organization's from any), live work in
   that channel (a turn, a job, a review or an SSH session — `liveness.js`), and for a personal

@@ -35,6 +35,9 @@ const PERSONAL_REAL = `real-personal-${crypto.randomBytes(16).toString("hex")}`;
 const PERSONAL_PH = mintPlaceholder({ scope: "personal" });
 const RELAY_REAL = `real-relay-${crypto.randomBytes(16).toString("hex")}`;
 const RELAY_TOKEN = shapePlaceholder({ scope: "relay", shape: "anthropic-oauth" });
+const APPROVAL_REAL = `real-approval-${crypto.randomBytes(16).toString("hex")}`;
+const APPROVAL_PH = mintPlaceholder({ scope: "org" });
+const approvalAsks = [];
 const LOOPBACK_NAMES = ["upstream.test", "other.test", "plain.test", "echo.test", "dead.test"];
 
 // ── Fixtures: upstreams, CA, proxy, listener ─────────────────────────────────────────────────────
@@ -93,6 +96,8 @@ const caStore = loadOrCreateEgressCa({ dir: path.join(tempDir("cg-egress-proxy-"
 const grants = new Map([
   [PH, { placeholder: PH, value: REAL, secretName: "GITHUB_TOKEN", scope: "channel", owner: "C_EGRESS", hosts: ["upstream.test", "plain.test"], headers: ["authorization"], format: "bearer" }],
   [PERSONAL_PH, { placeholder: PERSONAL_PH, value: PERSONAL_REAL, secretName: "MY_TOKEN", scope: "personal", owner: "U_OWNER", hosts: ["upstream.test"], headers: ["x-api-key"], format: "raw" }],
+  // A hidden secret with no known destination: approved for upstream.test only (catalog-rules.js).
+  [APPROVAL_PH, { placeholder: APPROVAL_PH, value: APPROVAL_REAL, secretName: "PAY_API_TOKEN", scope: "organization", owner: null, hosts: ["upstream.test"], headers: ["*"], query: ["*"], format: ["bearer", "raw", "basic-user", "basic-password"], approval: true, neverHosts: ["api.anthropic.com"] }],
   [corePlaceholder(RELAY_TOKEN), { placeholder: corePlaceholder(RELAY_TOKEN), value: RELAY_REAL, secretName: "CLAUDE_CODE_OAUTH_TOKEN", scope: "relay", owner: null, hosts: ["upstream.test"], headers: ["authorization"], format: "bearer" }],
 ]);
 
@@ -107,6 +112,7 @@ const proxy = createEgressProxy({
   resolveGrant: async (placeholder, ctx) => { assert.equal(ctx, CTX); return grants.get(placeholder) || null; },
   canUse: (grant) => (grant.scope === "personal" ? { ok: false, reason: "owner-not-live" } : { ok: true }),
   audit: (event) => audits.push(event),
+  onApprovalNeeded: (refusals, { ctx, hostname }) => { approvalAsks.push({ refusals, ctx, hostname }); },
   lookup: async (hostname) => {
     lookups.push(hostname);
     if (LOOPBACK_NAMES.includes(hostname)) return [{ address: "127.0.0.1", family: 4 }];
@@ -257,6 +263,24 @@ test("a canUse refusal answers 403 naming the secret and never reaches the upstr
   assert.equal(seen.length, before);
   await waitFor(() => auditFor((e) => e.path === "/personal"), "the refusal audit");
   assert.equal(auditFor((e) => e.path === "/personal").status, 403);
+});
+
+test("a hidden secret swaps in any header on its approved server; any other server gets 403 and an approval request", async () => {
+  const ok = await fetchVia({ host: "upstream.test", port: portA, path: "/approved", headers: { "x-pay-secret": APPROVAL_PH } });
+  assert.equal(ok.status, 200);
+  assert.equal(lastSeen("upstream").headers["x-pay-secret"], APPROVAL_REAL);
+  assert.equal(approvalAsks.length, 0, "an approved server asks nothing");
+
+  const before = seen.length;
+  const res = await fetchVia({ host: "other.test", port: portB, path: "/new-server", headers: { authorization: `Bearer ${APPROVAL_PH}` } });
+  assert.equal(res.status, 403);
+  assert.deepEqual(JSON.parse(res.body), { error: "secret-refused", detail: "The secret PAY_API_TOKEN has not been approved for other.test yet, so nothing was sent. An admin approves it with the card posted in this conversation's active thread (or with allow_secret_host); retry once it is approved." });
+  assert.equal(seen.length, before, "nothing reached the unapproved server");
+  await waitFor(() => approvalAsks.length === 1, "the approval request");
+  assert.equal(approvalAsks[0].hostname, "other.test");
+  assert.equal(approvalAsks[0].ctx, CTX);
+  assert.deepEqual(approvalAsks[0].refusals.map((r) => [r.secretName, r.reason, r.scope, r.host]), [["PAY_API_TOKEN", "approval-required", "organization", "other.test"]]);
+  assert.ok(!res.body.includes(APPROVAL_REAL));
 });
 
 test("refused destinations answer 403 with a category and are audited as blocked", async () => {

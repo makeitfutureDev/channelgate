@@ -26,6 +26,7 @@ import { startScheduler } from "./gateway/scheduler.js";
 import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js";
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
+import { executeSecretHostApproval, SECRET_HOST_ACTION, setSecretHostApprovalRequester } from "./gateway/secret-host-approvals.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
 import { startSshBroker, stopSshBroker } from "./gateway/ssh-broker.js";
 import { bindRunningChannelEgress, egressStatus, startEgressService, stopEgressService } from "./gateway/egress/service.js";
@@ -304,7 +305,11 @@ async function main() {
   backgroundJobs.armRecovery();
   setDurableApprovalExecutor((record) => record.action?.kind === INSTRUCTION_ACTION
     ? executeInstructionApproval(record)
-    : backgroundJobs.startApproved(record));
+    : record.action?.kind === SECRET_HOST_ACTION
+      ? executeSecretHostApproval(record)
+      : backgroundJobs.startApproved(record));
+  // A hidden secret presented to a server nobody approved yet asks an admin in the live thread.
+  setSecretHostApprovalRequester((request) => requestApproval(slack, request));
   const recoveredApprovals = recoverInterruptedApprovalExecutions();
   if (recoveredApprovals.consumed || recoveredApprovals.failed) {
     console.log(`[gateway] recovered durable approvals: ${recoveredApprovals.consumed} already started, ${recoveredApprovals.failed} failed closed`);

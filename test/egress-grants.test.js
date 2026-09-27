@@ -70,7 +70,12 @@ test("the catalog: GitHub, Vercel, Supabase, Make and Composio names are ruled; 
 });
 
 test("rulesFor: an entry's own hosts win; its headers/format refine; malformed declarations are refused on write", () => {
-  assert.equal(rulesFor("MY_API_KEY", {}), null);
+  // No destination known or declared: a web-looking name is HIDDEN behind an approval rule (its
+  // hosts are only what an admin approved), a password-looking one stays readable (null).
+  assert.deepEqual(rulesFor("MY_API_KEY", {}), { hosts: [], headers: ["*"], query: ["*"], format: ["bearer", "raw", "basic-user", "basic-password"], source: "approval", approval: true });
+  assert.deepEqual(rulesFor("MY_API_KEY", { approvedHosts: ["api.example.com"] }).hosts, ["api.example.com"]);
+  assert.equal(rulesFor("SMTP_PASSWORD", {}), null);
+  assert.equal(rulesFor("MY_API_KEY", { exposure: "readable" }), null, "an explicit readable choice wins");
   const own = rulesFor("MY_API_KEY", { hosts: ["api.example.com", "*.example.net"] });
   assert.deepEqual(own, { hosts: ["api.example.com", "*.example.net"], headers: ["authorization"], format: ["bearer", "raw"], source: "entry" });
   const refined = rulesFor("GITHUB_TOKEN", { headers: ["x-token"] });
@@ -146,7 +151,7 @@ test("resolveEgressRunEnv: inactive egress is exactly the real resolve", async (
   assert.deepEqual(out.placeholders, {});
   assert.deepEqual(out.unprotected, []);
   assert.ok(out.realValues.includes("ghp_plain_value_0001"));
-  assert.deepEqual(await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_PLAIN", target: inactiveTarget("C_GRANTS_PLAIN"), clean: true }), { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues: [], personalPaused: false });
+  assert.deepEqual(await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_PLAIN", target: inactiveTarget("C_GRANTS_PLAIN"), clean: true }), { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], personalPaused: false });
   // No target at all (an agent job resolves its own per turn), even with a running service: real values.
   setEgressProvider({ running: () => true, socketDirFor: () => "/x", caBundlePath: () => "/y" });
   try {
@@ -220,10 +225,10 @@ test("resolveEgressRunEnv: personalPaused while another person's SSH session is 
 });
 
 test("strict mode withholds unruled secrets instead of injecting them raw", async () => {
-  const meta = await channel("C_GRANTS_STRICT", { GITHUB_TOKEN: "ghp_strict_value_0001", RAW_ONLY: "raw-only-value-00001" });
+  const meta = await channel("C_GRANTS_STRICT", { GITHUB_TOKEN: "ghp_strict_value_0001", RAW_ONLY_PASSWORD: "raw-only-value-00001" });
   const out = await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_STRICT", target: activeTarget("C_GRANTS_STRICT", { strict: true }) });
-  assert.equal(out.env.RAW_ONLY, undefined);
-  assert.deepEqual(out.withheld, ["RAW_ONLY"]);
+  assert.equal(out.env.RAW_ONLY_PASSWORD, undefined);
+  assert.deepEqual(out.withheld, ["RAW_ONLY_PASSWORD"]);
   assert.deepEqual(out.unprotected, []);
   assert.ok(out.realValues.includes("raw-only-value-00001"), "withheld values are still redacted");
 });

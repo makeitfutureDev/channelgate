@@ -4,7 +4,11 @@
 // image's CLIs use, the gateway KNOWS the destinations (a GitHub token goes to api.github.com in
 // an Authorization header), so those rules ship here; anything else is protected only when its
 // owner declares "used on hosts" on the stored entry (config/channel-env.js validates it). A name
-// with no rule is injected raw and flagged unprotected — or withheld under egressSecretsStrict.
+// with no rule is decided by its KIND (secretExposure below): a web-API-looking secret is HIDDEN —
+// the container gets a placeholder, and the first time it is sent to a new server an admin approves
+// that server once (an "approval" rule whose hosts are the entry's approvedHosts) — while one that
+// is used outside HTTP (a mail or database password, a connection string, a signing key) stays
+// READABLE: injected raw and flagged unprotected, or withheld under egressSecretsStrict.
 //
 // A rule is { hosts, headers, format } in the core's grant vocabulary (rules.js): hosts are exact
 // names or one-level `*.suffix` wildcards, headers are lowercase names, format is one position or a
@@ -165,10 +169,76 @@ export function normalizeSwapRuleFields(entry = {}) {
   return out;
 }
 
-// The swap rule for a secret NAME and its stored ENTRY, or null (unprotected). The entry's own
-// `hosts` wins outright (with its own headers/format, else the catalog's, else the defaults); with
-// no hosts of its own the catalog rule applies, still refined by the entry's headers/format.
-export function rulesFor(secretName, entry = null) {
+// ── Hidden or readable: the kind of a secret with no known destination ──────────────────────
+
+// Secrets used OUTSIDE an HTTP request the proxy can see: a placeholder there would reach the
+// program that needs the real value (an SMTP login, a database driver, an HMAC signer) and fail.
+// Matched on name words (split on `_`), so MAKE_API_PASSWORD is readable and PASSAGE_TOKEN is not.
+export const READABLE_NAME_WORDS = Object.freeze([
+  "PASSWORD", "PASSWD", "PASS", "PWD", "SMTP", "IMAP", "POP3",
+  "DB", "DATABASE", "DSN", "POSTGRES", "POSTGRESQL", "PG", "MYSQL", "MARIADB", "MONGO", "MONGODB", "REDIS", "AMQP", "RABBITMQ",
+  "SIGNING", "HMAC", "ENCRYPTION", "SSH", "PGP", "GPG",
+]);
+// Word PAIRS that mark a readable secret where either word alone would not (a GitLab PRIVATE_TOKEN
+// and a WEBHOOK_URL are web credentials; a PRIVATE_KEY and a WEBHOOK_SECRET sign things). An OAuth
+// CLIENT_SECRET usually travels in a form body, which the proxy does not rewrite.
+export const READABLE_NAME_PAIRS = Object.freeze([["PRIVATE", "KEY"], ["WEBHOOK", "SECRET"], ["CLIENT", "SECRET"], ["SECRET", "KEY"]]);
+// Configuration that rides along in a secret store but is not a credential (a repo, an org or
+// project id, a region): tools put it in URL paths and command lines where no swap happens, so a
+// placeholder would only break them. Matched on the LAST word, so VERCEL_ORG_ID is readable and
+// ORG_TOKEN is not.
+export const IDENTIFIER_LAST_WORDS = Object.freeze([
+  "ID", "IDS", "SID", "REPO", "REPOSITORY", "ORG", "ORGANIZATION", "TEAM", "PROJECT", "REGION", "ZONE", "HOST", "HOSTNAME", "PORT",
+  "USER", "USERNAME", "EMAIL", "NAME", "ENV", "ENVIRONMENT", "URL", "URI", "DOMAIN", "BRANCH", "OWNER", "SLUG", "VERSION", "PATH", "BUCKET",
+]);
+// Whole-name matches for the few well-known signing credentials that carry none of the words above.
+export const READABLE_NAMES = Object.freeze(["AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "JWT_SECRET", "SESSION_SECRET", "APP_KEY", "SECRET_KEY_BASE"]);
+// A value that is a URL — a connection string (postgres://, redis://, smtp://…) or a web address
+// with the credential inside it (a Slack webhook URL) — is readable, whatever its name: a program
+// needs the real address to connect at all, so a placeholder there could never reach the proxy.
+const URL_VALUE_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+export const EXPOSURES = Object.freeze(["hidden", "readable"]);
+
+// → { exposure: "hidden" | "readable", reason } for a secret the catalog and its entry give no
+// destination. An explicit entry.exposure wins; otherwise name words, then the value's shape.
+export function secretExposure(secretName, entry = null, value = undefined) {
+  const own = String(entry?.exposure || "");
+  if (EXPOSURES.includes(own)) return { exposure: own, reason: "set" };
+  const name = String(secretName || "").toUpperCase();
+  if (READABLE_NAMES.includes(name)) return { exposure: "readable", reason: "name" };
+  const words = name.split("_").filter(Boolean);
+  if (words.some((word) => READABLE_NAME_WORDS.includes(word))) return { exposure: "readable", reason: "name" };
+  if (words.length && IDENTIFIER_LAST_WORDS.includes(words[words.length - 1])) return { exposure: "readable", reason: "identifier" };
+  if (READABLE_NAME_PAIRS.some(([a, b]) => words.some((word, i) => word === a && words[i + 1] === b))) return { exposure: "readable", reason: "name" };
+  const text = typeof value === "string" ? value : typeof entry?.value === "string" ? entry.value : "";
+  if (URL_VALUE_RE.test(text.trim())) return { exposure: "readable", reason: "value" };
+  return { exposure: "hidden", reason: "default" };
+}
+
+// An approval rule accepts its placeholder in ANY header and ANY query parameter, in any of the
+// whole-value positions: the gateway does not know how this API authenticates, only that a human
+// approved sending this secret to this server.
+export const APPROVAL_HEADERS = Object.freeze(["*"]);
+export const APPROVAL_QUERY = Object.freeze(["*"]);
+export const APPROVAL_FORMATS = Object.freeze(["bearer", "raw", "basic-user", "basic-password"]);
+
+// The servers an admin approved for an approval-rule secret (the entry's own approvedHosts).
+export function approvedHostsOf(entry = null) {
+  const list = Array.isArray(entry?.approvedHosts) ? entry.approvedHosts : [];
+  return [...new Set(list.map(normalizeRuleHost).filter((host) => isValidRuleHost(host) && !host.startsWith("*.")))].slice(0, MAX_APPROVED_HOSTS);
+}
+export const MAX_APPROVED_HOSTS = 32;
+
+// The swap rule for a secret NAME and its stored ENTRY, or null (readable: injected raw). The
+// entry's own `hosts` wins outright (with its own headers/format, else the catalog's, else the
+// defaults); with no hosts of its own the catalog rule applies, still refined by the entry's
+// headers/format. With neither, a HIDDEN secret gets an approval rule (source "approval"): its
+// hosts are only the servers an admin approved, and any other server asks (proxy.js). `value` is
+// the resolved value when the caller has it (the value's shape can make a secret readable).
+// An explicit `exposure: "readable"` on the entry returns null even for a catalog name.
+export function rulesFor(secretName, entry = null, { value = undefined } = {}) {
+  if (String(entry?.exposure || "") === "readable") return null;
   const own = normalizeSwapRuleFields(entry || {});
   const catalog = catalogRuleFor(secretName);
   if (own.hosts?.length) {
@@ -179,11 +249,21 @@ export function rulesFor(secretName, entry = null) {
       source: "entry",
     };
   }
-  if (!catalog) return null;
+  if (catalog) {
+    return {
+      hosts: [...catalog.hosts],
+      headers: own.headers || [...catalog.headers],
+      format: own.format || [...catalog.format],
+      source: `catalog:${catalog.id}`,
+    };
+  }
+  if (secretExposure(secretName, entry, value).exposure !== "hidden") return null;
   return {
-    hosts: [...catalog.hosts],
-    headers: own.headers || [...catalog.headers],
-    format: own.format || [...catalog.format],
-    source: `catalog:${catalog.id}`,
+    hosts: approvedHostsOf(entry),
+    headers: [...APPROVAL_HEADERS],
+    query: [...APPROVAL_QUERY],
+    format: [...APPROVAL_FORMATS],
+    source: "approval",
+    approval: true,
   };
 }
