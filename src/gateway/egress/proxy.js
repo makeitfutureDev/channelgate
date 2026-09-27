@@ -314,7 +314,7 @@ export function createEgressProxy({
     const pending = denied.filter((r) => r.reason === "approval-required");
     if (pending.length && pending.length === denied.length) {
       const names = [...new Set(pending.map((r) => r.secretName || "a secret"))].join(", ");
-      return `The secret ${names} has not been approved for ${pending[0].host} yet, so nothing was sent. An admin approves it with the card posted in this conversation's active thread (or with allow_secret_host); retry once it is approved.`;
+      return `The variable ${names} has not been approved for ${pending[0].host} yet, so nothing was sent. An admin approves it with the card posted in this conversation's active thread (or with allow_secret_host); retry once it is approved.`;
     }
     const names = [...new Set(denied.map((r) => r.secretName || "a secret"))].join(", ");
     const reasons = [...new Set(denied.map((r) => r.reason))].join(", ");

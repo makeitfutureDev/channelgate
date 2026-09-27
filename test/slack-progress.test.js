@@ -769,7 +769,7 @@ test("completed-run footer carries authorized-user Settings beside Files and Sec
   assert.deepEqual(JSON.parse(files.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
   const secrets = buttons.find((button) => button.text.text === "🔑");
   assert.equal(secrets.action_id, "cg_channel_secrets");
-  assert.equal(secrets.accessibility_label, "Manage channel secrets");
+  assert.equal(secrets.accessibility_label, "Manage channel variables");
   assert.deepEqual(JSON.parse(secrets.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
 });
 

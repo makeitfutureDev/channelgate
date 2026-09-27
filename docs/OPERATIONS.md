@@ -361,7 +361,7 @@ runs too, and the next successful update settles it.
 | Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
 | Full-access channels see the gateway home | off by default; on = every Full-access channel's container also mounts the gateway user's whole home read-write (see below) |
 | Legacy open network (no egress proxy) | off by default (`containerEgressMode = "proxy"`); on (`"bridge"`) = the pre-proxy behavior: the open bridge network and raw secret values (see **Network** below) |
-| Withhold unprotected secrets | `containerEgressSecretsStrict`: ON for a new install, OFF for an install that existed before this default (stored once at boot; your choice is never changed); on = a secret with no egress rule is not given to proxy-mode containers at all, off = it is injected raw and listed as unprotected |
+| Withhold readable variables | `containerEgressSecretsStrict`: ON for a new install, OFF for an install that existed before this default (stored once at boot; your choice is never changed); on = a secret with no egress rule is not given to proxy-mode containers at all, off = it is injected raw and listed as unprotected |
 
 Values that would reach the container CLI's argv are validated at the boundary: a flag, a space or a
 shell metacharacter in the image/memory/cpu fields is rejected with an error, not silently cleaned.
@@ -432,7 +432,7 @@ as the useless string it is. When declaring **Used on hosts**, avoid multi-tenan
 deployment too, and a container could have the real value swapped into a request to a site it
 controls. Rotation is live (the proxy
 resolves the current value per request); removing a secret revokes its placeholder, and re-adding
-mints a new one. A secret with no rule is withheld entirely while *Withhold unprotected secrets*
+mints a new one. A secret with no rule is withheld entirely while *Withhold readable variables*
 is on (the default on a new install; the run's credential note names it as withheld), or injected
 raw and listed as **unprotected** in the admin UI and the run's own credential note while it is
 off. Either way `list_secrets` ends with a **Finding** naming each such secret; declare its *Used on

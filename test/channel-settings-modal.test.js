@@ -171,7 +171,7 @@ test("Channel Settings pages are one row of tabs with the open page highlighted"
   assert.equal(row.type, "actions", "tabs, not a dropdown (Tiberiu, QA-0925)");
   assert.equal(view.blocks.indexOf(row) < view.blocks.findIndex((block) => block.type === "header" || block.type === "section" && block !== row && /MCP connections/.test(JSON.stringify(block))), true, "above the page content");
   assert.deepEqual(row.elements.map((button) => parseActionValue(button.value).p), [...CHANNEL_SETTINGS_TABS]);
-  assert.deepEqual(row.elements.map((button) => button.text.text), ["General", "Resume", "MCP", "Skills", "Secrets"],
+  assert.deepEqual(row.elements.map((button) => button.text.text), ["General", "Resume", "MCP", "Skills", "Variables"],
     "short names, so the five fit one row of a modal");
   assert.deepEqual(row.elements.map((button) => button.action_id), CHANNEL_SETTINGS_TABS.map((tab) => `cg_channel_settings_tab_${tab}`));
   // Exactly the open page is highlighted, and every tab is bound to this view's owner.

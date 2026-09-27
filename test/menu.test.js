@@ -33,7 +33,7 @@ async function fixture({ approved = true, dm = false } = {}) {
 function assertCard(message, channel, user, thread = "") {
   assert.equal(message.blocks.length, 1);
   assert.equal(message.blocks[0].type, "actions");
-  assert.deepEqual(message.blocks[0].elements.map(b => b.text.text), ["💻 Resume", "📂 Files", "🔑 Secrets", "⚙️ Settings"]);
+  assert.deepEqual(message.blocks[0].elements.map(b => b.text.text), ["💻 Resume", "📂 Files", "🔑 Variables", "⚙️ Settings"]);
   for (const button of message.blocks[0].elements) {
     const value = JSON.parse(button.value);
     assert.equal(value.c, channel); assert.equal(value.u, user); assert.equal(value.t, thread);

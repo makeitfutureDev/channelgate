@@ -1,5 +1,5 @@
 // Reply-footer cluster: the run-stats line ("Opus 4.8 1M · 14.4s · 36.8k/192 · $0.31 · 18%"),
-// its Block Kit form, and the 📂 Files / 🔑 Secrets / ⚙️ Settings controls that ride under it.
+// its Block Kit form, and the 📂 Files / 🔑 Variables / ⚙️ Settings controls that ride under it.
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
 // importing the whole app module.
@@ -68,7 +68,7 @@ export function secretsButton(channelId, threadTs, authorId, label = "🔑") {
     type: "button",
     action_id: SECRETS_ACTION_ID,
     text: { type: "plain_text", text: String(label).slice(0, 75), emoji: true },
-    accessibility_label: "Manage channel secrets",
+    accessibility_label: "Manage channel variables",
     value: secretActionValue("open", { c: channelId, t: threadTs || "", u: authorId }),
   };
 }

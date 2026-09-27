@@ -210,10 +210,29 @@ const PATH_VALUE_RE = /^(~\/|\/)[^\s]*$/;
 export const EXPOSURES = Object.freeze(["hidden", "readable"]);
 
 // → { exposure: "hidden" | "readable", reason } for a secret the catalog and its entry give no
-// destination. An explicit entry.exposure wins; otherwise name words, then the value's shape.
+// destination. `readable` chosen explicitly always wins. `hidden` chosen explicitly wins too —
+// UNLESS the name or value shows the secret is used outside HTTPS (a mail or database password, a
+// connection string, a signing key, configuration): a placeholder could never work there, so it
+// stays readable (reason "kind", owner ask 2026-09-27). Declaring the domains it is used on is how
+// to hide such a secret anyway — an entry's own hosts win before this is ever asked (rulesFor).
 export function secretExposure(secretName, entry = null, value = undefined) {
   const own = String(entry?.exposure || "");
-  if (EXPOSURES.includes(own)) return { exposure: own, reason: "set" };
+  if (own === "readable") return { exposure: "readable", reason: "set" };
+  const auto = autoExposure(secretName, entry, value);
+  if (own === "hidden") return auto.exposure === "readable" ? { exposure: "readable", reason: "kind", kind: auto.reason } : { exposure: "hidden", reason: "set" };
+  return auto;
+}
+
+// The plain-language why for a listing row, from secretExposure's reason (and kind).
+export function exposureReasonText({ reason, kind } = {}) {
+  const why = { name: "looks like a password, mail, database or signing secret", identifier: "looks like configuration (an id, repo, region, user…)", value: "its value is a URL or a file path" };
+  if (reason === "kind") return `kept readable although hidden was chosen: it ${why[kind] || "is used outside HTTPS"} — add the domains it is used on to hide it`;
+  if (reason === "set") return "chosen";
+  if (why[reason]) return `auto: it ${why[reason]}`;
+  return "auto";
+}
+
+function autoExposure(secretName, entry = null, value = undefined) {
   const name = String(secretName || "").toUpperCase();
   if (READABLE_NAMES.includes(name)) return { exposure: "readable", reason: "name" };
   const words = name.split("_").filter(Boolean);

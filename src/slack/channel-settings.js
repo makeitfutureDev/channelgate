@@ -594,7 +594,7 @@ const TAB_LABELS = Object.freeze({
   resume: "Resume Session",
   mcp: "MCP",
   skills: "Skills",
-  secrets: "Secrets",
+  secrets: "Variables",
 });
 
 // The short names the tab row shows; TAB_LABELS stays the page's full name.
@@ -603,7 +603,7 @@ const TAB_BUTTON_LABELS = Object.freeze({
   resume: "Resume",
   mcp: "MCP",
   skills: "Skills",
-  secrets: "Secrets",
+  secrets: "Variables",
 });
 
 // Pages are a row of tab buttons, the current one highlighted. A dropdown replaced an earlier row
