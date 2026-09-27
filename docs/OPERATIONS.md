@@ -516,7 +516,7 @@ data.
 | Where | Holds | Survives a `stop`/`start` | Survives a `rm` + recreate |
 | --- | --- | --- | --- |
 | Per-channel HOME **volume** (`/home/agent`) | engine sessions and transcripts, CLI logins (`gh`, `vercel`, `supabase`, MCP auth), `npm -g`, `pip --user`/`pipx`/`uv`/`cargo` installs, caches, dotfiles | yes | yes — the daemon removes a HOME volume only when the CHANNEL is deleted, never on a rollback, a reconfiguration or an image bump |
-| `/tmp` and `/var/tmp` (bind mounts of `~/ChannelGate/.runtime/<platform>/<slug>/{tmp,var-tmp}`) | scratch files, Claude Code's per-session scratchpad, anything an agent parks between turns | yes | yes |
+| `/tmp` and `/var/tmp` (per-channel **volumes** `<container>-tmp` / `<container>-vtmp`) | scratch files, Claude Code's per-session scratchpad, anything an agent parks between turns | yes | yes |
 | Channel work directory (`~/ChannelGate/<platform>/<slug>`, bind mount) | the project itself | yes — it is a host directory | yes |
 | Per-run artifacts (`~/ChannelGate/.runtime/<platform>/<slug>`, bind mount) | this run's settings copy, MCP config, job logs | yes | yes |
 | Engine session history (Claude transcripts, Codex rollouts, subagent transcripts) | inside the HOME volume | yes | yes |
@@ -526,11 +526,13 @@ data.
 | Detached background jobs | — | no — a stop kills them, and the next turn says so | no |
 
 `/tmp` and `/var/tmp` were tmpfs until image spec 1.1.0, which meant the idle reaper's routine stop
-emptied them ten minutes after every turn. They are host directories now, so they keep their
-contents — and the size cap that came with tmpfs is gone with it: they grow against the disk, just
-like the channel's work directory. Both are visible on the host under
-`~/ChannelGate/.runtime/<platform>/<slug>/`, so an operator can see (and, if a channel ever hoards,
-clear) what an agent parked there. Nothing in the daemon deletes them.
+emptied them ten minutes after every turn. They persist now, so they keep their contents — and
+the size cap that came with tmpfs is gone with it: they grow against the disk, just like the
+channel's work directory. Since 2026-09-27 they are per-channel podman volumes (`<container>-tmp`,
+`<container>-vtmp`; inspect with `podman volume inspect` or `podman exec <container> ls /tmp`), not
+host folders under `~/ChannelGate/.runtime/<platform>/<slug>/` — those were also visible inside the
+container through the artifact mount, a mount alias Codex's sandbox refuses. The daemon deletes
+them only with the channel, like the HOME volume.
 
 **Optional VPN database service.** `npm run vpn` provisions an operator-managed OpenVPN service
 and isolated database extractor without granting tunnel privileges to ordinary channel containers.

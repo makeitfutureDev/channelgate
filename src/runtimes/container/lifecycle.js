@@ -26,23 +26,27 @@ import { sweepStaleRunCredentialFiles } from "./stale-run-files.js";
 // executable. `/tmp` and `/var/tmp` used to be tmpfs too — and that made the idle reaper's
 // ten-minute `stop` DELETE whatever an agent had parked there, a regression against the host
 // backend where /tmp survives between turns (Claude Code keeps its per-session scratchpad under
-// /tmp/claude-<uid>/…). They are persistent bind mounts now; see PERSISTENT_TMP_DIRS.
+// /tmp/claude-<uid>/…). They are persistent named volumes now; see PERSISTENT_TMP_DIRS.
 export const TMPFS_SPECS = Object.freeze(["/run:rw,noexec,size=64m"]);
 
-// The two temp trees a channel keeps ACROSS stops, starts and recreates: host directories under
-// the channel's own artifact dir (~/ChannelGate/.runtime/<platform>/<slug>/), bind-mounted in.
+// The two temp trees a channel keeps ACROSS stops, starts and recreates: per-channel NAMED VOLUMES
+// (names.js tmpVolumeNames), like the HOME volume, created with the image's own /tmp and /var/tmp
+// modes (1777) on first use and removed with it when the channel is deleted.
 //
-// Under the artifact dir on purpose: it is per channel, it is never mounted into any OTHER
-// container, the daemon never deletes it, and it is visible on the host — an operator can see what
-// an agent parked in /tmp instead of guessing. The trade is that the tmpfs size cap is gone: these
-// grow against the disk, exactly like the channel's work directory.
-//
-// `<artifactDir>/tmp` is also where an isolated Codex run puts its per-run scratch (see
-// src/engines/codex.js) — the same directory, seen at two paths inside the container. That is not
-// a new exposure: the whole artifact dir has always been mounted rw at its identical path.
+// They used to be host directories under the artifact dir (`<artifactDir>/tmp`, `/var-tmp`) — and
+// the artifact dir is ALSO mounted at its identical path, so the same files were visible inside
+// the container at two paths. Codex's sandbox refuses exactly that: it keeps its app-server socket
+// under a fixed `/tmp/codex-daemon-<uid>` and will not build a bubblewrap command while that
+// directory's mount is an alias of another ("unsupported host mount … remove the bind-mount alias
+// or nested mount"), so Read-mode Codex could not run a single command (live, 2026-09-27). A host
+// directory anywhere under the operator's home would alias the same way in a whole-home channel;
+// a volume does not, because the container engine's storage is masked out of that mount
+// (OPERATOR_HOME_MASKS). The trade: an operator inspects /tmp through the CLI (`podman volume
+// inspect`), not as a plain folder. `<artifactDir>/tmp` remains a plain artifact subdirectory — the
+// isolated Codex run's per-run scratch (src/engines/codex.js) — just no longer aliased to /tmp.
 export const PERSISTENT_TMP_DIRS = Object.freeze([
-  Object.freeze({ kind: "tmp", dir: "tmp", target: "/tmp" }),
-  Object.freeze({ kind: "var-tmp", dir: "var-tmp", target: "/var/tmp" }),
+  Object.freeze({ kind: "tmp", target: "/tmp" }),
+  Object.freeze({ kind: "var-tmp", target: "/var/tmp" }),
 ]);
 export const CAP_DROP = Object.freeze(["ALL"]);
 export const CAP_ADD = Object.freeze(["DAC_OVERRIDE", "CHOWN", "FOWNER"]);
@@ -176,10 +180,10 @@ export function buildMounts(base) {
     { kind: "artifacts", type: "bind", source: base.artifactDir, target: base.artifactDir, mode: "rw" },
     // Persistent /tmp and /var/tmp. Nothing an agent leaves in them is lost to a stop or a
     // recreate, which is the difference between a container channel and the host backend.
-    ...PERSISTENT_TMP_DIRS.map(({ kind, dir, target }) => ({
+    ...PERSISTENT_TMP_DIRS.map(({ kind, target }) => ({
       kind,
-      type: "bind",
-      source: base.artifactDir ? path.join(base.artifactDir, dir) : "",
+      type: "volume",
+      source: base.container?.tmpVolumes?.[kind] || "",
       target,
       mode: "rw",
     })),
@@ -495,11 +499,12 @@ export function createContainerLifecycle({
       throw new Error(`could not remove container ${name}: ${String(result.stderr || "").trim()}`);
     }
     if (!preserveLeases) reaper.forget(name);
-    if (volumes) {
-      const removed = await cli.runWith(caps, ["volume", "rm", volumes], { timeoutMs: 60_000 });
+    // One `volume rm` per volume: a missing one must not keep the others from going.
+    for (const volume of [volumes].flat().filter(Boolean)) {
+      const removed = await cli.runWith(caps, ["volume", "rm", volume], { timeoutMs: 60_000 });
       if (removed.code !== 0 && !/no such volume|not found/i.test(String(removed.stderr || ""))) {
-        if (strictVolumes) throw new Error(`could not remove smoke HOME volume ${volumes}`);
-        log(`[container] could not remove volume ${volumes}: ${String(removed.stderr || "").trim()}`);
+        if (strictVolumes) throw new Error(`could not remove smoke volume ${volume}`);
+        log(`[container] could not remove volume ${volume}: ${String(removed.stderr || "").trim()}`);
       }
     }
   }
@@ -631,9 +636,10 @@ export function createContainerLifecycle({
     if (!name) return;
     const caps = await cli.probe(target.settings, { image: target.settings?.image });
     if (!caps.ok) throw new Error(caps.reason);
-    await removeContainer(caps, name, { volumes: volumes ? target.container.homeVolume : "", strictVolumes });
+    const channelVolumes = [target.container.homeVolume, ...Object.values(target.container.tmpVolumes || {})];
+    await removeContainer(caps, name, { volumes: volumes ? channelVolumes : "", strictVolumes });
     await releaseEgressFor(target);
-    log(`[container] removed ${name}${volumes ? " and its HOME volume" : ""}${reason ? ` (${reason})` : ""}`);
+    log(`[container] removed ${name}${volumes ? " and its HOME and temp volumes" : ""}${reason ? ` (${reason})` : ""}`);
   }
 
   // Boot reconcile: every engine process inside a RUNNING container belonged to the previous

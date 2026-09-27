@@ -7,7 +7,7 @@
 // message naming the remedy. It NEVER silently falls back to the host backend — only the explicit
 // gateway kill switch does that, in resolve.js.
 import { channelArtifactDir, runtimeSocketDir } from "../../config/paths.js";
-import { containerLabels, containerName, homeVolumeName } from "./names.js";
+import { containerLabels, containerName, homeVolumeName, tmpVolumeNames } from "./names.js";
 import { createContainerCli } from "./cli.js";
 import { createContainerImage } from "./image.js";
 import { createContainerLifecycle, buildMounts, containerFingerprint, volumeHostPath } from "./lifecycle.js";
@@ -104,6 +104,8 @@ export const containerBackend = Object.freeze({
     const container = {
       name,
       homeVolume: homeVolumeName(base),
+      // The persistent /tmp and /var/tmp volumes, keyed by mount kind (lifecycle.js).
+      tmpVolumes: tmpVolumeNames(base),
       // Host volume location for legacy adoption discovery only. Usage reads inside the
       // runtime; this location is commonly unreadable under rootless Podman.
       homeVolumeHostPath: volumeHostPath(runtime().cli.peek(), homeVolumeName(base)),

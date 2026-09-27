@@ -140,8 +140,8 @@ test("create argv: podman keep-id vs docker --user, with the hardening flags and
   assert.equal(podmanArgs.filter((a) => a === "--tmpfs").length, 1);
   assert.ok(!podmanArgs.some((a) => typeof a === "string" && a.startsWith("/tmp:")), "/tmp must not be a tmpfs");
   assert.ok(!podmanArgs.some((a) => typeof a === "string" && a.startsWith("/var/tmp:")), "/var/tmp must not be a tmpfs");
-  assert.ok(podmanArgs.includes(`${path.join(t.artifactDir, "tmp")}:/tmp`), "/tmp is bind-mounted from the channel's artifact dir");
-  assert.ok(podmanArgs.includes(`${path.join(t.artifactDir, "var-tmp")}:/var/tmp`));
+  assert.ok(podmanArgs.includes(`${t.container.tmpVolumes.tmp}:/tmp`), "/tmp is the channel's own temp volume");
+  assert.ok(podmanArgs.includes(`${t.container.tmpVolumes["var-tmp"]}:/var/tmp`));
   assert.deepEqual(podmanArgs.slice(-3), ["cg-init", "sleep", "infinity"]);
   assert.equal(podmanArgs[podmanArgs.length - 4], "channelgate/runtime:latest");
   assert.ok(podmanArgs.includes("cg.fingerprint=c1-abc"));
@@ -302,8 +302,7 @@ test("stop / rm / inspect argv, and resumeCommand wraps the engine's own command
     await containerBackend.destroy(t, { volumes: true, reason: "channel deleted" });
     const rm = fake.last("rm");
     assert.deepEqual(rm, ["podman", "rm", "-f", t.container.name]);
-    const volume = fake.last("volume");
-    assert.deepEqual(volume, ["podman", "volume", "rm", t.container.homeVolume]);
+    assert.deepEqual(fake.find("volume"), [t.container.homeVolume, t.container.tmpVolumes.tmp, t.container.tmpVolumes["var-tmp"]].map((v) => ["podman", "volume", "rm", v]));
     const described = await containerBackend.describe(t);
     assert.equal(described.state, "missing");
     const inspect = fake.last("inspect");
