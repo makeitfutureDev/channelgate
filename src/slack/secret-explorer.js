@@ -44,6 +44,13 @@ export const SECRETS_NAME_BLOCK_ID = "secret_name";
 export const SECRETS_NAME_INPUT_ACTION_ID = "cg_channel_secrets_name_value";
 export const SECRETS_VALUE_BLOCK_ID = "secret_value";
 export const SECRETS_VALUE_INPUT_ACTION_ID = "cg_channel_secrets_value_value";
+// Visibility (hidden / readable / auto) and "Used on domains". Their action ids deliberately do NOT
+// match SECRETS_ACTION_PATTERN: they are form inputs, read on submit, never button actions.
+export const SECRETS_MODE_BLOCK_ID = "secret_mode";
+export const SECRETS_MODE_INPUT_ACTION_ID = "cg_secret_form_mode";
+export const SECRETS_HOSTS_BLOCK_ID = "secret_hosts";
+export const SECRETS_HOSTS_INPUT_ACTION_ID = "cg_secret_form_hosts";
+export const SECRET_MODES = Object.freeze(["auto", "hidden", "readable"]);
 const EXPIRED = "This secrets manager expired. Open it again with `/secrets`.";
 
 export function actionValue(op, extra = {}) {
@@ -115,7 +122,19 @@ export function describeSecret(entry = {}) {
   // An entry whose provider this build has no resolver for is SHOWN, not hidden — it is why runs
   // in this channel are failing, and hiding it would leave that unexplained.
   const unresolvable = entry.resolvable === false ? `  ·  ⚠️ provider \`${entry.provider}\` can't be resolved by this build — runs here will fail until it is removed or the build supports it` : "";
-  return `*${entry.name}* — ${maskLabel(entry)}${trail ? `  ·  set ${trail}` : ""}${unresolvable}`;
+  return `*${entry.name}* — ${maskLabel(entry)}${visibilityLabel(entry)}${trail ? `  ·  set ${trail}` : ""}${unresolvable}`;
+}
+
+// How a container receives it (src/gateway/egress/catalog-rules.js): a placeholder (hidden) or the
+// raw value (readable), with the servers it may reach and why — no value, no tail beyond maskLabel.
+export function visibilityLabel(entry = {}) {
+  if (entry.approval === true) {
+    const hosts = (entry.hosts || []).join(", ");
+    return `  ·  🔒 hidden — ${hosts ? `approved for ${hosts}` : "each new server asks an admin once"}`;
+  }
+  if (entry.protected === true) return `  ·  🔒 hidden — used on ${(entry.hosts || []).join(", ")}`;
+  if (entry.protected === false) return `  ·  👁 readable${entry.exposureReason ? ` (${entry.exposureReason})` : ""}`;
+  return "";
 }
 
 // Per-scope copy. Kept in one table so a scope cannot ship with a heading that says one thing and
@@ -226,7 +245,7 @@ export function buildSecretsView(scopes = {}, state = {}, { channelName = "", ma
     type: "modal",
     callback_id: "cg_channel_secrets_modal",
     private_metadata: secretsMetadata(state),
-    title: plain("Secrets"),
+    title: plain("Variables"),
     close: plain("Done"),
     blocks,
   };
@@ -282,6 +301,35 @@ export function buildSecretFormView(state = {}, { channelName = "", name = "", s
         },
         hint: plain(`Values shorter than ${MIN_MASKABLE_LENGTH} characters are listed without a visible tail.`),
       },
+      {
+        type: "input",
+        block_id: SECRETS_MODE_BLOCK_ID,
+        optional: true,
+        label: plain("Visibility in the container"),
+        element: {
+          type: "radio_buttons",
+          action_id: SECRETS_MODE_INPUT_ACTION_ID,
+          options: [
+            { text: plain("Auto (recommended)"), value: "auto", description: plain("Hidden for web API tokens; readable for passwords, database/SMTP logins, signing keys and configuration.") },
+            { text: plain("Hidden"), value: "hidden", description: plain("Programs get a placeholder; the gateway puts the real value into HTTPS requests. Kept readable if it looks like an SMTP/database login and no domain is given.") },
+            { text: plain("Readable"), value: "readable", description: plain("Programs get the real value.") },
+          ],
+        },
+        hint: plain("Leave unselected to keep the current setting when updating."),
+      },
+      {
+        type: "input",
+        block_id: SECRETS_HOSTS_BLOCK_ID,
+        optional: true,
+        label: plain("Used on domains"),
+        element: {
+          type: "plain_text_input",
+          action_id: SECRETS_HOSTS_INPUT_ACTION_ID,
+          placeholder: plain("api.example.com, other.example.com"),
+          max_length: 1000,
+        },
+        hint: plain("Optional. The value stays hidden and works only on these domains, with no approval needed. Never a shared suffix like *.vercel.app. Leave empty to keep the current list."),
+      },
     ],
   };
 }
@@ -290,7 +338,7 @@ export function buildSecretsErrorView(message) {
   return {
     type: "modal",
     callback_id: "cg_channel_secrets_error",
-    title: plain("Channel secrets"),
+    title: plain("Variables"),
     close: plain("Close"),
     blocks: [{ type: "section", text: mrkdwn(`⚠️ ${String(message || "Something went wrong.")}`) }],
   };
@@ -300,8 +348,13 @@ export function buildSecretsErrorView(message) {
 // in this module that touches one, and it is handed straight to channel-env.js by the caller.
 export function readSecretForm(view = {}) {
   const values = view?.state?.values || {};
+  const mode = String(values[SECRETS_MODE_BLOCK_ID]?.[SECRETS_MODE_INPUT_ACTION_ID]?.selected_option?.value || "");
+  const hosts = String(values[SECRETS_HOSTS_BLOCK_ID]?.[SECRETS_HOSTS_INPUT_ACTION_ID]?.value || "").trim();
   return {
     name: String(values[SECRETS_NAME_BLOCK_ID]?.[SECRETS_NAME_INPUT_ACTION_ID]?.value || "").trim(),
     value: String(values[SECRETS_VALUE_BLOCK_ID]?.[SECRETS_VALUE_INPUT_ACTION_ID]?.value || "").trim(),
+    // Absent = keep what is stored (a rotation from this form must not reset either).
+    ...(SECRET_MODES.includes(mode) ? { exposure: mode } : {}),
+    ...(hosts ? { hosts } : {}),
   };
 }

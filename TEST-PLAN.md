@@ -269,7 +269,7 @@ a Slack test channel `p4-codex` on engine Codex with *Allow network* OFF, and a 
       sh -c 'printf "{\"tokens\":{\"refresh_token\":\"x\"}}" > /home/agent/.codex/auth.json'`, then
       `podman restart <container>`: the file is gone. Pass: gone.
 - [ ] UNEXECUTED (Claude AND Codex) — strict default. On a FRESH install (empty runtime root): the
-      Settings page shows *Withhold unprotected secrets* checked; add channel secret `RAW_THING`
+      Settings page shows *Withhold readable variables* checked; add channel secret `RAW_THING`
       (no hosts) and ask each engine "is RAW_THING set? answer yes or no, never print it" → "no";
       `list_secrets` ends with `**Finding:** 1 secret has no egress rule — \`RAW_THING\`: WITHHELD
       …`. On an UPGRADED install (a pre-P4 runtime root): the box is unchecked after the first boot,
@@ -597,7 +597,7 @@ block (`running: true`) before starting.
       none) and `VERCEL_TOKEN` (the name `vercel` reads). Any other name needs explicit *Used on
       hosts* on the entry AND an explicit hand-over (`vercel whoami --token "$NAME"`); a secret whose
       name the CLI does not read leaves it logged out, and one that matches no swap rule is injected
-      RAW while *Withhold unprotected secrets* is off, so neither satisfies this gate. Set them as
+      RAW while *Withhold readable variables* is off, so neither satisfies this gate. Set them as
       channel secrets; switch network ON. Ask the agent to run `printenv <name> | cut -c1-6` for each
       secret, then the three commands. Evidence: each prints `cgph_c` (a host-side `podman exec <c>
       printenv` reads the container-level env, where per-exec secrets are absent by design); all
@@ -672,6 +672,17 @@ block (`running: true`) before starting.
       its rule now swaps there. Proxy end-to-end (`test/egress-proxy.test.js`): approved server gets
       the real value in a custom header; another server gets 403 with the exact detail, the upstream
       sees nothing, and `onApprovalNeeded` receives secret, scope and host.
+- [x] Unit — the add-variable form and visibility rule: the Slack form's Visibility (auto/hidden/
+      readable) and Used-on-domains inputs are optional, never preselected and never button actions;
+      leaving them out keeps the stored choice across a rotation, `auto` clears it, an unknown mode is
+      refused; hidden chosen for an SMTP/database/password-looking name stays readable with the
+      "kept readable although hidden was chosen" reason, while declared domains hide it anyway; each
+      row's label states hidden/readable and why (`test/egress-secret-approval.test.js`).
+- [ ] LIVE (engine-independent: Slack UI only) — Settings → Variables → Add: `QA_FORM_TOKEN` with
+      Visibility *Hidden*, no domains → the row reads "🔒 hidden — each new server asks an admin once";
+      add `QA_FORM_SMTP_PASSWORD` with Visibility *Hidden* → the row reads "👁 readable (kept readable
+      although hidden was chosen…)"; update `QA_FORM_TOKEN` with a new value and nothing else chosen →
+      still hidden. Remove both.
 - [ ] LIVE (Claude: `cg-qa-auto`; Codex: `cg-qa-private-auto`; both Auto, *Allow network* ON) —
       setup: channel secrets `CG_QA_HIDDEN_TOKEN` = `cg-qa-dummy-hidden-0001` and
       `CG_QA_DB_PASSWORD` = `cg-qa-dummy-db-0001` (dummy values; remove both afterwards). Author

@@ -20,7 +20,7 @@
 import { createHash } from "node:crypto";
 import { PASSTHROUGH_ENV_NAMES } from "../engines/child-env.js";
 import { EGRESS_ENV_NAMES } from "../runtimes/container/egress-env.js";
-import { EXPOSURES, MAX_APPROVED_HOSTS, approvedHostsOf, assertValidSwapRuleFields, isValidRuleHost, normalizeRuleHost, normalizeSwapRuleFields, rulesFor } from "../gateway/egress/catalog-rules.js";
+import { EXPOSURES, MAX_APPROVED_HOSTS, approvedHostsOf, exposureReasonText, secretExposure, assertValidSwapRuleFields, isValidRuleHost, normalizeRuleHost, normalizeSwapRuleFields, rulesFor } from "../gateway/egress/catalog-rules.js";
 
 export const MAX_CHANNEL_ENV_VARS = 32;
 export const MAX_CHANNEL_ENV_VALUE_BYTES = 16_384;
@@ -195,6 +195,8 @@ export function listEnvVars(env) {
       exposure: rulesFor(name, entry) ? "hidden" : "readable",
       approval: Boolean(rulesFor(name, entry)?.approval),
       exposureChoice: entry.exposure || "auto",
+      // Why it is hidden or readable, in words (a password-looking name, a URL value, a choice…).
+      exposureReason: rulesFor(name, entry)?.approval || !rulesFor(name, entry) ? exposureReasonText(secretExposure(name, entry)) : "known or declared destination",
       // A tail only exists for a provider that stores the value here. Anything else lists as
       // "set, somewhere else" — which is also how an entry this build cannot resolve shows up,
       // rather than vanishing from the admin's view.
@@ -217,7 +219,7 @@ export function listChannelEnv(meta = {}) {
 // `hosts` / `headers` / `format` are the optional egress rule ("used on hosts"). Left undefined, a
 // rewrite KEEPS the stored rule — rotating a value from a surface that does not show the rule must
 // not silently turn a protected secret into a raw one; an empty list or "" clears it.
-export function setChannelEnvVar(env, { name, value, provider = "local", ref = "", hosts, headers, format, actor = "", now = Date.now(), scopeNoun = "This channel" } = {}) {
+export function setChannelEnvVar(env, { name, value, provider = "local", ref = "", hosts, headers, format, exposure, actor = "", now = Date.now(), scopeNoun = "This channel" } = {}) {
   const key = assertValidEnvName(name);
   if (!Object.hasOwn(PROVIDERS, provider)) throw new Error(`Unknown secret provider "${provider}".`);
   const current = normalizeChannelEnv(env);
@@ -229,9 +231,14 @@ export function setChannelEnvVar(env, { name, value, provider = "local", ref = "
   const stored = PROVIDERS[provider].store({ value, ref });
   // A rotated value keeps the servers approved for this secret and its hidden/readable choice:
   // both describe the secret, not one value of it.
+  // `exposure` left undefined keeps the stored choice (like the rule fields); "auto" or "" clears it.
+  if (exposure !== undefined && exposure !== null && exposure !== "" && exposure !== "auto" && !EXPOSURES.includes(exposure)) {
+    throw new Error(`Unknown visibility "${exposure}" — use auto, hidden or readable.`);
+  }
+  const chosen = exposure === undefined || exposure === null ? current[key]?.exposure : EXPOSURES.includes(exposure) ? exposure : "";
   const kept = {
     ...(current[key]?.approvedHosts ? { approvedHosts: current[key].approvedHosts } : {}),
-    ...(current[key]?.exposure ? { exposure: current[key].exposure } : {}),
+    ...(chosen ? { exposure: chosen } : {}),
   };
   return { ...current, [key]: { provider, ...stored, ...rules, ...kept, setBy: String(actor || ""), setAt: now } };
 }
@@ -324,7 +331,7 @@ export function safeSpawnEnv(resolved = {}) {
 // Absent fields stay absent (the stored rule is kept); validation is setChannelEnvVar's.
 export function swapRuleFieldsFrom(body = {}) {
   const out = {};
-  for (const field of ["hosts", "headers", "format"]) {
+  for (const field of ["hosts", "headers", "format", "exposure"]) {
     if (body && Object.hasOwn(body, field) && body[field] !== undefined) out[field] = body[field];
   }
   return out;

@@ -28,10 +28,11 @@ export function mountSecretEditor({
   const valueInput = root.querySelector(".secret-value");
   const saveButton = root.querySelector(".secret-save");
   const hostsInput = root.querySelector(".secret-hosts");
+  const modeInput = root.querySelector(".secret-mode");
   let current = Array.isArray(vars) ? vars : [];
 
   nameInput.placeholder = namePlaceholder;
-  for (const el of [nameInput, valueInput, hostsInput, saveButton]) if (el) el.disabled = disabled;
+  for (const el of [nameInput, valueInput, hostsInput, modeInput, saveButton]) if (el) el.disabled = disabled;
 
   const render = () => {
     state.textContent = current.length ? `${current.length} set` : "none";
@@ -62,7 +63,7 @@ export function mountSecretEditor({
         ? ` · hidden — approved servers: ${(entry.hosts || []).join(", ") || "none yet (first use asks an admin)"}`
         : entry.protected === true
           ? ` · protected via egress proxy (${(entry.hosts || []).join(", ")})`
-          : entry.protected === false ? " · readable (raw)" : "";
+          : entry.protected === false ? ` · readable (raw)${entry.exposureReason ? ` — ${entry.exposureReason}` : ""}` : "";
       mask.textContent = `${entry.last4 ? `••••${entry.last4}` : "•••••••"}${trail ? ` · ${trail}` : ""}${egress}`
         + (entry.resolvable === false ? ` · ⚠️ provider "${entry.provider}" can't be resolved by this build` : "");
       row.append(name, mask);
@@ -119,12 +120,15 @@ export function mountSecretEditor({
     hint.textContent = "saving…";
     try {
       // "Used on hosts": sent only when typed, so rotating a value keeps the stored rule.
+      // Visibility likewise: "" (keep) sends nothing, so a rotation keeps the stored choice.
       const hosts = hostsInput ? hostsInput.value.trim() : "";
-      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify(hosts ? { value, hosts } : { value }) });
+      const exposure = modeInput ? modeInput.value : "";
+      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ value, ...(hosts ? { hosts } : {}), ...(exposure ? { exposure } : {}) }) });
       current = result.vars || [];
       valueInput.value = "";
       nameInput.value = "";
       if (hostsInput) hostsInput.value = "";
+      if (modeInput) modeInput.value = "";
       hint.textContent = savedText(name);
       render();
     } catch (e) {
@@ -146,7 +150,13 @@ export function secretEditorMarkup() {
     <div class="secret-add">
       <input class="secret-name" type="text" autocomplete="off" spellcheck="false" />
       <input class="secret-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
-      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Used on hosts (optional) — api.example.com, *.example.com" title="Containers then receive a placeholder the egress proxy swaps for this value only on these hosts (Authorization header). Leave blank for the built-in rule (GitHub, Vercel, Supabase, Make, Composio names) or a raw value. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
+      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Used on domains (optional) — api.example.com, *.example.com" title="Containers then receive a placeholder the egress proxy swaps for this value only on these hosts (Authorization header), with no approval needed. Leave blank for the built-in rule (GitHub, Vercel, Supabase, Make, Composio names), or for a hidden secret whose first use on each new server asks an admin. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
+      <select class="secret-mode" title="How containers receive it. Auto: hidden for web API tokens, readable for passwords, database/SMTP logins, signing keys and configuration. Hidden: a placeholder the egress proxy swaps into HTTPS requests (kept readable if it looks like an SMTP/database login and no hosts are given). Readable: the real value.">
+        <option value="">Visibility: keep current</option>
+        <option value="auto">Auto (recommended)</option>
+        <option value="hidden">Hidden</option>
+        <option value="readable">Readable</option>
+      </select>
       <button type="button" class="ghost secret-save">Save variable</button>
     </div>
     <em class="state secret-hint"></em>`;

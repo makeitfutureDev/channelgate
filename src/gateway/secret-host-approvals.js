@@ -67,12 +67,12 @@ export function buildSecretHostAction({ channelId, slug, authorId = "", threadKe
 }
 
 function describe(action) {
-  const where = action.scope === "organization" ? "the organization-wide secret"
-    : action.scope === "personal" ? `<@${action.ownerId}>'s personal secret`
-      : "this conversation's secret";
+  const where = action.scope === "organization" ? "the organization-wide variable"
+    : action.scope === "personal" ? `<@${action.ownerId}>'s personal variable`
+      : "this conversation's variable";
   const reach = action.scope === "organization" ? " It is shared by every conversation, so approving applies in all of them." : "";
   return `Allow ${where} \`${action.secretName}\` to be sent to \`${action.host}\`?${reach}\n\n`
-    + `A program in this channel's container (a turn in this thread, a background job or an SSH session) just tried to use it there. Approving remembers ${action.host} for this secret: `
+    + `A program in this channel's container (a turn in this thread, a background job or an SSH session) just tried to use it there. Approving remembers ${action.host} for this variable: `
     + "every later run, schedule and SSH session may use it on that server (and only the servers approved so far). "
     + "Deny if you do not recognise the server — the request was refused and nothing was sent.";
 }
@@ -103,7 +103,7 @@ export async function requestSecretHostApprovals(refusals, { channelId, slug, ho
     });
     out.push(await requester({
       channelId, slug, authorId: turn.ownerId, threadKey: turn.threadKey,
-      toolName: `Use secret ${action.secretName} on ${host}`,
+      toolName: `Use variable ${action.secretName} on ${host}`,
       toolInput: { details: describe(action) },
       approvalType: "agent",
       requiredTier: "admin",

@@ -6,7 +6,7 @@ export const MENU_RESUME_ACTION_ID = "cg_menu_resume";
 
 export function buildMenuCard(channelId, threadTs, authorId) {
   return {
-    text: "Channel menu: Resume, Files, Secrets, Settings",
+    text: "Channel menu: Resume, Files, Variables, Settings",
     blocks: [{ type: "actions", elements: [
       {
         type: "button", action_id: MENU_RESUME_ACTION_ID,
@@ -15,7 +15,7 @@ export function buildMenuCard(channelId, threadTs, authorId) {
         value: JSON.stringify({ c: channelId, t: threadTs || "", u: authorId }),
       },
       filesButton(channelId, threadTs, authorId, "📂 Files"),
-      secretsButton(channelId, threadTs, authorId, "🔑 Secrets"),
+      secretsButton(channelId, threadTs, authorId, "🔑 Variables"),
       settingsButton(channelId, threadTs, authorId, true),
     ] }],
   };

@@ -11,7 +11,7 @@ ensureTestEnv();
 
 const { mintPlaceholder } = await import("../src/gateway/egress/placeholders.js");
 const rules = await import("../src/gateway/egress/rules.js");
-const { rulesFor, secretExposure } = await import("../src/gateway/egress/catalog-rules.js");
+const { rulesFor, secretExposure, exposureReasonText } = await import("../src/gateway/egress/catalog-rules.js");
 const { patchChannelEnv, patchEnvEntry, listEnvVars } = await import("../src/config/channel-env.js");
 const { engineHostsFor } = await import("../src/gateway/egress/engine-hosts.js");
 const liveness = await import("../src/gateway/egress/liveness.js");
@@ -66,10 +66,17 @@ test("kind detection: web tokens are hidden, passwords, connection strings and s
   assert.equal(secretExposure("SLACK_HOOK", {}, "https://hooks.slack.com/services/x").exposure, "readable");
   assert.equal(secretExposure("SUPA", {}, "sbp_1234").exposure, "hidden");
   assert.equal(secretExposure("CREDS", {}, "/home/agent/key.json").exposure, "readable", "a file path");
-  // Explicit choices.
-  assert.equal(secretExposure("SMTP_PASSWORD", { exposure: "hidden" }).exposure, "hidden");
+  // Explicit choices. Readable always wins. Hidden wins for a web-looking secret — but a secret whose
+  // kind says it is used outside HTTPS (SMTP, database, signing, configuration) stays READABLE when
+  // chosen hidden, because a placeholder could never work there (owner ask, 2026-09-27); declaring
+  // the domains it is used on is how to hide it anyway.
   assert.equal(secretExposure("MAKE_API", { exposure: "readable" }).exposure, "readable");
-  assert.equal(rulesFor("GMAIL_APP_PASSWORD", { exposure: "hidden" }).source, "approval");
+  assert.equal(secretExposure("MAKE_API", { exposure: "hidden" }).exposure, "hidden");
+  const kept = secretExposure("SMTP_PASSWORD", { exposure: "hidden" });
+  assert.deepEqual(kept, { exposure: "readable", reason: "kind", kind: "name" });
+  assert.match(exposureReasonText(kept), /kept readable although hidden was chosen: it looks like a password[^\n]*add the domains/);
+  assert.equal(rulesFor("GMAIL_APP_PASSWORD", { exposure: "hidden" }), null);
+  assert.equal(rulesFor("BITBUCKET_APP_PASSWORD", { exposure: "hidden", hosts: ["api.bitbucket.org"] }).source, "entry", "declared domains hide it anyway");
   assert.equal(rulesFor("GITHUB_TOKEN", { exposure: "readable" }), null, "readable wins even over a catalog rule");
   // Catalog and declared rules are untouched.
   assert.equal(rulesFor("GITHUB_TOKEN", {}).source, "catalog:github");
@@ -175,7 +182,7 @@ test("an approval request posts ONE durable admin card per secret+server in the 
     assert.equal(req.requiredTier, "admin", "only an admin's click counts — never the run's own author");
     assert.equal(req.durableAction.kind, approvals.SECRET_HOST_ACTION);
     assert.deepEqual({ secretName: req.durableAction.secretName, scope: req.durableAction.scope, host: req.durableAction.host }, { secretName: "PAY_API_TOKEN", scope: "organization", host: "api.pay.example" });
-    assert.match(req.toolInput.details, /^Allow the organization-wide secret `PAY_API_TOKEN` to be sent to `api\.pay\.example`\? It is shared by every conversation, so approving applies in all of them\./);
+    assert.match(req.toolInput.details, /^Allow the organization-wide variable `PAY_API_TOKEN` to be sent to `api\.pay\.example`\? It is shared by every conversation, so approving applies in all of them\./);
     // Never for an engine API.
     assert.deepEqual(await approvals.requestSecretHostApprovals([{ ...refusal, host: "api.anthropic.com" }], { channelId: "C_APPR", slug: "appr", hostname: "api.anthropic.com" }), []);
     assert.equal(req.durableAction.entrySetAt, scoped.getOrgEnv().PAY_API_TOKEN.setAt, "the card names the secret's current version");
@@ -231,4 +238,37 @@ test("the per-attempt note tells the agent a hidden secret's first use on a new 
   assert.match(prompt, /PAY_API_TOKEN is HIDDEN: [^\n]*on servers an admin approved \(none yet\)[^\n]*403 secret-refused[^\n]*retry the same request/);
   assert.doesNotMatch(prompt, /PAY_API_TOKEN is proxy-protected/, "not described as a fixed-destination secret");
   assert.ok(!prompt.includes(ph));
+});
+
+test("the add-variable form: visibility and domains are optional, and leaving them out keeps what is stored", async () => {
+  const { buildSecretFormView, readSecretForm, visibilityLabel, SECRETS_MODE_BLOCK_ID, SECRETS_MODE_INPUT_ACTION_ID, SECRETS_HOSTS_BLOCK_ID, SECRETS_HOSTS_INPUT_ACTION_ID, SECRETS_NAME_BLOCK_ID, SECRETS_NAME_INPUT_ACTION_ID, SECRETS_VALUE_BLOCK_ID, SECRETS_VALUE_INPUT_ACTION_ID, SECRETS_ACTION_PATTERN } = await import("../src/slack/secret-explorer.js");
+  const view = buildSecretFormView({}, { scope: "channel", channelName: "qa" });
+  const mode = view.blocks.find((b) => b.block_id === SECRETS_MODE_BLOCK_ID);
+  assert.equal(mode.optional, true);
+  assert.deepEqual(mode.element.options.map((o) => o.value), ["auto", "hidden", "readable"]);
+  assert.equal(mode.element.initial_option, undefined, "nothing preselected: an update keeps the stored choice");
+  assert.equal(view.blocks.find((b) => b.block_id === SECRETS_HOSTS_BLOCK_ID).optional, true);
+  for (const id of [SECRETS_MODE_INPUT_ACTION_ID, SECRETS_HOSTS_INPUT_ACTION_ID]) assert.ok(!SECRETS_ACTION_PATTERN.test(id), `${id} is a form input, never a button action`);
+  const submitted = (extra = {}) => ({ state: { values: {
+    [SECRETS_NAME_BLOCK_ID]: { [SECRETS_NAME_INPUT_ACTION_ID]: { value: "PAY_TOKEN" } },
+    [SECRETS_VALUE_BLOCK_ID]: { [SECRETS_VALUE_INPUT_ACTION_ID]: { value: "value-1234567890" } },
+    ...extra,
+  } } });
+  assert.deepEqual(readSecretForm(submitted()), { name: "PAY_TOKEN", value: "value-1234567890" });
+  assert.deepEqual(readSecretForm(submitted({
+    [SECRETS_MODE_BLOCK_ID]: { [SECRETS_MODE_INPUT_ACTION_ID]: { selected_option: { value: "hidden" } } },
+    [SECRETS_HOSTS_BLOCK_ID]: { [SECRETS_HOSTS_INPUT_ACTION_ID]: { value: " api.pay.example " } },
+  })), { name: "PAY_TOKEN", value: "value-1234567890", exposure: "hidden", hosts: "api.pay.example" });
+  // Storage: an explicit choice is kept across a rotation that does not name one; auto clears it.
+  let env = patchChannelEnv({}, { set: { name: "PAY_TOKEN", value: "value-1234567890", exposure: "readable" } });
+  env = patchChannelEnv(env, { set: { name: "PAY_TOKEN", value: "value-0987654321" } });
+  assert.equal(env.PAY_TOKEN.exposure, "readable");
+  env = patchChannelEnv(env, { set: { name: "PAY_TOKEN", value: "value-0987654321", exposure: "auto" } });
+  assert.equal(env.PAY_TOKEN.exposure, undefined);
+  assert.throws(() => patchChannelEnv(env, { set: { name: "PAY_TOKEN", value: "value-0987654321", exposure: "loud" } }), /Unknown visibility/);
+  // The row says how a container receives it, and why.
+  const smtp = listEnvVars(patchChannelEnv({}, { set: { name: "SMTP_PASSWORD", value: "value-1234567890", exposure: "hidden" } }))[0];
+  assert.match(visibilityLabel(smtp), /readable \(kept readable although hidden was chosen/);
+  const pay = listEnvVars(patchChannelEnv({}, { set: { name: "PAY_TOKEN", value: "value-1234567890" } }))[0];
+  assert.match(visibilityLabel(pay), /hidden — each new server asks an admin once/);
 });

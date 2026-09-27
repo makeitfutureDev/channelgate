@@ -177,7 +177,7 @@ export function register(server, ctx) {
         // Every run is told the organization NAMES in its prompt already; the tails and authors
         // are the admin surface's, like the UI.
         // Protection is a rule fact, not a secret: shown to everyone who sees the names.
-        const vars = noteUnruled(listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts, exposure: v.exposure, approval: v.approval, exposureChoice: v.exposureChoice })));
+        const vars = noteUnruled(listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts, exposure: v.exposure, approval: v.approval, exposureChoice: v.exposureChoice, exposureReason: v.exposureReason })));
         sections.push(`**Organization** (every conversation)\n${renderVars(vars, "_None set._")}`);
       }
       if (wanted === "all" || wanted === "personal") {
@@ -215,18 +215,22 @@ export function register(server, ctx) {
         "`headers`, `format`) declares where the gateway's egress proxy may use it: a container then " +
         "holds only a placeholder, swapped for the real value on those hosts alone. Well-known names " +
         "(GitHub, Vercel, Supabase, Make, Composio tokens) are protected without it. Never declare a " +
-        "multi-tenant suffix such as *.vercel.app or *.github.io — it covers other customers' sites.",
+        "multi-tenant suffix such as *.vercel.app or *.github.io — it covers other customers' sites. " +
+        "Optional `mode`: auto (default) / hidden / readable — how containers receive it; hidden without " +
+        "`hosts` stays readable if the name or value shows it is used outside HTTPS (SMTP, database, " +
+        "signing key). Left out on an update, the stored choice is kept.",
       inputSchema: {
         name: z.string(),
         value: z.string(),
         scope: z.enum(["personal", "organization", "my", "org"]).optional(),
         hosts: z.array(z.string()).max(16).optional(),
+        mode: z.enum(["auto", "hidden", "readable"]).optional(),
         headers: z.array(z.string()).max(8).optional(),
         format: z.enum(["bearer", "raw", "basic-password", "basic-user"]).optional(),
       },
     },
-    async ({ name, value, scope, hosts, headers, format }) => {
-      const rules = { ...(hosts !== undefined ? { hosts } : {}), ...(headers !== undefined ? { headers } : {}), ...(format !== undefined ? { format } : {}) };
+    async ({ name, value, scope, hosts, headers, format, mode }) => {
+      const rules = { ...(hosts !== undefined ? { hosts } : {}), ...(headers !== undefined ? { headers } : {}), ...(format !== undefined ? { format } : {}), ...(mode !== undefined ? { exposure: mode } : {}) };
       const target = scopeOf(scope, "personal");
       try {
         if (target === "organization") {

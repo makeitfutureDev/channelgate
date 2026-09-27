@@ -2750,7 +2750,7 @@ are retired, bullet by bullet; everything else stands.
   configuration (…_ID, _REPO, _ORG, _REGION, _USER, _URL…), or its value is a URL or a file path;
   otherwise HIDDEN — STRIPE_SECRET_KEY, API_SECRET and *_CLIENT_SECRET included. A readable name is
   injected raw and flagged `unprotected` — or withheld under `containerEgressSecretsStrict`
-  ("Withhold unprotected secrets"). A hidden one gets a placeholder behind an **approval rule**: a
+  ("Withhold readable variables"). A hidden one gets a placeholder behind an **approval rule**: a
   credential-like header or query parameter (the known auth headers, or a name with auth, token, key,
   secret, session, signature…), the bearer/raw/Basic positions, and only the servers an admin
   approved for that secret (`approvedHosts` on its entry, kept across a rotation). Presented to any
@@ -2769,7 +2769,19 @@ are retired, bullet by bullet; everything else stands.
   conversation = its managers, organization = admins, personal = the owner — but making a personal
   secret READABLE needs an admin's click, so a recruited bystander cannot approve it) overrides the
   kind; `list_secrets` and the admin secrets page show "hidden (placeholder); approved servers: …" /
-  "readable (raw)". Request bodies and URL paths are never rewritten. The proxy resolves the CURRENT
+  "readable (raw)". Request bodies and URL paths are never rewritten.
+  **Choosing it when adding a variable (2026-09-27):** the Slack add-variable form (now titled
+  *Variables* — the menu button, footer, Settings tab and admin UI say "variables", since a readable
+  value is configuration as often as a secret) and the admin secrets editor carry an optional
+  **Visibility** choice (Auto / Hidden / Readable) and an optional **Used on domains** field; leaving
+  either out on an update keeps what is stored, so a rotation never resets them. `set_secret` takes
+  the same `mode`. Readable always wins. Hidden wins for a web-looking variable; one whose name or
+  value says it is used outside HTTPS (SMTP, database, signing key, configuration) stays READABLE
+  even when hidden is chosen, because a placeholder could never work there — the listing says "kept
+  readable although hidden was chosen … add the domains it is used on to hide it", and declaring
+  domains does exactly that (an entry's own hosts win). Every row shows how containers receive it
+  and why (🔒 hidden — approved for … / each new server asks an admin once; 👁 readable (auto: it
+  looks like a password…)). The proxy resolves the CURRENT
   value per request from the store that owns it (rotation is live; the relay cached 60 s), and only
   while `canUse` passes: the placeholder's own channel (the organization's from any), live work in
   that channel (a turn, a job, a review or an SSH session — `liveness.js`), and for a personal

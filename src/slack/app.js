@@ -52,6 +52,7 @@ import {
   SECRETS_ADD_ORG_ACTION_ID, SECRETS_ADD_PERSONAL_ACTION_ID, normalizeSecretScope, scopeFromActionId,
   SECRETS_FORM_CALLBACK_ID, SECRETS_NAME_BLOCK_ID, SECRETS_REMOVE_ACTION_PREFIX, SECRETS_SHORTCUT_ID,
   SECRETS_VALUE_BLOCK_ID,
+  SECRETS_HOSTS_BLOCK_ID,
 } from "./secret-explorer.js";
 import {
   buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
@@ -77,6 +78,7 @@ import {
 } from "./channel-settings.js";
 import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, readAccessFieldValue } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
+import { assertValidSwapRuleFields } from "../gateway/egress/catalog-rules.js";
 // The two scopes that are not the channel's (config/scoped-env.js).
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../config/scoped-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
@@ -499,7 +501,7 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
     await ack({ response_action: "errors", errors: { [SECRETS_NAME_BLOCK_ID]: e.message.slice(0, 150) } });
     return;
   }
-  const { name: typedName, value } = readSecretForm(view);
+  const { name: typedName, value, ...rule } = readSecretForm(view);
   // Validate each field against its own input so the error lands on the box that is wrong.
   // assertValidEnvName returns the CANONICAL (uppercase) name — use that from here on so the
   // stored key, the "added vs updated" check, the audit line and the confirmation all agree.
@@ -507,6 +509,7 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
   let name = String(typedName || "").trim();
   try { name = assertValidEnvName(typedName); } catch (e) { errors[SECRETS_NAME_BLOCK_ID] = e.message.slice(0, 150); }
   try { assertValidEnvValue(value); } catch (e) { errors[SECRETS_VALUE_BLOCK_ID] = e.message.slice(0, 150); }
+  try { if (rule.hosts !== undefined) assertValidSwapRuleFields({ hosts: rule.hosts }); } catch (e) { errors[SECRETS_HOSTS_BLOCK_ID] = e.message.slice(0, 150); }
   if (Object.keys(errors).length > 0) {
     await ack({ response_action: "errors", errors });
     return;
@@ -523,16 +526,16 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
     let existed = false;
     if (scope === "organization") {
       existed = listOrgEnv().some((v) => v.name === name);
-      patchOrgEnv({ set: { name, value }, actor: `<@${clicker}>` });
+      patchOrgEnv({ set: { name, value, ...rule }, actor: `<@${clicker}>` });
       await logEvent("org_env_set", { name, actor: clicker });
     } else if (scope === "personal") {
       existed = (await listUserEnv(clicker)).some((v) => v.name === name);
-      await patchUserEnv(clicker, { set: { name, value } });
+      await patchUserEnv(clicker, { set: { name, value, ...rule } });
       await logEvent("user_env_set", { user: clicker, name, actor: clicker });
     } else {
       existed = listChannelEnv(await getChannelMeta(entry.slug)).some((v) => v.name === name);
       saved = await patchChannelMeta(entry.slug, (existing) => ({
-        env: patchChannelEnv(existing?.env, { set: { name, value }, actor: `<@${clicker}>` }),
+        env: patchChannelEnv(existing?.env, { set: { name, value, ...rule }, actor: `<@${clicker}>` }),
       }));
       await logEvent("channel_env_set", { slug: entry.slug, name, actor: clicker });
     }

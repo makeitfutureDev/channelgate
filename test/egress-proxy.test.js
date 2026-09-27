@@ -274,7 +274,7 @@ test("a hidden secret swaps in any header on its approved server; any other serv
   const before = seen.length;
   const res = await fetchVia({ host: "other.test", port: portB, path: "/new-server", headers: { authorization: `Bearer ${APPROVAL_PH}` } });
   assert.equal(res.status, 403);
-  assert.deepEqual(JSON.parse(res.body), { error: "secret-refused", detail: "The secret PAY_API_TOKEN has not been approved for other.test yet, so nothing was sent. An admin approves it with the card posted in this conversation's active thread (or with allow_secret_host); retry once it is approved." });
+  assert.deepEqual(JSON.parse(res.body), { error: "secret-refused", detail: "The variable PAY_API_TOKEN has not been approved for other.test yet, so nothing was sent. An admin approves it with the card posted in this conversation's active thread (or with allow_secret_host); retry once it is approved." });
   assert.equal(seen.length, before, "nothing reached the unapproved server");
   await waitFor(() => approvalAsks.length === 1, "the approval request");
   assert.equal(approvalAsks[0].hostname, "other.test");
