@@ -6455,6 +6455,13 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       runs `scripts/build-image.mjs`), accepts `--skip-image` / `CG_BUILD_IMAGE` to defer it, and
       names `npm run build:image` as the remedy when skipped or failed (automated:
       `test/container-image.test.js`).
+- [x] Unit: every container mounts Codex's socket directory `/tmp/codex-daemon-<uid>` as its own
+      1 MB tmpfs, mode 0700, owned by the run user — `U` on podman keep-id, `uid=`/`gid=` on docker,
+      never copying anything up (automated: `test/container-lifecycle.test.js`,
+      `test/container-cli.test.js`). Live: the Codex half of the CTR-30 home-guard case above must
+      show the member's read commands (`ls /home/management/qa-fixtures`) RUNNING and the write
+      refused with "Read-only file system" — not "app-server socket directory has an unsupported
+      host mount".
 - [x] Unit: durability — the mount contract keeps `/tmp` and `/var/tmp` as rw per-channel NAMED
       VOLUMES (`<container>-tmp`, `<container>-vtmp`; never a host path, never under the artifact
       dir, so nothing inside the container is visible at two paths), removed — one `volume rm` each,

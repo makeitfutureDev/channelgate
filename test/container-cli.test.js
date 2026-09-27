@@ -134,10 +134,13 @@ test("create argv: podman keep-id vs docker --user, with the hardening flags and
   assert.ok(podmanArgs.includes("--security-opt") && podmanArgs.includes("no-new-privileges"));
   assert.ok(podmanArgs.includes("--cap-drop") && podmanArgs.includes("ALL"));
   for (const cap of ["DAC_OVERRIDE", "CHOWN", "FOWNER"]) assert.ok(podmanArgs.includes(cap), `missing --cap-add ${cap}`);
-  // /run is the ONLY tmpfs: /tmp and /var/tmp are persistent bind mounts now, so the idle
-  // reaper's stop cannot empty what an agent parked there (test/container-durability.test.js).
+  // /run and Codex's 1 MB socket directory are the ONLY tmpfs: /tmp and /var/tmp are persistent
+  // volumes, so the idle reaper's stop cannot empty what an agent parked there
+  // (test/container-durability.test.js). The socket tmpfs is owned by the keep-id user (`U`),
+  // 0700, and never copies anything up — Codex's sandbox requires exactly that (live, 2026-09-27).
   assert.ok(podmanArgs.includes("/run:rw,noexec,size=64m"));
-  assert.equal(podmanArgs.filter((a) => a === "--tmpfs").length, 1);
+  const tmpfsArgs = podmanArgs.filter((a, i) => podmanArgs[i - 1] === "--tmpfs");
+  assert.deepEqual(tmpfsArgs.sort(), ["/run:rw,noexec,size=64m", `/tmp/codex-daemon-${t.container.uid}:rw,nosuid,nodev,noexec,size=1m,mode=0700,U,notmpcopyup`].sort());
   assert.ok(!podmanArgs.some((a) => typeof a === "string" && a.startsWith("/tmp:")), "/tmp must not be a tmpfs");
   assert.ok(!podmanArgs.some((a) => typeof a === "string" && a.startsWith("/var/tmp:")), "/var/tmp must not be a tmpfs");
   assert.ok(podmanArgs.includes(`${t.container.tmpVolumes.tmp}:/tmp`), "/tmp is the channel's own temp volume");
