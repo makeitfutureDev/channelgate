@@ -2740,9 +2740,36 @@ are retired, bullet by bullet; everything else stands.
   declared by an admin on the entry ("Used on hosts" in the admin secrets editor, `hosts`/
   `headers`/`format` on `set_secret`: ≤ 16 DNS names or `*.suffix`, ≤ 8 lowercase headers, one of
   bearer/raw/basic-password/basic-user), kept across a value rotation. Configuration names
-  (`GH_REPO`, `VERCEL_ORG_ID`) and raw-protocol passwords (`SUPABASE_DB_PASSWORD`) have no rule. A
-  name without a rule is injected raw and flagged `unprotected` — or withheld under
-  `containerEgressSecretsStrict` ("Withhold unprotected secrets"). The proxy resolves the CURRENT
+  (`GH_REPO`, `VERCEL_ORG_ID`) and raw-protocol passwords (`SUPABASE_DB_PASSWORD`) have no rule.
+  **A name without a rule is decided by its kind (2026-09-27, `secretExposure`; errs HIDDEN when
+  unsure):** READABLE when a name word marks a password, mail or signing secret (PASSWORD, PASS,
+  PWD, SMTP, IMAP, SIGNING, HMAC, ENCRYPTION, SSH…), a database word appears and the name does NOT
+  end in TOKEN/KEY (REDIS_URL readable, UPSTASH_REDIS_REST_TOKEN hidden), it ends in a local-signing
+  pair (WEBHOOK/AUTH/APP/JWT/SESSION/COOKIE_SECRET, SECRET_ACCESS_KEY, STORAGE_KEY, ENCRYPTION_KEY),
+  it is a known whole name (PGPASSWORD, NEXTAUTH_SECRET, KUBECONFIG…), its last word marks
+  configuration (…_ID, _REPO, _ORG, _REGION, _USER, _URL…), or its value is a URL or a file path;
+  otherwise HIDDEN — STRIPE_SECRET_KEY, API_SECRET and *_CLIENT_SECRET included. A readable name is
+  injected raw and flagged `unprotected` — or withheld under `containerEgressSecretsStrict`
+  ("Withhold unprotected secrets"). A hidden one gets a placeholder behind an **approval rule**: a
+  credential-like header or query parameter (the known auth headers, or a name with auth, token, key,
+  secret, session, signature…), the bearer/raw/Basic positions, and only the servers an admin
+  approved for that secret (`approvedHosts` on its entry, kept across a rotation). Presented to any
+  other server the proxy answers 403 `secret-refused` "…has not been approved for <host> yet, so
+  nothing was sent" and posts ONE durable card per secret+server in the channel's live thread
+  (`src/gateway/secret-host-approvals.js`, kind `secret_host`, requiredTier admin — the run's own
+  author never approves their own leak), at most 5 pending per channel and none again for the same
+  secret+server within 10 minutes (a deny or a loop does not re-post). The card names the secret's
+  VERSION (`setAt`): approved after the secret was deleted and re-created or re-set, it applies
+  nothing. Approving records the host on the secret, effective within the 5 s grant cache, for every
+  later run, schedule and SSH session. Never for a model API (the engines' and any configured Qwen
+  endpoint; checked even for an approved host, since a swapped value there would land in the model's
+  context), never for a wildcard, and a channel binding or liveness denial still wins over asking.
+  With no live thread (an SSH session or a job alone) no card is posted; an admin uses
+  `allow_secret_host` from the conversation's chat. `set_secret_mode` (hidden/readable/auto;
+  conversation = its managers, organization = admins, personal = the owner — but making a personal
+  secret READABLE needs an admin's click, so a recruited bystander cannot approve it) overrides the
+  kind; `list_secrets` and the admin secrets page show "hidden (placeholder); approved servers: …" /
+  "readable (raw)". Request bodies and URL paths are never rewritten. The proxy resolves the CURRENT
   value per request from the store that owns it (rotation is live; the relay cached 60 s), and only
   while `canUse` passes: the placeholder's own channel (the organization's from any), live work in
   that channel (a turn, a job, a review or an SSH session — `liveness.js`), and for a personal

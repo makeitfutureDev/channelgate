@@ -56,9 +56,13 @@ export function mountSecretEditor({
       ].filter(Boolean).join(" · ");
       // Egress protection (src/gateway/egress/): a protected secret reaches a container only as a
       // placeholder the proxy swaps on these hosts; an unprotected one is injected raw.
-      const egress = entry.protected === true
-        ? ` · protected via egress proxy (${(entry.hosts || []).join(", ")})`
-        : entry.protected === false ? " · unprotected (raw)" : "";
+      // A HIDDEN secret with no known destination (approval === true) is swapped only on servers an
+      // admin approved; its first use on a new server posts an approval card in the chat thread.
+      const egress = entry.approval === true
+        ? ` · hidden — approved servers: ${(entry.hosts || []).join(", ") || "none yet (first use asks an admin)"}`
+        : entry.protected === true
+          ? ` · protected via egress proxy (${(entry.hosts || []).join(", ")})`
+          : entry.protected === false ? " · readable (raw)" : "";
       mask.textContent = `${entry.last4 ? `••••${entry.last4}` : "•••••••"}${trail ? ` · ${trail}` : ""}${egress}`
         + (entry.resolvable === false ? ` · ⚠️ provider "${entry.provider}" can't be resolved by this build` : "");
       row.append(name, mask);

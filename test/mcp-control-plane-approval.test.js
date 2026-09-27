@@ -361,6 +361,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     // environment secret scopes that are not the channel's: each changes which account future runs
     // authenticate as, and the organization one does it for every conversation at once
     "set_secret", "remove_secret",
+    // hidden/readable and approved servers: readable hands containers the raw value, an approved
+    // server is where the real value may go (src/gateway/secret-host-approvals.js)
+    "set_secret_mode", "allow_secret_host",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
     // SSH access (src/gateway/ssh-access.js): a registered key is what a grant turns into a shell
     // inside a container, and a grant IS that shell — persistent, and never on the model's word alone.

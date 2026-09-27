@@ -20,7 +20,7 @@
 import { createHash } from "node:crypto";
 import { PASSTHROUGH_ENV_NAMES } from "../engines/child-env.js";
 import { EGRESS_ENV_NAMES } from "../runtimes/container/egress-env.js";
-import { assertValidSwapRuleFields, normalizeSwapRuleFields, rulesFor } from "../gateway/egress/catalog-rules.js";
+import { EXPOSURES, MAX_APPROVED_HOSTS, approvedHostsOf, assertValidSwapRuleFields, isValidRuleHost, normalizeRuleHost, normalizeSwapRuleFields, rulesFor } from "../gateway/egress/catalog-rules.js";
 
 export const MAX_CHANNEL_ENV_VARS = 32;
 export const MAX_CHANNEL_ENV_VALUE_BYTES = 16_384;
@@ -154,6 +154,10 @@ export function normalizeChannelEnv(raw) {
       ...(typeof entry.ref === "string" && entry.ref ? { ref: entry.ref } : {}),
       // The egress proxy's "used on hosts" declaration (optional; malformed parts dropped).
       ...normalizeSwapRuleFields(entry),
+      // Servers an admin approved for a HIDDEN secret with no declared destination, and an
+      // explicit hidden/readable choice (catalog-rules.js secretExposure). Both optional.
+      ...(approvedHostsOf(entry).length ? { approvedHosts: approvedHostsOf(entry) } : {}),
+      ...(EXPOSURES.includes(entry.exposure) ? { exposure: entry.exposure } : {}),
       setBy: String(entry.setBy || ""),
       setAt: Number.isFinite(entry.setAt) ? entry.setAt : 0,
     };
@@ -184,8 +188,13 @@ export function listEnvVars(env) {
     .map(([name, entry]) => ({
       name,
       provider: entry.provider,
+      // protected = the container holds a placeholder (a known destination, a declared one, or a
+      // hidden secret whose servers an admin approves on first use); readable = the raw value.
       protected: Boolean(rulesFor(name, entry)),
       hosts: rulesFor(name, entry)?.hosts || [],
+      exposure: rulesFor(name, entry) ? "hidden" : "readable",
+      approval: Boolean(rulesFor(name, entry)?.approval),
+      exposureChoice: entry.exposure || "auto",
       // A tail only exists for a provider that stores the value here. Anything else lists as
       // "set, somewhere else" — which is also how an entry this build cannot resolve shows up,
       // rather than vanishing from the admin's view.
@@ -218,7 +227,36 @@ export function setChannelEnvVar(env, { name, value, provider = "local", ref = "
   const rules = { ...normalizeSwapRuleFields(current[key]), ...assertValidSwapRuleFields({ hosts, headers, format }) };
   for (const field of ["hosts", "headers", "format"]) if (Array.isArray(rules[field]) && !rules[field].length) delete rules[field];
   const stored = PROVIDERS[provider].store({ value, ref });
-  return { ...current, [key]: { provider, ...stored, ...rules, setBy: String(actor || ""), setAt: now } };
+  // A rotated value keeps the servers approved for this secret and its hidden/readable choice:
+  // both describe the secret, not one value of it.
+  const kept = {
+    ...(current[key]?.approvedHosts ? { approvedHosts: current[key].approvedHosts } : {}),
+    ...(current[key]?.exposure ? { exposure: current[key].exposure } : {}),
+  };
+  return { ...current, [key]: { provider, ...stored, ...rules, ...kept, setBy: String(actor || ""), setAt: now } };
+}
+
+// Pure: the NEW env map with one entry's approval metadata changed and its value untouched.
+// `addApprovedHost` records a server an admin approved; `exposure` is "hidden", "readable" or
+// "auto" (clears the choice). Throws on an unknown name or a malformed host.
+export function patchEnvEntry(env, name, { addApprovedHost = "", exposure = undefined, scopeWhere = "this channel" } = {}) {
+  const current = normalizeChannelEnv(env);
+  const key = normalizeEnvName(name);
+  if (!Object.hasOwn(current, key)) throw new Error(`"${key}" is not set on ${scopeWhere}.`);
+  const entry = { ...current[key] };
+  if (addApprovedHost) {
+    const host = normalizeRuleHost(addApprovedHost);
+    if (!isValidRuleHost(host) || host.startsWith("*.")) throw new Error(`"${addApprovedHost}" is not a single host name.`);
+    const hosts = approvedHostsOf({ approvedHosts: [...(entry.approvedHosts || []), host] });
+    if (!hosts.includes(host)) throw new Error(`${key} already has the maximum of ${MAX_APPROVED_HOSTS} approved servers.`);
+    entry.approvedHosts = hosts;
+  }
+  if (exposure !== undefined) {
+    if (exposure === "auto" || exposure === "" || exposure === null) delete entry.exposure;
+    else if (EXPOSURES.includes(exposure)) entry.exposure = exposure;
+    else throw new Error(`Unknown exposure "${exposure}" — use hidden, readable or auto.`);
+  }
+  return { ...current, [key]: entry };
 }
 
 export function removeChannelEnvVar(env, name, { scopeWhere = "this channel" } = {}) {

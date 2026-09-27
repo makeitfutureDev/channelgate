@@ -18,6 +18,16 @@ export function approvalActionKey(action = {}) {
     workDir: String(action.workDir || ""),
     maxMs: Number(action.maxMs) || 0,
   };
+  if (action.kind === "secret_host") {
+    exact.secretName = String(action.secretName || "");
+    exact.scope = String(action.scope || "");
+    exact.ownerId = String(action.ownerId || "");
+    exact.host = String(action.host || "");
+    exact.entrySetAt = Number(action.entrySetAt) || 0;
+    // One pending card per secret + server, whichever thread or author tripped it.
+    exact.threadKey = "";
+    exact.authorId = "";
+  }
   if (action.kind === "channel_instructions") {
     exact.text = String(action.text || "");
     exact.mode = String(action.mode || "");

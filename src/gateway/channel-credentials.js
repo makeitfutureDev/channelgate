@@ -29,12 +29,22 @@ function scopeLines(names, scopes) {
 // PLACEHOLDER that only works through the proxy and on which hosts, which hold the raw value, and
 // which were withheld under egressSecretsStrict. Only said when the proxy is this run's egress —
 // otherwise every value is real and there is nothing to tell apart.
-function egressLines(names, { scopes = {}, placeholders = {}, hosts = {}, unprotected = [], withheld = [], personalPaused = false } = {}) {
+function egressLines(names, { scopes = {}, placeholders = {}, hosts = {}, unprotected = [], withheld = [], approval = [], personalPaused = false } = {}) {
   const lines = [];
+  const approvalSet = new Set(approval);
   for (const name of names) {
-    if (!placeholders[name]) continue;
+    if (!placeholders[name] || approvalSet.has(name)) continue;
     const on = (hosts[name] || []).join(", ") || "its declared hosts";
     lines.push(`${name} is proxy-protected: its value in the environment is a placeholder that only works from this container through the gateway's egress proxy on: ${on}. Use it exactly as you would the real credential (the CLI or HTTP client sends it; the proxy swaps it in flight); it is worthless anywhere else.`);
+  }
+  // Hidden secrets with no declared destination (egress/catalog-rules.js approval rules): the
+  // placeholder works on every server an admin approved, and the FIRST request to any other server
+  // is refused with a 403 while an admin approval card is posted. Say so, or the agent reads the
+  // 403 as a bad credential.
+  const hidden = names.filter((name) => placeholders[name] && approvalSet.has(name));
+  for (const name of hidden) {
+    const on = (hosts[name] || []).join(", ");
+    lines.push(`${name} is HIDDEN: its value in the environment is a placeholder the gateway's egress proxy swaps for the real one in a credential header or query parameter of an HTTPS request (Authorization, x-api-key, api_key=, token=…), on servers an admin approved${on ? ` (so far: ${on})` : " (none yet)"}. Use it exactly as you would the real credential. The first request to a NEW server is refused with 403 secret-refused "…has not been approved for <host> yet": an admin approval card is posted in this thread — tell the user which secret and server it is, wait for an admin to approve, then retry the same request. It cannot work outside HTTP(S) or inside a request body; if this task needs the real value (a mail or database password, a signing key), ask an admin to mark it readable.`);
   }
   // A personal placeholder swaps only while its owner is the one working here and no OTHER person
   // has a turn, a background job or an SSH session active in this channel
@@ -46,20 +56,20 @@ function egressLines(names, { scopes = {}, placeholders = {}, hosts = {}, unprot
   }
   if (personalPaused && personal.length) lines.push(`Personal secrets are PAUSED right now: another person's turn, background job or SSH session is active in this conversation's container, so the egress proxy refuses to use ${JSON.stringify(personal)} (403 "another-author-active" or "another-person-ssh-session") until it ends. Do not retry or substitute another credential; tell the author, or use a conversation/organization credential they approve.`);
   const raw = unprotected.filter((name) => names.includes(name));
-  if (raw.length) lines.push(`Unprotected (the RAW value is in the environment — no egress rule declares where it may be used): ${JSON.stringify(raw)}.`);
+  if (raw.length) lines.push(`Readable (the RAW value is in the environment, because it is used outside an HTTPS request — a password, connection string or signing key — or an admin marked it readable): ${JSON.stringify(raw)}. Never print or send it anywhere it does not belong.`);
   if (withheld.length) lines.push(`Withheld by the gateway's strict egress setting (no egress rule, so not injected at all): ${JSON.stringify([...withheld].sort())}. Ask an admin to declare "used on hosts" for them if this task needs them.`);
   return lines;
 }
 
 // Describe the SAME resolved environment the runners receive, never the stored metadata or the
 // daemon's process.env. Rebuild per turn so a resumed conversation cannot retain a revoked name.
-export function channelCredentialsPreamble(resolved = {}, { clean = false, scopes = {}, placeholders = {}, hosts = {}, unprotected = [], withheld = [], personalPaused = false } = {}) {
+export function channelCredentialsPreamble(resolved = {}, { clean = false, scopes = {}, placeholders = {}, hosts = {}, unprotected = [], withheld = [], approval = [], personalPaused = false } = {}) {
   if (clean) return "";
   const names = Object.keys(safeSpawnEnv(resolved)).sort();
   return "[Channel credentials for THIS attempt]\n"
     + `Available channel environment variable names: ${JSON.stringify(names)}.\n`
     + scopeLines(names, scopes).map((line) => `${line}\n`).join("")
-    + egressLines(names, { scopes, placeholders, hosts, unprotected, withheld, personalPaused }).map((line) => `${line}\n`).join("")
+    + egressLines(names, { scopes, placeholders, hosts, unprotected, withheld, approval, personalPaused }).map((line) => `${line}\n`).join("")
     + "This inventory replaces earlier turns' channel credential inventories. It lists only variables injected into this run; an empty list means none were injected, not that all CLI logins or MCP connections are absent.\n"
     + "Before declaring missing access or requesting a new connection, check relevant names here alongside task skills, existing CLI authentication and MCP tools. These variables are usable from the process environment for authorized API/CLI calls; they are not a project .env file. Some clients require explicitly passing the variable.\n"
     + "A variable name does not prove its account, permissions or validity. Where a conversation variable and a personal one could both serve a request, the conversation's is the one already in force — the personal scope only fills names the conversation does not define. Preserve the requested account; ask when identity is ambiguous and never silently substitute one scope's credential for another's.\n"

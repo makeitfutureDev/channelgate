@@ -27,6 +27,7 @@ import { renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-t
 import { egressActive } from "../../runtimes/container/egress-hook.js";
 import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder } from "./placeholders.js";
 import { CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
+import { engineHostsFor } from "./engine-hosts.js";
 
 export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
 const MINT_SCOPE = { organization: "org", channel: "channel", personal: "personal", relay: "relay" };
@@ -215,9 +216,11 @@ export async function resolveEgressGrant(core, deps = {}) {
     revokeGrants({ scope: row.scope, channelId: row.channelId, ownerId: row.ownerId, secretName: row.secretName });
     return null;
   }
-  const rule = row.scope === "relay" ? relayRuleFor(row.secretName) : rulesFor(row.secretName, material.entry);
+  const rule = row.scope === "relay" ? relayRuleFor(row.secretName) : rulesFor(row.secretName, material.entry, { value: material.value });
   if (!rule || !material.value) return null;
   return {
+    ...(rule.approval ? { approval: true, neverHosts: engineHostsFor() } : {}),
+    ...(Array.isArray(rule.query) ? { query: [...rule.query] } : {}),
     placeholder: row.placeholder,
     value: material.value,
     secretName: row.secretName,
@@ -249,7 +252,7 @@ function strictSetting(target) {
 // per-attempt credential note says so instead of letting the agent chase a 403. A snapshot at
 // resolve time: the proxy re-checks on every request.
 export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId = "", untrustedPrincipal = false, clean = false, target = null, deps = {} } = {}) {
-  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues: [], personalPaused: false };
+  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], personalPaused: false };
   if (clean) return empty;
   const [org, user, channel] = await Promise.all([
     (deps.resolveOrgEnv || resolveOrgEnv)(),
@@ -260,7 +263,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   const real = safeSpawnEnv(merged.env);
   const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel))])];
   if (!egressActive(target)) {
-    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], realValues, personalPaused: false };
+    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues, personalPaused: false };
   }
   const channelKey = String(channelId || meta?.channelId || "");
   const personalOwner = untrustedPrincipal ? "" : String(authorId || "");
@@ -284,9 +287,12 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   const hosts = {};
   const unprotected = [];
   const withheld = [];
+  // Hidden secrets with no known destination (catalog-rules.js approval rules): placeholders whose
+  // first use on each new server needs an admin's approval. Named in the per-attempt note.
+  const approval = [];
   for (const name of Object.keys(real).sort()) {
     const scope = merged.scopes[name];
-    const rule = rulesFor(name, entries[scope]?.[name] || null);
+    const rule = rulesFor(name, entries[scope]?.[name] || null, { value: real[name] });
     const bindable = scope === "organization" || (channelKey && (scope !== "personal" || personalOwner));
     if (rule && bindable) {
       const placeholder = placeholderFor({ scope, channelId: channelKey, ownerId: personalOwner, secretName: name });
@@ -294,6 +300,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
       scopes[name] = scope;
       placeholders[name] = placeholder;
       hosts[name] = [...rule.hosts];
+      if (rule.approval) approval.push(name);
       continue;
     }
     if (strict) {
@@ -314,7 +321,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
     const otherOwnerActive = deps.otherOwnerActive || liveness.otherOwnerActive;
     personalPaused = Boolean(otherSshOpen(channelKey, personalOwner) || otherOwnerActive(channelKey, personalOwner));
   }
-  return { env, scopes, placeholders, hosts, unprotected, withheld, realValues, personalPaused };
+  return { env, scopes, placeholders, hosts, unprotected, withheld, approval, realValues, personalPaused };
 }
 
 // ── The Claude relay ──────────────────────────────────────────────────────────────────────────

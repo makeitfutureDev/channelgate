@@ -8,7 +8,9 @@
 import { z } from "zod";
 import { setUser } from "../../config/store.js";
 import { revokeRemoteMcpsForAuthor } from "../remote-mcp-registry.js";
-import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../../config/scoped-env.js";
+import { listOrgEnv, listUserEnv, patchOrgEnv, patchSecretEntry, patchUserEnv } from "../../config/scoped-env.js";
+import { engineHostsFor } from "../../gateway/egress/engine-hosts.js";
+import { hostMatches } from "../../gateway/egress/rules.js";
 import { listChannelEnv } from "../../config/channel-env.js";
 import { getContainerRuntime } from "../../config/settings.js";
 
@@ -16,14 +18,19 @@ import { getContainerRuntime } from "../../config/settings.js";
 // The egress proxy's view of one secret (config/channel-env.js listEnvVars): protected = a proxy-mode
 // container receives a placeholder swapped only on these hosts; unprotected = the raw value.
 function egressNote(v) {
+  if (v.approval === true) {
+    const hosts = (v.hosts || []).join(", ");
+    return ` — hidden (placeholder); approved servers: ${hosts || "none yet — the first use on a server asks an admin"}${v.exposureChoice === "hidden" ? " [set hidden]" : ""}`;
+  }
   if (v.protected === true) return ` — protected via egress proxy (${(v.hosts || []).join(", ")})`;
-  if (v.protected === false) return " — unprotected (raw)";
+  if (v.protected === false) return ` — readable (raw)${v.exposureChoice === "readable" ? " [set readable]" : " [auto: used outside HTTPS]"}`;
   return "";
 }
 
 function protectionNote(saved) {
   if (!saved) return "";
-  return saved.protected ? ` (protected via egress proxy on ${saved.hosts.join(", ")})` : " (unprotected: containers receive the raw value — pass `hosts` to protect it)";
+  if (saved.approval) return ` (hidden: containers get a placeholder; its first use on each new server asks an admin${saved.hosts.length ? ` — approved so far: ${saved.hosts.join(", ")}` : ""})`;
+  return saved.protected ? ` (protected via egress proxy on ${saved.hosts.join(", ")})` : " (readable: containers receive the raw value, because it looks like a password, connection string or signing key — set_secret_mode hidden if it is a web API token)";
 }
 
 // The remaining raw (unruled) secrets as a FINDING, not a state: what happens to each one in a
@@ -33,7 +40,7 @@ export function unruledFinding(names = [], { bridge = false, strict = true } = {
   const list = names.sort().map((name) => `\`${name}\``).join(", ");
   const underProxy = strict ? "WITHHELD from containers (strict mode)" : "injected RAW into containers";
   const effect = bridge ? `injected raw today (the LEGACY bridge mode), and ${underProxy.replace(/^WITHHELD/, "withheld").replace(/^injected RAW/, "raw")} once the egress proxy is on` : underProxy;
-  return `\n\n**Finding:** ${names.length} secret${names.length === 1 ? " has" : "s have"} no egress rule — ${list}: ${effect}. Declare the hosts each is used on (\`hosts\` with set_secret, the Secrets modal or the admin UI's “Used on hosts”) to give containers a placeholder instead.`;
+  return `\n\n**Finding:** ${names.length} secret${names.length === 1 ? " is" : "s are"} READABLE — ${list}: ${effect}. That is right for a mail or database password, a connection string or a signing key (a placeholder cannot work outside an HTTPS request); if one is really a web API token, \`set_secret_mode\` hidden gives containers a placeholder instead.`;
 }
 
 function renderVars(vars, empty) {
@@ -44,7 +51,7 @@ function renderVars(vars, empty) {
 }
 
 export function register(server, ctx) {
-  const { createdBy, text, requireAdmin, principalTrusted, loadMeta } = ctx;
+  const { createdBy, text, requireAdmin, requireManage, principalTrusted, loadMeta, slug } = ctx;
 
   // ── Personal Composio token (any user, for themselves) ─────────────────────────
   // Token-entry tools: the secret arrives inside a Slack message, so it sits in Slack history (and
@@ -170,7 +177,7 @@ export function register(server, ctx) {
         // Every run is told the organization NAMES in its prompt already; the tails and authors
         // are the admin surface's, like the UI.
         // Protection is a rule fact, not a secret: shown to everyone who sees the names.
-        const vars = noteUnruled(listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts })));
+        const vars = noteUnruled(listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts, exposure: v.exposure, approval: v.approval, exposureChoice: v.exposureChoice })));
         sections.push(`**Organization** (every conversation)\n${renderVars(vars, "_None set._")}`);
       }
       if (wanted === "all" || wanted === "personal") {
@@ -262,6 +269,78 @@ export function register(server, ctx) {
         if (refusal) return text(refusal);
         await patchUserEnv(createdBy, { remove: name });
         return text(`🗑️ Removed your personal secret \`${shown}\`.`);
+      } catch (e) {
+        return text(`❌ ${e.message}`);
+      }
+    }
+  );
+
+  // ── Hidden or readable, and approved servers (egress/catalog-rules.js secretExposure) ─────────
+  // A secret with no known destination is HIDDEN by default (a placeholder; its first use on each
+  // new server asks an admin) unless its name or value shows it is used outside HTTPS (READABLE).
+  const scopeTarget = async (scope) => {
+    const wanted = scopeOf(scope, "personal");
+    if (wanted === "organization") {
+      const refusal = await requireOrgAdmin();
+      return refusal ? { refusal } : { scope: "organization" };
+    }
+    if (wanted === "personal") {
+      const refusal = requireSelf();
+      return refusal ? { refusal } : { scope: "personal", userId: createdBy };
+    }
+    if (wanted === "conversation") {
+      if (!slug || typeof requireManage !== "function" || !(await requireManage())) return { refusal: "Only this conversation's managers (or an admin) can change its secrets." };
+      return { scope: "channel", slug };
+    }
+    return { refusal: `Unknown scope \`${scope}\`. Use one of: ${SCOPES.join(", ")}.` };
+  };
+
+  server.registerTool(
+    "set_secret_mode",
+    {
+      description:
+        "Choose whether a secret is HIDDEN or READABLE in containers. hidden = containers get a placeholder the " +
+        "gateway's egress proxy swaps for the real value in HTTPS requests (on its known servers, or on servers an " +
+        "admin approves the first time it is used there); readable = containers get the raw value — needed when it is " +
+        "used outside an HTTPS request (a mail or database password, a connection string, a signing key). auto = let " +
+        "the gateway decide from the name and value (the default). `scope`: personal (yours, default), organization " +
+        "(admins) or conversation (this conversation's managers). The value is not touched.",
+      inputSchema: { name: z.string(), mode: z.enum(["hidden", "readable", "auto"]), scope: z.enum(["personal", "organization", "conversation", "my", "org", "channel"]).optional() },
+    },
+    async ({ name, mode, scope }) => {
+      const target = await scopeTarget(scope);
+      if (target.refusal) return text(target.refusal);
+      try {
+        const row = await patchSecretEntry({ ...target, name, exposure: mode });
+        return text(`✅ \`${row?.name || name}\` is now ${row?.exposure === "hidden" ? "hidden" : "readable"}${mode === "auto" ? " (decided automatically)" : ""}${egressNote(row || {})}. A process that already started keeps its environment; the next one gets the change.`);
+      } catch (e) {
+        return text(`❌ ${e.message}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "allow_secret_host",
+    {
+      description:
+        "ADMIN ONLY. Approve a server for a HIDDEN secret without waiting for its approval card — for work that posted " +
+        "no card (an SSH session or a background job with no chat thread): run it from this conversation's chat. After " +
+        "this the egress proxy swaps the secret's placeholder for the real value on that exact host. A single host " +
+        "name, never a wildcard; model APIs are refused. `scope`: organization, personal (yours) or conversation.",
+      inputSchema: { name: z.string(), host: z.string(), scope: z.enum(["personal", "organization", "conversation", "my", "org", "channel"]).optional() },
+    },
+    async ({ name, host, scope }) => {
+      if (!(await requireAdmin())) return text("Only organization admins can approve where a secret may be sent.");
+      const target = await scopeTarget(scope);
+      if (target.refusal) return text(target.refusal);
+      const wanted = String(host || "").trim().toLowerCase().replace(/\.$/, "");
+      let modelHosts = engineHostsFor();
+      try { modelHosts = (await import("../../gateway/egress/service.js")).modelApiHosts(); } catch { /* the fixed engine list */ }
+      if (modelHosts.some((pattern) => hostMatches(pattern, wanted))) return text(`❌ ${wanted} is a model API: a secret is never swapped there.`);
+      try {
+        const row = await patchSecretEntry({ ...target, name, addApprovedHost: wanted });
+        if (row && !row.approval) return text(`ℹ️ Recorded, but \`${row.name}\` is not a hidden-with-approval secret${egressNote(row)} — its known or declared servers decide where it is swapped.`);
+        return text(`✅ \`${row?.name || name}\` may now be used on ${wanted}${egressNote(row || {})}.`);
       } catch (e) {
         return text(`❌ ${e.message}`);
       }

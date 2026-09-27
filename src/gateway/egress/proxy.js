@@ -128,6 +128,10 @@ export function createEgressProxy({
   resolveGrant,
   canUse,
   audit,
+  // (refusals, { ctx, hostname }) → void: called when a request was refused because a hidden secret
+  // is not yet approved for this server (reason "approval-required"). Fire-and-forget; the service
+  // posts the admin approval card. Never awaited, never allowed to throw into the request path.
+  onApprovalNeeded = null,
   lookup,
   connectTimeoutMs = 15_000,
   headTimeoutMs = 10_000,
@@ -276,7 +280,9 @@ export function createEgressProxy({
       let grant = null;
       try { grant = (await resolveGrant(core, ctx)) || null; } catch (err) { log?.warn?.(`[egress] resolveGrant failed: ${err?.message || err}`); }
       grants.set(core, grant);
-      if (grant && !verdicts.has(grant) && grantAllowsHost(grant, hostname)) {
+      // An approval grant needs its verdict for an unapproved host too: a denial (another channel,
+      // an idle channel) must win over asking for approval (rules.js).
+      if (grant && !verdicts.has(grant) && (grantAllowsHost(grant, hostname) || grant.approval)) {
         let verdict;
         try { verdict = canUse ? await canUse(grant, ctx) : { ok: true }; } catch { verdict = { ok: false, reason: "denied" }; }
         verdicts.set(grant, verdict);
@@ -288,12 +294,28 @@ export function createEgressProxy({
     };
   }
 
+  function askApproval(refused, ctx, hostname) {
+    const pending = refused.filter((r) => r.denied && r.reason === "approval-required");
+    if (!pending.length || typeof onApprovalNeeded !== "function") return;
+    try {
+      const result = onApprovalNeeded(pending, { ctx, hostname });
+      if (result && typeof result.catch === "function") result.catch((err) => log?.warn?.(`[egress] approval request failed: ${err?.message || err}`));
+    } catch (err) {
+      log?.warn?.(`[egress] approval request failed: ${err?.message || err}`);
+    }
+  }
+
   function deniedDetail(refused) {
     const denied = refused.filter((r) => r.denied);
     if (!denied.length) return null;
     // A placeholder presented from the wrong channel is not this channel's to know about: never
     // confirm which secret it stands for.
     if (denied.some((r) => r.reason === "other-channel")) return "A credential in this request is not valid from this channel.";
+    const pending = denied.filter((r) => r.reason === "approval-required");
+    if (pending.length && pending.length === denied.length) {
+      const names = [...new Set(pending.map((r) => r.secretName || "a secret"))].join(", ");
+      return `The secret ${names} has not been approved for ${pending[0].host} yet, so nothing was sent. An admin approves it with the card posted in this conversation's active thread (or with allow_secret_host); retry once it is approved.`;
+    }
     const names = [...new Set(denied.map((r) => r.secretName || "a secret"))].join(", ");
     const reasons = [...new Set(denied.map((r) => r.reason))].join(", ");
     return `The credential ${names} may not be used right now (${reasons}).`;
@@ -339,6 +361,7 @@ export function createEgressProxy({
     swap = swapRequest({ headers, path, hostname, ...prepared, plainHttp: !secure });
     const denied = deniedDetail(swap.refused);
     if (denied) {
+      askApproval(swap.refused, ctx, hostname);
       status = 403;
       swap = { swapped: [], refused: swap.refused }; // nothing was sent, so nothing was swapped
       req.resume();
@@ -425,7 +448,10 @@ export function createEgressProxy({
     if (socket.destroyed) return;
     swap = swapRequest({ headers, path, hostname, ...prepared, plainHttp: !secure });
     const denied = deniedDetail(swap.refused);
-    if (denied) return refuse(403, "secret-refused", denied, { refused: swap.refused });
+    if (denied) {
+      askApproval(swap.refused, ctx, hostname);
+      return refuse(403, "secret-refused", denied, { refused: swap.refused });
+    }
     const outHeaders = { ...swap.headers, host: authorityOf(hostname, port, secure) };
     if (swap.swapped.length) {
       for (const name of Object.keys(outHeaders)) if (name.toLowerCase() === "accept-encoding") delete outHeaders[name];

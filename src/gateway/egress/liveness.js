@@ -44,6 +44,18 @@ function sshSessionsIn(channelId) {
   return sessions.filter((session) => session && String(session.channelId || "") === String(channelId || ""));
 }
 
+// The most recent live TURN in the channel (a turn's liveness id is its thread key) →
+// { threadKey, ownerId } or null. Where an approval card for this channel's traffic is posted.
+export function liveTurnIn(channelId) {
+  const channel = String(channelId || "");
+  let best = null;
+  for (const entry of live.values()) {
+    if (entry.channelId !== channel || entry.kind !== "turn" || !entry.id) continue;
+    if (!best || entry.since > best.since) best = entry;
+  }
+  return best ? { threadKey: best.id, ownerId: best.ownerId } : null;
+}
+
 export function isChannelLive(channelId) {
   const channel = String(channelId || "");
   if (!channel) return false;

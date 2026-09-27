@@ -43,7 +43,7 @@ for (const engine of ["claude", "codex"]) {
     await setUser(authorId, { name: "Egress run", approved: true });
     const channel = await upsertChannelEntry(channelId, { name: `egrun-${engine}`, type: "channel" });
     await saveChannelMeta(channel.slug, { channelId, type: "channel", engine, memory: false, cleanMode: false, allowNetwork: false,
-      env: { GITHUB_TOKEN: { provider: "local", value: REAL_GH }, RAW_THING: { provider: "local", value: REAL_RAW } } });
+      env: { GITHUB_TOKEN: { provider: "local", value: REAL_GH }, RAW_THING_PASSWORD: { provider: "local", value: REAL_RAW } } });
     const start = backend.calls.spawn.length;
     let liveDuring = false;
     const spawn = backend.spawn;
@@ -60,7 +60,7 @@ for (const engine of ["claude", "codex"]) {
     assert.ok(call, "the engine was spawned");
     assert.match(call.env.GITHUB_TOKEN, /^cgph_c[a-z2-7]{32}$/);
     assert.equal(lookupGrant(call.env.GITHUB_TOKEN).secretName, "GITHUB_TOKEN");
-    assert.equal(call.env.RAW_THING, REAL_RAW, "no rule → the raw value, flagged");
+    assert.equal(call.env.RAW_THING_PASSWORD, REAL_RAW, "no rule → the raw value, flagged");
     assert.ok(!JSON.stringify(call.env).includes(REAL_GH), "the real GitHub token never reaches the container env");
     if (engine === "claude") {
       assert.match(call.env.CLAUDE_CODE_OAUTH_TOKEN, /^sk-ant-oat01-cgph_r[a-z2-7]{32}$/);
@@ -69,7 +69,7 @@ for (const engine of ["claude", "codex"]) {
     }
     const prompt = promptOf(call);
     assert.match(prompt, /GITHUB_TOKEN is proxy-protected: [^\n]*on: api\.github\.com, github\.com, uploads\.github\.com, \*\.githubusercontent\.com\./);
-    assert.match(prompt, /Unprotected \(the RAW value[^\n]*\["RAW_THING"\]/);
+    assert.match(prompt, /Readable \(the RAW value[^\n]*\["RAW_THING_PASSWORD"\]/);
     assert.ok(!prompt.includes(REAL_GH) && !prompt.includes(REAL_RAW));
     assert.equal(liveDuring, true, "the turn is live work while it runs");
     assert.equal(liveSnapshot().some((e) => e.channelId === channelId), false, "and released when it ends");
@@ -78,7 +78,7 @@ for (const engine of ["claude", "codex"]) {
     const data = JSON.parse(config.data);
     assert.equal(data.networkEnforced, true);
     assert.equal(data.egress, "proxy");
-    assert.deepEqual(data.egressUnprotected, ["RAW_THING"]);
+    assert.deepEqual(data.egressUnprotected, ["RAW_THING_PASSWORD"]);
   });
 }
 
@@ -91,13 +91,13 @@ test("strict (the new-install default): an unruled secret is withheld from the c
   await setUser(authorId, { name: "Egress strict", approved: true });
   const channel = await upsertChannelEntry(channelId, { name: "egrun-strict", type: "channel" });
   await saveChannelMeta(channel.slug, { channelId, type: "channel", engine: "claude", memory: false, cleanMode: false, allowNetwork: false,
-    env: { GITHUB_TOKEN: { provider: "local", value: REAL_GH }, RAW_THING: { provider: "local", value: REAL_RAW } } });
+    env: { GITHUB_TOKEN: { provider: "local", value: REAL_GH }, RAW_THING_PASSWORD: { provider: "local", value: REAL_RAW } } });
   const start = backend.calls.spawn.length;
   await runMessage({ channelId, authorId, threadKey: "egrun-strict.1", origin: "slack_foreground", preferCold: true, text: "status?" });
   const call = backend.calls.spawn.slice(start).find(promptOf);
   assert.ok(call, "the engine was spawned");
   assert.match(call.env.GITHUB_TOKEN, /^cgph_c[a-z2-7]{32}$/, "a ruled secret is still its placeholder");
-  assert.equal(call.env.RAW_THING, undefined, "the unruled secret is withheld, not raw");
+  assert.equal(call.env.RAW_THING_PASSWORD, undefined, "the unruled secret is withheld, not raw");
   assert.ok(!JSON.stringify(call.env).includes(REAL_RAW));
-  assert.match(promptOf(call), /Withheld by the gateway's strict egress setting[^\n]*\["RAW_THING"\]/);
+  assert.match(promptOf(call), /Withheld by the gateway's strict egress setting[^\n]*\["RAW_THING_PASSWORD"\]/);
 });

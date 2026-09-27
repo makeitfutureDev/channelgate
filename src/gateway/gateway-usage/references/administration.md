@@ -141,11 +141,17 @@ These channel modes do not leave the container. The separate organization-admin-
   only works through the proxy, on its declared hosts, while the channel has live work (a personal
   one only while its owner is working here and no other person's turn, background job or SSH
   session is active). Use it
-  exactly like the real credential; it is useless anywhere else. `list_secrets` and this attempt's
-  credential note say which names are protected, which are raw ("unprotected") and which the
-  operator withheld. A 403 `secret-refused` from the proxy names the secret and the reason
-  (`channel-idle`, `owner-not-live`, `another-author-active`, `another-person-ssh-session`) — report it; never try to route
-  around the proxy.
+  exactly like the real credential; it is useless anywhere else. Any OTHER secret is HIDDEN too
+  unless it looks like a password, connection string, signing key or configuration value: its
+  placeholder works in credential headers and query parameters (Authorization, x-api-key, `api_key=`, `token=`…), but only on servers an admin approved for it.
+  The first request to a new server answers 403 `secret-refused` "…has not been approved for
+  <host> yet" and posts an admin approval card in this thread: tell the user which secret and
+  server it is, wait for the approval, then retry. `list_secrets` and this attempt's credential note
+  say which names are protected, hidden (with their approved servers), readable (raw) and withheld.
+  If a hidden secret really needs its real value (it is used outside HTTPS), ask an admin to run
+  `set_secret_mode` readable. A 403 `secret-refused` from the proxy names the secret and the reason
+  (`channel-idle`, `owner-not-live`, `another-author-active`, `another-person-ssh-session`,
+  `approval-required`) — report it; never try to route around the proxy.
 
 ## Admin access, the container, and `/sudo` (read this before diagnosing "file not found")
 

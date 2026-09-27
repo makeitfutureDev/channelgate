@@ -1012,7 +1012,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const channelCredentialsPrefix = channelCredentialsPreamble(channelEnv, {
     clean, scopes: runEnvScopes,
     placeholders: egressRunEnv.placeholders, hosts: egressRunEnv.hosts,
-    unprotected: egressRunEnv.unprotected, withheld: egressRunEnv.withheld,
+    unprotected: egressRunEnv.unprotected, withheld: egressRunEnv.withheld, approval: egressRunEnv.approval || [],
     personalPaused: egressRunEnv.personalPaused,
   });
   // Which browser daemon this channel's browser MCP server attaches to. Unconditional — clean

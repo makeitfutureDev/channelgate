@@ -9,7 +9,13 @@
 // A grant: { placeholder (the CORE `cgph_…`), value, secretName, scope, owner,
 //            hosts: ["api.github.com", "*.vercel.app"], headers: ["authorization", …] (lowercase),
 //            format: "bearer" | "raw" | "basic-password" | "basic-user" (or an array of them),
-//            query: ["token"]?, body: boolean (reserved, not swapped here), plainHttp: boolean? }
+//            query: ["token"]?, body: boolean (reserved, not swapped here), plainHttp: boolean?,
+//            approval: boolean?, neverHosts: [..]? }
+// An APPROVAL grant (catalog-rules.js, a hidden secret with no known destination) may list "*" in
+// `headers` / `query` — any header or parameter name — and its `hosts` are the servers an admin
+// approved. Presented to any OTHER server it is refused as `approval-required` (a denial, so the
+// proxy answers 403 and asks for the approval); presented to a `neverHosts` server (the engines'
+// own APIs, where a swapped value would land in the model's context) it is simply not swapped.
 // Formats: `bearer` = the header is `<scheme> <token>`; `raw` = the header value IS the token;
 // `basic-password` / `basic-user` = `Authorization: Basic base64(user:password)` with the token as
 // exactly that half; `jwt` = the token (bearer or the whole value) is a JWT-SHAPED placeholder
@@ -67,6 +73,31 @@ function grantHeaders(grant) {
   return new Set(list.map((h) => String(h).toLowerCase()));
 }
 
+// Never a swap target, even for a "*" grant: the proxy's own routing fields.
+const NEVER_SWAP_HEADERS = new Set(["host", "proxy-authorization"]);
+
+// The approval rule's `~credential` marker: a field whose NAME says it carries a credential. Only
+// honoured on an approval grant (catalog-rules.js APPROVAL_HEADERS / APPROVAL_QUERY).
+const CREDENTIAL_MARKER = "~credential";
+const CREDENTIAL_FIELD_RE = /(auth|token|key|secret|session|credential|passw|signature|^sig$|^code$|bearer|jwt|apikey|access)/i;
+function credentialField(grant, list, name) {
+  return grant?.approval === true && Array.isArray(list) && list.includes(CREDENTIAL_MARKER)
+    && (DEFAULT_SWAP_HEADERS.includes(name) || CREDENTIAL_FIELD_RE.test(name));
+}
+
+function headerAllowed(grant, name) {
+  if (NEVER_SWAP_HEADERS.has(name)) return false;
+  return grantHeaders(grant).has(name) || credentialField(grant, grant?.headers, name);
+}
+
+function queryAllowed(grant, name) {
+  return Array.isArray(grant?.query) && (grant.query.includes(name) || credentialField(grant, grant.query, name));
+}
+
+function neverSwapHere(grant, host) {
+  return Array.isArray(grant?.neverHosts) && grant.neverHosts.some((pattern) => hostMatches(pattern, host));
+}
+
 // The host half of a Host header ("example.com:8443" → "example.com", "[::1]:443" → "::1").
 export function hostHeaderName(value) {
   const text = String(value ?? "").trim();
@@ -116,15 +147,28 @@ function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHead
     const refuse = (reason, extra = {}) => ({ refusal: { secretName, reason, ...extra } });
     if (plainHttp && grant.plainHttp !== true) return refuse("plain-http");
     if (mismatch) return refuse("host-header-mismatch");
-    if (!grantAllowsHost(grant, host)) return refuse("host");
+    // An approval grant checks WHERE the token sits before WHERE it goes: a placeholder in a place
+    // it could never be swapped (embedded in other text) must not raise an approval card.
+    // The engines' own APIs never receive an approval grant's value, approved or not: a swapped
+    // value there would land in the model's context.
+    if (grant.approval && neverSwapHere(grant, host)) return refuse("engine-host");
+    const hostOk = grantAllowsHost(grant, host);
+    if (!hostOk && !grant.approval) return refuse("host");
     if (where.kind === "query") {
-      if (!Array.isArray(grant.query) || !grant.query.includes(where.name)) return refuse("query");
+      if (!queryAllowed(grant, where.name)) return refuse("query");
       if (where.position === "embedded") return refuse("format");
     } else {
-      if (!grantHeaders(grant).has(where.name)) return refuse("header");
+      if (!headerAllowed(grant, where.name)) return refuse("header");
       if (where.position === "embedded" || !grantFormats(grant).has(where.position)) return refuse("format");
       if (where.position !== "basic-user" && where.position !== "basic-password" && INVALID_HEADER_CHAR.test(grant.value)) return refuse("invalid-value");
       if (where.position === "basic-user" && grant.value.includes(":")) return refuse("invalid-value");
+    }
+    if (!hostOk) {
+      const verdict = allowed(grant);
+      // The channel binding and liveness still come first: a placeholder from another channel, or
+      // an idle channel, never raises an approval card.
+      if (!verdict.ok) return refuse(verdict.reason, { denied: true, scope: grant.scope ?? null });
+      return refuse("approval-required", { denied: true, scope: grant.scope ?? null, owner: grant.owner ?? null, host });
     }
     const verdict = allowed(grant);
     // A canUse refusal also names the grant's scope: the service's audit policy tells an idle warm
