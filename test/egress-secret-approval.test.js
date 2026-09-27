@@ -175,7 +175,7 @@ test("an approval request posts ONE durable admin card per secret+server in the 
     assert.equal(req.requiredTier, "admin", "only an admin's click counts — never the run's own author");
     assert.equal(req.durableAction.kind, approvals.SECRET_HOST_ACTION);
     assert.deepEqual({ secretName: req.durableAction.secretName, scope: req.durableAction.scope, host: req.durableAction.host }, { secretName: "PAY_API_TOKEN", scope: "organization", host: "api.pay.example" });
-    assert.match(req.toolInput.details, /organization-wide secret `PAY_API_TOKEN` to be sent to `api\.pay\.example`\? It is shared by every conversation, so approving applies in all of them\./);
+    assert.match(req.toolInput.details, /^Allow the organization-wide secret `PAY_API_TOKEN` to be sent to `api\.pay\.example`\? It is shared by every conversation, so approving applies in all of them\./);
     // Never for an engine API.
     assert.deepEqual(await approvals.requestSecretHostApprovals([{ ...refusal, host: "api.anthropic.com" }], { channelId: "C_APPR", slug: "appr", hostname: "api.anthropic.com" }), []);
     assert.equal(req.durableAction.entrySetAt, scoped.getOrgEnv().PAY_API_TOKEN.setAt, "the card names the secret's current version");
