@@ -521,6 +521,7 @@ data.
 | Per-run artifacts (`~/ChannelGate/.runtime/<platform>/<slug>`, bind mount) | this run's settings copy, MCP config, job logs | yes | yes |
 | Engine session history (Claude transcripts, Codex rollouts, subagent transcripts) | inside the HOME volume | yes | yes |
 | `/run` (tmpfs, 64m, `noexec`) | run-helper pid files, the read-only control socket | **no** — fresh on every start, deliberately | no |
+| `/tmp/codex-daemon-<uid>` (tmpfs, 1m, 0700, owned by the agent user) | Codex's app-server socket, which its sandbox requires on its own user-owned mount | **no** — a socket needs nothing kept | no |
 | Image layers (`/usr`, `/opt/channelgate`, the pinned engines) | read-only and root-owned | yes | replaced by an image rebuild |
 | Foreground/warm engine processes | — | no — a stop kills them; the turn replays | no |
 | Detached background jobs | — | no — a stop kills them, and the next turn says so | no |

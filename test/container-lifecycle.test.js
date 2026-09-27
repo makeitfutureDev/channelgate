@@ -68,10 +68,10 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
   const t = target("mounts-chan");
   const allowedUnderRoot = new Set([cleanWorkspaceFolder("mounts-chan", "slack"), runtimeSocketDir()]);
   const kinds = t.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "codex-auth"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth"]);
 
   for (const mount of t.container.mounts) {
-    if (mount.type === "volume") continue;
+    if (mount.type === "volume" || mount.type === "tmpfs") continue;
     assert.ok(path.isAbsolute(mount.source), `${mount.kind} mount source must be absolute`);
     assert.ok(!mount.source.startsWith(`${configDir()}${path.sep}`) && mount.source !== configDir(), `${mount.kind} must never mount config/`);
     const underRoot = mount.source === gatewayRoot() || mount.source.startsWith(`${gatewayRoot()}${path.sep}`);
@@ -110,7 +110,7 @@ test("operator home: granted only to adminMode channels while the gateway switch
   const admin = resolveRuntime("home-admin", { platform: "slack", channelId: "C2", adminMode: true }, { settings: on });
   assert.equal(operatorHomeGranted(admin), true);
   const kinds = admin.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "codex-auth", "operator-home", "mask"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth", "operator-home", "mask"]);
   const grant = admin.container.mounts.find((m) => m.kind === "operator-home");
   assert.equal(grant.type, "bind");
   assert.equal(grant.mode, "rw");
@@ -170,7 +170,7 @@ test("operator home: the create argv binds the home read-write and masks the sto
   }
   // Without the grant, no tmpfs but /run and no home bind at all.
   const plain = buildCreateArgs(resolveRuntime("home-argv-off", { platform: "slack", channelId: "C8", adminMode: true }, { settings: SETTINGS }), caps, { fingerprint: "c1-test" });
-  const plainTmpfs = plain.filter((a, i) => plain[i - 1] === "--tmpfs");
+  const plainTmpfs = plain.filter((a, i) => plain[i - 1] === "--tmpfs" && !a.startsWith("/tmp/codex-daemon-"));
   assert.deepEqual(plainTmpfs, ["/run:rw,noexec,size=64m"]);
   assert.ok(!plain.some((a, i) => plain[i - 1] === "-v" && a === `${home}:${home}`));
 });
@@ -798,4 +798,20 @@ test("egress: a listener that cannot bind, or a service that is down, fails ensu
   } finally {
     setEgressProvider(null);
   }
+});
+
+// Codex's app-server socket lives in a fixed /tmp/codex-daemon-<uid>, which its bubblewrap sandbox
+// requires to be its OWN mount (no alias of a host path seen elsewhere — in a whole-home channel
+// even the /tmp volume's storage is under the mounted home) and user-owned 0700 (live, 2026-09-27).
+test("codex socket dir: its own tmpfs, owned by the run user, for every container", async () => {
+  const { codexSocketMount, CODEX_SOCKET_DIR_PREFIX } = await import("../src/runtimes/container/lifecycle.js");
+  assert.deepEqual(codexSocketMount({ container: { uid: 1001, gid: 1002 } }), [{ kind: "codex-socket", type: "tmpfs", source: "", target: `${CODEX_SOCKET_DIR_PREFIX}1001`, mode: "rw", options: "rw,nosuid,nodev,noexec,size=1m,mode=0700", owner: { uid: 1001, gid: 1002 } }]);
+  assert.deepEqual(codexSocketMount({ container: { uid: null } }), [], "no uid, no socket mount to own");
+  // Ownership is rendered for the CLI that creates it: podman rejects uid=, docker has no `U`.
+  const t = target("codex-socket-chan");
+  const podman = buildCreateArgs(t, { uidStrategy: "keep-id", supportsInit: true }, { fingerprint: "c1-test" });
+  const docker = buildCreateArgs(t, { uidStrategy: "user", supportsInit: true }, { fingerprint: "c1-test" });
+  const socketArg = (args) => args.find((a, i) => args[i - 1] === "--tmpfs" && a.startsWith(CODEX_SOCKET_DIR_PREFIX));
+  assert.equal(socketArg(podman), `${CODEX_SOCKET_DIR_PREFIX}${t.container.uid}:rw,nosuid,nodev,noexec,size=1m,mode=0700,U,notmpcopyup`);
+  assert.equal(socketArg(docker), `${CODEX_SOCKET_DIR_PREFIX}${t.container.uid}:rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=${t.container.uid},gid=${t.container.gid},notmpcopyup`);
 });

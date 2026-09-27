@@ -119,7 +119,7 @@ test("durability: /tmp and /var/tmp are persistent per-channel volumes, and /run
   // exactly once — with its volume.
   assert.deepEqual(
     t.container.mounts.map((m) => m.kind),
-    ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "codex-auth"],
+    ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth"],
   );
   // A target with no artifact dir (never a container target, but buildMounts is exported) must not
   // emit a mount whose source is the empty string.

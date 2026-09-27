@@ -173,6 +173,30 @@ export function assertSafeBindSource(source) {
   }
 }
 
+// Codex's app-server keeps its socket in a FIXED directory, `/tmp/codex-daemon-<uid>`, and its
+// bubblewrap sandbox refuses to build a command unless that directory (a) is not an alias of
+// another mount — no host path inside the container is visible at two paths — and (b) is owned by
+// the user with mode 0700 ("app-server socket directory has an unsupported host mount … remove the
+// bind-mount alias or nested mount", "must be a user-owned directory with mode 0700"). The /tmp
+// volume alone satisfies (a) in an ordinary channel, but not in a whole-home Admin channel: the
+// volume's storage, and the container's own root filesystem, live under the operator's home, which
+// that container ALSO mounts. A small tmpfs on the socket directory itself is its own mount with no
+// host source at all, so Read-mode (and home-guarded) Codex runs everywhere (live, 2026-09-27). It
+// is emptied on every start, which is fine for a socket. Ownership: rootless podman's `U` chowns it
+// to the keep-id user; docker takes the kernel's uid=/gid= options (chosen per CLI in mountArgs).
+export const CODEX_SOCKET_DIR_PREFIX = "/tmp/codex-daemon-";
+export function codexSocketMount(base) {
+  const c = base?.container || {};
+  if (c.uid == null) return [];
+  return [{ kind: "codex-socket", type: "tmpfs", source: "", target: `${CODEX_SOCKET_DIR_PREFIX}${c.uid}`, mode: "rw", options: "rw,nosuid,nodev,noexec,size=1m,mode=0700", owner: { uid: c.uid, gid: c.gid ?? c.uid } }];
+}
+
+// The ownership half of a user-owned tmpfs, for the CLI that will create it.
+function tmpfsOwnerOption(owner, caps) {
+  if (!owner) return "";
+  return caps?.uidStrategy === "keep-id" ? "U" : `uid=${owner.uid},gid=${owner.gid}`;
+}
+
 export function buildMounts(base) {
   const mounts = [
     { kind: "workdir", type: "bind", source: base.workDir, target: base.workDir, mode: "rw" },
@@ -187,6 +211,8 @@ export function buildMounts(base) {
       target,
       mode: "rw",
     })),
+    // After /tmp: destinations are applied deepest-last, so this lands on top of the /tmp volume.
+    ...codexSocketMount(base),
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
     { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
@@ -236,7 +262,7 @@ export function operatorHomeMounts(base) {
   ];
 }
 
-function mountArgs(mounts) {
+function mountArgs(mounts, caps) {
   const args = [];
   for (const mount of mounts) {
     // Destinations are applied deepest-last by both CLIs, so the Codex auth file lands inside the
@@ -247,7 +273,10 @@ function mountArgs(mounts) {
       // contents INTO the tmpfs, and the destination here is the multi-gigabyte container store —
       // the create fails with "no space left on device" before the mask is ever applied (proven
       // live on podman 5.7). The mask must be empty; nothing is copied.
-      args.push("--tmpfs", `${mount.target}:${MASK_TMPFS_OPTIONS}`);
+      const options = mount.options
+        ? [mount.options, tmpfsOwnerOption(mount.owner, caps), "notmpcopyup"].filter(Boolean).join(",")
+        : MASK_TMPFS_OPTIONS;
+      args.push("--tmpfs", `${mount.target}:${options}`);
       continue;
     }
     args.push("-v", `${mount.source}:${mount.target}${mount.mode === "ro" ? ":ro" : ""}`);
@@ -321,7 +350,7 @@ export function buildCreateArgs(target, caps, { fingerprint = "", mountFingerpri
   if (caps.uidStrategy === "keep-id") args.push("--userns=keep-id");
   else if (c.uid != null && c.gid != null) args.push("--user", `${c.uid}:${c.gid}`);
   if (caps.supportsInit) args.push("--init");
-  args.push(...mountArgs(c.mounts));
+  args.push(...mountArgs(c.mounts, caps));
   for (const spec of TMPFS_SPECS) args.push("--tmpfs", spec);
   for (const cap of CAP_DROP) args.push("--cap-drop", cap);
   for (const cap of CAP_ADD) args.push("--cap-add", cap);

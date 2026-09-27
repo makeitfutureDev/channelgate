@@ -2520,7 +2520,10 @@ are retired, bullet by bullet; everything else stands.
   is deleted); before that they were bind mounts of `<artifactDir>/{tmp,var-tmp}`, which made the
   same files visible at two paths inside the container — a mount alias Codex's bubblewrap sandbox
   refuses (its app-server socket lives under a fixed `/tmp/codex-daemon-<uid>`), so Read-mode Codex
-  could run no command. They persist and trade the tmpfs size cap for the disk (the same deal the work directory
+  could run no command. Codex's socket directory itself, `/tmp/codex-daemon-<uid>`, is a 1 MB
+  tmpfs of its own (0700, owned by the agent user: podman `U`, docker `uid=`/`gid=`), because in a
+  whole-home Admin channel even the volume's storage — and the container's root filesystem — sit
+  under the mounted home, which Codex also reads as an alias. They persist and trade the tmpfs size cap for the disk (the same deal the work directory
   already had). `/run` stays a tmpfs on purpose. The image PATH puts every place a channel can
   install into ahead of the pinned toolchain — `~/.npm-global/bin`, `~/.local/bin`, `~/bin`, then
   `~/.cargo`/`~/.bun`/`~/.deno`/`~/go` — and ships `pip`/`venv`/`pipx` with `PIP_USER=1` +
