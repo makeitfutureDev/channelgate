@@ -311,7 +311,8 @@ export function buildSecretFormView(state = {}, { channelName = "", name = "", s
           action_id: SECRETS_MODE_INPUT_ACTION_ID,
           options: [
             { text: plain("Auto (recommended)"), value: "auto", description: plain("Hidden for web API tokens; readable for passwords, database/SMTP logins, signing keys and configuration.") },
-            { text: plain("Hidden"), value: "hidden", description: plain("Programs get a placeholder; the gateway puts the real value into HTTPS requests. Kept readable if it looks like an SMTP/database login and no domain is given.") },
+            // Slack caps an option description at 150 characters (views.push → invalid_arguments).
+            { text: plain("Hidden"), value: "hidden", description: plain("Programs get a placeholder; the real value goes only into HTTPS requests. SMTP/database logins stay readable unless a domain is set.") },
             { text: plain("Readable"), value: "readable", description: plain("Programs get the real value.") },
           ],
         },

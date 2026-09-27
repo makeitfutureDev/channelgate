@@ -272,3 +272,22 @@ test("the add-variable form: visibility and domains are optional, and leaving th
   const pay = listEnvVars(patchChannelEnv({}, { set: { name: "PAY_TOKEN", value: "value-1234567890" } }))[0];
   assert.match(visibilityLabel(pay), /hidden — each new server asks an admin once/);
 });
+
+// Slack rejects the WHOLE view (views.push → invalid_arguments) when one text exceeds its Block Kit
+// limit — found live on 2026-09-27: the Hidden option's description was 158 characters.
+test("the add-variable form stays inside Slack's Block Kit text limits", async () => {
+  const { buildSecretFormView } = await import("../src/slack/secret-explorer.js");
+  for (const scope of ["channel", "personal", "organization"]) {
+    const view = buildSecretFormView({}, { scope, channelName: "a-very-long-channel-name-for-limits", name: "SOME_VARIABLE_NAME" });
+    assert.ok(view.title.text.length <= 24, "modal title ≤ 24");
+    for (const block of view.blocks) {
+      if (block.label) assert.ok(block.label.text.length <= 2000, `${block.block_id} label`);
+      if (block.hint) assert.ok(block.hint.text.length <= 2000, `${block.block_id} hint`);
+      for (const option of block.element?.options || []) {
+        assert.ok(option.text.text.length <= 75, `${option.value} text ≤ 75`);
+        if (option.description) assert.ok(option.description.text.length <= 150, `${option.value} description ≤ 150 (is ${option.description.text.length})`);
+      }
+      if (block.element?.placeholder) assert.ok(block.element.placeholder.text.length <= 150, `${block.block_id} placeholder ≤ 150`);
+    }
+  }
+});
