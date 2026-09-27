@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { getUser, isAdminPrincipal, isApproved, getChannelMeta, getChannelEntry } from "../../config/store.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine } from "../../config/settings.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
-import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
+import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, getTemplate, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport, formatSkillUsageReport } from "../../gateway/skills/usage.js";
@@ -26,6 +26,8 @@ import {
   updateLocalSkill,
   skillEditability,
   skillTier,
+  addSkillsToTemplate,
+  removeSkillsFromTemplate,
   deleteOwnSkill,
   grantSkillsToChannel,
   revokeSkillsFromChannel,
@@ -350,6 +352,37 @@ export function register(server, ctx) {
   );
 
   server.registerTool(
+    "update_skill_template",
+    {
+      description: "ADMINS. Add skills to, or remove skills from, a skill template (Development, Sales, …). Every conversation following the template gets the change on its next message. Anyone else asks with propose_skill_change kind template.",
+      inputSchema: {
+        template: z.string().describe("Template slug or name (list_skill_templates)"),
+        add: z.array(z.string()).optional(),
+        remove: z.array(z.string()).optional(),
+      },
+    },
+    async ({ template, add = [], remove = [] }) => {
+      if (!(await requireAdmin())) return text("Only admins edit skill templates. Ask for it with propose_skill_change (kind template).");
+      if (!add.length && !remove.length) return text("Name skills to add or remove.");
+      try {
+        const out = [];
+        if (add.length) {
+          const r = addSkillsToTemplate(template, add, { actor: createdBy });
+          out.push(`Added: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${r.refused.length ? ` · not added (unknown, deleted or personal): ${r.refused.join(", ")}` : ""}`);
+        }
+        if (remove.length) {
+          const r = removeSkillsFromTemplate(template, remove, { actor: createdBy });
+          out.push(`Removed: ${r.removed.map((s) => `\`${s}\``).join(", ") || "(none of those were in it)"}`);
+        }
+        const tpl = listTemplateSummaries().find((t) => t.slug === (getTemplate(template)?.slug || template));
+        return text(`✅ **${tpl?.name || template}** template updated. ${out.join("\n")}\nNow ${tpl?.resolved.length ?? 0} skill(s): ${tpl?.resolved.join(", ") || "(none)"}. Conversations following it get the change on their next message.\n${ANNOUNCE}`);
+      } catch (err) {
+        return text(`🚫 ${err?.message || err}`);
+      }
+    },
+  );
+
+  server.registerTool(
     "set_channel_skill_template",
     {
       description: "Any member of this conversation. Make this conversation follow a skill template (Development, Sales, …): it gets the template's CURRENT skills, live, plus whatever add_channel_skills adds on top. `template: \"none\"` stops following. No approval needed; active on the next message.",
@@ -508,14 +541,20 @@ export function register(server, ctx) {
   server.registerTool(
     "propose_skill_change",
     {
-      description: "Ask an admin for a change you cannot make yourself: kind change (the changed files + a note) for an organization skill, feedback (note only), promote (a personal or channel skill becomes an organization skill; an organization skill gets granted everywhere), or delete (remove a shared skill from the whole catalog). An admin reviews it with decide_skill_proposal or in the admin UI.",
-      inputSchema: { skill: z.string(), note: z.string(), files: z.array(FILE_INPUT).optional(), kind: z.enum(["change", "feedback", "promote", "delete"]).optional() },
+      description: "Ask an admin for a change you cannot make yourself: kind change (the changed files + a note) for an organization skill, feedback (note only), promote (a personal or channel skill becomes an organization skill; an organization skill gets granted everywhere), delete (remove a shared skill from the whole catalog), or template (add the skill to the skill template named in `template` — templates are admin-edited skill sets such as Development or Sales). An admin reviews it with decide_skill_proposal or in the admin UI.",
+      inputSchema: {
+        skill: z.string(),
+        note: z.string(),
+        files: z.array(FILE_INPUT).optional(),
+        kind: z.enum(["change", "feedback", "promote", "delete", "template"]).optional(),
+        template: z.string().optional().describe("For kind template: the template slug or name (list_skill_templates)"),
+      },
     },
-    async ({ skill: key, note, files = [], kind = "change" }) => {
+    async ({ skill: key, note, files = [], kind = "change", template = "" }) => {
       if (!(await approvedAuthor())) return text("Only approved members can file proposals.");
       try {
-        const { proposal, skill } = proposeSkillChange({ skill: key, kind, files, note, proposedBy: createdBy, channelSlug: slug });
-        return text(`📝 Proposal #${proposal.id} filed for \`${proposal.slug}\` (${kind}${skill ? `, ${describeOwner(skill)}` : ", new skill"}). An admin reviews it (list_skill_proposals / decide_skill_proposal, or the admin UI under Skills → Review).`);
+        const { proposal, skill } = proposeSkillChange({ skill: key, kind, files, note, proposedBy: createdBy, channelSlug: slug, template });
+        return text(`📝 Proposal #${proposal.id} filed for \`${proposal.slug}\` (${kind}${proposal.target ? ` → template ${proposal.target}` : ""}${skill ? `, ${describeOwner(skill)}` : ", new skill"}). An admin reviews it (list_skill_proposals / decide_skill_proposal, or the admin UI under Skills → Review).`);
       } catch (err) {
         return text(`🚫 Could not file the proposal: ${err?.message || err}`);
       }
@@ -544,7 +583,7 @@ export function register(server, ctx) {
       try {
         const r = await decideSkillProposal(id, { decision, decidedBy: createdBy, note });
         if (decision === "reject") return text(`Proposal #${id} rejected.`);
-        return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a local override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}${r.deleted ? ` — \`${r.proposal.slug}\` removed from the catalog (restorable in the admin UI)` : ""}.${publishLine(r.published)}`);
+        return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a local override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}${r.deleted ? ` — \`${r.proposal.slug}\` removed from the catalog (restorable in the admin UI)` : ""}${r.templated ? ` — \`${r.proposal.slug}\` added to the ${r.proposal.target} template (every conversation following it gets it on its next message)` : ""}.${publishLine(r.published)}`);
       } catch (err) {
         return text(`🚫 ${err?.message || err}`);
       }

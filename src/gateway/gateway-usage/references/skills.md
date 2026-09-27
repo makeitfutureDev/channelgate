@@ -57,8 +57,13 @@ applies at once.
   channel FOLLOWS its template live: it gets the template's current skills, and
   `add_channel_skills` adds on top; `template: "none"` stops following (the channel's own
   additions stay). Preview shows what the channel would gain, keep or drop.
+- **What is IN a template** is an admin's to decide. There are no "team skills": a team's
+  skills are a template. Anyone may ask for a skill to join a template with
+  `propose_skill_change` (`kind: "template"`, `template: "<name>"`) — the skill must be a shared
+  (channel or organization) skill, not a personal one. An admin edits a template with
+  `update_skill_template` (`add` / `remove`).
 
-None of these show an approval card.
+None of these show an approval card (except the admin's `update_skill_template`, below).
 
 ## Authoring
 
@@ -91,16 +96,19 @@ None of these show an approval card.
 - `propose_skill_change` — ask an admin for what you cannot do yourself: `kind: "change"`
   (files + note, for an organization skill), `"feedback"` (a note), `"promote"` (a personal or
   channel skill becomes an organization skill), `"delete"` (remove a shared skill from the
-  catalog).
+  catalog), `"template"` (add a skill to a template).
 
 ## Admins
 
 - `list_skill_proposals` / `decide_skill_proposal` — review pending proposals in the thread
   (`decision: "approve" | "reject"`, optional `note`). Approving a promotion moves a channel
   skill into the shared library (or makes a personal skill an organization skill); approving a
-  delete request removes the skill from the catalog.
-- The organization-wide admin tools below (`decide_skill_proposal`, sources, org grants,
-  governance, exclusion, `set_skill_scope`, `publish_skill`) **always** show an Approve/Deny card:
+  delete request removes the skill from the catalog; approving a template request adds the skill
+  to that template.
+- `update_skill_template` — add skills to or remove them from a template; every conversation
+  following it is affected on its next message.
+- The organization-wide admin tools (`decide_skill_proposal`, `update_skill_template`, sources,
+  org grants, governance, exclusion, `set_skill_scope`, `publish_skill`) **always** show an Approve/Deny card:
   they change every conversation at once, and a proposal's text is written by someone else.
   Auto mode and admin mode do NOT skip it.
 - `sync_skill_sources` — pull the configured sources now (a source in *review* mode stages new

@@ -106,7 +106,12 @@ following; the conversation's own additions stay. DM templates (User / Admin) ca
 template too. Preview first to see what a conversation would gain, keep or drop.
 
 Templates store explicit skill selections; category is catalog metadata used for filtering, not a
-bulk template selector. From chat: `list_skill_templates`, `preview_skill_template` and
+bulk template selector. A template is also what a "team's skills" means — there is no separate
+team scope. Only admins edit a template (the admin UI, or `update_skill_template` from chat, which
+carries a card like the other organization-wide admin verbs); anyone may ask with
+`propose_skill_change` `kind: template` + `template`, stored in the proposal's `target` column
+(migration 31), and an approved request adds the skill to that template. Personal skills never join
+a template. From chat: `list_skill_templates`, `preview_skill_template` and
 `show_channel_skills` (which names the template and marks which skills come from it) are open
 reads. `set_channel_skill_template`, `add_channel_skills` and `remove_channel_skills` are open to
 any member of the conversation and post no approval card (operator decision 2026-09-27: a
@@ -202,7 +207,7 @@ Personal and channel changes never post an approval card and never wait for anyo
 decision 2026-09-27); the tool result tells the model to announce the change in its reply, and
 every write is audited (`skill_created`, `skill_updated`, `skill_revoked`, `skill_removed`).
 Admins moderate only the organization tier; the organization-wide admin verbs
-(`decide_skill_proposal`, `add_org_skills` / `remove_org_skills`, sources, governance, exclusion,
+(`decide_skill_proposal`, `update_skill_template`, `add_org_skills` / `remove_org_skills`, sources, governance, exclusion,
 `set_skill_scope`, `publish_skill`) **always** post an Approve/Deny card.
 Auto mode does not bypass it: auto-approval applies to tool permission prompts only, never to
 control-plane changes.
