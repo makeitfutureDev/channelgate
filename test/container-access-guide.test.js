@@ -25,7 +25,7 @@ test("the guide states the resolved home grant for every platform and refreshes 
           assert.ok(skill.includes(JSON.stringify(os.homedir())));
           assert.match(skill, /resolved runtime includes the operator-home mount/);
           assert.match(skill, /Every admitted author can read/);
-          assert.match(skill, /bypass tools still require an admin author in Admin mode/);
+          assert.match(skill, /every other author's turn runs read-only/);
           assert.doesNotMatch(skill, /has no operator-home mount/);
         } else {
           assert.match(skill, /resolved runtime has no operator-home mount/);

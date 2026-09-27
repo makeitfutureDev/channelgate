@@ -77,7 +77,7 @@ export function containerAccessNote(target) {
   const homes = target.container.mounts.filter((m) => m.kind === "operator-home").map((m) => m.target);
   const setting = target.settings?.fullAccessHome === true ? "on" : "off";
   const access = homes.length
-    ? `This channel's resolved runtime includes the operator-home mount at ${homes.map((home) => JSON.stringify(home)).join(", ")}. Every admitted author can read that mounted home; write-capable bypass tools still require an admin author in Admin mode.`
+    ? `This channel's resolved runtime includes the operator-home mount at ${homes.map((home) => JSON.stringify(home)).join(", ")}. Every admitted author can read that mounted home; only an admin author's turn may change anything here — every other author's turn runs read-only (the shell and all file-writing tools are refused, and Codex keeps its read-only sandbox).`
     : "This channel's resolved runtime has no operator-home mount. The working folder, clean workspace and artifacts remain its host directory mounts; the author's admin role alone adds no mount.";
   return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access} Switching this channel to Admin/Full-access qualifies it for the operator-home mount on the next resolved run ONLY while that gateway switch is on; with the switch off, Admin adds no home mount. The container remains the filesystem/process boundary. \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See the \`gateway-usage\` skill's \`references/administration.md\` for the boundary and the optional grant.`;
 }

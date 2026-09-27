@@ -184,7 +184,8 @@ changes the required container mounts; readiness checks reconcile them before th
 
 **The mount belongs to the channel, not the author.** While granted, every admitted author can
 read the mounted home through file tools; only an admin author's turn in Admin mode receives
-write-capable bypass tools. The container remains the filesystem/process boundary. Read the
+write-capable tools. Every other author's turn here runs read-only: the shell and all
+file-writing tools are refused (not offered for approval), and Codex keeps its read-only sandbox. The container remains the filesystem/process boundary. Read the
 **Container access for this run** note in `SKILL.md` for the gateway switch and this resolved
 runtime's operator-home mount. If that note has no resolved target, verify current runtime state
 before asserting access. Diagnose only paths this runtime actually mounts: an absent host path

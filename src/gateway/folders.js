@@ -486,6 +486,12 @@ const SHELL_TOOLS = ["Bash", "Write", "Edit", "MultiEdit"];
 // permission prompt tool, i.e. the Slack approval card, which is what Read mode promises.
 const ASK_WITHOUT_SHELL = ["Bash"];
 
+// What a home-guarded run (buildSettings `homeGuard`) is REFUSED — deny, not ask. The operator-home
+// mount is read-write for the whole container, so the only thing standing between a non-admin
+// author and the operator's files is the tool policy; an `ask` would hand that decision to the
+// run's own author, who may approve their own card (canResolveApproval).
+const HOME_GUARD_DENY = ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"];
+
 // Trusted host sources for pre-catalog grants. First match wins; workspace copies track its bytes.
 export function skillSourceDirs() {
   if (process.env.GATEWAY_SKILL_SOURCES) {
@@ -548,7 +554,14 @@ export function operatorHomeDirectories(target) {
 // only when the channel's container actually mounts it (`target.container.mounts`, kind
 // "operator-home"): Claude Code confines its file tools to the cwd plus these directories, so
 // without the entry a Full-access channel could see the home in Bash but not Read/Edit it.
-export async function buildSettings(meta, { allowBypass = false, target = null } = {}) {
+//
+// `homeGuard` builds the variant for a channel whose container mounts the operator home (the
+// gateway-wide containerFullAccessHome switch + Admin mode): every run there that is not an admin
+// author's gets it. The mount is per CONTAINER, so read-write for every turn; this file is what
+// keeps a member's turn to "can read the home" instead of "can rewrite it" (CTR-30, 2026-09-27):
+// the read tools stay, the shell and every file-writing tool are denied outright.
+export async function buildSettings(meta, { allowBypass = false, homeGuard = false, target = null } = {}) {
+  if (allowBypass && homeGuard) throw new Error("buildSettings: allowBypass and homeGuard are mutually exclusive");
   // Clean mode: run bare — no MCP servers reachable at all (the per-run --mcp-config is empty +
   // strict, and the allowlist is empty too), and no MCP tool namespaces pre-approved.
   const clean = Boolean(meta.cleanMode);
@@ -571,12 +584,12 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
   // sets adminMode alone (never allowBash/autoMode), the variant inherited read mode's
   // `ask: ["Bash"]`, and Claude Code kept evaluating that rule for the bypassed run — a bare `pwd`
   // came back denied and the admin turn fell back to read-only (QA, 2026-09-07).
-  const bashy = Boolean(meta.allowBash || meta.autoMode || meta.adminMode || allowBypass);
+  const bashy = !homeGuard && Boolean(meta.allowBash || meta.autoMode || meta.adminMode || allowBypass);
 
   // Folder-scoped memory: when on (and the channel isn't already bash-enabled, which grants Write/
   // Edit broadly), grant a NARROW Write/Edit limited to MEMORY.md so the agent can persist memory
   // without unlocking general file writes.
-  const memTools = memoryEnabled(meta) && !bashy ? [`Write(${MEM_FILE})`, `Edit(${MEM_FILE})`] : [];
+  const memTools = memoryEnabled(meta) && !bashy && !homeGuard ? [`Write(${MEM_FILE})`, `Edit(${MEM_FILE})`] : [];
 
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -609,10 +622,10 @@ export async function buildSettings(meta, { allowBypass = false, target = null }
       // granted: `ask` outranks `allow`, so listing Bash here for a bash/auto channel — or for the
       // admin-run variant, which is bashy by definition — would put an approval card in front of
       // every command it is meant to run unattended, and headless there is nobody to answer it.
-      ...(bashy ? {} : { ask: [...ASK_WITHOUT_SHELL] }),
+      ...(bashy || homeGuard ? {} : { ask: [...ASK_WITHOUT_SHELL] }),
       // Never Write/Edit: `deny` outranks `allow`, and it would void the narrow
       // Write(MEMORY.md)/Edit(MEMORY.md) grant above that folder-scoped memory depends on.
-      deny: ["mcp__claude-in-chrome", "mcp__computer-use"],
+      deny: ["mcp__claude-in-chrome", "mcp__computer-use", ...(homeGuard ? HOME_GUARD_DENY : [])],
     },
 
     // Refuse to end a turn while background subagents are still running (all modes, clean

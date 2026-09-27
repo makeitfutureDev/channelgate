@@ -9,7 +9,7 @@ import {
   getUser,
   isAdmin,
 } from "../config/store.js";
-import { ensureChannelFolder } from "./folders.js";
+import { ensureChannelFolder, operatorHomeDirectories } from "./folders.js";
 import { memorySnapshotPrefix } from "./channel-memory.js";
 import { recordUsage } from "./usage.js";
 import { createSkillUsageRecorder } from "./skills/usage.js";
@@ -618,6 +618,12 @@ export function adminUnattendedTier({ meta = {}, isAdminAuthor = false, untruste
   return !dangerouslySkip && Boolean(meta.adminMode) && Boolean(isAdminAuthor) && !untrustedPrincipal;
 }
 
+// Does this run need the home guard? Only when the resolved container mounts the operator home
+// AND the run is not an admin author's (escalated live turn, or the admin unattended tier).
+export function homeGuardRequired({ target = null, dangerouslySkip = false, adminUnattended = false } = {}) {
+  return !dangerouslySkip && !adminUnattended && operatorHomeDirectories(target).length > 0;
+}
+
 function assertRuntimeCanStart() {
   if (isForceStopping()) {
     throw Object.assign(new Error("Gateway is completing a forced shutdown"), { name: "AbortError" });
@@ -1168,6 +1174,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // The bypass allowance rides per-spawn: only an escalated run gets the settings variant that
   // honors --dangerously-skip-permissions; the shared channel settings file always hard-disables
   // it, so a non-admin run (even in an adminMode channel) can never be escalated by the file.
+  //
+  // Home guard (CTR-30): while this channel's container mounts the operator home, the mount is
+  // read-write for EVERY process in it, so a run that is not an admin author's — a member's turn,
+  // a guest's, their background agents — is held to reading: Claude gets home-guard settings
+  // (shell and file writes denied, not asked — see folders.js buildSettings), Codex its read-only
+  // sandbox with no auto-approved escalation.
+  const homeGuarded = homeGuardRequired({ target, dangerouslySkip, adminUnattended });
   const sharedRunSettingsFile = dangerouslySkip && adminSettingsFile ? adminSettingsFile : settingsFile;
 
   // Model/effort precedence: per-thread override (the /model wizard's "just this thread" scope) →
@@ -1205,14 +1218,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // container or fail closed before spawning.
   const adapter = requireAdapter(engine);
   assertUserSkillOverlaySupported(adapter, userSkills);
-  const codexWritable = Boolean(meta.allowBash || meta.autoMode);
+  const codexWritable = !homeGuarded && Boolean(meta.allowBash || meta.autoMode);
   const confinement = adapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), writable: codexWritable });
   const networkPolicy = confinement.network;
   if (!confinement.supported) {
     throw new Error(`${confinement.reason}. Turn network off or switch this thread to an engine that supports this policy.`);
   }
   const codexNetwork = networkPolicy.mode !== "off";
-  const codexAutoApprove = Boolean(meta.autoMode);
+  const codexAutoApprove = !homeGuarded && Boolean(meta.autoMode);
 
   await logEvent("run_config", {
     channel: channelId,
@@ -1237,6 +1250,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     autoMode: Boolean(meta.autoMode),
     allowBash: Boolean(meta.allowBash),
     allowNetwork: Boolean(meta.allowNetwork),
+    // Present only when this run was held read-only because the container mounts the operator home.
+    ...(homeGuarded ? { homeGuard: true } : {}),
     networkPolicy: networkPolicy.mode,
     // Whether that mode was a real boundary for THIS turn: true when the egress proxy is the
     // container's only network; false for the legacy bridge mode, a raw-socket channel or a sudo
@@ -1315,10 +1330,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     workspaceAgentsDir: path.join(cwd, ".claude", "agents"),
     needsClaudeSettings,
     allowBypass: dangerouslySkip,
+    homeGuard: homeGuarded,
     // Decides both WHERE the artifacts land and WHICH of them exist: an isolated runtime gets no
     // host plumbing of any kind — everything lands under the channel's mounted artifact dir.
     target,
   });
+  // The channel folder's shared file is NOT guarded, so a guarded run may never fall back to it.
+  if (homeGuarded && needsClaudeSettings && !grantArtifacts.settingsFile) throw new Error("this channel mounts the operator home but no home-guard settings were generated; refusing to run a non-admin turn unguarded");
   const runSettingsFile = grantArtifacts.settingsFile || sharedRunSettingsFile;
   const grantFingerprint = JSON.stringify({
     allowedMcps: clean ? [] : runGrants.effective.allowedMcps,
