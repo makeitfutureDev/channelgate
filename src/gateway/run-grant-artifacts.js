@@ -190,6 +190,8 @@ export async function createRunGrantArtifacts({
   workspaceAgentsDir = "",
   needsClaudeSettings = false,
   allowBypass = false,
+  // A home-guarded run (run.js homeGuardRequired): read-only tools, and no plugin command servers.
+  homeGuard = false,
   target = null,
 } = {}) {
   // WHERE this run's engine-facing files go: under the channel's artifact dir, which the container
@@ -234,7 +236,7 @@ export async function createRunGrantArtifacts({
             const compiled = compilePluginPackage(pkg, {
               capabilities: requireAdapter(engine).pluginCapabilities,
               allowBypass,
-              writable: Boolean(meta.allowBash || meta.autoMode || meta.adminMode || allowBypass),
+              writable: !homeGuard && Boolean(meta.allowBash || meta.autoMode || meta.adminMode || allowBypass),
             });
             const files = normalizeSkillFiles([
               { path: "SKILL.md", content: `---\nname: package-runtime\ndescription: Approved package runtime files\n---\n` },
@@ -326,7 +328,7 @@ export async function createRunGrantArtifacts({
 
     let settingsFile = "";
     if (needsClaudeSettings || sharedPackages.length || personalPackages.length) {
-      const settings = await buildSettings({ ...meta, _slug: slug }, { allowBypass, target });
+      const settings = await buildSettings({ ...meta, _slug: slug }, { allowBypass, homeGuard, target });
       for (const server of pluginRuntime.claude?.servers || []) {
         settings.allowedMcpServers.push({ serverName: server.name });
         settings.permissions.allow.push(`mcp__${server.name}`);

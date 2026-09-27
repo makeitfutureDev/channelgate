@@ -18,6 +18,7 @@ product overview.
 
 ## Unreleased
 
+- **Members can no longer write to the operator's home through a whole-home Admin channel.** With *Admin channels can access the host home* on, the home is mounted read-write for the whole channel container, and a non-admin author's turn in that Admin channel still received the shell and file-writing tools, so it could change any file in the home without a prompt (CTR-30, 2026-09-27). Every run there that is not an admin author's is now read-only: Claude's shell and write tools are denied outright, Codex runs in its read-only sandbox, and plugin command servers are refused. Admin authors are unaffected.
 - The egress proxy now presents its CA after the per-host leaf, so the in-container browser's CA pin matches and agent-browser loads HTTPS pages without `--ignore-https-errors` (EGR-03, 2026-09-27). Codex failure messages no longer lead with the CLI's "Reading additional input from stdin..." notice (EN-09).
 
 - Channel image spec 1.6.1: the image now ships `bubblewrap`. Codex 0.156.1 refuses to run any command in a read-only sandbox without it ("filesystem-restricted execution requires bubblewrap"), so Read-mode Codex channels could not execute a probe since the 0.156.1 pin (found by the 2026-09-27 live campaign, EN-01/CTR-06/MD-02 on Codex). Rebuild with `npm run build:image`.

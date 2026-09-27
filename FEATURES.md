@@ -2238,7 +2238,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `~/.local/share/containers` masked), Claude's admin-run settings list it in
   `permissions.additionalDirectories` (derived from the resolved mount), the grant is part of the
   create-time fingerprint, no MCP tool can flip it, and it is per channel (every admitted author
-  reads; an admin author's turn writes). → TEST-PLAN: Container runtime (operator-home grant). **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
+  reads; an admin author's turn writes). Because the mount is read-write for the whole container,
+  every run there that is NOT an admin author's — a member's or guest's turn, their background
+  agents — is **home-guarded** (2026-09-27, CTR-30): Claude's per-run settings deny `Bash`, `Write`,
+  `Edit`, `MultiEdit` and `NotebookEdit` outright (deny, not ask: a run's own author may approve
+  their own card), Codex runs in its read-only sandbox with no auto-approved escalation, and
+  plugin command servers are refused. An admin author's live turn (bypass) and the admin unattended
+  tier are unchanged. → TEST-PLAN: Container runtime (operator-home grant). **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
   live foreground turn in an admin-mode channel runs with the bypass AND `sandbox.enabled: false`
   (the flag alone never lifts the sandbox), so it can genuinely reach the whole account — while
   the shared settings keep every other run fully sandboxed, and unattended admin runs stay at the

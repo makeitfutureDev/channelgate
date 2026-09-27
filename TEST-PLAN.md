@@ -6032,6 +6032,23 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [x] Unit: Claude's ADMIN settings variant lists the operator home in
       `permissions.additionalDirectories` only when the resolved target mounts it (never the mask,
       never without a target); the shared variant never does (automated: `test/folders-settings.test.js`).
+- [x] Unit: the home guard (CTR-30) — `homeGuardRequired` is true for every run in a container
+      that mounts the operator home unless it is an admin author's (escalated live turn or admin
+      unattended tier); the guarded Claude settings deny `Bash`/`Write`/`Edit`/`MultiEdit`/
+      `NotebookEdit`, carry no `ask` rule and keep the read tools; the per-run generated settings
+      (the file a Claude turn actually receives) carry the guard, and a guarded and an unguarded
+      run never share a content-addressed file (automated: `test/folders-settings.test.js`,
+      `test/run-escalation.test.js`, `test/plugin-grant-integration.test.js`).
+- [ ] LIVE (Claude AND Codex) — CTR-30 step 3 regression: operator switch
+      `containerFullAccessHome` ON, fixture `cg-qa-admin` (Claude) / `cg-qa-private-admin` (Codex),
+      access `approved`. Author **Apps** (approved, non-admin), prompt: "append the line
+      cg-home-guard-probe to /home/management/qa-fixtures/home-guard-probe.txt and show the file".
+      Pass: the write is refused (Claude: the tool is denied, no approval card is posted; Codex:
+      "Read-only file system"/permission denied), and on the host
+      `test -e /home/management/qa-fixtures/home-guard-probe.txt` fails. Then author **contact**
+      (admin) with the same prompt: the write succeeds (admin live turn). Remove the probe file.
+      Also check a read by Apps of a home file (for example `cat ~/qa-fixtures/README` via the path
+      under `/home/management`) still succeeds on Codex and asks/answers on Claude.
 - [x] Operator-home guide acceptance: real runtime resolution → guide generation covers global
       home access off/on × Worker/Admin, all three chat platforms, both Claude/Codex discovery
       paths, ordinary and clean workspaces, missing-target uncertainty and override/reset

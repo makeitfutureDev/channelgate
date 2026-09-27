@@ -148,6 +148,26 @@ test("Admin lockdown files grant Worker tools to members while keeping admin byp
   assert.equal((bashSettings.permissions.ask || []).includes("Bash"), false);
 });
 
+// CTR-30 (live, 2026-09-27): with the operator home mounted read-write for the whole container, the
+// shared Admin-mode file handed a MEMBER'S turn the shell, and the member rewrote a file in the
+// operator's home unprompted. The home-guard variant is what such a turn gets instead: the read
+// tools stay, the shell and every file-writing tool are DENIED (an `ask` would let the run's own
+// author approve their own card), and no host path is named.
+test("the home-guard variant denies the shell and every file-writing tool outright", async () => {
+  for (const meta of [{ adminMode: true, allowBash: true }, { adminMode: true, allowBash: true, autoMode: true }]) {
+    const s = await buildSettings({ ...meta, allowedMcps: [] }, { homeGuard: true });
+    for (const tool of ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"]) {
+      assert.ok(s.permissions.deny.includes(tool), `${tool} denied (${JSON.stringify(meta)})`);
+      assert.ok(!s.permissions.allow.some((rule) => rule === tool || rule.startsWith(`${tool}(`)), `${tool} never allowed`);
+    }
+    for (const tool of ["Read", "Glob", "Grep"]) assert.ok(s.permissions.allow.includes(tool), `${tool} stays`);
+    assert.equal(s.permissions.ask, undefined, "nothing is left to the run's own author to approve");
+    assert.equal(s.permissions.disableBypassPermissionsMode, "disable");
+    assert.deepEqual(s.permissions.additionalDirectories, []);
+  }
+  await assert.rejects(buildSettings({ adminMode: true }, { homeGuard: true, allowBypass: true }), /mutually exclusive/);
+});
+
 test("Claude settings explicitly pre-approve embedded gateway MCP tools", async () => {
   const settings = await buildSettings({ _slug: "claude-gateway-tools", cleanMode: false, allowedMcps: [] });
   const allow = settings.permissions.allow;
