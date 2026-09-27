@@ -167,8 +167,8 @@ attempt's resolved mount facts; if its location is unknown, report that uncertai
 identifying an unrelated file as runtime data. Do not save an unverified access claim as memory.
 
 **Every non-sudo turn runs inside this channel's container — Admin/Full-access mode included.** By default,
-the host directory mounts are this channel's working folder, clean workspace and artifact folder
-(also backing `/tmp` and `/var/tmp`). The container also has its own home volume (`/home/agent`),
+the host directory mounts are this channel's working folder, clean workspace and artifact folder.
+The container also has its own home volume (`/home/agent`) and its own `/tmp` and `/var/tmp` volumes,
 the image's toolchain and a read-only control socket. A host directory chosen as the working folder
 is visible in full at its identical absolute path; unrelated host directories are normally absent.
 

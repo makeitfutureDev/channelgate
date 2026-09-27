@@ -6364,8 +6364,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       runs `scripts/build-image.mjs`), accepts `--skip-image` / `CG_BUILD_IMAGE` to defer it, and
       names `npm run build:image` as the remedy when skipped or failed (automated:
       `test/container-image.test.js`).
-- [x] Unit: durability — the mount contract keeps `/tmp` and `/var/tmp` as rw BIND mounts of
-      `<artifactDir>/{tmp,var-tmp}` and leaves `/run` as the only tmpfs, and both appear on the
+- [x] Unit: durability — the mount contract keeps `/tmp` and `/var/tmp` as rw per-channel NAMED
+      VOLUMES (`<container>-tmp`, `<container>-vtmp`; never a host path, never under the artifact
+      dir, so nothing inside the container is visible at two paths), removed — one `volume rm` each,
+      beside HOME — only by a channel deletion, and leaves `/run` as the only tmpfs, and both appear on the
       create argv beside `--userns=keep-id` (rootless) / `--user uid:gid` (docker), so files in the
       volume and the binds are owned by the daemon user on both sides (automated:
       `test/container-durability.test.js`).

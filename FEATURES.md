@@ -2335,7 +2335,7 @@ are retired, bullet by bullet; everything else stands.
   MCP socket directory is mounted **read-only** at `/run/channelgate`; outside the egress proxy the
   Codex `auth.json` is a single-FILE mount (the one deliberate exception to "mount directories,
   never single files" — see the credential bullet; behind the proxy Codex is relayed with no mount,
-  container-secrets P4); `/tmp` and `/var/tmp` are per-channel bind mounts too, for durability (own
+  container-secrets P4); `/tmp` and `/var/tmp` are per-channel named volumes, for durability (own
   bullet below). Hardening: tmpfs `/run` only (64m, noexec — pid files and the socket mount, which
   must be fresh at every start);
   `--cap-drop ALL` plus only `DAC_OVERRIDE`/`CHOWN`/`FOWNER`; `--security-opt no-new-privileges`;
@@ -2513,11 +2513,14 @@ are retired, bullet by bullet; everything else stands.
   channel accumulates lives in one of three places, none of which the daemon deletes: the
   per-channel HOME **volume** (`/home/agent` — engine sessions, CLI logins, `npm -g`, `pip --user`,
   `pipx`, `uv`/`cargo` installs, caches), the bind-mounted work directory, and — since image spec
-  1.1.0 — `/tmp` and `/var/tmp`, which are bind mounts of
-  `~/ChannelGate/.runtime/<platform>/<slug>/{tmp,var-tmp}` rather than tmpfs. As tmpfs they were the
+  1.1.0 — `/tmp` and `/var/tmp`, which are persistent rather than tmpfs. As tmpfs they were the
   ONE thing a stop threw away, a regression against the host backend, where Claude Code's
-  `/tmp/claude-<uid>/…` scratchpad survives between turns; as bind mounts they persist, are visible
-  to the operator, and trade the tmpfs size cap for the disk (the same deal the work directory
+  `/tmp/claude-<uid>/…` scratchpad survives between turns. Since 2026-09-27 they are per-channel
+  named volumes (`<container>-tmp`, `<container>-vtmp`, removed with the HOME volume when the channel
+  is deleted); before that they were bind mounts of `<artifactDir>/{tmp,var-tmp}`, which made the
+  same files visible at two paths inside the container — a mount alias Codex's bubblewrap sandbox
+  refuses (its app-server socket lives under a fixed `/tmp/codex-daemon-<uid>`), so Read-mode Codex
+  could run no command. They persist and trade the tmpfs size cap for the disk (the same deal the work directory
   already had). `/run` stays a tmpfs on purpose. The image PATH puts every place a channel can
   install into ahead of the pinned toolchain — `~/.npm-global/bin`, `~/.local/bin`, `~/bin`, then
   `~/.cargo`/`~/.bun`/`~/.deno`/`~/go` — and ships `pip`/`venv`/`pipx` with `PIP_USER=1` +

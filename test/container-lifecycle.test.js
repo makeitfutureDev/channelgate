@@ -541,7 +541,7 @@ test("destroy: rm always, the HOME volume only when explicitly asked", async () 
   assert.deepEqual(h.fake.last("rm"), ["podman", "rm", "-f", t.container.name]);
   assert.equal(h.fake.last("volume"), null, "a rollback must never delete the channel's HOME volume");
   await h.lifecycle.destroy(t, { volumes: true, reason: "channel deleted" });
-  assert.deepEqual(h.fake.last("volume"), ["podman", "volume", "rm", t.container.homeVolume]);
+  assert.deepEqual(h.fake.find("volume"), [t.container.homeVolume, t.container.tmpVolumes.tmp, t.container.tmpVolumes["var-tmp"]].map((v) => ["podman", "volume", "rm", v]), "HOME and both temp volumes, one rm each");
 });
 
 test("names: install-scoped, clamped, and a foreign install label is not ours", async () => {
@@ -549,6 +549,7 @@ test("names: install-scoped, clamped, and a foreign install label is not ours", 
   const t = target("names-chan");
   assert.equal(t.container.name, `cg-${currentInstallId()}-slack-names-chan`);
   assert.equal(t.container.homeVolume, `${t.container.name}-home`);
+  assert.deepEqual(t.container.tmpVolumes, { tmp: `${t.container.name}-tmp`, "var-tmp": `${t.container.name}-vtmp` });
   const long = containerName({ slug: "x".repeat(120), platform: "slack" });
   assert.ok(long.length <= 58, `clamped name too long: ${long.length}`);
   assert.ok(homeVolumeName({ slug: "x".repeat(120), platform: "slack" }).length <= 63);
