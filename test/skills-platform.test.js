@@ -834,3 +834,26 @@ test("a channel deactivates its template and section skills for itself only; pro
   assert.equal(catalog.getSkill("src-doomed").deleted, true, "the next sync does not restore an approved delete");
   catalog.removeSource(src.id);
 });
+
+test("templates: only admins edit them; anyone may ask — an approved template request adds the skill for every follower", async () => {
+  catalog.putSkillRevision({ files: [md("Tpl Req", "wanted in a template")], ownerKind: "local" });
+  catalog.putSkillRevision({ files: [md("Tpl Mine", "personal")], ownerKind: "local", visibility: "personal", createdBy: "U_TPL" });
+  catalog.upsertTemplate({ slug: "req-tpl", name: "Req Tpl", skills: [] });
+  assert.throws(() => authoring.proposeSkillChange({ skill: "tpl-req", kind: "template", template: "nope", note: "x", proposedBy: "U_TPL" }), /no skill template/);
+  assert.throws(() => authoring.proposeSkillChange({ skill: "tpl-mine", kind: "template", template: "req-tpl", note: "x", proposedBy: "U_TPL" }), /personal skill/);
+  const { proposal } = authoring.proposeSkillChange({ skill: "tpl-req", kind: "template", template: "Req Tpl", note: "sales needs it", proposedBy: "U_TPL" });
+  assert.equal(proposal.kind, "template");
+  assert.equal(proposal.target, "req-tpl", "the template is resolved by name to its slug");
+  assert.deepEqual(catalog.getTemplate("req-tpl").skills, [], "nothing changes before an admin decides");
+  const decided = await authoring.decideSkillProposal(proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
+  assert.equal(decided.templated, true);
+  assert.deepEqual(catalog.getTemplate("req-tpl").skills, ["tpl-req"]);
+  assert.throws(() => authoring.proposeSkillChange({ skill: "tpl-req", kind: "template", template: "req-tpl", note: "again", proposedBy: "U_TPL" }), /already in/);
+
+  const added = authoring.addSkillsToTemplate("req-tpl", ["tpl-mine", "ghost-skill", "tpl-req"]);
+  assert.deepEqual(added.added, []);
+  assert.deepEqual(added.refused, ["tpl-mine", "ghost-skill"], "personal and unknown skills never join a template");
+  const removed = authoring.removeSkillsFromTemplate("req-tpl", ["Tpl Req"]);
+  assert.deepEqual(removed.removed, ["tpl-req"]);
+  assert.deepEqual(catalog.getTemplate("req-tpl").skills, []);
+});

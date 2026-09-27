@@ -971,4 +971,12 @@ export const migrations = [
       `);
     },
   },
+  {
+    // A skill proposal's TARGET beyond the skill itself: for kind "template" the slug of the skill
+    // template the requester wants the skill added to (only admins edit templates; anyone may ask).
+    version: 31,
+    up(db) {
+      db.exec(`ALTER TABLE skill_proposals ADD COLUMN target TEXT NOT NULL DEFAULT '';`);
+    },
+  },
 ];

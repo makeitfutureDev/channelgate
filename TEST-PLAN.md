@@ -7168,7 +7168,13 @@ companion skill; every change is announced in the reply.
       sync of the old bytes does not revert it. `skillsOff`: a template skill and a section skill
       deactivated in one channel stay active in another channel on the same template and in the
       catalog; `grantSkillsToChannel` reactivates without storing an explicit grant; an approved
-      `promote` moves a channel skill into the library; an approved `delete` tombstones.
+      `promote` moves a channel skill into the library; an approved `delete` tombstones. Template
+      requests: unknown template, personal skill and already-included skill are refused; an
+      approved `template` proposal (target resolved from the template's name) adds the skill; the
+      admin add/remove helpers refuse personal/unknown skills. Control plane (both engines): a
+      member's `update_skill_template` is refused and `propose_skill_change kind template` files a
+      request with no card; the admin's decision and `update_skill_template` each post exactly one
+      admin-tier card.
       `test/skills-standalone.test.js`: a shared skill's author cannot catalog-delete it; the
       author of a personal skill and an admin can.
 - [ ] Live Claude + Codex (Slack test channel, an approved NON-admin member, network on, no Auto
@@ -7188,6 +7194,10 @@ companion skill; every change is announced in the reply.
       5. "Add a reference with our escalation contacts to `<bundled or other-repo skill>`."
          Expect: no in-place edit; the agent creates a companion channel skill with
          `requires: [<that skill>]`.
+      6. "Add `<prefix>-org-check` to the Sales template." (member) Expect: no card, a pending
+         `template` proposal with target `sales`; the template is unchanged. As an admin, approve
+         it (one card): the Sales template lists the skill, and a channel following Sales shows
+         it in `show_channel_skills` on its next message.
       Repeat 1–2 as an ADMIN with "…organization-level skill…": expect no card at all, the skill in
       the library (`skills/<slug>/`), active here. Pass only when no step shows an Approve card
       except the admin's `decide_skill_proposal`, and every create/update/deactivate is mentioned

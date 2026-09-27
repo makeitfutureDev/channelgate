@@ -121,6 +121,7 @@ export const GATEWAY_TOOL_NAMES = [
   "list_skill_templates",
   "preview_skill_template",
   "set_channel_skill_template",
+  "update_skill_template",
   "get_skill_file",
   "create_skill",
   "update_skill",

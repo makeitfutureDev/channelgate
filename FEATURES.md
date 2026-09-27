@@ -3467,6 +3467,13 @@ are retired, bullet by bullet; everything else stands.
   org grants, sources, governance, exclusion, `publish_skill`, `set_skill_scope`) keep their card.
   Accepted residual risk: injected content in an authorized turn can write a channel or personal
   skill, never an organization one. → TEST-PLAN: Skills platform (skill ownership without approvals).
+- **Template requests and admin template edits from chat.** There is no "team" scope: a team's skill
+  set is a template. `update_skill_template` (admins, control-plane card) adds/removes skills in a
+  template, live for every conversation following it; anyone asks with `propose_skill_change`
+  `kind: "template"` + `template` (resolved by slug or name, stored in `skill_proposals.target`,
+  migration 31; personal, unknown and already-included skills are refused), and an approved request
+  adds the skill to the template (`skill_template_changed` audit). The admin Review tab shows the
+  target. → TEST-PLAN: Skills platform (skill ownership without approvals).
 - **Usage telemetry** (`usage.js`, on the run event stream in `run.js`): Claude's `Skill` tool call
   is an **exact** signal (the stream parser now names the skill as the tool target); a Codex/shell
   read of `…/skills/<slug>/SKILL.md` is **inferred** and labelled so; one row per run/skill/signal

@@ -16,7 +16,7 @@ import { normalizeSkillFiles, decodeInputFile, isSkillManifestPath } from "./fil
 import { parseFrontmatter, skillMetadata, slugFromName } from "./frontmatter.js";
 import { withDependencies } from "./resolve.js";
 import { publishQuietly, publishTarget, publishSource, moveSkillFiles } from "./publish.js";
-import { normalizeChannelScope, setSkillChannelScope, listRevisions } from "./catalog.js";
+import { normalizeChannelScope, setSkillChannelScope, listRevisions, getTemplate, upsertTemplate } from "./catalog.js";
 import { getOrgAccessGrants, getSkillsPublishGithubToken, saveSettings } from "../../config/settings.js";
 import { patchChannelMeta, getUser, setUser, getChannelEntry } from "../../config/store.js";
 import { sanitizeSkillGrantNames } from "../access-grants.js";
@@ -341,17 +341,26 @@ export function promoteSkillToOrg(slug) {
 
 // File a proposal. Kinds: change (files + note), feedback (note only), promote (make a personal
 // or channel skill an organization skill, or grant an organization skill everywhere — decided on
-// approval), delete (remove a shared skill from the whole catalog).
-export function proposeSkillChange({ skill = "", kind = "change", files = [], note = "", proposedBy = "", channelSlug = "" } = {}) {
+// approval), delete (remove a shared skill from the whole catalog), template (add the skill to the
+// skill template named by `template` — only admins edit templates).
+export function proposeSkillChange({ skill = "", kind = "change", files = [], note = "", proposedBy = "", channelSlug = "", template = "" } = {}) {
   const existing = getSkill(skill);
   const slug = existing?.slug || skill;
-  if (!["change", "feedback", "promote", "delete"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
-  if ((kind === "promote" || kind === "feedback" || kind === "delete") && !existing) throw new SkillCatalogError(`"${skill}" is not in the catalog`, { status: 404 });
+  if (!["change", "feedback", "promote", "delete", "template"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
+  if ((kind === "promote" || kind === "feedback" || kind === "delete" || kind === "template") && !existing) throw new SkillCatalogError(`"${skill}" is not in the catalog`, { status: 404 });
+  let target = "";
+  if (kind === "template") {
+    const tpl = getTemplate(template);
+    if (!tpl) throw new SkillCatalogError(`no skill template named "${template}" (see list_skill_templates)`, { status: 404 });
+    if (existing.visibility === "personal") throw new SkillCatalogError(`"${slug}" is a personal skill; promote it before it can join a template`, { status: 409 });
+    if ((tpl.skills || []).some((s) => s.toLowerCase() === slug.toLowerCase())) throw new SkillCatalogError(`"${slug}" is already in the ${tpl.name} template`, { status: 409 });
+    target = tpl.slug;
+  }
   if (kind === "feedback" && !String(note || "").trim()) throw new SkillCatalogError("feedback needs a note");
   if (kind === "change" && !existing && !(files || []).some((f) => isSkillManifestPath(f?.path))) {
     throw new SkillCatalogError(`"${skill}" is not in the catalog — a proposal for a new skill needs a SKILL.md`, { status: 404 });
   }
-  const proposal = createProposal({ slug, kind, files: kind === "feedback" || kind === "delete" ? [] : files, note, proposedBy, channelSlug });
+  const proposal = createProposal({ slug, kind, files: kind === "change" || kind === "promote" ? files : [], note, proposedBy, channelSlug, target });
   logEvent("skill_proposal", { slug: channelSlug, author: proposedBy, skill: slug, kind, proposal: proposal.id });
   return { proposal, skill: existing };
 }
@@ -367,7 +376,7 @@ export async function decideSkillProposal(id, { decision, decidedBy = "", note =
   if (decision === "reject") {
     const p = decideProposal(id, { status: "rejected", decidedBy, note });
     logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "rejected" });
-    return { proposal: p, revision: null, pinned: false, promoted: false, published: null, deleted: false };
+    return { proposal: p, revision: null, pinned: false, promoted: false, published: null, deleted: false, templated: false };
   }
   if (decision !== "approve") throw new SkillCatalogError("decision must be approve or reject");
   const skill = getSkill(proposal.slug);
@@ -376,6 +385,7 @@ export async function decideSkillProposal(id, { decision, decidedBy = "", note =
   let promoted = false;
   let published = null;
   let deleted = false;
+  let templated = false;
   if (proposal.kind === "promote") {
     if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
     if (skill.visibility === "personal") {
@@ -389,6 +399,10 @@ export async function decideSkillProposal(id, { decision, decidedBy = "", note =
     } else {
       promoted = grantSkillsToOrg([skill.slug]).added.length > 0;
     }
+  } else if (proposal.kind === "template") {
+    if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
+    const r = addSkillsToTemplate(proposal.target, [skill.slug], { actor: decidedBy });
+    templated = r.added.length > 0;
   } else if (proposal.kind === "delete") {
     // A source-owned skill would come back on its source's next sync, so it is EXCLUDED (sticky
     // until restored); a local one is tombstoned. Both are restorable in the admin UI.
@@ -415,6 +429,47 @@ export async function decideSkillProposal(id, { decision, decidedBy = "", note =
     if (revision && (skill?.ownerKind === "local" || !skill)) published = await publishQuietly({ slug: r.skill.slug, revisionId: revision.id, actor: decidedBy });
   }
   const p = decideProposal(id, { status: "approved", decidedBy, note, revisionId: revision?.id ?? null });
-  logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "approved", revision: revision?.revisionNo, pinned, promoted, deleted });
-  return { proposal: p, revision, pinned, promoted, published, deleted };
+  logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "approved", revision: revision?.revisionNo, pinned, promoted, deleted, templated, template: proposal.target || undefined });
+  return { proposal: p, revision, pinned, promoted, published, deleted, templated };
+}
+
+// ── Templates ───────────────────────────────────────────────────────────────────────────────
+// A template is an admin-curated skill set (Development, Sales, …); every conversation following
+// it gets its CURRENT skills live. Only admins edit one — the chat verb is admin-only and anyone
+// else asks with a "template" proposal. Personal and deleted skills never join a template.
+
+export function addSkillsToTemplate(templateKey, slugs = [], { actor = "" } = {}) {
+  const tpl = getTemplate(templateKey);
+  if (!tpl) throw new SkillCatalogError(`no skill template named "${templateKey}"`, { status: 404 });
+  const have = new Set((tpl.skills || []).map((s) => s.toLowerCase()));
+  const added = [];
+  const refused = [];
+  for (const raw of sanitizeSkillGrantNames(slugs)) {
+    const skill = getSkill(raw);
+    if (!skill || skill.deleted || skill.visibility === "personal") {
+      refused.push(raw);
+      continue;
+    }
+    if (have.has(skill.slug.toLowerCase())) continue;
+    have.add(skill.slug.toLowerCase());
+    added.push(skill.slug);
+  }
+  const next = added.length ? upsertTemplate({ ...tpl, skills: [...(tpl.skills || []), ...added] }) : tpl;
+  if (added.length) logEvent("skill_template_changed", { template: tpl.slug, added, author: actor });
+  return { template: next, added, refused };
+}
+
+export function removeSkillsFromTemplate(templateKey, slugs = [], { actor = "" } = {}) {
+  const tpl = getTemplate(templateKey);
+  if (!tpl) throw new SkillCatalogError(`no skill template named "${templateKey}"`, { status: 404 });
+  const drop = new Set();
+  for (const raw of sanitizeSkillGrantNames(slugs)) {
+    drop.add(raw.toLowerCase());
+    const skill = getSkill(raw);
+    if (skill) drop.add(skill.slug.toLowerCase());
+  }
+  const removed = (tpl.skills || []).filter((s) => drop.has(s.toLowerCase()));
+  const next = removed.length ? upsertTemplate({ ...tpl, skills: (tpl.skills || []).filter((s) => !drop.has(s.toLowerCase())) }) : tpl;
+  if (removed.length) logEvent("skill_template_changed", { template: tpl.slug, removed, author: actor });
+  return { template: next, removed };
 }

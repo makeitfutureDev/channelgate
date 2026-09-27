@@ -363,7 +363,7 @@ function renderReview() {
     </tr>`).join("");
   const proposalRows = proposals.map((p) => `
     <tr>
-      <td>#${p.id} <code>${esc(p.slug)}</code> <span class="pill">${esc(p.kind)}</span></td>
+      <td>#${p.id} <code>${esc(p.slug)}</code> <span class="pill">${esc(p.kind)}</span>${p.target ? ` → <code>${esc(p.target)}</code>` : ""}</td>
       <td>${esc(p.note || "")}<br/><span class="muted">${p.files.length ? p.files.map((f) => esc(f.path)).join(", ") : "no files"}</span></td>
       <td class="muted">${esc(p.proposedBy || "?")}${p.channelSlug ? ` in ${esc(p.channelSlug)}` : ""}<br/>${fmtWhen(p.createdAt)}</td>
       <td><span class="skills-inline">${p.files.length ? `<button type="button" class="ghost" data-action="view-proposal" data-id="${p.id}">files</button>` : ""}<button type="button" data-action="approve-proposal" data-id="${p.id}">Approve</button><button type="button" class="ghost" data-action="reject-proposal" data-id="${p.id}">Reject</button></span></td>

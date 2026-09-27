@@ -368,7 +368,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     // skills platform: the ORGANIZATION tier (admin decisions, org grants, sources, governance,
     // moving a skill in or out of the shared library) and Git publishing keep their card
     "decide_skill_proposal", "sync_skill_sources",
-    "publish_skill", "add_org_skills", "remove_org_skills",
+    "publish_skill", "add_org_skills", "remove_org_skills", "update_skill_template",
     "add_skill_source", "set_skill_source", "remove_skill_source", "set_skill_excluded", "set_skill_governance", "set_skill_scope",    // Publishing bytes outside the gateway: a "share" link puts a channel file at an
     // unauthenticated URL for up to 48h and cannot be recalled once fetched. Its `details()`
     // returns null for the short machine-facing "upload" purpose, the same conditional shape
@@ -549,6 +549,41 @@ test("both engines: a member owns channel and personal skills without approval; 
     });
     assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.requiredTier]), [["decide_skill_proposal", "admin"]]);
     assert.equal(getSkill(adminChannelSkill).deleted, true);
+  }
+});
+
+test("both engines: a member asks for a template change; only an admin edits a template, with its card", async () => {
+  const { getTemplate, upsertTemplate } = await import("../src/gateway/skills/catalog.js");
+  for (const engine of ["claude", "codex"]) {
+    const tpl = `ctrl-tpl-${engine}`;
+    upsertTemplate({ slug: tpl, name: `Ctrl Tpl ${engine}`, skills: [] });
+    const wanted = `tpl-wanted-${engine}`;
+    await withGateway({ engine }, async client => {
+      await client.callTool({ name: "create_skill", arguments: { slug: wanted, files: creationFiles(wanted), scope: "organization" } });
+    });
+    approvalRequests.length = 0;
+    let requestId = 0;
+    await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+      const refused = resultText(await client.callTool({ name: "update_skill_template", arguments: { template: tpl, add: [wanted] } }));
+      assert.match(refused, /Only admins/);
+      const asked = resultText(await client.callTool({ name: "propose_skill_change", arguments: { skill: wanted, kind: "template", template: tpl, note: "our team needs it" } }));
+      assert.match(asked, new RegExp(`template → template ${tpl}`));
+      requestId = Number(asked.match(/Proposal #(\d+)/)[1]);
+    });
+    assert.equal(approvalRequests.length, 0, "a member's refusal and request post no card");
+    assert.deepEqual(getTemplate(tpl).skills, []);
+
+    approvalResponse = { allow: true };
+    await withGateway({ engine }, async client => {
+      const approved = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: requestId, decision: "approve" } }));
+      assert.match(approved, /added to the .* template/);
+      assert.deepEqual(getTemplate(tpl).skills, [wanted]);
+      const edited = resultText(await client.callTool({ name: "update_skill_template", arguments: { template: tpl, remove: [wanted] } }));
+      assert.match(edited, /template updated/);
+      assert.match(edited, approvalReceipt);
+    });
+    assert.deepEqual(getTemplate(tpl).skills, []);
+    assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.requiredTier]), [["decide_skill_proposal", "admin"], ["update_skill_template", "admin"]]);
   }
 });
 

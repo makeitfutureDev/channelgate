@@ -259,6 +259,7 @@ export function buildControlPlane({ loadMeta }) {
     // Accepted residual risk: injected content inside an authorized turn can write a skill that
     // loads in this channel's (or this author's) later turns — never the organization tier, which
     // stays admin-only. The organization-wide admin tools below keep their card.
+    ["update_skill_template", { authz: "admin", details: ({ template, add = [], remove = [] }) => `Change the "${summarize(template)}" skill template — every conversation following it is affected.${add.length ? ` Add: ${summarize(add.join(", "))}.` : ""}${remove.length ? ` Remove: ${summarize(remove.join(", "))}.` : ""}` }],
     ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => `${decision === "approve" ? "APPROVE" : "Reject"} skill proposal #${Number(id) || "?"}.` }],
     ["sync_skill_sources", { authz: "admin", details: ({ id }) => `Sync ${id ? `skill source #${Number(id)}` : "every skill source"} into the catalog now.` }],
     ["publish_skill", { authz: "manage", details: ({ skill }) => `Push skill \`${summarize(skill)}\` to the configured Git repository now.` }],
