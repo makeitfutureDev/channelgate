@@ -18,6 +18,7 @@ product overview.
 
 ## Unreleased
 
+- **Codex Read-mode channels can run commands again.** Codex 0.156.1 enforces its read-only sandbox with bubblewrap only, and bubblewrap will not start while the process holds the container's added capabilities ("bwrap: Unexpected capabilities but not setuid"), so every command failed even with bubblewrap installed. A sandboxed Codex run in a container now starts without those capabilities: reads work, writes are refused. The ignored `features.use_legacy_landlock` switch is gone (EN-01 on Codex, 2026-09-27).
 - The egress proxy now presents its CA after the per-host leaf, so the in-container browser's CA pin matches and agent-browser loads HTTPS pages without `--ignore-https-errors` (EGR-03, 2026-09-27). Codex failure messages no longer lead with the CLI's "Reading additional input from stdin..." notice (EN-09).
 
 - Channel image spec 1.6.1: the image now ships `bubblewrap`. Codex 0.156.1 refuses to run any command in a read-only sandbox without it ("filesystem-restricted execution requires bubblewrap"), so Read-mode Codex channels could not execute a probe since the 0.156.1 pin (found by the 2026-09-27 live campaign, EN-01/CTR-06/MD-02 on Codex). Rebuild with `npm run build:image`.

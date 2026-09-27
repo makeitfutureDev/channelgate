@@ -645,6 +645,14 @@ export function codexPluginSkillPrefix(skills) {
     + JSON.stringify(skills) + "\n[End current approved plugin skills]\n\n";
 }
 
+// Does this run's Codex sandbox need a process without the container's added capabilities? Only
+// when Codex enforces a sandbox itself (not the admin bypass, not danger-full-access) inside an
+// isolated runtime: bubblewrap is the mechanism, and it will not start while ambient caps are held
+// (see buildCodexArgs). Dropping them only ever narrows what the run can do.
+export function codexSpawnDropsCapabilities({ target = null, cwd = "", dangerouslySkip = false, writable = false } = {}) {
+  return isIsolatedTarget(runtimeTargetOr(target, cwd)) && !dangerouslySkip && !writable;
+}
+
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
 export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
@@ -688,16 +696,12 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
     const sandbox = writable ? "danger-full-access" : "read-only";
     if (resuming) args.push("-c", `sandbox_mode=${tomlString(sandbox)}`);
     else args.push("--sandbox", sandbox);
-    // Inside the container the sandbox also has to be a MECHANISM that can start in here. Codex's default is
-    // bubblewrap, which refuses under the container's `--cap-drop ALL` + no-new-privileges
-    // ("bwrap: Unexpected capabilities but not setuid") and fails EVERY command — which left Read
-    // mode inoperative, reads included. Landlock is the mechanism that works under those caps:
-    // reads succeed, writes get "Permission denied". Select it only for isolated container runs;
-    // a sudo-host turn uses the host CLI's native sandbox mechanism. It never applies to the admin
-    // bypass, which has no sandbox to pick a mechanism for. `use_legacy_landlock` is
-    // DEPRECATED-but-functional in the pinned CLI (containers/versions.json): re-check it on every
-    // Codex CLI bump.
-    if (isolated) args.push("-c", "features.use_legacy_landlock=true");
+    // Inside the container Codex's sandbox MECHANISM is bubblewrap (the pinned CLI no longer honours
+    // the `features.use_legacy_landlock` fallback). bwrap refuses to start while the process holds
+    // capabilities without being setuid ("bwrap: Unexpected capabilities but not setuid"), and the
+    // container's `--cap-add` set reaches the agent user as AMBIENT caps — so every command failed,
+    // reads included. The spawn therefore asks the backend to exec this run WITHOUT them
+    // (codexSpawnDropsCapabilities below); argv states nothing about the mechanism.
   }
 
   // Optional host/runtime MCP policy. OpenAI injects `codex_apps` AFTER config parsing, so treating
@@ -1083,6 +1087,7 @@ export async function runCodex({
       detached: true,
       runId: runId || newRunId("run"),
       kind: "turn",
+      dropCapabilities: codexSpawnDropsCapabilities({ target: runtime, cwd, dangerouslySkip, writable }),
     }), { engine: "codex", kind: "cold" });
 
     let stdout = "";

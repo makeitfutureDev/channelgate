@@ -198,6 +198,14 @@ test("exec argv: -i, the env file, the workdir, and the cg-exec run wrapper — 
   assert.ok(!args.includes("-e"));
   const piped = buildExecArgs(t, podmanCaps, { runId: "warm-2", cmd: "claude", args: [], cwd: t.cwd, envFile: "/x/warm-2.env", stdinPiped: true });
   assert.equal(piped[1], "-i", "a spawn that pipes stdin (the warm Claude session) attaches it");
+  // A sandboxed Codex run execs without the container's added caps: bubblewrap will not start
+  // while ambient caps are held. setpriv sits INSIDE cg-exec, so the recorded session leader is
+  // still the run's own process (setpriv execs the engine in place).
+  const dropped = buildExecArgs(t, podmanCaps, { runId: "run-3", cmd: "codex", args: ["exec"], cwd: t.cwd, envFile: "/x/run-3.env", dropCapabilities: true });
+  assert.deepEqual(dropped.slice(dropped.indexOf("cg-exec")), ["cg-exec", "run-3", "setpriv", "--ambient-caps=-all", "--inh-caps=-all", "--", "codex", "exec"]);
+  const droppedJob = buildExecArgs(t, podmanCaps, { runId: "job-3", cmd: "codex", args: [], cwd: t.cwd, envFile: "/x/job-3.env", background: true, logFile: "/art/l.log", dropCapabilities: true });
+  assert.ok(droppedJob.indexOf("setpriv") > droppedJob.indexOf("/art/l.log"), "the log wrapper execs setpriv, which execs the command");
+  assert.ok(!args.includes("setpriv"), "nothing else drops capabilities");
 
   const dockerCaps = await createContainerCli({ exec: createFakeCli({ kind: "docker", available: ["docker"] }).exec }).probe(SETTINGS, { image: SETTINGS.image });
   const dockerArgs = buildExecArgs(t, dockerCaps, { runId: "run-2", cmd: "codex", args: [], cwd: t.cwd, envFile: "/x/run-2.env" });
