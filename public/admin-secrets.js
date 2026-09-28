@@ -30,10 +30,11 @@ export function mountSecretEditor({
   const valueInput = root.querySelector(".secret-value");
   const saveButton = root.querySelector(".secret-save");
   const secretInput = root.querySelector(".secret-is-secret");
+  const hostsInput = root.querySelector(".secret-hosts");
   let current = Array.isArray(vars) ? vars : [];
 
   nameInput.placeholder = namePlaceholder;
-  for (const el of [nameInput, valueInput, secretInput, saveButton]) if (el) el.disabled = disabled;
+  for (const el of [nameInput, valueInput, secretInput, hostsInput, saveButton]) if (el) el.disabled = disabled;
 
   const render = () => {
     state.textContent = current.length ? `${current.length} set` : "none";
@@ -136,15 +137,18 @@ export function mountSecretEditor({
     saveButton.disabled = true;
     hint.textContent = "saving…";
     try {
-      // The one choice: secret (hidden — the gateway still keeps an SMTP/database login readable
-      // and learns where it may be sent through admin approvals) or not (readable). A stored
-      // "Used on hosts" rule is kept: no hosts are sent from here.
-      const exposure = secretInput ? (secretInput.checked ? "hidden" : "readable") : "";
-      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ value, ...(exposure ? { exposure } : {}) }) });
+      // Secret or not (hidden — the gateway still keeps an SMTP/database login readable and learns
+      // where it may be sent through admin approvals — or readable). Optional "Allowed domains"
+      // restricts a secret to exactly those domains; sent only when typed, so a rotation keeps the
+      // stored list, and naming any makes the variable a secret.
+      const hosts = hostsInput ? hostsInput.value.trim() : "";
+      const exposure = hosts ? "hidden" : secretInput ? (secretInput.checked ? "hidden" : "readable") : "";
+      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ value, ...(exposure ? { exposure } : {}), ...(hosts ? { hosts } : {}) }) });
       current = result.vars || [];
       valueInput.value = "";
       nameInput.value = "";
       if (secretInput) secretInput.checked = true;
+      if (hostsInput) hostsInput.value = "";
       hint.textContent = savedText(name);
       render();
     } catch (e) {
@@ -167,6 +171,7 @@ export function secretEditorMarkup() {
       <input class="secret-name" type="text" autocomplete="off" spellcheck="false" />
       <input class="secret-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
       <label class="toggle" title="Programs see a stand-in; the real value is only sent to servers an admin approves. Email and database passwords stay usable automatically. Untick for plain configuration (an id, a region, a URL)."><input class="secret-is-secret" type="checkbox" checked /> Secret</label>
+      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Allowed domains (optional) — api.example.com" title="Restricts the secret to only these domains: the egress proxy swaps the real value in there and nowhere else, with no approval needed. Leave empty and each new server asks an admin once. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
       <button type="button" class="ghost secret-save">Save variable</button>
     </div>
     <em class="state secret-hint"></em>`;

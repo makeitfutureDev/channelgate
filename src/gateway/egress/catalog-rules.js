@@ -276,6 +276,19 @@ export function rulesFor(secretName, entry = null, { value = undefined } = {}) {
   const own = normalizeSwapRuleFields(entry || {});
   const catalog = catalogRuleFor(secretName);
   if (own.hosts?.length) {
+    // "Allowed domains" on a variable the catalog does not know: the gateway cannot know how that
+    // API authenticates, so it accepts the placeholder in any credential-like header or query
+    // parameter (like an approval rule) — but ONLY on these domains, and never asks about others.
+    if (!catalog && !own.headers) {
+      return {
+        hosts: own.hosts,
+        headers: [...APPROVAL_HEADERS],
+        query: [...APPROVAL_QUERY],
+        format: own.format || [...APPROVAL_FORMATS],
+        source: "entry",
+        credentialFields: true,
+      };
+    }
     return {
       hosts: own.hosts,
       headers: own.headers || [...(catalog?.headers || DEFAULT_RULE_HEADERS)],
