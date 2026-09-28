@@ -6,6 +6,8 @@ import { ACCESS_FIELD_PREFIX, ACCESS_FLAGS, ACCESS_LABELS, ACCESS_SELECTS, ACCES
 import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
 import { buildSecretsView } from "./secret-explorer.js";
+import { nextCronRun } from "../util/cron.js";
+import { daemonTimeZone, zonedStamp } from "../util/timezone.js";
 
 export const CHANNEL_SETTINGS_MODE_PREFIX = "cg_channel_settings_mode_";
 export const CHANNEL_SETTINGS_OPTION_PREFIX = "cg_channel_settings_option_";
@@ -48,12 +50,16 @@ export const CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID = "cg_channel_settings_templa
 export const CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID = "cg_channel_settings_secrets_manage";
 export const CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID = "cg_channel_settings_vpn_toggle";
 export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_refresh";
+// Automations page controls. The schedule id rides in the button value and is re-checked against
+// THIS channel's rows by the handler, so a stale or forged id can never touch another channel's.
+export const CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID = "cg_channel_settings_automation_toggle";
+export const CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID = "cg_channel_settings_automation_delete";
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
 // The pages the modal offers, in the order the tab row shows them. "general" absorbed the former
 // runtime, access and network tabs (see generalBlocks); LEGACY_TABS keeps a Settings view opened
 // before that merge — its buttons still carry the old ids — landing on the page that now owns
 // those controls instead of silently falling back to the first one.
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["general", "resume", "mcp", "skills", "secrets"]);
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["general", "secrets", "mcp", "skills", "automations", "resume"]);
 const LEGACY_TABS = Object.freeze({ runtime: "general", access: "general", network: "general" });
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
@@ -108,7 +114,7 @@ function mrkdwn(text) {
   return { type: "mrkdwn", text: String(text).slice(0, 3000) };
 }
 
-function escapeMrkdwn(value) {
+export function escapeMrkdwn(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -589,26 +595,94 @@ function resumeBlocks(snapshot = {}) {
   ];
 }
 
+// This channel's schedules, one-time reminders and /loop wake-ups — the rows the agent's own
+// create_schedule and the harness's loop calls write — so what will fire here unattended is visible
+// without asking the agent. The controls are the ones the agent's tools already give any
+// authorized user: pause/resume a recurring schedule, delete any row. A one-time row is only ever
+// cancelled (resuming one whose time has passed would fire it at once), and a loop is stopped, not
+// paused, because its tick budget and thread binding make a paused loop meaningless.
+const AUTOMATION_LIST_LIMIT = 20;
+
+function automationWhen(sched = {}, { now = new Date(), tz = daemonTimeZone() } = {}) {
+  if (sched.once || sched.runAt) {
+    const at = Date.parse(sched.runAt);
+    return Number.isFinite(at) ? `Once · ${zonedStamp(new Date(at), { tz })}` : "Once";
+  }
+  const next = sched.enabled ? nextCronRun(sched.cron, now) : null;
+  return `${inlineCode(sched.cron)}${next ? ` · next ${zonedStamp(next, { tz })}` : ""}`;
+}
+
+function automationKind(sched = {}) {
+  if (sched.loop) return "Loop";
+  if (sched.kind === "reminder") return sched.ack ? "Reminder · needs ✅" : "Reminder";
+  return "Task";
+}
+
+function automationRow(sched, state, options) {
+  const title = String(sched.loop ? sched.loopReason || sched.prompt || "Loop" : sched.description || sched.prompt || sched.id).replace(/\s+/g, " ").trim();
+  const status = sched.enabled ? "On" : "Paused";
+  const details = [
+    automationKind(sched),
+    status,
+    automationWhen(sched, options),
+    ...(sched.loop && Number.isFinite(sched.ticksRemaining) ? [`${sched.ticksRemaining} ticks left`] : []),
+    ...(sched.createdBy ? [`by <@${escapeMrkdwn(sched.createdBy)}>`] : []),
+    ...(sched.lastStatus ? [`last: ${escapeMrkdwn(String(sched.lastStatus).slice(0, 80))}`] : []),
+  ];
+  const recurring = !sched.loop && !sched.once && !sched.runAt;
+  const remove = sched.loop ? "Stop loop" : recurring ? "Delete" : "Cancel";
+  return [
+    { type: "section", text: mrkdwn(`*${escapeMrkdwn(title.slice(0, 150))}*\n${details.join(" · ")}`) },
+    {
+      type: "actions",
+      block_id: `cg_automation_${String(sched.id).slice(0, 40)}`,
+      elements: [
+        ...(recurring ? [button(CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, sched.enabled ? "Pause" : "Resume", state, "automation_toggle",
+          { id: sched.id, enabled: !sched.enabled }, sched.enabled ? {} : { style: "primary" })] : []),
+        button(CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, remove, state, "automation_delete", { id: sched.id }, {
+          style: "danger",
+          confirm: destructiveConfirm(`${remove}?`, `This removes *${escapeMrkdwn(title.slice(0, 80))}* from this channel. It will not run again.`, remove),
+        }),
+      ],
+    },
+  ];
+}
+
+function automationsBlocks(snapshot = {}, state = {}, options = {}) {
+  const list = Array.isArray(snapshot.automations) ? snapshot.automations : [];
+  const intro = { type: "context", elements: [mrkdwn("Scheduled tasks, reminders and `/loop` wake-ups that run in this channel. To add one, ask the agent — e.g. _every weekday at 9:00 summarize new issues_.")] };
+  if (!list.length) return [intro, { type: "section", text: mrkdwn("_No automations in this channel yet._") }];
+  const tz = daemonTimeZone();
+  const shown = list.slice(0, AUTOMATION_LIST_LIMIT);
+  return [
+    intro,
+    ...shown.flatMap((sched) => automationRow(sched, state, { ...options, tz })),
+    ...(list.length > shown.length ? [{ type: "context", elements: [mrkdwn(`${list.length - shown.length} more not shown — the admin UI's Schedules page lists them all.`)] }] : []),
+  ];
+}
+
 const TAB_LABELS = Object.freeze({
   general: "General Settings",
-  resume: "Resume Session",
+  secrets: "Variables",
   mcp: "MCP",
   skills: "Skills",
-  secrets: "Variables",
+  automations: "Automations",
+  resume: "Resume Session",
 });
 
 // The short names the tab row shows; TAB_LABELS stays the page's full name.
 const TAB_BUTTON_LABELS = Object.freeze({
   general: "General",
-  resume: "Resume",
-  mcp: "MCP",
-  skills: "Skills",
   secrets: "Variables",
+  mcp: "MCPs",
+  skills: "Skills",
+  automations: "Automations",
+  resume: "Resume",
 });
 
 // Pages are a row of tab buttons, the current one highlighted. A dropdown replaced an earlier row
-// that wrapped onto a second line as pages were added; with five short names one row fits a
-// modal, and a tab is one click where the dropdown was two. Each button carries the same `tab`
+// that wrapped onto a second line as pages were added; Slack wraps a long row on its own, and a
+// tab is one click where the dropdown was two. Each button carries the same `tab`
 // command the dropdown did, so a Settings view opened before this shipped still switches pages
 // through the very same handler.
 function tabRow(state, active) {
@@ -642,6 +716,8 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   const active = normalizeTab(tab);
   const content = active === "resume"
     ? resumeBlocks(snapshot)
+    : active === "automations"
+    ? automationsBlocks(snapshot, state)
     : active === "mcp"
     ? mcpBlocks(snapshot, state, { canManageCloudMcp })
     : active === "skills"
