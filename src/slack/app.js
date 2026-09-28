@@ -30,7 +30,8 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
+import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel } from "../config/schedules.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../gateway/skills/authoring.js";
@@ -63,6 +64,7 @@ import {
   CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
+  CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, escapeMrkdwn,
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
@@ -976,6 +978,7 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   ]);
   snapshot.runtime.scopes = scopes;
   snapshot.resume = resume;
+  snapshot.automations = listForChannel(state.channelId);
   snapshot.orgSecrets = secretScopes.organization;
   snapshot.personalSecrets = secretScopes.personal;
   return buildChannelSettingsView({ ...snapshot, vpn: vpn ?? unconfiguredChannelVpnStatus(meta) }, { ...state, tab }, {
@@ -984,6 +987,32 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
     notice,
     ...channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) }),
   });
+}
+
+// One Automations-page control, applied by the caller only after channelSettingsContext admitted
+// the clicker. The authority is the one the agent's own schedule tools give any authorized user.
+// The row is looked up among THIS channel's schedules, so an id from another channel (or a row
+// deleted since the page was drawn) is refused rather than touched. Returns the page notice.
+export async function applyAutomationAction({ channelId, slug, actorId, actionId, command = {} }) {
+  const id = String(command.id || "");
+  const sched = listForChannel(channelId).find((row) => row.id === id);
+  if (!sched) throw new Error("That automation no longer exists in this channel. Reopen Settings to see the current list.");
+  const title = escapeMrkdwn(String(sched.description || sched.loopReason || sched.prompt || id).slice(0, 80));
+  if (actionId === CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID) {
+    deleteSchedule(id, channelId);
+    await logEvent("schedule_deleted", { channel: channelId, slug, schedule: id, author: actorId, via: "slack_settings" });
+    return `🗑️ Removed *${title}*.`;
+  }
+  if (actionId !== CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID) throw new Error("This channel settings control expired. Open Settings again from a recent reply.");
+  if (sched.loop || sched.once || sched.runAt) throw new Error("Only recurring schedules can be paused. Delete this one instead.");
+  const enable = command.enabled === true;
+  if (enable && !sched.enabled) {
+    const max = getScheduleMaxPerChannel();
+    if (countEnabledForChannel(channelId) >= max) throw new Error(`This channel already has ${max} enabled schedules (the limit). Pause or delete one first.`);
+  }
+  updateSchedule(id, { enabled: enable });
+  await logEvent("schedule_updated", { channel: channelId, slug, schedule: id, enabled: enable, author: actorId, via: "slack_settings" });
+  return `${enable ? "▶️ Resumed" : "⏸️ Paused"} *${title}*.`;
 }
 
 // Membership is a live Slack request. Re-read both channel policy and global roles AFTER it
@@ -1689,6 +1718,12 @@ async function connectAndWire(app) {
         // Compatibility with a Settings view opened before the template dropdown moved onto the
         // page: repaint it, and the control is simply there.
         await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "skills" }, userIsAdmin, { tab: "skills" }));
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID || actionId === CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID) {
+        const notice = await applyAutomationAction({ channelId: state.channelId, slug: entry.slug, actorId: clicker, actionId, command });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "automations" }, userIsAdmin, { tab: "automations", notice }), { guardHash: false });
         return;
       }
 

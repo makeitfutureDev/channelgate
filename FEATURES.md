@@ -384,9 +384,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Grant Tier switch is gone.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
-  setup concepts across five pages — **General Settings**, **Resume Session**, **MCP**, **Skills**,
-  **Secrets** — shown as one row of tabs (*General · Resume · MCP · Skills · Secrets*) at the top,
-  the open page highlighted; short names keep the five on one row of the modal. Legacy page ids
+  setup concepts across six pages — **General Settings**, **Variables**, **MCP**, **Skills**,
+  **Automations**, **Resume Session** — shown as one row of tabs (*General · Variables · MCPs ·
+  Skills · Automations · Resume*) at the top, the open page highlighted; Slack wraps the row on a
+  narrow modal. Legacy page ids
   (`runtime`, `access`, `network`) and the former *Page* dropdown still resolve, so a Settings view
   opened before either change keeps navigating.
   **General Settings** is everything that decides how the conversation runs: its Engine & model
@@ -462,7 +463,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   hand out a cleared session's id, plus the session id and the folder it belongs to. Opened outside
   a thread, or in a thread that has not run a turn yet, the tab says so instead of showing a
   command. It replaces the 💻 reply-footer button, which is gone from run footers.
-  A DM sees the same five pages, with its mode/Auto/Lean buttons at the top of General Settings and
+  **Automations** lists this conversation's scheduled tasks, reminders and `/loop` wake-ups (up to
+  20, then a pointer to the admin Schedules page): title, kind, on/paused, the cron with its next
+  run or the one-time run time (both in the gateway's zone), remaining loop ticks, creator and last
+  status. Any authorized user may **Pause**/**Resume** a recurring schedule and **Delete** any row
+  (*Cancel* for a one-time row, *Stop loop* for a loop; each asks first) — the same authority the
+  agent's `create_schedule`/`delete_schedule` tools give them. A one-time row or a loop is never
+  paused. Resuming is refused at the per-channel enabled-schedule limit, an id not in THIS
+  channel's rows is refused, and every change is logged (`schedule_updated` / `schedule_deleted`,
+  `via: slack_settings`). New automations are still created by asking the agent.
+  A DM sees the same six pages, with its mode/Auto/Lean buttons at the top of General Settings and
   no Access summary. Work-dir and gateway-wide settings are not exposed here.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;

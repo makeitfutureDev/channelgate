@@ -2846,7 +2846,8 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       the thread and reopen the tab: it must say there is no session rather than offering the
       cleared id.
 - [x] Automated page tabs and General Settings: the modal carries one `actions` row of tab buttons
-      General / Resume / MCP / Skills / Secrets in that order, above the page content, exactly the
+      General / Variables / MCPs / Skills / Automations / Resume in that order (Tiberiu,
+      2026-09-28), above the page content, exactly the
       open page styled primary, each bound to the view's channel and owner, and no page dropdown;
       a picked option from a view opened while the dropdown shipped still switches pages
       (`test/channel-settings-modal.test.js`). Earlier the pages were a *Page* dropdown (Tiberiu
@@ -2857,6 +2858,20 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       opened before the merge keeps navigating. A control's command is read from a button's own
       value or from the picked option, while a runtime dropdown's bare model id parses to no
       command at all (`test/channel-settings-modal.test.js`).
+- [x] Automated Automations page: an empty channel reads *No automations in this channel yet*; a
+      recurring row shows its escaped title, its next run and **Pause**/**Resume** + **Delete**
+      (with a confirm); a one-time row shows only **Cancel** and a loop only **Stop loop** with its
+      remaining ticks. `applyAutomationAction` pauses and resumes a recurring row, refuses to pause a
+      one-time row, refuses an id belonging to another channel (that row stays), refuses a resume at
+      the per-channel enabled-schedule limit and deletes a one-time row
+      (`test/channel-settings-modal.test.js`).
+- [ ] Live Automations page (engine-independent Slack UI case — the page reads and writes the
+      schedule store only): in a disposable channel ask the agent (Claude, then Codex) "every day at
+      09:00 post a haiku" and "remind me in 2 hours to stretch", then open **⚙️ Settings →
+      Automations**. Pass when both rows appear with the gateway's zone, **Pause** turns the daily
+      row to *Paused* and the admin Schedules page shows it disabled, **Resume** re-enables it,
+      **Cancel** on the reminder (after the confirm) removes it, and `list_schedules` in the thread
+      agrees with the page.
 - [x] Automated VPN row: each state renders as `*VPN* — <state>` with its scoped controls; a
       failure or an unavailable service still carries its diagnosis, while `off` no longer restates
       itself in prose and the "does not route the agent container" paragraph is gone from the modal
