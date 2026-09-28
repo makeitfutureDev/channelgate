@@ -1898,11 +1898,43 @@ The skipped/live cases below remain unverified; this branch is not a release can
   even if the previous engine completes late. New unquoted group `/stop` must not stop a different
   root. Verify `/status`, `/help`, permitted `/model` and `/effort`, and rejected non-admin channel
   runtime changes. A final answer must never be overwritten by a late progress edit.
+## Reply menu on every answer
+
+- [x] Automated: `node --test test/deliver.test.js test/slack-progress.test.js test/slack-requester-tag.test.js
+  test/slack-answer-images.test.js test/codex-message-to-reply-e2e.test.js test/stop-card-engine.test.js
+  test/file-button-actions.test.js test/review-file-buttons.test.js test/channel-settings-modal.test.js`.
+  Pass: a streamed reply seals with stats + the three labelled buttons; an overflowing reply (tool-only
+  long answer, answerless notice after commentary) moves the stats + menu to its LAST follow-up and the
+  streamed head carries none; an unattended delivery ends with the unbound menu (inline when the last
+  chunk fits one section, a trailer after a longer one; exactly one menu); a failed Codex turn through
+  the real pipeline posts its error text with the requester-bound menu; "🛑 Stopped." carries the menu;
+  a long notice posts in full with the menu below it, a rejected menu keeps the notice, and Google
+  Chat/Teams receive plain text only; an unbound button opens for any clicker, a bound one only for
+  its owner (file buttons also for admins).
+- [ ] Live (Claude + Codex, engine-dependent): in a disposable approved Worker channel per harness
+  and a DM, with the candidate daemon, capture Slack screenshots of the END of each reply and pass
+  only when every one ends with exactly **📂 Files · 🔑 Variables · ⚙️ Settings** (no 💻, no
+  icon-only buttons, Settings present):
+  1. `@agent Reply MENU_OK` (short streamed answer).
+  2. `@agent Print the numbers 1 to 6000, one per line` (overflow: menu on the last message only).
+  3. `/model` → pick the other model for this thread, then `@agent Reply MENU_AFTER_MODEL`.
+  4. A failing turn: pin an unavailable model for the thread (`/model` → a model the account lacks)
+     and send `@agent Reply MENU_ERR`; the error line carries the menu (reset the pin afterwards).
+  5. `@agent Run sleep 60 in the shell` then `stop` in the thread: "🛑 Stopped." carries the menu.
+  6. `POST /api/runs` into the thread (`{"channel":…,"thread":…,"message":"Reply MENU_API","author":"qa-bot"}`):
+     the streamed answer ends with the menu and Settings is present; click Files as a second approved
+     member — it opens (unbound) under that member's own permissions.
+  7. A one-time schedule `in 1 minute: Reply MENU_SCHEDULE` in the channel: its answer ends with the menu.
+  Record the screenshots and event ids in the PR. Menu delivery is platform-side and shared by both
+  harnesses, but cases 1–5 require both harness fixtures because each engine reaches the finalizer
+  and the error path through its own runner.
+
 ## Standalone Slack menu
 
 - [x] Automated: `node --test test/menu.test.js test/inherited-file-commands.test.js test/help-text.test.js`.
-  Fresh approved channel/DM fixtures receive exactly one actions block with four controls and no
-  session creation; typed channel commands retain mention gating and the current thread. Root or
+  Fresh approved channel/DM fixtures receive exactly one actions block with the three menu controls
+  (Files, Variables, Settings — no Resume) and no session creation; an older card's Resume button
+  still resolves through its registered handler; typed channel commands retain mention gating and the current thread. Root or
   previous attachments do not send `/menu` to an engine. Unapproved users receive no card. Resume
   reads only the selected thread, honors the stored Claude/Codex session owner despite a changed
   thread pin, wraps the command for the container and uses per-thread Clean cwd. Empty/top-level
@@ -1913,11 +1945,11 @@ The skipped/live cases below remain unverified; this branch is not a release can
   per-thread Clean session with `@agent /clean Reply MENU_CLEAN`. Keep a fresh thread with no
   session and one thread with a harmless uploaded `menu-fixture.txt`.
   Invoke native `/menu` at top level, `@agent /menu` in each channel thread and `/menu` in a DM
-  thread. Pass: exactly the four-button card, no visible intro/stats/progress and no new
-  `run_start`. Click Files, Secrets and Settings: the existing channel-scoped modals open without
-  changing data. Click Resume: existing sessions show their owning harness and container cwd,
-  including Clean cwd; fresh/top-level cases show guidance. Clear an existing thread and click its
-  old Resume button: no old session command. A channel message `/menu` without mention is ignored;
+  thread. Pass: exactly the three-button card (Files, Variables, Settings), no visible
+  intro/stats/progress and no new `run_start`. Click each: the existing channel-scoped modals open
+  without changing data. Settings → Resume Session shows existing sessions with their owning harness
+  and container cwd, including Clean cwd; fresh cases show guidance. On a card posted before this
+  change, clear the thread and click its old Resume button: no old session command. A channel message `/menu` without mention is ignored;
   a revoked/nonmember or different author cannot open an old menu's controls. Capture Slack
   payloads/screenshots, session identity and event evidence. Card delivery is engine-independent;
   resume ownership/cwd requires both harness fixtures. Live cases remain unexecuted at development
@@ -2785,9 +2817,9 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       The shared resolver reads the session at render time: a cleared session yields no command, and
       a session minted by Codex prints a Codex resume line even when the channel default is Claude
       (`test/channel-settings-modal.test.js`, `test/menu.test.js`).
-- [x] Automated footers: a completed interactive reply's controls are exactly 📂 / 🔑 / ⚙️ Settings
-      (plus any 📄 review-file buttons) with no `resume_cmd_modal` control, and an unattended
-      `deliverResult` footer posts run stats with no control at all
+- [x] Automated footers: a completed interactive reply's controls are exactly 📂 Files / 🔑 Variables /
+      ⚙️ Settings (plus any 📄 review-file buttons) with no `resume_cmd_modal` control, and an
+      unattended `deliverResult` answer ends with the same menu, unbound
       (`test/slack-progress.test.js`, `test/channel-settings-modal.test.js`, `test/deliver.test.js`).
 - [ ] Live General Settings (engine-independent Slack UI case): in a disposable channel with a
       manager actor and an ordinary approved member, open **⚙️ Settings** from a reply. Pass when
@@ -4992,12 +5024,10 @@ none` for its cases and live gates. Kept as history.
       containing the word) is NOT intercepted — it runs as a normal prompt.
 - [ ] Stop: a plain "stop" message and a 🛑 reaction each halt an in-flight run and post "🛑 Stopped.";
       `/stop` is rejected by Slack inside a thread (words/reactions are the in-thread path).
-- [x] Unit (`test/stop-card-engine.test.js`): the "🛑 Stopped." card's 💻 resume button names the
-      harness the STOPPED THREAD ran on, not the gateway default — a Claude session in a
-      Codex-default gateway resumes as Claude and the inverse resumes as Codex, a per-thread
-      harness override outranks the session it was pinned onto, and with neither a session nor an
-      override the channel's own engine beats the gateway default. A session id is engine-specific,
-      so the old global-default read printed a `codex exec resume` line for a Claude session.
+- [x] Unit (`test/stop-card-engine.test.js`): the "🛑 Stopped." card of a Claude and of a Codex thread
+      ends with the requester-bound reply menu (📂 Files / 🔑 Variables / ⚙️ Settings) and no 💻
+      resume button; with neither a session nor an override the channel's own engine beats the
+      gateway default.
 - [ ] Stop is the end of the answer, on both engines: stop a run that is mid-answer and nothing more
       than "🛑 Stopped." arrives — no full reply beneath the card, no chunked fallback. Whatever
       text had already streamed stays put, ending in `🛑 _Stopped — partial answer._`.

@@ -1,23 +1,16 @@
-// A standalone controls card: no run, usage footer, or session creation.
-import { filesButton, secretsButton, settingsButton } from "./footer.js";
+// A standalone controls card: no run, usage footer, or session creation. It is the same fixed reply
+// menu every answer ends with (footer.js), so `/menu` and a reply never disagree about its buttons.
+import { menuButtons } from "./footer.js";
 import { resolveResumeSession } from "./resume-session.js";
 
+// Cards posted before the menu dropped its Resume button still carry this action id; the handler
+// stays registered so those older buttons keep working.
 export const MENU_RESUME_ACTION_ID = "cg_menu_resume";
 
 export function buildMenuCard(channelId, threadTs, authorId) {
   return {
-    text: "Channel menu: Resume, Files, Variables, Settings",
-    blocks: [{ type: "actions", elements: [
-      {
-        type: "button", action_id: MENU_RESUME_ACTION_ID,
-        text: { type: "plain_text", text: "💻 Resume", emoji: true },
-        accessibility_label: "Resume this thread in a terminal",
-        value: JSON.stringify({ c: channelId, t: threadTs || "", u: authorId }),
-      },
-      filesButton(channelId, threadTs, authorId, "📂 Files"),
-      secretsButton(channelId, threadTs, authorId, "🔑 Variables"),
-      settingsButton(channelId, threadTs, authorId, true),
-    ] }],
+    text: "Channel menu: Files, Variables, Settings",
+    blocks: [{ type: "actions", elements: menuButtons({ channel: channelId, threadTs, authorId }) }],
   };
 }
 

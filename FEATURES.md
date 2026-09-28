@@ -135,16 +135,29 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   independent reads can continue. The bundled guide, managed instructions and fresh/resumed
   prompts carry the same rule for Claude and Codex. → TEST-PLAN: Read/search account routing.
 
-## Standalone Slack menu
+## Reply menu and standalone Slack menu
 
-- `/menu` returns only one card with **Resume, Files, Secrets, Settings**, directly from the
-  daemon without starting Claude or Codex. The registered slash command is private to its caller;
-  `@agent /menu` inside a channel thread (or `/menu` in a DM message) posts the card in that thread.
-- All four controls remain available before a session exists. Resume reads the current thread's
-  session when clicked, uses its owning harness and container workspace (including per-thread
-  Clean mode), and explains when there is no session. Top-level slash commands do not guess a
-  thread. Existing file, secret and settings controls retain their authorization checks; Resume
-  is bound to the requester/channel and rechecks access and membership on click.
+- **Every AI reply in Slack ends with the same menu: 📂 Files · 🔑 Variables · ⚙️ Settings**, with
+  visible labels, always all three, in that order. That holds for a streamed or classic answer, a
+  failed turn (the error line carries it), "🛑 Stopped.", an answer after an engine/model switch or
+  failover, an HTTP API run into a thread (streamed, fallback delivery or failure), a scheduled
+  run and its failure notice, a background job or agent continuation, self-diagnosis, and a turn
+  replayed after a restart (answer or failure). When an answer overflows into follow-up messages,
+  the stats and menu ride the LAST one, never the streamed head. Referenced-file `📄` buttons follow
+  the menu. There is no 💻 Resume button on any of them.
+- Binding: a reply with a Slack requester binds the menu to that person (another member's click
+  is refused, as before; admins may still open another user's file button). An automation post
+  (schedule, background job, API run, restart recovery) has no Slack requester, so its menu opens
+  for whoever clicks it. That grants nothing: every open re-applies the clicker's own live channel
+  authorization and binds the modal to that clicker.
+- Slack only. Google Chat and Teams receive the plain text of those notices and answers.
+- `/menu` returns only one card with the same **Files, Variables, Settings** buttons, directly
+  from the daemon without starting Claude or Codex. The registered slash command is private to its
+  caller; `@agent /menu` inside a channel thread (or `/menu` in a DM message) posts the card in that
+  thread. All controls remain available before a session exists and retain their authorization
+  checks. Resume Session is a tab in Settings and the `/resume` command; a 💻 Resume button on a
+  card posted before this change still opens the resume modal (it reads the thread's session when
+  clicked and rechecks requester, channel, access and membership).
 - Existing Slack installations must add `/menu` from `slack-app-manifest.json` to their installed
   app configuration. The typed `@agent /menu` route needs no Slack app reconfiguration.
 
@@ -816,9 +829,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Native Slack **channel file explorer**: the 📂 reply button opens a Block Kit modal rooted at the channel's
   effective working folder. Its title identifies the authoritative stored Slack channel name, and
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
-  *Browse channel files* message shortcut opens it for a selected thread, and every interactive run footer carries a
-  requester-bound `📂` button for one-click access; managers also receive the
-  requester-bound **⚙️ Settings** snapshot button described above, and gateway admins may open a
+  *Browse channel files* message shortcut opens it for a selected thread, and every reply's menu carries a
+  `📂 Files` button (requester-bound when the reply has a requester) for one-click access, beside the
+  **⚙️ Settings** snapshot button described above, and gateway admins may open a
   control attached to another user's bot reply. When an agent names up to five
   existing files inside its effective working folder for review, the same footer adds deduplicated
   `📄 filename` buttons in mention order. A named path may be absolute or written relative to the
@@ -1086,7 +1099,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   message starts fresh), `/context` (token usage + % of the context window from the last turn),
   `/resume` (the copyable `cd "…" && claude --resume <id>` terminal command for this thread's
   session — kept out of reply footers; the same command is a tab in Slack Settings → **Resume
-  Session** and behind the 💻 buttons on `/menu` and on "🛑 Stopped." messages → modal.
+  Session** → modal (the 💻 buttons on older `/menu` cards and "🛑 Stopped." messages still open it).
   `/resume <command or session id>` runs the same trip in REVERSE: paste that line back and the
   thread adopts the existing local session, so a conversation started in a terminal on the gateway
   machine (or left behind by a cleared thread) continues in Slack. Accepts the full pasted command,
@@ -1923,7 +1936,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   read its own environment and a failing CLI will echo a token into its error line. Exact values
   are stripped from the reply, the live stream (holdback, so a value split across two deltas still
   matches) and background-job output.
-- **Surfaces.** `/secrets` and a message shortcut in Slack, a 🔑 button on every authored reply
+- **Surfaces.** `/secrets` and a message shortcut in Slack, a 🔑 Variables button on every reply
   footer (including when the channel has none, so users can add the first), and a card on the
   channel's admin page. Managing them needs the same privilege as running
   commands with them (`canEditChannelFiles`); everyone authorized in the channel can see that they
@@ -3686,9 +3699,9 @@ are retired, bullet by bullet; everything else stands.
   times too small),
   other Claude models 200k, Codex prefers the rollout's runtime-reported usable window (with the
   engine declaration as fallback), unknown models fall back to Settings →
-  contextWindow; no icons/unit labels). The reply footer's controls are 📂 Files, 🔑 Secrets,
-  ⚙️ Settings and any 📄 review-file buttons; a single control uses the section accessory and
-  several share an actions row under the stats context. The resume command is NOT one of them —
+  contextWindow; no icons/unit labels). The reply footer's controls are the reply menu (📂 Files, 🔑 Variables,
+  ⚙️ Settings — see *Reply menu*) and any 📄 review-file buttons, in one actions row under the stats
+  context. The resume command is NOT one of them —
   it lives in Settings → **Resume Session**, `/menu` and `/resume`. Model = the configured cascade that governed the turn (thread override → channel/DM
   model → gateway default) → CLI-reported runtime model (when nothing is configured) → engine name;
   context% and Codex cost rates still key on the CLI-reported runtime model, where multi-model

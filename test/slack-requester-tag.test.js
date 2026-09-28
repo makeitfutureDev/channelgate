@@ -71,8 +71,11 @@ test("long answer tags the OVERFLOW follow-up, not the truncated first message",
 
   const posts = calls.filter((c) => c[0] === "postMessage");
   assert.ok(posts.length > 0, "the overflow should be posted as follow-up message(s)");
-  const lastPost = String(posts[posts.length - 1][1].text || "");
+  // The last CONTENT message carries the tag; only the stats + menu trailer may follow it.
+  const answerPosts = posts.filter((c) => String(c[1].text || "").includes("line"));
+  const lastPost = String(answerPosts.at(-1)[1].text || "");
   assert.ok(lastPost.includes("<@U5>"), "the last (overflow) message should tag the requester");
+  assert.ok(posts.at(-1)[1].blocks?.some((block) => block.type === "actions"), "the reply ends with the menu");
 
   const stop = calls.find((c) => c[0] === "stopStream");
   assert.ok(!String(stop?.[1]?.markdown_text || "").includes("<@U5>"), "the truncated first message must not also carry the tag");

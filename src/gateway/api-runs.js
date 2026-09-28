@@ -48,7 +48,7 @@ import { logEvent } from "../util/logger.js";
 import { getDb, toJson, fromJson } from "../db/index.js";
 import { getDirectory } from "../slack/directory.js";
 import { mdToMrkdwn } from "../slack/format.js";
-import { deliverResult } from "../slack/deliver.js";
+import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { startProgress } from "../slack/progress.js";
 import { PROFILE_FLAGS, API_PRINCIPAL } from "./modes.js";
 import { postNotice } from "../platforms/notify.js";
@@ -719,6 +719,9 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
         authorId: job.author,
         teamId,
         dir,
+        // The caller-named author is attribution, not necessarily a Slack user: the reply menu is
+        // unbound and opens under whoever clicks it (their own authorization applies).
+        menuOwnerId: "",
       });
     }
     const onEvent = (ev) => {
@@ -836,7 +839,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       await logEvent("api_run_error", { id: job.id, slug: job.slug, error: err.message }).catch(() => {});
       if (client) {
         await status?.stop?.();
-        postNotice(client, { conversationId: job.channelId, threadKey: job.threadKey, text: `⚠️ API run \`${job.id}\` failed: ${err.message}` }).catch(() => {});
+        postNoticeWithMenu(client, { channel: job.channelId, threadKey: job.threadKey, text: `⚠️ API run \`${job.id}\` failed: ${err.message}` }).catch(() => {});
       }
     }
   } finally {

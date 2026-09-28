@@ -88,7 +88,7 @@ test("workspace file extraction rejects outside, escaping, missing, malformed, a
   assert.deepEqual(referencedWorkspaceFiles(content, "relative/root"), []);
 });
 
-test("review buttons are requester-bound, root-relative, and capped at five", async (t) => {
+test("review buttons are requester-bound (unbound without one), root-relative, and capped at five", async (t) => {
   const { root } = await fixture(t);
   const refs = [];
   for (let i = 0; i < 7; i++) {
@@ -109,7 +109,10 @@ test("review buttons are requester-bound, root-relative, and capped at five", as
     "cg_channel_files_review_4",
   ]);
   assert.deepEqual(JSON.parse(buttons[0].value), { o: "open_file", c: "C1", t: "1.2", u: "U1", p: "file-0.md" });
-  assert.deepEqual(reviewFileButtons({ cwd: root, content: refs[0] }, { channel: "C1" }), []);
+  // An author-less (automation) post keeps its review buttons, unbound like the rest of its menu.
+  assert.deepEqual(JSON.parse(reviewFileButtons({ cwd: root, content: refs[0] }, { channel: "C1" })[0].value),
+    { o: "open_file", c: "C1", t: "", u: "", p: "file-0.md" });
+  assert.deepEqual(reviewFileButtons({ cwd: root, content: refs[0] }, { channel: "" }), []);
 
   const footer = footerButtons(
     { cwd: root, content: refs.join(" "), sessionId: "session-1", engine: "claude" },
@@ -117,7 +120,7 @@ test("review buttons are requester-bound, root-relative, and capped at five", as
   );
   const actionIds = footer.map((button) => button.action_id);
   assert.equal(new Set(actionIds).size, actionIds.length, `duplicate footer action_id: ${actionIds.join(", ")}`);
-  assert.ok(footer.filter((button) => !["resume_cmd_modal", SECRETS_ACTION_ID].includes(button.action_id))
+  assert.ok(footer.filter((button) => ![SECRETS_ACTION_ID, "cg_channel_settings"].includes(button.action_id))
     .every((button) => FILES_ACTION_PATTERN.test(button.action_id)),
   "every file control must reach the shared handler");
   assert.equal(footer.filter((button) => button.action_id === SECRETS_ACTION_ID).length, 1,

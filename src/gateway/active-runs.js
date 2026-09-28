@@ -13,7 +13,7 @@ import { EventEmitter } from "node:events";
 import { logEvent } from "../util/logger.js";
 import { engineLabel, isEngineId } from "../engines/registry.js";
 import { runMessage, isEmptyResult } from "./run.js";
-import { deliverResult } from "../slack/deliver.js";
+import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { startProgress } from "../slack/progress.js";
 import { getDirectory } from "../slack/directory.js";
 import { recordUsage, createUsageBank } from "./usage.js";
@@ -551,8 +551,8 @@ export async function recoverRuns(stale, {
       await logEvent("run_recover_error", { slug: rec.slug, error: err.message });
       let told = false;
       try {
-        await postNotice(client, {
-          conversationId: rec.channelId,
+        await postNoticeWithMenu(client, {
+          channel: rec.channelId,
           threadKey: rec.threadKey,
           text: `⚠️ I tried to resume your last message after a restart, but it failed: ${err.message}. Send it again and I'll retry.`,
         });
