@@ -19,6 +19,8 @@
 // nothing, which is the failure mode this rule exists to prevent.
 import { createHash } from "node:crypto";
 import { PASSTHROUGH_ENV_NAMES } from "../engines/child-env.js";
+import { EGRESS_ENV_NAMES } from "../runtimes/container/egress-env.js";
+import { EXPOSURES, MAX_APPROVED_HOSTS, approvedHostsOf, exposureReasonText, secretExposure, assertValidSwapRuleFields, isValidRuleHost, normalizeRuleHost, normalizeSwapRuleFields, rulesFor } from "../gateway/egress/catalog-rules.js";
 
 export const MAX_CHANNEL_ENV_VARS = 32;
 export const MAX_CHANNEL_ENV_VALUE_BYTES = 16_384;
@@ -41,6 +43,10 @@ const RESERVED_PREFIXES = ["LD_", "DYLD_", "BASH_FUNC_", "XDG_", "CG_", "CLAUDE_
 const RESERVED_EXACT = new Set([
   // Anything the daemon itself sets or passes through. One source of truth: child-env.js.
   ...PASSTHROUGH_ENV_NAMES,
+  // The egress proxy and CA variables a container is given (runtimes/container/egress-env.js).
+  // A channel secret named HTTPS_PROXY or SSL_CERT_FILE would route a run around the proxy or
+  // make it trust another CA. SSL_CERT_DIR is the directory twin of SSL_CERT_FILE.
+  ...EGRESS_ENV_NAMES, "SSL_CERT_DIR",
   // Interpreter and linker hooks that turn a variable into code.
   "NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE",
   "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
@@ -50,6 +56,8 @@ const RESERVED_EXACT = new Set([
   "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR",
   "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_COUNT",
   "PAGER", "EDITOR", "VISUAL",
+  // Gateway-owned in a proxy-mode Claude spawn (engines/claude.js CLAUDE_PROXY_TELEMETRY_ENV).
+  "DISABLE_TELEMETRY",
 ]);
 
 export function isReservedEnvName(name) {
@@ -144,6 +152,12 @@ export function normalizeChannelEnv(raw) {
       provider,
       ...(typeof entry.value === "string" ? { value: entry.value } : {}),
       ...(typeof entry.ref === "string" && entry.ref ? { ref: entry.ref } : {}),
+      // The egress proxy's "used on hosts" declaration (optional; malformed parts dropped).
+      ...normalizeSwapRuleFields(entry),
+      // Servers an admin approved for a HIDDEN secret with no declared destination, and an
+      // explicit hidden/readable choice (catalog-rules.js secretExposure). Both optional.
+      ...(approvedHostsOf(entry).length ? { approvedHosts: approvedHostsOf(entry) } : {}),
+      ...(EXPOSURES.includes(entry.exposure) ? { exposure: entry.exposure } : {}),
       setBy: String(entry.setBy || ""),
       setAt: Number.isFinite(entry.setAt) ? entry.setAt : 0,
     };
@@ -165,11 +179,24 @@ function maskValue(value) {
 // person (config/scoped-env.js). Everything below the storage layer is scope-agnostic on purpose:
 // one set of name/value rules, one masking shape, one resolver, so a new scope can never drift
 // into a second validation story (the reason patchChannelEnv exists at all).
+//
+// `protected` / `hosts` describe the egress proxy's rule for the name (gateway/egress/
+// catalog-rules.js): protected = a container receives a placeholder the proxy swaps only on those
+// hosts; unprotected = the raw value is injected. Rules are not secrets.
 export function listEnvVars(env) {
   return Object.entries(normalizeChannelEnv(env))
     .map(([name, entry]) => ({
       name,
       provider: entry.provider,
+      // protected = the container holds a placeholder (a known destination, a declared one, or a
+      // hidden secret whose servers an admin approves on first use); readable = the raw value.
+      protected: Boolean(rulesFor(name, entry)),
+      hosts: rulesFor(name, entry)?.hosts || [],
+      exposure: rulesFor(name, entry) ? "hidden" : "readable",
+      approval: Boolean(rulesFor(name, entry)?.approval),
+      exposureChoice: entry.exposure || "auto",
+      // Why it is hidden or readable, in words (a password-looking name, a URL value, a choice…).
+      exposureReason: rulesFor(name, entry)?.approval || !rulesFor(name, entry) ? exposureReasonText(secretExposure(name, entry)) : "known or declared destination",
       // A tail only exists for a provider that stores the value here. Anything else lists as
       // "set, somewhere else" — which is also how an entry this build cannot resolve shows up,
       // rather than vanishing from the admin's view.
@@ -188,15 +215,55 @@ export function listChannelEnv(meta = {}) {
 
 // Pure: returns the NEW env map. Add and update are the same operation — a blind overwrite — so
 // there is no read-modify-write of the value anywhere, and nothing to leak on the way through.
-export function setChannelEnvVar(env, { name, value, provider = "local", ref = "", actor = "", now = Date.now(), scopeNoun = "This channel" } = {}) {
+//
+// `hosts` / `headers` / `format` are the optional egress rule ("used on hosts"). Left undefined, a
+// rewrite KEEPS the stored rule — rotating a value from a surface that does not show the rule must
+// not silently turn a protected secret into a raw one; an empty list or "" clears it.
+export function setChannelEnvVar(env, { name, value, provider = "local", ref = "", hosts, headers, format, exposure, actor = "", now = Date.now(), scopeNoun = "This channel" } = {}) {
   const key = assertValidEnvName(name);
   if (!Object.hasOwn(PROVIDERS, provider)) throw new Error(`Unknown secret provider "${provider}".`);
   const current = normalizeChannelEnv(env);
   if (!Object.hasOwn(current, key) && Object.keys(current).length >= MAX_CHANNEL_ENV_VARS) {
     throw new Error(`${scopeNoun} already ${scopeNoun === "You" ? "have" : "has"} the maximum of ${MAX_CHANNEL_ENV_VARS} variables.`);
   }
+  const rules = { ...normalizeSwapRuleFields(current[key]), ...assertValidSwapRuleFields({ hosts, headers, format }) };
+  for (const field of ["hosts", "headers", "format"]) if (Array.isArray(rules[field]) && !rules[field].length) delete rules[field];
   const stored = PROVIDERS[provider].store({ value, ref });
-  return { ...current, [key]: { provider, ...stored, setBy: String(actor || ""), setAt: now } };
+  // A rotated value keeps the servers approved for this secret and its hidden/readable choice:
+  // both describe the secret, not one value of it.
+  // `exposure` left undefined keeps the stored choice (like the rule fields); "auto" or "" clears it.
+  if (exposure !== undefined && exposure !== null && exposure !== "" && exposure !== "auto" && !EXPOSURES.includes(exposure)) {
+    throw new Error(`Unknown visibility "${exposure}" — use auto, hidden or readable.`);
+  }
+  const chosen = exposure === undefined || exposure === null ? current[key]?.exposure : EXPOSURES.includes(exposure) ? exposure : "";
+  const kept = {
+    ...(current[key]?.approvedHosts ? { approvedHosts: current[key].approvedHosts } : {}),
+    ...(chosen ? { exposure: chosen } : {}),
+  };
+  return { ...current, [key]: { provider, ...stored, ...rules, ...kept, setBy: String(actor || ""), setAt: now } };
+}
+
+// Pure: the NEW env map with one entry's approval metadata changed and its value untouched.
+// `addApprovedHost` records a server an admin approved; `exposure` is "hidden", "readable" or
+// "auto" (clears the choice). Throws on an unknown name or a malformed host.
+export function patchEnvEntry(env, name, { addApprovedHost = "", exposure = undefined, scopeWhere = "this channel" } = {}) {
+  const current = normalizeChannelEnv(env);
+  const key = normalizeEnvName(name);
+  if (!Object.hasOwn(current, key)) throw new Error(`"${key}" is not set on ${scopeWhere}.`);
+  const entry = { ...current[key] };
+  if (addApprovedHost) {
+    const host = normalizeRuleHost(addApprovedHost);
+    if (!isValidRuleHost(host) || host.startsWith("*.")) throw new Error(`"${addApprovedHost}" is not a single host name.`);
+    const hosts = approvedHostsOf({ approvedHosts: [...(entry.approvedHosts || []), host] });
+    if (!hosts.includes(host)) throw new Error(`${key} already has the maximum of ${MAX_APPROVED_HOSTS} approved servers.`);
+    entry.approvedHosts = hosts;
+  }
+  if (exposure !== undefined) {
+    if (exposure === "auto" || exposure === "" || exposure === null) delete entry.exposure;
+    else if (EXPOSURES.includes(exposure)) entry.exposure = exposure;
+    else throw new Error(`Unknown exposure "${exposure}" — use hidden, readable or auto.`);
+  }
+  return { ...current, [key]: entry };
 }
 
 export function removeChannelEnvVar(env, name, { scopeWhere = "this channel" } = {}) {
@@ -256,6 +323,16 @@ export function safeSpawnEnv(resolved = {}) {
     if (!CHANNEL_ENV_NAME_RE.test(name) || isReservedEnvName(name)) continue;
     if (typeof value !== "string" || !value) continue;
     out[name] = value;
+  }
+  return out;
+}
+
+// The optional egress rule fields ("used on hosts") a write surface forwards from a request body.
+// Absent fields stay absent (the stored rule is kept); validation is setChannelEnvVar's.
+export function swapRuleFieldsFrom(body = {}) {
+  const out = {};
+  for (const field of ["hosts", "headers", "format", "exposure"]) {
+    if (body && Object.hasOwn(body, field) && body[field] !== undefined) out[field] = body[field];
   }
   return out;
 }

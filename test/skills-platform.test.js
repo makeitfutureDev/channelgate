@@ -622,7 +622,7 @@ test("chat verb: add_channel_skills reports the over-cap warning to the person w
       loadMeta: async () => getChannelMeta(entry.slug),
     });
     const reply = (await tools.get("add_channel_skills")({ slugs: ["warn-heavy"] })).content.map((c) => c.text).join("\n");
-    assert.match(reply, /Granted here: `warn-heavy`/);
+    assert.match(reply, /Active here: `warn-heavy`/);
     assert.match(reply, /always-on skill descriptions cost about \d+ tokens per turn \(soft cap 1\)/, "the warning reaches the reply instead of being computed and dropped");
     const projected = Number(reply.match(/Always-on context now ~(\d+) tokens/)[1]);
     assert.match(reply, /Current before grant: ~0 tokens/);
@@ -653,7 +653,7 @@ test("authoring: create grants here with dependencies, update merges files, sour
 
   const src = catalog.addSource({ kind: "git", url: "https://github.com/example/owned", mode: "auto" });
   catalog.putSkillRevision({ files: [md("Upstream", "upstream v1")], ownerKind: "git", sourceId: src.id, status: "active", sourceRef: "u1" });
-  await assert.rejects(authoring.updateLocalSkill({ skill: catalog.getSkill("upstream"), files: [md("Upstream", "hacked")] }), /proposal/);
+  await assert.rejects(authoring.updateLocalSkill({ skill: catalog.getSkill("upstream"), files: [md("Upstream", "hacked")] }), /cannot write to.*companion skill/, "a source this gateway cannot write to is never edited in place");
   const { proposal } = authoring.proposeSkillChange({ skill: "upstream", files: [md("Upstream", "improved locally")], note: "typo fix", proposedBy: "U2", channelSlug: entry.slug });
   assert.equal(proposal.status, "pending");
   assert.throws(() => authoring.proposeSkillChange({ skill: "ghost", kind: "promote", note: "x" }), /not in the catalog/);
@@ -743,4 +743,117 @@ test("granting stores only what was granted: a dependency keeps its provenance, 
   saveSettings({ accessGrants: { skills: [] } });
   assert.deepEqual(authoring.grantSkillsToOrg(["prov-parent"]).names, ["prov-parent"]);
   assert.deepEqual(getOrgAccessGrants().skills, ["prov-parent"]);
+});
+
+// ── operator decision 2026-09-27: who edits what, deactivation, and read-only sources ─────────
+
+test("editing in place: local and publish-repository skills are editable (pushed back, pinned when the push fails); other sources never are", async () => {
+  const before = getSettings();
+  const pubSource = catalog.addSource({ kind: "git", url: "https://github.com/example/edit-pub", mode: "auto" });
+  const otherSource = catalog.addSource({ kind: "git", url: "https://github.com/example/edit-other", mode: "auto" });
+  saveSettings({ skillsPublishRepo: "https://github.com/example/edit-pub", skillsPublishGithubToken: "test-token", skillsPublishMode: "commit" });
+  try {
+    catalog.putSkillRevision({ files: [md("Pub Owned", "from the publish repo")], ownerKind: "git", sourceId: pubSource.id, sourcePath: "skills/pub-owned", status: "active", sourceRef: "p1" });
+    catalog.putSkillRevision({ files: [md("Other Owned", "from someone else's repo")], ownerKind: "git", sourceId: otherSource.id, status: "active", sourceRef: "o1" });
+    assert.deepEqual(authoring.skillEditability(catalog.getSkill("pub-owned")).via, "repository");
+    assert.equal(authoring.skillEditability(catalog.getSkill("other-owned")).editable, false);
+    await assert.rejects(authoring.updateLocalSkill({ skill: catalog.getSkill("other-owned"), files: [md("Other Owned", "x")] }), /companion skill/);
+
+    // The push succeeds: a new revision, written back to the skill's own folder, not pinned.
+    const writes = [];
+    const github = async (url, init = {}) => {
+      if ((init.method || "GET") === "GET") return new Response("", { status: 404 });
+      writes.push({ method: init.method, url: String(url) });
+      return new Response(JSON.stringify({ commit: { sha: "c0ffee" } }), { status: 200 });
+    };
+    const pushed = await authoring.updateLocalSkill({ skill: catalog.getSkill("pub-owned"), files: [{ path: "references/extra.md", content: "extra" }], createdBy: "U_ADMIN", fetchImpl: github });
+    assert.equal(pushed.via, "repository");
+    assert.equal(pushed.published.published, true);
+    assert.ok(writes.some((w) => w.url.includes("/contents/skills/pub-owned/references/extra.md")), "written back under the folder it was synced from");
+    assert.equal(pushed.pinned, false);
+    assert.equal(catalog.getSkill("pub-owned").ownerKind, "git", "ownership stays with the repository");
+    assert.equal(catalog.effectiveRevisionFor(catalog.getSkill("pub-owned")).id, pushed.revision.id);
+
+    // The push fails: the edit still runs, pinned so the next sync cannot bring the old files back.
+    const failing = async () => new Response("nope", { status: 500 });
+    const kept = await authoring.updateLocalSkill({ skill: catalog.getSkill("pub-owned"), files: [{ path: "references/extra.md", content: "extra v2" }], createdBy: "U_ADMIN", fetchImpl: failing });
+    assert.equal(kept.published.published, false);
+    assert.equal(kept.pinned, true);
+    catalog.putSkillRevision({ files: [md("Pub Owned", "from the publish repo")], ownerKind: "git", sourceId: pubSource.id, sourcePath: "skills/pub-owned", status: "active", sourceRef: "p2" });
+    assert.equal(catalog.effectiveRevisionFor(catalog.getSkill("pub-owned")).id, kept.revision.id, "a later sync does not revert the pinned edit");
+  } finally {
+    saveSettings({ skillsPublishRepo: before.skillsPublishRepo || "", skillsPublishGithubToken: before.skillsPublishGithubToken || "", skillsPublishMode: before.skillsPublishMode || "commit" });
+    catalog.removeSource(pubSource.id);
+    catalog.removeSource(otherSource.id);
+  }
+});
+
+test("a channel deactivates its template and section skills for itself only; promoting a channel skill moves it to the library", async () => {
+  const entry = await upsertChannelEntry("C_SKILLS_OFF", { name: "skills-off", type: "channel", isDM: false });
+  const other = await upsertChannelEntry("C_SKILLS_OFF2", { name: "skills-off2", type: "channel", isDM: false });
+  catalog.putSkillRevision({ files: [md("Off Template", "in the template")], ownerKind: "local" });
+  catalog.upsertTemplate({ slug: "off-tpl", name: "Off Tpl", skills: ["off-template"] });
+  await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: "C_SKILLS_OFF", name: "skills-off", type: "channel", isDM: false }), skillTemplate: "off-tpl" });
+  await saveChannelMeta(other.slug, { ...defaultChannelMeta({ channelId: "C_SKILLS_OFF2", name: "skills-off2", type: "channel", isDM: false }), skillTemplate: "off-tpl" });
+  const section = await authoring.createLocalSkill({ files: [md("Off Section", "this channel's own")], createdBy: "U_MEMBER", channelId: "C_SKILLS_OFF", publish: false });
+  assert.ok(templates.channelSkillGrants(await getChannelMeta(entry.slug)).includes("off-section"));
+
+  const explicitOnly = await authoring.revokeSkillsFromChannel(entry.slug, ["off-template"]);
+  assert.deepEqual(explicitOnly.deactivated, [], "without deactivate only explicit grants change (the admin grant-list editor)");
+  assert.ok(templates.channelSkillGrants(await getChannelMeta(entry.slug)).includes("off-template"));
+  const off = await authoring.revokeSkillsFromChannel(entry.slug, ["off-template", "Off Section"], { deactivate: true });
+  assert.deepEqual(off.deactivated.sort(), ["off-section", "off-template"]);
+  const tier = templates.channelSkillGrants(await getChannelMeta(entry.slug));
+  assert.ok(!tier.includes("off-template") && !tier.includes("off-section"), "both are off here");
+  assert.ok(templates.channelSkillGrants(await getChannelMeta(other.slug)).includes("off-template"), "another channel on the same template keeps it");
+  assert.equal(catalog.getSkill("off-section").deleted, false, "deactivating never deletes");
+
+  const on = await authoring.grantSkillsToChannel(entry.slug, ["off-template"]);
+  assert.deepEqual(on.reactivated, ["off-template"]);
+  assert.deepEqual((await getChannelMeta(entry.slug)).skills, ["off-template"], "an addition is stored even when the template provides it");
+  assert.deepEqual((await getChannelMeta(entry.slug)).skillsOff, ["off-section"], "and it is no longer off here; the section skill still is");
+  assert.ok(templates.channelSkillGrants(await getChannelMeta(entry.slug)).includes("off-template"));
+
+  const { proposal } = authoring.proposeSkillChange({ skill: section.skill.slug, kind: "promote", note: "everyone", proposedBy: "U_MEMBER" });
+  const promoted = await authoring.decideSkillProposal(proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
+  assert.equal(promoted.promoted, true);
+  assert.equal(catalog.getSkill("off-section").channelScope, "", "an approved promotion puts a channel skill in the shared library");
+
+  const del = authoring.proposeSkillChange({ skill: "off-template", kind: "delete", note: "gone", proposedBy: "U_MEMBER" });
+  assert.equal(del.proposal.kind, "delete");
+  const decided = await authoring.decideSkillProposal(del.proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
+  assert.equal(decided.deleted, true);
+  assert.equal(catalog.getSkill("off-template").deleted, true);
+
+  // A source-owned skill is excluded instead, so its next sync cannot bring it back.
+  const src = catalog.addSource({ kind: "git", url: "https://github.com/example/delete-me-src", mode: "auto" });
+  catalog.putSkillRevision({ files: [md("Src Doomed", "from a source")], ownerKind: "git", sourceId: src.id });
+  const srcDel = authoring.proposeSkillChange({ skill: "src-doomed", kind: "delete", note: "gone", proposedBy: "U_MEMBER" });
+  await authoring.decideSkillProposal(srcDel.proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
+  catalog.putSkillRevision({ files: [md("Src Doomed", "from a source")], ownerKind: "git", sourceId: src.id });
+  assert.equal(catalog.getSkill("src-doomed").deleted, true, "the next sync does not restore an approved delete");
+  catalog.removeSource(src.id);
+});
+
+test("templates: only admins edit them; anyone may ask — an approved template request adds the skill for every follower", async () => {
+  catalog.putSkillRevision({ files: [md("Tpl Req", "wanted in a template")], ownerKind: "local" });
+  catalog.putSkillRevision({ files: [md("Tpl Mine", "personal")], ownerKind: "local", visibility: "personal", createdBy: "U_TPL" });
+  catalog.upsertTemplate({ slug: "req-tpl", name: "Req Tpl", skills: [] });
+  assert.throws(() => authoring.proposeSkillChange({ skill: "tpl-req", kind: "template", template: "nope", note: "x", proposedBy: "U_TPL" }), /no skill template/);
+  assert.throws(() => authoring.proposeSkillChange({ skill: "tpl-mine", kind: "template", template: "req-tpl", note: "x", proposedBy: "U_TPL" }), /personal skill/);
+  const { proposal } = authoring.proposeSkillChange({ skill: "tpl-req", kind: "template", template: "Req Tpl", note: "sales needs it", proposedBy: "U_TPL" });
+  assert.equal(proposal.kind, "template");
+  assert.equal(proposal.target, "req-tpl", "the template is resolved by name to its slug");
+  assert.deepEqual(catalog.getTemplate("req-tpl").skills, [], "nothing changes before an admin decides");
+  const decided = await authoring.decideSkillProposal(proposal.id, { decision: "approve", decidedBy: "U_ADMIN" });
+  assert.equal(decided.templated, true);
+  assert.deepEqual(catalog.getTemplate("req-tpl").skills, ["tpl-req"]);
+  assert.throws(() => authoring.proposeSkillChange({ skill: "tpl-req", kind: "template", template: "req-tpl", note: "again", proposedBy: "U_TPL" }), /already in/);
+
+  const added = authoring.addSkillsToTemplate("req-tpl", ["tpl-mine", "ghost-skill", "tpl-req"]);
+  assert.deepEqual(added.added, []);
+  assert.deepEqual(added.refused, ["tpl-mine", "ghost-skill"], "personal and unknown skills never join a template");
+  const removed = authoring.removeSkillsFromTemplate("req-tpl", ["Tpl Req"]);
+  assert.deepEqual(removed.removed, ["tpl-req"]);
+  assert.deepEqual(catalog.getTemplate("req-tpl").skills, []);
 });

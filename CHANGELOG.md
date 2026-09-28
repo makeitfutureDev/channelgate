@@ -16,6 +16,142 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## 0.6.0 — 2026-09-28
+
+- **Claude model choices now show exact versions.** The `/model` picker and admin selectors list
+  Opus 5.5, Fable 5.1, Sonnet 5, and Haiku 4.5. Duplicate moving aliases and special modes no
+  longer crowd the normal list. Existing alias settings keep working and stay visible when selected.
+- **Codex no longer sends usage metrics to OpenAI.** Claude Code's telemetry was already off, but Codex still sent OpenAI its anonymous usage and health metrics by default. Every Codex process the gateway starts now runs with `analytics.enabled=false`: chat turns, background work, the memory reviewer, SSH and VS Code sessions, and the gateway's own checks.
+- **A channel's database can be read page by page, and counted.** `query_channel_database` used to return at most 100 rows with no way to ask for the next ones. Ordered by a table's primary key, a read now also returns `nextCursor`; passing it back as `after` gets the next page, until it comes back empty. The new `count_rows` returns how many rows match, so an agent can show that nothing was missed. The extractor image has to be rebuilt (`npm run vpn -- build --channel ID`, then VPN off and on); until then the running one keeps working and a paged or counted request says it needs the rebuild.
+- **A connector outage at the provider no longer looks like a gateway bug.** When Composio or a toolbox answered a connection attempt with an error, a container run just lost the connector and the daemon logged only `remote MCP unavailable`. A brief 502/503/504 or network blip is now retried once after a second, so it no longer drops the connector for the whole turn. A lasting failure is logged with the server and the upstream status, for example `remote MCP unavailable (composio-user: upstream HTTP 502)`. The container still sees only the fixed sentence.
+- **Slack Settings has an Automations page, and the tabs are reordered.** The tabs now read General · Variables · MCPs · Skills · Automations · Resume. **Automations** lists the conversation's scheduled tasks, reminders and `/loop` wake-ups with their next run time, and lets anyone allowed to use the agent there pause or resume a recurring schedule and delete any of them. Creating one is still done by asking the agent.
+- **Every AI reply ends with the same menu: 📂 Files · 🔑 Variables · ⚙️ Settings.** Replies used to show the menu inconsistently. Errors had none, "🛑 Stopped." still showed the removed 💻 Resume button, and API-run, scheduled, background and restart-recovery answers had no menu or lacked Settings. Replies also showed bare icons, while `/menu` spelled out the labels and still offered Resume. Now every answer, error and stop in Slack ends with all three labelled buttons, after a model switch, an API request or anything else. A long answer carries the menu on its last message instead of the first. `/menu` shows the same three buttons. The resume command stays in Settings → Resume Session and `/resume`. A menu under an automated post (no Slack requester) opens for whoever clicks it, with that person's own permissions.
+- **Allowed domains is back as an option** on the add-variable form and the admin page. Filling it in restricts a secret to exactly those domains: no approval cards, and the value is never sent anywhere else. It also now works for tokens sent in headers other than Authorization, such as `x-api-key`. Leave it empty to approve servers on first use instead.
+- **The admin page lists variables in a table:** name, masked value, type (🔒 Secret or 👁 Readable, with the reason on hover), the servers a secret may be sent to, who set it (shown as a person's name, not a Slack id) and when.
+- **Adding a variable asks one question: is it a secret?** The Visibility choice and the domains field are gone from the add-variable form and the admin page. One **Secret** checkbox remains, ticked by default. The gateway handles the rest: where the variable may be sent is learned through admin approvals, and an email or database password stays usable even when marked secret. Untick it for plain configuration such as an id, a region or a URL.
+- **"Secrets" are now "Variables", and you choose how each one is shared.** The Slack menu, the message footer, the Settings tab and the admin page now say *Variables*. Adding one offers **Visibility** (Auto, Hidden or Readable) and an optional **Used on domains**. A variable given domains stays hidden and works only on those domains, with no approval card. A variable that looks like an SMTP, database or signing login stays readable even when Hidden is chosen, because it cannot work as a placeholder, and the list says so. Leaving the fields empty on an update keeps the current settings.
+- **Every secret is hidden by default, and an admin approves where it may go.** A secret the gateway had no rule for used to reach containers as its raw value. Now, unless it looks like a password, connection string, signing key or configuration value (those stay readable), containers get a placeholder. The first time a program sends it to a new server, the proxy refuses that one request and posts an approval card in the thread: *Use secret VERCEL_PAY_MAKEITFUTURE on api.vercel.com?* After an admin approves, that server keeps working for every run, schedule and SSH session. A secret is never sent to the model APIs. New tools: `set_secret_mode` (hidden / readable / auto) and `allow_secret_host` (admin; approve a server without waiting for a card). Existing secrets without a rule switch to this on the next run, so each asks once per server.
+- **Templates are the team skill sets, and admins curate them from chat.** An admin can now add skills to a template (Development, Sales, …) or remove them straight from chat with `update_skill_template`. Anyone else can ask for a skill to be added to a template, and an admin approves the request. There is no separate "team" scope for skills.
+- **Skills no longer ask for approval you already gave.** Creating, updating or deactivating a personal or channel skill used to post an Approve card every time, admins included, and the agent often asked where a new skill should go. Now a skill the user asks for is created as a **channel skill** of the conversation (a personal skill in a DM) with no card and no question. Any member of the channel can edit or deactivate the channel's skills. The agent mentions every change in its reply. Admins moderate only the **organization** library: an admin's organization skill is created at once, while anyone else's request becomes a channel skill plus a proposal for an admin. A member's edit to an organization skill becomes a change proposal, and deleting a skill from the whole catalog is an admin's call. Skills synced from the gateway's own publish repository can now be edited and are pushed back; skills from sources the gateway cannot write to are extended with a companion skill instead. `set_skill_scope` is now admin-only.
+- **Codex's read-only sandbox also works in whole-home Admin channels.** Codex keeps its app-server socket in a fixed `/tmp/codex-daemon-<uid>` and requires that folder to be its own mount, owned by the user with mode 0700. In a channel that mounts the operator's home, even the `/tmp` volume lives under that home, so member turns there (held read-only by the home guard) still could not run commands. Every container now gets a 1 MB tmpfs on exactly that folder. Existing containers are recreated once.
+- **Codex Read-mode commands now actually start.** Each channel's `/tmp` and `/var/tmp` were folders inside the channel's artifact folder, which is also mounted at its own path, so the same files were visible twice inside the container. Codex's sandbox refuses that ("app-server socket directory has an unsupported host mount … remove the bind-mount alias"), so Read-mode Codex still ran no command after the capability fix. `/tmp` and `/var/tmp` are now per-channel podman volumes (`<container>-tmp`, `<container>-vtmp`), kept across stops and recreates like the home volume. Existing containers are recreated once; files an agent left in the old `/tmp` stay on the host under `~/ChannelGate/.runtime/<platform>/<slug>/tmp` but no longer appear in `/tmp`.
+- **Members can no longer write to the operator's home through a whole-home Admin channel.** With *Admin channels can access the host home* on, the home is mounted read-write for the whole channel container, and a non-admin author's turn in that Admin channel still received the shell and file-writing tools, so it could change any file in the home without a prompt (CTR-30, 2026-09-27). Every run there that is not an admin author's is now read-only: Claude's shell and write tools are denied outright, Codex runs in its read-only sandbox, and plugin command servers are refused. Admin authors are unaffected.
+- **Codex Read-mode channels can run commands again.** Codex 0.156.1 enforces its read-only sandbox with bubblewrap only, and bubblewrap will not start while the process holds the container's added capabilities ("bwrap: Unexpected capabilities but not setuid"), so every command failed even with bubblewrap installed. A sandboxed Codex run in a container now starts without those capabilities: reads work, writes are refused. The ignored `features.use_legacy_landlock` switch is gone (EN-01 on Codex, 2026-09-27).
+- The egress proxy now presents its CA after the per-host leaf, so the in-container browser's CA pin matches and agent-browser loads HTTPS pages without `--ignore-https-errors` (EGR-03, 2026-09-27). Codex failure messages no longer lead with the CLI's "Reading additional input from stdin..." notice (EN-09).
+
+- Channel image spec 1.6.1: the image now ships `bubblewrap`. Codex 0.156.1 refuses to run any command in a read-only sandbox without it ("filesystem-restricted execution requires bubblewrap"), so Read-mode Codex channels could not execute a probe since the 0.156.1 pin (found by the 2026-09-27 live campaign, EN-01/CTR-06/MD-02 on Codex). Rebuild with `npm run build:image`.
+- **The browser works behind the egress proxy.** Chromium's proxy and certificate flags were joined
+  with a space, which agent-browser does not split, so every page failed with
+  `ERR_INTERNET_DISCONNECTED` in a proxy-mode channel. They are now comma-separated.
+- **Leftover credential files are cleaned out of channel containers.** A crashed or interrupted run
+  could leave its MCP config or Codex secret bundle in the channel's artifact folder, where later
+  turns could read it (files from before the MCP relay held real Composio and toolbox tokens). The
+  gateway now deletes such files older than six hours before a channel container is created or
+  started, and at boot for containers already running.
+- **Idle channels no longer flood the audit log.** An idle warm Claude process's telemetry, refused
+  because nothing is running in the channel, is counted in the egress status instead of written as
+  an audit row for every attempt. Every other refusal is still logged.
+- **Codex status and error text no longer shows Node's proxy warning.** The
+  `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental` line is silenced in proxy-mode Codex
+  runs and filtered out of the status row and failure messages.
+- **Claude sends no telemetry from proxy-mode channels.** Claude runs behind the egress proxy now
+  set `DISABLE_TELEMETRY=1`, so an idle warm engine stops sending telemetry the proxy would refuse.
+  Feature flags, the version check and claude.ai plugin downloads are unaffected. A channel secret
+  named `DISABLE_TELEMETRY` is now refused as reserved.
+- **Organization secrets are named as organization secrets.** When a run's only secrets were
+  organization-wide, the credential list never said so, and an engine could call them channel
+  credentials. The scope is now stated whenever any secret is organization-wide or personal.
+- **Codex's sign-in no longer sits in every channel container.** Until now each channel container
+  had the gateway host's real Codex login file, refresh token included, mounted read-write, so one
+  channel could read it and every channel shared it. Behind the egress proxy a container now gets
+  its own access-only sign-in: a stand-in token the proxy swaps for the real one on OpenAI's and
+  ChatGPT's servers, and no refresh token at all. The gateway keeps the real login fresh with a
+  cheap Codex turn on the host when it is two days from expiring. Keep the host signed in with
+  `codex login` as before. Each channel container is recreated once on its next turn. The legacy
+  open-network mode and an API-key Codex login still mount the real file. Rebuild the image
+  (`npm run build:image`, still spec 1.6.0): `cg-init` now also removes an old copied Codex login
+  from a channel's home.
+- **Secrets without an egress rule are withheld by default on new installs.** On a fresh install
+  *Withhold unprotected secrets* starts on: a secret with no built-in rule and no *Used on hosts* is
+  not given to channel containers. Existing installs keep their current behavior; turn it on in
+  Settings → Container runtime. `list_secrets` now ends with a **Finding** that names every secret
+  without a rule and says how to protect it.
+- **A check keeps secrets out of the files channel containers can read.** `npm run check:static`
+  now fails when code writes a token, a relay's token or a resolved run environment into a
+  channel's artifact folder. The unused `remote-secret-bridge` helper is removed.
+
+- **SSH and VS Code sessions hold placeholders, not secrets.** A developer's SSH session into a
+  channel container now gets the same `cgph_…` placeholders a turn gets, and Claude's login in the
+  session (and the editor's token file) is the channel's login placeholder. Nothing a session
+  writes holds a real protected value. Tools such as `gh` and `vercel` work as before through the
+  gateway's egress proxy. The proxy settings reach every SSH shell, VS Code terminal and your own
+  `agent-browser`. The editor token file is now also removed when the channel's last session ends.
+- **Your personal secrets pause while someone else is attached.** While another person has an SSH
+  session open in a channel, your personal secrets stop working there. Everyone else's stop working
+  while you are attached. The agent's credential note says they are paused rather than failing
+  with an unexplained 403.
+- **Outbound SSH from a session goes through the egress proxy.** The image ships
+  `/opt/channelgate/bin/cg-egress-connect`, an SSH `ProxyCommand` through the egress proxy. A
+  session's `GIT_SSH_COMMAND` already uses it (github.com only, with *Allow network* on). For your
+  own `ssh`, add `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`. The proxy
+  cannot supply an SSH key. `ssh -L` forwards to hosts outside the container no longer work;
+  forwards to the container's own ports and `-R` are unchanged. Rebuild the image
+  (`npm run build:image`, still spec 1.6.0) to get the helper.
+
+- **Channel containers now reach the internet only through the gateway's egress proxy.** Every
+  channel container runs with no network of its own. A small forwarder inside it hands each
+  connection to the gateway, which enforces the channel's *Allow network* switch on every request
+  (off: only the AI engines and the channel's selected connectors; on: public hosts, never private,
+  loopback or cloud-metadata addresses) and logs every refused or blocked destination. The switch
+  is no longer advisory, and `/mode`, `/status` and the run record say so. A flip applies to the
+  next request without recreating anything.
+- **Secrets become placeholders the container cannot use elsewhere.** A GitHub, Vercel, Supabase,
+  Make or Composio token, and any secret an admin marks with **Used on hosts**, reaches the
+  container as a `cgph_…` placeholder. The gateway swaps in the real value only on that secret's
+  hosts and only while the channel has work running; a personal secret only while its owner is the
+  one working, and never while another person's turn, background job or SSH session is active
+  there. The relayed Claude
+  login is a placeholder too. Rotation takes effect on the next request; removing a secret kills
+  its placeholder. Secrets without a rule are still injected as before and are marked
+  **unprotected** in `list_secrets`, the admin UI and the agent's own credential note. The new
+  *Withhold unprotected secrets* setting keeps them out of containers entirely.
+- **New container settings.** Settings → Container runtime gains *Legacy open network (no egress
+  proxy)* — off by default; on restores the old open bridge network and raw secrets — and
+  *Withhold unprotected secrets*. The admin API accepts `rawNetwork` (a channel that needs raw
+  sockets beside the proxy) and `egressRawHosts` (hosts whose SSH/Postgres ports are tunnelled).
+  If the proxy cannot start, container runs stop with the reason instead of running unprotected.
+  After a restart, containers that kept running get their network back immediately. Avoid
+  multi-tenant host suffixes such as `*.vercel.app` in *Used on hosts*. A Qwen provider key and a
+  daemon `CODEX_API_KEY` are still given to containers as real values, and a self-hosted Qwen
+  endpoint on a private address cannot be reached in proxy mode.
+  TLS clients in the container trust the gateway's own CA through the usual CA variables; a tool
+  that reads none of them needs `/run/channelgate/egress-ca.pem`. After updating, run
+  `npm run build:image` (image spec 1.6.0 now also ships the forwarder; the updater does this for
+  you).
+- **Fix: Codex in Composio SDK mode works in containers.** A Codex run in a channel container with
+  Enterprise SDK-mode Composio started its Composio connection without the run's grant, so the
+  gateway refused it and Codex had no Composio tools. It now connects like the other relayed
+  servers.
+- **Composio and toolbox tokens no longer enter a channel container.** In a container, the
+  `composio-user`, `composio-agent`, MakeItFuture toolbox and Make toolbox connections are now
+  reached through the gateway itself: the engine holds only its signed run grant, and the daemon
+  dials the service with the real token and relays the tools. Before, the token sat in a file in
+  the channel's run folder that any process in the container could read. This applies to Claude
+  and Codex turns and to SSH sessions. Direct-host `/sudo` threads are unchanged. A rotated token
+  still restarts the warm Claude process. After updating, run `npm run build:image` (image spec
+  1.6.0; the updater does this for you).
+- **Agents can now explain how to set up a channel's VPN.** The chat operating manual has a
+  channel VPN page. It covers who may turn the VPN on or off, read its status or query the
+  database. It also has the host-operator runbook for another channel, with the exact
+  `npm run vpn` steps, the profile and Secrets requirements, what each failure means and who fixes
+  it, and how to rotate or retire the service. It says plainly that provisioning cannot run inside
+  a channel container. It never tells anyone to paste a profile or password into chat.
+- Dependency refresh: the Composio SDK moves to 0.19.0 (the session API the Enterprise SDK mode
+  uses is unchanged), `mcp-remote` to 0.14.3 in both the daemon and the channel image, and `zod`
+  to 4.6.5. `hono`, pulled in by the MCP SDK, moves to 4.13.9 for its moderate advisories. After
+  updating, run `npm run build:image` (the updater does this for you) so channel containers get the
+  new `mcp-remote`.
+
 ## 0.5.7 — 2026-09-25
 
 - **An HTTP API run now works like an admin's message in its channel.** The run API key is an

@@ -49,6 +49,14 @@ export function homeVolumeName(target) {
   return `${containerName(target)}${HOME_SUFFIX}`;
 }
 
+// The persistent /tmp and /var/tmp volumes (lifecycle.js PERSISTENT_TMP_DIRS). Their suffixes are
+// no longer than HOME_SUFFIX, so they fit the same ceiling.
+export const TMP_VOLUME_SUFFIXES = Object.freeze({ tmp: "-tmp", "var-tmp": "-vtmp" });
+export function tmpVolumeNames(target) {
+  const stem = containerName(target);
+  return Object.fromEntries(Object.entries(TMP_VOLUME_SUFFIXES).map(([kind, suffix]) => [kind, `${stem}${suffix}`]));
+}
+
 // The label set every container we create carries. `channelgate=1` is the coarse marker an
 // operator can filter on; `cg.install` is the ownership proof; `cg.fingerprint` is what a later
 // run compares to decide "reuse or recreate" (§7).

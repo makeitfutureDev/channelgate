@@ -33,10 +33,12 @@ turn can see. Most tools are on an allowlist, and persistent global memory is of
 The channel's *Allow network* switch says
 whether you are meant to use the network; there is no per-domain allow-list. **Its current value
 is stated in the gateway-managed block at the top of this conversation's instruction file** — read
-it rather than guessing, and never claim you were told nothing either way. The switch is
-*advisory*: the resolved runtime is not cut off at the OS level (ordinary turns use the container
-bridge; `/sudo` uses the host), so a request may still succeed while the switch is off.
-That is not permission — when it is off, say so instead of going out. The gateway gives
+it rather than guessing, and never claim you were told nothing either way. For an ordinary turn
+the switch is *enforced*: the container has no network of its own and goes out only through the
+gateway's egress proxy, which refuses non-engine hosts while it is off (HTTP 403 with the reason).
+Where this attempt's access note says it is advisory (the legacy bridge mode, a raw-socket channel,
+a `/sudo` host thread) a request may still succeed while it is off — that is not permission.
+Either way, when it is off, say so instead of going out. The gateway gives
 you a set of **control tools** (an MCP server named `gateway`, always available, acting as the
 bot). Other connected apps (Gmail, Slack, HubSpot, Drive, ClickUp, …) come from two Composio
 accounts when configured: **`composio-agent` is YOUR OWN account** and **`composio-user` is the
@@ -173,10 +175,11 @@ credential or connection is needed, without exposing its value.
 | Connect a provider CLI with a device code      | `references/cli-device-login.md`  | Live TTY/session + interim code/link + same-turn polling + identity verification |
 | Find API/CLI access or diagnose a missing integration | `references/administration.md` | Current channel credential names, relevant skills, non-secret CLI auth status, selected-account MCP discovery |
 | A file/path outside the working folder seems missing, or host access is needed | `references/administration.md` | Check this run's resolved mounts and the optional operator-home grant; `~` remains the channel's own home |
-| See, grant or remove skills here, apply a skills template, create/update/propose a skill, see skill usage | `references/skills.md` | `gateway` → `show_channel_skills`, `add_channel_skills`, `apply_skill_template`, `create_skill`, `propose_skill_change`, `skill_usage_report` |
+| See, grant or remove skills here, apply a skills template, create/update/delete/propose a skill, see skill usage | `references/skills.md` | `gateway` → `show_channel_skills`, `add_channel_skills`, `set_channel_skill_template`, `create_skill`, `update_skill`, `propose_skill_change`, `skill_usage_report` — personal and channel skill changes need no approval; announce them in the reply |
 | Change a channel/gateway setting, tokens, update/restart, or this guide | `references/administration.md` | `gateway` → `set_channel_*`, `set_my_*_token`, `update_gateway`, `restart_gateway`, `update_gateway_guide` |
 | Register an SSH key, grant/revoke SSH into this channel's container, get the connection block | `references/administration.md` | `gateway` → `add_my_ssh_key`, `grant_channel_ssh`, `revoke_channel_ssh`, `show_channel_ssh` |
 | Check disk space, stale containers or old runtime images | `references/administration.md` | Host `/sudo` thread: `npm run runtime:storage` (reports, changes nothing). **Never run or suggest `podman system prune`, `podman system reset`, `podman volume prune`, `podman image prune -a` or `docker system prune`** — they can delete channel HOME volumes (engine sessions, CLI logins) or the runtime image. Report and ask; remove only via `-- --apply` when an admin says so |
+| Turn a channel's VPN on/off, read its private database, or set one up for another channel | `references/channel-vpn.md` | `gateway` → `get_channel_vpn_status`, `set_channel_vpn`, `query_channel_database`; provisioning is a host-operator runbook |
 
 ## Tool identities: the bot, YOUR account, and the requester's account
 

@@ -1,5 +1,5 @@
 // Reply-footer cluster: the run-stats line ("Opus 4.8 1M · 14.4s · 36.8k/192 · $0.31 · 18%"),
-// its Block Kit form, and the 📂 Files / 🔑 Secrets / ⚙️ Settings controls that ride under it.
+// its Block Kit form, and the reply menu (📂 Files / 🔑 Variables / ⚙️ Settings) that rides under it.
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
 // importing the whole app module.
@@ -29,62 +29,81 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
   return `cd ${JSON.stringify(cwd)} && ${base}`;
 }
 
-// A small button that opens the resume-command modal (the "resume_cmd_modal" handler). It is NOT
-// a reply-footer control any more — the resume command lives in Channel Settings → Resume Session
-// (and in `/menu` and `/resume`), so an ordinary answer is not trailed by a button almost nobody
-// clicks. What is left is the accessory on "🛑 Stopped.", where the thread has no footer of its
-// own, plus the handler that keeps buttons in older messages alive. The label stays SHORT — Slack
-// clips button labels to ~35 visible chars. Returns null when there's nothing to resume.
-export function resumeButton(cwd, sessionId, engine, label = "💻") {
-  if (!buildResumeCommand(cwd, sessionId, engine)) return null;
-  return {
-    type: "button",
-    action_id: "resume_cmd_modal",
-    text: { type: "plain_text", text: String(label).slice(0, 75), emoji: true },
-    value: JSON.stringify({ cwd, sessionId, engine }),
-  };
-}
-
-// Opens the existing confined file explorer for this conversation. The value is bound to the
-// requester; the shared action handler re-checks that the clicker matches, then applies current
-// channel authorization before opening the modal. Returns null for author-less automation posts.
-export function filesButton(channelId, threadTs, authorId, label = "📂") {
-  if (!channelId || !authorId) return null;
+// The reply MENU — 📂 Files · 🔑 Variables · ⚙️ Settings — rides the end of EVERY answer the AI
+// posts into Slack: a streamed or classic reply, an error, a stop, a scheduled/background/API/
+// recovery delivery, and the `/menu` card. It is one fixed set with visible labels, so a reply never
+// shows a partial or icon-only variant of it. The resume command is deliberately NOT here: it lives
+// in Channel Settings → Resume Session and `/resume`.
+//
+// Binding: a button carries the requester (`u`) when the post has one, and the handlers refuse a
+// different clicker. An automation post (schedule, background job, API run, restart recovery) has
+// no Slack requester, so its menu is UNBOUND (`u: ""`) and opens for whoever clicks. That grants
+// nothing: every open re-applies the clicker's own live channel authorization, and the modal it
+// opens is bound to that clicker.
+export function filesButton(channelId, threadTs, authorId = "", label = "📂 Files") {
+  if (!channelId) return null;
   return {
     type: "button",
     action_id: FILES_ACTION_ID,
     text: { type: "plain_text", text: String(label).slice(0, 75), emoji: true },
     accessibility_label: "Open channel files",
-    value: fileActionValue("open", { c: channelId, t: threadTs || "", u: authorId }),
+    value: fileActionValue("open", { c: channelId, t: threadTs || "", u: authorId || "" }),
   };
 }
 
-// Opens this channel's environment secrets (config/channel-env.js). Rendered on every authored
-// reply, including when the channel has none yet, so the first key can be added without requiring
-// the user to know `/secrets`. Same bound-to-the-requester value as filesButton.
-export function secretsButton(channelId, threadTs, authorId, label = "🔑") {
-  if (!channelId || !authorId) return null;
+// Opens this channel's environment variables (config/channel-env.js), including when the channel
+// has none yet, so the first one can be added without knowing `/secrets`.
+export function secretsButton(channelId, threadTs, authorId = "", label = "🔑 Variables") {
+  if (!channelId) return null;
   return {
     type: "button",
     action_id: SECRETS_ACTION_ID,
     text: { type: "plain_text", text: String(label).slice(0, 75), emoji: true },
-    accessibility_label: "Manage channel secrets",
-    value: secretActionValue("open", { c: channelId, t: threadTs || "", u: authorId }),
+    accessibility_label: "Manage channel variables",
+    value: secretActionValue("open", { c: channelId, t: threadTs || "", u: authorId || "" }),
   };
 }
 
-// Authorized agent users get a route from the reply footer to the current channel setup.
-// `mayUseSettings` is resolved by the authenticated message pipeline before the run starts; the action
-// handler repeats the live authorization check so a stale button never preserves old privileges.
-export function settingsButton(channelId, threadTs, authorId, mayUseSettings = false, label = "⚙️ Settings") {
-  if (!channelId || !authorId || !mayUseSettings) return null;
+// Opens the current channel setup. The action handler applies the live authorization check, so a
+// stale button never preserves old privileges and there is nothing to gate at render time.
+export function settingsButton(channelId, threadTs, authorId = "", label = "⚙️ Settings") {
+  if (!channelId) return null;
   return {
     type: "button",
     action_id: CHANNEL_SETTINGS_ACTION_ID,
     text: { type: "plain_text", text: String(label).slice(0, 75), emoji: true },
     accessibility_label: "View channel settings",
-    value: settingsActionValue("open", { c: channelId, t: threadTs || "", u: authorId }),
+    value: settingsActionValue("open", { c: channelId, t: threadTs || "", u: authorId || "" }),
   };
+}
+
+// The fixed menu: always all three, in this order, or nothing (no channel to bind to).
+export function menuButtons({ channel = "", threadTs = "", authorId = "" } = {}) {
+  if (!channel) return [];
+  return [
+    filesButton(channel, threadTs, authorId),
+    secretsButton(channel, threadTs, authorId),
+    settingsButton(channel, threadTs, authorId),
+  ];
+}
+
+// The menu as a standalone actions row, for a message that carries no run stats (an error, a stop).
+export function menuBlocks(context = {}) {
+  const buttons = menuButtons(context);
+  return buttons.length ? [{ type: "actions", elements: buttons }] : [];
+}
+
+// Slack caps one section block's text at 3,000 characters.
+const MAX_SECTION_CHARS = 3000;
+
+// A gateway notice (an error, "🛑 Stopped.") with the menu under it, as one message's blocks.
+// Returns null when the text cannot ride a section block, so the caller posts it plainly and the
+// menu separately rather than truncating the notice.
+export function noticeWithMenuBlocks(text, context = {}) {
+  const body = String(text || "").trim();
+  const menu = menuBlocks(context);
+  if (!body || !menu.length || body.length > MAX_SECTION_CHARS) return null;
+  return [{ type: "section", text: { type: "mrkdwn", text: body } }, ...menu];
 }
 
 const MAX_REVIEW_FILE_BUTTONS = 5;
@@ -152,7 +171,7 @@ export function referencedWorkspaceFiles(content, cwd, limit = MAX_REVIEW_FILE_B
 }
 
 export function reviewFileButtons(result, { channel = "", threadTs = "", authorId = "" } = {}) {
-  if (!channel || !authorId) return [];
+  if (!channel) return [];
   return referencedWorkspaceFiles(result?.content, result?.cwd).map((file, index) => ({
     type: "button",
     // Slack rejects duplicate action_ids inside one actions block. Keep the stable prefix so the
@@ -160,17 +179,14 @@ export function reviewFileButtons(result, { channel = "", threadTs = "", authorI
     action_id: `${FILES_ACTION_ID}_review_${index}`,
     text: { type: "plain_text", text: `📄 ${file.name}`.slice(0, 75), emoji: true },
     accessibility_label: `Open ${file.name} in channel files`.slice(0, 75),
-    value: fileActionValue("open_file", { c: channel, t: threadTs || "", u: authorId, p: file.relative }),
+    value: fileActionValue("open_file", { c: channel, t: threadTs || "", u: authorId || "", p: file.relative }),
   }));
 }
 
-export function footerButtons(result, { channel = "", threadTs = "", authorId = "", mayUseSettings = false } = {}) {
-  return [
-    filesButton(channel, threadTs, authorId),
-    secretsButton(channel, threadTs, authorId),
-    settingsButton(channel, threadTs, authorId, mayUseSettings),
-    ...reviewFileButtons(result, { channel, threadTs, authorId }),
-  ].filter(Boolean);
+export function footerButtons(result, { channel = "", threadTs = "", authorId = "" } = {}) {
+  const menu = menuButtons({ channel, threadTs, authorId });
+  if (!menu.length) return [];
+  return [...menu, ...reviewFileButtons(result, { channel, threadTs, authorId })];
 }
 
 // Compact token counts for the footer: 214 → "214", 34799 → "34.8k", 1959778 → "1.96M".
@@ -185,7 +201,7 @@ function fmtTok(n) {
 // "Opus 4.8 1M · 14.4s · 36.8k/192 · $0.31 · 18%" — model · duration · tokens in/out ·
 // cost (2 decimals, no ~/est. markers) · context% against the MODEL's own window
 // (contextWindowFor). The resume command never rides here as text — it lives in Channel Settings
-// → Resume Session, `/menu` and `/resume`.
+// → Resume Session and `/resume`.
 export function footerText(result) {
   const u = result.usage || {};
   // Tolerate both Claude (input_tokens/…) and Codex (prompt_tokens/…) usage shapes.
@@ -212,13 +228,10 @@ export function footerText(result) {
 }
 
 // Same run-stats footer as footerText, but as Block Kit — used to append the footer to a
-// streamed reply (chat.stopStream takes `blocks`, not appended text). A single control uses the
-// section ACCESSORY; Slack's section block cannot hold two, so several controls put the compact
-// stats context directly above an actions row containing the adjacent buttons.
+// streamed reply (chat.stopStream takes `blocks`, not appended text): the compact stats context
+// directly above the actions row holding the menu (and any referenced-file buttons).
 export function footerBlocks(result, context = {}) {
   const buttons = footerButtons(result, context);
-  const text = { type: "mrkdwn", text: footerText(result) };
-  if (buttons.length === 1) return [{ type: "section", text, accessory: buttons[0] }];
-  if (buttons.length > 1) return [{ type: "context", elements: [text] }, { type: "actions", elements: buttons }];
-  return [{ type: "context", elements: [text] }];
+  const stats = { type: "context", elements: [{ type: "mrkdwn", text: footerText(result) }] };
+  return buttons.length ? [stats, { type: "actions", elements: buttons }] : [stats];
 }

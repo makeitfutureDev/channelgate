@@ -726,7 +726,7 @@ test("stream progress updates its model label when the runtime falls back to Cod
   assert.ok(loadingMessages.includes("gpt-5.4 · Gathering information…"));
 });
 
-test("completed-run footer carries authorized-user Settings beside Files and Secrets", async () => {
+test("completed-run footer carries the fixed labelled menu: Files, Variables, Settings", async () => {
   const calls = [];
   const streamer = {
     ts: "1720000000.000100",
@@ -740,7 +740,6 @@ test("completed-run footer carries authorized-user Settings beside Files and Sec
   };
   const progress = startProgress("stream", client, "C_FILES", "111.222", {
     isDM: false,
-    mayUseSettings: true,
     authorId: "U_REQUESTER",
     teamId: "T1",
     dir: null,
@@ -760,16 +759,16 @@ test("completed-run footer carries authorized-user Settings beside Files and Sec
   assert.deepEqual(stop[1].blocks.map((block) => block.type), ["context", "actions"]);
   const buttons = stop[1].blocks[1].elements;
   // No 💻 control: the resume command lives in Settings → Resume Session, not on every reply.
-  assert.deepEqual(buttons.map((button) => button.text.text), ["📂", "🔑", "⚙️ Settings"]);
+  assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
   const settings = buttons.find((button) => button.action_id === "cg_channel_settings");
   assert.deepEqual(JSON.parse(settings.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
-  const files = buttons.find((button) => button.text.text === "📂");
+  const files = buttons.find((button) => button.text.text === "📂 Files");
   assert.equal(files.action_id, "cg_channel_files");
   assert.equal(files.accessibility_label, "Open channel files");
   assert.deepEqual(JSON.parse(files.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
-  const secrets = buttons.find((button) => button.text.text === "🔑");
+  const secrets = buttons.find((button) => button.text.text === "🔑 Variables");
   assert.equal(secrets.action_id, "cg_channel_secrets");
-  assert.equal(secrets.accessibility_label, "Manage channel secrets");
+  assert.equal(secrets.accessibility_label, "Manage channel variables");
   assert.deepEqual(JSON.parse(secrets.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
 });
 
@@ -793,8 +792,8 @@ test("completed-run footer adds one direct-preview button per referenced workspa
     usage: { input_tokens: 1, output_tokens: 1 },
   });
   const buttons = calls[0].blocks.at(-1).elements;
-  assert.deepEqual(buttons.map((button) => button.text.text), ["📂", "🔑", "📄 review spec.md"]);
-  assert.deepEqual(JSON.parse(buttons[2].value), { o: "open_file", c: "C1", t: "111.222", u: "U1", p: "docs/review spec.md" });
+  assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📄 review spec.md"]);
+  assert.deepEqual(JSON.parse(buttons[3].value), { o: "open_file", c: "C1", t: "111.222", u: "U1", p: "docs/review spec.md" });
 });
 
 test("invalid footer blocks finalize the existing stream without duplicating the answer", async () => {
@@ -3042,7 +3041,16 @@ for (const mode of ["commentary", "no stream", "truncated commentary"]) {
     const delivered = native + followups;
     assert.equal(delivered.split("The engine ended without a final message.").length - 1, 1, "authoritative notice is delivered once");
     assert.equal(delivered.split("<@U_NOTICE>").length - 1, 1, "requester notification belongs to the last message only");
-    assert.ok(calls.some(([method, payload]) => method === "stopStream" && payload.blocks?.length), "usage footer still seals the native stream");
+    if (mode === "no stream") {
+      assert.ok(calls.some(([method, payload]) => method === "stopStream" && payload.blocks?.length), "usage footer still seals the native stream");
+    } else {
+      // The notice is a follow-up below the stream, so the footer and menu move to it: the reply
+      // ENDS with the menu instead of carrying it mid-thread on the streamed head.
+      assert.ok(!calls.some(([method, payload]) => method === "stopStream" && payload.blocks?.some((block) => block.type === "actions")), "the streamed head no longer carries the menu");
+      const posts = calls.filter(([method]) => method === "postMessage").map(([, payload]) => payload);
+      const menu = posts.at(-1)?.blocks?.find((block) => block.type === "actions");
+      assert.deepEqual(menu?.elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"], "the last message carries the menu");
+    }
     if (mode === "no stream") {
       assert.match(native, /ended without a final message/);
       assert.equal(followups, "", "a short notice needs no extra message when nothing streamed");

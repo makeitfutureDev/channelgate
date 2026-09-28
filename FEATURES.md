@@ -22,6 +22,11 @@
   checked. OFF also cleans up manually started owned containers. Network off blocks startup and
   stops a supervised pair. No arbitrary commands, profile import or SQL extraction are granted
   through these controls. See `docs/CHANNEL-VPN.md` for setup and limitations.
+- The `gateway-usage` chat manual carries `references/channel-vpn.md`: roles, the host-operator
+  provisioning runbook (`npm run vpn` configure → build → install-unit → enable → status →
+  verify), the profile allowlist, failure classes and who fixes each, rotation and retirement.
+  Asked to set up a VPN from a channel container, the agent hands over the filled-in runbook
+  instead of attempting it, and never asks for a profile or password in chat.
 - The 30-second VPN health check verifies only the tunnel and its route. It never opens a
   database connection, so it cannot run up MySQL's connect-error count and get the tunnel address
   blocked (error 1129).
@@ -35,6 +40,13 @@
   checks. It exposes no arbitrary SQL, credentials, shell, host selector or cross-channel target.
   Configured VPN/database secret references are withheld from new ordinary agent launches, while
   the protected operator service can still resolve them; unrelated channel variables are retained.
+- Whole tables can be read page by page. `select_rows` ordered by the table's single-column
+  primary key (or a NOT NULL unique integer/char column) returns `nextCursor`, the last key as a
+  string, and the next call passes it back as `after` (keyset paging, never OFFSET); `null` marks
+  the last page. `count_rows` returns the row count for the same equality filters, so the pages
+  can be shown to add up. Each call is a separate read-only transaction, not one snapshot. An
+  extractor built before paging keeps serving the other operations and answers paged or counted
+  requests with the rebuild remedy.
 
 Regression: `test/channel-database.test.js`, `services/vpn-image/test_query.py`,
 `services/vpn-image/test_vpn3.py`, `test/channel-vpn-control.test.js`, `test/channel-vpn-web.test.js`,
@@ -130,16 +142,29 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   independent reads can continue. The bundled guide, managed instructions and fresh/resumed
   prompts carry the same rule for Claude and Codex. → TEST-PLAN: Read/search account routing.
 
-## Standalone Slack menu
+## Reply menu and standalone Slack menu
 
-- `/menu` returns only one card with **Resume, Files, Secrets, Settings**, directly from the
-  daemon without starting Claude or Codex. The registered slash command is private to its caller;
-  `@agent /menu` inside a channel thread (or `/menu` in a DM message) posts the card in that thread.
-- All four controls remain available before a session exists. Resume reads the current thread's
-  session when clicked, uses its owning harness and container workspace (including per-thread
-  Clean mode), and explains when there is no session. Top-level slash commands do not guess a
-  thread. Existing file, secret and settings controls retain their authorization checks; Resume
-  is bound to the requester/channel and rechecks access and membership on click.
+- **Every AI reply in Slack ends with the same menu: 📂 Files · 🔑 Variables · ⚙️ Settings**, with
+  visible labels, always all three, in that order. That holds for a streamed or classic answer, a
+  failed turn (the error line carries it), "🛑 Stopped.", an answer after an engine/model switch or
+  failover, an HTTP API run into a thread (streamed, fallback delivery or failure), a scheduled
+  run and its failure notice, a background job or agent continuation, self-diagnosis, and a turn
+  replayed after a restart (answer or failure). When an answer overflows into follow-up messages,
+  the stats and menu ride the LAST one, never the streamed head. Referenced-file `📄` buttons follow
+  the menu. There is no 💻 Resume button on any of them.
+- Binding: a reply with a Slack requester binds the menu to that person (another member's click
+  is refused, as before; admins may still open another user's file button). An automation post
+  (schedule, background job, API run, restart recovery) has no Slack requester, so its menu opens
+  for whoever clicks it. That grants nothing: every open re-applies the clicker's own live channel
+  authorization and binds the modal to that clicker.
+- Slack only. Google Chat and Teams receive the plain text of those notices and answers.
+- `/menu` returns only one card with the same **Files, Variables, Settings** buttons, directly
+  from the daemon without starting Claude or Codex. The registered slash command is private to its
+  caller; `@agent /menu` inside a channel thread (or `/menu` in a DM message) posts the card in that
+  thread. All controls remain available before a session exists and retain their authorization
+  checks. Resume Session is a tab in Settings and the `/resume` command; a 💻 Resume button on a
+  card posted before this change still opens the resume modal (it reads the thread's session when
+  clicked and rechecks requester, channel, access and membership).
 - Existing Slack installations must add `/menu` from `slack-app-manifest.json` to their installed
   app configuration. The typed `@agent /menu` route needs no Slack app reconfiguration.
 
@@ -147,8 +172,10 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 - **Current network policy accompanies every attempt:** fresh, resumed, recovered and fallback
   prompts state the resolved network switch, including Clean runs. An off switch instructs the
   engine to explain the current restriction rather than present a cached response as a new request.
-  This remains advisory policy, not container egress enforcement; other tool restrictions still
-  apply. The added fact contains no credential inventory or values. → TEST-PLAN: Network policy on resumed turns.
+  The note states whether THIS attempt's container enforces the switch (the egress proxy is its
+  only network) or only advises it (the legacy bridge mode, a `rawNetwork` channel, a `/sudo` host
+  thread); other tool restrictions still apply. The added fact contains no credential inventory or
+  values. → TEST-PLAN: Network policy on resumed turns.
 
 - **Control-plane results report received human approval:** a tool that awaited an approving
   decision returns a receipt alongside its original outcome, including returned refusals or error
@@ -227,7 +254,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   await every server before its first model request. → TEST-PLAN: MCP startup budgets.
 
 - **Accurate channel-control descriptions:** MCP mode/network descriptions and confirmations
-  describe the container boundary, advisory networking and separately resolved operator-home
+  describe the container boundary, the egress proxy's enforcement of the network switch (advisory
+  only where the proxy is not the channel's network) and the separately resolved operator-home
   grant. They do not promise domain filtering or automatic access to host credentials. Auto
   distinguishes engine tool approval from explicit control-plane sign-offs.
   → TEST-PLAN: Channel-control description accuracy.
@@ -363,9 +391,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Grant Tier switch is gone.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
   requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
-  setup concepts across five pages — **General Settings**, **Resume Session**, **MCP**, **Skills**,
-  **Secrets** — shown as one row of tabs (*General · Resume · MCP · Skills · Secrets*) at the top,
-  the open page highlighted; short names keep the five on one row of the modal. Legacy page ids
+  setup concepts across six pages — **General Settings**, **Variables**, **MCP**, **Skills**,
+  **Automations**, **Resume Session** — shown as one row of tabs (*General · Variables · MCPs ·
+  Skills · Automations · Resume*) at the top, the open page highlighted; Slack wraps the row on a
+  narrow modal. Legacy page ids
   (`runtime`, `access`, `network`) and the former *Page* dropdown still resolve, so a Settings view
   opened before either change keeps navigating.
   **General Settings** is everything that decides how the conversation runs: its Engine & model
@@ -441,7 +470,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   hand out a cleared session's id, plus the session id and the folder it belongs to. Opened outside
   a thread, or in a thread that has not run a turn yet, the tab says so instead of showing a
   command. It replaces the 💻 reply-footer button, which is gone from run footers.
-  A DM sees the same five pages, with its mode/Auto/Lean buttons at the top of General Settings and
+  **Automations** lists this conversation's scheduled tasks, reminders and `/loop` wake-ups (up to
+  20, then a pointer to the admin Schedules page): title, kind, on/paused, the cron with its next
+  run or the one-time run time (both in the gateway's zone), remaining loop ticks, creator and last
+  status. Any authorized user may **Pause**/**Resume** a recurring schedule and **Delete** any row
+  (*Cancel* for a one-time row, *Stop loop* for a loop; each asks first) — the same authority the
+  agent's `create_schedule`/`delete_schedule` tools give them. A one-time row or a loop is never
+  paused. Resuming is refused at the per-channel enabled-schedule limit, an id not in THIS
+  channel's rows is refused, and every change is logged (`schedule_updated` / `schedule_deleted`,
+  `via: slack_settings`). New automations are still created by asking the agent.
+  A DM sees the same six pages, with its mode/Auto/Lean buttons at the top of General Settings and
   no Access summary. Work-dir and gateway-wide settings are not exposed here.
   → TEST-PLAN: Conversation settings + on-demand memory.
 - **Truthful guest access:** approved members appear selected because they already have access;
@@ -476,10 +514,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   same registry snapshot, so newly available models such as Astra appear without a ChannelGate code
   change. Discovery is bounded and cached for six hours; a failed refresh retains the last good
   snapshot, or the bundled fallback on a cold start.
-- **Claude stays current through rolling aliases:** the catalog offers `best`, `opus`, `sonnet`,
-  `haiku`, `fable`, `opusplan`, and the supported 1M aliases instead of pinning dated model IDs.
-  Saved same-engine full IDs remain valid and round-trip through the Admin UI. Provider CLI/package
-  upgrades are deliberately separate and continue through reviewed dependency PRs.
+- **Claude's model choices state exact versions:** the picker offers Opus 5.5, Fable 5.1,
+  Sonnet 5, and Haiku 4.5 under their full model IDs. It omits duplicate aliases and special
+  modes from the normal choices. Previously saved Claude aliases and full IDs remain valid;
+  the Slack picker shows the current saved value, and the Admin UI round-trips it. The curated
+  list is reviewed when Anthropic releases a new model. Provider CLI/package upgrades are
+  deliberately separate and continue through reviewed dependency PRs.
   → TEST-PLAN: Dynamic engine model catalog.
 
 ## Chat-platform adapter kernel
@@ -756,7 +796,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   token never appears in Codex's argv or environment. Remote servers still get
   `startup_timeout_sec=120` (gateway control server 60) as a ceiling on the handshake itself.
   Before this, the `mcp-remote` bridge needed ~2.4 s to answer `tools/list` and made only the cold
-  window, so the SECOND turn of a Codex thread had no Composio tools at all.
+  window, so the SECOND turn of a Codex thread had no Composio tools at all. Since the
+  remote-MCP relay (below, Container runtime) this native transport is the sudo-host shape; in a
+  channel container the same servers are relayed by the daemon over the control socket.
   → TEST-PLAN: Background jobs, MCP.
 - Resilient image/file attachments: every accepted Slack trigger is hydrated from the exact
   canonical root/reply before processing; `message` and `app_mention` delivery is deduplicated by
@@ -806,9 +848,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Native Slack **channel file explorer**: the 📂 reply button opens a Block Kit modal rooted at the channel's
   effective working folder. Its title identifies the authoritative stored Slack channel name, and
   its subtitle shows the full absolute current directory, refreshed on every navigation. The
-  *Browse channel files* message shortcut opens it for a selected thread, and every interactive run footer carries a
-  requester-bound `📂` button for one-click access; managers also receive the
-  requester-bound **⚙️ Settings** snapshot button described above, and gateway admins may open a
+  *Browse channel files* message shortcut opens it for a selected thread, and every reply's menu carries a
+  `📂 Files` button (requester-bound when the reply has a requester) for one-click access, beside the
+  **⚙️ Settings** snapshot button described above, and gateway admins may open a
   control attached to another user's bot reply. When an agent names up to five
   existing files inside its effective working folder for review, the same footer adds deduplicated
   `📄 filename` buttons in mention order. A named path may be absolute or written relative to the
@@ -1076,7 +1118,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   message starts fresh), `/context` (token usage + % of the context window from the last turn),
   `/resume` (the copyable `cd "…" && claude --resume <id>` terminal command for this thread's
   session — kept out of reply footers; the same command is a tab in Slack Settings → **Resume
-  Session** and behind the 💻 buttons on `/menu` and on "🛑 Stopped." messages → modal.
+  Session** → modal (the 💻 buttons on older `/menu` cards and "🛑 Stopped." messages still open it).
   `/resume <command or session id>` runs the same trip in REVERSE: paste that line back and the
   thread adopts the existing local session, so a conversation started in a terminal on the gateway
   machine (or left behind by a cleared thread) continues in Slack. Accepts the full pasted command,
@@ -1428,8 +1470,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   the channel Runtime card, channel/DM config editors) are **dropdowns** with the same curated
   options as the `/model` wizard, switching with the selected/inherited engine; a hand-edited
   non-curated id (e.g. a dated full id in settings.json) survives as an extra option so Save
-  round-trips it, while an other-engine leftover is dropped. The Claude list includes Fable 5 as
-  `claude-fable-5`; Fable is not offered as a GPT/Codex model. Settings also provides a confirmed,
+  round-trips it, while an other-engine leftover is dropped. The Claude list includes Fable 5.1 as
+  `claude-fable-5-1`; Fable is not offered as a GPT/Codex model. Settings also provides a confirmed,
   admin-only reset that clears every channel's engine/model/effort overrides so new threads inherit
   these gateway defaults again (effort resets with the other two because the `/model` wizard sets
   all three in one pass); DMs, existing thread-owned sessions, access, tools, and tokens are
@@ -1587,7 +1629,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Retired 2026-09-03 (Linux + containers only):** the host permission profiles, the semantic network modes and the `network_proxy` compilation —
   inside its container Codex runs `--sandbox read-only` in read mode (which refuses network on its
   own) and `danger-full-access` for write modes, with no permission profiles; the container itself
-  is on the bridge network. Codex confinement mirrors the channel via Gateway-owned permission profiles (never the legacy
+  has no network of its own and goes out through the egress proxy. Codex confinement mirrors the channel via Gateway-owned permission profiles (never the legacy
   broad-read sandbox modes): `gateway-readonly` (root denied, minimal runtime paths + workspace
   readable, nothing writable) by default, `gateway-workspace` (adds workspace write + a private
   per-run scratch dir as TMPDIR; `.git`/`.codex` stay read-only) when Bash/Auto mode is on, profile
@@ -1660,9 +1702,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `NODE_USE_ENV_PROXY=1` so Node-based CLIs honor its destination-restricted network proxy; this
   changes proxy consumption, not the approved-domain boundary. → TEST-PLAN: CLI integrations.
 - **Retired 2026-09-03 (Linux + containers only):** the tool, the card and `extraNetworkDomains` went with the host sandbox's allow-list — *Allow
-  network* stays as a per-channel switch the engines are told about, with no domain filtering and,
-  in this release, no egress cut-off in the container (every container is on the bridge network;
-  a container-side egress proxy is the planned follow-up). **Per-channel domain approvals (`request_network_domain`)**: when a sandboxed command fails on a
+  network* stays as a per-channel switch the engines are told about, with no domain filtering; the
+  container-side egress proxy enforces it (off/on, private addresses always refused). **Per-channel domain approvals (`request_network_domain`)**: when a sandboxed command fails on a
   blocked host, the agent may request ONE named domain; the gateway posts an Approve/Deny card
   that ANY authorized user can approve (the human click is the control — injected content can
   request but never click). Approved domains persist in the channel meta, join that channel's
@@ -1914,7 +1955,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   read its own environment and a failing CLI will echo a token into its error line. Exact values
   are stripped from the reply, the live stream (holdback, so a value split across two deltas still
   matches) and background-job output.
-- **Surfaces.** `/secrets` and a message shortcut in Slack, a 🔑 button on every authored reply
+- **Surfaces.** `/secrets` and a message shortcut in Slack, a 🔑 Variables button on every reply
   footer (including when the channel has none, so users can add the first), and a card on the
   channel's admin page. Managing them needs the same privilege as running
   commands with them (`canEditChannelFiles`); everyone authorized in the channel can see that they
@@ -2189,18 +2230,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (Bash + Write/Edit with writes kept away from the gateway root, `.ssh`, `.aws`, `.config`,
   `.claude`, keychains and every other channel's folder) is the container boundary instead.
   → TEST-PLAN: Sandbox boundaries.
-- **Allow Network is an ADVISORY per-channel switch, not an egress boundary.** Every channel's
-  container runs on the default bridge network and the gateway polices no egress per channel, so
-  "off" does not cut the container off — it states the channel's intent. That intent is now said
-  out loud everywhere instead of being inferred from a missing suffix: the mode label carries the
-  state in BOTH directions (`Read-only · network off` / `Bash · network on`), `/mode` and `/status`
-  add the caveat (`network off (advisory — not enforced by the container yet)`), the gateway-managed
-  block at the top of every conversation's instruction file states the mode and the network switch
-  to the engine itself, and the `run_config` event records `networkEnforced: false` beside
-  `networkPolicy` so an operator reading it after an incident cannot mistake `"off"` for "this turn
-  could not reach the internet". A container-side egress proxy that actually enforces the switch is
-  a later slice; `NETWORK_POLICY_ENFORCED` in `src/engines/network-policy.js` is the one flag every
-  surface reads. → TEST-PLAN: Sandbox boundaries.
+- **Allow Network is enforced by the egress proxy, and says so where it is only advisory.** A
+  proxy-mode container (the default) has `--network none`, and the per-channel switch is the
+  proxy's live policy (see Container runtime → egress proxy). Under the legacy
+  `containerEgressMode = "bridge"`, a channel's `rawNetwork` escape or a `/sudo` host thread the
+  switch only states intent, and that is said out loud everywhere instead of being inferred from a
+  missing suffix: the mode label carries the state in BOTH directions (`Read-only · network off` /
+  `Bash · network on`), `/mode` and `/status` add the caveat (`network off (advisory — not enforced
+  for this container)`) only where it applies, the gateway-managed block at the top of every
+  conversation's instruction file states the switch AND whether it is enforced, and the
+  `run_config` event records `networkEnforced` and `egress` beside `networkPolicy` so an operator
+  reading it after an incident cannot mistake one for the other. `NETWORK_POLICY_ENFORCED` in
+  `src/engines/network-policy.js` is now `true`; every surface asks `networkEnforcedFor(target)`.
+  → TEST-PLAN: Sandbox boundaries; Egress proxy, placeholders and `--network none`.
 - **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — with no host sandbox there is no user namespace for AppArmor to restrict,
   and rootless Podman brings its own uid mapping (`--userns=keep-id`, `/etc/subuid`). **Linux hosts keep their Bash sandbox under Ubuntu's AppArmor userns restriction**: Ubuntu 23.10+
   (24.04 LTS included) stacks any unconfined process that creates a user namespace into a
@@ -2228,7 +2270,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `~/.local/share/containers` masked), Claude's admin-run settings list it in
   `permissions.additionalDirectories` (derived from the resolved mount), the grant is part of the
   create-time fingerprint, no MCP tool can flip it, and it is per channel (every admitted author
-  reads; an admin author's turn writes). → TEST-PLAN: Container runtime (operator-home grant). **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
+  reads; an admin author's turn writes). Because the mount is read-write for the whole container,
+  every run there that is NOT an admin author's — a member's or guest's turn, their background
+  agents — is **home-guarded** (2026-09-27, CTR-30): Claude's per-run settings deny `Bash`, `Write`,
+  `Edit`, `MultiEdit` and `NotebookEdit` outright (deny, not ask: a run's own author may approve
+  their own card), Codex runs in its read-only sandbox with no auto-approved escalation, and
+  plugin command servers are refused. An admin author's live turn (bypass) and the admin unattended
+  tier are unchanged. → TEST-PLAN: Container runtime (operator-home grant). **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
   live foreground turn in an admin-mode channel runs with the bypass AND `sandbox.enabled: false`
   (the flag alone never lifts the sandbox), so it can genuinely reach the whole account — while
   the shared settings keep every other run fully sandboxed, and unattended admin runs stay at the
@@ -2316,9 +2364,10 @@ are retired, bullet by bullet; everything else stands.
   sides: the channel's resolved workdir, the clean workspace (so clean mode works in a container),
   and the per-channel artifact dir `~/ChannelGate/.runtime/<platform>/<slug>` (0700) that holds this
   run's engine-facing files. The channel's HOME is a **named volume** at `/home/agent`; the daemon's
-  MCP socket directory is mounted **read-only** at `/run/channelgate`; the Codex `auth.json` is a
-  single-FILE mount (the one deliberate exception to "mount directories, never single files" — see
-  the credential bullet); `/tmp` and `/var/tmp` are per-channel bind mounts too, for durability (own
+  MCP socket directory is mounted **read-only** at `/run/channelgate`; outside the egress proxy the
+  Codex `auth.json` is a single-FILE mount (the one deliberate exception to "mount directories,
+  never single files" — see the credential bullet; behind the proxy Codex is relayed with no mount,
+  container-secrets P4); `/tmp` and `/var/tmp` are per-channel named volumes, for durability (own
   bullet below). Hardening: tmpfs `/run` only (64m, noexec — pid files and the socket mount, which
   must be fresh at every start);
   `--cap-drop ALL` plus only `DAC_OVERRIDE`/`CHOWN`/`FOWNER`; `--security-opt no-new-privileges`;
@@ -2406,7 +2455,8 @@ are retired, bullet by bullet; everything else stands.
   the thread-bound background, progress and approval tools) with `composio-user` for the
   developer's own accounts, `composio-agent` for the channel's and the selected catalog servers,
   `--strict-mcp-config` so the operator's own claude.ai connectors never load, and the run
-  environment (`resolveRunEnv` + `safeSpawnEnv`) sourced by the `claude` wrapper. Codex gets the
+  environment (`resolveEgressRunEnv` + `safeSpawnEnv`, placeholders behind the egress proxy — see
+  "SSH and VS Code sessions on placeholders") sourced by the `claude` wrapper. Codex gets the
   same session through its own `codex` wrapper (QA-0925: over SSH it had no gateway MCP, no Composio
   and no secrets): the session also writes `codex-args.sh` — exactly the `-c mcp_servers.*` /
   `apps.*` overrides a chat turn's Codex gets, with a Codex-minted gateway capability and the
@@ -2495,11 +2545,17 @@ are retired, bullet by bullet; everything else stands.
   channel accumulates lives in one of three places, none of which the daemon deletes: the
   per-channel HOME **volume** (`/home/agent` — engine sessions, CLI logins, `npm -g`, `pip --user`,
   `pipx`, `uv`/`cargo` installs, caches), the bind-mounted work directory, and — since image spec
-  1.1.0 — `/tmp` and `/var/tmp`, which are bind mounts of
-  `~/ChannelGate/.runtime/<platform>/<slug>/{tmp,var-tmp}` rather than tmpfs. As tmpfs they were the
+  1.1.0 — `/tmp` and `/var/tmp`, which are persistent rather than tmpfs. As tmpfs they were the
   ONE thing a stop threw away, a regression against the host backend, where Claude Code's
-  `/tmp/claude-<uid>/…` scratchpad survives between turns; as bind mounts they persist, are visible
-  to the operator, and trade the tmpfs size cap for the disk (the same deal the work directory
+  `/tmp/claude-<uid>/…` scratchpad survives between turns. Since 2026-09-27 they are per-channel
+  named volumes (`<container>-tmp`, `<container>-vtmp`, removed with the HOME volume when the channel
+  is deleted); before that they were bind mounts of `<artifactDir>/{tmp,var-tmp}`, which made the
+  same files visible at two paths inside the container — a mount alias Codex's bubblewrap sandbox
+  refuses (its app-server socket lives under a fixed `/tmp/codex-daemon-<uid>`), so Read-mode Codex
+  could run no command. Codex's socket directory itself, `/tmp/codex-daemon-<uid>`, is a 1 MB
+  tmpfs of its own (0700, owned by the agent user: podman `U`, docker `uid=`/`gid=`), because in a
+  whole-home Admin channel even the volume's storage — and the container's root filesystem — sit
+  under the mounted home, which Codex also reads as an alias. They persist and trade the tmpfs size cap for the disk (the same deal the work directory
   already had). `/run` stays a tmpfs on purpose. The image PATH puts every place a channel can
   install into ahead of the pinned toolchain — `~/.npm-global/bin`, `~/.local/bin`, `~/bin`, then
   `~/.cargo`/`~/.bun`/`~/.deno`/`~/go` — and ships `pip`/`venv`/`pipx` with `PIP_USER=1` +
@@ -2524,12 +2580,14 @@ are retired, bullet by bullet; everything else stands.
   at all, and no forked refresh chain: an access token cannot rotate anything, whereas a copy that
   refreshes would log the gateway out (it did, live, on 2026-09-02). The daemon's own
   `ANTHROPIC_API_KEY` is the third mode, for service installs with no login. With none of them the
-  mode is **missing** and a Claude turn fails closed. Codex is the opposite case — it rewrites `auth.json`
-  IN PLACE, so a copy would fork the refresh chain and one side would eventually lose the race — and
-  therefore gets a shared read-write FILE mount of the gateway's real auth file. What is ISOLATED
+  mode is **missing** and a Claude turn fails closed. Codex rewrites `auth.json` IN PLACE, so a copy
+  would fork the refresh chain and one side would eventually lose the race; behind the egress proxy
+  it is therefore RELAYED like Claude (an access-only file with a placeholder token, written by the
+  runner — container-secrets P4), and only the legacy bridge mode or an API-key login still gets a
+  shared read-write FILE mount of the gateway's real auth file. What is ISOLATED
   per channel: the whole HOME volume — CLI logins, npm prefix, dotfiles, caches, the Claude config
   dir (transcripts, prompt history, todos, shell snapshots) and `CODEX_HOME` (sessions, history).
-  What is SHARED: the Codex sign-in file, and nothing else; `describe()` compares its inode so a
+  What is SHARED (bridge mode / API-key login only): the Codex sign-in file, and nothing else; `describe()` compares its inode so a
   container still holding a login the host has since replaced is visible rather than silently stale,
   and `/status` carries the caveat in words. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Inside the container, each engine's OWN sandbox is off** — the vendor-sanctioned pattern, and the
@@ -2541,13 +2599,16 @@ are retired, bullet by bullet; everything else stands.
   workspace scan, the channel listing and the toolchain/credential carve-outs that only existed to
   build it are skipped; Codex states `--sandbox danger-full-access` for write modes and `read-only`
   in read mode (as the `sandbox_mode=` config twin on resume, where the flag is rejected), with no
-  permission profiles, no `network_proxy` compilation and no `sqlite_home`. A stated mode also
-  states the MECHANISM that can enforce it in here — `features.use_legacy_landlock=true`: Codex's
-  default is bubblewrap, which cannot start under `--cap-drop ALL` + no-new-privileges
-  (`bwrap: Unexpected capabilities but not setuid`) and failed every command, so Read mode could not
-  even read; Landlock gives the same posture in-container (reads succeed, writes get "Permission
-  denied"). The flag is deprecated-but-functional in the pinned CLI (`containers/versions.json`) and
-  is re-checked on every Codex bump; the admin bypass has no sandbox and states no mechanism. Everything that is
+  permission profiles, no `network_proxy` compilation and no `sqlite_home`. The read-only sandbox's MECHANISM is bubblewrap (the pinned CLI no longer
+  honours the old `features.use_legacy_landlock` fallback, so argv names no mechanism). bwrap refuses
+  to start while the process holds capabilities without being setuid, and the container's
+  `--cap-add DAC_OVERRIDE,CHOWN,FOWNER` reaches the agent user as AMBIENT caps — which failed every
+  Read-mode command, reads included. A container Codex run whose sandbox Codex enforces (read-only:
+  not the admin bypass, not `danger-full-access`) is therefore exec'd through
+  `setpriv --ambient-caps=-all --inh-caps=-all` inside `cg-exec` (spawn spec `dropCapabilities`,
+  container backend only): reads succeed, writes get "Read-only file system", and the recorded
+  session leader is still the engine because setpriv execs it in place. The admin bypass and write
+  modes keep the caps and have no sandbox to start. Everything that is
   POLICY rather than confinement is unchanged on both backends: `permissions.allow` +
   `permissions.ask` (the shell for any channel that did not grant it — never the admin-run variant,
   which grants it), the mode →
@@ -2567,7 +2628,7 @@ are retired, bullet by bullet; everything else stands.
   anyway (every remote MCP is already bridged to stdio for it), so an HTTP control plane would have
   needed a bridge regardless. → TEST-PLAN: Container runtime (v0.8 P1).
 - **The socket's wire protocol is one line, then MCP.** The client writes a newline-terminated hello
-  (`{channelgate:"hello", v:1, service:"gateway"|"composio-sdk", cap, engine, toolset,
+  (`{channelgate:"hello", v:1, service:"gateway"|"composio-sdk"|"remote-mcp", cap, engine, toolset,
   progressReport, args, framed}`) and the daemon answers on the same socket with the MCP stream,
   preceded — only for a client that opted into `framed` — by one `{channelgate:"ready"}` line. A
   refusal is ALWAYS announced as `{channelgate:"error", reason}` before the socket closes, so the
@@ -2588,6 +2649,293 @@ are retired, bullet by bullet; everything else stands.
   container cannot see. An unbindable socket path (over the 100-byte `sockaddr_un` budget, a
   read-only root) logs one line and never fails the boot — container runs then fail closed with
   their own message. → TEST-PLAN: Container runtime (v0.8 P1).
+- **A remote MCP credential never enters a channel container (container-secrets P1).** The four
+  header-bearing remote servers a run may receive — `composio-user` and `composio-agent` (legacy
+  token mode and an explicit `endpoint.url` + `endpoint.headers`), `makeitfuture-toolbox` and
+  `make-toolbox` — used to reach a containerized engine WITH their token: Claude's `cg-mcp-*.json`
+  and Codex's per-run secret bundle (plus its `http_headers_helper` scripts) sit in the artifact
+  dir, which the container bind-mounts read-write, so any process in the box could read them. On an
+  isolated target they are now a third socket service, `remote-mcp`: the engine's entry is the same
+  socket bridge the gateway entry uses (`CG_MCP_SERVICE=remote-mcp`, the server NAME as its
+  argument; Codex reaches it through the secret-env-bridge so the capability still comes from the
+  0600 bundle), the signed capability's optional `remoteMcps` claim lists the names, and the real
+  URL + headers are registered in the daemon's in-memory registry
+  (`src/mcp/remote-mcp-registry.js`) under the capability's `jti`, for exactly the capability's
+  lifetime at most (a turn's 6 h, an SSH session's 12 h; ≤ 16 servers, header values ≤ 8 KB,
+  never logged) and usually far less: the minting turn holds it until it settles, every open relay
+  connection holds it too, and it goes when the last hold is released — so a cold turn's grant
+  ends with the turn, a warm Claude process keeps its grant exactly as long as its bridge
+  connections stay open, and a turn that merely reused a warm process drops its own unused grant.
+  An SSH refresh releases the previous preparation's grants (a `claude` already running keeps
+  its relays through its open connections); the developer's last session ending drops them all;
+  clearing a personal Composio or Toolbox token (`clear_my_*_token`, or the admin UI) drops every
+  grant minted for that person's runs at once. A hello is relayed only when the claim names the
+  server AND the daemon holds a live registration for it; at most 8 relay connections per grant
+  and server exist at once (a slot is held until the upstream dial has settled, so hello-then-hang-up
+  cannot fan out dials), and a container that hangs up mid-dial never leaves the upstream client
+  open. The daemon dials the server (Streamable HTTP, HTTP+SSE on a 4xx; https only; a network
+  error or a 502/503/504 is retried once after a second, and a failed dial is logged daemon-side
+  with the server name and the upstream status only — `upstream HTTP 502` / `network error`) and forwards
+  `tools/list` and `tools/call`, re-authorizing each, passing the engine's cancellation upstream and
+  upstream progress back (`src/mcp/remote-relay.js`). Refusals are fixed sentences that quote no
+  URL, header or upstream error; a failed forwarded request reaches the engine as `remote MCP
+  request failed` unless the remote itself answered with a JSON-RPC error, which passes unchanged.
+  A gateway hello carrying arguments (a pre-1.6.0 image's broker dropped the relay selection) is
+  refused with the rebuild remedy instead of serving the control plane under a relayed name. Codex's container bundle now holds ONLY
+  `gatewayCapability` and no headers helper is written; an SSH session's `mcp.json` and Codex
+  bundle follow the same rule. The warm pool's fingerprint carries a value-free sha256 digest of
+  each relayed URL + header, so a rotated Composio or toolbox token still retires the warm process.
+  A remote the relay cannot carry — plain http (a `COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override) or
+  a malformed header (not text, over 8 KB, a line break, a bad name, more than 16) — is dropped
+  from an isolated run on its own and named in the skipped-MCP note; the rest of the turn is
+  unaffected and the token is never handed to the container instead. Host (sudo) targets keep the direct http entries and headers
+  helpers byte for byte. Image spec 1.6.0 (the image's broker forwards `CG_MCP_SERVICE` /
+  `CG_MCP_SOCKET`). Where the egress proxy is the container's network (below) it also decides whether
+  the container can reach those endpoints at all with a credential of its OWN; either way it can no
+  longer read the gateway's. → TEST-PLAN: Remote MCP relay (container-secrets P1).
+- **The egress proxy core (container-secrets P2).** `src/gateway/egress/` is an in-house HTTP/1.1
+  proxy in Node built-ins only, served per connection over a unix socket the caller owns (the
+  socket PATH is the channel identity): `CONNECT` → the destination policy → a TLS-terminated
+  tunnel with a leaf from the per-deployment CA (`ca.js`: created once under
+  `config/egress-ca/`, `ca.key` 0600, ECDSA P-256 leaves for 24 h in a 512-entry LRU) → every
+  request forwarded over https to the PINNED address with the CONNECT host as SNI, headers swapped,
+  bodies streamed unbuffered, WebSocket upgrades swapped then piped, absolute-form plain http
+  forwarded, and a raw CONNECT tunnel (no TLS termination) for declared SSH/Postgres host:ports.
+  The policy (`policy.js`) resolves EVERY address and refuses a destination when any of them is
+  loopback, private, link-local (the metadata address included), CGNAT or reserved — IPv4-mapped
+  forms too — then dials the first address as a literal, so DNS rebinding is useless; mode off
+  admits only engine hosts. A placeholder (`placeholders.js`: `cgph_<o|c|p|r><32 base32>`, 160
+  random bits; an `sk-ant-oat01-` shape for engines that check one) is swapped (`rules.js`) only on
+  a declared host, in a declared header, at a declared position (bearer, raw, the password or user
+  half of Basic), never partially, never across a Host-header mismatch, over plain http only when
+  the grant opts in, in query parameters only when listed; anything else is forwarded unchanged. A
+  `canUse` refusal answers 403 naming the secret and the reason (never naming it for a placeholder
+  presented from another channel). Every request is PINNED to the approved host: inside a tunnel an
+  absolute-form request line is 400 `absolute-form-in-tunnel`, a Host header naming another host
+  than the CONNECT/URL host is 403 `host-mismatch` (no domain fronting), a request without Host is
+  never swapped into, and the upstream always receives the approved host. A swapped request asks
+  for `accept-encoding: identity`, and its response is scrubbed (`scrub.js`) of every swapped value
+  in the header values and in any body that is text-like or declares no type — including a non-101
+  answer to an Upgrade, now sent through Node's HTTP client — even across chunks; declared binary
+  bodies pass through. Deadlines and caps: DNS 5 s (504 `dns-timeout`), 16 destination decisions in
+  flight per channel (503 `too-many-lookups`), connect 15 s, response headers 60 s after the request
+  was sent (504). Upstream TLS is verified (`rejectUnauthorized`) against Node's roots plus the
+  host's CA bundle. Audit events carry names, counts and reasons only. HTTP/1.1 only (ALPN), request
+  bodies are never swapped, trailers are dropped. → TEST-PLAN: Egress proxy, placeholders and
+  `--network none`.
+- **Channel containers run with `--network none` behind the egress proxy (container-secrets P2).**
+  The gateway setting `containerEgressMode` (Settings → Container runtime) is `"proxy"` by default:
+  every channel container is created with no network of its own, its channel's egress socket
+  directory (`<root>/eg/<12 hex of sha256(platform|slug)>/egress.sock`, 0700/0600 — NOT under the
+  `run/` dir every container mounts) bind-mounted read-only at `/run/channelgate/egress`, and the
+  CA trust bundle (`<root>/run/egress-ca.pem`, the host's system roots + the egress CA, written in
+  place at boot so a running container's file mount stays current) at
+  `/run/channelgate/egress-ca.pem`. `cg-init` starts the image's forwarder (`bin/cg-egress.mjs`, a
+  verbatim copy of `src/mcp/egress-forwarder.js`) on `127.0.0.1:3128` under `CG_EGRESS=proxy`; it
+  pipes each connection to the socket and RESETS the client when the daemon is unreachable. One
+  helper (`src/runtimes/container/egress-env.js`) sets `HTTP(S)_PROXY` (both cases), `NO_PROXY`
+  (loopback), `NODE_USE_ENV_PROXY=1`, ten CA variables (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
+  `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PIP_CERT`, `NPM_CONFIG_CAFILE`,
+  `CARGO_HTTP_CAINFO`, `AWS_CA_BUNDLE`, `DENO_CERT`) and `CG_EGRESS`, and removes `ALL_PROXY` — at
+  create time, FORCED in every exec env-file (a daemon `HTTPS_PROXY` cannot route a run around the
+  proxy) and in the gateway-owned last group of the Claude and Codex env; every one of those names
+  is a reserved secret name. Chromium gets `--proxy-server` and the CA's SPKI pin through
+  `AGENT_BROWSER_ARGS`. The daemon's service (`src/gateway/egress/service.js`) starts right after
+  the control socket; a failure logs ONE line and leaves the boot running, and every proxy-mode
+  run, background job and SSH container then fails before spawning with `egress proxy unavailable:
+  …` and the remedy — a down proxy never opens the bridge. `ensureUp` binds the channel's listener
+  before creating or starting the container, holds at most 256 connections per channel socket, and
+  at boot re-binds the listener of every proxy-mode container that kept running across the restart
+  (a recovered job, an attached editor or a process left from an SSH session keeps its network).
+  The forwarder half-closes cleanly (`allowHalfOpen` both ways) and logs to `/run/cg/egress.log`.
+  The network mode is in the MOUNT fingerprint too, so a network change (clearing `rawNetwork`) is
+  never deferred behind running work. Per request the policy reads the channel's CURRENT
+  meta: *Allow network* off admits the engine endpoints (Claude, Codex, a configured Qwen endpoint)
+  and the remote MCP hosts this channel's runs were handed; on admits any public destination; raw
+  tunnels go to `github.com:22` and the admin-declared `egressRawHosts` on 22/5432/6543. Audit rows
+  (`egress` events) only for a swap of a channel/organization/personal secret, a refusal, a blocked
+  destination or a raw tunnel — the relayed Claude login's swap on every API call is only counted
+  (`egressStatus()`, `/api/health` → `containerRuntime.egress`), and so is a request whose only
+  refusal is an engine-login relay refused `channel-idle` (an idle warm process's telemetry). Two escapes, both reported as
+  advisory everywhere: the LEGACY `containerEgressMode = "bridge"` (the open bridge and raw values,
+  for a host that cannot run the proxy) and a channel's admin-set `rawNetwork` (the bridge beside
+  the proxy, proxy env still set). Switching either recreates the container at its next idle moment
+  (the network mode is in the create-time fingerprint; the egress mounts are in both).
+  → TEST-PLAN: Egress proxy, placeholders and `--network none`.
+- **A proxy-mode container holds placeholders, not secrets (container-secrets P2).** Every spawn site
+  — a turn, a background job, the memory reviewer — resolves its environment through
+  `resolveEgressRunEnv` (`src/gateway/egress/grants.js`): a secret with a swap rule becomes its
+  placeholder, stable per (scope, channel, owner, name) in migration 30's `egress_grants`
+  (organization: shared by every channel; channel; personal: per channel AND author) — the table
+  never holds a value. Rules are built in for credential NAMES (`catalog-rules.js`, fed by the CLI
+  catalog's new `swap` blocks: GitHub tokens and PATs on api.github.com / github.com /
+  uploads.github.com / *.githubusercontent.com incl. Basic-password for git over https; Vercel and
+  Supabase access tokens; Make API keys with `Token <key>` or x-api-key; `COMPOSIO_API_KEY`) or
+  declared by an admin on the entry ("Used on hosts" in the admin secrets editor, `hosts`/
+  `headers`/`format` on `set_secret`: ≤ 16 DNS names or `*.suffix`, ≤ 8 lowercase headers, one of
+  bearer/raw/basic-password/basic-user), kept across a value rotation. Configuration names
+  (`GH_REPO`, `VERCEL_ORG_ID`) and raw-protocol passwords (`SUPABASE_DB_PASSWORD`) have no rule.
+  **A name without a rule is decided by its kind (2026-09-27, `secretExposure`; errs HIDDEN when
+  unsure):** READABLE when a name word marks a password, mail or signing secret (PASSWORD, PASS,
+  PWD, SMTP, IMAP, SIGNING, HMAC, ENCRYPTION, SSH…), a database word appears and the name does NOT
+  end in TOKEN/KEY (REDIS_URL readable, UPSTASH_REDIS_REST_TOKEN hidden), it ends in a local-signing
+  pair (WEBHOOK/AUTH/APP/JWT/SESSION/COOKIE_SECRET, SECRET_ACCESS_KEY, STORAGE_KEY, ENCRYPTION_KEY),
+  it is a known whole name (PGPASSWORD, NEXTAUTH_SECRET, KUBECONFIG…), its last word marks
+  configuration (…_ID, _REPO, _ORG, _REGION, _USER, _URL…), or its value is a URL or a file path;
+  otherwise HIDDEN — STRIPE_SECRET_KEY, API_SECRET and *_CLIENT_SECRET included. A readable name is
+  injected raw and flagged `unprotected` — or withheld under `containerEgressSecretsStrict`
+  ("Withhold readable variables"). A hidden one gets a placeholder behind an **approval rule**: a
+  credential-like header or query parameter (the known auth headers, or a name with auth, token, key,
+  secret, session, signature…), the bearer/raw/Basic positions, and only the servers an admin
+  approved for that secret (`approvedHosts` on its entry, kept across a rotation). Presented to any
+  other server the proxy answers 403 `secret-refused` "…has not been approved for <host> yet, so
+  nothing was sent" and posts ONE durable card per secret+server in the channel's live thread
+  (`src/gateway/secret-host-approvals.js`, kind `secret_host`, requiredTier admin — the run's own
+  author never approves their own leak), at most 5 pending per channel and none again for the same
+  secret+server within 10 minutes (a deny or a loop does not re-post). The card names the secret's
+  VERSION (`setAt`): approved after the secret was deleted and re-created or re-set, it applies
+  nothing. Approving records the host on the secret, effective within the 5 s grant cache, for every
+  later run, schedule and SSH session. Never for a model API (the engines' and any configured Qwen
+  endpoint; checked even for an approved host, since a swapped value there would land in the model's
+  context), never for a wildcard, and a channel binding or liveness denial still wins over asking.
+  With no live thread (an SSH session or a job alone) no card is posted; an admin uses
+  `allow_secret_host` from the conversation's chat. `set_secret_mode` (hidden/readable/auto;
+  conversation = its managers, organization = admins, personal = the owner — but making a personal
+  secret READABLE needs an admin's click, so a recruited bystander cannot approve it) overrides the
+  kind; `list_secrets` and the admin secrets page show "hidden (placeholder); approved servers: …" /
+  "readable (raw)". Request bodies and URL paths are never rewritten.
+  **Adding a variable asks one thing (2026-09-28): is it a secret?** The Slack add-variable form
+  (titled *Variables* — the menu button, footer, Settings tab and admin UI say "variables", since a
+  readable value is configuration as often as a secret) and the admin editor carry a single
+  **Secret** checkbox, ticked by default, plus an optional **Allowed domains** field (2026-09-28)
+  that restricts a secret to exactly those domains — no approval cards, never sent anywhere else,
+  and naming any makes the variable a secret; for a name the catalog does not know it swaps in any
+  credential-like header or query parameter there (not only Authorization), never on a model API.
+  Empty keeps the stored list and leaves servers to first-use approvals. There is no mode field — the
+  gateway does the rest. Ticked stores `exposure: hidden`: a placeholder whose servers admins approve on first use, or
+  the built-in rule for a known name — and a variable whose name or value says it is used outside
+  HTTPS (SMTP, database, signing key, configuration) is kept READABLE automatically, because a
+  placeholder could never work there (the row says "kept readable although hidden was chosen"). Unticked
+  stores `readable`. A stored "Used on hosts" rule is kept (still settable through `set_secret`
+  `hosts`, which also takes `mode`). Every row shows how containers receive it and why (🔒 hidden —
+  approved for … / each new server asks an admin once; 👁 readable (auto: it looks like a password…)). The proxy resolves the CURRENT
+  value per request from the store that owns it (rotation is live; the relay cached 60 s), and only
+  while `canUse` passes: the placeholder's own channel (the organization's from any), live work in
+  that channel (a turn, a job, a review or an SSH session — `liveness.js`), and for a personal
+  secret its OWNER live there with NO other person's turn, job or SSH session live there (403
+  `another-author-active` / `another-person-ssh-session`; a memory review is ownerless and pauses
+  nothing). Removing a secret revokes its placeholder (the config-change listener, every run's own
+  reconcile — keyed by the STORED names, so a secret that briefly resolves empty keeps its
+  placeholder — and the resolver itself); re-adding mints a new one. Limits: a Qwen provider key and
+  a daemon `CODEX_API_KEY` still reach a proxy-mode container raw (Codex's own sign-in is the shared
+  `auth.json`, a later phase), a self-hosted Qwen endpoint on a private address is refused by the
+  proxy, and an admin should never declare a multi-tenant suffix such as `*.vercel.app` as "Used
+  on hosts" (the editor and `set_secret` say so). The relayed Claude login becomes the channel's relay placeholder in
+  the `sk-ant-oat01-` shape (`containerClaudeCredential`), swapped on `api.anthropic.com` only.
+  The per-attempt credential note names each protected name with its hosts, the unprotected ones
+  and the withheld ones; `list_secrets` and the admin listings show "protected via egress proxy
+  (hosts)" / "unprotected (raw)"; the output redactor keeps every REAL value; `run_config` records
+  `networkEnforced`, `egress` (`proxy` / `proxy+raw` / `bridge` / `unavailable` / `host`) and the
+  unprotected/withheld names. → TEST-PLAN: Egress proxy, placeholders and `--network none`.
+- **SSH and VS Code sessions on placeholders (container-secrets P3).** A developer's SSH session
+  resolves its environment through the same `resolveEgressRunEnv` a turn uses (this channel, the
+  developer as a trusted principal, the session's target), so behind the egress proxy the session
+  `env` file under `<artifacts>/ssh/users/<id>/` exports a `cgph_…` placeholder for every ruled
+  secret; an unruled one stays raw and flagged (withheld under strict mode). The status line and
+  `ssh_session_start` report `secrets` as `{ name, scope, protected }`. Claude's access-only
+  `.credentials.json` and the host-side `<artifacts>/vscode/claude-token` hold the channel's relay
+  placeholder (`containerClaudeCredential`; expiry, scopes, subscription and rate tier stay the
+  real login's), and the token file is now removed when the channel's LAST SSH session ends, not
+  only when the `npm run vscode` launcher exits. Because sshd starts a clean environment, the
+  complete `egressEnv(target)` map plus `AGENT_BROWSER_ARGS` and a gateway-owned
+  `GIT_SSH_COMMAND="ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"` ride the
+  session's ONE `SetEnv` line (from the target's own plan, over a stale create-time value;
+  `ALL_PROXY` dropped) and lead the session `env` file after an `unset ALL_PROXY all_proxy`, so
+  `. "$CG_SESSION_ENV"` re-asserts them. `cg-egress-connect` (image spec 1.6.0, unreleased, no
+  separate bump: a POSIX shim over `bin/cg-egress-connect.mjs`, staged verbatim from
+  `src/mcp/egress-connect.js`, node built-ins only) speaks `CONNECT host:port` to the in-container
+  forwarder and pipes stdio, so `git@github.com` works through the proxy's raw tunnel (github.com:22
+  and the declared raw hosts, Allow network on); a refusal is one stderr line with the proxy's
+  reason and exit 1. The proxy cannot inject an SSH key. The session's `session.md` names the proxy,
+  the CA bundle, the protected/unprotected/withheld names, the personal-scope pause rule and the
+  ProxyCommand — never a value or a placeholder. Personal pause: `resolveEgressRunEnv` returns
+  `personalPaused` when the author holds personal placeholders and a DIFFERENT person's SSH session
+  is open in the channel (`liveness.otherSshOpen`, which reads the broker's `liveSshSessions()` —
+  the session is registered before its files are prepared), and the per-attempt credential note
+  then says those names are paused (the proxy answers `403 secret-refused …
+  another-person-ssh-session`). An operator's `npm run vscode` window — its own process, so no
+  liveness mark — keeps channel, organization and relay grants swapping through its signed editor
+  lease (`canUseGrant`), never a personal one. `show_channel_ssh` and the `gateway-usage`
+  administration page say so. → TEST-PLAN: SSH and VS Code sessions on placeholders
+  (container-secrets P3).
+- **The Codex login is relayed, not mounted (container-secrets P4).** Behind the egress proxy a
+  channel container no longer bind-mounts the operator's real `~/.codex/auth.json` (refresh token
+  included, one file shared by every channel). Before every Codex spawn — turn, failover, background
+  agent, schedule, update smoke — and when an SSH session is prepared, the runner writes an
+  ACCESS-ONLY `/home/agent/.codex/auth.json` into the channel's own HOME volume through the backend's
+  new optional `writeHomeFile` (staged 0600 through the artifact dir, `mv -f` into place, refused
+  while the destination is still a mount): `auth_mode: "chatgpt"`, the access token = the channel's
+  relay placeholder in JWT SHAPE (`placeholders.js`: the real token's header and claims — plan,
+  account, expiry, which the CLI reads locally — with `cgph_r…` as the signature segment, because
+  codex-cli rejects a non-JWT), the id_token's claims with a non-signature, the account id,
+  `refresh_token: ""` and `last_refresh` = now. The proxy's new `jwt` format replaces the WHOLE token
+  with the live access token in the Authorization header on `api.openai.com`, `chatgpt.com` and
+  `auth.openai.com` only (grant `relay`/`CODEX_ACCESS_TOKEN`, 60 s cache, channel-live liveness like
+  Claude's); a jwt grant never swaps a bare placeholder and a bearer grant never a JWT-shaped one.
+  The daemon owns the refresh (`src/gateway/codex-token-relay.js`, the twin of
+  `claude-token-relay.js`): when the access token has less than 48 h left it runs one cheap
+  `codex exec --ephemeral --ignore-user-config -m gpt-5.6-luna` turn in the login's own `CODEX_HOME`
+  under a keyed lock, and backs off 6 h when the CLI declines to renew a still-valid token. The
+  container's Codex mode is `relay` (`credentialError` refuses a run with no relayable ChatGPT
+  sign-in, naming `codex login`); the mount leaves the fingerprint, so each container is recreated
+  once. `cg-init` removes, under the proxy, a leftover Codex login carrying a refresh token (never a
+  mounted file). Still the shared file (the documented remaining exposure): the LEGACY bridge egress
+  mode and an API-key `auth.json`; a daemon `OPENAI_API_KEY`/`CODEX_API_KEY` still rides the
+  container env raw. Spike: codex-cli 0.156.1 runs a turn on an access-only file, does not refresh on
+  `last_refresh` age, and a refresh attempt with the empty refresh token is rejected (400
+  `empty_string`). → TEST-PLAN: Codex login relay, strict secrets, static check (container-secrets P4).
+- **Unruled secrets are withheld by default on new installs (container-secrets P4).**
+  `containerEgressSecretsStrict` reads an absent value as ON, and the daemon stores it once at boot:
+  `true` for a brand-new install, `false` for an install whose operator had configured it before
+  this release (read before the first-boot password is saved), so an upgrade never silently
+  withholds a secret a working channel uses; a stored choice is never changed. `list_secrets` ends
+  with a **Finding** line naming every listed secret that has no egress rule and what happens to it
+  (withheld under strict, raw otherwise, raw today under the legacy bridge) and how to declare its
+  hosts; the settings UI says the same. → TEST-PLAN: Codex login relay, strict secrets, static check
+  (container-secrets P4).
+- **A static check keeps secrets out of the artifact dir (container-secrets P4).**
+  `npm run check:static` runs `scripts/static-secret-writes.mjs` over `src/`: a `writeFile*` /
+  `appendFile*` / `writePrivate` / `writeSecretFile` call whose path mentions `artifactDir`,
+  `runArtifactRoot`, `sshUserDir`, `sshUsersDir`, `channelArtifactDir` or a name derived from one
+  (to a fixpoint, per file) fails the check when its content mentions `composioUserToken`,
+  `composioToken`, `toolboxToken`, `makeToolboxKey`, `relay.token`, `resolvedRunEnv` or
+  `realValues`; a reviewed exception says `static-check: allow-secret-artifact-write <why>` (today
+  only the VS Code token file, which holds the relay placeholder behind the proxy). The retired
+  `src/mcp/remote-secret-bridge.js` and its `mcp-remote` runtime helper are gone: since the P1
+  relay nothing bridged a remote MCP through them. → TEST-PLAN: Codex login relay, strict secrets,
+  static check (container-secrets P4).
+- **Egress QA campaign fixes (2026-09-27).** `AGENT_BROWSER_ARGS` is comma-joined
+  (`--proxy-server=http://127.0.0.1:3128,--ignore-certificate-errors-spki-list=<hash>`), the
+  separator agent-browser 0.36.0 splits on (a newline is too, but an SSH session's `SetEnv` line
+  drops control characters). The container backend removes `cg-mcp-*.json`,
+  `cg-mcp-review-*.json`, `cg-codex-secrets-*.json` and `cg-codex-secrets-*.headers.cjs` older than
+  six hours from a channel's artifact dir and its `run/` before every create/start and, for running
+  containers, at boot (`src/runtimes/container/stale-run-files.js`; lstat, links skipped; one
+  `[container] swept N stale per-run credential file(s) from <slug>` line). An idle channel's
+  engine-relay refusal is counted, not written as an `egress` row. A proxy-mode Codex spawn gets
+  `NODE_OPTIONS=--disable-warning=UNDICI-EHPA`, and the Codex runner drops Node's `[UNDICI-EHPA]`
+  warning and its `--trace-warnings` hint from the status-row note and every failure sentence (the
+  raw `details.stderr` keeps them). A proxy-mode Claude spawn gets `DISABLE_TELEMETRY=1`
+  (gateway-owned, applied last, a reserved secret name), so an idle warm engine sends no telemetry;
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is deliberately not set (it would also drop feature
+  flags, the version lookup and claude.ai plugin downloads). Codex's twin is
+  `-c analytics.enabled=false` (`src/engines/codex-telemetry.js`), carried by EVERY gateway-spawned
+  Codex process on every runtime — turns (bypass, resume and clean included), the memory reviewer,
+  SSH/VS Code sessions through `codex-args.sh`, the relay refresh turn, MCP discovery
+  (`app-server`) and model discovery (`debug models`) — so Codex sends OpenAI no anonymous usage
+  metrics; it rides `-c` because turns run with `--ignore-user-config`. The credential inventory's
+  per-scope lines now appear whenever any injected name is organization- or personal-scoped, even
+  as the only scope; a purely channel-scoped run is unchanged. → TEST-PLAN: Egress QA campaign fixes.
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's
   pid names the host-side `exec` CLIENT, never the engine, so liveness and signals are asked of the
   backend: a probe execs `cg-probe <runId>` against the process-group leader `cg-exec` recorded
@@ -3107,8 +3455,9 @@ are retired, bullet by bullet; everything else stands.
 - **Repository sections (`channel_scope`)**: the skills repository is one shared library plus
   `channels/<channel id>/<slug>/` per channel; a skill in a channel's section is in that channel's
   tier automatically (`channelSkillGrants` = template ∪ section ∪ own), derived from the synced
-  path or the scope a local skill was created with. `create_skill` defaults to the library and
-  takes `scope: "channel"` for customer-specific skills (the agent asks first); `set_skill_scope`,
+  path or the scope a local skill was created with. `create_skill` from a channel defaults to a
+  channel skill in that section (personal in a DM; `scope: "organization"` for the library — see
+  *Skill ownership without approvals*); `set_skill_scope` (admins),
   the admin *Section* control and `POST /api/skills/catalog/:slug/scope` move a skill either way —
   files move in the repository (`moveSkillFiles`), promotion leaves the channel an explicit grant.
   → TEST-PLAN: Skills platform (round two).
@@ -3157,15 +3506,15 @@ are retired, bullet by bullet; everything else stands.
   costs in every conversation whatever the template says, and the effective union measured against
   the soft cap. (2026-09-05, replacing the earlier snapshot-copy apply.)
   → TEST-PLAN: Skills platform (Core).
-- **Chat verbs** (`src/mcp/tools/skills.js`, in the lockdown allowlist and the control-plane
-  approval map): `list_skills`, `show_channel_skills` (tiers, dependencies, missing/staged, context
-  cost), `get_skill_file`, `list_skill_templates`, `preview_skill_template` (open);
-  `add_channel_skills`, `remove_channel_skills`, `apply_skill_template` (managers, approval card —
-  a grant answers with the conversation's resulting always-on cost and any warning it crossed, e.g.
-  the context soft cap, so the person who caused it hears about it);
-  `create_skill` (any approved member → a local skill granted in the conversation),
-  `update_skill` (author / manager / admin, local skills only, partial files merge over the current
-  revision), `propose_skill_change` (`change` with files, or `promote` organization-wide),
+- **Chat verbs** (`src/mcp/tools/skills.js`, in the lockdown allowlist; the organization-tier admin
+  verbs are in the control-plane approval map): `list_skills`, `show_channel_skills` (tiers,
+  dependencies, missing/staged, context cost), `get_skill_file`, `list_skill_templates`,
+  `preview_skill_template` (open); `add_channel_skills`, `remove_channel_skills`,
+  `set_channel_skill_template` (any member, no card — a grant answers with the conversation's
+  resulting always-on cost and any warning it crossed, e.g. the context soft cap, so the person who
+  caused it hears about it); `create_skill`, `update_skill`, `delete_skill` (tiered ownership, no
+  card — see *Skill ownership without approvals*; partial files merge over the current revision),
+  `propose_skill_change` (`change` with files, `promote`, `delete`, `feedback`),
   `list_skill_proposals` / `decide_skill_proposal` (admins; an approved change on a source-owned
   skill becomes a **pinned local override** so the source keeps flowing and the pin holds until
   unpinned; an approved promotion adds the skill to the organization tier), `skill_usage_report`,
@@ -3174,6 +3523,38 @@ are retired, bullet by bullet; everything else stands.
   update/proposal input: omitted files remain, and `update_skill.remove` explicitly deletes files.
   Every resulting revision remains a complete immutable package.
   → TEST-PLAN: Skills platform (Core).
+- **Skill ownership without approvals** (operator decision 2026-09-27). Three tiers, three owners:
+  a **personal** skill is its author's, a **channel** (project) skill — one in a channel's section —
+  belongs to that channel's members, and the **organization** library is moderated by admins.
+  `create_skill`, `update_skill`, `delete_skill`, `add_channel_skills`, `remove_channel_skills` and
+  `set_channel_skill_template` are OUT of the control-plane approval map: personal and channel
+  changes apply at once with no card, even for a non-admin, and every result tells the model to
+  announce the change in its reply (audited as `skill_created` / `skill_updated` /
+  `skill_revoked` / `skill_removed`). `create_skill` without a scope makes a channel skill (a
+  personal one in a DM) — the agent no longer asks where it goes; `scope: "organization"` is an
+  admin's direct library write, and for anyone else a channel skill plus a `promote` proposal
+  (approving it moves the channel skill into the library). `update_skill`: personal → its author,
+  channel → any member of that channel, organization → an admin (a non-admin's edit is filed as a
+  `change` proposal automatically). Edits in place cover local skills AND skills synced from the
+  configured publish repository (`skillEditability`: the new revision is pushed back to the skill's
+  own folder; a failed push pins it so a sync cannot revert it; a pinned skill is re-pinned to the
+  edit). Bundled, host-folder, other-repository and peer-gateway skills are read-only: the tool
+  explains how to extend one with a companion skill that `requires:` it. Deactivating is not
+  deleting: `remove_channel_skills` turns a template or section skill off for that conversation only
+  (`meta.skillsOff`, honored by `channelSkillGrants` and the Slack skills manager) and
+  `add_channel_skills` turns it back on; a catalog delete is an admin's (or a personal skill's
+  author's), and anyone else's `delete_skill` deactivates here and files a `delete` proposal.
+  `set_skill_scope` is admin-only. The organization-wide admin verbs (`decide_skill_proposal`,
+  org grants, sources, governance, exclusion, `publish_skill`, `set_skill_scope`) keep their card.
+  Accepted residual risk: injected content in an authorized turn can write a channel or personal
+  skill, never an organization one. → TEST-PLAN: Skills platform (skill ownership without approvals).
+- **Template requests and admin template edits from chat.** There is no "team" scope: a team's skill
+  set is a template. `update_skill_template` (admins, control-plane card) adds/removes skills in a
+  template, live for every conversation following it; anyone asks with `propose_skill_change`
+  `kind: "template"` + `template` (resolved by slug or name, stored in `skill_proposals.target`,
+  migration 31; personal, unknown and already-included skills are refused), and an approved request
+  adds the skill to the template (`skill_template_changed` audit). The admin Review tab shows the
+  target. → TEST-PLAN: Skills platform (skill ownership without approvals).
 - **Usage telemetry** (`usage.js`, on the run event stream in `run.js`): Claude's `Skill` tool call
   is an **exact** signal (the stream parser now names the skill as the tool target); a Codex/shell
   read of `…/skills/<slug>/SKILL.md` is **inferred** and labelled so; one row per run/skill/signal
@@ -3220,7 +3601,7 @@ are retired, bullet by bullet; everything else stands.
   published or exported; a `promote` proposal, once approved, makes it an organization skill.
   `add_my_skills` / `remove_my_skills` let any approved member carry catalog skills in their OWN
   runs (the user tier of the grant union — Skills Manager's "stars"), no card needed; `delete_skill`
-  removes a skill you authored (tombstone). Proposals gain `kind: feedback` (a note without files).
+  removes your own personal skill, or any local skill for an admin (tombstone). Proposals gain `kind: feedback` (a note without files).
   Admins get chat verbs for the organization tier (`add_org_skills` / `remove_org_skills`), the
   sources (`list_skill_sources`, `add_skill_source`, `set_skill_source`, `remove_skill_source`),
   exclusions (`set_skill_excluded`) and `get_skill_info`. → TEST-PLAN: Skills platform (round two).
@@ -3344,9 +3725,9 @@ are retired, bullet by bullet; everything else stands.
   times too small),
   other Claude models 200k, Codex prefers the rollout's runtime-reported usable window (with the
   engine declaration as fallback), unknown models fall back to Settings →
-  contextWindow; no icons/unit labels). The reply footer's controls are 📂 Files, 🔑 Secrets,
-  ⚙️ Settings and any 📄 review-file buttons; a single control uses the section accessory and
-  several share an actions row under the stats context. The resume command is NOT one of them —
+  contextWindow; no icons/unit labels). The reply footer's controls are the reply menu (📂 Files, 🔑 Variables,
+  ⚙️ Settings — see *Reply menu*) and any 📄 review-file buttons, in one actions row under the stats
+  context. The resume command is NOT one of them —
   it lives in Settings → **Resume Session**, `/menu` and `/resume`. Model = the configured cascade that governed the turn (thread override → channel/DM
   model → gateway default) → CLI-reported runtime model (when nothing is configured) → engine name;
   context% and Codex cost rates still key on the CLI-reported runtime model, where multi-model

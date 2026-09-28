@@ -68,10 +68,10 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
   const t = target("mounts-chan");
   const allowedUnderRoot = new Set([cleanWorkspaceFolder("mounts-chan", "slack"), runtimeSocketDir()]);
   const kinds = t.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "codex-auth"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth"]);
 
   for (const mount of t.container.mounts) {
-    if (mount.type === "volume") continue;
+    if (mount.type === "volume" || mount.type === "tmpfs") continue;
     assert.ok(path.isAbsolute(mount.source), `${mount.kind} mount source must be absolute`);
     assert.ok(!mount.source.startsWith(`${configDir()}${path.sep}`) && mount.source !== configDir(), `${mount.kind} must never mount config/`);
     const underRoot = mount.source === gatewayRoot() || mount.source.startsWith(`${gatewayRoot()}${path.sep}`);
@@ -110,7 +110,7 @@ test("operator home: granted only to adminMode channels while the gateway switch
   const admin = resolveRuntime("home-admin", { platform: "slack", channelId: "C2", adminMode: true }, { settings: on });
   assert.equal(operatorHomeGranted(admin), true);
   const kinds = admin.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "codex-auth", "operator-home", "mask"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth", "operator-home", "mask"]);
   const grant = admin.container.mounts.find((m) => m.kind === "operator-home");
   assert.equal(grant.type, "bind");
   assert.equal(grant.mode, "rw");
@@ -170,7 +170,7 @@ test("operator home: the create argv binds the home read-write and masks the sto
   }
   // Without the grant, no tmpfs but /run and no home bind at all.
   const plain = buildCreateArgs(resolveRuntime("home-argv-off", { platform: "slack", channelId: "C8", adminMode: true }, { settings: SETTINGS }), caps, { fingerprint: "c1-test" });
-  const plainTmpfs = plain.filter((a, i) => plain[i - 1] === "--tmpfs");
+  const plainTmpfs = plain.filter((a, i) => plain[i - 1] === "--tmpfs" && !a.startsWith("/tmp/codex-daemon-"));
   assert.deepEqual(plainTmpfs, ["/run:rw,noexec,size=64m"]);
   assert.ok(!plain.some((a, i) => plain[i - 1] === "-v" && a === `${home}:${home}`));
 });
@@ -191,13 +191,22 @@ test("fingerprint: create-time config only — the image id moves it, a per-exec
   c.meta = { ...c.meta, someRuntimeThing: "changed" };
   assert.equal(containerFingerprint(c), first, "per-exec inputs are not part of the fingerprint");
 
-  // Every container is created on the bridge network, so the channel's "Allow network" switch
-  // is no longer a create-time input: flipping it must NOT retire the container (its enforcement
-  // point is the planned egress proxy, not the container's network mode).
+  // Every proxy-mode container is created with `--network none`, so the channel's "Allow network"
+  // switch is not a create-time input: flipping it must NOT retire the container — it is the egress
+  // proxy's per-request policy, live on the next connection.
   const off = target("fp-chan", { allowNetwork: false });
   off.container.imageId = "sha256:one";
-  assert.equal(off.container.network, "bridge");
+  assert.equal(off.container.network, "none");
   assert.equal(containerFingerprint(off), first, "the network switch does not move the fingerprint");
+
+  // The raw-socket escape IS create-time: it changes the container's network mode.
+  const raw = target("fp-chan", { rawNetwork: true });
+  raw.container.imageId = "sha256:one";
+  assert.equal(raw.container.network, "bridge");
+  assert.notEqual(containerFingerprint(raw), first, "granting raw sockets recreates the container on the bridge");
+  // …and never deferred: the network mode is in the MOUNT fingerprint too, so clearing rawNetwork
+  // cannot leave a bridged container serving turns that are reported as proxy-enforced.
+  assert.notEqual(containerMountFingerprint(raw), containerMountFingerprint(off));
 });
 
 test("mount fingerprint: the paths a container can SEE, and nothing about how it behaves", () => {
@@ -532,7 +541,7 @@ test("destroy: rm always, the HOME volume only when explicitly asked", async () 
   assert.deepEqual(h.fake.last("rm"), ["podman", "rm", "-f", t.container.name]);
   assert.equal(h.fake.last("volume"), null, "a rollback must never delete the channel's HOME volume");
   await h.lifecycle.destroy(t, { volumes: true, reason: "channel deleted" });
-  assert.deepEqual(h.fake.last("volume"), ["podman", "volume", "rm", t.container.homeVolume]);
+  assert.deepEqual(h.fake.find("volume"), [t.container.homeVolume, t.container.tmpVolumes.tmp, t.container.tmpVolumes["var-tmp"]].map((v) => ["podman", "volume", "rm", v]), "HOME and both temp volumes, one rm each");
 });
 
 test("names: install-scoped, clamped, and a foreign install label is not ours", async () => {
@@ -540,6 +549,7 @@ test("names: install-scoped, clamped, and a foreign install label is not ours", 
   const t = target("names-chan");
   assert.equal(t.container.name, `cg-${currentInstallId()}-slack-names-chan`);
   assert.equal(t.container.homeVolume, `${t.container.name}-home`);
+  assert.deepEqual(t.container.tmpVolumes, { tmp: `${t.container.name}-tmp`, "var-tmp": `${t.container.name}-vtmp` });
   const long = containerName({ slug: "x".repeat(120), platform: "slack" });
   assert.ok(long.length <= 58, `clamped name too long: ${long.length}`);
   assert.ok(homeVolumeName({ slug: "x".repeat(120), platform: "slack" }).length <= 63);
@@ -566,6 +576,89 @@ test("stale env files are swept when a new one is written", async () => {
   assert.equal(existsSync(stale), false, "an env file left by a crashed daemon must not linger with its secrets");
   assert.equal(existsSync(fresh), true);
   runner.discardEnvFile(fresh);
+});
+
+// RELAY-01: per-run MCP configs and Codex secret bundles (real tokens before P1) that a crashed or
+// interrupted run left in the bind-mounted artifact dir must not stay readable by later turns.
+test("stale per-run credential files: old ones removed, fresh ones kept, links and look-alikes skipped", async () => {
+  const { sweepStaleRunCredentialFiles, STALE_RUN_FILE_MS } = await import("../src/runtimes/container/stale-run-files.js");
+  const { symlinkSync, utimesSync, readFileSync } = await import("node:fs");
+  const dir = tempDir("cg-stale-run-");
+  const run = path.join(dir, "run");
+  mkdirSync(run, { mode: 0o700 });
+  const outside = tempDir("cg-stale-outside-");
+  const nowMs = Date.now();
+  const age = (file, ms) => utimesSync(file, (nowMs - ms) / 1000, (nowMs - ms) / 1000);
+  const put = (file, ms) => { writeFileSync(file, "{\"token\":\"real\"}", { mode: 0o600 }); age(file, ms); return file; };
+  const old = STALE_RUN_FILE_MS + 60_000;
+  const stale = [
+    put(path.join(dir, "cg-mcp-11111111-1111-4111-8111-111111111111.json"), old),
+    put(path.join(dir, "cg-mcp-review-22222222-2222-4222-8222-222222222222.json"), old),
+    put(path.join(run, "cg-codex-secrets-33333333-3333-4333-8333-333333333333.json"), old),
+    put(path.join(run, "cg-codex-secrets-33333333-3333-4333-8333-333333333333-composio.headers.cjs"), old),
+    put(path.join(dir, "cg-codex-secrets-44444444-4444-4444-8444-444444444444.json"), old),
+  ];
+  const kept = [
+    put(path.join(dir, "cg-mcp-55555555-5555-4555-8555-555555555555.json"), 5 * 60_000), // a live turn's
+    put(path.join(run, "cg-codex-secrets-66666666-6666-4666-8666-666666666666.json"), 60_000),
+    put(path.join(dir, "notes.json"), old), // not a per-run name
+    put(path.join(dir, "cg-mcp-77777777.txt"), old),
+  ];
+  // A link named like a target, pointing at an old file OUTSIDE: the link is skipped, the target untouched.
+  const victim = put(path.join(outside, "victim.json"), old);
+  const link = path.join(dir, "cg-mcp-88888888-8888-4888-8888-888888888888.json");
+  symlinkSync(victim, link);
+  // A `run` subdir an agent replaced with a link is not descended into.
+  const linkedRun = tempDir("cg-stale-linked-run-");
+  const linkedStale = put(path.join(linkedRun, "cg-codex-secrets-99999999-9999-4999-8999-999999999999.json"), old);
+
+  assert.equal(sweepStaleRunCredentialFiles(dir, { now: nowMs }), stale.length);
+  for (const file of stale) assert.equal(existsSync(file), false, `${path.basename(file)} must be swept`);
+  for (const file of kept) assert.equal(existsSync(file), true, `${path.basename(file)} must be kept`);
+  const { lstatSync, rmSync } = await import("node:fs");
+  assert.ok(lstatSync(link).isSymbolicLink(), "a symlink named like a target is skipped, not unlinked");
+  assert.equal(readFileSync(victim, "utf8"), "{\"token\":\"real\"}", "the link's target is never touched");
+
+  rmSync(run, { recursive: true, force: true });
+  symlinkSync(linkedRun, run);
+  assert.equal(sweepStaleRunCredentialFiles(dir, { now: nowMs }), 0);
+  assert.equal(existsSync(linkedStale), true, "a symlinked run/ is never followed");
+  assert.equal(sweepStaleRunCredentialFiles(path.join(dir, "missing"), { now: nowMs }), 0, "a missing dir is a no-op");
+});
+
+test("stale per-run credential files: swept before a create/start and at boot, with one log line per channel", async () => {
+  const { STALE_RUN_FILE_MS } = await import("../src/runtimes/container/stale-run-files.js");
+  const { utimesSync } = await import("node:fs");
+  const oldSec = (Date.now() - STALE_RUN_FILE_MS - 60_000) / 1000;
+  const h = harness();
+  const t = target("stale-run-create");
+  mkdirSync(path.join(t.artifactDir, "run"), { recursive: true, mode: 0o700 });
+  const leaked = [path.join(t.artifactDir, "cg-mcp-aaaa.json"), path.join(t.artifactDir, "run", "cg-codex-secrets-bbbb.json")];
+  for (const file of leaked) { writeFileSync(file, "{}", { mode: 0o600 }); utimesSync(file, oldSec, oldSec); }
+  await h.lifecycle.ensureUp(t, {});
+  for (const file of leaked) assert.equal(existsSync(file), false);
+  assert.equal(h.logs.filter((m) => m === "[container] swept 2 stale per-run credential file(s) from stale-run-create").length, 1);
+
+  // Boot: a container that is ALREADY running (no create/start will happen) is swept too.
+  const bootTarget = target("stale-run-boot");
+  mkdirSync(bootTarget.artifactDir, { recursive: true, mode: 0o700 });
+  const bootLeak = path.join(bootTarget.artifactDir, "cg-mcp-review-cccc.json");
+  writeFileSync(bootLeak, "{}", { mode: 0o600 });
+  utimesSync(bootLeak, oldSec, oldSec);
+  const fake = createFakeCli({
+    kind: "podman",
+    routes: [
+      { match: (a) => a[1] === "ps", result: { code: 0, stdout: "ddd\n" } },
+      { match: (a) => a[1] === "inspect" && a.length > 5, result: { code: 0, stdout: inspectLine({ name: "cg-boot", status: "running", install: currentInstallId(), channel: "stale-run-boot", platform: "slack" }) } },
+      { match: (a) => a[1] === "exec" && a.includes("cg-sweep"), result: { code: 0, stdout: "" } },
+    ],
+  });
+  const logs = [];
+  const cli = createContainerCli({ exec: fake.exec });
+  const lifecycle = createContainerLifecycle({ cli, image: createContainerImage({ cli }), reaper: createContainerReaper({ log: () => {} }), log: (m) => logs.push(m) });
+  await lifecycle.bootReconcile(SETTINGS);
+  assert.equal(existsSync(bootLeak), false, "a leftover in a container that was already running at boot is swept");
+  assert.ok(logs.includes("[container] swept 1 stale per-run credential file(s) from stale-run-boot"));
 });
 
 test("the daemon's timezone crosses into the container — at create AND on every exec", async () => {
@@ -603,4 +696,122 @@ test("the daemon's timezone crosses into the container — at create AND on ever
     if (real === undefined) delete process.env.TZ;
     else process.env.TZ = real;
   }
+});
+
+// ── Egress (container-secrets P2) ─────────────────────────────────────────────────────────────
+// With the daemon's egress service registered (a fake provider here: the real one is
+// src/gateway/egress/service.js), a proxy-mode container gets its channel's socket directory and
+// the CA trust bundle as read-only mounts, the proxy env at create, `--network none`, and the
+// listener is bound BEFORE the container is created.
+const { setEgressProvider } = await import("../src/runtimes/container/egress-hook.js");
+const { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR } = await import("../src/runtimes/container/image-paths.js");
+
+function egressProvider({ running = true, error = null, ensure = null } = {}) {
+  const root = tempDir("cg-eg-");
+  const bundle = path.join(tempDir("cg-egca-"), "egress-ca.pem");
+  const calls = [];
+  const provider = {
+    running: () => running,
+    socketDirFor: ({ slug }) => path.join(root, `h-${slug}`),
+    caBundlePath: () => bundle,
+    caSpki: () => "c3BraS1oYXNo",
+    ensure: async (t) => {
+      calls.push(t.container.name);
+      if (ensure) return ensure(t);
+      mkdirSync(path.join(root, `h-${t.slug}`), { recursive: true });
+      return { socketDir: path.join(root, `h-${t.slug}`), socketPath: path.join(root, `h-${t.slug}`, "egress.sock") };
+    },
+    error: () => error,
+    settings: () => SETTINGS,
+  };
+  return { provider, calls, root, bundle };
+}
+
+test("egress: mounts include the channel socket dir and the CA bundle, read-only, in both fingerprints", () => {
+  const eg = egressProvider();
+  setEgressProvider(eg.provider);
+  try {
+    const t = target("eg-mounts");
+    assert.equal(t.container.network, "none");
+    assert.equal(t.container.egress.active, true);
+    const egress = t.container.mounts.find((m) => m.kind === "egress");
+    const ca = t.container.mounts.find((m) => m.kind === "egress-ca");
+    assert.deepEqual(egress, { kind: "egress", type: "bind", source: path.join(eg.root, "h-eg-mounts"), target: CONTAINER_EGRESS_DIR, mode: "ro" });
+    assert.deepEqual(ca, { kind: "egress-ca", type: "bind-file", source: eg.bundle, target: CONTAINER_EGRESS_CA, mode: "ro" });
+    // The per-channel socket is never under the shared control-socket dir every container mounts.
+    assert.ok(!egress.source.startsWith(runtimeSocketDir()), "the egress socket dir must not be visible to other channels");
+
+    const caps = { uidStrategy: "keep-id", supportsInit: true };
+    const args = buildCreateArgs(t, caps, { fingerprint: "c1-eg" });
+    assert.ok(args.includes(`${egress.source}:${CONTAINER_EGRESS_DIR}:ro`));
+    assert.ok(args.includes(`${eg.bundle}:${CONTAINER_EGRESS_CA}:ro`));
+    assert.equal(args[args.indexOf("--network") + 1], "none");
+    for (const pair of ["CG_EGRESS=proxy", "HTTPS_PROXY=http://127.0.0.1:3128", "NODE_EXTRA_CA_CERTS=/run/channelgate/egress-ca.pem", "NO_PROXY=localhost,127.0.0.1,::1"]) {
+      assert.ok(args.includes(pair), `create env carries ${pair}`);
+    }
+
+    const withEgress = { full: containerFingerprint(t), mounts: containerMountFingerprint(t) };
+    setEgressProvider(null);
+    const plain = target("eg-mounts");
+    assert.equal(plain.container.mounts.some((m) => m.kind.startsWith("egress")), false, "no service → no egress mounts");
+    assert.notEqual(containerMountFingerprint(plain), withEgress.mounts);
+    assert.notEqual(containerFingerprint(plain), withEgress.full);
+  } finally {
+    setEgressProvider(null);
+  }
+});
+
+test("egress: ensureUp binds the channel listener before creating, and never mkdirs the CA file source", async () => {
+  const eg = egressProvider();
+  setEgressProvider(eg.provider);
+  try {
+    const h = harness();
+    const t = target("eg-ensure");
+    await h.lifecycle.ensureUp(t, {});
+    assert.deepEqual(eg.calls, [t.container.name]);
+    assert.ok(h.fake.last("run"), "the container is created after the listener is up");
+    assert.equal(existsSync(eg.bundle), false, "a bind-file source is never created as a directory");
+  } finally {
+    setEgressProvider(null);
+  }
+});
+
+test("egress: a listener that cannot bind, or a service that is down, fails ensureUp closed before any create", async () => {
+  const failing = egressProvider({ ensure: async () => { throw new Error("egress proxy unavailable for this channel: EADDRINUSE"); } });
+  setEgressProvider(failing.provider);
+  try {
+    const h = harness();
+    await assert.rejects(h.lifecycle.ensureUp(target("eg-bind-fail"), {}), /egress proxy unavailable for this channel/);
+    assert.equal(h.fake.calls.some((c) => c.argv[1] === "run" && c.argv[2] === "-d"), false, "nothing is created");
+  } finally {
+    setEgressProvider(null);
+  }
+  const down = egressProvider({ running: false, error: "egress proxy unavailable: CA unreadable. Restart the gateway." });
+  setEgressProvider(down.provider);
+  try {
+    const h = harness();
+    const t = target("eg-down");
+    assert.equal(t.container.egress.active, false);
+    assert.equal(t.container.network, "none", "a down service never opens the bridge");
+    await assert.rejects(h.lifecycle.ensureUp(t, {}), /egress proxy unavailable: CA unreadable/);
+    assert.equal(h.fake.calls.some((c) => c.argv[1] === "run" && c.argv[2] === "-d"), false);
+  } finally {
+    setEgressProvider(null);
+  }
+});
+
+// Codex's app-server socket lives in a fixed /tmp/codex-daemon-<uid>, which its bubblewrap sandbox
+// requires to be its OWN mount (no alias of a host path seen elsewhere — in a whole-home channel
+// even the /tmp volume's storage is under the mounted home) and user-owned 0700 (live, 2026-09-27).
+test("codex socket dir: its own tmpfs, owned by the run user, for every container", async () => {
+  const { codexSocketMount, CODEX_SOCKET_DIR_PREFIX } = await import("../src/runtimes/container/lifecycle.js");
+  assert.deepEqual(codexSocketMount({ container: { uid: 1001, gid: 1002 } }), [{ kind: "codex-socket", type: "tmpfs", source: "", target: `${CODEX_SOCKET_DIR_PREFIX}1001`, mode: "rw", options: "rw,nosuid,nodev,noexec,size=1m,mode=0700", owner: { uid: 1001, gid: 1002 } }]);
+  assert.deepEqual(codexSocketMount({ container: { uid: null } }), [], "no uid, no socket mount to own");
+  // Ownership is rendered for the CLI that creates it: podman rejects uid=, docker has no `U`.
+  const t = target("codex-socket-chan");
+  const podman = buildCreateArgs(t, { uidStrategy: "keep-id", supportsInit: true }, { fingerprint: "c1-test" });
+  const docker = buildCreateArgs(t, { uidStrategy: "user", supportsInit: true }, { fingerprint: "c1-test" });
+  const socketArg = (args) => args.find((a, i) => args[i - 1] === "--tmpfs" && a.startsWith(CODEX_SOCKET_DIR_PREFIX));
+  assert.equal(socketArg(podman), `${CODEX_SOCKET_DIR_PREFIX}${t.container.uid}:rw,nosuid,nodev,noexec,size=1m,mode=0700,U,notmpcopyup`);
+  assert.equal(socketArg(docker), `${CODEX_SOCKET_DIR_PREFIX}${t.container.uid}:rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=${t.container.uid},gid=${t.container.gid},notmpcopyup`);
 });

@@ -765,7 +765,7 @@
                   <p class="setsec-desc">Composio and Toolbox endpoints plus the org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
                 </header>
                 <div class="setcard" id="org-secrets-card">
-                  <h4>Organization secrets <em class="state secret-state"></em></h4>
+                  <h4>Organization variables <em class="state secret-state"></em></h4>
                   <p class="desc">Environment variables passed to <strong>every</strong> conversation's runs &mdash; one credential the whole deployment shares, such as a <code>GH_TOKEN</code> every channel can push with. A conversation's own secret of the same name overrides it there, and a person's own fills names neither defines. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
                   <div id="org-secrets-editor"></div>
                 </div>
@@ -932,6 +932,8 @@
                     <input id="set-container-cpus" type="text" placeholder="blank = no limit" />
                   </label>
                   <label class="toggle"><input type="checkbox" id="set-container-full-access-home" /> <strong>Admin channels can access the host home.</strong> Gives every Admin channel read-write access to the gateway user’s home directory: other channel folders and memory, repositories, gateway logs, metadata, and credential stores. All admitted members share this access, including non-admins using Worker permissions. This does not grant host root access. Off keeps Admin channels confined to their own channel folder. Changing it recreates those containers at their next turn.</label>
+                  <label class="toggle"><input type="checkbox" id="set-container-egress-bridge" /> <strong>Legacy open network (no egress proxy).</strong> Off (the default): every channel container runs with no network of its own and reaches the internet only through the gateway's egress proxy, which enforces each channel's Allow network switch, blocks private and metadata addresses, and swaps placeholder credentials for real secrets only on their declared hosts. On: containers use the open bridge network and receive raw secret values, as before this release. Changing it recreates containers at their next turn.</label>
+                  <label class="toggle"><input type="checkbox" id="set-container-egress-strict" /> <strong>Withhold readable variables.</strong> On (the default for new installs): a secret with no egress rule — no built-in rule and no “Used on hosts” — is withheld from proxy-mode containers, and the run is told its name was withheld. To give it to containers, add the hosts it is used on (the secret's “Used on hosts” field, or <code>hosts</code> with <code>set_secret</code>): the container then gets a placeholder the proxy swaps on those hosts only. Off: an unruled secret is injected raw and listed as unprotected.</label>
                   <label class="field">
                     <span>Claude token for container runs <em class="state" id="container-token-state"></em></span>
                     <input id="set-container-claude-token" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
@@ -1241,7 +1243,7 @@
         <!-- ── ENVIRONMENT TOKENS ────────────────────────────────────────── -->
         <div class="subpane" data-pane="environment">
           <div class="setcard channel-env-card">
-            <h4>Environment secrets <em class="state secret-state"></em></h4>
+            <h4>Environment variables <em class="state secret-state"></em></h4>
             <p class="desc">Variables passed to every run in this conversation — this channel's own CLI logins (e.g. <code>SUPABASE_ACCESS_TOKEN</code>), separate from every other channel's. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
             <!-- Built by public/admin-secrets.js, the one editor all three scopes share. -->
             <div class="ch-env-editor"></div>
@@ -1386,7 +1388,7 @@
         </div>
 
         <div class="ud-row ud-secrets-row">
-          <label class="fldlab">Personal secrets<em class="state secret-state"></em></label>
+          <label class="fldlab">Personal variables<em class="state secret-state"></em></label>
           <p class="desc">Environment variables injected only into runs <strong>this person</strong> authors, in every conversation they talk in &mdash; never into anyone else's turn in those same conversations. A conversation's own secret of the same name still wins there. Saved and removed immediately, separately from the Save button below. Write-only: a stored value is never shown again.</p>
           <div class="ud-secrets"></div>
         </div>

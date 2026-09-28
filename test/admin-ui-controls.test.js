@@ -42,15 +42,26 @@ test("a description is small wherever it is written, not only inside a .setcard"
 
 test("the secret editor's own classes are what it renders, so no host's classes can be dropped", () => {
   const js = readFileSync(new URL("../public/admin-secrets.js", import.meta.url), "utf8");
-  for (const cls of ["secret-list", "secret-add", "secret-name", "secret-value", "secret-save", "secret-row"]) {
+  for (const cls of ["secret-list", "secret-add", "secret-name", "secret-value", "secret-save", "secret-is-secret", "vars-table"]) {
     assert.ok(js.includes(cls), `admin-secrets.js renders .${cls}`);
   }
   // The containers carry rules of their own; the two inputs are covered by `.secret-add input`
   // above, which is the point — one rule, so a new field inside the editor cannot miss it.
-  for (const cls of ["secret-list", "secret-add", "secret-row"]) {
+  for (const cls of ["secret-list", "secret-add", "vars-table"]) {
     assert.ok(ruleFor(`.${cls}`), `.${cls} is styled`);
   }
   // The conversation card used to hand-write this markup in index.html; one source only now.
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   assert.doesNotMatch(html, /class="secret-list"/, "the markup comes from secretEditorMarkup()");
+});
+
+// Egress (container-secrets P2): the "Used on hosts" field warns against multi-tenant suffixes —
+// a wildcard over *.vercel.app would let the proxy swap the real value into a request to any
+// other customer's deployment.
+test("the variable editor asks 'secret or not' plus optional Allowed domains, and both it and set_secret warn against multi-tenant host suffixes", () => {
+  const js = readFileSync(new URL("../public/admin-secrets.js", import.meta.url), "utf8");
+  assert.match(js, /class="secret-hosts"[^>]*Avoid multi-tenant suffixes such as \*\.vercel\.app/, "the optional Allowed domains field warns against shared suffixes");
+  assert.match(js, /class="secret-is-secret" type="checkbox" checked/);
+  const tool = readFileSync(new URL("../src/mcp/tools/tokens.js", import.meta.url), "utf8");
+  assert.match(tool, /multi-tenant suffix such as \*\.vercel\.app/);
 });

@@ -20,8 +20,9 @@ see [README.md](./README.md).
   claude login          # or set ANTHROPIC_API_KEY
   claude --version      # must work
   ```
-- **(Optional) OpenAI Codex CLI** — only if you'll use the Codex engine. Its host sign-in file is
-  bind-mounted into the channel containers (sessions stay per channel; the sign-in is shared):
+- **(Optional) OpenAI Codex CLI** — only if you'll use the Codex engine. Its host sign-in is
+  relayed into the channel containers through the egress proxy — each container gets an access-only
+  stand-in, never the host's login file (sessions stay per channel):
   ```bash
   npm install -g @openai/codex
   codex login           # or set OPENAI_API_KEY

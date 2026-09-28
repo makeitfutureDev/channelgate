@@ -170,3 +170,16 @@ test("API overrides cannot widen a read channel or restore clean-mode integratio
   assert.equal(applyRunOverrides({ autoMode: true }, { mode: "worker" }).allowBash, true);
   assert.equal(applyRunOverrides({ adminMode: true }, { mode: "auto" }).autoMode, true);
 });
+
+// CTR-30: the operator-home mount is read-write for the whole container, so every run there that
+// is not an admin author's is home-guarded (shell and file writes denied, Codex read-only).
+test("the home guard applies to every non-admin-author run while the operator home is mounted", async () => {
+  const { homeGuardRequired } = await import("../src/gateway/run.js");
+  const home = { container: { mounts: [{ kind: "operator-home", source: "/home/op", target: "/home/op", mode: "rw" }] } };
+  const noHome = { container: { mounts: [{ kind: "workdir", source: "/w", target: "/w", mode: "rw" }] } };
+  assert.equal(homeGuardRequired({ target: home }), true, "a member's turn");
+  assert.equal(homeGuardRequired({ target: home, dangerouslySkip: true }), false, "an admin author's live turn");
+  assert.equal(homeGuardRequired({ target: home, adminUnattended: true }), false, "an admin author's unattended run");
+  assert.equal(homeGuardRequired({ target: noHome }), false, "no mount, nothing to guard");
+  assert.equal(homeGuardRequired({ target: null }), false, "a host target");
+});

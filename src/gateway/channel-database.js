@@ -8,11 +8,12 @@ import { runCommand } from "./vpn-service.js";
 import { getChannelVpnStatus } from "./channel-vpn-control.js";
 
 const helper = fileURLToPath(new URL("../../scripts/channel-vpn.mjs", import.meta.url));
-const OPERATIONS = new Set(["list_databases", "list_tables", "describe_table", "select_rows"]);
+const OPERATIONS = new Set(["list_databases", "list_tables", "describe_table", "select_rows", "count_rows"]);
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$-]{0,63}$/;
 const MAX_ROWS = 100;
 const MAX_COLUMNS = 50;
 const MAX_FILTERS = 20;
+const MAX_CURSOR = 4096;
 const MAX_QUEUED_PER_CHANNEL = 3;
 const MAX_REQUEST_BYTES = 16 * 1024;
 const MAX_RESULT_BYTES = 256 * 1024;
@@ -33,6 +34,9 @@ const SAFE_FAILURES = new Map([
   ["invalid_order", "The row ordering is invalid."],
   ["invalid_order_column", "The order-by column name is invalid."],
   ["invalid_limit", "The row limit must be between 1 and 100."],
+  ["invalid_cursor", "The page cursor is invalid. Pass back the nextCursor value from the previous page unchanged."],
+  ["cursor_requires_order", "Paging with after requires orderBy on the table's unique key."],
+  ["order_column_not_unique", "Paging needs orderBy on a single-column primary key or NOT NULL unique column of integer or char/varchar type."],
   ["database_not_found", "The requested database is unavailable."],
   ["table_not_found", "The requested table is unavailable."],
   ["column_not_found", "A requested column is unavailable."],
@@ -65,6 +69,25 @@ function name(value, label) {
   return value;
 }
 
+// A key value travels as a string so a BIGINT beyond 2^53 survives JSON in JavaScript.
+function cursor(value) {
+  if (typeof value === "string" && value.length <= MAX_CURSOR) return value;
+  if (Number.isSafeInteger(value)) return String(value);
+  throw fail("after must be the nextCursor string returned by the previous page.");
+}
+
+function filterList(input) {
+  const filters = input.filters ?? [];
+  if (!Array.isArray(filters) || filters.length > MAX_FILTERS) throw fail(`At most ${MAX_FILTERS} equality filters are allowed.`);
+  return filters.map(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item) ||
+        Object.keys(item).length !== 2 || !Object.hasOwn(item, "column") || !Object.hasOwn(item, "value")) {
+      throw fail("Each filter must contain only column and value.");
+    }
+    return { column: name(item.column, "Filter column"), value: scalar(item.value) };
+  });
+}
+
 function scalar(value) {
   if (value === null || typeof value === "boolean" || typeof value === "string" ||
       (typeof value === "number" && Number.isFinite(value))) {
@@ -76,18 +99,23 @@ function scalar(value) {
 
 export function normalizeDatabaseRequest(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw fail("Database request is invalid.");
-  const extra = Object.keys(input).filter(key => !["operation", "database", "table", "columns", "filters", "orderBy", "limit"].includes(key));
+  const extra = Object.keys(input).filter(key => !["operation", "database", "table", "columns", "filters", "orderBy", "limit", "after"].includes(key));
   if (extra.length || !OPERATIONS.has(input.operation)) throw fail("Database operation is invalid.");
   const fields = {
     list_databases: new Set(["operation"]),
     list_tables: new Set(["operation", "database"]),
     describe_table: new Set(["operation", "database", "table"]),
-    select_rows: new Set(["operation", "database", "table", "columns", "filters", "orderBy", "limit"]),
+    select_rows: new Set(["operation", "database", "table", "columns", "filters", "orderBy", "limit", "after"]),
+    count_rows: new Set(["operation", "database", "table", "filters"]),
   }[input.operation];
   if (Object.keys(input).some(key => !fields.has(key))) throw fail("Database request contains fields that do not apply to this operation.");
   const request = { operation: input.operation };
   if (input.operation !== "list_databases") request.database = name(input.database, "Database name");
-  if (["describe_table", "select_rows"].includes(input.operation)) request.table = name(input.table, "Table name");
+  if (["describe_table", "select_rows", "count_rows"].includes(input.operation)) request.table = name(input.table, "Table name");
+  if (input.operation === "count_rows") {
+    request.filters = filterList(input);
+    return request;
+  }
   if (input.operation !== "select_rows") return request;
 
   if (!Array.isArray(input.columns) || input.columns.length < 1 || input.columns.length > MAX_COLUMNS) {
@@ -95,21 +123,17 @@ export function normalizeDatabaseRequest(input) {
   }
   request.columns = input.columns.map(column => name(column, "Column name"));
   if (new Set(request.columns).size !== request.columns.length) throw fail("Column names must be unique.");
-  const filters = input.filters ?? [];
-  if (!Array.isArray(filters) || filters.length > MAX_FILTERS) throw fail(`At most ${MAX_FILTERS} equality filters are allowed.`);
-  request.filters = filters.map(item => {
-    if (!item || typeof item !== "object" || Array.isArray(item) ||
-        Object.keys(item).length !== 2 || !Object.hasOwn(item, "column") || !Object.hasOwn(item, "value")) {
-      throw fail("Each filter must contain only column and value.");
-    }
-    return { column: name(item.column, "Filter column"), value: scalar(item.value) };
-  });
+  request.filters = filterList(input);
   if (input.orderBy !== undefined) {
     const order = input.orderBy;
     if (!order || typeof order !== "object" || Array.isArray(order) ||
         Object.keys(order).length !== 2 || !Object.hasOwn(order, "column") || !Object.hasOwn(order, "direction") ||
         !["asc", "desc"].includes(order.direction)) throw fail("orderBy must contain a column and asc or desc direction.");
     request.orderBy = { column: name(order.column, "Order-by column"), direction: order.direction };
+  }
+  if (input.after !== undefined) {
+    if (!request.orderBy) throw fail("after requires orderBy on the table's unique key.");
+    request.after = cursor(input.after);
   }
   const limit = input.limit ?? MAX_ROWS;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_ROWS) throw fail(`limit must be between 1 and ${MAX_ROWS}.`);
@@ -145,7 +169,12 @@ function publicResult(value, request) {
     if (!Array.isArray(value.tables) || value.tables.length > 1000) throw fail("The database service returned an invalid response.", 503);
     return { ok: true, operation: request.operation, database: request.database, tables: value.tables.map(item => boundedString(item, 64)), truncated: value.truncated === true };
   }
-  if (value.table !== request.table || !Array.isArray(value.columns)) throw fail("The database service returned an invalid response.", 503);
+  if (value.table !== request.table) throw fail("The database service returned an invalid response.", 503);
+  if (request.operation === "count_rows") {
+    if (!Number.isSafeInteger(value.count) || value.count < 0) throw fail("The database service returned an invalid response.", 503);
+    return { ok: true, operation: request.operation, database: request.database, table: request.table, count: value.count };
+  }
+  if (!Array.isArray(value.columns)) throw fail("The database service returned an invalid response.", 503);
   if (request.operation === "describe_table") {
     if (value.columns.length > 1000) throw fail("The database service returned an invalid response.", 503);
     const columns = value.columns.map(column => {
@@ -165,8 +194,18 @@ function publicResult(value, request) {
     return row.map(publicCell);
   });
   const truncatedCells = Number.isInteger(value.truncatedCells) && value.truncatedCells >= 0 ? value.truncatedCells : 0;
-  return { ok: true, operation: request.operation, database: request.database, table: request.table,
+  const result = { ok: true, operation: request.operation, database: request.database, table: request.table,
     columns: [...request.columns], rows, truncated: value.truncated === true, truncatedCells };
+  // Present only when the order column is a pageable unique key; null marks the last page.
+  if (Object.hasOwn(value, "nextCursor")) {
+    if (value.nextCursor !== null && (typeof value.nextCursor !== "string" || value.nextCursor.length > MAX_CURSOR)) {
+      throw fail("The database service returned an invalid response.", 503);
+    }
+    result.nextCursor = value.nextCursor;
+  } else if (request.after !== undefined) {
+    throw fail("The database service returned an invalid response.", 503);
+  }
+  return result;
 }
 
 function parseResult(result, request) {
@@ -174,6 +213,11 @@ function parseResult(result, request) {
   try { value = JSON.parse(result?.stdout || ""); } catch { throw fail("The database service returned an invalid response.", 503); }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw fail("The database service returned an invalid response.", 503);
   if (result.code !== 0 || value.ok !== true) {
+    // An extractor built before paging rejects the new fields with a generic class; say so.
+    if (["invalid_request", "invalid_operation"].includes(value.errorClass) &&
+        (request.operation === "count_rows" || request.after !== undefined)) {
+      throw fail("This channel's database service predates paging and count_rows. Ask an administrator to rebuild the VPN image (npm run vpn -- build) and turn the channel VPN off and on.", 503);
+    }
     throw fail(SAFE_FAILURES.get(value.errorClass) || "The database service could not complete the read-only request.", 503);
   }
   // The extractor is trusted code, but keep its public protocol JSON-only and bounded before

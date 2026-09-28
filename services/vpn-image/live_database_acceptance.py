@@ -97,6 +97,12 @@ CREATE TABLE acceptance.records (
 INSERT INTO acceptance.records VALUES
   (1, TRUE, 12.50, '2026-09-21', '{injection}', X'000102'),
   (2, FALSE, 99.25, '2026-09-22', REPEAT('x', 5000), REPEAT(X'AB', 5000));
+CREATE TABLE acceptance.contacts (id CHAR(36) PRIMARY KEY, status VARCHAR(8) NOT NULL);
+INSERT INTO acceptance.contacts SELECT UUID(), IF(seq % 3 = 0, 'lost', 'open') FROM acceptance.seq_1_to_250;
+CREATE TABLE acceptance.ledger (id BIGINT PRIMARY KEY, label VARCHAR(8) NOT NULL);
+INSERT INTO acceptance.ledger VALUES (9007199254740993, 'a'), (9007199254740994, 'b'), (9007199254740995, 'c');
+CREATE TABLE acceptance.links (a INT NOT NULL, b INT NOT NULL, PRIMARY KEY (a, b));
+INSERT INTO acceptance.links VALUES (1, 1), (1, 2);
 """.format(reader_password=reader_password.replace("'", "''"), writer_password=writer_password.replace("'", "''"), injection=injection.replace("'", "''"))
         seeded = run(
             [podman, "exec", "-i", database_container, "mariadb", "-uroot", f"-p{root_password}"],
@@ -193,7 +199,7 @@ def inside_main():
         if "acceptance" not in databases["databases"]:
             raise AssertionError("fixture database was not listed")
         tables = database_query.execute_request(reader, database_query.normalize_request({"operation": "list_tables", "database": "acceptance"}))
-        if tables["tables"] != ["records"]:
+        if tables["tables"] != ["contacts", "ledger", "links", "records"]:
             raise AssertionError("fixture table listing mismatch")
         described = database_query.execute_request(reader, database_query.normalize_request({
             "operation": "describe_table", "database": "acceptance", "table": "records",
@@ -219,6 +225,66 @@ def inside_main():
         blob = large["rows"][0][1]
         if blob.get("encoding") != "base64" or len(blob.get("data", "")) != 5464 or large["truncatedCells"] != 2:
             raise AssertionError("large binary cell truncation mismatch")
+
+        def run_request(payload):
+            return database_query.execute_request(reader, database_query.normalize_request(payload))
+
+        # Keyset paging over a CHAR(36) key reads every row exactly once and agrees with count_rows.
+        def page_all(filters, direction):
+            seen, after, pages = [], None, 0
+            while True:
+                payload = {"operation": "select_rows", "database": "acceptance", "table": "contacts",
+                           "columns": ["id", "status"], "filters": filters,
+                           "orderBy": {"column": "id", "direction": direction}, "limit": 100}
+                if after is not None:
+                    payload["after"] = after
+                page = run_request(payload)
+                pages += 1
+                seen.extend(row[0] for row in page["rows"])
+                if page["nextCursor"] is None:
+                    if page["truncated"]:
+                        raise AssertionError("last page still reported truncation")
+                    return seen, pages
+                if page["nextCursor"] != page["rows"][-1][0]:
+                    raise AssertionError("cursor is not the last row's key")
+                after = page["nextCursor"]
+
+        total = run_request({"operation": "count_rows", "database": "acceptance", "table": "contacts"})["count"]
+        seen, pages = page_all([], "asc")
+        if total != 250 or len(seen) != 250 or len(set(seen)) != 250 or pages != 3 or seen != sorted(seen):
+            raise AssertionError("ascending keyset paging did not read every row exactly once")
+        descending, _ = page_all([], "desc")
+        if descending != list(reversed(seen)):
+            raise AssertionError("descending keyset paging mismatch")
+        lost = run_request({"operation": "count_rows", "database": "acceptance", "table": "contacts",
+                            "filters": [{"column": "status", "value": "lost"}]})["count"]
+        lost_rows, _ = page_all([{"column": "status", "value": "lost"}], "asc")
+        if lost != 83 or len(set(lost_rows)) != 83:
+            raise AssertionError("filtered paging and count disagree")
+
+        # BIGINT keys past 2^53 round-trip as exact strings.
+        keys, after = [], None
+        while True:
+            payload = {"operation": "select_rows", "database": "acceptance", "table": "ledger", "columns": ["label"],
+                       "orderBy": {"column": "id", "direction": "asc"}, "limit": 1}
+            if after is not None:
+                payload["after"] = after
+            page = run_request(payload)
+            keys.extend(row[0] for row in page["rows"])
+            if page["nextCursor"] is None:
+                break
+            after = page["nextCursor"]
+        if keys != ["a", "b", "c"] or after != "9007199254740994":
+            raise AssertionError("BIGINT cursor lost precision")
+
+        # A composite key cannot page.
+        try:
+            run_request({"operation": "select_rows", "database": "acceptance", "table": "links", "columns": ["a"],
+                         "orderBy": {"column": "b", "direction": "asc"}, "after": "1"})
+            raise AssertionError("composite key accepted a cursor")
+        except database_query.CheckFailed as error:
+            if error.error_class != "order_column_not_unique":
+                raise
     finally:
         reader.rollback()
         reader.close()
@@ -226,8 +292,9 @@ def inside_main():
     print(json.dumps({
         "ok": True,
         "database": "synthetic-mariadb",
-        "checks": ["readonly-transaction", "statement-timeout", "list", "describe", "typed-select", "injection-as-data", "large-cell-bounds"],
-        "rowsRead": 2,
+        "checks": ["readonly-transaction", "statement-timeout", "list", "describe", "typed-select", "injection-as-data", "large-cell-bounds",
+                   "keyset-paging-char-key", "keyset-paging-desc", "filtered-count-matches-pages", "bigint-cursor-exact", "composite-key-refused"],
+        "rowsRead": 2 + 250 * 2 + 83 + 3,
     }, separators=(",", ":")))
 
 

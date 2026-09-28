@@ -208,3 +208,72 @@ test("MCP tool has no caller-selected channel and requires live capability plus 
   assert.equal((await handler(list)).isError, true);
   assert.equal(calls.length, 1);
 });
+
+test("count_rows and keyset paging normalize to a closed shape", () => {
+  assert.deepEqual(
+    normalizeDatabaseRequest({ operation: "count_rows", database: "db", table: "t", filters: [{ column: "a", value: 1 }] }),
+    { operation: "count_rows", database: "db", table: "t", filters: [{ column: "a", value: 1 }] },
+  );
+  assert.deepEqual(normalizeDatabaseRequest({ operation: "count_rows", database: "db", table: "t" }).filters, []);
+  assert.throws(() => normalizeDatabaseRequest({ operation: "count_rows", database: "db", table: "t", columns: ["a"] }), /do not apply/);
+  assert.throws(() => normalizeDatabaseRequest({ operation: "count_rows", database: "db", table: "t", after: "1" }), /do not apply/);
+  assert.equal(normalizeDatabaseRequest({ ...select, after: "9007199254740993" }).after, "9007199254740993");
+  assert.equal(normalizeDatabaseRequest({ ...select, after: 42 }).after, "42");
+  const { orderBy: _order, ...unordered } = select;
+  assert.throws(() => normalizeDatabaseRequest({ ...unordered, after: "1" }), /requires orderBy/);
+  assert.equal(normalizeDatabaseRequest({ ...select, after: "" }).after, "");
+  for (const after of ["x".repeat(4097), 2 ** 60, 1.5, true, null, { id: 1 }]) {
+    assert.throws(() => normalizeDatabaseRequest({ ...select, after }), /nextCursor/, JSON.stringify(after));
+  }
+});
+
+test("count and page results are rebuilt from allowlisted fields and validated", async () => {
+  const counted = fixture({ execute: async () => ({ code: 0, stderr: "",
+    stdout: JSON.stringify({ ok: true, operation: "count_rows", database: "customer-db", table: "orders", count: 1234, secret: "must-not-leak" }) }) });
+  const count = { operation: "count_rows", database: "customer-db", table: "orders" };
+  assert.deepEqual(await counted.database.query("C_DB", count, { authorize: async () => true }),
+    { ok: true, operation: "count_rows", database: "customer-db", table: "orders", count: 1234 });
+  for (const bad of [-1, 1.5, "12", 2 ** 60]) {
+    const f = fixture({ execute: async () => ({ code: 0, stderr: "",
+      stdout: JSON.stringify({ ok: true, operation: "count_rows", database: "customer-db", table: "orders", count: bad }) }) });
+    await assert.rejects(f.database.query("C_DB", count, { authorize: async () => true }), { statusCode: 503 });
+  }
+
+  const page = extra => fixture({ execute: async (_id, request) => ({ code: 0, stderr: "", stdout: JSON.stringify({
+    ok: true, operation: "select_rows", database: request.database, table: request.table, columns: request.columns,
+    rows: [[7, "paid"]], truncated: true, truncatedCells: 0, ...extra }) }) });
+  const first = await page({ nextCursor: "7" }).database.query("C_DB", select, { authorize: async () => true });
+  assert.equal(first.nextCursor, "7");
+  const last = await page({ truncated: false, nextCursor: null }).database.query("C_DB", { ...select, after: "7" }, { authorize: async () => true });
+  assert.equal(last.nextCursor, null);
+  // A non-pageable order leaves the field out entirely rather than inventing one.
+  assert.equal(Object.hasOwn(await page({}).database.query("C_DB", select, { authorize: async () => true }), "nextCursor"), false);
+  for (const extra of [{ nextCursor: 7 }, { nextCursor: "x".repeat(4097) }, {}]) {
+    await assert.rejects(page(extra).database.query("C_DB", { ...select, after: "1" }, { authorize: async () => true }), { statusCode: 503 });
+  }
+});
+
+test("paging failures are named, and an extractor that predates paging says to rebuild", async () => {
+  const failing = errorClass => fixture({ execute: async () => ({ code: 1, stderr: "", stdout: JSON.stringify({ ok: false, errorClass }) }) });
+  await assert.rejects(failing("order_column_not_unique").database.query("C_DB", { ...select, after: "1" }, { authorize: async () => true }),
+    /single-column primary key/);
+  await assert.rejects(failing("invalid_cursor").database.query("C_DB", { ...select, after: "1" }, { authorize: async () => true }),
+    /page cursor is invalid/);
+  for (const [errorClass, request] of [["invalid_request", { ...select, after: "1" }],
+    ["invalid_operation", { operation: "count_rows", database: "db", table: "t" }]]) {
+    await assert.rejects(failing(errorClass).database.query("C_DB", request, { authorize: async () => true }),
+      error => error.statusCode === 503 && /predates paging/.test(error.message) && /rebuild the VPN image/.test(error.message));
+  }
+  // An ordinary request keeps the ordinary message.
+  await assert.rejects(failing("invalid_request").database.query("C_DB", select, { authorize: async () => true }),
+    error => /request was invalid/.test(error.message) && !/predates/.test(error.message));
+});
+
+test("MCP tool schema advertises count_rows and a string cursor", () => {
+  let definition;
+  register({ registerTool(_name, def) { definition = def; } }, { channelId: "C", text: value => value });
+  assert.ok(definition.inputSchema.operation.options.includes("count_rows"));
+  assert.equal(definition.inputSchema.after.safeParse("abc").success, true);
+  assert.equal(definition.inputSchema.after.safeParse(7).success, false);
+  assert.match(definition.description, /nextCursor/);
+});

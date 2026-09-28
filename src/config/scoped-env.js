@@ -26,8 +26,8 @@
 // define; it never redirects one the channel does. The preamble names which scope each variable
 // came from (gateway/channel-credentials.js) so the agent can say which account it used.
 import { getSettings, saveSettings } from "./settings.js";
-import { getUser, setUser } from "./store.js";
-import { listEnvVars, normalizeChannelEnv, patchChannelEnv, resolveChannelEnv, resolveEnvMap } from "./channel-env.js";
+import { getChannelMeta, getUser, patchChannelMeta, setUser } from "./store.js";
+import { listEnvVars, normalizeChannelEnv, patchChannelEnv, patchEnvEntry, resolveChannelEnv, resolveEnvMap } from "./channel-env.js";
 import { emitConfigChange } from "./change-events.js";
 
 // ── Organization ──────────────────────────────────────────────────────────────────────────────
@@ -86,6 +86,49 @@ export async function patchUserEnv(userId, { set = null, remove = "", actor = ""
 export async function resolveUserEnv(userId, { untrustedPrincipal = false } = {}) {
   if (!userId || untrustedPrincipal) return {};
   return resolveEnvMap(await getUserEnv(userId), { scopeLabel: "Personal" });
+}
+
+// ── Approval metadata, any scope ─────────────────────────────────────────────────────────────
+
+// One stored entry (normalized; it carries the value, so callers use metadata only) or null.
+export async function getSecretEntry({ scope, slug = "", userId = "", name } = {}) {
+  const key = String(name || "").toUpperCase();
+  if (scope === "organization") return getOrgEnv()[key] || null;
+  if (scope === "personal") return (await getUserEnv(userId))[key] || null;
+  if (scope === "channel") return normalizeChannelEnv((await getChannelMeta(slug))?.env)[key] || null;
+  return null;
+}
+
+// Change ONE secret's approval metadata (an approved server, the hidden/readable choice) in the
+// scope that owns it, without touching its value. scope: "organization" | "channel" (slug) |
+// "personal" (userId). → the entry's new listing row. Callers authorize; this only writes.
+export async function patchSecretEntry({ scope, slug = "", userId = "", name, addApprovedHost = "", exposure = undefined } = {}) {
+  const fields = { addApprovedHost, exposure };
+  if (scope === "organization") {
+    const next = patchEnvEntry(getOrgEnv(), name, { ...fields, scopeWhere: "the organization" });
+    saveSettings({ orgEnv: next });
+    emitConfigChange("org-env", {});
+    return listEnvVars(next).find((row) => row.name === String(name).toUpperCase()) || null;
+  }
+  if (scope === "personal") {
+    if (!userId) throw new Error("No user to change.");
+    const next = patchEnvEntry(await getUserEnv(userId), name, { ...fields, scopeWhere: "that person's account" });
+    await setUser(userId, { env: next });
+    return listEnvVars(next).find((row) => row.name === String(name).toUpperCase()) || null;
+  }
+  if (scope === "channel") {
+    if (!slug) throw new Error("No channel to change.");
+    let rows = null;
+    const saved = await patchChannelMeta(slug, (existing) => {
+      if (!existing) return null;
+      const next = patchEnvEntry(existing.env, name, { ...fields, scopeWhere: "this channel" });
+      rows = listEnvVars(next);
+      return { env: next };
+    });
+    if (!saved) throw new Error("That channel is not set up.");
+    return rows?.find((row) => row.name === String(name).toUpperCase()) || null;
+  }
+  throw new Error(`Unknown secret scope "${scope}".`);
 }
 
 // ── The spawn-time merge ──────────────────────────────────────────────────────────────────────

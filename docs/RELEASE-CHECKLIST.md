@@ -6,6 +6,25 @@
 > CI passed on the exact candidate and a live smoke ran for Claude and Qwen. The owner released it
 > without Codex live acceptance (the Codex account was usage-limited until 2026-09-24) and without
 > the full live campaign; both remain open for the next release, see RELEASE-ACCEPTANCE.md.
+> 0.6.0 was published on 2026-09-28 by explicit owner decision after the full automated gate and
+> CI passed on the exact candidate. It carries the container-secrets work (P1–P4): every container
+> runs with `--network none` behind the per-channel egress proxy, secrets and the Claude/Codex
+> logins reach containers only as placeholders, remote MCP credentials stay in the daemon, SSH
+> sessions run on placeholders. On top of that: every variable is hidden by default and an admin
+> approves each new server once (readable only for passwords, connection strings, signing keys and
+> configuration), the Slack form and admin page say *Variables* with a single "It's a secret"
+> checkbox and optional Allowed domains, non-admin turns are read-only while an Admin channel
+> mounts the operator home, Codex Read mode runs commands again, the Claude model pickers show exact
+> versions, and Codex usage metrics are switched off on every spawn. The image is spec 1.6.1
+> (bubblewrap, per-channel `/tmp` volumes); every other host must run `npm run build:image` before
+> restarting. Live on Xavier before the cut (Claude and Codex through the QA actors, recorded in the
+> private QA base): EGR-01/03/04/05/07/09/10, CDX-01..04/08, EN-01 and EN-09 on Codex, CTR-30 on both
+> engines, SSHP-01..05 from the gateway host, and the hidden-variable first-use approval with the
+> post-approval swap. Still open for the next release: SSHP-06/07 (need a desktop VS Code), the Slack
+> add-variable form walk-through (needs a person in the modal), RELAY-01 after the owner rotates the
+> Composio tokens, CDX-05 (needs a Codex login near expiry), and the definition-only failures
+> corrected in TEST-PLAN.md that still need a rerun. Dependabot #114 was deferred: its mcp-remote bump
+> needs an image spec bump and its Composio SDK 0.21 a live SDK-mode check.
 > 0.5.7 was published on 2026-09-25 by explicit owner decision after the full automated gate and
 > CI passed on the exact candidate. It makes an HTTP run API turn behave like an admin's message
 > in its channel (the API key is an admin credential acting as the `api` principal, with no

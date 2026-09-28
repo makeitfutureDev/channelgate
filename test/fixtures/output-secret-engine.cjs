@@ -3,6 +3,8 @@
 const { writeFileSync } = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
+// Global `-c key=value` overrides may precede a Codex subcommand; skip them like the real CLI.
+while (args[0] === "-c") args.splice(0, 2);
 const text = args.join(" ");
 const engine = path.basename(process.argv[1]);
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\n");

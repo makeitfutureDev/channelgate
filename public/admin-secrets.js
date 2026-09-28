@@ -20,6 +20,8 @@ export function mountSecretEditor({
   savedText = (name) => `Saved ${name}. It reaches the next run.`,
   namePlaceholder = "GH_TOKEN",
   disabled = false,
+  // Slack user id → display name (the admin app's user directory); "" when unknown.
+  userName = () => "",
 }) {
   const list = root.querySelector(".secret-list");
   const state = root.querySelector(".secret-state");
@@ -27,10 +29,12 @@ export function mountSecretEditor({
   const nameInput = root.querySelector(".secret-name");
   const valueInput = root.querySelector(".secret-value");
   const saveButton = root.querySelector(".secret-save");
+  const secretInput = root.querySelector(".secret-is-secret");
+  const hostsInput = root.querySelector(".secret-hosts");
   let current = Array.isArray(vars) ? vars : [];
 
   nameInput.placeholder = namePlaceholder;
-  for (const el of [nameInput, valueInput, saveButton]) el.disabled = disabled;
+  for (const el of [nameInput, valueInput, secretInput, hostsInput, saveButton]) if (el) el.disabled = disabled;
 
   const render = () => {
     state.textContent = current.length ? `${current.length} set` : "none";
@@ -42,20 +46,44 @@ export function mountSecretEditor({
       list.appendChild(empty);
       return;
     }
+    // One table: name, masked value, how containers receive it, where it may be sent, who set it.
+    const wrap = document.createElement("div");
+    wrap.className = "utable vars-table-wrap";
+    const table = document.createElement("table");
+    table.className = "vars-table";
+    const head = table.createTHead().insertRow();
+    for (const label of ["Name", "Value", "Type", "Servers", "Set by", "Updated", ""]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      head.appendChild(th);
+    }
+    const body = table.createTBody();
     for (const entry of current) {
-      const row = document.createElement("div");
-      row.className = "secret-row";
+      const row = body.insertRow();
+      const cell = (text, { className = "", title = "" } = {}) => {
+        const td = row.insertCell();
+        if (className) td.className = className;
+        if (title) td.title = title;
+        if (text instanceof Node) td.appendChild(text); else td.textContent = text;
+        return td;
+      };
       const name = document.createElement("code");
       name.textContent = entry.name;
-      const mask = document.createElement("em");
-      mask.className = "state";
-      const trail = [
-        entry.setBy ? `set by ${entry.setBy}` : "",
-        entry.setAt ? new Date(entry.setAt).toISOString().slice(0, 10) : "",
-      ].filter(Boolean).join(" · ");
-      mask.textContent = `${entry.last4 ? `••••${entry.last4}` : "•••••••"}${trail ? ` · ${trail}` : ""}`
-        + (entry.resolvable === false ? ` · ⚠️ provider "${entry.provider}" can't be resolved by this build` : "");
-      row.append(name, mask);
+      cell(name);
+      cell(`${entry.last4 ? `••••${entry.last4}` : "•••••••"}${entry.resolvable === false ? ` ⚠️ provider "${entry.provider}" can't be resolved` : ""}`, { className: "state" });
+      // Egress (src/gateway/egress/): a SECRET reaches a container only as a placeholder the proxy
+      // swaps on its servers — built-in or declared ones, or those an admin approved on first use;
+      // a READABLE one is injected raw (with the reason: a password-looking name, a URL value, a choice).
+      const secret = entry.protected === true;
+      cell(secret ? "🔒 Secret" : "👁 Readable", { className: secret ? "vars-secret" : "vars-readable", title: secret ? "Programs see a stand-in; the real value is sent only to the servers listed." : entry.exposureReason || "Programs get the real value." });
+      const hosts = (entry.hosts || []).join(", ");
+      cell(secret ? (hosts || (entry.approval ? "asks an admin on first use" : "—")) : "—", { className: hosts ? "" : "state", title: entry.approval ? "Servers an admin approved. A new server asks once, in the conversation's thread." : "" });
+      const who = String(entry.setBy || "");
+      const id = /^<@([A-Z0-9]+)>$/.exec(who)?.[1];
+      cell(id ? (userName(id) || id) : who || "—", { className: who ? "" : "state", title: id || "" });
+      cell(entry.setAt ? new Date(entry.setAt).toISOString().slice(0, 10) : "—", { className: "state" });
+      const actions = row.insertCell();
+      actions.className = "vars-actions";
       if (!disabled) {
         const remove = document.createElement("button");
         remove.type = "button";
@@ -77,10 +105,11 @@ export function mountSecretEditor({
             hint.textContent = e.message || "Couldn't remove that variable.";
           }
         });
-        row.appendChild(remove);
+        actions.appendChild(remove);
       }
-      list.appendChild(row);
     }
+    wrap.appendChild(table);
+    list.appendChild(wrap);
   };
   render();
 
@@ -108,10 +137,18 @@ export function mountSecretEditor({
     saveButton.disabled = true;
     hint.textContent = "saving…";
     try {
-      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ value }) });
+      // Secret or not (hidden — the gateway still keeps an SMTP/database login readable and learns
+      // where it may be sent through admin approvals — or readable). Optional "Allowed domains"
+      // restricts a secret to exactly those domains; sent only when typed, so a rotation keeps the
+      // stored list, and naming any makes the variable a secret.
+      const hosts = hostsInput ? hostsInput.value.trim() : "";
+      const exposure = hosts ? "hidden" : secretInput ? (secretInput.checked ? "hidden" : "readable") : "";
+      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ value, ...(exposure ? { exposure } : {}), ...(hosts ? { hosts } : {}) }) });
       current = result.vars || [];
       valueInput.value = "";
       nameInput.value = "";
+      if (secretInput) secretInput.checked = true;
+      if (hostsInput) hostsInput.value = "";
       hint.textContent = savedText(name);
       render();
     } catch (e) {
@@ -133,6 +170,8 @@ export function secretEditorMarkup() {
     <div class="secret-add">
       <input class="secret-name" type="text" autocomplete="off" spellcheck="false" />
       <input class="secret-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
+      <label class="toggle" title="Programs see a stand-in; the real value is only sent to servers an admin approves. Email and database passwords stay usable automatically. Untick for plain configuration (an id, a region, a URL)."><input class="secret-is-secret" type="checkbox" checked /> Secret</label>
+      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Allowed domains (optional) — api.example.com" title="Restricts the secret to only these domains: the egress proxy swaps the real value in there and nowhere else, with no approval needed. Leave empty and each new server asks an admin once. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
       <button type="button" class="ghost secret-save">Save variable</button>
     </div>
     <em class="state secret-hint"></em>`;

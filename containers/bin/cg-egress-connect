@@ -1,0 +1,9 @@
+#!/bin/sh
+# cg-egress-connect — an SSH ProxyCommand through the gateway's egress proxy (docs/SSH-ACCESS.md).
+# A `--network none` channel container has no route of its own; this speaks `CONNECT host:port` to
+# the in-container forwarder (127.0.0.1:3128) and pipes stdio through the raw tunnel the proxy
+# allows (github.com:22, plus the channel's declared raw hosts, with Allow network on). An SSH
+# session's GIT_SSH_COMMAND already uses it; for your own ssh:
+#   ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p' user@host
+# The implementation is bin/cg-egress-connect.mjs, staged verbatim from src/mcp/egress-connect.js.
+exec node /opt/channelgate/bin/cg-egress-connect.mjs "$@"

@@ -70,6 +70,13 @@ test("a configured 1M model keeps its window even though the CLI reports the pla
   }), 1_000_000);
 });
 
+test("current versioned Claude IDs retain their default 1M window", () => {
+  for (const model of ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5"]) {
+    assert.equal(contextWindowFor({ engine: "claude", model, raw: { model } }), 1_000_000);
+  }
+  assert.equal(contextWindowFor({ engine: "claude", model: "claude-haiku-4-5", raw: { model: "claude-haiku-4-5" } }), 200_000);
+});
+
 test("Codex turn.completed model drives cost estimates; the label shows the governing model", () => {
   const usage = { input_tokens: 1_000_000, output_tokens: 0 };
   const result = {

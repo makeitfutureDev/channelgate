@@ -1,5 +1,5 @@
 import { adapterFor } from "../engines/registry.js";
-import { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } from "../engines/network-policy.js";
+import { NETWORK_ADVISORY_NOTE, networkEnforcedFor } from "../engines/network-policy.js";
 import { authorizeSudoRuntime } from "../runtimes/sudo-authority.js";
 
 // A channel's capability "mode" is a friendly name over the underlying flags (adminMode,
@@ -81,13 +81,14 @@ export function networkState(meta = {}) {
   return (adapterFor(engine)?.supports?.networkModes || []).includes("on") ? "on" : "unsupported";
 }
 
-// `detail` adds the honest caveat for the OFF state: under the container runtime the switch is
-// advisory (see engines/network-policy.js), so "off" is an instruction the engines are given, not
-// a wall that stops them. Compact by default — this rides the channel list — and detailed where
-// someone is actually asking about the setting (`/mode`, `/status`).
+// `detail` adds the honest caveat for the OFF state where the switch is only advisory for this
+// channel (the legacy bridge mode, raw sockets, no egress service — engines/network-policy.js):
+// there "off" is an instruction the engines are given, not a wall that stops them. With the egress
+// proxy as the container's network it IS the wall, and no caveat is added. Compact by default —
+// this rides the channel list — and detailed where someone is asking (`/mode`, `/status`).
 export function networkLabel(meta = {}, { detail = false } = {}) {
   const state = networkState(meta);
-  if (state === "off" && detail && !NETWORK_POLICY_ENFORCED) return `network off (${NETWORK_ADVISORY_NOTE})`;
+  if (state === "off" && detail && !networkEnforcedFor({ meta })) return `network off (${NETWORK_ADVISORY_NOTE})`;
   return `network ${state}`;
 }
 

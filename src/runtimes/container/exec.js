@@ -17,6 +17,7 @@ import { attachRuntime } from "../contract.js";
 import { channelFolder } from "../../config/paths.js";
 import { cliEnv } from "./cli.js";
 import { containerEnvDefaults } from "./credentials.js";
+import { applyEgressEnv } from "./egress-env.js";
 import { isContainerGoneError } from "./lifecycle.js";
 
 const BACKEND_TAG = Object.freeze({ id: "container" });
@@ -69,7 +70,10 @@ export function containerRunEnv(target, env = {}) {
   }
   if (!out.CG_CHANNEL) out.CG_CHANNEL = owned.CG_CHANNEL;
   if (!out.CG_PLATFORM) out.CG_PLATFORM = owned.CG_PLATFORM;
-  return out;
+  // The egress proxy and CA variables are container-owned too, and FORCED: a host HTTPS_PROXY (or
+  // an ALL_PROXY) that reached the caller's env through the passthrough list must not route this
+  // run around the proxy, and a background shell job's env never went through buildClaudeEnv.
+  return applyEgressEnv(out, target);
 }
 
 // `--env-file` is line-oriented on both CLIs: KEY=VALUE, no quoting, no continuation. A value with
@@ -97,7 +101,13 @@ export function renderEnvFile(env = {}) {
 // `background` (a job: no client stdio, `exec -d`, found again by runId) is NOT `detached`: the
 // runners pass `detached: true` for the HOST's process-group semantics on every engine spawn, and
 // reading that as "no stdio" handed the Claude warm process a null stdin (found live, CTR-01).
-export function buildExecArgs(target, caps, { runId, cmd, args = [], cwd, envFile, background = false, logFile = "", stdinPiped = false }) {
+// `dropCapabilities` execs the command without the container's added capabilities (CAP_ADD in
+// lifecycle.js), which reach the agent user as AMBIENT caps: `setpriv` clears the ambient and
+// inheritable sets, so the command and everything it starts runs with none. A sandbox that
+// refuses to start while caps are held (Codex's bubblewrap) needs exactly this.
+export const DROP_CAPS_PREFIX = Object.freeze(["setpriv", "--ambient-caps=-all", "--inh-caps=-all", "--"]);
+
+export function buildExecArgs(target, caps, { runId, cmd, args = [], cwd, envFile, background = false, logFile = "", stdinPiped = false, dropCapabilities = false }) {
   const name = target.container.name;
   // `-i` attaches the client's stdin. Only a spawn that actually pipes stdin (the warm Claude
   // session) wants it: attaching an "ignore"d stdin hands the engine a closed pipe, and Codex then
@@ -114,13 +124,14 @@ export function buildExecArgs(target, caps, { runId, cmd, args = [], cwd, envFil
     argv.push("--user", `${target.container.uid}:${target.container.gid}`);
   }
   argv.push(name, "cg-exec", runId);
+  const command = dropCapabilities ? [...DROP_CAPS_PREFIX, cmd, ...args] : [cmd, ...args];
   if (logFile) {
     // Detached runs have no client stdio, so their output goes to a file inside the artifact dir,
     // which is bind-mounted at the identical path — the daemon tails the very same file. The log
     // path travels as a positional, never interpolated into the script, so nothing needs quoting.
-    argv.push("/bin/sh", "-c", 'log="$1"; shift; exec >>"$log" 2>&1; exec "$@"', "cg-log", logFile, cmd, ...args);
+    argv.push("/bin/sh", "-c", 'log="$1"; shift; exec >>"$log" 2>&1; exec "$@"', "cg-log", logFile, ...command);
   } else {
-    argv.push(cmd, ...args);
+    argv.push(...command);
   }
   return argv;
 }

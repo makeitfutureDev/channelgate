@@ -90,23 +90,24 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
   // section accessory; multiple controls need an actions row because Slack sections allow only one
   // accessory. Rendered text can't carry interactive elements, and folding long answer chunks into
   // section blocks is what this poster deliberately avoids.
+  // A trailer without stats (an unattended answer posted without them) is the menu row alone.
   if (buttons.length) {
-    const text = { type: "mrkdwn", text: footer || " " };
+    const text = { type: "mrkdwn", text: footer };
     const blocks = buttons.length === 1
-      ? [{ type: "section", text, accessory: buttons[0] }]
-      : [{ type: "context", elements: [text] }, { type: "actions", elements: buttons }];
+      ? [{ type: "section", text: footer ? text : { type: "mrkdwn", text: " " }, accessory: buttons[0] }]
+      : [...(footer ? [{ type: "context", elements: [text] }] : []), { type: "actions", elements: buttons }];
     try {
       await client.chat.postMessage({
         channel,
         thread_ts: threadTs,
-        text: footer || "resume",
+        text: footer || "Menu: Files, Variables, Settings",
         blocks,
       });
     } catch (error) {
       if (!isSlackInvalidBlocksError(error)) throw error;
       // Controls are cosmetic. If Slack rejects their Block Kit, keep the completed answer a
       // success and preserve its stats in a plain-text trailer instead of surfacing run_error.
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text: footer || "resume" });
+      if (footer) await client.chat.postMessage({ channel, thread_ts: threadTs, text: footer });
     }
   }
 }

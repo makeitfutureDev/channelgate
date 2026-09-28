@@ -3,6 +3,12 @@
 The caller supplies structured JSON, never SQL.  Every identifier is validated and
 quoted here, and every value remains a DB-API parameter.  Error details are reduced
 to stable classes because driver messages can contain endpoints, SQL, or secrets.
+
+select_rows pages by keyset: ordered by a single-column unique key, a result that
+stops early carries nextCursor (that key's last value, always a string so a BIGINT
+survives JavaScript), and the next request passes it back as ``after``.  Each call
+is its own transaction, so pages are not one snapshot; count_rows gives the total
+for the same equality filters.
 """
 
 import base64
@@ -25,11 +31,15 @@ MAX_METADATA_ROWS = 1000
 MAX_VALUE_TEXT = 4096
 STATEMENT_TIMEOUT_MS = 15_000
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$-]{0,63}\Z")
+OPERATIONS = {"list_databases", "list_tables", "describe_table", "select_rows", "count_rows"}
+SAFE_INTEGER = 2 ** 53 - 1
 
 TEXT_TYPES = {
     "char", "varchar", "tinytext", "text", "mediumtext", "longtext",
     "enum", "set", "json",
 }
+# Keyset cursors travel as strings; these types compare correctly against one.
+CURSOR_TYPES = {"tinyint", "smallint", "mediumint", "int", "integer", "bigint", "char", "varchar"}
 BINARY_TYPES = {
     "binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob",
     "geometry", "point", "linestring", "polygon", "multipoint",
@@ -63,28 +73,54 @@ def scalar(value):
     fail("invalid_filter_value")
 
 
+def cursor_value(value):
+    if isinstance(value, str) and len(value) <= MAX_VALUE_TEXT:
+        return value
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) <= SAFE_INTEGER:
+        return str(value)
+    fail("invalid_cursor")
+
+
+def normalize_filters(value):
+    filters = value.get("filters", [])
+    if not isinstance(filters, list) or len(filters) > MAX_FILTERS:
+        fail("invalid_filters")
+    normalized = []
+    for item in filters:
+        if not isinstance(item, dict) or set(item) != {"column", "value"}:
+            fail("invalid_filters")
+        normalized.append({
+            "column": identifier(item["column"], "invalid_filter_column"),
+            "value": scalar(item["value"]),
+        })
+    return normalized
+
+
 def normalize_request(value):
     if not isinstance(value, dict):
         fail("invalid_request")
-    allowed = {"operation", "database", "table", "columns", "filters", "orderBy", "limit"}
+    allowed = {"operation", "database", "table", "columns", "filters", "orderBy", "limit", "after"}
     if set(value) - allowed:
         fail("invalid_request")
     operation = value.get("operation")
-    if operation not in {"list_databases", "list_tables", "describe_table", "select_rows"}:
+    if operation not in OPERATIONS:
         fail("invalid_operation")
     fields = {
         "list_databases": {"operation"},
         "list_tables": {"operation", "database"},
         "describe_table": {"operation", "database", "table"},
         "select_rows": allowed,
+        "count_rows": {"operation", "database", "table", "filters"},
     }[operation]
     if set(value) - fields:
         fail("invalid_request")
     request = {"operation": operation}
     if operation != "list_databases":
         request["database"] = identifier(value.get("database"), "invalid_database")
-    if operation in {"describe_table", "select_rows"}:
+    if operation in {"describe_table", "select_rows", "count_rows"}:
         request["table"] = identifier(value.get("table"), "invalid_table")
+    if operation == "count_rows":
+        request["filters"] = normalize_filters(value)
     if operation == "select_rows":
         columns = value.get("columns")
         if not isinstance(columns, list) or not 1 <= len(columns) <= MAX_COLUMNS:
@@ -92,19 +128,7 @@ def normalize_request(value):
         request["columns"] = [identifier(item, "invalid_column") for item in columns]
         if len(set(request["columns"])) != len(request["columns"]):
             fail("invalid_columns")
-
-        filters = value.get("filters", [])
-        if not isinstance(filters, list) or len(filters) > MAX_FILTERS:
-            fail("invalid_filters")
-        normalized_filters = []
-        for item in filters:
-            if not isinstance(item, dict) or set(item) != {"column", "value"}:
-                fail("invalid_filters")
-            normalized_filters.append({
-                "column": identifier(item["column"], "invalid_filter_column"),
-                "value": scalar(item["value"]),
-            })
-        request["filters"] = normalized_filters
+        request["filters"] = normalize_filters(value)
 
         order = value.get("orderBy")
         if order is not None:
@@ -117,6 +141,10 @@ def normalize_request(value):
                 "column": identifier(order["column"], "invalid_order_column"),
                 "direction": direction,
             }
+        if "after" in value:
+            if order is None:
+                fail("cursor_requires_order")
+            request["after"] = cursor_value(value["after"])
         limit = value.get("limit", MAX_ROWS)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_ROWS:
             fail("invalid_limit")
@@ -210,6 +238,48 @@ def normalize_value(value):
     return text[:MAX_VALUE_TEXT], len(text) > MAX_VALUE_TEXT
 
 
+def keyset_column(metadata, column):
+    """Return True when ``column`` alone identifies a row and can carry a string cursor.
+
+    information_schema marks every column of a composite primary key PRI, and marks a
+    single-column UNIQUE index UNI (which still admits many NULLs unless NOT NULL).
+    """
+    primary = [str(row[0]) for row in metadata if str(row[4] or "") == "PRI"]
+    for row in metadata:
+        if str(row[0]) != column:
+            continue
+        key = str(row[4] or "")
+        unique = (key == "PRI" and primary == [column]) or (key == "UNI" and str(row[3]) == "NO")
+        return unique and str(row[1]).lower() in CURSOR_TYPES
+    return False
+
+
+def where_clause(request, parameters):
+    where = []
+    for item in request["filters"]:
+        where.append(f"{quote_identifier(item['column'])} <=> %s")
+        parameters.append(item["value"])
+    return where
+
+
+def count_rows(connection, request, metadata):
+    columns = {str(row[0]) for row in metadata}
+    if not {item["column"] for item in request["filters"]}.issubset(columns):
+        fail("column_not_found")
+    parameters = []
+    where = where_clause(request, parameters)
+    statement = (
+        "SELECT /*+ MAX_EXECUTION_TIME(15000) */ COUNT(*) FROM " +
+        quote_identifier(request["database"]) + "." + quote_identifier(request["table"]) +
+        ((" WHERE " + " AND ".join(where)) if where else "")
+    )
+    rows, _ = fetch_rows(connection, statement, tuple(parameters), 1)
+    if len(rows) != 1 or isinstance(rows[0][0], bool) or not isinstance(rows[0][0], int):
+        fail("database_query_failed")
+    return {"ok": True, "operation": "count_rows", "database": request["database"],
+            "table": request["table"], "count": rows[0][0]}
+
+
 def select_rows(connection, request, metadata=None):
     metadata = metadata if metadata is not None else table_columns(connection, request["database"], request["table"])
     types = {str(row[0]): str(row[1]).lower() for row in metadata}
@@ -219,6 +289,10 @@ def select_rows(connection, request, metadata=None):
         referenced.add(request["orderBy"]["column"])
     if not referenced.issubset(types):
         fail("column_not_found")
+    order_column = request["orderBy"]["column"] if request.get("orderBy") else None
+    pageable = order_column is not None and keyset_column(metadata, order_column)
+    if "after" in request and not pageable:
+        fail("order_column_not_unique")
 
     parameters = []
     selections = []
@@ -232,11 +306,22 @@ def select_rows(connection, request, metadata=None):
             parameters.append(MAX_VALUE_TEXT + 1)
         else:
             selections.append(quoted)
+    if pageable:
+        # The cursor rides a trailing, unclipped copy of the key, stripped from the rows.
+        selections.append(quote_identifier(order_column))
 
-    where = []
-    for item in request["filters"]:
-        where.append(f"{quote_identifier(item['column'])} <=> %s")
-        parameters.append(item["value"])
+    where = where_clause(request, parameters)
+    if "after" in request:
+        comparison = ">" if request["orderBy"]["direction"] == "asc" else "<"
+        where.append(f"{quote_identifier(order_column)} {comparison} %s")
+        after = request["after"]
+        if types[order_column] not in {"char", "varchar"}:
+            # MySQL compares an integer column with a string as a double, which loses
+            # BIGINT precision; bind an integer so the comparison stays exact.
+            if not re.fullmatch(r"-?[0-9]{1,20}", after):
+                fail("invalid_cursor")
+            after = int(after)
+        parameters.append(after)
     order = ""
     if request.get("orderBy"):
         order = " ORDER BY " + quote_identifier(request["orderBy"]["column"]) + " " + request["orderBy"]["direction"].upper()
@@ -258,7 +343,14 @@ def select_rows(connection, request, metadata=None):
         "table": request["table"],
         "columns": request["columns"],
     }
+    cursor = None
     for raw in raw_rows:
+        raw = list(raw)
+        key = raw.pop() if pageable else None
+        if pageable:
+            if isinstance(key, bool) or not isinstance(key, (int, str)) or (isinstance(key, str) and len(key) > MAX_VALUE_TEXT):
+                fail("order_column_not_unique")
+            key = str(key)
         normalized = []
         row_truncated_cells = 0
         for value in raw:
@@ -266,13 +358,20 @@ def select_rows(connection, request, metadata=None):
             normalized.append(item)
             row_truncated_cells += int(clipped)
         candidate = {**base, "rows": rows + [normalized], "truncated": overflow,
-                     "truncatedCells": truncated_cells + row_truncated_cells}
+                     "truncatedCells": truncated_cells + row_truncated_cells, "nextCursor": key}
         if len(json.dumps(candidate, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) > MAX_OUTPUT_BYTES:
             overflow = True
             break
         rows.append(normalized)
         truncated_cells += row_truncated_cells
-    return {**base, "rows": rows, "truncated": overflow or len(rows) < len(raw_rows), "truncatedCells": truncated_cells}
+        cursor = key
+    truncated = overflow or len(rows) < len(raw_rows)
+    result = {**base, "rows": rows, "truncated": truncated, "truncatedCells": truncated_cells}
+    if pageable:
+        # null means this was the last page; a truncated page with no rows (one row alone
+        # exceeds the response limit) also has none, and the caller must select fewer columns.
+        result["nextCursor"] = cursor if truncated else None
+    return result
 
 
 def execute_request(connection, request):
@@ -292,6 +391,8 @@ def execute_request(connection, request):
         )
         return {"ok": True, "operation": operation, "database": request["database"], "tables": [str(row[0]) for row in rows], "truncated": truncated}
     metadata = table_columns(connection, request["database"], request["table"])
+    if operation == "count_rows":
+        return count_rows(connection, request, metadata)
     if operation == "describe_table":
         columns = []
         for row in metadata:

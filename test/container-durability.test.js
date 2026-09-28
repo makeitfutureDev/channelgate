@@ -94,34 +94,36 @@ function assertNothingDestroyed(fake, why) {
   }
 }
 
-test("durability: /tmp and /var/tmp are persistent binds under the artifact dir, and /run is the only tmpfs", () => {
+test("durability: /tmp and /var/tmp are persistent per-channel volumes, and /run is the only tmpfs", () => {
   const t = target("dur-mounts");
   // A tmpfs is emptied by the very stop the idle reaper performs every ten minutes. Only /run,
   // which holds the run helpers' pid files and the read-only socket mount, may be one.
   assert.deepEqual([...TMPFS_SPECS], ["/run:rw,noexec,size=64m"]);
 
   const mounts = buildMounts(t);
-  for (const { kind, dir, target: dest } of PERSISTENT_TMP_DIRS) {
+  for (const { kind, target: dest } of PERSISTENT_TMP_DIRS) {
     const mount = mounts.find((m) => m.kind === kind);
     assert.ok(mount, `no ${kind} mount`);
-    assert.equal(mount.type, "bind");
+    // A named volume, like HOME: it survives a stop and a recreate, and — unlike the host
+    // directory under the artifact dir it replaced — it is not ALSO visible at a second path
+    // inside the container, which Codex's sandbox refuses (live, 2026-09-27).
+    assert.equal(mount.type, "volume");
     assert.equal(mount.mode, "rw");
     assert.equal(mount.target, dest);
-    assert.equal(mount.source, path.join(t.artifactDir, dir));
-    // The artifact dir is per channel, on the host, and the daemon never deletes it — which is
-    // what makes this survive a stop AND makes it visible to an operator.
-    assert.ok(mount.source.startsWith(`${t.artifactDir}${path.sep}`));
+    assert.equal(mount.source, t.container.tmpVolumes[kind]);
+    assert.ok(mount.source.startsWith(t.container.name), "per channel, named after its container");
+    assert.ok(!mount.source.startsWith(path.sep), "never a host path");
   }
   assert.deepEqual(PERSISTENT_TMP_DIRS.map((d) => d.target), ["/tmp", "/var/tmp"]);
   // The mount list is part of the fingerprint, so this change recreates every existing container
   // exactly once — with its volume.
   assert.deepEqual(
     t.container.mounts.map((m) => m.kind),
-    ["workdir", "clean", "artifacts", "tmp", "var-tmp", "home", "socket", "codex-auth"],
+    ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth"],
   );
   // A target with no artifact dir (never a container target, but buildMounts is exported) must not
   // emit a mount whose source is the empty string.
-  assert.ok(!buildMounts({ ...t, artifactDir: "" }).some((m) => m.kind === "tmp" || m.kind === "var-tmp"));
+  assert.ok(!buildMounts({ ...t, container: { ...t.container, tmpVolumes: {} } }).some((m) => m.kind === "tmp" || m.kind === "var-tmp"));
 });
 
 test("durability: the idle sweep only ever stops — never rm, never a volume command", async () => {
@@ -168,9 +170,9 @@ test("durability: a fingerprint mismatch recreates the container onto the SAME H
     volumes.includes(`${t.container.homeVolume}:/home/agent`),
     `the recreated container must reuse the channel's HOME volume, got ${volumes.join(" ")}`,
   );
-  // The two temp trees come back at the same host paths, so an image bump does not empty them.
-  assert.ok(volumes.includes(`${path.join(t.artifactDir, "tmp")}:/tmp`));
-  assert.ok(volumes.includes(`${path.join(t.artifactDir, "var-tmp")}:/var/tmp`));
+  // The two temp volumes come back too, so an image bump does not empty them.
+  assert.ok(volumes.includes(`${t.container.tmpVolumes.tmp}:/tmp`));
+  assert.ok(volumes.includes(`${t.container.tmpVolumes["var-tmp"]}:/var/tmp`));
   // The whole point: a recreate is `rm -f` + `run`, and never a volume removal.
   assertNothingDestroyed(h.fake, "recreate");
   assert.ok(h.logs.some((m) => /configuration changed — recreating/.test(m)));
@@ -185,7 +187,7 @@ test("durability: destroy() removes the HOME volume only when a caller explicitl
   assertNothingDestroyed(h.fake, "default destroy");
 
   await h.lifecycle.destroy(t, { volumes: true, reason: "channel deleted" });
-  assert.deepEqual(h.fake.last("volume"), ["podman", "volume", "rm", t.container.homeVolume]);
+  assert.deepEqual(h.fake.find("volume"), [t.container.homeVolume, t.container.tmpVolumes.tmp, t.container.tmpVolumes["var-tmp"]].map((v) => ["podman", "volume", "rm", v]));
 
   // Architecture tripwire, in the style of test/run-escalation.test.js: `{ volumes: true }` is the
   // one switch that can delete everything a channel ever installed, and today NOTHING in src/

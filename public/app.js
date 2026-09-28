@@ -133,18 +133,14 @@ function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, val
   if (label) label.textContent = `Effort (${ENGINE_MANIFESTS.find((m) => m.id === engine)?.label || engine})`;
 }
 
-// Model choices per engine — mirrors the Slack /model wizard's dropdowns. Every value passes the
+// Model choices per engine — mirrors the Slack /model wizard's buttons. Every value passes the
 // server's isValidModel guard; "" = blank (inherit: gateway default, or the CLI default).
 const MODEL_OPTIONS = {
   claude: [
-    ["best", "Best"],
-    ["opus", "Opus"],
-    ["opus[1m]", "Opus 1M (1M context)"],
-    ["sonnet", "Sonnet"],
-    ["sonnet[1m]", "Sonnet 1M (1M context)"],
-    ["haiku", "Haiku"],
-    ["fable", "Fable"],
-    ["opusplan", "Opus plan"],
+    ["claude-opus-5-5", "Opus 5.5"],
+    ["claude-fable-5-1", "Fable 5.1"],
+    ["claude-sonnet-5", "Sonnet 5"],
+    ["claude-haiku-4-5", "Haiku 4.5"],
   ],
   codex: [
     ["codex", "Codex (default family)"],
@@ -2114,6 +2110,7 @@ function renderChannelDetail(ch) {
   mountSecretEditor({
     root: card,
     vars: Array.isArray(meta.envVars) ? meta.envVars : [],
+    userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/channels/${encodeURIComponent(ch.channelId)}/env/${encodeURIComponent(name)}`,
     namePlaceholder: "SUPABASE_ACCESS_TOKEN",
     emptyText: "No variables — runs here use whatever login the gateway host has, plus any organization secret.",
@@ -2989,6 +2986,7 @@ function openUserDrawer(id) {
   mountSecretEditor({
     root: secretsRow,
     vars: u.secrets || [],
+    userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/users/${encodeURIComponent(id)}/env/${encodeURIComponent(name)}`,
     namePlaceholder: "GH_TOKEN",
     emptyText: "No personal variables — this person's runs use the organization's and each conversation's own secrets.",
@@ -3505,6 +3503,8 @@ function readSettingsForm() {
     containerMemory: document.getElementById("set-container-memory").value,
     containerCpus: document.getElementById("set-container-cpus").value,
     containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
+    containerEgressMode: document.getElementById("set-container-egress-bridge").checked ? "bridge" : "proxy",
+    containerEgressSecretsStrict: document.getElementById("set-container-egress-strict").checked,
     // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
     ...(tokenValue(document.getElementById("set-container-claude-token")) ? { containerClaudeOauthToken: tokenValue(document.getElementById("set-container-claude-token")) } : {}),
     ...(document.getElementById("clear-container-claude-token").classList.contains("armed") ? { clearContainerClaudeOauthToken: true } : {}),
@@ -3636,6 +3636,8 @@ function paintSettings(s) {
   document.getElementById("set-container-memory").value = s.containerMemory || "";
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
   document.getElementById("set-container-full-access-home").checked = s.containerFullAccessHome === true;
+  document.getElementById("set-container-egress-bridge").checked = s.containerEgressMode === "bridge";
+  document.getElementById("set-container-egress-strict").checked = s.containerEgressSecretsStrict === true;
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
   attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
   document.getElementById("set-adminpw").dataset.hasPassword = String(s.hasAdminPassword === true);
@@ -3759,6 +3761,7 @@ async function loadOrgSecrets() {
   orgSecretEditor = mountSecretEditor({
     root: card,
     vars,
+    userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/org-secrets/${encodeURIComponent(name)}`,
     namePlaceholder: "GH_TOKEN",
     emptyText: "No organization variables — each conversation relies on its own secrets, or on whatever login the gateway host has.",

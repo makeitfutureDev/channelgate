@@ -42,9 +42,36 @@ export function browserNamespaceFor({ platform = "", slug = "" } = {}) {
   return `cg-${surface}-${channel}`.slice(0, MAX_NAMESPACE_LENGTH);
 }
 
+export const BROWSER_ARGS_ENV = "AGENT_BROWSER_ARGS";
+
+// Chromium through the egress proxy. Under `--network none` the container has no route of its own,
+// so the browser must be TOLD the proxy (Chromium reads no HTTPS_PROXY when a flag is absent on a
+// headless Linux host), and it must accept the proxy's leaf certificates: they chain to the
+// deployment's egress CA, which Chromium does not read from SSL_CERT_FILE. Pinning that CA's SPKI
+// hash accepts exactly the proxy's certificates and nothing else. `caSpki` is
+// base64(sha256(SubjectPublicKeyInfo)), carried on the target's egress plan.
+//
+// agent-browser splits AGENT_BROWSER_ARGS on ',' and '\n' — never on a space (0.36.0:
+// cli/src/native/actions.rs `v.split([',', '\n'])`, and main.rs for `--args`). Space-joined, Chromium
+// received ONE malformed flag, ran with no proxy, and every page failed ERR_INTERNET_DISCONNECTED in
+// the `--network none` namespace. Comma, not newline: an SSH session carries this value on sshd's
+// one SetEnv line and in its env file, which drop any value with a control character
+// (ssh-access.js SESSION_ENV_VALUE). Neither the proxy URL nor a base64 SPKI hash contains a comma
+// — which also means the pin list holds exactly ONE hash; Chromium's own comma list is unusable here.
+export const BROWSER_ARGS_SEPARATOR = ",";
+
+export function browserEgressArgs(plan) {
+  if (plan?.active !== true || !plan.caSpki) return "";
+  return ["--proxy-server=http://127.0.0.1:3128", `--ignore-certificate-errors-spki-list=${plan.caSpki}`].join(BROWSER_ARGS_SEPARATOR);
+}
+
 // The spawn-site form: an env fragment to merge into a child's environment. Takes either a
-// prepared namespace string or the `{ platform, slug }` identity.
-export function browserSpawnEnv(identity) {
+// prepared namespace string or the `{ platform, slug }` identity, and — for a container whose
+// egress is the proxy — the target, which adds the Chromium proxy arguments.
+export function browserSpawnEnv(identity, { target = null } = {}) {
   const namespace = typeof identity === "string" ? identity : browserNamespaceFor(identity);
-  return namespace ? { [BROWSER_NAMESPACE_ENV]: namespace } : {};
+  const env = namespace ? { [BROWSER_NAMESPACE_ENV]: namespace } : {};
+  const args = browserEgressArgs(target?.container?.egress);
+  if (args) env[BROWSER_ARGS_ENV] = args;
+  return env;
 }

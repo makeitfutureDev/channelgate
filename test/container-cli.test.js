@@ -134,14 +134,17 @@ test("create argv: podman keep-id vs docker --user, with the hardening flags and
   assert.ok(podmanArgs.includes("--security-opt") && podmanArgs.includes("no-new-privileges"));
   assert.ok(podmanArgs.includes("--cap-drop") && podmanArgs.includes("ALL"));
   for (const cap of ["DAC_OVERRIDE", "CHOWN", "FOWNER"]) assert.ok(podmanArgs.includes(cap), `missing --cap-add ${cap}`);
-  // /run is the ONLY tmpfs: /tmp and /var/tmp are persistent bind mounts now, so the idle
-  // reaper's stop cannot empty what an agent parked there (test/container-durability.test.js).
+  // /run and Codex's 1 MB socket directory are the ONLY tmpfs: /tmp and /var/tmp are persistent
+  // volumes, so the idle reaper's stop cannot empty what an agent parked there
+  // (test/container-durability.test.js). The socket tmpfs is owned by the keep-id user (`U`),
+  // 0700, and never copies anything up — Codex's sandbox requires exactly that (live, 2026-09-27).
   assert.ok(podmanArgs.includes("/run:rw,noexec,size=64m"));
-  assert.equal(podmanArgs.filter((a) => a === "--tmpfs").length, 1);
+  const tmpfsArgs = podmanArgs.filter((a, i) => podmanArgs[i - 1] === "--tmpfs");
+  assert.deepEqual(tmpfsArgs.sort(), ["/run:rw,noexec,size=64m", `/tmp/codex-daemon-${t.container.uid}:rw,nosuid,nodev,noexec,size=1m,mode=0700,U,notmpcopyup`].sort());
   assert.ok(!podmanArgs.some((a) => typeof a === "string" && a.startsWith("/tmp:")), "/tmp must not be a tmpfs");
   assert.ok(!podmanArgs.some((a) => typeof a === "string" && a.startsWith("/var/tmp:")), "/var/tmp must not be a tmpfs");
-  assert.ok(podmanArgs.includes(`${path.join(t.artifactDir, "tmp")}:/tmp`), "/tmp is bind-mounted from the channel's artifact dir");
-  assert.ok(podmanArgs.includes(`${path.join(t.artifactDir, "var-tmp")}:/var/tmp`));
+  assert.ok(podmanArgs.includes(`${t.container.tmpVolumes.tmp}:/tmp`), "/tmp is the channel's own temp volume");
+  assert.ok(podmanArgs.includes(`${t.container.tmpVolumes["var-tmp"]}:/var/tmp`));
   assert.deepEqual(podmanArgs.slice(-3), ["cg-init", "sleep", "infinity"]);
   assert.equal(podmanArgs[podmanArgs.length - 4], "channelgate/runtime:latest");
   assert.ok(podmanArgs.includes("cg.fingerprint=c1-abc"));
@@ -151,7 +154,8 @@ test("create argv: podman keep-id vs docker --user, with the hardening flags and
   assert.ok(podmanArgs.includes("--pids-limit") && podmanArgs.includes("1024"));
   assert.ok(podmanArgs.includes("--memory") && podmanArgs.includes("2g"));
   assert.ok(podmanArgs.includes("--cpus") && podmanArgs.includes("4"));
-  assert.ok(podmanArgs.includes("--network") && podmanArgs.includes("bridge"));
+  // Egress proxy mode (the default): the container has no network of its own.
+  assert.equal(podmanArgs[podmanArgs.indexOf("--network") + 1], "none");
 
   const dockerCaps = await createContainerCli({ exec: createFakeCli({ kind: "docker", available: ["docker"] }).exec }).probe(SETTINGS, { image: SETTINGS.image });
   const dockerArgs = buildCreateArgs(t, dockerCaps, { fingerprint: "c1-abc" });
@@ -160,18 +164,27 @@ test("create argv: podman keep-id vs docker --user, with the hardening flags and
   assert.equal(dockerArgs[dockerArgs.indexOf("--user") + 1], `${t.container.uid}:${t.container.gid}`);
 });
 
-test("create argv: every container sits on the bridge network regardless of the channel switch, and cgroup limits are dropped when the probe failed", async () => {
-  // The per-channel "Allow network" switch is not enforced by the container's network mode (an
-  // egress proxy is the planned enforcement point), so a network-off channel is created on the
-  // bridge exactly like a network-on one — never `--network none`.
-  const off = target("net-off", { allowNetwork: false });
-  off.container.appliedLimits = null;
+test("create argv: always --network none unless the raw bridge, and cgroup limits are dropped when the probe failed", async () => {
+  // Container-secrets P2: the channel's only network is the daemon's egress proxy over its
+  // per-channel socket, so EVERY channel — network switch on or off — is created with
+  // `--network none`; the switch is proxy policy, live per request. The open bridge exists only
+  // for the legacy `containerEgressMode = "bridge"` escape and a channel an admin gave raw sockets.
   const caps = await createContainerCli({ exec: createFakeCli({ kind: "podman", cgroupLimits: false }).exec }).probe(SETTINGS, { image: SETTINGS.image });
   assert.equal(caps.cgroupLimits, false);
   assert.match(caps.reason, /cgroup cpu\/memory limits are not delegated/);
+  const networkOf = (t) => {
+    t.container.appliedLimits = null;
+    const args = buildCreateArgs(t, caps, { fingerprint: "c1-x" });
+    return args[args.indexOf("--network") + 1];
+  };
+  const off = target("net-off", { allowNetwork: false });
+  assert.equal(networkOf(off), "none");
+  assert.equal(networkOf(target("net-on", { allowNetwork: true })), "none", "the switch is proxy policy, not the container's network mode");
+  const legacy = resolveRuntime("net-legacy", { platform: "slack", channelId: "C1" }, { settings: { ...SETTINGS, egressMode: "bridge" } });
+  assert.equal(networkOf(legacy), "bridge", "the legacy egress mode keeps the open bridge");
+  assert.equal(networkOf(target("net-raw", { rawNetwork: true })), "bridge", "an admin-granted raw-socket channel gets the bridge");
+
   const args = buildCreateArgs(off, caps, { fingerprint: "c1-x" });
-  assert.equal(args[args.indexOf("--network") + 1], "bridge");
-  assert.ok(!args.includes("none"));
   assert.ok(!args.includes("--memory"));
   assert.ok(!args.includes("--cpus"));
   assert.ok(!args.includes("--pids-limit"));
@@ -188,6 +201,14 @@ test("exec argv: -i, the env file, the workdir, and the cg-exec run wrapper — 
   assert.ok(!args.includes("-e"));
   const piped = buildExecArgs(t, podmanCaps, { runId: "warm-2", cmd: "claude", args: [], cwd: t.cwd, envFile: "/x/warm-2.env", stdinPiped: true });
   assert.equal(piped[1], "-i", "a spawn that pipes stdin (the warm Claude session) attaches it");
+  // A sandboxed Codex run execs without the container's added caps: bubblewrap will not start
+  // while ambient caps are held. setpriv sits INSIDE cg-exec, so the recorded session leader is
+  // still the run's own process (setpriv execs the engine in place).
+  const dropped = buildExecArgs(t, podmanCaps, { runId: "run-3", cmd: "codex", args: ["exec"], cwd: t.cwd, envFile: "/x/run-3.env", dropCapabilities: true });
+  assert.deepEqual(dropped.slice(dropped.indexOf("cg-exec")), ["cg-exec", "run-3", "setpriv", "--ambient-caps=-all", "--inh-caps=-all", "--", "codex", "exec"]);
+  const droppedJob = buildExecArgs(t, podmanCaps, { runId: "job-3", cmd: "codex", args: [], cwd: t.cwd, envFile: "/x/job-3.env", background: true, logFile: "/art/l.log", dropCapabilities: true });
+  assert.ok(droppedJob.indexOf("setpriv") > droppedJob.indexOf("/art/l.log"), "the log wrapper execs setpriv, which execs the command");
+  assert.ok(!args.includes("setpriv"), "nothing else drops capabilities");
 
   const dockerCaps = await createContainerCli({ exec: createFakeCli({ kind: "docker", available: ["docker"] }).exec }).probe(SETTINGS, { image: SETTINGS.image });
   const dockerArgs = buildExecArgs(t, dockerCaps, { runId: "run-2", cmd: "codex", args: [], cwd: t.cwd, envFile: "/x/run-2.env" });
@@ -284,8 +305,7 @@ test("stop / rm / inspect argv, and resumeCommand wraps the engine's own command
     await containerBackend.destroy(t, { volumes: true, reason: "channel deleted" });
     const rm = fake.last("rm");
     assert.deepEqual(rm, ["podman", "rm", "-f", t.container.name]);
-    const volume = fake.last("volume");
-    assert.deepEqual(volume, ["podman", "volume", "rm", t.container.homeVolume]);
+    assert.deepEqual(fake.find("volume"), [t.container.homeVolume, t.container.tmpVolumes.tmp, t.container.tmpVolumes["var-tmp"]].map((v) => ["podman", "volume", "rm", v]));
     const described = await containerBackend.describe(t);
     assert.equal(described.state, "missing");
     const inspect = fake.last("inspect");

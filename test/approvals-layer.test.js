@@ -199,11 +199,15 @@ test("no shipped doc claims auto mode skips a control-plane skills approval", ()
 
   const [, docs] = files[0];
   const [, guide] = files[1];
-  // Both must state the positive rule, not merely omit the wrong one.
+  // Both must state the positive rule, not merely omit the wrong one: the organization-wide admin
+  // verbs always carry a card that Auto does not skip, and (operator decision 2026-09-27) personal
+  // and channel skill changes carry none at all.
   assert.match(docs, /\*\*always\*\* post an Approve\/Deny card/i);
   assert.match(docs, /Auto mode does not bypass it/i);
   assert.match(guide, /\*\*always\*\* show an Approve\/Deny card/i);
   assert.match(guide, /Auto mode and admin mode do NOT skip it/i);
+  assert.match(docs, /Personal and channel changes never post an approval card/i);
+  assert.match(guide, /Personal and channel changes never wait for anyone/i);
 });
 test("the HTTP run API principal ranks as an admin for its own permission prompts; a clicker id never does", async () => {
   const { isAdminPrincipal, isAdmin } = await import("../src/config/store.js");

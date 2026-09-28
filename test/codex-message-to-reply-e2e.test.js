@@ -69,7 +69,7 @@ test("Codex stub process is terminated when the run is cancelled", async () => {
   });
 });
 
-test("stopping a first Codex turn keeps the announced native session in its resume button", async () => {
+test("stopping a first Codex turn keeps the announced native session and ends with the reply menu", async () => {
   await setUser("U_CODEX_STOP", { name: "Codex Stop", approved: true });
   const client = fakeSlack();
   const root = { type: "message", channel: "D_CODEX_STOP", channel_type: "im", user: "U_CODEX_STOP", text: "CODEX_STUB_WAIT_FOR_CANCEL", ts: "2001.001" };
@@ -84,9 +84,13 @@ test("stopping a first Codex turn keeps the announced native session in its resu
     await pending;
   }
   const stopped = client.posted.find((message) => message.text === "🛑 Stopped.");
-  assert.ok(stopped, "Stop exposes the resume control");
-  assert.match(JSON.stringify(stopped.blocks), /codex-stub-cancel/);
+  assert.ok(stopped, "Stop posts its card");
+  // The card ends the turn with the reply menu; the resume command lives in Settings → Resume.
+  const menu = stopped.blocks.find((block) => block.type === "actions");
+  assert.deepEqual(menu.elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+  assert.doesNotMatch(JSON.stringify(stopped.blocks), /resume_cmd_modal/);
   const entry = await getChannelEntry(root.channel);
+  assert.equal(await getSession(entry.slug, root.ts), "codex-stub-cancel", "the native session survives the stop");
   await clearSession(entry.slug, root.ts);
 });
 
@@ -263,4 +267,19 @@ test("Codex keeps the answer but visibly marks failed final child accounting", a
   const notes = events.filter((e) => e.kind === "engine_note" && /accounting may be incomplete/.test(e.text));
   assert.equal(notes.length, 1, "live/root/child failures announce once");
   assert.ok(!JSON.stringify(events).includes("private runtime diagnostic"));
+});
+
+test("a failed Codex turn still ends with the reply menu under its error", async () => {
+  await setUser("U_CODEX_FAIL", { name: "Codex Fail", approved: true });
+  const client = fakeSlack();
+  const root = { type: "message", channel: "D_CODEX_FAIL", channel_type: "im", user: "U_CODEX_FAIL", text: "CODEX_STUB_FAIL_GENERIC", ts: "2003.001" };
+  await processMessageEvent(root, client, { botUserId: "U_BOT", teamId: "T_E2E" });
+  const last = client.posted.at(-1);
+  assert.equal(last.thread_ts, root.ts);
+  const menu = (last.blocks || []).find((block) => block.type === "actions");
+  assert.ok(menu, `the error ends with the menu: ${JSON.stringify(client.posted)}`);
+  assert.deepEqual(menu.elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+  for (const button of menu.elements) assert.equal(JSON.parse(button.value).u, "U_CODEX_FAIL");
+  assert.equal(last.blocks[0].type, "section");
+  assert.equal(last.blocks[0].text.text, last.text, "the error text itself is still delivered");
 });

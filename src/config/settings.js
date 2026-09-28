@@ -386,7 +386,30 @@ export function getContainerRuntime() {
     // Off by default: the confined work-folder-only admin channel is the product's posture; an
     // operator who wants an overseer channel that sees every agent and every repo switches it on.
     fullAccessHome: s.containerFullAccessHome === true,
+    // Container egress (src/gateway/egress/). "proxy" (the default): every channel container runs
+    // with `--network none` and reaches the internet only through the daemon's per-channel egress
+    // proxy, which swaps placeholder credentials for real ones on their declared hosts. "bridge" is
+    // the documented LEGACY escape: the open bridge network and raw secret values, as before.
+    egressMode: s.containerEgressMode === "bridge" ? "bridge" : "proxy",
+    // Strict (container-secrets P4): a secret with no egress rule is WITHHELD from proxy-mode
+    // containers instead of being injected raw. On unless stored off: a NEW install has no stored
+    // value and is strict; an install that existed before this default is pinned to its old
+    // behavior (off) once at boot by pinEgressSecretsStrictDefault below, so an upgrade never
+    // silently withholds a secret a working channel relies on.
+    egressSecretsStrict: s.containerEgressSecretsStrict !== false,
   };
+}
+// Boot (server.js): store the strict default explicitly so it never depends on "is the key absent?"
+// again. `configured` is whether the operator had already written settings when this boot started
+// (harden.js isOperatorConfigured, read before the first-boot password is saved) — an existing install
+// keeps the pre-P4 behavior (unruled secrets raw, flagged unprotected); a brand-new one is strict.
+// A stored value — either way — is never touched. → the value now in force.
+export function pinEgressSecretsStrictDefault({ configured, save = saveSettings, read = getSettings } = {}) {
+  const stored = read().containerEgressSecretsStrict;
+  if (typeof stored === "boolean") return stored;
+  const value = !configured;
+  save({ containerEgressSecretsStrict: value });
+  return value;
 }
 // ── Anthropic-compatible providers (the Qwen harnesses — src/engines/qwen.js) ─────────────────
 // Gateway-level credentials, deliberately NOT per-channel environment secrets: `ANTHROPIC_*` is a
@@ -1030,6 +1053,8 @@ export function settingsForApi() {
         containerMemory: c.memory,
         containerCpus: c.cpus,
         containerFullAccessHome: c.fullAccessHome,
+        containerEgressMode: c.egressMode,
+        containerEgressSecretsStrict: c.egressSecretsStrict,
         hasContainerClaudeOauthToken: c.hasClaudeOauthToken,
         containerClaudeOauthTokenLast4: last4(getContainerClaudeOauthToken()),
       };

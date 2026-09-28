@@ -14,6 +14,7 @@ import { appendTail } from "../util/tail.js";
 import { trackEngineChild } from "./process-registry.js";
 import { containerPaths, dropHostLocationEnv, isIsolatedTarget, probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
+import { applyEgressEnv } from "../runtimes/container/egress-env.js";
 import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 import { QWEN_PROVIDERS } from "./qwen.js";
 
@@ -53,6 +54,13 @@ function applyProviderEnv(env, providerEnv) {
   return env;
 }
 
+// Claude Code 2.1.281's "no-telemetry" level. Deliberately NOT CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:
+// its "essential-traffic" level also drops feature flags, the version lookup and claude.ai plugin
+// archive downloads, which production channels need.
+export const CLAUDE_PROXY_TELEMETRY_ENV = Object.freeze({
+  DISABLE_TELEMETRY: "1",
+});
+
 // `extraEnv` is the channel's own environment secrets (config/channel-env.js). Two independent
 // guards, because `extra` beats everything inherited in buildChildEnv: it is re-filtered through
 // safeSpawnEnv HERE rather than trusting the caller to have done it (PATH is inherited, so
@@ -72,15 +80,24 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
   // and the gateway-owned values are still applied LAST so a channel secret cannot displace them.
   if (isIsolatedTarget(target)) {
     const image = containerPaths(target);
-    const base = buildChildEnv({ ...safeSpawnEnv(extraEnv), ...browserSpawnEnv(browserNamespace) }, source);
-    return applyProviderEnv({
+    const base = buildChildEnv({ ...safeSpawnEnv(extraEnv), ...browserSpawnEnv(browserNamespace, { target }) }, source);
+    // The egress proxy and CA variables (runtimes/container/egress-env.js) are gateway-owned and in
+    // this last group too: with the proxy as the container's only network, a daemon HTTPS_PROXY
+    // passed through child-env.js would be a dead route, and ALL_PROXY a bypass attempt.
+    const env = applyEgressEnv({
       ...dropHostLocationEnv(base),
       HOME: image.home,
       CLAUDE_CONFIG_DIR: image.claudeConfigDir,
       PATH: image.path,
       TMPDIR: image.tmpDir,
       ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
-    }, providerEnv);
+    }, target);
+    // Behind the proxy, no telemetry: an idle warm process kept posting its event-log batch
+    // between turns, and with nothing live in the channel the proxy refused the relay placeholder
+    // on every attempt. Gateway-owned and in this last group (DISABLE_TELEMETRY is a reserved
+    // name), so a channel secret cannot turn it back on.
+    if (env.CG_EGRESS === "proxy") Object.assign(env, CLAUDE_PROXY_TELEMETRY_ENV);
+    return applyProviderEnv(env, providerEnv);
   }
   return applyProviderEnv(buildChildEnv({
     ...safeSpawnEnv(extraEnv),

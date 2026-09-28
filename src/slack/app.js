@@ -30,9 +30,10 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
+import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel } from "../config/schedules.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
-import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
+import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../gateway/skills/authoring.js";
 import { listSkills } from "../gateway/skills/catalog.js";
 import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
@@ -52,6 +53,7 @@ import {
   SECRETS_ADD_ORG_ACTION_ID, SECRETS_ADD_PERSONAL_ACTION_ID, normalizeSecretScope, scopeFromActionId,
   SECRETS_FORM_CALLBACK_ID, SECRETS_NAME_BLOCK_ID, SECRETS_REMOVE_ACTION_PREFIX, SECRETS_SHORTCUT_ID,
   SECRETS_VALUE_BLOCK_ID,
+  SECRETS_DOMAINS_BLOCK_ID,
 } from "./secret-explorer.js";
 import {
   buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
@@ -62,6 +64,7 @@ import {
   CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
+  CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, escapeMrkdwn,
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
@@ -77,6 +80,7 @@ import {
 } from "./channel-settings.js";
 import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, readAccessFieldValue } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
+import { assertValidSwapRuleFields } from "../gateway/egress/catalog-rules.js";
 // The two scopes that are not the channel's (config/scoped-env.js).
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../config/scoped-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
@@ -91,11 +95,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { gatewayRoot } from "../config/paths.js";
 
-import { buildResumeCommand, resumeButton, filesButton, secretsButton, settingsButton, footerButtons, footerText, footerBlocks } from "./footer.js";
+import { buildResumeCommand, filesButton, secretsButton, settingsButton, menuButtons, menuBlocks, footerButtons, footerText, footerBlocks } from "./footer.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
 // Re-exported for existing importers (moved to slack/footer.js + slack/progress.js in the
 // 2026-08 restructure split).
-export { buildResumeCommand, resumeButton, filesButton, secretsButton, settingsButton, footerButtons, footerText, footerBlocks };
+export { buildResumeCommand, filesButton, secretsButton, settingsButton, menuButtons, menuBlocks, footerButtons, footerText, footerBlocks };
 export { setAssistantStatus, startProgress };
 import { processMessageEvent, runQueue, stopRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
 import { registerQuestionActions } from "./questions.js";
@@ -426,7 +430,7 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
   const command = parseSecretActionValue(action?.value);
   try {
     if (command.o === "open") {
-      if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
+      if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
       await openSecretsManager(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "" });
       return;
     }
@@ -499,7 +503,7 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
     await ack({ response_action: "errors", errors: { [SECRETS_NAME_BLOCK_ID]: e.message.slice(0, 150) } });
     return;
   }
-  const { name: typedName, value } = readSecretForm(view);
+  const { name: typedName, value, ...rule } = readSecretForm(view);
   // Validate each field against its own input so the error lands on the box that is wrong.
   // assertValidEnvName returns the CANONICAL (uppercase) name — use that from here on so the
   // stored key, the "added vs updated" check, the audit line and the confirmation all agree.
@@ -507,6 +511,7 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
   let name = String(typedName || "").trim();
   try { name = assertValidEnvName(typedName); } catch (e) { errors[SECRETS_NAME_BLOCK_ID] = e.message.slice(0, 150); }
   try { assertValidEnvValue(value); } catch (e) { errors[SECRETS_VALUE_BLOCK_ID] = e.message.slice(0, 150); }
+  try { if (rule.hosts !== undefined) assertValidSwapRuleFields({ hosts: rule.hosts }); } catch (e) { errors[SECRETS_DOMAINS_BLOCK_ID] = e.message.slice(0, 150); }
   if (Object.keys(errors).length > 0) {
     await ack({ response_action: "errors", errors });
     return;
@@ -523,16 +528,16 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
     let existed = false;
     if (scope === "organization") {
       existed = listOrgEnv().some((v) => v.name === name);
-      patchOrgEnv({ set: { name, value }, actor: `<@${clicker}>` });
+      patchOrgEnv({ set: { name, value, ...rule }, actor: `<@${clicker}>` });
       await logEvent("org_env_set", { name, actor: clicker });
     } else if (scope === "personal") {
       existed = (await listUserEnv(clicker)).some((v) => v.name === name);
-      await patchUserEnv(clicker, { set: { name, value } });
+      await patchUserEnv(clicker, { set: { name, value, ...rule } });
       await logEvent("user_env_set", { user: clicker, name, actor: clicker });
     } else {
       existed = listChannelEnv(await getChannelMeta(entry.slug)).some((v) => v.name === name);
       saved = await patchChannelMeta(entry.slug, (existing) => ({
-        env: patchChannelEnv(existing?.env, { set: { name, value }, actor: `<@${clicker}>` }),
+        env: patchChannelEnv(existing?.env, { set: { name, value, ...rule }, actor: `<@${clicker}>` }),
       }));
       await logEvent("channel_env_set", { slug: entry.slug, name, actor: clicker });
     }
@@ -876,7 +881,9 @@ function skillManagerItems(meta, { userId = "", userIsAdmin = false } = {}) {
   const template = templateOfMeta(meta);
   const templateSummary = template ? listTemplateSummaries().find((entry) => entry.slug === template.slug) : null;
   const fromTemplate = new Set((templateSummary?.resolved || []).map((value) => String(value).toLowerCase()));
-  const active = new Set([...direct, ...organization, ...scoped, ...fromTemplate]);
+  // A template or channel-section skill this conversation deactivated (meta.skillsOff) is off here.
+  const off = channelSkillsOff(meta);
+  const active = new Set([...direct, ...organization, ...[...scoped, ...fromTemplate].filter((key) => !off.has(key))]);
   const rows = new Map();
   for (const skill of listSkills({ viewer: userIsAdmin ? "*" : userId || "" })) {
     const key = skill.slug.toLowerCase();
@@ -888,8 +895,8 @@ function skillManagerItems(meta, { userId = "", userIsAdmin = false } = {}) {
       description: skill.description || "",
       direct: direct.has(key),
       inherited: organization.has(key),
-      template: fromTemplate.has(key),
-      scoped: scoped.has(key),
+      template: fromTemplate.has(key) && !off.has(key),
+      scoped: scoped.has(key) && !off.has(key),
       active: active.has(key),
     });
   }
@@ -971,6 +978,7 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   ]);
   snapshot.runtime.scopes = scopes;
   snapshot.resume = resume;
+  snapshot.automations = listForChannel(state.channelId);
   snapshot.orgSecrets = secretScopes.organization;
   snapshot.personalSecrets = secretScopes.personal;
   return buildChannelSettingsView({ ...snapshot, vpn: vpn ?? unconfiguredChannelVpnStatus(meta) }, { ...state, tab }, {
@@ -979,6 +987,32 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
     notice,
     ...channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) }),
   });
+}
+
+// One Automations-page control, applied by the caller only after channelSettingsContext admitted
+// the clicker. The authority is the one the agent's own schedule tools give any authorized user.
+// The row is looked up among THIS channel's schedules, so an id from another channel (or a row
+// deleted since the page was drawn) is refused rather than touched. Returns the page notice.
+export async function applyAutomationAction({ channelId, slug, actorId, actionId, command = {} }) {
+  const id = String(command.id || "");
+  const sched = listForChannel(channelId).find((row) => row.id === id);
+  if (!sched) throw new Error("That automation no longer exists in this channel. Reopen Settings to see the current list.");
+  const title = escapeMrkdwn(String(sched.description || sched.loopReason || sched.prompt || id).slice(0, 80));
+  if (actionId === CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID) {
+    deleteSchedule(id, channelId);
+    await logEvent("schedule_deleted", { channel: channelId, slug, schedule: id, author: actorId, via: "slack_settings" });
+    return `🗑️ Removed *${title}*.`;
+  }
+  if (actionId !== CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID) throw new Error("This channel settings control expired. Open Settings again from a recent reply.");
+  if (sched.loop || sched.once || sched.runAt) throw new Error("Only recurring schedules can be paused. Delete this one instead.");
+  const enable = command.enabled === true;
+  if (enable && !sched.enabled) {
+    const max = getScheduleMaxPerChannel();
+    if (countEnabledForChannel(channelId) >= max) throw new Error(`This channel already has ${max} enabled schedules (the limit). Pause or delete one first.`);
+  }
+  updateSchedule(id, { enabled: enable });
+  await logEvent("schedule_updated", { channel: channelId, slug, schedule: id, enabled: enable, author: actorId, via: "slack_settings" });
+  return `${enable ? "▶️ Resumed" : "⏸️ Paused"} *${title}*.`;
 }
 
 // Membership is a live Slack request. Re-read both channel policy and global roles AFTER it
@@ -1210,8 +1244,15 @@ async function notifyAdminsScopes(client, missing) {
 
 // A reply footer belongs to the requester who caused that reply, but gateway admins must still
 // be able to inspect its workspace files. Everyone else remains bound to their own controls.
+// An automation post's menu is unbound (no owner): it opens for whoever clicks, under that
+// clicker's own live authorization (footer.js explains the binding).
 export function canOpenMessageFileButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
-  return Boolean(clickerId && (clickerId === ownerId || clickerIsAdmin));
+  return Boolean(clickerId && (!ownerId || clickerId === ownerId || clickerIsAdmin));
+}
+
+// The same rule for the other menu buttons, which have no admin override.
+export function canOpenMenuButton({ ownerId = "", clickerId = "" } = {}) {
+  return Boolean(clickerId && (!ownerId || clickerId === ownerId));
 }
 
 // Slack does not infer the source thread for an ephemeral posted from a Block Kit action. Carry
@@ -1255,7 +1296,7 @@ async function connectAndWire(app) {
     const command = parseFileActionValue(action?.value);
     try {
       if (command.o === "open" || command.o === "open_file") {
-        const clickerIsAdmin = clicker && command.u !== clicker ? await isAdmin(clicker) : false;
+        const clickerIsAdmin = clicker && command.u && command.u !== clicker ? await isAdmin(clicker) : false;
         if (!canOpenMessageFileButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin }) || !body?.trigger_id) {
           throw new Error("This file explorer button isn't for you.");
         }
@@ -1413,7 +1454,7 @@ async function connectAndWire(app) {
     const actionId = String(action?.action_id || "");
     try {
       if (command.o === "open") {
-        if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This settings button isn't for you.");
+        if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This settings button isn't for you.");
         await openChannelSettings(client, body.trigger_id, {
           channelId: command.c,
           userId: clicker,
@@ -1641,7 +1682,7 @@ async function connectAndWire(app) {
           }
           await grantSkillsToChannel(entry.slug, [skill.slug]);
         } else {
-          await revokeSkillsFromChannel(entry.slug, [key]);
+          await revokeSkillsFromChannel(entry.slug, [key], { deactivate: true });
         }
         meta = await getChannelMeta(entry.slug);
         await ensureChannelFolder(entry.slug, effectiveMeta(meta));
@@ -1677,6 +1718,12 @@ async function connectAndWire(app) {
         // Compatibility with a Settings view opened before the template dropdown moved onto the
         // page: repaint it, and the control is simply there.
         await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "skills" }, userIsAdmin, { tab: "skills" }));
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID || actionId === CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID) {
+        const notice = await applyAutomationAction({ channelId: state.channelId, slug: entry.slug, actorId: clicker, actionId, command });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "automations" }, userIsAdmin, { tab: "automations", notice }), { guardHash: false });
         return;
       }
 

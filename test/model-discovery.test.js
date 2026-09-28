@@ -105,3 +105,9 @@ test("a cold discovery failure retains the bundled fallback", async () => {
   assert.equal(catalog.snapshot("codex").source, "fallback");
   assert.deepEqual(catalog.snapshot("codex").models.map((model) => model.value), ["codex"]);
 });
+
+test("Codex model discovery sends no usage metrics", async () => {
+  let seen = null;
+  await discoverCodexModels({ execFileImpl: (command, args, options, callback) => { seen = args; queueMicrotask(() => callback(null, JSON.stringify({ models: [] }), "")); } }).catch(() => {});
+  assert.deepEqual(seen, ["-c", "analytics.enabled=false", "debug", "models"]);
+});

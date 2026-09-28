@@ -174,6 +174,7 @@ function rowToProposal(r) {
     note: r.note,
     proposedBy: r.proposed_by,
     channelSlug: r.channel_slug,
+    target: r.target || "",
     createdAt: r.created_at,
     decidedAt: r.decided_at,
     decidedBy: r.decided_by,
@@ -808,8 +809,8 @@ export function usageByAuthor({ channelSlug = "", since = "", until = "", slugs 
 
 // ── Proposals ───────────────────────────────────────────────────────────────────────────────
 
-export function createProposal({ slug, kind = "change", files = [], note = "", proposedBy = "", channelSlug = "", now = nowIso() } = {}) {
-  if (!["change", "promote", "feedback"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
+export function createProposal({ slug, kind = "change", files = [], note = "", proposedBy = "", channelSlug = "", target = "", now = nowIso() } = {}) {
+  if (!["change", "promote", "feedback", "delete", "template"].includes(kind)) throw new SkillCatalogError(`unknown proposal kind "${kind}"`);
   const s = normalizeSlug(slug);
   if (!isValidSlug(s)) throw new SkillCatalogError("a proposal needs a valid skill slug");
   const stored = (Array.isArray(files) ? files : []).map((f) => {
@@ -819,8 +820,8 @@ export function createProposal({ slug, kind = "change", files = [], note = "", p
   });
   if (kind === "change" && stored.length === 0) throw new SkillCatalogError("a change proposal needs at least one file");
   const res = getDb()
-    .prepare(`INSERT INTO skill_proposals(slug, kind, status, files, note, proposed_by, channel_slug, created_at) VALUES(?, ?, 'pending', ?, ?, ?, ?, ?)`)
-    .run(s, kind, toJson(stored), String(note || "").trim().slice(0, 4000), proposedBy, channelSlug, now);
+    .prepare(`INSERT INTO skill_proposals(slug, kind, status, files, note, proposed_by, channel_slug, target, created_at) VALUES(?, ?, 'pending', ?, ?, ?, ?, ?, ?)`)
+    .run(s, kind, toJson(stored), String(note || "").trim().slice(0, 4000), proposedBy, channelSlug, String(target || "").trim().slice(0, 128), now);
   return getProposal(Number(res.lastInsertRowid));
 }
 

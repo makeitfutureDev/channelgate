@@ -95,11 +95,13 @@ test("Codex app-server inventory performs initialize then requests tool status",
     end() {},
   };
 
+  let spawnedArgs = null;
   const result = await discovery.listCodexRuntimeMcps({
-    spawnImpl: () => child,
+    spawnImpl: (_cmd, args) => { spawnedArgs = args; return child; },
     timeoutMs: 250,
   });
 
+  assert.deepEqual(spawnedArgs, ["-c", "analytics.enabled=false", "app-server"], "discovery sends no usage metrics");
   assert.deepEqual(result.map((entry) => entry.id), ["boost_space"]);
   assert.deepEqual(requests.map((message) => message.method), [
     "initialize",

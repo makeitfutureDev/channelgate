@@ -10,7 +10,7 @@ const { saveSession, getSessionMap, clearSession } = await import("../src/gatewa
 const { setThreadEngine, setThreadClean } = await import("../src/gateway/thread-engine.js");
 const { handleMenuCommand, handleMenuResumeAction } = await import("../src/slack/app.js");
 const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
-const { buildMenuCard } = await import("../src/slack/menu.js");
+const { MENU_RESUME_ACTION_ID } = await import("../src/slack/menu.js");
 const { readEvents } = await import("../src/util/logger.js");
 let sequence = 0;
 async function fixture({ approved = true, dm = false } = {}) {
@@ -33,13 +33,14 @@ async function fixture({ approved = true, dm = false } = {}) {
 function assertCard(message, channel, user, thread = "") {
   assert.equal(message.blocks.length, 1);
   assert.equal(message.blocks[0].type, "actions");
-  assert.deepEqual(message.blocks[0].elements.map(b => b.text.text), ["💻 Resume", "📂 Files", "🔑 Secrets", "⚙️ Settings"]);
+  // The same fixed menu every reply ends with; the Resume button was removed from it.
+  assert.deepEqual(message.blocks[0].elements.map(b => b.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
   for (const button of message.blocks[0].elements) {
     const value = JSON.parse(button.value);
     assert.equal(value.c, channel); assert.equal(value.u, user); assert.equal(value.t, thread);
   }
 }
-for (const dm of [false, true]) test(`/menu returns only four buttons in ${dm ? "DM" : "channel"} without a session`, async () => {
+for (const dm of [false, true]) test(`/menu returns only the three menu buttons in ${dm ? "DM" : "channel"} without a session`, async () => {
   const f = await fixture({ dm });
   await handleMenuCommand(f.args);
   assert.equal(f.sent.length, 1);
@@ -69,7 +70,8 @@ test("typed menu preserves thread, mention gate, and bypasses the engine", async
 async function click(f, { thread = "100.1", user = f.user, channel = f.channel } = {}) {
   await handleMenuResumeAction({ ack: async () => {}, client: f.client,
     body: { channel: { id: channel }, user: { id: user }, trigger_id: "trigger" },
-    action: buildMenuCard(f.channel, thread, f.user).blocks[0].elements[0] });
+    // A Resume button on a card posted before the menu dropped it: its handler stays registered.
+    action: { action_id: MENU_RESUME_ACTION_ID, value: JSON.stringify({ c: f.channel, t: thread, u: f.user }) } });
 }
 test("Resume never selects another thread and reads cleared state on click", async () => {
   const f = await fixture();

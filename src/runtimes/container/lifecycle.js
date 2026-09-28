@@ -14,7 +14,9 @@ import { acquireKeyedLock } from "../../util/keyed-lock.js";
 import { channelArtifactDir } from "../../config/paths.js";
 import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM } from "./names.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
-import { CONTAINER_SOCKET_DIR } from "./image-paths.js";
+import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
+import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
+import { sweepStaleRunCredentialFiles } from "./stale-run-files.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
 // fingerprint, so changing any of them recreates every container on the next run.
@@ -24,23 +26,27 @@ import { CONTAINER_SOCKET_DIR } from "./image-paths.js";
 // executable. `/tmp` and `/var/tmp` used to be tmpfs too — and that made the idle reaper's
 // ten-minute `stop` DELETE whatever an agent had parked there, a regression against the host
 // backend where /tmp survives between turns (Claude Code keeps its per-session scratchpad under
-// /tmp/claude-<uid>/…). They are persistent bind mounts now; see PERSISTENT_TMP_DIRS.
+// /tmp/claude-<uid>/…). They are persistent named volumes now; see PERSISTENT_TMP_DIRS.
 export const TMPFS_SPECS = Object.freeze(["/run:rw,noexec,size=64m"]);
 
-// The two temp trees a channel keeps ACROSS stops, starts and recreates: host directories under
-// the channel's own artifact dir (~/ChannelGate/.runtime/<platform>/<slug>/), bind-mounted in.
+// The two temp trees a channel keeps ACROSS stops, starts and recreates: per-channel NAMED VOLUMES
+// (names.js tmpVolumeNames), like the HOME volume, created with the image's own /tmp and /var/tmp
+// modes (1777) on first use and removed with it when the channel is deleted.
 //
-// Under the artifact dir on purpose: it is per channel, it is never mounted into any OTHER
-// container, the daemon never deletes it, and it is visible on the host — an operator can see what
-// an agent parked in /tmp instead of guessing. The trade is that the tmpfs size cap is gone: these
-// grow against the disk, exactly like the channel's work directory.
-//
-// `<artifactDir>/tmp` is also where an isolated Codex run puts its per-run scratch (see
-// src/engines/codex.js) — the same directory, seen at two paths inside the container. That is not
-// a new exposure: the whole artifact dir has always been mounted rw at its identical path.
+// They used to be host directories under the artifact dir (`<artifactDir>/tmp`, `/var-tmp`) — and
+// the artifact dir is ALSO mounted at its identical path, so the same files were visible inside
+// the container at two paths. Codex's sandbox refuses exactly that: it keeps its app-server socket
+// under a fixed `/tmp/codex-daemon-<uid>` and will not build a bubblewrap command while that
+// directory's mount is an alias of another ("unsupported host mount … remove the bind-mount alias
+// or nested mount"), so Read-mode Codex could not run a single command (live, 2026-09-27). A host
+// directory anywhere under the operator's home would alias the same way in a whole-home channel;
+// a volume does not, because the container engine's storage is masked out of that mount
+// (OPERATOR_HOME_MASKS). The trade: an operator inspects /tmp through the CLI (`podman volume
+// inspect`), not as a plain folder. `<artifactDir>/tmp` remains a plain artifact subdirectory — the
+// isolated Codex run's per-run scratch (src/engines/codex.js) — just no longer aliased to /tmp.
 export const PERSISTENT_TMP_DIRS = Object.freeze([
-  Object.freeze({ kind: "tmp", dir: "tmp", target: "/tmp" }),
-  Object.freeze({ kind: "var-tmp", dir: "var-tmp", target: "/var/tmp" }),
+  Object.freeze({ kind: "tmp", target: "/tmp" }),
+  Object.freeze({ kind: "var-tmp", target: "/var/tmp" }),
 ]);
 export const CAP_DROP = Object.freeze(["ALL"]);
 export const CAP_ADD = Object.freeze(["DAC_OVERRIDE", "CHOWN", "FOWNER"]);
@@ -140,7 +146,9 @@ export function parseInspectLine(line) {
 // the daemon checkout, and the operator's ~/.claude or ~/.codex directories. The only sources under
 // the gateway root are the clean workspace (a bare workdir, mounted so clean mode works in a
 // container) and the MCP socket directory (read-only). The Codex auth FILE is the one credential
-// mount, and it is the resolved real file — see credentials.js for why it is a file and not a dir.
+// mount, and only outside the egress proxy (legacy bridge mode, or an API-key login): it is the
+// resolved real file — see credentials.js for why it is a file and not a dir. Behind the proxy
+// Codex is relayed and nothing credential-shaped is mounted.
 // The single, deliberate exception is the operator-home grant (operatorHomeMounts below): a
 // Full-access channel, while the gateway-wide switch is on, gets the daemon user's whole home.
 //
@@ -165,6 +173,30 @@ export function assertSafeBindSource(source) {
   }
 }
 
+// Codex's app-server keeps its socket in a FIXED directory, `/tmp/codex-daemon-<uid>`, and its
+// bubblewrap sandbox refuses to build a command unless that directory (a) is not an alias of
+// another mount — no host path inside the container is visible at two paths — and (b) is owned by
+// the user with mode 0700 ("app-server socket directory has an unsupported host mount … remove the
+// bind-mount alias or nested mount", "must be a user-owned directory with mode 0700"). The /tmp
+// volume alone satisfies (a) in an ordinary channel, but not in a whole-home Admin channel: the
+// volume's storage, and the container's own root filesystem, live under the operator's home, which
+// that container ALSO mounts. A small tmpfs on the socket directory itself is its own mount with no
+// host source at all, so Read-mode (and home-guarded) Codex runs everywhere (live, 2026-09-27). It
+// is emptied on every start, which is fine for a socket. Ownership: rootless podman's `U` chowns it
+// to the keep-id user; docker takes the kernel's uid=/gid= options (chosen per CLI in mountArgs).
+export const CODEX_SOCKET_DIR_PREFIX = "/tmp/codex-daemon-";
+export function codexSocketMount(base) {
+  const c = base?.container || {};
+  if (c.uid == null) return [];
+  return [{ kind: "codex-socket", type: "tmpfs", source: "", target: `${CODEX_SOCKET_DIR_PREFIX}${c.uid}`, mode: "rw", options: "rw,nosuid,nodev,noexec,size=1m,mode=0700", owner: { uid: c.uid, gid: c.gid ?? c.uid } }];
+}
+
+// The ownership half of a user-owned tmpfs, for the CLI that will create it.
+function tmpfsOwnerOption(owner, caps) {
+  if (!owner) return "";
+  return caps?.uidStrategy === "keep-id" ? "U" : `uid=${owner.uid},gid=${owner.gid}`;
+}
+
 export function buildMounts(base) {
   const mounts = [
     { kind: "workdir", type: "bind", source: base.workDir, target: base.workDir, mode: "rw" },
@@ -172,19 +204,38 @@ export function buildMounts(base) {
     { kind: "artifacts", type: "bind", source: base.artifactDir, target: base.artifactDir, mode: "rw" },
     // Persistent /tmp and /var/tmp. Nothing an agent leaves in them is lost to a stop or a
     // recreate, which is the difference between a container channel and the host backend.
-    ...PERSISTENT_TMP_DIRS.map(({ kind, dir, target }) => ({
+    ...PERSISTENT_TMP_DIRS.map(({ kind, target }) => ({
       kind,
-      type: "bind",
-      source: base.artifactDir ? path.join(base.artifactDir, dir) : "",
+      type: "volume",
+      source: base.container?.tmpVolumes?.[kind] || "",
       target,
       mode: "rw",
     })),
+    // After /tmp: destinations are applied deepest-last, so this lands on top of the /tmp volume.
+    ...codexSocketMount(base),
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
     { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
+    ...egressMounts(base),
     ...operatorHomeMounts(base),
   ];
   return mounts.filter((mount) => mount.type === "tmpfs" || mount.source);
+}
+
+// The egress proxy's two mounts, present only while the proxy is this target's egress
+// (egress-hook.js): the channel's OWN socket directory — the daemon's per-channel listener, whose
+// PATH is the channel identity, so it is never under the shared control-socket dir — and the CA
+// trust bundle (the host's system roots + the deployment's egress CA) that every CA variable in
+// egress-env.js names. Both read-only. The bundle is a FILE: `bind-file` renders like any bind, and
+// ensureBindSources below never mkdirs a file source (the service writes it at boot, in place, so
+// a running container's mount keeps pointing at the current bytes).
+export function egressMounts(base) {
+  const plan = base?.container?.egress;
+  if (!plan?.active) return [];
+  return [
+    { kind: "egress", type: "bind", source: plan.socketDir, target: CONTAINER_EGRESS_DIR, mode: "ro" },
+    { kind: "egress-ca", type: "bind-file", source: plan.caBundle, target: CONTAINER_EGRESS_CA, mode: "ro" },
+  ];
 }
 
 // The operator-home grant: ONLY for a channel in Full access (adminMode) and ONLY while the
@@ -211,7 +262,7 @@ export function operatorHomeMounts(base) {
   ];
 }
 
-function mountArgs(mounts) {
+function mountArgs(mounts, caps) {
   const args = [];
   for (const mount of mounts) {
     // Destinations are applied deepest-last by both CLIs, so the Codex auth file lands inside the
@@ -222,7 +273,10 @@ function mountArgs(mounts) {
       // contents INTO the tmpfs, and the destination here is the multi-gigabyte container store —
       // the create fails with "no space left on device" before the mask is ever applied (proven
       // live on podman 5.7). The mask must be empty; nothing is copied.
-      args.push("--tmpfs", `${mount.target}:${MASK_TMPFS_OPTIONS}`);
+      const options = mount.options
+        ? [mount.options, tmpfsOwnerOption(mount.owner, caps), "notmpcopyup"].filter(Boolean).join(",")
+        : MASK_TMPFS_OPTIONS;
+      args.push("--tmpfs", `${mount.target}:${options}`);
       continue;
     }
     args.push("-v", `${mount.source}:${mount.target}${mount.mode === "ro" ? ":ro" : ""}`);
@@ -241,9 +295,12 @@ function mountArgs(mounts) {
 // died on `Append system prompt file not found: …/CLAUDE.md`. So the mount half is compared
 // separately and never deferred — see ensureUp.
 //
-// Deliberately NOT in here: the image, the network mode, cgroup limits, caps and the security opts.
-// They change how the container BEHAVES, not which host directories it is looking at, and the
-// existing deferral is the right answer for them.
+// Deliberately NOT in here: the image, cgroup limits, caps and the security opts. They change how
+// the container BEHAVES, not which host directories it is looking at, and the existing deferral is
+// the right answer for them. The NETWORK MODE is the one behavioural exception (egress P2): what a
+// container can reach is part of what it can see, and a deferred switch would leave a bridged
+// container — say, one whose `rawNetwork` was just cleared — serving turns that every surface
+// reports as proxy-enforced. So a network change is never deferred either.
 export function containerMountFingerprint(target) {
   const c = target?.container || {};
   const canonical = JSON.stringify({
@@ -252,6 +309,7 @@ export function containerMountFingerprint(target) {
     cleanWorkDir: target?.cleanWorkDir || "",
     artifactDir: target?.artifactDir || "",
     homeVolume: c.homeVolume || "",
+    network: c.network || "",
     mounts: (c.mounts || []).map((m) => `${m.kind}:${m.type}:${m.source}:${m.target}:${m.mode}`).sort(),
   });
   return `m1-${createHash("sha256").update(canonical).digest("hex").slice(0, 32)}`;
@@ -292,7 +350,7 @@ export function buildCreateArgs(target, caps, { fingerprint = "", mountFingerpri
   if (caps.uidStrategy === "keep-id") args.push("--userns=keep-id");
   else if (c.uid != null && c.gid != null) args.push("--user", `${c.uid}:${c.gid}`);
   if (caps.supportsInit) args.push("--init");
-  args.push(...mountArgs(c.mounts));
+  args.push(...mountArgs(c.mounts, caps));
   for (const spec of TMPFS_SPECS) args.push("--tmpfs", spec);
   for (const cap of CAP_DROP) args.push("--cap-drop", cap);
   for (const cap of CAP_ADD) args.push("--cap-add", cap);
@@ -386,8 +444,9 @@ export function createContainerLifecycle({
     if (!caps.cgroupLimits && (c.limits.memory || c.limits.cpus || c.limits.pidsLimit)) {
       log(`[container] cgroup limits are not delegated — ${c.name} runs without pids/memory/cpu caps`);
     }
-    const settled = settleCredentialModes(target.settings, env);
+    const settled = settleCredentialModes(target.settings, env, { egressActive: c.egress?.active === true });
     c.credentialMode = settled.modes;
+    // "" in relay mode: the real Codex login is never a mount behind the egress proxy.
     c.codexAuthFile = settled.codexAuthFile;
     // Rebuild rather than patch: ensureUp can run more than once on one target (the out-of-band
     // retry), and a credential that appeared since the last pass has to come BACK as a mount.
@@ -401,6 +460,7 @@ export function createContainerLifecycle({
   // credential-shaped is ever staged here (see credentials.js).
   function prepareHostSide(target) {
     if (target.artifactDir) mkdirSync(target.artifactDir, { recursive: true, mode: 0o700 });
+    sweepRunCredentials(target);
     for (const dir of [target.workDir, target.cleanWorkDir]) {
       if (dir) mkdirSync(dir, { recursive: true });
     }
@@ -408,6 +468,15 @@ export function createContainerLifecycle({
     // directories an operator can delete between two turns, and a missing bind source is a create
     // failure on one CLI and a silently root-owned auto-created directory on the other.
     ensureBindSources(target);
+  }
+
+  // Per-run credential files a crashed or interrupted run left in the artifact dir (see
+  // stale-run-files.js). Before every create/start — no process from before a start survives it —
+  // and at boot for the containers already running.
+  function sweepRunCredentials(target) {
+    const removed = sweepStaleRunCredentialFiles(target?.artifactDir, { now: now() });
+    if (removed) log(`[container] swept ${removed} stale per-run credential file(s) from ${target.slug || target.container?.name || target.artifactDir}`);
+    return removed;
   }
 
   // Every bind-mount SOURCE must exist before `run`, or the CLI fails the create with a bare
@@ -459,11 +528,12 @@ export function createContainerLifecycle({
       throw new Error(`could not remove container ${name}: ${String(result.stderr || "").trim()}`);
     }
     if (!preserveLeases) reaper.forget(name);
-    if (volumes) {
-      const removed = await cli.runWith(caps, ["volume", "rm", volumes], { timeoutMs: 60_000 });
+    // One `volume rm` per volume: a missing one must not keep the others from going.
+    for (const volume of [volumes].flat().filter(Boolean)) {
+      const removed = await cli.runWith(caps, ["volume", "rm", volume], { timeoutMs: 60_000 });
       if (removed.code !== 0 && !/no such volume|not found/i.test(String(removed.stderr || ""))) {
-        if (strictVolumes) throw new Error(`could not remove smoke HOME volume ${volumes}`);
-        log(`[container] could not remove volume ${volumes}: ${String(removed.stderr || "").trim()}`);
+        if (strictVolumes) throw new Error(`could not remove smoke volume ${volume}`);
+        log(`[container] could not remove volume ${volume}: ${String(removed.stderr || "").trim()}`);
       }
     }
   }
@@ -493,6 +563,10 @@ export function createContainerLifecycle({
       if (!caps.ok) throw new Error(caps.reason);
       const img = await image.inspect(caps, target.settings, { force: forceImage });
       if (!img.present) throw new Error(img.reason);
+      // The channel's egress listener first: its socket directory is a bind source, and a
+      // container must never come up pointing at a proxy that is not listening. Throws (fail
+      // closed, remedy named) when the service cannot bind it.
+      await ensureEgressFor(target);
       settleTarget(target, { caps, img });
       const fingerprint = containerFingerprint(target);
       const mountFingerprint = containerMountFingerprint(target);
@@ -591,8 +665,10 @@ export function createContainerLifecycle({
     if (!name) return;
     const caps = await cli.probe(target.settings, { image: target.settings?.image });
     if (!caps.ok) throw new Error(caps.reason);
-    await removeContainer(caps, name, { volumes: volumes ? target.container.homeVolume : "", strictVolumes });
-    log(`[container] removed ${name}${volumes ? " and its HOME volume" : ""}${reason ? ` (${reason})` : ""}`);
+    const channelVolumes = [target.container.homeVolume, ...Object.values(target.container.tmpVolumes || {})];
+    await removeContainer(caps, name, { volumes: volumes ? channelVolumes : "", strictVolumes });
+    await releaseEgressFor(target);
+    log(`[container] removed ${name}${volumes ? " and its HOME and temp volumes" : ""}${reason ? ` (${reason})` : ""}`);
   }
 
   // Boot reconcile: every engine process inside a RUNNING container belonged to the previous
@@ -617,6 +693,7 @@ export function createContainerLifecycle({
         slug, platform, artifactDir: channelArtifactDir(slug, platform), container: { name: entry.name },
       } : null;
       reaper.markRunning(entry.name, leaseTarget, { lastActivity: now() });
+      if (leaseTarget) sweepRunCredentials(leaseTarget);
     }
     if (running.length) log(`[container] boot reconcile: ${running.length} running container(s) swept and registered idle`);
     return { ok: true, reason: "", running: running.map((entry) => entry.name), swept, containers };

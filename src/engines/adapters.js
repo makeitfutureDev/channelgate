@@ -62,16 +62,11 @@ const claude = validateEngineAdapter({
   id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", mcpMetaKey: "allowedMcps",
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
   efforts: ["low", "medium", "high", "xhigh"], models: [
-    { label: "Best", value: "best", description: "Claude's current best model for this account." },
-    { label: "Opus", value: "opus", description: "Claude Opus alias." },
-    { label: "Opus 1M", value: "opus[1m]", description: "Claude Opus with the 1M context alias." },
-    { label: "Sonnet", value: "sonnet", description: "Claude Sonnet alias." },
-    { label: "Sonnet 1M", value: "sonnet[1m]", description: "Claude Sonnet with the 1M context alias." },
-    { label: "Haiku", value: "haiku", description: "Claude Haiku alias." },
-    { label: "Fable", value: "fable", description: "Claude Fable alias." },
-    { label: "Opus plan", value: "opusplan", description: "Use Opus for planning and Sonnet for execution." },
+    { label: "Opus 5.5", value: "claude-opus-5-5", description: "Current Opus model for most coding and knowledge work." },
+    { label: "Fable 5.1", value: "claude-fable-5-1", description: "Current Fable model for demanding long-running work." },
+    { label: "Sonnet 5", value: "claude-sonnet-5", description: "Current Sonnet model for everyday work." },
+    { label: "Haiku 4.5", value: "claude-haiku-4-5", description: "Current Haiku model for fast, low-cost work." },
   ], mintsOwnSessionId: false,
-  modelCatalogSource: "aliases",
   // Provider-failure kinds (stream.js claudeProviderError) the orchestrator may replay IN PLACE on
   // this engine: the provider did not answer the request. Never the limit/credential kinds (their
   // own failover) and never the catch-all "provider" (a rejected request fails the same way twice).

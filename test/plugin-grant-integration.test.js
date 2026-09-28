@@ -116,3 +116,18 @@ for (const mode of ["inline", "file"]) test(`dual-manifest packages select each 
     await assert.rejects(access(path.join(run.pluginRuntime.claude.dirs[0], "config", `${engine}.json`)), { code: "ENOENT" });
   }
 });
+
+// CTR-30: the per-run settings file IS what a Claude turn receives (needsClaudeSettings), so the
+// home guard has to reach it — a guard only in the channel folder's file would never be read.
+test("a home-guarded run's generated settings deny the shell and file writes", async (t) => {
+  const adminMeta = { platform: "slack", adminMode: true, allowBash: true };
+  const guarded = await createRunGrantArtifacts({ slug: "home-guard-run", meta: adminMeta, needsClaudeSettings: true, homeGuard: true, target: fakeTarget(backend, "home-guard-run", adminMeta) });
+  const member = await createRunGrantArtifacts({ slug: "home-guard-run", meta: adminMeta, needsClaudeSettings: true, target: fakeTarget(backend, "home-guard-run", adminMeta) });
+  t.after(async () => { await guarded.cleanup(); await member.cleanup(); });
+  const settings = JSON.parse(await readFile(guarded.settingsFile, "utf8"));
+  for (const tool of ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"]) assert.ok(settings.permissions.deny.includes(tool), tool);
+  assert.ok(!settings.permissions.allow.includes("Bash"));
+  const unguarded = JSON.parse(await readFile(member.settingsFile, "utf8"));
+  assert.ok(unguarded.permissions.allow.includes("Bash"), "without the guard, Admin mode keeps Worker tools");
+  assert.notEqual(guarded.settingsFile, member.settingsFile, "content-addressed: a guarded and an unguarded run never share a file");
+});

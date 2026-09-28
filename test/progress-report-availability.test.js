@@ -19,7 +19,7 @@ test("runMessage defaults progress report off and threads the opt-in through bot
   assert.match(run, /const mcpRuntimeInput = \{[\s\S]*?progressReport: progressReportEnabled/);
   // `target` rides alongside `engine`: mcp.js needs both to pick the gateway server entry (the
   // checkout's stdio server on the host, the in-container bridge for an isolated runtime).
-  assert.match(engineMcp, /buildMcpConfig\(\{ \.\.\.identity, engine, target \}\)/);
+  assert.match(engineMcp, /buildMcpRuntimePayload\(\{ \.\.\.identity, engine, target \}\)/);
   assert.match(run, /progressReport: progressReportEnabled,/);
   assert.ok((run.match(/progressReport: progressReportEnabled/g) || []).length >= 2);
   assert.match(adapters, /progressReport: r\.progressReport/);
@@ -104,7 +104,7 @@ test("runMessage threads one per-channel Make toolbox through Claude, Codex, and
   assert.match(run, /const mcpRuntimeInput = \{[\s\S]*?makeToolboxUrl, makeToolboxKey/);
   // `target` rides alongside `engine`: mcp.js needs both to pick the gateway server entry (the
   // checkout's stdio server on the host, the in-container bridge for an isolated runtime).
-  assert.match(engineMcp, /buildMcpConfig\(\{ \.\.\.identity, engine, target \}\)/);
+  assert.match(engineMcp, /buildMcpRuntimePayload\(\{ \.\.\.identity, engine, target \}\)/);
   assert.ok((run.match(/makeToolboxUrl, makeToolboxKey/g) || []).length >= 2);
   assert.match(adapters, /makeToolboxUrl: r\.makeToolboxUrl, makeToolboxKey: r\.makeToolboxKey/);
 });

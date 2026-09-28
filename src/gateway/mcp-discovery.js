@@ -9,6 +9,7 @@
 import { spawn } from "node:child_process";
 import { requireAdapter } from "../engines/registry.js";
 import { processFailureMessage } from "../util/process-outcome.js";
+import { codexNoTelemetryArgs } from "../engines/codex-telemetry.js";
 
 const cache = new Map(); // engine -> { ts, data }
 const refreshing = new Map(); // engine -> in-flight refresh promise (dedupe concurrent refreshes)
@@ -236,7 +237,7 @@ export async function listCodexRuntimeMcps({
   };
 
   try {
-    child = spawnImpl("codex", ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
+    child = spawnImpl("codex", [...codexNoTelemetryArgs(), "app-server"], { stdio: ["pipe", "pipe", "pipe"] });
     const failed = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error("Codex MCP discovery timed out")), Math.max(1, timeoutMs));
       timer.unref?.();

@@ -50,6 +50,7 @@ import {
   TEMPLATE_BLOCK_ID,
 } from "../src/slack/channel-settings.js";
 import { footerButtons, settingsButton } from "../src/slack/footer.js";
+import { CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID } from "../src/slack/channel-settings.js";
 
 const [{ channelSettingsContext, channelSettingsEditOptions, secretsContext, cloudSelectionsAfterToggle, connectionSettingsPatch, runtimeSettingsPatch, nextRuntimeTriple, runtimeScopes, applyThreadRuntimeSelection }, store] = await Promise.all([
   import("../src/slack/app.js"),
@@ -139,30 +140,27 @@ const tabRow = (view) => view.blocks.find((block) => block.block_id === "cg_chan
 const selects = (view) => view.blocks.filter((block) => block.accessory?.type === "static_select");
 const rendered = (view) => JSON.stringify(view);
 
-test("Settings footer button is authorized-user-only and requester-bound", () => {
-  assert.equal(settingsButton("C1", "1.1", "U1", false), null);
-  assert.equal(settingsButton("C1", "1.1", "", true), null);
+test("Settings footer button is requester-bound, or unbound on an author-less post", () => {
+  assert.equal(settingsButton("", "1.1", "U1"), null);
 
-  const button = settingsButton("C1", "1.1", "U1", true);
+  const button = settingsButton("C1", "1.1", "U1");
   assert.equal(button.action_id, CHANNEL_SETTINGS_ACTION_ID);
   assert.equal(button.text.text, "⚙️ Settings");
   assert.deepEqual(parseActionValue(button.value), { o: "open", c: "C1", t: "1.1", u: "U1" });
+  // An automation post has no requester: the button opens under whoever clicks it.
+  assert.deepEqual(parseActionValue(settingsButton("C1", "", "").value), { o: "open", c: "C1", t: "", u: "" });
 });
 
-test("authorized user reply footer adds Settings after the existing workspace controls", () => {
-  const buttons = footerButtons(
-    { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
-    { channel: "C1", threadTs: "1.1", authorId: "U1", mayUseSettings: true },
-  );
-  // The 💻 resume control moved into Settings → Resume Session; footers no longer carry it.
-  assert.deepEqual(buttons.map((button) => button.text.text), ["📂", "🔑", "⚙️ Settings"]);
-  assert.equal(buttons.some((button) => button.action_id === "resume_cmd_modal"), false);
-
-  const ordinary = footerButtons(
-    { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
-    { channel: "C1", threadTs: "1.1", authorId: "U1", mayUseSettings: false },
-  );
-  assert.equal(ordinary.some((button) => button.action_id === CHANNEL_SETTINGS_ACTION_ID), false);
+test("every reply footer carries the same fixed menu: Files, Variables, Settings — no Resume", () => {
+  for (const authorId of ["U1", ""]) {
+    const buttons = footerButtons(
+      { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
+      { channel: "C1", threadTs: "1.1", authorId },
+    );
+    // The 💻 resume control moved into Settings → Resume Session; footers no longer carry it.
+    assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+    assert.equal(buttons.some((button) => button.action_id === "resume_cmd_modal"), false);
+  }
 });
 
 test("Channel Settings pages are one row of tabs with the open page highlighted", () => {
@@ -171,8 +169,8 @@ test("Channel Settings pages are one row of tabs with the open page highlighted"
   assert.equal(row.type, "actions", "tabs, not a dropdown (Tiberiu, QA-0925)");
   assert.equal(view.blocks.indexOf(row) < view.blocks.findIndex((block) => block.type === "header" || block.type === "section" && block !== row && /MCP connections/.test(JSON.stringify(block))), true, "above the page content");
   assert.deepEqual(row.elements.map((button) => parseActionValue(button.value).p), [...CHANNEL_SETTINGS_TABS]);
-  assert.deepEqual(row.elements.map((button) => button.text.text), ["General", "Resume", "MCP", "Skills", "Secrets"],
-    "short names, so the five fit one row of a modal");
+  assert.deepEqual(row.elements.map((button) => button.text.text), ["General", "Variables", "MCPs", "Skills", "Automations", "Resume"],
+    "Tiberiu's order (2026-09-28): General, Variables, MCPs, Skills, Automations, Resume");
   assert.deepEqual(row.elements.map((button) => button.action_id), CHANNEL_SETTINGS_TABS.map((tab) => `cg_channel_settings_tab_${tab}`));
   // Exactly the open page is highlighted, and every tab is bound to this view's owner.
   assert.deepEqual(row.elements.filter((button) => button.style === "primary").map((button) => parseActionValue(button.value).p), ["mcp"]);
@@ -730,4 +728,65 @@ test("a thread pick is validated against the harness the dropdown offered, not t
     () => applyThreadRuntimeSelection({ entry, meta, state: { ...state, threadTs: "" }, actorId: "U_MANAGER", field: "engine", value: "codex" }),
     /inside the thread/i,
   );
+});
+
+test("the Automations page lists this channel's schedules with the controls each kind allows", () => {
+  const empty = rendered(buildChannelSettingsView({ ...snapshot, automations: [] }, state, { tab: "automations" }));
+  assert.match(empty, /No automations in this channel yet/);
+  const automations = [
+    { id: "rec1", cron: "0 9 * * 1-5", description: "Daily <standup>", enabled: true, kind: "task", createdBy: "U1", lastStatus: "ok" },
+    { id: "rec2", cron: "0 18 * * *", prompt: "Evening digest", enabled: false, kind: "task" },
+    { id: "once1", once: true, runAt: "2026-10-01T07:30:00.000Z", description: "Ping Ana", enabled: true, kind: "reminder", ack: true },
+    { id: "loop1", loop: true, cron: "*/5 * * * *", loopReason: "watch CI", enabled: true, ticksRemaining: 7, threadTs: "1.2" },
+  ];
+  const view = buildChannelSettingsView({ ...snapshot, automations }, state, { tab: "automations" });
+  const text = rendered(view);
+  assert.match(text, /Daily &lt;standup&gt;/, "titles are escaped");
+  assert.match(text, /next 20/, "an enabled recurring row names its next run");
+  assert.match(text, /Paused/);
+  assert.match(text, /Reminder · needs ✅/);
+  assert.match(text, /7 ticks left/);
+  const controls = (id) => view.blocks.find((block) => block.block_id === `cg_automation_${id}`).elements
+    .map((el) => ({ label: el.text.text, action: el.action_id, command: parseActionValue(el.value) }));
+  assert.deepEqual(controls("rec1").map((c) => c.label), ["Pause", "Delete"]);
+  assert.deepEqual(controls("rec2").map((c) => c.label), ["Resume", "Delete"]);
+  assert.deepEqual(controls("once1").map((c) => c.label), ["Cancel"], "a one-time row is cancelled, never resumed");
+  assert.deepEqual(controls("loop1").map((c) => c.label), ["Stop loop"]);
+  const [pause, remove] = controls("rec1");
+  assert.equal(pause.action, CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID);
+  assert.deepEqual(pause.command, { o: "automation_toggle", c: state.channelId, u: state.ownerId, id: "rec1", enabled: false });
+  assert.equal(remove.action, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID);
+  for (const id of [CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID]) assert.match(id, CHANNEL_SETTINGS_ACTION_PATTERN);
+  assert.ok(view.blocks.find((block) => block.block_id === "cg_automation_rec1").elements[1].confirm, "delete asks first");
+});
+
+test("Automations controls act only on this channel's rows and respect the enabled-schedule ceiling", async () => {
+  const { applyAutomationAction } = await import("../src/slack/app.js");
+  const schedules = await import("../src/config/schedules.js");
+  const { getScheduleMaxPerChannel } = await import("../src/config/settings.js");
+  const mine = "C_AUTOMATIONS";
+  const rec = schedules.addSchedule({ channelId: mine, slug: "automations", cron: "0 9 * * *", prompt: "daily" });
+  const once = schedules.addSchedule({ channelId: mine, slug: "automations", runAt: "2026-10-01T07:30:00.000Z", once: true, prompt: "once" });
+  const other = schedules.addSchedule({ channelId: "C_OTHER_AUTOMATIONS", slug: "other", cron: "0 9 * * *", prompt: "not yours" });
+  const act = (actionId, command) => applyAutomationAction({ channelId: mine, slug: "automations", actorId: "U1", actionId, command });
+
+  assert.match(await act(CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, { id: rec.id, enabled: false }), /Paused/);
+  assert.equal(schedules.listForChannel(mine).find((s) => s.id === rec.id).enabled, false);
+  await assert.rejects(act(CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, { id: once.id, enabled: false }), /Only recurring/);
+  await assert.rejects(act(CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, { id: other.id }), /no longer exists/);
+  assert.ok(schedules.getSchedules().some((s) => s.id === other.id), "another channel's row is untouched");
+
+  // Resuming past the per-channel ceiling is refused, exactly like create_schedule.
+  const fillers = [];
+  while (schedules.countEnabledForChannel(mine) < getScheduleMaxPerChannel()) {
+    fillers.push(schedules.addSchedule({ channelId: mine, slug: "automations", cron: "0 10 * * *", prompt: "filler" }));
+  }
+  await assert.rejects(act(CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, { id: rec.id, enabled: true }), /limit/);
+  schedules.deleteSchedule(fillers.pop().id);
+  assert.match(await act(CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, { id: rec.id, enabled: true }), /Resumed/);
+  assert.equal(schedules.listForChannel(mine).find((s) => s.id === rec.id).enabled, true);
+
+  assert.match(await act(CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, { id: once.id }), /Removed/);
+  assert.equal(schedules.listForChannel(mine).some((s) => s.id === once.id), false);
+  for (const row of [...schedules.listForChannel(mine), other]) schedules.deleteSchedule(row.id);
 });

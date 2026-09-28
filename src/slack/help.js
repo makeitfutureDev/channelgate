@@ -16,7 +16,7 @@ export const HELP_TEXT =
   "• *Direct host work:* an organization admin can enable `/sudo` for one thread. Its admin messages run directly as the gateway daemon OS user, outside the channel container; non-admin messages to that thread are rejected. Use `/sudo off` to restore the normal container.\n" +
   "• *Useful checks:* `/status` shows active runs, background jobs, and schedules; `/pending` shows threads waiting on your decision; `/model` changes Claude/Codex, model, and effort; `/mode` shows the channel's tool-access mode.\n\n" +
   "*Commands* (this thread/channel)\n" +
-  "• `/menu` — show only the Resume, Files, Secrets, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
+  "• `/menu` — show only the Files, Variables, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
   "• `/help` — show this guide\n" +
   "• `/clear` — start a fresh session in this thread\n" +
   "• `/delete` — delete this thread's messages (admin; irreversible—everyone's if an admin user token is set in Settings, otherwise mine only)\n" +

@@ -233,6 +233,21 @@ export function secretScopeTier(scope) {
   return s === "organization" || s === "org" ? "admin" : "any";
 }
 
+// set_secret_mode: the organization's secrets need an admin, a conversation's its managers. Making a
+// PERSONAL secret readable hands its raw value to the containers of every conversation its owner
+// works in, and an "any" card could be approved by a bystander a prompt injection recruited — so
+// only an admin's click counts for that; hiding one (or `auto`) stays the owner's own call.
+export function secretModeTier(scope, mode = "") {
+  const s = String(scope || "personal").trim().toLowerCase();
+  if (s === "organization" || s === "org") return "admin";
+  if (s === "conversation" || s === "channel") return "manage";
+  return String(mode) === "readable" ? "admin" : "any";
+}
+function secretModeLabel(scope) {
+  const tier = secretModeTier(scope);
+  return tier === "admin" ? "ORGANIZATION-WIDE" : tier === "manage" ? "this conversation's" : "YOUR personal";
+}
+
 /** A gate's tier: a string, or a function of the call's arguments (see set_secret). */
 export function gateAuthz(gate, args = {}) {
   return typeof gate?.authz === "function" ? gate.authz(args ?? {}) : gate?.authz;
@@ -251,26 +266,19 @@ export function buildControlPlane({ loadMeta }) {
     ["clear_channel_drive_folder", { authz: "admin", details: () => "Unlink this channel's Google Drive sync folder (sync off)." }],
     ["add_channel_mcps", { authz: "manage", details: ({ names }) => `Allow MCP server(s) in this channel: ${summarize((names || []).join(", "))}` }],
     ["remove_channel_mcps", { authz: "manage", details: ({ names }) => `Remove MCP server(s) from this channel: ${summarize((names || []).join(", "))}` }],
-    // Skills (src/mcp/tools/skills.js): a conversation's grant list and the shared catalog are
-    // persistent state. Reads, previews and proposals are open; grants, templates, authoring and
-    // admin decisions carry a card.
-    ["add_channel_skills", { authz: "manage", details: ({ slugs }) => `Grant skill(s) in this channel: ${summarize((slugs || []).join(", "))}` }],
-    ["remove_channel_skills", { authz: "manage", details: ({ slugs }) => `Remove skill grant(s) from this channel: ${summarize((slugs || []).join(", "))}` }],
-    ["set_channel_skill_template", { authz: "manage", details: ({ template }) => (String(template || "").toLowerCase() === "none" ? "Stop this channel from following a skill template." : `Make this channel follow the "${summarize(template)}" skill template (live).`) }],
-    ["create_skill", { authz: "any", details: ({ slug, files, personal = false, scope = "library", grant_here = true }) => {
-      const name = slug ? ` (\`${summarize(slug)}\`)` : "";
-      const bundle = `${name} with ${(files || []).length} file(s)`;
-      if (personal && scope === "channel") return `A personal skill${bundle} cannot be created in a channel section. This combination will be rejected.`;
-      if (personal) return `Create a personal skill${bundle} and automatically grant it to your own runs. It will not be published to shared skill sources.`;
-      if (scope === "channel") return `Create a shared skill in this channel's section${bundle}; it will be active here automatically.`;
-      return `Create a skill in the shared library${bundle}${grant_here ? " and grant it in this channel" : " without adding a channel grant"}.`;
-    } }],
-    ["update_skill", { authz: "any", details: ({ skill, files }) => `Publish a new revision of skill \`${summarize(skill)}\` (${(files || []).length} changed file(s)).` }],
+    // Skills (src/mcp/tools/skills.js). Operator decision 2026-09-27: personal and channel skills
+    // belong to their author / the channel's members and never wait for anyone — create_skill,
+    // update_skill, delete_skill, add_/remove_channel_skills and set_channel_skill_template are
+    // OPEN; their handlers enforce who may change which tier, file an admin proposal for a
+    // non-admin's organization request, and tell the model to announce every change in its reply.
+    // Accepted residual risk: injected content inside an authorized turn can write a skill that
+    // loads in this channel's (or this author's) later turns — never the organization tier, which
+    // stays admin-only. The organization-wide admin tools below keep their card.
+    ["update_skill_template", { authz: "admin", details: ({ template, add = [], remove = [] }) => `Change the "${summarize(template)}" skill template — every conversation following it is affected.${add.length ? ` Add: ${summarize(add.join(", "))}.` : ""}${remove.length ? ` Remove: ${summarize(remove.join(", "))}.` : ""}` }],
     ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => `${decision === "approve" ? "APPROVE" : "Reject"} skill proposal #${Number(id) || "?"}.` }],
     ["sync_skill_sources", { authz: "admin", details: ({ id }) => `Sync ${id ? `skill source #${Number(id)}` : "every skill source"} into the catalog now.` }],
-    ["delete_skill", { authz: "any", details: ({ skill }) => `Remove skill \`${summarize(skill)}\` from the catalog (tombstone; an admin can restore it).` }],
     ["publish_skill", { authz: "manage", details: ({ skill }) => `Push skill \`${summarize(skill)}\` to the configured Git repository now.` }],
-    ["set_skill_scope", { authz: "manage", details: ({ skill, scope, channel }) => `Move skill \`${summarize(skill)}\` to ${scope === "channel" ? `the ${channel ? summarize(channel) : "current"} channel's section (that customer only)` : "the shared library (every conversation)"}; its files move in the skills repository.` }],
+    ["set_skill_scope", { authz: "admin", details: ({ skill, scope, channel }) => `Move skill \`${summarize(skill)}\` to ${scope === "channel" ? `the ${channel ? summarize(channel) : "current"} channel's section (that customer only)` : "the shared library (every conversation)"}; its files move in the skills repository.` }],
     ["add_org_skills", { authz: "admin", details: ({ slugs }) => `Grant skill(s) ORGANIZATION-WIDE (every conversation): ${summarize((slugs || []).join(", "))}` }],
     ["remove_org_skills", { authz: "admin", details: ({ slugs }) => `Remove organization-wide skill grant(s): ${summarize((slugs || []).join(", "))}` }],
     ["add_skill_source", { authz: "admin", details: ({ kind, url }) => `Add a ${summarize(kind)} skill source and sync it: ${summarize(url)}` }],
@@ -328,6 +336,12 @@ export function buildControlPlane({ loadMeta }) {
     ["remove_secret", { authz: ({ scope }) => secretScopeTier(scope), details: ({ name, scope }) => secretScopeTier(scope) === "admin"
       ? `Remove the organization-wide environment secret ${summarize(name)} — every conversation stops receiving it.`
       : `Remove YOUR personal environment secret ${summarize(name)}.` }],
+    // Hidden/readable and approved servers: making a secret readable hands containers its raw value,
+    // and an approved server is where its real value may go — both gated like the secret itself.
+    ["set_secret_mode", { authz: ({ scope, mode }) => secretModeTier(scope, mode), details: ({ name, mode, scope }) =>
+      `Make the ${secretModeLabel(scope)} secret ${summarize(name)} ${mode === "auto" ? "hidden or readable automatically" : mode.toUpperCase()}${mode === "readable" ? " — containers will receive its RAW value" : ""}.` }],
+    ["allow_secret_host", { authz: "admin", details: ({ name, host, scope }) =>
+      `Allow the ${secretModeLabel(scope)} secret ${summarize(name)} to be sent to ${summarize(host)} — the egress proxy will swap in its real value on that server.` }],
     // SSH access to channel containers (src/gateway/ssh-access.js): a registered key is what a
     // later grant turns into a shell inside a container, and a grant IS that shell. Never echo the
     // key material in the card — the fingerprint is computed after approval.

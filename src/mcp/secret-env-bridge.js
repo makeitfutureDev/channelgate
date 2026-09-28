@@ -29,7 +29,10 @@ if (typeof secret !== "string" || !secret) {
   process.exit(2);
 }
 
-const contextNames = ["CG_ENGINE", "CG_FS_ROOT", "CG_WORKSPACE_DIR", "CHANNELGATE_DIR", "CLAUDE_GATEWAY_DIR", "PATH", "CG_PROGRESS_REPORT"];
+// CG_MCP_SERVICE / CG_MCP_SOCKET select the daemon socket service and path for the image's socket
+// bridge (src/mcp/socket-server.js): Codex reaches the relayed remote MCPs ("remote-mcp") through
+// this same broker, so the capability still comes from the bundle and never rides argv/env.
+const contextNames = ["CG_ENGINE", "CG_FS_ROOT", "CG_WORKSPACE_DIR", "CHANNELGATE_DIR", "CLAUDE_GATEWAY_DIR", "PATH", "CG_PROGRESS_REPORT", "CG_MCP_SERVICE", "CG_MCP_SOCKET"];
 const context = Object.fromEntries(contextNames.filter((name) => typeof process.env[name] === "string").map((name) => [name, process.env[name]]));
 const child = spawn(process.execPath, [scriptPath, ...scriptArgs], {
   env: buildChildEnv({ ...context, [envName]: secret }),

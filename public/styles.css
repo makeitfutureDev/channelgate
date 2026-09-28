@@ -642,9 +642,15 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
    give an input. The boxes deliberately match the canonical .field control above: a secret input
    should look like every other input in the admin UI, wherever it appears. */
 .secret-list { display: grid; gap: 8px; margin-bottom: 10px; }
-.secret-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.secret-row code { font-weight: 600; }
-.secret-row .state { flex: 1 1 auto; }
+.vars-table-wrap { overflow-x: auto; }
+.vars-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.vars-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); font-weight: 600; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+.vars-table td { padding: 9px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; color: var(--ink); }
+.vars-table tr:last-child td { border-bottom: 0; }
+.vars-table td code { font-weight: 600; white-space: nowrap; }
+.vars-table td.state { color: var(--faint); font-style: normal; white-space: nowrap; }
+.vars-table .vars-secret, .vars-table .vars-readable { white-space: nowrap; }
+.vars-table .vars-actions { text-align: right; width: 1%; white-space: nowrap; }
 .secret-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .secret-add input { flex: 1 1 220px; min-width: 0; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
 .secret-add .secret-save { flex: none; }

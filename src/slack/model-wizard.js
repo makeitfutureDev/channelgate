@@ -69,6 +69,8 @@ export const EFFORT_PICKER_ACTION_PATTERN = /^cg_effort_pick(?:_\d+)?$/;
 export const ENGINE_PICKER_ACTION = "cg_engine_pick"; // legacy /engine dropdowns still sitting in Slack history
 const isPickerAction = (actionId, base) => actionId === base || actionId.startsWith(`${base}_`);
 const DEFAULT_PICKER_VALUE = "__default__";
+// Buttons and dropdowns already posted to Slack retain their old values after a deployment.
+const LEGACY_CLAUDE_PICKER_VALUES = new Set(["best", "opus", "opus[1m]", "sonnet", "sonnet[1m]", "haiku", "fable", "opusplan"]);
 
 function encodeWizardState({ scope, threadTs, value }) {
   return JSON.stringify({ s: scope === "thread" ? "t" : "c", t: threadTs || "", ...(value === undefined ? {} : { v: value }) });
@@ -108,8 +110,13 @@ function runtimeEngine(meta = {}) {
   return adapterFor(id) ? id : ENGINE_IDS[0];
 }
 
-export function modelOptionsForEngine(engine) {
-  return [MODEL_DEFAULT_OPTION, ...modelsForEngine(engine)];
+export function modelOptionsForEngine(engine, current = "") {
+  const options = [MODEL_DEFAULT_OPTION, ...modelsForEngine(engine)];
+  // A saved alias or older full ID remains visible and selectable while this scope uses it.
+  if (current && isValidModel(current) && modelBelongsToEngine(current, engine) && !options.some((option) => option.value === current)) {
+    options.push({ label: `Current: ${current.slice(0, 66)}`, value: current, description: "Previously selected model." });
+  }
+  return options;
 }
 
 function effortOptionsForEngine(engine, model = "") {
@@ -219,7 +226,7 @@ export function modelWizardModelBlocks({ scope, threadTs, engine, current, isDM 
     scope,
     threadTs,
     actionId: MODEL_PICKER_ACTION,
-    options: modelOptionsForEngine(engine),
+    options: modelOptionsForEngine(engine, current),
     current,
     backActionId: MODEL_WIZARD_BACK_ENGINE_ACTION,
     header: `*Choose a ${requireAdapter(engine).label} model* — for ${wizardScopeLabel(scope, isDM)}\nCurrent: \`${current || "default"}\``,
@@ -453,7 +460,9 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
 
     // Step 3 → 4: model picked.
     if (isPickerAction(actionId, MODEL_PICKER_ACTION)) {
-      if (!modelOptionsForEngine(engine).some((o) => o.value === (val || DEFAULT_PICKER_VALUE))) {
+      const currentModel = scope === "thread" ? await getThreadModel(entry.slug, threadTs) : meta.model || "";
+      const offered = modelOptionsForEngine(engine, currentModel).some((o) => o.value === (val || DEFAULT_PICKER_VALUE));
+      if (!offered && !(engine === "claude" && LEGACY_CLAUDE_PICKER_VALUES.has(val))) {
         await ephemeral("That model does not belong to the chosen harness.");
         return;
       }

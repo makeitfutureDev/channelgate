@@ -47,15 +47,22 @@ test("every model button carries the scope + thread + value the handler decodes"
 });
 
 test("the button already in force is marked, since buttons have no initial_option", () => {
-  const els = buttons(modelWizardModelBlocks({ scope: "channel", threadTs: "", engine: "claude", current: "sonnet", isDM: false }));
+  const els = buttons(modelWizardModelBlocks({ scope: "channel", threadTs: "", engine: "claude", current: "claude-sonnet-5", isDM: false }));
   const marked = els.filter((e) => e.style === "primary");
 
   assert.equal(marked.length, 1);
-  assert.equal(JSON.parse(marked[0].value).v, "sonnet");
+  assert.equal(JSON.parse(marked[0].value).v, "claude-sonnet-5");
   assert.match(marked[0].text.text, /^✓ /);
   // With no override set, the "Gateway default" entry is the one marked.
   const noOverride = buttons(modelWizardModelBlocks({ scope: "channel", threadTs: "", engine: "claude", current: "", isDM: false }));
   assert.equal(noOverride.findIndex((e) => e.style === "primary"), 0);
+});
+
+test("a previously saved Claude alias remains marked and selectable", () => {
+  const els = buttons(modelWizardModelBlocks({ scope: "channel", threadTs: "", engine: "claude", current: "opus", isDM: false }));
+  const selected = els.find((button) => button.style === "primary");
+  assert.equal(JSON.parse(selected.value).v, "opus");
+  assert.equal(selected.text.text, "✓ Current: opus");
 });
 
 test("the effort step is buttons too, one per level the engine accepts", () => {

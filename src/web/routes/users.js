@@ -6,10 +6,11 @@ import { getUsers, setUser } from "../../config/store.js";
 import { getDefaultNudges, userNudgesEnabled } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
 import { cleanAccessGrants } from "./helpers.js";
+import { revokeRemoteMcpsForAuthor } from "../../mcp/remote-mcp-registry.js";
 // A person's OWN environment secrets (config/scoped-env.js). Same write-only contract as a
 // channel's: listUserEnv's masked shape is the only thing that may leave the process.
 import { listUserEnv, patchUserEnv } from "../../config/scoped-env.js";
-import { listEnvVars, normalizeEnvName } from "../../config/channel-env.js";
+import { listEnvVars, normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
 // a stored user record can carry secrets this file has never heard of — a personal token from an
@@ -128,7 +129,7 @@ export function createUsersRouter() {
       const name = normalizeEnvName(req.params.name);
       let vars;
       try {
-        vars = await patchUserEnv(userId, { set: { name: req.params.name, value }, actor: USER_SECRET_ACTOR });
+        vars = await patchUserEnv(userId, { set: { name: req.params.name, value, ...swapRuleFieldsFrom(req.body) }, actor: USER_SECRET_ACTOR });
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
@@ -180,6 +181,9 @@ export function createUsersRouter() {
         Object.assign(patch, cleanAccessGrants(body.accessGrants));
 
       const saved = await setUser(userId, patch);
+      // The admin UI's "clear token" is the same revocation as clear_my_composio_token /
+      // clear_my_toolbox_token: in-flight container relays for that person's runs stop now.
+      if (patch.composioToken === "" || patch.toolboxToken === "") revokeRemoteMcpsForAuthor(userId);
       res.json({
         ok: true,
         user: {

@@ -623,7 +623,10 @@ function createTaskTimeline(push) {
 // All append/stop calls are serialized through a promise chain (the streamer's buffer is not
 // concurrency-safe). Any API failure flips `failed`, and finalize() falls back to a plain
 // postMessage so an answer is never lost if streaming is unavailable (missing scope / not enabled).
-function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, mayUseSettings = false, stopGraceMs = 1_000, uploadFile }) {
+function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, menuOwnerId, stopGraceMs = 1_000, uploadFile }) {
+  // Who the reply menu is bound to (footer.js). Defaults to the requester; a caller whose author is
+  // not a Slack user (an API run's caller-named author) passes "" for an unbound menu.
+  const menu = { channel, threadTs, authorId: menuOwnerId === undefined ? authorId : menuOwnerId };
   // Resolve "@Name" → "<@id>" as the answer streams in; the holdback buffer keeps a mention whole
   // even when it straddles two delta slices (flushed in finalize).
   const mentionStream = createMentionStream(dir);
@@ -1216,14 +1219,21 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           if (!answerStreamer?.ts) return false;
           await stopTimeline();
           await cleanupRetiredStreams();
-          if (hasOverflow) await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag);
+          // The menu ENDS the reply: with overflow it rides the last follow-up, not the streamed head.
+          if (hasOverflow) {
+            await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag,
+              footerText(result), footerButtons(result, menu));
+          }
           await shareImageFiles();
           return true;
         };
-        const finalFooterBlocks = footerBlocks(result, { channel, threadTs, authorId, mayUseSettings });
+        // With overflow the footer and menu go under the LAST follow-up (sealDelivered), so the
+        // streamed head closes without them.
+        const finalFooterBlocks = hasOverflow ? [] : footerBlocks(result, menu);
+        const stopBlocks = [...imageBlocks, ...finalFooterBlocks];
         const stopWithFooter = () => answerStreamer.stop({
           ...terminalPayload,
-          blocks: [...imageBlocks, ...finalFooterBlocks],
+          ...(stopBlocks.length ? { blocks: stopBlocks } : {}),
         });
         try {
           if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
@@ -1248,7 +1258,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
               // terminal write without image previews first, so a bad/unreachable image cannot
               // discard a healthy stats footer. Do not append terminal markdown a second time:
               // that text is still in ChatStreamer's buffer from the rejected request.
-              await answerStreamer.stop(imageBlocks.length ? { blocks: finalFooterBlocks } : undefined);
+              await answerStreamer.stop(imageBlocks.length && finalFooterBlocks.length ? { blocks: finalFooterBlocks } : undefined);
               if (await sealDelivered()) return;
             } catch (footerError) {
               if (imageBlocks.length && isSlackInvalidBlocksError(footerError)) {
@@ -1280,9 +1290,9 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           // streamed copy this fallback replaces, so nothing of it survives to be duplicated.
           resolveMentions(mdToMrkdwn(fullRaw.trim()), dir).trim() + tag,
           footerText(result),
-          footerButtons(result, { channel, threadTs, authorId, mayUseSettings }),
+          footerButtons(result, menu),
           {
-            footerBlocks: footerBlocks(result, { channel, threadTs, authorId, mayUseSettings }),
+            footerBlocks: footerBlocks(result, menu),
             answerBlocks: imageBlocks,
           },
         );

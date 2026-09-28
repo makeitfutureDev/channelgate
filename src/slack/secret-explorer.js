@@ -44,6 +44,17 @@ export const SECRETS_NAME_BLOCK_ID = "secret_name";
 export const SECRETS_NAME_INPUT_ACTION_ID = "cg_channel_secrets_name_value";
 export const SECRETS_VALUE_BLOCK_ID = "secret_value";
 export const SECRETS_VALUE_INPUT_ACTION_ID = "cg_channel_secrets_value_value";
+// The one choice a person makes: is this value a SECRET? Everything else — where it may be sent,
+// whether a placeholder can work for it (an SMTP or database login cannot), the approvals — the
+// gateway decides (src/gateway/egress/catalog-rules.js). The action id deliberately does NOT match
+// SECRETS_ACTION_PATTERN: it is a form input, read on submit, never a button action.
+export const SECRETS_KIND_BLOCK_ID = "secret_kind";
+export const SECRETS_KIND_INPUT_ACTION_ID = "cg_secret_form_is_secret";
+export const SECRET_CHECKBOX_VALUE = "secret";
+// Optional "Allowed domains": restrict a secret to exactly these domains (no approval cards, and
+// never sent anywhere else). Same rule: a form input, not a button action.
+export const SECRETS_DOMAINS_BLOCK_ID = "secret_domains";
+export const SECRETS_DOMAINS_INPUT_ACTION_ID = "cg_secret_form_domains";
 const EXPIRED = "This secrets manager expired. Open it again with `/secrets`.";
 
 export function actionValue(op, extra = {}) {
@@ -115,7 +126,19 @@ export function describeSecret(entry = {}) {
   // An entry whose provider this build has no resolver for is SHOWN, not hidden — it is why runs
   // in this channel are failing, and hiding it would leave that unexplained.
   const unresolvable = entry.resolvable === false ? `  ·  ⚠️ provider \`${entry.provider}\` can't be resolved by this build — runs here will fail until it is removed or the build supports it` : "";
-  return `*${entry.name}* — ${maskLabel(entry)}${trail ? `  ·  set ${trail}` : ""}${unresolvable}`;
+  return `*${entry.name}* — ${maskLabel(entry)}${visibilityLabel(entry)}${trail ? `  ·  set ${trail}` : ""}${unresolvable}`;
+}
+
+// How a container receives it (src/gateway/egress/catalog-rules.js): a placeholder (hidden) or the
+// raw value (readable), with the servers it may reach and why — no value, no tail beyond maskLabel.
+export function visibilityLabel(entry = {}) {
+  if (entry.approval === true) {
+    const hosts = (entry.hosts || []).join(", ");
+    return `  ·  🔒 hidden — ${hosts ? `approved for ${hosts}` : "each new server asks an admin once"}`;
+  }
+  if (entry.protected === true) return `  ·  🔒 hidden — used on ${(entry.hosts || []).join(", ")}`;
+  if (entry.protected === false) return `  ·  👁 readable${entry.exposureReason ? ` (${entry.exposureReason})` : ""}`;
+  return "";
 }
 
 // Per-scope copy. Kept in one table so a scope cannot ship with a heading that says one thing and
@@ -226,7 +249,7 @@ export function buildSecretsView(scopes = {}, state = {}, { channelName = "", ma
     type: "modal",
     callback_id: "cg_channel_secrets_modal",
     private_metadata: secretsMetadata(state),
-    title: plain("Secrets"),
+    title: plain("Variables"),
     close: plain("Done"),
     blocks,
   };
@@ -282,6 +305,33 @@ export function buildSecretFormView(state = {}, { channelName = "", name = "", s
         },
         hint: plain(`Values shorter than ${MIN_MASKABLE_LENGTH} characters are listed without a visible tail.`),
       },
+      {
+        type: "input",
+        block_id: SECRETS_KIND_BLOCK_ID,
+        optional: true,
+        label: plain("Secret?"),
+        element: {
+          type: "checkboxes",
+          action_id: SECRETS_KIND_INPUT_ACTION_ID,
+          // Checked by default: a value is a secret unless the person says otherwise.
+          options: [{ text: plain("It's a secret"), value: SECRET_CHECKBOX_VALUE, description: plain("Programs see a stand-in; the real value is only sent to servers an admin approves. Email and database passwords stay usable.") }],
+          initial_options: [{ text: plain("It's a secret"), value: SECRET_CHECKBOX_VALUE, description: plain("Programs see a stand-in; the real value is only sent to servers an admin approves. Email and database passwords stay usable.") }],
+        },
+        hint: plain("Untick for plain configuration (an id, a region, a URL) that programs may read."),
+      },
+      {
+        type: "input",
+        block_id: SECRETS_DOMAINS_BLOCK_ID,
+        optional: true,
+        label: plain("Allowed domains"),
+        element: {
+          type: "plain_text_input",
+          action_id: SECRETS_DOMAINS_INPUT_ACTION_ID,
+          placeholder: plain("Optional — api.example.com, other.example.com"),
+          max_length: 1000,
+        },
+        hint: plain("Optional. Restricts the secret to only these domains — no approval needed, never sent anywhere else. Empty: each new server asks an admin once. Never a shared suffix like *.vercel.app."),
+      },
     ],
   };
 }
@@ -290,7 +340,7 @@ export function buildSecretsErrorView(message) {
   return {
     type: "modal",
     callback_id: "cg_channel_secrets_error",
-    title: plain("Channel secrets"),
+    title: plain("Variables"),
     close: plain("Close"),
     blocks: [{ type: "section", text: mrkdwn(`⚠️ ${String(message || "Something went wrong.")}`) }],
   };
@@ -300,8 +350,17 @@ export function buildSecretsErrorView(message) {
 // in this module that touches one, and it is handed straight to channel-env.js by the caller.
 export function readSecretForm(view = {}) {
   const values = view?.state?.values || {};
+  const kind = values[SECRETS_KIND_BLOCK_ID]?.[SECRETS_KIND_INPUT_ACTION_ID];
+  const domains = String(values[SECRETS_DOMAINS_BLOCK_ID]?.[SECRETS_DOMAINS_INPUT_ACTION_ID]?.value || "").trim();
   return {
     name: String(values[SECRETS_NAME_BLOCK_ID]?.[SECRETS_NAME_INPUT_ACTION_ID]?.value || "").trim(),
     value: String(values[SECRETS_VALUE_BLOCK_ID]?.[SECRETS_VALUE_INPUT_ACTION_ID]?.value || "").trim(),
+    // Ticked → hidden (the gateway still keeps an SMTP/database login readable, since a stand-in
+    // cannot work there); unticked → readable. A form from an older build without the block keeps
+    // whatever is stored.
+    ...(kind ? { exposure: (kind.selected_options || []).some((o) => o?.value === SECRET_CHECKBOX_VALUE) ? "hidden" : "readable" } : {}),
+    // Domains restrict a SECRET, so naming any makes it one whatever the box says. Empty keeps the
+    // stored list (a rotation must not drop it).
+    ...(domains ? { hosts: domains, exposure: "hidden" } : {}),
   };
 }

@@ -1,13 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { canOpenMessageFileButton, fileButtonNoticePayload } from "../src/slack/app.js";
+import { canOpenMenuButton, canOpenMessageFileButton, fileButtonNoticePayload } from "../src/slack/app.js";
 
 test("message file buttons allow their owner and admins, but not another ordinary user", () => {
   assert.equal(canOpenMessageFileButton({ ownerId: "U_OWNER", clickerId: "U_OWNER" }), true);
   assert.equal(canOpenMessageFileButton({ ownerId: "U_OWNER", clickerId: "U_ADMIN", clickerIsAdmin: true }), true);
   assert.equal(canOpenMessageFileButton({ ownerId: "U_OWNER", clickerId: "U_OTHER" }), false);
   assert.equal(canOpenMessageFileButton({ ownerId: "U_OWNER", clickerId: "", clickerIsAdmin: true }), false);
+});
+
+test("an automation post's unbound menu opens for any clicker (their own authorization applies)", () => {
+  assert.equal(canOpenMessageFileButton({ ownerId: "", clickerId: "U_ANY" }), true);
+  assert.equal(canOpenMessageFileButton({ ownerId: "", clickerId: "" }), false);
+  assert.equal(canOpenMenuButton({ ownerId: "", clickerId: "U_ANY" }), true);
+  assert.equal(canOpenMenuButton({ ownerId: "U_OWNER", clickerId: "U_OWNER" }), true);
+  assert.equal(canOpenMenuButton({ ownerId: "U_OWNER", clickerId: "U_OTHER" }), false);
+  assert.equal(canOpenMenuButton({ ownerId: "", clickerId: "" }), false);
 });
 
 test("file-button notices stay in the thread encoded by the clicked button", () => {
