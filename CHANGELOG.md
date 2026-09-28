@@ -16,6 +16,10 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- **A provider usage limit no longer blocks an update.** Before and after updating, the updater sends each engine a tiny test prompt inside a throwaway container. A reply like "You've hit your weekly limit" used to refuse the update, even though it proves the engine starts, logs in and reaches its provider. It now counts as reachable. A broken login or engine still stops the update.
+
 ## 0.6.0 — 2026-09-28
 
 - **Claude model choices now show exact versions.** The `/model` picker and admin selectors list
