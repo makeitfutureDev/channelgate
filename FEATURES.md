@@ -310,7 +310,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Its script refuses non-hosted or occupied hosts. A separate KVM guest workflow exercises an
   actual OS reboot, service autostart and persistent database/container-volume fixtures.
   Authenticated engine update smoke and conversation/session acceptance remain separate live
-  gates. → TEST-PLAN: Disposable Linux lifecycle workflow.
+  gates. → TEST-PLAN: Disposable Linux lifecycle workflow. The update's engine smoke (a
+  throwaway container, one fixed prompt per configured engine, before the update and after the
+  restart) counts a provider **usage limit** (weekly/session plan cap, spent credits, rate limit)
+  as REACHABLE, noted "reachable but usage-limited": the CLI started in the new container,
+  authenticated and reached its provider, which is what the smoke proves (2026-09-28, an update on
+  Atlas was refused over a Claude weekly limit). A bad login, a missing CLI or a wrong answer still
+  refuses the update or rolls it back.
 - **Service-account image provisioning** uses the same explicit environment as the systemd
   daemon so operator XDG/container storage settings cannot redirect a fresh build into another
   user's private Podman store, and runs from the service-owned checkout so an operator-private

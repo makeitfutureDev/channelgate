@@ -7869,6 +7869,12 @@ the suite runs as an enterprise deployment because it holds a license it actuall
 
 ## Container update verification and recovery
 
+- [x] Unit — the update engine smoke counts a provider usage limit (thrown or returned: Claude's
+      weekly/session limit, Codex's usage limit, a rate limit) as reachable with a
+      "reachable but usage-limited" note, both before the update and for an engine required after
+      the restart; an authentication failure, a missing CLI or an unexpected answer still fails it
+      (`test/update-smoke.test.js`).
+
 - Both Claude and Codex fixtures: configure each login, invoke the internal authenticated update smoke route, require exact CG_UPDATE_SMOKE_OK responses per engine. Verify isolated target, no bypass/MCP injection, no host engine child, and removal of the ephemeral container, HOME volume and work folders. Invalid configured credentials must fail; absent credentials must be explicitly skipped; zero probes fails.
 - Image recovery: build old pins, change the desired Codex pin without changing imageSpecVersion, make the first build fail, then run Update again on the same checkout revision. Require retry and matching built/desired source digest; a build exiting zero with stale labels fails verification. Existing channels retain HOME and adopt the new image when idle.
 - Admin container status: require actual built and desired Claude/Codex versions, rebuild-needed status, and count of containers awaiting adoption. A custom image reference must never report a successful default-image rebuild.
