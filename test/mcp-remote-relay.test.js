@@ -26,14 +26,18 @@ function toolServer(seen) {
 
 // mode "streamable": stateless Streamable HTTP on /mcp. mode "sse": POST /mcp answers 405 (an
 // SSE-only server), GET /mcp opens the legacy stream, POST /messages carries client frames.
-// mode "broken": every request is a 502.
+// mode "broken": every request is a 502. mode "error500": every request is a 500. mode "flaky":
+// the first request is a 502, then it behaves as "streamable".
 async function startRemote(t, mode) {
   const seen = { headers: [], calls: [] };
+  let flakes = mode === "flaky" ? 1 : 0;
   const sse = new Map();
   const httpServer = http.createServer(async (req, res) => {
     seen.headers.push({ method: req.method, path: req.url, key: req.headers["x-consumer-api-key"] || "", auth: req.headers.authorization || "" });
     if (mode === "broken") { res.writeHead(502).end("upstream says: key ck_leak"); return; }
-    if (mode === "streamable" && req.url === "/mcp") {
+    if (mode === "error500") { res.writeHead(500).end("upstream says: key ck_leak"); return; }
+    if (flakes > 0) { flakes -= 1; res.writeHead(502).end("error code: 502"); return; }
+    if ((mode === "streamable" || mode === "flaky") && req.url === "/mcp") {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       const server = toolServer(seen);
       res.on("close", () => { transport.close(); server.close(); });
@@ -89,10 +93,38 @@ test("a 4xx from the Streamable endpoint falls back to HTTP+SSE, headers include
 test("a 5xx is a failure, not a transport hint, and its message quotes nothing upstream", async (t) => {
   const remote = await startRemote(t, "broken");
   await assert.rejects(
-    connectRemoteClient({ url: "https://remote.example/mcp", headers: { "x-consumer-api-key": "ck_leak" }, fetch: remote.fetch }),
-    (error) => error.message === "remote MCP server unavailable",
+    connectRemoteClient({ url: "https://remote.example/mcp", headers: { "x-consumer-api-key": "ck_leak" }, fetch: remote.fetch, retryDelaysMs: [0] }),
+    (error) => error.message === "remote MCP server unavailable" && error.upstream === "HTTP 502",
   );
   assert.equal(remote.seen.headers.filter((h) => h.method === "GET").length, 0, "no SSE fallback on a 5xx");
+  assert.equal(remote.seen.headers.filter((h) => h.method === "POST").length, 2, "a 502 is retried once, then given up");
+});
+
+test("a transient 502 is retried and the connection comes up", async (t) => {
+  const remote = await startRemote(t, "flaky");
+  const client = await connectRemoteClient({ url: "https://remote.example/mcp", headers: { "x-consumer-api-key": "ck_flaky" }, fetch: remote.fetch, retryDelaysMs: [0] });
+  t.after(() => client.close());
+  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["echo"]);
+  assert.equal(remote.seen.headers[0].method, "POST", "the first initialize met the 502");
+});
+
+test("a non-transient 5xx is not retried", async (t) => {
+  const remote = await startRemote(t, "error500");
+  await assert.rejects(
+    connectRemoteClient({ url: "https://remote.example/mcp", fetch: remote.fetch, retryDelaysMs: [0] }),
+    (error) => error.message === "remote MCP server unavailable" && error.upstream === "HTTP 500",
+  );
+  assert.equal(remote.seen.headers.length, 1);
+});
+
+test("a network failure is retried and reported as a fixed phrase, never the resolver's text", async () => {
+  let dials = 0;
+  const failing = async () => { dials += 1; throw new TypeError("fetch failed: getaddrinfo ENOTFOUND secret-host.internal"); };
+  await assert.rejects(
+    connectRemoteClient({ url: "https://remote.example/mcp", fetch: failing, retryDelaysMs: [0] }),
+    (error) => error.message === "remote MCP server unavailable" && error.upstream === "network error",
+  );
+  assert.equal(dials, 2);
 });
 
 test("only https URLs without embedded credentials are dialled", async () => {
