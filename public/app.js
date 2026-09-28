@@ -2114,6 +2114,7 @@ function renderChannelDetail(ch) {
   mountSecretEditor({
     root: card,
     vars: Array.isArray(meta.envVars) ? meta.envVars : [],
+    userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/channels/${encodeURIComponent(ch.channelId)}/env/${encodeURIComponent(name)}`,
     namePlaceholder: "SUPABASE_ACCESS_TOKEN",
     emptyText: "No variables — runs here use whatever login the gateway host has, plus any organization secret.",
@@ -2989,6 +2990,7 @@ function openUserDrawer(id) {
   mountSecretEditor({
     root: secretsRow,
     vars: u.secrets || [],
+    userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/users/${encodeURIComponent(id)}/env/${encodeURIComponent(name)}`,
     namePlaceholder: "GH_TOKEN",
     emptyText: "No personal variables — this person's runs use the organization's and each conversation's own secrets.",
@@ -3763,6 +3765,7 @@ async function loadOrgSecrets() {
   orgSecretEditor = mountSecretEditor({
     root: card,
     vars,
+    userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/org-secrets/${encodeURIComponent(name)}`,
     namePlaceholder: "GH_TOKEN",
     emptyText: "No organization variables — each conversation relies on its own secrets, or on whatever login the gateway host has.",

@@ -20,6 +20,8 @@ export function mountSecretEditor({
   savedText = (name) => `Saved ${name}. It reaches the next run.`,
   namePlaceholder = "GH_TOKEN",
   disabled = false,
+  // Slack user id → display name (the admin app's user directory); "" when unknown.
+  userName = () => "",
 }) {
   const list = root.querySelector(".secret-list");
   const state = root.querySelector(".secret-state");
@@ -43,29 +45,44 @@ export function mountSecretEditor({
       list.appendChild(empty);
       return;
     }
+    // One table: name, masked value, how containers receive it, where it may be sent, who set it.
+    const wrap = document.createElement("div");
+    wrap.className = "utable vars-table-wrap";
+    const table = document.createElement("table");
+    table.className = "vars-table";
+    const head = table.createTHead().insertRow();
+    for (const label of ["Name", "Value", "Type", "Servers", "Set by", "Updated", ""]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      head.appendChild(th);
+    }
+    const body = table.createTBody();
     for (const entry of current) {
-      const row = document.createElement("div");
-      row.className = "secret-row";
+      const row = body.insertRow();
+      const cell = (text, { className = "", title = "" } = {}) => {
+        const td = row.insertCell();
+        if (className) td.className = className;
+        if (title) td.title = title;
+        if (text instanceof Node) td.appendChild(text); else td.textContent = text;
+        return td;
+      };
       const name = document.createElement("code");
       name.textContent = entry.name;
-      const mask = document.createElement("em");
-      mask.className = "state";
-      const trail = [
-        entry.setBy ? `set by ${entry.setBy}` : "",
-        entry.setAt ? new Date(entry.setAt).toISOString().slice(0, 10) : "",
-      ].filter(Boolean).join(" · ");
-      // Egress protection (src/gateway/egress/): a protected secret reaches a container only as a
-      // placeholder the proxy swaps on these hosts; an unprotected one is injected raw.
-      // A HIDDEN secret with no known destination (approval === true) is swapped only on servers an
-      // admin approved; its first use on a new server posts an approval card in the chat thread.
-      const egress = entry.approval === true
-        ? ` · hidden — approved servers: ${(entry.hosts || []).join(", ") || "none yet (first use asks an admin)"}`
-        : entry.protected === true
-          ? ` · protected via egress proxy (${(entry.hosts || []).join(", ")})`
-          : entry.protected === false ? ` · readable (raw)${entry.exposureReason ? ` — ${entry.exposureReason}` : ""}` : "";
-      mask.textContent = `${entry.last4 ? `••••${entry.last4}` : "•••••••"}${trail ? ` · ${trail}` : ""}${egress}`
-        + (entry.resolvable === false ? ` · ⚠️ provider "${entry.provider}" can't be resolved by this build` : "");
-      row.append(name, mask);
+      cell(name);
+      cell(`${entry.last4 ? `••••${entry.last4}` : "•••••••"}${entry.resolvable === false ? ` ⚠️ provider "${entry.provider}" can't be resolved` : ""}`, { className: "state" });
+      // Egress (src/gateway/egress/): a SECRET reaches a container only as a placeholder the proxy
+      // swaps on its servers — built-in or declared ones, or those an admin approved on first use;
+      // a READABLE one is injected raw (with the reason: a password-looking name, a URL value, a choice).
+      const secret = entry.protected === true;
+      cell(secret ? "🔒 Secret" : "👁 Readable", { className: secret ? "vars-secret" : "vars-readable", title: secret ? "Programs see a stand-in; the real value is sent only to the servers listed." : entry.exposureReason || "Programs get the real value." });
+      const hosts = (entry.hosts || []).join(", ");
+      cell(secret ? (hosts || (entry.approval ? "asks an admin on first use" : "—")) : "—", { className: hosts ? "" : "state", title: entry.approval ? "Servers an admin approved. A new server asks once, in the conversation's thread." : "" });
+      const who = String(entry.setBy || "");
+      const id = /^<@([A-Z0-9]+)>$/.exec(who)?.[1];
+      cell(id ? (userName(id) || id) : who || "—", { className: who ? "" : "state", title: id || "" });
+      cell(entry.setAt ? new Date(entry.setAt).toISOString().slice(0, 10) : "—", { className: "state" });
+      const actions = row.insertCell();
+      actions.className = "vars-actions";
       if (!disabled) {
         const remove = document.createElement("button");
         remove.type = "button";
@@ -87,10 +104,11 @@ export function mountSecretEditor({
             hint.textContent = e.message || "Couldn't remove that variable.";
           }
         });
-        row.appendChild(remove);
+        actions.appendChild(remove);
       }
-      list.appendChild(row);
     }
+    wrap.appendChild(table);
+    list.appendChild(wrap);
   };
   render();
 
