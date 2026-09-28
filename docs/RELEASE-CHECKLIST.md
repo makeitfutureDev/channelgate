@@ -16,8 +16,9 @@
 > checkbox and optional Allowed domains, non-admin turns are read-only while an Admin channel
 > mounts the operator home, Codex Read mode runs commands again, the Claude model pickers show exact
 > versions, and Codex usage metrics are switched off on every spawn. The image is spec 1.6.1
-> (bubblewrap, per-channel `/tmp` volumes); every other host must run `npm run build:image` before
-> restarting. Live on Xavier before the cut (Claude and Codex through the QA actors, recorded in the
+> (bubblewrap, per-channel `/tmp` volumes); the updater (Settings → Update or `scripts/update.sh`)
+> rebuilds the default image automatically — `npm run build:image` by hand only if it reports the
+> image build failed or the host uses a custom image. Live on Xavier before the cut (Claude and Codex through the QA actors, recorded in the
 > private QA base): EGR-01/03/04/05/07/09/10, CDX-01..04/08, EN-01 and EN-09 on Codex, CTR-30 on both
 > engines, SSHP-01..05 from the gateway host, and the hidden-variable first-use approval with the
 > post-approval swap. Still open for the next release: SSHP-06/07 (need a desktop VS Code), the Slack
