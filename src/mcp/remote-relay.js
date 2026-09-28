@@ -47,18 +47,38 @@ export function validateRemoteUrl(value) {
 // The standard client pattern: Streamable HTTP first, and the legacy HTTP+SSE transport only when
 // the server answered the Streamable initialize with a 4xx (the "this endpoint does not speak
 // Streamable HTTP" signal: 404/405 on the POST). Anything else — a network failure, a 5xx — is a
-// real failure and is not retried on a second transport. `fetch` is injectable for tests only.
-export async function connectRemoteClient({ url, headers = {}, fetch = undefined } = {}) {
+// real failure and is not retried on a second transport. A TRANSIENT one (a network error, or a
+// 502/503/504 from the provider's edge) is retried on the same transport after each of
+// `retryDelaysMs`, so a blip does not drop the connector for a whole turn; a lasting outage still
+// fails within a few seconds, well inside the engine's MCP startup window. The thrown error keeps
+// its fixed message and carries `upstream` ("HTTP 502", "network error") for the DAEMON's log
+// only — a status code or a fixed phrase, never upstream text. `fetch` is injectable for tests only.
+export const REMOTE_CONNECT_RETRY_DELAYS_MS = Object.freeze([1_000]);
+const TRANSIENT_STATUSES = new Set([502, 503, 504]);
+
+function unavailable(status) {
+  return Object.assign(new Error("remote MCP server unavailable"), {
+    upstream: status >= 100 && status < 600 ? `HTTP ${status}` : "network error",
+  });
+}
+
+export async function connectRemoteClient({ url, headers = {}, fetch = undefined, retryDelaysMs = REMOTE_CONNECT_RETRY_DELAYS_MS } = {}) {
   const target = validateRemoteUrl(url);
   const requestInit = { headers: { ...headers } };
-  const streamable = new Client(CLIENT_INFO, { capabilities: {} });
-  try {
-    await streamable.connect(new StreamableHTTPClientTransport(target, { requestInit, ...(fetch ? { fetch } : {}) }));
-    return streamable;
-  } catch (error) {
-    await streamable.close().catch(() => {});
-    const status = Number(error?.code);
-    if (!(status >= 400 && status < 500)) throw new Error("remote MCP server unavailable");
+  for (let attempt = 0; ; attempt++) {
+    const streamable = new Client(CLIENT_INFO, { capabilities: {} });
+    let status;
+    try {
+      await streamable.connect(new StreamableHTTPClientTransport(target, { requestInit, ...(fetch ? { fetch } : {}) }));
+      return streamable;
+    } catch (error) {
+      await streamable.close().catch(() => {});
+      status = Number(error?.code);
+    }
+    if (status >= 400 && status < 500) break; // the SSE hint, below
+    const transient = !(status >= 100 && status < 600) || TRANSIENT_STATUSES.has(status);
+    if (!transient || attempt >= retryDelaysMs.length) throw unavailable(status);
+    await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt]));
   }
   const sse = new Client(CLIENT_INFO, { capabilities: {} });
   try {
@@ -67,15 +87,12 @@ export async function connectRemoteClient({ url, headers = {}, fetch = undefined
       ...(fetch ? { fetch, eventSourceInit: { fetch } } : {}),
     }));
     return sse;
-  } catch {
+  } catch (error) {
     await sse.close().catch(() => {});
-    throw new Error("remote MCP server unavailable");
+    throw unavailable(Number(error?.code));
   }
 }
 
-// Forwarded request options: the engine's cancellation aborts the upstream call, and upstream
-// progress is re-emitted downstream under the ENGINE's progress token (the client allocates its
-// own token for the upstream leg, so the engine's must not be forwarded as-is).
 function forwardOptions(params, extra) {
   const progressToken = params?._meta?.progressToken;
   const options = { timeout: RELAY_REQUEST_TIMEOUT_MS, resetTimeoutOnProgress: true };

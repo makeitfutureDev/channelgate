@@ -279,7 +279,11 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
     } catch (e) {
       // Deliberately terse for the relaying services: upstream errors can quote request headers or URLs.
       const reason = frame.service === "gateway" ? String(e?.message || "server error") : REFUSAL_BY_SERVICE[frame.service];
-      log?.warn?.(`[gateway] MCP socket: ${frame.service} connection failed — ${reason}`);
+      // The daemon's own log may name the server and the upstream status ("HTTP 502" / "network
+      // error" — set by connectRemoteClient, never upstream text): without it an outage at the
+      // provider reads exactly like a gateway bug. The container still gets the fixed sentence.
+      const upstream = frame.service === "remote-mcp" && typeof e?.upstream === "string" ? ` (${remoteName}: upstream ${e.upstream})` : "";
+      log?.warn?.(`[gateway] MCP socket: ${frame.service} connection failed — ${reason}${upstream}`);
       refuse(socket, reason);
     }
   }

@@ -2664,7 +2664,9 @@ are retired, bullet by bullet; everything else stands.
   server AND the daemon holds a live registration for it; at most 8 relay connections per grant
   and server exist at once (a slot is held until the upstream dial has settled, so hello-then-hang-up
   cannot fan out dials), and a container that hangs up mid-dial never leaves the upstream client
-  open. The daemon dials the server (Streamable HTTP, HTTP+SSE on a 4xx; https only) and forwards
+  open. The daemon dials the server (Streamable HTTP, HTTP+SSE on a 4xx; https only; a network
+  error or a 502/503/504 is retried once after a second, and a failed dial is logged daemon-side
+  with the server name and the upstream status only — `upstream HTTP 502` / `network error`) and forwards
   `tools/list` and `tools/call`, re-authorizing each, passing the engine's cancellation upstream and
   upstream progress back (`src/mcp/remote-relay.js`). Refusals are fixed sentences that quote no
   URL, header or upstream error; a failed forwarded request reaches the engine as `remote MCP

@@ -71,10 +71,10 @@ function rawExchange(socketPath, line) {
 
 // One listener per test, torn down with the test: the module keeps a single active server, so a
 // leaked one from a failed test would silently serve the next test's assertions.
-async function serverOn(t, handlers = {}, { connectRemote } = {}) {
+async function serverOn(t, handlers = {}, { connectRemote, warnings = [] } = {}) {
   const dir = shortSocketDir();
   const socketPath = path.join(dir, "mcp.sock");
-  const active = await startMcpSocketServer({ handlers, socketPath, dir, log: { log() {}, warn() {} }, ...(connectRemote ? { connectRemote } : {}) });
+  const active = await startMcpSocketServer({ handlers, socketPath, dir, log: { log() {}, warn: (m) => warnings.push(m) }, ...(connectRemote ? { connectRemote } : {}) });
   assert.ok(active, "the socket server must bind under a short /tmp path");
   t.after(() => stopMcpSocketServer());
   return socketPath;
@@ -389,6 +389,20 @@ test("a remote that cannot be dialled is refused with a fixed sentence that quot
   t.after(() => clearRemoteMcps(jti));
   const reply = await rawExchange(socketPath, hello(capability({ remoteMcps: ["composio-user"], jti }), "composio-user"));
   assert.deepEqual(JSON.parse(reply.trim()), { channelgate: "error", reason: "remote MCP unavailable" });
+});
+
+test("an upstream outage is logged daemon-side with the server and status, never sent to the container", async (t) => {
+  const warnings = [];
+  const socketPath = await serverOn(t, {}, {
+    warnings,
+    connectRemote: async () => { throw Object.assign(new Error("remote MCP server unavailable"), { upstream: "HTTP 502" }); },
+  });
+  const jti = "relay-jti-upstream-502";
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "composio-user": RELAYED["composio-user"] } });
+  t.after(() => clearRemoteMcps(jti));
+  const reply = await rawExchange(socketPath, hello(capability({ remoteMcps: ["composio-user"], jti }), "composio-user"));
+  assert.deepEqual(JSON.parse(reply.trim()), { channelgate: "error", reason: "remote MCP unavailable" }, "the container sees only the fixed sentence");
+  assert.ok(warnings.some((w) => w.endsWith("remote MCP unavailable (composio-user: upstream HTTP 502)")), warnings.join("\n"));
 });
 
 // Codex's exact chain in a container: secret-env-bridge reads the capability out of the 0600 bundle

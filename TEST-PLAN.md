@@ -723,13 +723,18 @@ HTTP MCP server reached through an https URL plus a rewriting `fetch`. Token fix
       and a path-shaped name; a registration past its expiry. An expired capability is refused at
       `capability rejected`. Clearing the registration mid-connection makes the next `tools/call`
       fail with "not authorized" without reaching the remote. A dial failure answers only
-      `remote MCP unavailable`. Codex's exact chain (`secret-env-bridge.js` reading the capability
+      `remote MCP unavailable`; one carrying an upstream status is logged daemon-side as
+      `remote MCP unavailable (composio-user: upstream HTTP 502)` while the container still receives
+      only the fixed sentence. Codex's exact chain (`secret-env-bridge.js` reading the capability
       from a 0600 bundle → socket bridge → relay) completes a `tools/call`. Pass: all green, and no
       refusal line contains a token, `composio.dev` or `make.com`.
 - [x] HTTP leg (`test/mcp-remote-relay.test.js`): Streamable HTTP carries the header on every
       request; a 405 on the Streamable POST falls back to HTTP+SSE with the header on the GET stream
-      and every POST; a 502 is not retried on SSE and fails as `remote MCP server unavailable`
-      (the upstream body quoting a key is not surfaced); http and credential-bearing URLs are
+      and every POST; a 502 is not retried on SSE, is retried ONCE on Streamable HTTP, and then
+      fails as `remote MCP server unavailable` with `upstream: "HTTP 502"` (the upstream body
+      quoting a key is not surfaced); a single transient 502 followed by a healthy server connects;
+      a 500 is not retried (`upstream: "HTTP 500"`); a network failure is retried once and reported
+      as `upstream: "network error"`, never the resolver's text; http and credential-bearing URLs are
       refused; `runRemoteRelay` authorizes before dialling and on every forwarded request, and
       upstream progress reaches the engine under the engine's own progress token.
 - [x] Claude config (`test/mcp-config.test.js`): an isolated target with all four remotes gives each
