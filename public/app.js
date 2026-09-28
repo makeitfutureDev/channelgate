@@ -133,18 +133,14 @@ function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, val
   if (label) label.textContent = `Effort (${ENGINE_MANIFESTS.find((m) => m.id === engine)?.label || engine})`;
 }
 
-// Model choices per engine — mirrors the Slack /model wizard's dropdowns. Every value passes the
+// Model choices per engine — mirrors the Slack /model wizard's buttons. Every value passes the
 // server's isValidModel guard; "" = blank (inherit: gateway default, or the CLI default).
 const MODEL_OPTIONS = {
   claude: [
-    ["best", "Best"],
-    ["opus", "Opus"],
-    ["opus[1m]", "Opus 1M (1M context)"],
-    ["sonnet", "Sonnet"],
-    ["sonnet[1m]", "Sonnet 1M (1M context)"],
-    ["haiku", "Haiku"],
-    ["fable", "Fable"],
-    ["opusplan", "Opus plan"],
+    ["claude-opus-5-5", "Opus 5.5"],
+    ["claude-fable-5-1", "Fable 5.1"],
+    ["claude-sonnet-5", "Sonnet 5"],
+    ["claude-haiku-4-5", "Haiku 4.5"],
   ],
   codex: [
     ["codex", "Codex (default family)"],

@@ -514,10 +514,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   same registry snapshot, so newly available models such as Astra appear without a ChannelGate code
   change. Discovery is bounded and cached for six hours; a failed refresh retains the last good
   snapshot, or the bundled fallback on a cold start.
-- **Claude stays current through rolling aliases:** the catalog offers `best`, `opus`, `sonnet`,
-  `haiku`, `fable`, `opusplan`, and the supported 1M aliases instead of pinning dated model IDs.
-  Saved same-engine full IDs remain valid and round-trip through the Admin UI. Provider CLI/package
-  upgrades are deliberately separate and continue through reviewed dependency PRs.
+- **Claude's model choices state exact versions:** the picker offers Opus 5.5, Fable 5.1,
+  Sonnet 5, and Haiku 4.5 under their full model IDs. It omits duplicate aliases and special
+  modes from the normal choices. Previously saved Claude aliases and full IDs remain valid;
+  the Slack picker shows the current saved value, and the Admin UI round-trips it. The curated
+  list is reviewed when Anthropic releases a new model. Provider CLI/package upgrades are
+  deliberately separate and continue through reviewed dependency PRs.
   → TEST-PLAN: Dynamic engine model catalog.
 
 ## Chat-platform adapter kernel
@@ -1468,8 +1470,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   the channel Runtime card, channel/DM config editors) are **dropdowns** with the same curated
   options as the `/model` wizard, switching with the selected/inherited engine; a hand-edited
   non-curated id (e.g. a dated full id in settings.json) survives as an extra option so Save
-  round-trips it, while an other-engine leftover is dropped. The Claude list includes Fable 5 as
-  `claude-fable-5`; Fable is not offered as a GPT/Codex model. Settings also provides a confirmed,
+  round-trips it, while an other-engine leftover is dropped. The Claude list includes Fable 5.1 as
+  `claude-fable-5-1`; Fable is not offered as a GPT/Codex model. Settings also provides a confirmed,
   admin-only reset that clears every channel's engine/model/effort overrides so new threads inherit
   these gateway defaults again (effort resets with the other two because the `/model` wizard sets
   all three in one pass); DMs, existing thread-owned sessions, access, tools, and tokens are
