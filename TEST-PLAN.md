@@ -672,17 +672,16 @@ block (`running: true`) before starting.
       its rule now swaps there. Proxy end-to-end (`test/egress-proxy.test.js`): approved server gets
       the real value in a custom header; another server gets 403 with the exact detail, the upstream
       sees nothing, and `onApprovalNeeded` receives secret, scope and host.
-- [x] Unit — the add-variable form and visibility rule: the Slack form's Visibility (auto/hidden/
-      readable) and Used-on-domains inputs are optional, never preselected and never button actions;
-      leaving them out keeps the stored choice across a rotation, `auto` clears it, an unknown mode is
-      refused; hidden chosen for an SMTP/database/password-looking name stays readable with the
-      "kept readable although hidden was chosen" reason, while declared domains hide it anyway; each
-      row's label states hidden/readable and why (`test/egress-secret-approval.test.js`).
-- [ ] LIVE (engine-independent: Slack UI only) — Settings → Variables → Add: `QA_FORM_TOKEN` with
-      Visibility *Hidden*, no domains → the row reads "🔒 hidden — each new server asks an admin once";
-      add `QA_FORM_SMTP_PASSWORD` with Visibility *Hidden* → the row reads "👁 readable (kept readable
-      although hidden was chosen…)"; update `QA_FORM_TOKEN` with a new value and nothing else chosen →
-      still hidden. Remove both.
+- [x] Unit — the add-variable form asks ONE thing: a single "It's a secret" checkbox, ticked by
+      default, within Block Kit limits and never a button action; ticked → `hidden`, unticked →
+      `readable`, a form without the block keeps the stored choice; hidden chosen for an
+      SMTP/database/password-looking name stays readable with the "kept readable although hidden was
+      chosen" reason; a rotation keeps the choice; each row's label states hidden/readable and why
+      (`test/egress-secret-approval.test.js`).
+- [ ] LIVE (engine-independent: Slack UI only) — Settings → Variables → Add: `QA_FORM_TOKEN`, Secret
+      ticked → the row reads "🔒 hidden — each new server asks an admin once"; `QA_FORM_SMTP_PASSWORD`,
+      Secret ticked → "👁 readable (kept readable although hidden was chosen…)"; `QA_FORM_REGION`, Secret
+      unticked → "👁 readable". Remove all three.
 - [ ] LIVE (Claude: `cg-qa-auto`; Codex: `cg-qa-private-auto`; both Auto, *Allow network* ON) —
       setup: channel secrets `CG_QA_HIDDEN_TOKEN` = `cg-qa-dummy-hidden-0001` and
       `CG_QA_DB_PASSWORD` = `cg-qa-dummy-db-0001` (dummy values; remove both afterwards). Author

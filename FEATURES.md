@@ -2770,18 +2770,17 @@ are retired, bullet by bullet; everything else stands.
   secret READABLE needs an admin's click, so a recruited bystander cannot approve it) overrides the
   kind; `list_secrets` and the admin secrets page show "hidden (placeholder); approved servers: …" /
   "readable (raw)". Request bodies and URL paths are never rewritten.
-  **Choosing it when adding a variable (2026-09-27):** the Slack add-variable form (now titled
-  *Variables* — the menu button, footer, Settings tab and admin UI say "variables", since a readable
-  value is configuration as often as a secret) and the admin secrets editor carry an optional
-  **Visibility** choice (Auto / Hidden / Readable) and an optional **Used on domains** field; leaving
-  either out on an update keeps what is stored, so a rotation never resets them. `set_secret` takes
-  the same `mode`. Readable always wins. Hidden wins for a web-looking variable; one whose name or
-  value says it is used outside HTTPS (SMTP, database, signing key, configuration) stays READABLE
-  even when hidden is chosen, because a placeholder could never work there — the listing says "kept
-  readable although hidden was chosen … add the domains it is used on to hide it", and declaring
-  domains does exactly that (an entry's own hosts win). Every row shows how containers receive it
-  and why (🔒 hidden — approved for … / each new server asks an admin once; 👁 readable (auto: it
-  looks like a password…)). The proxy resolves the CURRENT
+  **Adding a variable asks one thing (2026-09-28): is it a secret?** The Slack add-variable form
+  (titled *Variables* — the menu button, footer, Settings tab and admin UI say "variables", since a
+  readable value is configuration as often as a secret) and the admin editor carry a single
+  **Secret** checkbox, ticked by default; there are no domain or mode fields — the gateway does the
+  rest. Ticked stores `exposure: hidden`: a placeholder whose servers admins approve on first use, or
+  the built-in rule for a known name — and a variable whose name or value says it is used outside
+  HTTPS (SMTP, database, signing key, configuration) is kept READABLE automatically, because a
+  placeholder could never work there (the row says "kept readable although hidden was chosen"). Unticked
+  stores `readable`. A stored "Used on hosts" rule is kept (still settable through `set_secret`
+  `hosts`, which also takes `mode`). Every row shows how containers receive it and why (🔒 hidden —
+  approved for … / each new server asks an admin once; 👁 readable (auto: it looks like a password…)). The proxy resolves the CURRENT
   value per request from the store that owns it (rotation is live; the relay cached 60 s), and only
   while `canUse` passes: the placeholder's own channel (the organization's from any), live work in
   that channel (a turn, a job, a review or an SSH session — `liveness.js`), and for a personal
