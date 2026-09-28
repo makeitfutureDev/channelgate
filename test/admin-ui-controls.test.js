@@ -42,12 +42,12 @@ test("a description is small wherever it is written, not only inside a .setcard"
 
 test("the secret editor's own classes are what it renders, so no host's classes can be dropped", () => {
   const js = readFileSync(new URL("../public/admin-secrets.js", import.meta.url), "utf8");
-  for (const cls of ["secret-list", "secret-add", "secret-name", "secret-value", "secret-save", "secret-row"]) {
+  for (const cls of ["secret-list", "secret-add", "secret-name", "secret-value", "secret-save", "secret-is-secret", "vars-table"]) {
     assert.ok(js.includes(cls), `admin-secrets.js renders .${cls}`);
   }
   // The containers carry rules of their own; the two inputs are covered by `.secret-add input`
   // above, which is the point — one rule, so a new field inside the editor cannot miss it.
-  for (const cls of ["secret-list", "secret-add", "secret-row"]) {
+  for (const cls of ["secret-list", "secret-add", "vars-table"]) {
     assert.ok(ruleFor(`.${cls}`), `.${cls} is styled`);
   }
   // The conversation card used to hand-write this markup in index.html; one source only now.
