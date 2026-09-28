@@ -329,7 +329,8 @@ export function createVpnService({ run = runCommand, bin = "/usr/bin/podman", id
     const safeErrorClasses = new Set([
       "invalid_request", "request_too_large", "invalid_operation", "invalid_database", "invalid_table",
       "invalid_columns", "invalid_column", "invalid_filters", "invalid_filter_column", "invalid_filter_value",
-      "invalid_order", "invalid_order_column", "invalid_limit", "invalid_database_host", "invalid_database_port",
+      "invalid_order", "invalid_order_column", "invalid_limit", "invalid_cursor", "cursor_requires_order", "order_column_not_unique",
+      "invalid_database_host", "invalid_database_port",
       "route_not_ready", "database_route_not_tunnel", "public_default_route_changed",
       "database_credentials_unavailable", "invalid_database_credentials", "invalid_database_credentials_file",
       "database_authentication_failed", "database_access_denied", "database_not_found", "table_not_found",
