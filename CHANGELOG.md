@@ -16,7 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## 0.6.0 — 2026-09-28
 
 - **Claude model choices now show exact versions.** The `/model` picker and admin selectors list
   Opus 5.5, Fable 5.1, Sonnet 5, and Haiku 4.5. Duplicate moving aliases and special modes no
