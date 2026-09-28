@@ -159,15 +159,19 @@ test("database bridge pins the owned extractor and bounds stdin, output and exec
   assert.equal(executions[0].options.maxOutputBytes,263168);
   queryResult={code:1,stdout:'{"ok":false,"errorClass":"statement_timeout_unavailable"}'};
   assert.deepEqual(await service.query({operation:"list_databases"}),{ok:false,errorClass:"statement_timeout_unavailable"});
+  for (const errorClass of ["invalid_cursor","cursor_requires_order","order_column_not_unique"]) {
+    queryResult={code:1,stdout:JSON.stringify({ok:false,errorClass})};
+    assert.deepEqual(await service.query({operation:"list_databases"}),{ok:false,errorClass});
+  }
   queryResult={code:1,stdout:'{"ok":false,"errorClass":"PRIVATE","detail":"must-not-leak"}'};
   await assert.rejects(service.query({operation:"list_databases"}),error=>/Database query failed/.test(error.message)&&!/PRIVATE|must-not-leak/.test(error.message));
   queryResult={code:0,stdout:'{"ok":false,"errorClass":"query_timed_out"}'};
   await assert.rejects(service.query({operation:"list_databases"}),/Database query failed/);
   await assert.rejects(service.query({operation:"list_databases"},{beforeExecute:async()=>false}),/no longer allowed/);
-  assert.equal(executions.length,4);
+  assert.equal(executions.length,7);
   f.containers.get(identity.extractor).HostConfig.NetworkMode="bridge";
   await assert.rejects(service.query({operation:"list_databases"}),/must both be ready/);
-  assert.equal(executions.length,4);
+  assert.equal(executions.length,7);
 });
 
 test("stale OpenVPN image is refused and test files do not change its build contract",async()=>{

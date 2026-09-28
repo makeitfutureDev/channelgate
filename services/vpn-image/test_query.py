@@ -33,13 +33,11 @@ class Cursor:
         if self.connection.execute_hook:
             self.connection.execute_hook(statement, parameters)
         if "information_schema.COLUMNS" in statement:
-            self.rows = [
-                ("id", "int", "int unsigned", "NO", "PRI", None, ""),
-                ("name", "varchar", "varchar(255)", "YES", "", None, ""),
-                ("payload", "longblob", "longblob", "YES", "", None, ""),
-            ]
+            self.rows = self.connection.metadata
+        elif statement.startswith("SELECT /*+ MAX_EXECUTION_TIME(15000) */ COUNT(*)"):
+            self.rows = [(1234,)]
         elif statement.startswith("SELECT /*+"):
-            self.rows = [(7, "Ada", b"abc"), (8, "Grace", b"def"), (9, "Lin", b"ghi")]
+            self.rows = self.connection.rows
         elif "information_schema.SCHEMATA" in statement:
             self.rows = [("alpha",), ("beta",)]
         else:
@@ -54,10 +52,21 @@ class Cursor:
         return row
 
 
+METADATA = [
+    ("id", "int", "int unsigned", "NO", "PRI", None, ""),
+    ("name", "varchar", "varchar(255)", "YES", "", None, ""),
+    ("payload", "longblob", "longblob", "YES", "", None, ""),
+]
+# Paged selects carry a trailing copy of the key column, which the helper strips.
+KEYED_ROWS = [(7, "Ada", b"abc", 7), (8, "Grace", b"def", 8), (9, "Lin", b"ghi", 9)]
+
+
 class Connection:
-    def __init__(self, execute_hook=None):
+    def __init__(self, execute_hook=None, metadata=None, rows=None):
         self.executed = []
         self.execute_hook = execute_hook
+        self.metadata = metadata if metadata is not None else METADATA
+        self.rows = rows if rows is not None else KEYED_ROWS
 
     def cursor(self):
         return Cursor(self)
@@ -90,11 +99,97 @@ class QueryTests(unittest.TestCase):
         self.assertIn("FROM `customer-db`.`orders`", statement)
         self.assertIn("`name` <=> %s", statement)
         self.assertIn("ORDER BY `id` DESC LIMIT %s", statement)
+        self.assertIn("{payload}, `id` FROM".format(payload="LEFT(`payload`, %s) AS `payload`"), statement)
         self.assertNotIn("Robert", statement)
         self.assertEqual(parameters[-2:], ("Robert'); DROP TABLE orders;--", 3))
         self.assertNotRegex(statement, r"\b(INSERT|UPDATE|DELETE|REPLACE|CALL|OUTFILE|LOAD_FILE)\b")
         self.assertEqual(result["rows"], [[7, "Ada", {"encoding": "base64", "data": "YWJj"}], [8, "Grace", {"encoding": "base64", "data": "ZGVm"}]])
         self.assertTrue(result["truncated"])
+        self.assertEqual(result["nextCursor"], "8")
+
+    def select(self, connection, **fields):
+        request = {"operation": "select_rows", "database": "db", "table": "orders", "columns": ["name"], **fields}
+        result = query.execute_request(connection, query.normalize_request(request))
+        statement, parameters = next(item for item in connection.executed if item[0].startswith("SELECT /*+"))
+        return result, statement, parameters
+
+    def test_keyset_page_continues_after_cursor_and_strips_the_key(self):
+        connection = Connection(rows=[("Grace", 8), ("Lin", 9)])
+        result, statement, parameters = self.select(
+            connection, orderBy={"column": "id", "direction": "asc"}, after="7", limit=1,
+            filters=[{"column": "name", "value": "x"}])
+        self.assertIn("WHERE `name` <=> %s AND `id` > %s ORDER BY `id` ASC LIMIT %s", statement)
+        self.assertEqual(parameters, (query.MAX_VALUE_TEXT + 1, "x", 7, 2))
+        self.assertEqual(result["rows"], [["Grace"]])
+        self.assertEqual((result["truncated"], result["nextCursor"]), (True, "8"))
+
+    def test_descending_keyset_uses_less_than(self):
+        connection = Connection(rows=[("Ada", 7)])
+        result, statement, _ = self.select(connection, orderBy={"column": "id", "direction": "desc"}, after=8)
+        self.assertIn("`id` < %s ORDER BY `id` DESC", statement)
+        self.assertEqual((result["truncated"], result["nextCursor"]), (False, None))
+
+    def test_bigint_cursor_binds_an_exact_integer(self):
+        connection = Connection(rows=[("Ada", 9007199254740995)])
+        result, _, parameters = self.select(connection, orderBy={"column": "id", "direction": "asc"}, after="9007199254740993", limit=1)
+        self.assertEqual(parameters[-2], 9007199254740993)
+        self.assertIsInstance(parameters[-2], int)
+        self.assertEqual(result["nextCursor"], None)
+        with self.assertRaises(query.CheckFailed) as failure:
+            self.select(Connection(), orderBy={"column": "id", "direction": "asc"}, after="7 OR 1=1")
+        self.assertEqual(failure.exception.error_class, "invalid_cursor")
+
+    def test_string_key_cursor_stays_a_string(self):
+        metadata = [("id", "char", "char(36)", "NO", "PRI", None, ""), ("name", "varchar", "varchar(255)", "YES", "", None, "")]
+        uuid = "0f1e2d3c-0000-4000-8000-000000000001"
+        connection = Connection(metadata=metadata, rows=[("Ada", uuid), ("Lin", "ff")])
+        result, _, parameters = self.select(connection, orderBy={"column": "id", "direction": "asc"}, after="0", limit=1)
+        self.assertEqual(parameters[-2], "0")
+        self.assertEqual(result["nextCursor"], uuid)
+
+    def test_paging_requires_a_single_column_unique_key(self):
+        composite = [("a", "int", "int", "NO", "PRI", None, ""), ("id", "int", "int", "NO", "PRI", None, ""), ("name", "varchar", "varchar(9)", "YES", "", None, "")]
+        nullable_unique = [("id", "int", "int", "YES", "UNI", None, ""), ("name", "varchar", "varchar(9)", "YES", "", None, "")]
+        text_key = [("id", "text", "text", "NO", "PRI", None, ""), ("name", "varchar", "varchar(9)", "YES", "", None, "")]
+        for metadata in (composite, nullable_unique, text_key):
+            with self.subTest(metadata=metadata[0]), self.assertRaises(query.CheckFailed) as failure:
+                self.select(Connection(metadata=metadata), orderBy={"column": "id", "direction": "asc"}, after="1")
+            self.assertEqual(failure.exception.error_class, "order_column_not_unique")
+        # Without a cursor the same ordering still reads, it just cannot page.
+        result, statement, _ = self.select(Connection(metadata=composite, rows=[("Ada",)]), orderBy={"column": "id", "direction": "asc"})
+        self.assertNotIn("nextCursor", result)
+        self.assertIn("SELECT /*+ MAX_EXECUTION_TIME(15000) */ LEFT(CAST(`name` AS CHAR), %s) AS `name` FROM", statement)
+        unique = [("id", "bigint", "bigint", "NO", "UNI", None, ""), ("name", "varchar", "varchar(9)", "YES", "", None, "")]
+        result, _, _ = self.select(Connection(metadata=unique, rows=[("Ada", 1)]), orderBy={"column": "id", "direction": "asc"}, after="0")
+        self.assertEqual(result["nextCursor"], None)
+
+    def test_cursor_is_rejected_without_order_or_outside_select(self):
+        for payload, error_class in [
+            ({"operation": "select_rows", "database": "db", "table": "t", "columns": ["id"], "after": "1"}, "cursor_requires_order"),
+            ({"operation": "select_rows", "database": "db", "table": "t", "columns": ["id"], "orderBy": {"column": "id", "direction": "asc"}, "after": True}, "invalid_cursor"),
+            ({"operation": "select_rows", "database": "db", "table": "t", "columns": ["id"], "orderBy": {"column": "id", "direction": "asc"}, "after": "x" * 4097}, "invalid_cursor"),
+            ({"operation": "select_rows", "database": "db", "table": "t", "columns": ["id"], "orderBy": {"column": "id", "direction": "asc"}, "after": 2 ** 60}, "invalid_cursor"),
+            ({"operation": "count_rows", "database": "db", "table": "t", "after": "1"}, "invalid_request"),
+            ({"operation": "count_rows", "database": "db", "table": "t", "columns": ["id"]}, "invalid_request"),
+        ]:
+            with self.subTest(payload=payload), self.assertRaises(query.CheckFailed) as failure:
+                query.normalize_request(payload)
+            self.assertEqual(failure.exception.error_class, error_class)
+
+    def test_count_rows_uses_the_same_parameterized_filters(self):
+        connection = Connection()
+        result = query.execute_request(connection, query.normalize_request({
+            "operation": "count_rows", "database": "customer-db", "table": "orders",
+            "filters": [{"column": "name", "value": "x'); DROP TABLE orders;--"}],
+        }))
+        statement, parameters = connection.executed[-1]
+        self.assertEqual(statement, "SELECT /*+ MAX_EXECUTION_TIME(15000) */ COUNT(*) FROM `customer-db`.`orders` WHERE `name` <=> %s")
+        self.assertEqual(parameters, ("x'); DROP TABLE orders;--",))
+        self.assertEqual(result, {"ok": True, "operation": "count_rows", "database": "customer-db", "table": "orders", "count": 1234})
+        with self.assertRaises(query.CheckFailed) as failure:
+            query.execute_request(Connection(), query.normalize_request({
+                "operation": "count_rows", "database": "db", "table": "orders", "filters": [{"column": "missing", "value": 1}]}))
+        self.assertEqual(failure.exception.error_class, "column_not_found")
 
     def test_readonly_transaction_and_session_timeout_are_always_started(self):
         connection = Connection()

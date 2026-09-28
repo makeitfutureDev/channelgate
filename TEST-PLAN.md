@@ -1434,6 +1434,42 @@ Only metadata was queried. Host-reboot recovery remains a separate operator acce
 - [ ] Publish prepared private QA cases and engine-specific run evidence through the requester’s
       selected personal Airtable connection; account selection is pending.
 
+## Channel database paging and count_rows
+
+- [x] `python3 -m unittest discover -s services/vpn-image -p 'test_*.py'` (`test_query.py`):
+      keyset `WHERE key > %s` / `< %s` after the equality filters, the key selected as a trailing
+      unclipped column and stripped from rows, `nextCursor` = last emitted key as a string and null
+      on the last page, BIGINT cursors bound as exact integers, injection text in a cursor refused
+      (`invalid_cursor`), a cursor without `orderBy` refused (`cursor_requires_order`), composite
+      primary keys, nullable unique columns and TEXT keys refused (`order_column_not_unique`),
+      `count_rows` with the same parameterized filters and no row/column fields.
+- [x] `test/channel-database.test.js`: closed request shapes for `count_rows` and `after`, count and
+      cursor results rebuilt and validated (a missing cursor after `after`, a numeric or oversize
+      cursor, a negative/fractional/unsafe count are 503s), named paging failures, and the
+      "predates paging… rebuild the VPN image" remedy when an old extractor rejects the new fields.
+      `test/vpn-service.test.js`: the three new failure classes pass the helper allowlist.
+- [x] `python3 services/vpn-image/live_database_acceptance.py` (with
+      `CG_ACCEPT_VPN_IMAGE` set to an image built from this checkout): rootless MariaDB 11.4 fixture,
+      250 rows keyed by `CHAR(36)` UUID read in exactly 3 pages of ≤ 100 ascending and descending,
+      every key once, total equal to `count_rows`; 83 filtered rows equal to the filtered count;
+      BIGINT keys 2^53+1…2^53+3 paged one at a time with exact cursors; composite key refused.
+      Passed 2026-09-28 (MariaDB evidence; MySQL keyset semantics are the same SQL).
+- [ ] Upgrade on a channel with a running pre-paging extractor: update the gateway only. Ask
+      "count the rows in <table>". Expected: the reply names the rebuild remedy, and
+      `list_tables` still works. Then `npm run vpn -- build --channel ID`, VPN off and on, and ask again.
+      Pass: an exact count comes back; the other operations never break in between.
+- [ ] Claude, live VPN channel with a table of more than 100 rows. Prompt: "How many rows does
+      <table> have? Then read all of their ids and confirm you got every one." Expected evidence:
+      one `count_rows` call, then `select_rows` calls ordered by the primary key, each after the first
+      passing the previous `nextCursor` as `after`, stopping at `nextCursor: null`. The reply
+      states the count and that the paged total matched it. Pass: no id is repeated, the totals match,
+      and no call uses OFFSET-like or SQL input.
+- [ ] Codex, the same channel, prompt and pass rule as the Claude case.
+- [ ] Claude and Codex, the same channel. Prompt: "page through <table> ordered by <non-unique
+      column>". Expected: the first page comes back without `nextCursor`. The agent explains that paging
+      needs the unique key, and switches to it or asks. Pass: no fabricated cursor, no claim that the
+      table was fully read.
+
 ## Admin-only sudo thread → direct host execution
 
 Automated regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,

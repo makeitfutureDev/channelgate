@@ -45,7 +45,7 @@ The tunnel serves only the dedicated database extractor, not the ordinary agent 
 ## Read the database from the channel
 
 Once status is **Connected**, ask the agent to list available databases or tables, describe a
-selected table, or read up to 100 matching rows. Claude and Codex use `query_channel_database`.
+selected table, count matching rows, or read matching rows up to 100 per page. Claude and Codex use `query_channel_database`.
 It accepts structured operations, never arbitrary SQL, connection URLs, hostnames or credentials:
 
 ```json
@@ -53,7 +53,25 @@ It accepts structured operations, never arbitrary SQL, connection URLs, hostname
 {"operation":"list_tables","database":"example"}
 {"operation":"describe_table","database":"example","table":"customers"}
 {"operation":"select_rows","database":"example","table":"customers","columns":["id","name"],"filters":[{"column":"active","value":true}],"limit":20}
+{"operation":"count_rows","database":"example","table":"customers","filters":[{"column":"active","value":true}]}
+{"operation":"select_rows","database":"example","table":"customers","columns":["name"],"orderBy":{"column":"id","direction":"asc"},"after":"1042","limit":100}
 ```
+
+**Paging.** When `orderBy` names the table's single-column primary key, or a `NOT NULL` unique
+column, of an integer or `char`/`varchar` type, a `select_rows` result carries `nextCursor`: the
+last returned row's key, always as a string so a `BIGINT` keeps its exact value. Pass it back
+unchanged as `after` for the next page (`WHERE key > after`, or `<` when descending); `null` marks
+the last page. The key does not have to be among the selected columns. Other orderings still read,
+without `nextCursor`, and a cursor on them is refused (`order_column_not_unique`). `count_rows`
+returns the number of rows matching the same equality filters, so a caller can show that the pages
+add up. Each call is its own read-only transaction: pages are not one snapshot, and rows changed
+between calls can move. Every page passes through the agent's context, so paging suits
+inspection and verification; a bulk copy of a large database belongs in an operator job.
+
+**Upgrading.** Paging and `count_rows` live in the extractor image. After updating the gateway,
+rebuild it (`npm run vpn -- build --channel ID`) and turn the channel's VPN off and on. Until then
+the running extractor keeps serving the other operations, and a paged or counted request answers
+that the database service predates paging.
 
 Reads require current channel admission, Network on and a ready VPN/extractor pair. Turning VPN
 on/off still requires a channel manager/admin. The tool pins the owned extractor container, checks

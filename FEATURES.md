@@ -40,6 +40,13 @@
   checks. It exposes no arbitrary SQL, credentials, shell, host selector or cross-channel target.
   Configured VPN/database secret references are withheld from new ordinary agent launches, while
   the protected operator service can still resolve them; unrelated channel variables are retained.
+- Whole tables can be read page by page. `select_rows` ordered by the table's single-column
+  primary key (or a NOT NULL unique integer/char column) returns `nextCursor`, the last key as a
+  string, and the next call passes it back as `after` (keyset paging, never OFFSET); `null` marks
+  the last page. `count_rows` returns the row count for the same equality filters, so the pages
+  can be shown to add up. Each call is a separate read-only transaction, not one snapshot. An
+  extractor built before paging keeps serving the other operations and answers paged or counted
+  requests with the rebuild remedy.
 
 Regression: `test/channel-database.test.js`, `services/vpn-image/test_query.py`,
 `services/vpn-image/test_vpn3.py`, `test/channel-vpn-control.test.js`, `test/channel-vpn-web.test.js`,
