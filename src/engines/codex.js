@@ -43,6 +43,7 @@ import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
 import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
+import { CODEX_NO_TELEMETRY } from "./codex-telemetry.js";
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 const MAX_RETAINED = 64_000; // stdout/stderr/delta kept for error context — tail only, never unbounded
@@ -662,6 +663,8 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerous
   const resuming = !isNewSession;
   const base = isNewSession ? ["exec"] : ["exec", "resume", sessionId];
   const args = [...base, "--json", "--skip-git-repo-check", "-o", outFile];
+  // No anonymous usage metrics to OpenAI from any turn (src/engines/codex-telemetry.js).
+  args.push("-c", CODEX_NO_TELEMETRY);
   // Slack is the only interactive surface for this daemon. In non-autonomous modes, fail closed:
   // approval-required Codex actions are rejected instead of hanging on an invisible prompt. In
   // autonomous mode, route eligible approvals through Codex auto-review so safe MCP reads (for

@@ -228,7 +228,7 @@ export function codexSessionOverrides(args) {
   for (let i = 0; i < args.length - 1; i++) {
     if (args[i] !== "-c") continue;
     const value = String(args[i + 1]);
-    if (value.startsWith("mcp_servers.") || value.startsWith("apps.")) out.push(value);
+    if (value.startsWith("mcp_servers.") || value.startsWith("apps.") || value.startsWith("analytics.")) out.push(value);
   }
   return out;
 }

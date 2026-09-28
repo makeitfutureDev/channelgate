@@ -32,6 +32,7 @@ import { codexAuthCandidates } from "../engines/codex-auth.js";
 import { buildChildEnv } from "../engines/child-env.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { jwtClaimSegments } from "./egress/placeholders.js";
+import { CODEX_NO_TELEMETRY } from "../engines/codex-telemetry.js";
 
 // The access token lives 10 days; refresh inside the last two (the CLI's own proactive window was
 // 8 days after issue in the versions that had one).
@@ -122,7 +123,7 @@ export async function refreshDaemonCodexToken({ login = resolveCodexLogin(), spa
       child = spawnImpl(
         "codex",
         ["exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "-m", CODEX_RELAY_REFRESH_MODEL,
-          "-c", 'model_reasoning_effort="low"', "-s", "read-only", "Reply with exactly OK"],
+          "-c", 'model_reasoning_effort="low"', "-c", CODEX_NO_TELEMETRY, "-s", "read-only", "Reply with exactly OK"],
         { cwd, env: buildChildEnv({ HOME: path.dirname(codexHome), CODEX_HOME: codexHome }), stdio: ["ignore", "ignore", "pipe"] },
       );
     } catch (e) {

@@ -2926,7 +2926,12 @@ are retired, bullet by bullet; everything else stands.
   raw `details.stderr` keeps them). A proxy-mode Claude spawn gets `DISABLE_TELEMETRY=1`
   (gateway-owned, applied last, a reserved secret name), so an idle warm engine sends no telemetry;
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is deliberately not set (it would also drop feature
-  flags, the version lookup and claude.ai plugin downloads). The credential inventory's
+  flags, the version lookup and claude.ai plugin downloads). Codex's twin is
+  `-c analytics.enabled=false` (`src/engines/codex-telemetry.js`), carried by EVERY gateway-spawned
+  Codex process on every runtime — turns (bypass, resume and clean included), the memory reviewer,
+  SSH/VS Code sessions through `codex-args.sh`, the relay refresh turn, MCP discovery
+  (`app-server`) and model discovery (`debug models`) — so Codex sends OpenAI no anonymous usage
+  metrics; it rides `-c` because turns run with `--ignore-user-config`. The credential inventory's
   per-scope lines now appear whenever any injected name is organization- or personal-scoped, even
   as the only scope; a purely channel-scoped run is unchanged. → TEST-PLAN: Egress QA campaign fixes.
 - **Liveness crossed a pid namespace, so the watchdog learned a third answer.** A container child's

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { codexNoTelemetryArgs } from "./codex-telemetry.js";
 
 const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const EFFORT_RE = /^[a-z][a-z0-9_-]{0,31}$/i;
@@ -15,7 +16,7 @@ export function discoverCodexModels({
   maxBuffer = 10 * 1024 * 1024,
 } = {}) {
   return new Promise((resolve, reject) => {
-    execFileImpl("codex", ["debug", "models"], {
+    execFileImpl("codex", [...codexNoTelemetryArgs(), "debug", "models"], {
       env,
       timeout: timeoutMs,
       maxBuffer,
