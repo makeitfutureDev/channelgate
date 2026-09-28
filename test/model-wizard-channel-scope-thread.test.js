@@ -73,13 +73,13 @@ test("a channel-scope model pick applies to the thread it was made in", async ()
   const client = fakeClient();
   await click(client, "C_MW_SAME", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue());
   await click(client, "C_MW_SAME", "cg_mw_engine_claude", wizardValue());
-  await click(client, "C_MW_SAME", `${MODEL_PICKER_ACTION}_1`, wizardValue("opus"));
+  await click(client, "C_MW_SAME", `${MODEL_PICKER_ACTION}_1`, wizardValue("claude-opus-5-5"));
   await click(client, "C_MW_SAME", `${EFFORT_PICKER_ACTION}_1`, wizardValue("high"));
 
   const meta = await getChannelMeta(entry.slug);
-  assert.deepEqual([meta.engine, meta.model, meta.effort], ["claude", "opus", "high"]);
+  assert.deepEqual([meta.engine, meta.model, meta.effort], ["claude", "claude-opus-5-5", "high"]);
   // Nothing of the thread's own is left to shadow the channel: the next turn in THIS thread
-  // resolves opus/high from the channel, and the harness it was already on needs no pin.
+  // resolves Opus 5.5/high from the channel, and the harness it was already on needs no pin.
   assert.equal(await getThreadModel(entry.slug, THREAD), "");
   assert.equal(await getThreadEffort(entry.slug, THREAD), "");
   assert.equal(await getThreadEngine(entry.slug, THREAD), "", "a thread already on the chosen harness stays unpinned");
@@ -87,6 +87,18 @@ test("a channel-scope model pick applies to the thread it was made in", async ()
   const done = client.updates.at(-1);
   assert.match(done.text, /Runtime updated/);
   assert.doesNotMatch(JSON.stringify(done.blocks), /fresh Claude session/, "nothing moved, so nothing to warn about");
+});
+
+test("Fable 5.1 saves its exact ID while an older Fable button remains usable", async () => {
+  const entry = await channel("C_MW_FABLE", "mw-fable-model");
+  const client = fakeClient();
+  await click(client, "C_MW_FABLE", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue());
+  await click(client, "C_MW_FABLE", "cg_mw_engine_claude", wizardValue());
+  await click(client, "C_MW_FABLE", `${MODEL_PICKER_ACTION}_2`, wizardValue("claude-fable-5-1"));
+  assert.equal((await getChannelMeta(entry.slug)).model, "claude-fable-5-1");
+  await click(client, "C_MW_FABLE", `${MODEL_PICKER_ACTION}_7`, wizardValue("fable"));
+  assert.equal((await getChannelMeta(entry.slug)).model, "fable");
+  assert.equal(client.ephemerals.length, 0);
 });
 
 test("a channel-scope harness pick moves a thread whose session belongs to the other harness", async () => {

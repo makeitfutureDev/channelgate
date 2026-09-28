@@ -3319,9 +3319,10 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       the same login under 0.153.4 is served the GPT-5.6 line with no GPT-6 Sol/Luna, so a pin bump
       is what exposes a new model, and `~/.codex/models_cache.json` carries `client_version` so a
       mixed-version probe cannot leave a stale catalog behind.
-- [x] Automated: Claude's picker and browser fallback use rolling aliases (including `best`,
-      `fable`, and `sonnet[1m]`); the Admin UI consumes the registry's model/effort manifests and
-      keeps a valid saved same-engine custom ID available (`test/model-options.test.js`,
+- [x] Automated: Claude's picker and browser fallback show only the exact Opus 5.5, Fable 5.1,
+      Sonnet 5, and Haiku 4.5 IDs; a previously saved same-engine alias remains selected in
+      Slack, and the Admin UI consumes the registry's model/effort manifests and keeps a valid
+      saved same-engine custom ID available (`test/model-options.test.js`,
       `test/model-wizard-buttons.test.js`).
 - [x] Automated: the `/model` wizard's **This channel** scope applies to the thread it was clicked
       in. Same-harness: the thread's stale engine/model/effort overrides are cleared and the next
@@ -3339,9 +3340,13 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
 - [ ] Live Codex: in the Codex Auto fixture, open `/model`, choose Codex, and verify the buttons
       match the authenticated CLI's current visible catalog, include `gpt-6-astra`, and show
       Astra's reported efforts through `ultra`; select Astra and complete one ordinary turn.
-- [ ] Live Claude: in the Claude Auto fixture, open `/model`, choose Claude, and verify the rolling
-      aliases are offered; select `best`, complete the wizard, and confirm a normal turn runs on
-      the account's resolved current model.
+- [ ] Live Claude: in the Claude Auto fixture, open `/model`, choose Claude, and verify that
+      the four versioned choices include Opus 5.5 and Fable 5.1, with no unversioned `fable`
+      button. Select Opus 5.5, complete the wizard, and confirm a normal turn reports
+      `claude-opus-5-5`. With an existing `opus` override, reopen the picker and verify that
+      `Current: opus` remains marked until another model is selected.
+- [ ] Admin browser: load a Claude model selector and verify the same four exact-version choices;
+      save Fable 5.1 and reload to confirm the stored model is `claude-fable-5-1`.
 - [ ] Admin browser: load Settings and a conversation Runtime page after a catalog refresh; verify
       both show the same Codex models as Slack, model changes narrow the effort selector, and a
       saved valid full/custom same-engine model ID survives a load/save round trip.
