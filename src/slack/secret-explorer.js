@@ -44,13 +44,13 @@ export const SECRETS_NAME_BLOCK_ID = "secret_name";
 export const SECRETS_NAME_INPUT_ACTION_ID = "cg_channel_secrets_name_value";
 export const SECRETS_VALUE_BLOCK_ID = "secret_value";
 export const SECRETS_VALUE_INPUT_ACTION_ID = "cg_channel_secrets_value_value";
-// Visibility (hidden / readable / auto) and "Used on domains". Their action ids deliberately do NOT
-// match SECRETS_ACTION_PATTERN: they are form inputs, read on submit, never button actions.
-export const SECRETS_MODE_BLOCK_ID = "secret_mode";
-export const SECRETS_MODE_INPUT_ACTION_ID = "cg_secret_form_mode";
-export const SECRETS_HOSTS_BLOCK_ID = "secret_hosts";
-export const SECRETS_HOSTS_INPUT_ACTION_ID = "cg_secret_form_hosts";
-export const SECRET_MODES = Object.freeze(["auto", "hidden", "readable"]);
+// The one choice a person makes: is this value a SECRET? Everything else — where it may be sent,
+// whether a placeholder can work for it (an SMTP or database login cannot), the approvals — the
+// gateway decides (src/gateway/egress/catalog-rules.js). The action id deliberately does NOT match
+// SECRETS_ACTION_PATTERN: it is a form input, read on submit, never a button action.
+export const SECRETS_KIND_BLOCK_ID = "secret_kind";
+export const SECRETS_KIND_INPUT_ACTION_ID = "cg_secret_form_is_secret";
+export const SECRET_CHECKBOX_VALUE = "secret";
 const EXPIRED = "This secrets manager expired. Open it again with `/secrets`.";
 
 export function actionValue(op, extra = {}) {
@@ -303,33 +303,17 @@ export function buildSecretFormView(state = {}, { channelName = "", name = "", s
       },
       {
         type: "input",
-        block_id: SECRETS_MODE_BLOCK_ID,
+        block_id: SECRETS_KIND_BLOCK_ID,
         optional: true,
-        label: plain("Visibility in the container"),
+        label: plain("Secret?"),
         element: {
-          type: "radio_buttons",
-          action_id: SECRETS_MODE_INPUT_ACTION_ID,
-          options: [
-            { text: plain("Auto (recommended)"), value: "auto", description: plain("Hidden for web API tokens; readable for passwords, database/SMTP logins, signing keys and configuration.") },
-            // Slack caps an option description at 150 characters (views.push → invalid_arguments).
-            { text: plain("Hidden"), value: "hidden", description: plain("Programs get a placeholder; the real value goes only into HTTPS requests. SMTP/database logins stay readable unless a domain is set.") },
-            { text: plain("Readable"), value: "readable", description: plain("Programs get the real value.") },
-          ],
+          type: "checkboxes",
+          action_id: SECRETS_KIND_INPUT_ACTION_ID,
+          // Checked by default: a value is a secret unless the person says otherwise.
+          options: [{ text: plain("It's a secret"), value: SECRET_CHECKBOX_VALUE, description: plain("Programs see a stand-in; the real value is only sent to servers an admin approves. Email and database passwords stay usable.") }],
+          initial_options: [{ text: plain("It's a secret"), value: SECRET_CHECKBOX_VALUE, description: plain("Programs see a stand-in; the real value is only sent to servers an admin approves. Email and database passwords stay usable.") }],
         },
-        hint: plain("Leave unselected to keep the current setting when updating."),
-      },
-      {
-        type: "input",
-        block_id: SECRETS_HOSTS_BLOCK_ID,
-        optional: true,
-        label: plain("Used on domains"),
-        element: {
-          type: "plain_text_input",
-          action_id: SECRETS_HOSTS_INPUT_ACTION_ID,
-          placeholder: plain("api.example.com, other.example.com"),
-          max_length: 1000,
-        },
-        hint: plain("Optional. The value stays hidden and works only on these domains, with no approval needed. Never a shared suffix like *.vercel.app. Leave empty to keep the current list."),
+        hint: plain("Untick for plain configuration (an id, a region, a URL) that programs may read."),
       },
     ],
   };
@@ -349,13 +333,13 @@ export function buildSecretsErrorView(message) {
 // in this module that touches one, and it is handed straight to channel-env.js by the caller.
 export function readSecretForm(view = {}) {
   const values = view?.state?.values || {};
-  const mode = String(values[SECRETS_MODE_BLOCK_ID]?.[SECRETS_MODE_INPUT_ACTION_ID]?.selected_option?.value || "");
-  const hosts = String(values[SECRETS_HOSTS_BLOCK_ID]?.[SECRETS_HOSTS_INPUT_ACTION_ID]?.value || "").trim();
+  const kind = values[SECRETS_KIND_BLOCK_ID]?.[SECRETS_KIND_INPUT_ACTION_ID];
   return {
     name: String(values[SECRETS_NAME_BLOCK_ID]?.[SECRETS_NAME_INPUT_ACTION_ID]?.value || "").trim(),
     value: String(values[SECRETS_VALUE_BLOCK_ID]?.[SECRETS_VALUE_INPUT_ACTION_ID]?.value || "").trim(),
-    // Absent = keep what is stored (a rotation from this form must not reset either).
-    ...(SECRET_MODES.includes(mode) ? { exposure: mode } : {}),
-    ...(hosts ? { hosts } : {}),
+    // Ticked → hidden (the gateway still keeps an SMTP/database login readable, since a stand-in
+    // cannot work there); unticked → readable. A form from an older build without the block keeps
+    // whatever is stored.
+    ...(kind ? { exposure: (kind.selected_options || []).some((o) => o?.value === SECRET_CHECKBOX_VALUE) ? "hidden" : "readable" } : {}),
   };
 }

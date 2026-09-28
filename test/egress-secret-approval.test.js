@@ -240,25 +240,25 @@ test("the per-attempt note tells the agent a hidden secret's first use on a new 
   assert.ok(!prompt.includes(ph));
 });
 
-test("the add-variable form: visibility and domains are optional, and leaving them out keeps what is stored", async () => {
-  const { buildSecretFormView, readSecretForm, visibilityLabel, SECRETS_MODE_BLOCK_ID, SECRETS_MODE_INPUT_ACTION_ID, SECRETS_HOSTS_BLOCK_ID, SECRETS_HOSTS_INPUT_ACTION_ID, SECRETS_NAME_BLOCK_ID, SECRETS_NAME_INPUT_ACTION_ID, SECRETS_VALUE_BLOCK_ID, SECRETS_VALUE_INPUT_ACTION_ID, SECRETS_ACTION_PATTERN } = await import("../src/slack/secret-explorer.js");
+test("the add-variable form asks ONE thing — is it a secret? — ticked by default; the gateway decides the rest", async () => {
+  const { buildSecretFormView, readSecretForm, visibilityLabel, SECRETS_KIND_BLOCK_ID, SECRETS_KIND_INPUT_ACTION_ID, SECRET_CHECKBOX_VALUE, SECRETS_NAME_BLOCK_ID, SECRETS_NAME_INPUT_ACTION_ID, SECRETS_VALUE_BLOCK_ID, SECRETS_VALUE_INPUT_ACTION_ID, SECRETS_ACTION_PATTERN } = await import("../src/slack/secret-explorer.js");
   const view = buildSecretFormView({}, { scope: "channel", channelName: "qa" });
-  const mode = view.blocks.find((b) => b.block_id === SECRETS_MODE_BLOCK_ID);
-  assert.equal(mode.optional, true);
-  assert.deepEqual(mode.element.options.map((o) => o.value), ["auto", "hidden", "readable"]);
-  assert.equal(mode.element.initial_option, undefined, "nothing preselected: an update keeps the stored choice");
-  assert.equal(view.blocks.find((b) => b.block_id === SECRETS_HOSTS_BLOCK_ID).optional, true);
-  for (const id of [SECRETS_MODE_INPUT_ACTION_ID, SECRETS_HOSTS_INPUT_ACTION_ID]) assert.ok(!SECRETS_ACTION_PATTERN.test(id), `${id} is a form input, never a button action`);
+  const kind = view.blocks.find((b) => b.block_id === SECRETS_KIND_BLOCK_ID);
+  assert.equal(kind.element.type, "checkboxes");
+  assert.deepEqual(kind.element.options.map((o) => o.value), [SECRET_CHECKBOX_VALUE]);
+  assert.deepEqual(kind.element.initial_options.map((o) => o.value), [SECRET_CHECKBOX_VALUE], "a value is a secret unless the person says otherwise");
+  assert.ok(!view.blocks.some((b) => /host|domain|mode/i.test(b.block_id || "")), "no domains or modes to fill in");
+  assert.ok(!SECRETS_ACTION_PATTERN.test(SECRETS_KIND_INPUT_ACTION_ID), "a form input, never a button action");
   const submitted = (extra = {}) => ({ state: { values: {
     [SECRETS_NAME_BLOCK_ID]: { [SECRETS_NAME_INPUT_ACTION_ID]: { value: "PAY_TOKEN" } },
     [SECRETS_VALUE_BLOCK_ID]: { [SECRETS_VALUE_INPUT_ACTION_ID]: { value: "value-1234567890" } },
     ...extra,
   } } });
-  assert.deepEqual(readSecretForm(submitted()), { name: "PAY_TOKEN", value: "value-1234567890" });
-  assert.deepEqual(readSecretForm(submitted({
-    [SECRETS_MODE_BLOCK_ID]: { [SECRETS_MODE_INPUT_ACTION_ID]: { selected_option: { value: "hidden" } } },
-    [SECRETS_HOSTS_BLOCK_ID]: { [SECRETS_HOSTS_INPUT_ACTION_ID]: { value: " api.pay.example " } },
-  })), { name: "PAY_TOKEN", value: "value-1234567890", exposure: "hidden", hosts: "api.pay.example" });
+  const ticked = { [SECRETS_KIND_BLOCK_ID]: { [SECRETS_KIND_INPUT_ACTION_ID]: { selected_options: [{ value: SECRET_CHECKBOX_VALUE }] } } };
+  const unticked = { [SECRETS_KIND_BLOCK_ID]: { [SECRETS_KIND_INPUT_ACTION_ID]: { selected_options: [] } } };
+  assert.deepEqual(readSecretForm(submitted(ticked)), { name: "PAY_TOKEN", value: "value-1234567890", exposure: "hidden" });
+  assert.deepEqual(readSecretForm(submitted(unticked)), { name: "PAY_TOKEN", value: "value-1234567890", exposure: "readable" });
+  assert.deepEqual(readSecretForm(submitted()), { name: "PAY_TOKEN", value: "value-1234567890" }, "a form without the block keeps what is stored");
   // Storage: an explicit choice is kept across a rotation that does not name one; auto clears it.
   let env = patchChannelEnv({}, { set: { name: "PAY_TOKEN", value: "value-1234567890", exposure: "readable" } });
   env = patchChannelEnv(env, { set: { name: "PAY_TOKEN", value: "value-0987654321" } });

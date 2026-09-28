@@ -27,12 +27,11 @@ export function mountSecretEditor({
   const nameInput = root.querySelector(".secret-name");
   const valueInput = root.querySelector(".secret-value");
   const saveButton = root.querySelector(".secret-save");
-  const hostsInput = root.querySelector(".secret-hosts");
-  const modeInput = root.querySelector(".secret-mode");
+  const secretInput = root.querySelector(".secret-is-secret");
   let current = Array.isArray(vars) ? vars : [];
 
   nameInput.placeholder = namePlaceholder;
-  for (const el of [nameInput, valueInput, hostsInput, modeInput, saveButton]) if (el) el.disabled = disabled;
+  for (const el of [nameInput, valueInput, secretInput, saveButton]) if (el) el.disabled = disabled;
 
   const render = () => {
     state.textContent = current.length ? `${current.length} set` : "none";
@@ -119,16 +118,15 @@ export function mountSecretEditor({
     saveButton.disabled = true;
     hint.textContent = "saving…";
     try {
-      // "Used on hosts": sent only when typed, so rotating a value keeps the stored rule.
-      // Visibility likewise: "" (keep) sends nothing, so a rotation keeps the stored choice.
-      const hosts = hostsInput ? hostsInput.value.trim() : "";
-      const exposure = modeInput ? modeInput.value : "";
-      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ value, ...(hosts ? { hosts } : {}), ...(exposure ? { exposure } : {}) }) });
+      // The one choice: secret (hidden — the gateway still keeps an SMTP/database login readable
+      // and learns where it may be sent through admin approvals) or not (readable). A stored
+      // "Used on hosts" rule is kept: no hosts are sent from here.
+      const exposure = secretInput ? (secretInput.checked ? "hidden" : "readable") : "";
+      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ value, ...(exposure ? { exposure } : {}) }) });
       current = result.vars || [];
       valueInput.value = "";
       nameInput.value = "";
-      if (hostsInput) hostsInput.value = "";
-      if (modeInput) modeInput.value = "";
+      if (secretInput) secretInput.checked = true;
       hint.textContent = savedText(name);
       render();
     } catch (e) {
@@ -150,13 +148,7 @@ export function secretEditorMarkup() {
     <div class="secret-add">
       <input class="secret-name" type="text" autocomplete="off" spellcheck="false" />
       <input class="secret-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
-      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Used on domains (optional) — api.example.com, *.example.com" title="Containers then receive a placeholder the egress proxy swaps for this value only on these hosts (Authorization header), with no approval needed. Leave blank for the built-in rule (GitHub, Vercel, Supabase, Make, Composio names), or for a hidden secret whose first use on each new server asks an admin. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
-      <select class="secret-mode" title="How containers receive it. Auto: hidden for web API tokens, readable for passwords, database/SMTP logins, signing keys and configuration. Hidden: a placeholder the egress proxy swaps into HTTPS requests (kept readable if it looks like an SMTP/database login and no hosts are given). Readable: the real value.">
-        <option value="">Visibility: keep current</option>
-        <option value="auto">Auto (recommended)</option>
-        <option value="hidden">Hidden</option>
-        <option value="readable">Readable</option>
-      </select>
+      <label class="toggle" title="Programs see a stand-in; the real value is only sent to servers an admin approves. Email and database passwords stay usable automatically. Untick for plain configuration (an id, a region, a URL)."><input class="secret-is-secret" type="checkbox" checked /> Secret</label>
       <button type="button" class="ghost secret-save">Save variable</button>
     </div>
     <em class="state secret-hint"></em>`;
