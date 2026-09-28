@@ -81,7 +81,7 @@ const NEVER_SWAP_HEADERS = new Set(["host", "proxy-authorization"]);
 const CREDENTIAL_MARKER = "~credential";
 const CREDENTIAL_FIELD_RE = /(auth|token|key|secret|session|credential|passw|signature|^sig$|^code$|bearer|jwt|apikey|access)/i;
 function credentialField(grant, list, name) {
-  return grant?.approval === true && Array.isArray(list) && list.includes(CREDENTIAL_MARKER)
+  return (grant?.approval === true || grant?.credentialFields === true) && Array.isArray(list) && list.includes(CREDENTIAL_MARKER)
     && (DEFAULT_SWAP_HEADERS.includes(name) || CREDENTIAL_FIELD_RE.test(name));
 }
 
@@ -151,7 +151,7 @@ function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHead
     // it could never be swapped (embedded in other text) must not raise an approval card.
     // The engines' own APIs never receive an approval grant's value, approved or not: a swapped
     // value there would land in the model's context.
-    if (grant.approval && neverSwapHere(grant, host)) return refuse("engine-host");
+    if ((grant.approval || grant.credentialFields) && neverSwapHere(grant, host)) return refuse("engine-host");
     const hostOk = grantAllowsHost(grant, host);
     if (!hostOk && !grant.approval) return refuse("host");
     if (where.kind === "query") {

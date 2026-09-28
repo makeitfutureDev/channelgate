@@ -241,13 +241,16 @@ test("the per-attempt note tells the agent a hidden secret's first use on a new 
 });
 
 test("the add-variable form asks ONE thing — is it a secret? — ticked by default; the gateway decides the rest", async () => {
-  const { buildSecretFormView, readSecretForm, visibilityLabel, SECRETS_KIND_BLOCK_ID, SECRETS_KIND_INPUT_ACTION_ID, SECRET_CHECKBOX_VALUE, SECRETS_NAME_BLOCK_ID, SECRETS_NAME_INPUT_ACTION_ID, SECRETS_VALUE_BLOCK_ID, SECRETS_VALUE_INPUT_ACTION_ID, SECRETS_ACTION_PATTERN } = await import("../src/slack/secret-explorer.js");
+  const { buildSecretFormView, readSecretForm, visibilityLabel, SECRETS_KIND_BLOCK_ID, SECRETS_KIND_INPUT_ACTION_ID, SECRET_CHECKBOX_VALUE, SECRETS_DOMAINS_BLOCK_ID, SECRETS_DOMAINS_INPUT_ACTION_ID, SECRETS_NAME_BLOCK_ID, SECRETS_NAME_INPUT_ACTION_ID, SECRETS_VALUE_BLOCK_ID, SECRETS_VALUE_INPUT_ACTION_ID, SECRETS_ACTION_PATTERN } = await import("../src/slack/secret-explorer.js");
   const view = buildSecretFormView({}, { scope: "channel", channelName: "qa" });
   const kind = view.blocks.find((b) => b.block_id === SECRETS_KIND_BLOCK_ID);
   assert.equal(kind.element.type, "checkboxes");
   assert.deepEqual(kind.element.options.map((o) => o.value), [SECRET_CHECKBOX_VALUE]);
   assert.deepEqual(kind.element.initial_options.map((o) => o.value), [SECRET_CHECKBOX_VALUE], "a value is a secret unless the person says otherwise");
-  assert.ok(!view.blocks.some((b) => /host|domain|mode/i.test(b.block_id || "")), "no domains or modes to fill in");
+  assert.ok(!view.blocks.some((b) => /host|mode/i.test(b.block_id || "")), "no mode to pick");
+  const domains = view.blocks.find((b) => b.block_id === SECRETS_DOMAINS_BLOCK_ID);
+  assert.equal(domains.optional, true, "Allowed domains is optional");
+  assert.ok(!SECRETS_ACTION_PATTERN.test(SECRETS_DOMAINS_INPUT_ACTION_ID));
   assert.ok(!SECRETS_ACTION_PATTERN.test(SECRETS_KIND_INPUT_ACTION_ID), "a form input, never a button action");
   const submitted = (extra = {}) => ({ state: { values: {
     [SECRETS_NAME_BLOCK_ID]: { [SECRETS_NAME_INPUT_ACTION_ID]: { value: "PAY_TOKEN" } },
@@ -259,6 +262,9 @@ test("the add-variable form asks ONE thing — is it a secret? — ticked by def
   assert.deepEqual(readSecretForm(submitted(ticked)), { name: "PAY_TOKEN", value: "value-1234567890", exposure: "hidden" });
   assert.deepEqual(readSecretForm(submitted(unticked)), { name: "PAY_TOKEN", value: "value-1234567890", exposure: "readable" });
   assert.deepEqual(readSecretForm(submitted()), { name: "PAY_TOKEN", value: "value-1234567890" }, "a form without the block keeps what is stored");
+  // Allowed domains restrict a SECRET: naming any makes it one, even with the box unticked.
+  const withDomains = { ...unticked, [SECRETS_DOMAINS_BLOCK_ID]: { [SECRETS_DOMAINS_INPUT_ACTION_ID]: { value: " api.pay.example " } } };
+  assert.deepEqual(readSecretForm(submitted(withDomains)), { name: "PAY_TOKEN", value: "value-1234567890", exposure: "hidden", hosts: "api.pay.example" });
   // Storage: an explicit choice is kept across a rotation that does not name one; auto clears it.
   let env = patchChannelEnv({}, { set: { name: "PAY_TOKEN", value: "value-1234567890", exposure: "readable" } });
   env = patchChannelEnv(env, { set: { name: "PAY_TOKEN", value: "value-0987654321" } });
@@ -290,4 +296,23 @@ test("the add-variable form stays inside Slack's Block Kit text limits", async (
       if (block.element?.placeholder) assert.ok(block.element.placeholder.text.length <= 150, `${block.block_id} placeholder ≤ 150`);
     }
   }
+});
+
+// "Allowed domains" (owner ask, 2026-09-28): a variable restricted to its declared domains swaps in
+// any credential-like field THERE — not only Authorization — and is never sent, nor asked about,
+// anywhere else; model APIs stay refused even if declared.
+test("Allowed domains: credential fields on those domains only, no approval elsewhere", () => {
+  const rule = rulesFor("PAY_API_TOKEN", { hosts: ["api.pay.example"] });
+  assert.deepEqual({ source: rule.source, credentialFields: rule.credentialFields, approval: rule.approval }, { source: "entry", credentialFields: true, approval: undefined });
+  const grant = { ...approvalGrant(), approval: false, credentialFields: true, hosts: rule.hosts, headers: rule.headers, query: rule.query, format: rule.format };
+  const ok = swap({ headers: { "x-api-key": grant.placeholder }, path: `/v1?token=${grant.placeholder}`, hostname: "api.pay.example", resolveGrant: resolverFor(grant), canUse: allowAll });
+  assert.equal(ok.swapped.length, 1);
+  assert.equal(ok.headers["x-api-key"], grant.value);
+  const other = swap({ headers: { "x-api-key": grant.placeholder }, path: "/", hostname: "other.example.net", resolveGrant: resolverFor(grant), canUse: allowAll });
+  assert.equal(other.swapped.length, 0);
+  assert.deepEqual(other.refused.map((r) => [r.reason, Boolean(r.denied)]), [["host", false]], "not an approval request: it is restricted");
+  const engine = swap({ headers: { authorization: `Bearer ${grant.placeholder}` }, path: "/", hostname: "api.anthropic.com", resolveGrant: resolverFor({ ...grant, hosts: ["api.anthropic.com"] }), canUse: allowAll });
+  assert.equal(engine.refused[0].reason, "engine-host");
+  // A known name keeps its catalog headers even with its own domains.
+  assert.deepEqual(rulesFor("GITHUB_TOKEN", { hosts: ["ghe.example.com"] }).credentialFields, undefined);
 });

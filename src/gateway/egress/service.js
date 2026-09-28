@@ -291,7 +291,7 @@ export async function startEgressService({
         const grant = await resolveEgressGrant(core);
         // An approval grant also never swaps into a configured Qwen endpoint (grants.js knows only
         // the engines' fixed hosts).
-        return grant?.approval ? { ...grant, neverHosts: modelApiHosts() } : grant;
+        return grant?.approval || grant?.credentialFields ? { ...grant, neverHosts: modelApiHosts() } : grant;
       },
       canUse: (grant, ctx) => canUseGrant(grant, ctx),
       audit: recordAudit,

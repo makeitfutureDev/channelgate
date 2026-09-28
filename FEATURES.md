@@ -2773,8 +2773,12 @@ are retired, bullet by bullet; everything else stands.
   **Adding a variable asks one thing (2026-09-28): is it a secret?** The Slack add-variable form
   (titled *Variables* — the menu button, footer, Settings tab and admin UI say "variables", since a
   readable value is configuration as often as a secret) and the admin editor carry a single
-  **Secret** checkbox, ticked by default; there are no domain or mode fields — the gateway does the
-  rest. Ticked stores `exposure: hidden`: a placeholder whose servers admins approve on first use, or
+  **Secret** checkbox, ticked by default, plus an optional **Allowed domains** field (2026-09-28)
+  that restricts a secret to exactly those domains — no approval cards, never sent anywhere else,
+  and naming any makes the variable a secret; for a name the catalog does not know it swaps in any
+  credential-like header or query parameter there (not only Authorization), never on a model API.
+  Empty keeps the stored list and leaves servers to first-use approvals. There is no mode field — the
+  gateway does the rest. Ticked stores `exposure: hidden`: a placeholder whose servers admins approve on first use, or
   the built-in rule for a known name — and a variable whose name or value says it is used outside
   HTTPS (SMTP, database, signing key, configuration) is kept READABLE automatically, because a
   placeholder could never work there (the row says "kept readable although hidden was chosen"). Unticked

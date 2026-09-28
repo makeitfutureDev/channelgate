@@ -220,6 +220,7 @@ export async function resolveEgressGrant(core, deps = {}) {
   if (!rule || !material.value) return null;
   return {
     ...(rule.approval ? { approval: true, neverHosts: engineHostsFor() } : {}),
+    ...(rule.credentialFields ? { credentialFields: true, neverHosts: engineHostsFor() } : {}),
     ...(Array.isArray(rule.query) ? { query: [...rule.query] } : {}),
     placeholder: row.placeholder,
     value: material.value,

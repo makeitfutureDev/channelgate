@@ -77,7 +77,8 @@ test("rulesFor: an entry's own hosts win; its headers/format refine; malformed d
   assert.equal(rulesFor("SMTP_PASSWORD", {}), null);
   assert.equal(rulesFor("MY_API_KEY", { exposure: "readable" }), null, "an explicit readable choice wins");
   const own = rulesFor("MY_API_KEY", { hosts: ["api.example.com", "*.example.net"] });
-  assert.deepEqual(own, { hosts: ["api.example.com", "*.example.net"], headers: ["authorization"], format: ["bearer", "raw"], source: "entry" });
+  assert.deepEqual(own, { hosts: ["api.example.com", "*.example.net"], headers: ["~credential"], query: ["~credential"], format: ["bearer", "raw", "basic-user", "basic-password"], source: "entry", credentialFields: true });
+  assert.deepEqual(rulesFor("MY_API_KEY", { hosts: ["api.example.com"], headers: ["x-token"] }).headers, ["x-token"], "declared headers still narrow it");
   const refined = rulesFor("GITHUB_TOKEN", { headers: ["x-token"] });
   assert.deepEqual(refined.headers, ["x-token"]);
   assert.equal(refined.source, "catalog:github");
