@@ -951,3 +951,14 @@ test("a remote whose header the relay cannot carry is skipped in a container, li
   assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.composio-user.")), "no entry the socket would refuse");
   assert.ok(args.includes(`mcp_servers.composio-agent.env.CG_MCP_SERVICE="remote-mcp"`), "the others still relay");
 });
+
+test("every Codex turn switches off anonymous usage metrics, bypass and resume included", () => {
+  for (const overrides of [{}, { dangerouslySkip: true }, { isNewSession: false }, { clean: true }]) {
+    assert.ok(cfgValues(argsFor(overrides)).includes("analytics.enabled=false"), JSON.stringify(overrides));
+  }
+});
+
+test("an SSH session's Codex overrides carry the telemetry switch into the interactive CLI", async () => {
+  const { codexSessionOverrides } = await import("../src/gateway/ssh-session.js");
+  assert.ok(codexSessionOverrides(argsFor()).includes("analytics.enabled=false"));
+});

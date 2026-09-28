@@ -216,6 +216,7 @@ test("the refresh turn: ephemeral, the user config ignored, in the login's own C
   const { cmd, args, options } = calls[0];
   assert.equal(cmd, "codex");
   for (const flag of ["exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", "-s", "read-only"]) assert.ok(args.includes(flag), flag);
+  assert.equal(args[args.indexOf("analytics.enabled=false") - 1], "-c", "the refresh turn sends no usage metrics");
   assert.equal(args[args.indexOf("-m") + 1], relay.CODEX_RELAY_REFRESH_MODEL);
   assert.equal(options.env.CODEX_HOME, dir);
   assert.equal(options.stdio[0], "ignore", "a closed stdin: `codex exec` otherwise waits on it");

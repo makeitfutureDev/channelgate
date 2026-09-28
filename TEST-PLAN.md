@@ -92,6 +92,13 @@ with its sockets, and the `test/fixtures/codex` stub.
 - [x] Claude telemetry off behind the proxy (`test/container-egress-env.test.js`): a proxy-mode
       `buildClaudeEnv` sets `DISABLE_TELEMETRY=1` over a channel secret of that name (reserved) and
       never sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`; a non-proxy target sets neither.
+- [x] Codex telemetry off everywhere (`test/codex-args.test.js`, `test/codex-token-relay.test.js`,
+      `test/mcp-discovery.test.js`, `test/model-discovery.test.js`): every turn's argv (fresh, resume,
+      bypass, clean) carries `-c analytics.enabled=false`; an SSH session's `codex-args.sh`
+      overrides include it; the relay refresh turn carries it; MCP discovery spawns exactly
+      `-c analytics.enabled=false app-server` and model discovery `-c analytics.enabled=false debug
+      models`. The fake engines (`test/fixtures/codex`, `prompt-echo/codex`,
+      `output-secret-engine.cjs`) skip leading global `-c` pairs like the real CLI.
 - [x] Scope lines (`test/channel-credentials.test.js`, SEC-LIST-01): an organization-only run gets
       exactly the `Organization-wide variables …: ["GITHUB_PAT_ORG","VERCEL_ORG_TOKEN"].` line and no
       empty group; a personal-only run gets the personal line; organization + channel gets both; a
@@ -115,6 +122,9 @@ with its sockets, and the `test/fixtures/codex` stub.
       Pass: both name them organization secrets, none "a channel credential".
 - [ ] Claude telemetry (Claude only): `podman exec <container> sh -c 'cat /proc/<warm pid>/environ | tr "\0" "\n" | grep -E "NONESSENTIAL|DISABLE_TELEMETRY"'`
       shows only `DISABLE_TELEMETRY=1`; the idle audit gate above then also shows the `requests` counter flat while idle.
+- [ ] Codex telemetry (Codex only): during a Codex turn, `podman exec <container> sh -c 'cat /proc/<codex pid>/cmdline | tr "\0" " "'`
+      contains `-c analytics.enabled=false`; after the turn the channel's egress audit shows no request to
+      `ab.chatgpt.com`. Pass: both hold for a fresh and a resumed turn.
 
 ## Codex login relay, strict secrets, static check (container-secrets P4)
 
