@@ -61,7 +61,8 @@ import path from "node:path";
 import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
 import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor } from "./download.js";
 
-import { buildResumeCommand, resumeButton, footerButtons, footerText } from "./footer.js";
+import { buildResumeCommand, footerButtons, footerText } from "./footer.js";
+import { postNoticeWithMenu } from "./deliver.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
 import { busyThreadChoiceBlocks, busyThreadChoices, deliverBusyThreadChoiceLinks, steerActiveRun, BUSY_THREAD_CHOICE_KIND } from "./busy-thread-choice.js";
 import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText } from "./engine-switch-choice.js";
@@ -137,7 +138,7 @@ function retireQuestionCards(client, records) {
 
 // Abort in-flight runs in a channel/DM. When `threadKey` is given, only the run in that one thread
 // is stopped (the common case — a `stop` message or 🛑 reaction inside a thread); when it's null the
-// whole channel is swept (the `/stop` slash command). Posts "🛑 Stopped." (with the resume link) in
+// whole channel is swept (the `/stop` slash command). Posts "🛑 Stopped." (with the reply menu) in
 // each stopped run's thread. Returns how many were stopped.
 export async function stopRunsInChannel(client, channelId, slug, byUser, threadKey = null) {
   const { pendingChoices, pendingQuestions, stoppedRuns, stoppedTurns } = abortRunsInChannel(channelId, slug, byUser, threadKey);
@@ -180,24 +181,11 @@ export async function stopRunsInChannel(client, channelId, slug, byUser, threadK
     }).catch(() => {}));
   }
 
-  // The folder the agent ran in (for a copyable resume command) + the engine that ran there. The
-  // engine is resolved PER STOPPED THREAD (override → session-born → channel → gateway default),
-  // never from the gateway default alone: a session id is engine-specific, so a Claude thread in a
-  // Codex-default gateway would otherwise be handed a `codex exec resume` line for a Claude
-  // session — a command that cannot work.
-  const meta = stoppedRuns.length ? await getChannelMeta(slug).catch(() => null) : null;
-  const cwd = effectiveWorkDir(slug, meta || {});
+  // A stop ends the turn, so the notice carries the reply menu every answer ends with.
   for (const runThread of stoppedRuns) {
     void setAssistantStatus(client, channelId, runThread, "");
-    const sessionId = (await getSessionMap(slug).catch(() => ({})))[runThread];
-    const engine = await resolveThreadEngine(slug, runThread, meta || {});
-    const btn = resumeButton(cwd, sessionId, engine);
-    deliveries.push(client.chat.postMessage({
-      channel: channelId,
-      thread_ts: runThread,
-      text: "🛑 Stopped.",
-      ...(btn ? { blocks: [{ type: "section", text: { type: "mrkdwn", text: "🛑 Stopped." }, accessory: btn }] } : {}),
-    }).catch(() => {}));
+    deliveries.push(postNoticeWithMenu(client, { channel: channelId, threadKey: runThread, text: "🛑 Stopped.", authorId: byUser })
+      .catch(() => {}));
   }
   // A native loop lives in the SCHEDULE store, not the run registry: between ticks there is
   // nothing in-flight for abortRunsInChannel to find, so stopping only running turns would leave
@@ -651,7 +639,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       });
       return;
     }
-    const mayUseSettings = true; // The message authorization gate above has passed.
 
     // Only an authorized trigger may spend Slack read/file API calls. Hydrate it from the exact
     // canonical message so omitted/incomplete attachment fields cannot produce a text-only agent
@@ -1417,7 +1404,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         authorId: event.user,
         teamId,
         dir,
-        mayUseSettings,
       });
       // First time the bot is EVER pulled into an existing thread → replay its earlier messages
       // for context. Gated on the persistent has-ever-had-a-session marker (not "no current
@@ -1584,7 +1570,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             channel: event.channel,
             threadTs: threadKey,
             authorId: event.user,
-            mayUseSettings,
           }),
           { answerBlocks: answerImageBlocks(result.content || "") },
         );
@@ -1691,10 +1676,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // Process-death errors (stall watchdog, crashed warm session) leave the thread's session
         // intact — work already streamed is on disk and the next message resumes it. Say so.
         const resumable = Boolean(runDeathRecovery(err));
-        await client.chat.postMessage({
+        // A failure ends the turn like an answer does, so it carries the same reply menu.
+        await postNoticeWithMenu(client, {
           channel: event.channel,
-          thread_ts: threadKey,
+          threadKey,
           text: runFailureText(err, { resumable }),
+          authorId: event.user,
         });
         markTerminal();
         await logEvent("run_error", { channel: event.channel, author: event.user, slug: entry.slug, error: err.message, ...runFailureDiagnostics(err) });

@@ -1,9 +1,7 @@
-// The "🛑 Stopped." card names the harness the STOPPED THREAD was running on, not the gateway
-// default. A session id is engine-specific — `claude -r <id>` cannot open a Codex rollout and
-// `codex exec resume <id>` cannot open a Claude session — so a card that reads the global default
-// hands the user a command that is guaranteed to fail. The precedence must match what actually
-// served the turn (run.js + decideThreadEngine): per-thread override → the engine that minted the
-// thread's live session → the channel's own engine → the gateway default.
+// The "🛑 Stopped." card ends the turn with the reply menu, and the thread's engine resolves with
+// the precedence that actually served the turn (run.js + decideThreadEngine): per-thread override
+// → the engine that minted the thread's live session → the channel's own engine → the gateway
+// default.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
@@ -15,7 +13,6 @@ await useFakeRuntime();
 const { upsertChannelEntry, saveChannelMeta, getChannelMeta } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { saveSession, clearSession } = await import("../src/gateway/sessions.js");
-const { setThreadEngine } = await import("../src/gateway/thread-engine.js");
 const { resolveThreadEngine } = await import("../src/gateway/thread-engine.js");
 const { stopRunsInChannel, runQueue } = await import("../src/slack/message-pipeline.js");
 
@@ -48,57 +45,31 @@ async function stopThread(client, slug, threadKey) {
   }
 }
 
-const resumeValue = (client) => {
+const stopCard = (client) => {
   const card = client.posted.find((m) => String(m.text || "") === "🛑 Stopped." && Array.isArray(m.blocks));
   assert.ok(card, `no stop card posted: ${JSON.stringify(client.posted)}`);
-  const accessory = card.blocks[0]?.accessory;
-  assert.ok(accessory, `stop card has no resume button: ${JSON.stringify(card)}`);
-  return JSON.parse(accessory.value);
+  return card;
 };
 
 const entry = await upsertChannelEntry(CHANNEL, { name: "stop-card-engine", type: "channel", isDM: false });
 const slug = entry.slug;
 
-test("the stop card resumes with the engine that minted the thread's session, not the gateway default", async () => {
-  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: true } });
-  await saveChannelMeta(slug, { ...(await getChannelMeta(slug)), engine: "claude" });
-  const threadKey = "9100.100";
+// A stop ends the turn, so the card carries the same reply menu every answer ends with — and no
+// longer a 💻 resume button (the command lives in Settings → Resume Session and `/resume`).
+for (const engine of ["claude", "codex"]) test(`the stop card ends a ${engine} thread with the reply menu and no resume button`, async () => {
+  saveSettings({ engine, engineEnabled: { claude: true, codex: true } });
+  const threadKey = engine === "claude" ? "9100.100" : "9100.200";
   await clearSession(slug, threadKey);
-  await setThreadEngine(slug, threadKey, "");
-  await saveSession(slug, threadKey, "1f1a5a4e-0000-4000-8000-000000000001", "claude");
+  await saveSession(slug, threadKey, `1f1a5a4e-0000-4000-8000-00000000000${engine === "claude" ? 1 : 2}`, engine);
 
   const client = fakeSlack();
   assert.equal(await stopThread(client, slug, threadKey), 1);
-  const value = resumeValue(client);
-  assert.equal(value.sessionId, "1f1a5a4e-0000-4000-8000-000000000001");
-  assert.equal(value.engine, "claude", "a Claude session must never be offered a Codex resume command");
-});
-
-test("the inverse holds: a Codex session in a Claude-default gateway resumes as Codex", async () => {
-  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
-  await saveChannelMeta(slug, { ...(await getChannelMeta(slug)), engine: "codex" });
-  const threadKey = "9100.200";
-  await clearSession(slug, threadKey);
-  await setThreadEngine(slug, threadKey, "");
-  await saveSession(slug, threadKey, "01999999-0000-4000-8000-0000000000c0", "codex");
-
-  const client = fakeSlack();
-  assert.equal(await stopThread(client, slug, threadKey), 1);
-  assert.equal(resumeValue(client).engine, "codex");
-});
-
-test("a per-thread harness override outranks the session it was pinned onto", async () => {
-  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: true } });
-  await saveChannelMeta(slug, { ...(await getChannelMeta(slug)), engine: "codex" });
-  const threadKey = "9100.300";
-  await clearSession(slug, threadKey);
-  await saveSession(slug, threadKey, "1f1a5a4e-0000-4000-8000-000000000003", "codex");
-  await setThreadEngine(slug, threadKey, "claude");
-
-  const client = fakeSlack();
-  assert.equal(await stopThread(client, slug, threadKey), 1);
-  assert.equal(resumeValue(client).engine, "claude");
-  await setThreadEngine(slug, threadKey, "");
+  const card = stopCard(client);
+  assert.equal(card.thread_ts, threadKey);
+  assert.deepEqual(card.blocks.map((block) => block.type), ["section", "actions"]);
+  assert.deepEqual(card.blocks[1].elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+  for (const button of card.blocks[1].elements) assert.deepEqual(JSON.parse(button.value), { o: "open", c: CHANNEL, t: threadKey, u: USER });
+  assert.doesNotMatch(JSON.stringify(card), /resume_cmd_modal/);
 });
 
 test("with no session and no override the channel's engine beats the gateway default", async () => {

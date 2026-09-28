@@ -139,30 +139,27 @@ const tabRow = (view) => view.blocks.find((block) => block.block_id === "cg_chan
 const selects = (view) => view.blocks.filter((block) => block.accessory?.type === "static_select");
 const rendered = (view) => JSON.stringify(view);
 
-test("Settings footer button is authorized-user-only and requester-bound", () => {
-  assert.equal(settingsButton("C1", "1.1", "U1", false), null);
-  assert.equal(settingsButton("C1", "1.1", "", true), null);
+test("Settings footer button is requester-bound, or unbound on an author-less post", () => {
+  assert.equal(settingsButton("", "1.1", "U1"), null);
 
-  const button = settingsButton("C1", "1.1", "U1", true);
+  const button = settingsButton("C1", "1.1", "U1");
   assert.equal(button.action_id, CHANNEL_SETTINGS_ACTION_ID);
   assert.equal(button.text.text, "⚙️ Settings");
   assert.deepEqual(parseActionValue(button.value), { o: "open", c: "C1", t: "1.1", u: "U1" });
+  // An automation post has no requester: the button opens under whoever clicks it.
+  assert.deepEqual(parseActionValue(settingsButton("C1", "", "").value), { o: "open", c: "C1", t: "", u: "" });
 });
 
-test("authorized user reply footer adds Settings after the existing workspace controls", () => {
-  const buttons = footerButtons(
-    { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
-    { channel: "C1", threadTs: "1.1", authorId: "U1", mayUseSettings: true },
-  );
-  // The 💻 resume control moved into Settings → Resume Session; footers no longer carry it.
-  assert.deepEqual(buttons.map((button) => button.text.text), ["📂", "🔑", "⚙️ Settings"]);
-  assert.equal(buttons.some((button) => button.action_id === "resume_cmd_modal"), false);
-
-  const ordinary = footerButtons(
-    { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
-    { channel: "C1", threadTs: "1.1", authorId: "U1", mayUseSettings: false },
-  );
-  assert.equal(ordinary.some((button) => button.action_id === CHANNEL_SETTINGS_ACTION_ID), false);
+test("every reply footer carries the same fixed menu: Files, Variables, Settings — no Resume", () => {
+  for (const authorId of ["U1", ""]) {
+    const buttons = footerButtons(
+      { cwd: "/tmp/work", sessionId: "S1", engine: "claude", content: "" },
+      { channel: "C1", threadTs: "1.1", authorId },
+    );
+    // The 💻 resume control moved into Settings → Resume Session; footers no longer carry it.
+    assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+    assert.equal(buttons.some((button) => button.action_id === "resume_cmd_modal"), false);
+  }
 });
 
 test("Channel Settings pages are one row of tabs with the open page highlighted", () => {

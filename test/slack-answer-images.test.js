@@ -148,7 +148,8 @@ test("unattended Slack delivery promotes the model's Markdown image into the ans
   });
 
   assert.equal(posts.length, 1);
-  assert.deepEqual(posts[0].blocks.map((block) => block.type), ["section", "image"]);
+  // The unattended answer ends with the reply menu, after its previews.
+  assert.deepEqual(posts[0].blocks.map((block) => block.type), ["section", "image", "actions"]);
   assert.equal(posts[0].blocks[1].image_url, "https://img.example/trend.png");
   assert.match(posts[0].text, /https:\/\/img\.example\/trend\.png/);
 });
@@ -173,7 +174,7 @@ test("unattended Slack delivery shares a referenced workspace image after its te
   assert.equal(calls[1][1].threadTs, "111.222");
 });
 
-test("an image preview does not displace an unattended run footer with no resume control", async () => {
+test("an image preview does not displace an unattended run footer and menu", async () => {
   const posts = [];
   const client = { chat: { postMessage: async (payload) => posts.push(payload) } };
 
@@ -189,8 +190,9 @@ test("an image preview does not displace an unattended run footer with no resume
   });
 
   assert.equal(posts.length, 1);
-  assert.deepEqual(posts[0].blocks.map((block) => block.type), ["section", "image", "context"]);
+  assert.deepEqual(posts[0].blocks.map((block) => block.type), ["section", "image", "context", "actions"]);
   assert.match(posts[0].blocks[2].elements[0].text, /3\/2/);
+  assert.doesNotMatch(JSON.stringify(posts[0].blocks), /resume_cmd_modal/);
 });
 
 test("invalid classic preview blocks never cost the completed text answer", async () => {
@@ -232,7 +234,7 @@ test("native answer finalization appends image blocks before the run footer", as
   await progress.finalize({ content: markdown, usage: { input_tokens: 1, output_tokens: 1 } });
 
   assert.equal(stops.length, 1);
-  assert.deepEqual(stops[0].blocks.map((block) => block.type), ["image", "context"]);
+  assert.deepEqual(stops[0].blocks.map((block) => block.type), ["image", "context", "actions"]);
   assert.equal(stops[0].blocks[0].image_url, "https://img.example/chart.png");
 });
 
@@ -290,8 +292,8 @@ test("a rejected native image preview retries with the healthy footer", async ()
   await progress.finalize({ content: markdown, usage: { input_tokens: 1, output_tokens: 1 } });
 
   assert.equal(stops.length, 2);
-  assert.deepEqual(stops[0].blocks.map((block) => block.type), ["image", "context"]);
-  assert.deepEqual(stops[1].blocks.map((block) => block.type), ["context"]);
+  assert.deepEqual(stops[0].blocks.map((block) => block.type), ["image", "context", "actions"]);
+  assert.deepEqual(stops[1].blocks.map((block) => block.type), ["context", "actions"]);
   assert.equal(stops[1].markdown_text, undefined, "the SDK's retained terminal Markdown is not duplicated");
   assert.equal(posts.length, 0, "a rejected preview does not force a duplicate classic answer");
 });

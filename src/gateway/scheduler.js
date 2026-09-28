@@ -10,7 +10,7 @@ import { runMessage as defaultRunMessage } from "./run.js";
 import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops } from "./loops.js";
 import { logEvent } from "../util/logger.js";
 import { createUsageBank } from "./usage.js";
-import { deliverResult } from "../slack/deliver.js";
+import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { postNotice, postDirectMessage, automationTarget } from "../platforms/notify.js";
 
@@ -287,7 +287,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       ...(sched.executionState === "running" ? { enabled: false, executionState: "interrupted" } : {}) });
     await logEvent("schedule_error", { id: sched.id, error: err.message });
     try {
-      if (client) await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${plainFailureText(err.message) || "the run failed"}` });
+      if (client) await postNoticeWithMenu(client, { channel: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${plainFailureText(err.message) || "the run failed"}` });
     } catch {
       /* ignore */
     }

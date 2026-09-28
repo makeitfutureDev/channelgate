@@ -93,11 +93,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { gatewayRoot } from "../config/paths.js";
 
-import { buildResumeCommand, resumeButton, filesButton, secretsButton, settingsButton, footerButtons, footerText, footerBlocks } from "./footer.js";
+import { buildResumeCommand, filesButton, secretsButton, settingsButton, menuButtons, menuBlocks, footerButtons, footerText, footerBlocks } from "./footer.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
 // Re-exported for existing importers (moved to slack/footer.js + slack/progress.js in the
 // 2026-08 restructure split).
-export { buildResumeCommand, resumeButton, filesButton, secretsButton, settingsButton, footerButtons, footerText, footerBlocks };
+export { buildResumeCommand, filesButton, secretsButton, settingsButton, menuButtons, menuBlocks, footerButtons, footerText, footerBlocks };
 export { setAssistantStatus, startProgress };
 import { processMessageEvent, runQueue, stopRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
 import { registerQuestionActions } from "./questions.js";
@@ -428,7 +428,7 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
   const command = parseSecretActionValue(action?.value);
   try {
     if (command.o === "open") {
-      if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
+      if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
       await openSecretsManager(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "" });
       return;
     }
@@ -1215,8 +1215,15 @@ async function notifyAdminsScopes(client, missing) {
 
 // A reply footer belongs to the requester who caused that reply, but gateway admins must still
 // be able to inspect its workspace files. Everyone else remains bound to their own controls.
+// An automation post's menu is unbound (no owner): it opens for whoever clicks, under that
+// clicker's own live authorization (footer.js explains the binding).
 export function canOpenMessageFileButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
-  return Boolean(clickerId && (clickerId === ownerId || clickerIsAdmin));
+  return Boolean(clickerId && (!ownerId || clickerId === ownerId || clickerIsAdmin));
+}
+
+// The same rule for the other menu buttons, which have no admin override.
+export function canOpenMenuButton({ ownerId = "", clickerId = "" } = {}) {
+  return Boolean(clickerId && (!ownerId || clickerId === ownerId));
 }
 
 // Slack does not infer the source thread for an ephemeral posted from a Block Kit action. Carry
@@ -1260,7 +1267,7 @@ async function connectAndWire(app) {
     const command = parseFileActionValue(action?.value);
     try {
       if (command.o === "open" || command.o === "open_file") {
-        const clickerIsAdmin = clicker && command.u !== clicker ? await isAdmin(clicker) : false;
+        const clickerIsAdmin = clicker && command.u && command.u !== clicker ? await isAdmin(clicker) : false;
         if (!canOpenMessageFileButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin }) || !body?.trigger_id) {
           throw new Error("This file explorer button isn't for you.");
         }
@@ -1418,7 +1425,7 @@ async function connectAndWire(app) {
     const actionId = String(action?.action_id || "");
     try {
       if (command.o === "open") {
-        if (!clicker || command.u !== clicker || !body?.trigger_id) throw new Error("This settings button isn't for you.");
+        if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This settings button isn't for you.");
         await openChannelSettings(client, body.trigger_id, {
           channelId: command.c,
           userId: clicker,
