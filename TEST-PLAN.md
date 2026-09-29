@@ -2,6 +2,15 @@
 
 ## Channel-specific Codex authentication (2026-09-29)
 
+- [x] Automated: `node --test test/channel-codex-login.test.js`. Admin UI device sign-in exposes
+  only an approved ChatGPT URL and one-time code, then selects the channel after a saved login;
+  API key sign-in sends the key only through CLI standard input. Failed/cancelled flows do not
+  select the channel. The authenticated admin API refuses unknown channels and invalid input.
+- [ ] Live admin UI acceptance: in a disposable channel open Runtime → Codex authentication,
+  start ChatGPT sign-in, follow the browser link and code, and observe **Signed in with ChatGPT**
+  and **This channel's login** selected. Repeat with a disposable API key in a second channel;
+  observe **Signed in with an API key**, a cleared password field, and no key in the browser
+  response, gateway logs, or audit. Cancel a third device flow and confirm it remains unsigned.
 - [x] Automated: `node --test test/codex-token-relay.test.js
   test/container-credentials.test.js test/engine-runtime-isolated.test.js
   test/codex-args.test.js test/channel-env.test.js`. A channel-selected login has no gateway

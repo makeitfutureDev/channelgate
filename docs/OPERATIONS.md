@@ -753,9 +753,16 @@ fingerprint), and `cg-init` deletes an old copied Codex login carrying a refresh
 volume. The legacy open-network mode keeps the shared read-write mount (and says so in `/status`).
 
 **A separate Codex login for one channel.** In the admin channel editor, Runtime → **Codex
-authentication** → **This channel's login**, then Save. The editor shows that channel's Codex
-home directory on the **gateway host**. Create it under the gateway service account and sign in
-there. For ChatGPT subscription access, use `CODEX_HOME=<displayed directory> codex login
+authentication** → **This channel's login**. Use **Sign in with ChatGPT** to start a device code
+flow in the admin page; open the displayed link, enter its code, and wait for the status to show
+the completed ChatGPT login. Device code sign-in may first need enabling in ChatGPT security
+settings or workspace permissions. Alternatively, enter a Platform key in the private password
+field and choose **Use API key**. A successful sign-in selects and saves **This channel's login**.
+The page shows only the method and sign-in status after completion; it never returns the key.
+
+For a terminal fallback, the editor shows that channel's Codex home directory on the **gateway
+host**. Create it under the gateway service account and sign in there. For ChatGPT subscription
+access, use `CODEX_HOME=<displayed directory> codex login
 --device-auth` and complete the browser code flow. For an OpenAI Platform API key, use
 `CODEX_HOME=<displayed directory> codex login --with-api-key`, supplying the key on standard
 input as prompted by the CLI. Never put the key on the command line, in Slack, or in the channel

@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Admin channel settings now start ChatGPT device code sign-in or accept an OpenAI API key for a
+  dedicated Codex login, show its status, and select it after success.
 - Channels can select a separate host-side Codex login for ChatGPT subscription access or an
   OpenAI API key. Proxy-mode containers receive only channel-bound credential placeholders.
 

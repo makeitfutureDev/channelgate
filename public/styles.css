@@ -231,6 +231,10 @@ code {
 
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 12px; }
 .grid-2 { grid-template-columns: repeat(2, 1fr); }
+.ch-codex-login { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.ch-codex-login .row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ch-codex-login .ch-codex-api-key { flex: 1 1 220px; min-width: 0; width: auto; }
+.ch-codex-login .ch-codex-device-value { font-family: var(--mono); letter-spacing: .08em; }
 .col h4 { margin: 0 0 8px; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
 .checks { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
 .checks.empty { color: var(--faint); font-size: 12px; font-style: italic; }

@@ -64,7 +64,7 @@ let detailDirty = false; // whether the open conversation detail has unsaved edi
 // Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
 // Environment secrets and VPN control have independent writes and must never round-trip through
 // the card's Save or tell the admin the card has edits waiting.
-const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls";
+const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -2062,6 +2062,57 @@ function renderChannelDetail(ch) {
   engineSelect.value = meta.engine || "";
   card.querySelector(".ch-codex-auth-source").value = meta.codexAuthSource || "gateway";
   card.querySelector(".ch-codex-auth-home").textContent = meta.codexAuthHome || "Save this channel first";
+  const loginBox = card.querySelector(".ch-codex-login");
+  const loginStatus = loginBox.querySelector(".ch-codex-login-status");
+  const deviceBox = loginBox.querySelector(".ch-codex-device-code");
+  const apiKeyInput = loginBox.querySelector(".ch-codex-api-key");
+  const cancelLogin = loginBox.querySelector(".ch-codex-device-cancel");
+  const loginUrl = `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`;
+  let loginPoll = null;
+  const paintLogin = (state) => {
+    loginStatus.textContent = state.phase === "pending"
+      ? "Waiting for sign-in…"
+      : state.phase === "failed" ? state.error
+      : state.authenticated ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}`
+      : "No channel login yet";
+    deviceBox.hidden = !(state.phase === "pending" && state.code && state.url);
+    if (!deviceBox.hidden) {
+      loginBox.querySelector(".ch-codex-device-link").href = state.url;
+      loginBox.querySelector(".ch-codex-device-value").textContent = state.code;
+    }
+    cancelLogin.hidden = state.phase !== "pending";
+    if (state.phase === "complete") {
+      card.querySelector(".ch-codex-auth-source").value = "channel";
+      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel" };
+    }
+    if (state.phase === "pending" && !loginPoll) {
+      loginPoll = setInterval(() => {
+        if (!card.isConnected) { clearInterval(loginPoll); loginPoll = null; return; }
+        void api(loginUrl).then(paintLogin).catch(() => { loginStatus.textContent = "Could not check sign-in status"; });
+      }, 2000);
+    } else if (state.phase !== "pending" && loginPoll) {
+      clearInterval(loginPoll);
+      loginPoll = null;
+    }
+  };
+  void api(loginUrl).then(paintLogin).catch((e) => { loginStatus.textContent = `Could not check sign-in: ${e.message}`; });
+  loginBox.querySelector(".ch-codex-device-start").addEventListener("click", async () => {
+    loginStatus.textContent = "Starting ChatGPT sign-in…";
+    try { paintLogin(await api(loginUrl, { method: "POST", body: JSON.stringify({ method: "device" }) })); }
+    catch (e) { loginStatus.textContent = e.message; }
+  });
+  loginBox.querySelector(".ch-codex-key-save").addEventListener("click", async () => {
+    const key = apiKeyInput.value;
+    apiKeyInput.value = "";
+    if (!key) { loginStatus.textContent = "Enter an OpenAI API key"; return; }
+    loginStatus.textContent = "Saving API key sign-in…";
+    try { paintLogin(await api(loginUrl, { method: "POST", body: JSON.stringify({ method: "api-key", key }) })); }
+    catch (e) { loginStatus.textContent = e.message; }
+  });
+  cancelLogin.addEventListener("click", async () => {
+    try { await api(loginUrl, { method: "DELETE" }); paintLogin(await api(loginUrl)); }
+    catch (e) { loginStatus.textContent = e.message; }
+  });
   renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
   syncModelOptions({
     engineSelect,

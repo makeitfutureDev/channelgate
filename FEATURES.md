@@ -5,6 +5,10 @@
 - Admins can select the gateway Codex login or a dedicated host-side `CODEX_HOME` for a channel
   from Runtime → Codex authentication. The dedicated directory is keyed to the conversation ID
   and does not fall back to another account when no login exists.
+- The channel editor can start ChatGPT device code sign-in or accept an OpenAI API key through a
+  private password field. It polls the sign-in state, lets an admin cancel a pending device flow,
+  and selects the channel login after success. The API returns only the method and device code;
+  the key enters the Codex CLI through standard input and never appears in a response or argv.
 - The operator can sign in to that directory with ChatGPT subscription access or an OpenAI
   Platform API key. In proxy-mode containers, both methods use a channel-bound placeholder:
   ChatGPT access tokens are relayed as JWT-shaped values, while API keys are relayed only to

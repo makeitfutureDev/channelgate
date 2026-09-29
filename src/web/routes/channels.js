@@ -52,6 +52,7 @@ import {
 } from "../../slack/members.js";
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
 import { CODEX_AUTH_SOURCES, channelCodexHome } from "../../gateway/channel-codex-auth.js";
+import { channelCodexLoginStatus, startChannelCodexLogin, cancelChannelCodexLogin } from "../../gateway/channel-codex-login.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
 import { listChannelEnv, normalizeEnvName, patchChannelEnv, swapRuleFieldsFrom } from "../../config/channel-env.js";
@@ -110,6 +111,44 @@ export function createChannelsRouter({
   setVpnEnabled = setChannelVpnEnabled,
 } = {}) {
   const router = Router();
+
+  const registeredChannel = async (req, res) => {
+    const entry = (await getChannelsIndex())[req.params.channelId];
+    if (!entry) res.status(404).json({ error: "unknown channel" });
+    return entry;
+  };
+
+  router.get("/channels/:channelId/codex-login", async (req, res, next) => {
+    try {
+      if (!(await registeredChannel(req, res))) return;
+      res.json(await channelCodexLoginStatus(req.params.channelId));
+    } catch (error) { next(error); }
+  });
+  router.post("/channels/:channelId/codex-login", async (req, res, next) => {
+    try {
+      const entry = await registeredChannel(req, res);
+      if (!entry) return;
+      const method = req.body?.method;
+      const status = await startChannelCodexLogin(req.params.channelId, method, {
+        key: req.body?.key,
+        onAuthenticated: async () => {
+          const before = await getChannelMeta(entry.slug);
+          const after = await patchChannelMeta(entry.slug, (current) => ({ ...current, codexAuthSource: "channel" }));
+          await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before, after });
+        },
+      });
+      res.status(202).json(status);
+    } catch (error) {
+      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+      next(error);
+    }
+  });
+  router.delete("/channels/:channelId/codex-login", async (req, res, next) => {
+    try {
+      if (!(await registeredChannel(req, res))) return;
+      res.json({ cancelled: cancelChannelCodexLogin(req.params.channelId) });
+    } catch (error) { next(error); }
+  });
 
   // The enclosing admin stack authenticates these routes. No profile, command, path or
   // service metadata is accepted from the browser: only this registered conversation's switch.
