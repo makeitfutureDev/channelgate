@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- **The agent can send any file into the thread.** New gateway tool `slack_share_file` posts a file
+  from the channel's working folder — PDF, Word, Excel, PowerPoint, ZIP, images, HTML — into the
+  current thread as the bot, up to 25 MB, exactly like the file explorer's Share button. "Trimite
+  fișierul" no longer ends in a "which Slack account?" question card: a Composio upload is only for
+  other channels or DMs now. Files outside the channel folder (including the mounted operator home)
+  and symlinks out of it are refused.
+
 - Completed nested background reports stranded by the earlier `invalid_thread_ts` error get one
   bounded recovery attempt from their saved output after restart. Their work is not rerun.
 - Channel Runtime settings now ask for the Codex login source first, show the matching gateway

@@ -13,10 +13,15 @@ If the person only wants to see it here, write the folder-relative path in inlin
 (`` `work/acme/PROPOSAL.pdf` ``) and the reply gets a `📄 PROPOSAL.pdf` button that opens it in the
 file explorer. No tool call. See `references/writing-replies.md`.
 
+If they want the **file itself** in this conversation ("send it", "attach the PDF") and the
+`slack_share_file` tool is available, use it: it posts the file into this thread as the bot, any
+type, up to 25 MB. It needs no Composio account, so it never raises a "which account?" question —
+do not route a file for THIS thread through Composio.
+
 ## 2. Anywhere reachable through Composio → `stage_file_for_composio`
 
-**This is the default for Drive, Gmail attachments, Slack uploads, HubSpot, e-signature tools —
-anything with a Composio toolkit.** Nothing is published; the bytes go from the gateway straight
+**This is the default for Drive, Gmail attachments, Slack uploads to OTHER channels or DMs,
+HubSpot, e-signature tools — anything with a Composio toolkit.** Nothing is published; the bytes go from the gateway straight
 into Composio's storage over TLS.
 
 Composio's file-taking tools do not accept a path or base64. They take

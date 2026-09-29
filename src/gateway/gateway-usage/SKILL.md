@@ -93,9 +93,9 @@ credential or connection is needed, without exposing its value.
    `📄 ACME_SOW.pdf` button to the reply footer that opens the file explorer straight to it.
    Plain prose with no backticks gets no button, and a bare word with no `/` and no extension
    isn't treated as a file. **When the user asks for the file itself** — "send it here", "share
-   the file", "attach it" — don't just name it: upload it with `slack_upload_snippet`, which
-   posts any UTF-8 text file (`.md`, `.txt`, `.json`, `.html`, `.csv`, code, logs) into this
-   thread as a real file. Binaries and images go the other routes.
+   the file", "attach it" — don't just name it: send it with `slack_share_file`, which posts
+   the file itself (any type — PDF, DOCX, XLSX, HTML, Markdown) into this thread as the bot. It
+   needs no Composio account, so never ask "which account?" to put a file in this thread.
    Full detail: `references/writing-replies.md`.
 4. **Delegate work that may outlive this turn with the gateway tool, never an engine background subagent.**
    In-turn Agent/Task subagents are fine (a Stop hook mechanically prevents you from ending the
@@ -149,7 +149,7 @@ credential or connection is needed, without exposing its value.
 | ---------------------------------------------- | --------------------------------- | ----------- |
 | Reply in this thread                           | `references/writing-replies.md`   | (just output text) |
 | Point the user at a file you wrote or changed   | `references/writing-replies.md`   | Write its folder-relative path in inline code → `📄 name` footer button |
-| Send a file into this thread because they asked for it ("share it here", "attach it") | `references/writing-replies.md` | `gateway` → `slack_upload_snippet` (any UTF-8 text file: `.md`, `.txt`, `.json`, `.html`, `.csv`, code) |
+| Send a file into this thread because they asked for it ("share it here", "attach it", "send the PDF") | `references/writing-replies.md` | `gateway` → `slack_share_file` (any file type in the working folder, ≤ 25 MB, posted by the bot) |
 | @-mention / ping someone                       | `references/mentions.md`          | (write `@Name`) |
 | Post to another channel / DM, schedule a send, react | `references/messages.md`    | chosen Composio account (`mcp__composio-agent__*` / `mcp__composio-user__*`) |
 | Set a reminder or schedule a task (once/recurring) | `references/reminders.md`     | `gateway` → `create_schedule`, `list_schedules`, `delete_schedule` |
