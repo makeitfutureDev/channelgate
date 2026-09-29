@@ -2513,6 +2513,16 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 
 ## Complete background-agent report delivery
 
+- [x] `test/deliver.test.js`: a nested agent session key with two `::agent-` suffixes delivers
+  its report and menu into the launching Slack thread; a synthetic scheduled key produces a
+  channel-level post with no `thread_ts`. `test/durable-delivery.test.js` checks that a completed
+  agent's report is delivered directly and its durable row retires only after delivery.
+- [ ] Live Claude and Codex, separate private Auto fixtures: start a background agent that starts
+  another background agent returning a short read-only report. Capture the root thread timestamp
+  and both synthetic session keys. Pass when the nested agent's completed report appears exactly
+  once in the root thread, no `invalid_thread_ts` warning appears, and its `bg_jobs` row retires.
+  Repeat with a channel-level scheduled report: it must post without a `thread_ts`. Keep each
+  engine's observed evidence and any failed attempt for the exact candidate.
 - [x] `test/durable-delivery.test.js`: both engine result shapes retain a report longer than
   12,000 characters through an unavailable transport, persisted state, and recovery. Exact
   content and the final sentinel survive, known secret values remain redacted, and the completed

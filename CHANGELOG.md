@@ -20,6 +20,10 @@ product overview.
 
 - Channel Runtime settings now ask for the Codex login source first, show the matching gateway
   or channel setup, and allow shared gateway Codex sign-in directly in the admin UI.
+- **Nested background agent reports reach their Slack thread.** Delivery now turns an agent's
+  synthetic session key into the launching thread timestamp before posting the report and menu.
+  Scheduled reports with synthetic keys post at channel level. This prevents `invalid_thread_ts`
+  from stranding a completed report.
 - Admin channel settings now start ChatGPT device code sign-in or accept an OpenAI API key for a
   dedicated Codex login, show its status, and select it after success.
 - Channels can select a separate host-side Codex login for ChatGPT subscription access or an
