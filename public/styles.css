@@ -412,9 +412,9 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .kpi-link:hover { border-color: var(--orange); background: var(--panel-2); transform: translateY(-1px); }
 .kpi-link:focus-visible { outline: none; border-color: var(--orange); }
 
-/* Cost is the hero chart (2fr); sessions + tokens ride at 1fr each. */
-.dash-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
-.dash-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+/* Four compact usage charts above the full-width model, channel, user and skill cards. */
+.dash-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.dash-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 
 .chart-card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 16px 18px; min-width: 0; }
 .chart-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
@@ -427,7 +427,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; box-shadow: none; }
 
 /* ── Per-model stacking ──────────────────────────────────────────────────────
-   One legend above the three hero charts: the bands mean the same model in each,
+   One legend above the four usage cards: the colours mean the same model in each,
    so repeating it per card would be three copies of the same key. It wraps because
    a deployment can easily be running eight models at once. Legend text stays in the
    muted ink token — the swatch carries identity, never the label's colour. */
@@ -457,6 +457,13 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .spark-tip-row b { margin-left: auto; font-variant-numeric: tabular-nums; }
 .spark-tip-row .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex: none; }
 
+/* Model breakdown for each source/user bar and each of a channel's three metrics. */
+.bar-hover { position: relative; display: block; min-width: 0; cursor: help; }
+.bar-hover:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; border-radius: 5px; }
+.bar-tip { display: none; right: 0; bottom: calc(100% + 6px); max-width: min(260px, 85vw); }
+.bar-hover:hover .bar-tip, .bar-hover:focus .bar-tip { display: block; }
+.bar-tip .spark-tip-head { display: block; }
+
 .bar-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 10px; padding: 6px 0; font-size: 12.5px; }
 .bar-row-dual { align-items: center; }
 .bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
@@ -476,6 +483,8 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 /* Stacked value: when a bar's value is split into <span> lines (e.g. sessions/tokens/cost per user),
    render one metric per line. Plain-text values (channel rows) are unaffected. */
 .bar-val > span { display: block; line-height: 1.45; }
+.dash-grid .bar-row { grid-template-columns: 76px minmax(24px, 1fr) auto; gap: 6px; font-size: 11px; }
+.dash-grid .bar-val { font-size: 10px; }
 
 /* ── Overview (slice 2): orange cost KPI + taller hero cost chart ───────────── */
 .kpi-value.cost { color: var(--orange); }
@@ -869,7 +878,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 
 /* ── Responsive: turn the left rail into a compact row above the sections ─── */
 @media (max-width: 900px) {
-  .dash-grid, .dash-two { grid-template-columns: 1fr; }
+  .dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cap-cards { grid-template-columns: repeat(2, 1fr); }
   .userlayout { flex-direction: column; }
   .userlayout .drawer { width: 100%; position: static; }
@@ -879,6 +888,9 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
   .setnav a.on::before { left: 11px; right: 11px; top: auto; bottom: 2px; width: auto; height: 2px; }
   .setcontent { width: 100%; }
   .setbody { max-width: none; }
+}
+@media (max-width: 600px) {
+  .dash-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 760px) {

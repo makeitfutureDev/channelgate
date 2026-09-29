@@ -1221,9 +1221,23 @@ unchecked live gate above.
       snapshot, OpenAI id, unknown id, empty). Engine-independent: this is ledger SQL, not harness
       behaviour.
 - [x] `test/usage-model-breakdown.test.js` also pins the Overview's chart contract: the categorical
-      palette hexes (changing one obliges re-running the dataviz validator), the stacked-area
+      palette hexes (changing one obliges re-running the dataviz validator), the stacked-column
       renderer, a legend for every multi-series chart, the models bar chart, and that hues are
       keyed on the model rather than cycled by position in a filtered list.
+- [x] `test/dashboard-chart-layout.test.js`: stacked columns occupy separate time buckets and
+      reconcile their heights with per-model values; source, channel and user bars expose the
+      matching model breakdown on hover and keyboard focus; the four compact cards and four
+      full-width cards render in the requested order. Engine-independent: these are browser UI
+      functions over the already-aggregated dashboard payload.
+- [ ] Live acceptance (Overview chart layout): open Overview with a range containing usage from
+      two or more models. Require four cards across at desktop width: Token est. cost, Runs,
+      Tokens, Where usage came from. Require separate stacked columns for each time bucket and
+      verify the hovered column shows that bucket's model values. Below, require full-width Models,
+      Channels, Runs per user, Top skills in that order. Hover and keyboard-focus one source bar,
+      one channel metric bar and one user bar; each tooltip must show the bar's total and model
+      breakdown in the same colours as the legend. Repeat at a narrow viewport to check card
+      wrapping and that tooltips remain readable. Engine-independent: the UI reads a fixed API
+      payload and no engine turn is involved.
 - [x] `test/external-usage.test.js`: Claude transcript parsing into per-hour/per-model aggregates
       (subagent spend counted, synthetic error replies not, tool results and subagent prompts not
       counted as turns, dated snapshots collapsed onto the billing id); the cache-write TTL split,

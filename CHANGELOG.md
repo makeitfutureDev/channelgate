@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Overview now draws separate stacked columns for each time bucket, shows model totals when a
+  source, channel or user bar is hovered or focused, and arranges usage sources beside the three
+  time charts above Models, Channels, Users and Skills.
+
 - **The folder-generator test no longer scatters projects across the operator's home.** Its custom-workdir fixtures now live under one `ChannelGate Testing` folder, are removed when the test process exits, and stale runs are swept before the next test suite.
 - **A provider usage limit no longer blocks an update.** Before and after updating, the updater sends each engine a tiny test prompt inside a throwaway container. A reply like "You've hit your weekly limit" used to refuse the update, even though it proves the engine starts, logs in and reaches its provider. It now counts as reachable. A broken login or engine still stops the update.
 
