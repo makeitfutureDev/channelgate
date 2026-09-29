@@ -65,14 +65,15 @@ Claude daemon authentication uses supported organization API credentials resolve
 files and legacy setup-token settings are not relayed. If missing, name the service-environment
 remedy rather than attempting to copy host credentials or create a second refresh chain.
 
-Codex uses the daemon's `CODEX_API_KEY` (before `OPENAI_API_KEY`), or the host's ChatGPT sign-in
-RELAYED like Claude's (`src/gateway/codex-token-relay.js`): behind the egress proxy the runner writes
-an ACCESS-ONLY `auth.json` into the channel's HOME volume before each Codex run — the access token is
-the channel's relay placeholder in JWT shape (real claims, `cgph_r…` as the signature), the refresh
-token is empty — and the proxy swaps the whole token on the OpenAI/ChatGPT hosts. The daemon renews
-the real login with a cheap turn in its own `CODEX_HOME`. Only the legacy bridge egress mode and an
-API-key `auth.json` still bind-mount the host's real file (the documented remaining exposure). Never
-copy a host `auth.json`, and never ask for one to be mounted: a copy forks the refresh chain.
+Codex normally uses the gateway host's login; Runtime → Codex authentication can select a separate
+host-side `CODEX_HOME` for one channel. That login can be a ChatGPT subscription or a Platform API
+key. The operator signs in with `codex login --device-auth` or `codex login --with-api-key` under the
+displayed home directory. Behind the egress proxy the runner writes an access-only `auth.json`
+into the channel's HOME volume: a JWT-shaped placeholder with an empty refresh token for ChatGPT,
+or a separate API-key placeholder accepted only on `api.openai.com`. The daemon refreshes a ChatGPT
+login in its own host-side `CODEX_HOME`; neither real credential is mounted in proxy mode. Only the
+legacy bridge mode mounts the selected host file. Never ask for a credential in chat or copy it
+into a channel folder. A missing selected login fails instead of falling back to the gateway one.
 
 VS Code attaches to the existing channel container/workdir and holds an editor lease in daemon
 metadata. It sees that channel's existing native CLI sessions, but no daemon auth or channel

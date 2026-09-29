@@ -39,6 +39,7 @@ export const POLICY_KEYS = Object.freeze([
   "cleanMode", // run bare (no MCP servers, no skills)
   "noDefaultTokens", // refuse the org-default token fallback here
   "engine", // per-channel engine override
+  "codexAuthSource", // gateway-wide or channel-specific Codex login
   "model",
   "effort",
   "runtime", // where a turn runs, when a channel pins it

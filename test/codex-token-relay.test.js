@@ -21,10 +21,11 @@ ensureTestEnv();
 const relay = await import("../src/gateway/codex-token-relay.js");
 const { wrapPlaceholder, corePlaceholder, findPlaceholders, jwtClaimSegments, mintPlaceholder, shapePlaceholder, JWT_PLACEHOLDER_RE } = await import("../src/gateway/egress/placeholders.js");
 const { swapHeaders, placeholdersInRequest } = await import("../src/gateway/egress/rules.js");
-const { CODEX_RELAY_RULE, CODEX_RELAY_SECRET_NAME, relayRuleFor, RELAY_RULE } = await import("../src/gateway/egress/catalog-rules.js");
+const { CODEX_API_RELAY_RULE, CODEX_API_RELAY_SECRET_NAME, CODEX_RELAY_RULE, CODEX_RELAY_SECRET_NAME, relayRuleFor, RELAY_RULE } = await import("../src/gateway/egress/catalog-rules.js");
 const { ENGINE_HOSTS } = await import("../src/gateway/egress/engine-hosts.js");
 const grants = await import("../src/gateway/egress/grants.js");
 const { installRelayedCodexLogin } = await import("../src/engines/codex.js");
+const { channelCodexHome, codexLoginCandidatesFor } = await import("../src/gateway/channel-codex-auth.js");
 
 const seg = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
 const SIGNATURE = Buffer.from(`real-signature-${Date.now()}`).toString("base64url");
@@ -265,6 +266,45 @@ test("containerCodexCredential: a per-channel JWT placeholder whose grant resolv
   const nothing = await grants.containerCodexCredential({ target: activeTarget("C_CODEX_RELAY_A"), resolveRelay: async () => ({ token: "", error: "Codex is not signed in on the gateway host" }) });
   assert.equal(nothing.authJson, undefined);
   assert.match(nothing.error, /not signed in/);
+});
+
+test("a channel API-key login stays on the host and only its scoped placeholder reaches the container", async () => {
+  grants.__resetGrantCaches();
+  const channelId = "C_CODEX_API_ONLY";
+  const home = channelCodexHome(channelId);
+  const file = authFile(home, { apiKey: true });
+  const target = { ...activeTarget(channelId), meta: { channelId, codexAuthSource: "channel" } };
+  assert.deepEqual(codexLoginCandidatesFor(target.meta), [file]);
+  const resolved = await relay.resolveContainerCodexToken({ candidates: [file] });
+  assert.equal(resolved.source, "api-key");
+  const placed = await grants.containerCodexCredential({ target });
+  const parsed = JSON.parse(placed.authJson);
+  assert.equal(parsed.tokens, null);
+  assert.equal(parsed.OPENAI_API_KEY, grants.codexApiRelayPlaceholderFor({ channelId }));
+  assert.ok(!placed.authJson.includes(resolved.token));
+  const grant = await grants.resolveEgressGrant(parsed.OPENAI_API_KEY, { metaFor: async () => target.meta });
+  assert.equal(grant.value, resolved.token);
+  assert.equal(grant.secretName, CODEX_API_RELAY_SECRET_NAME);
+  assert.deepEqual(grant.hosts, [...CODEX_API_RELAY_RULE.hosts]);
+  assert.deepEqual(grant.format, ["bearer"]);
+  assert.equal(swapHeaders({ headers: { host: "api.openai.com", authorization: `Bearer ${parsed.OPENAI_API_KEY}` }, hostname: "api.openai.com", resolveGrant: resolverFor(grant) }).headers.authorization, `Bearer ${resolved.token}`);
+  assert.equal(swapHeaders({ headers: { host: "chatgpt.com", authorization: `Bearer ${parsed.OPENAI_API_KEY}` }, hostname: "chatgpt.com", resolveGrant: resolverFor(grant) }).headers.authorization, `Bearer ${parsed.OPENAI_API_KEY}`);
+});
+
+test("a channel ChatGPT login relays from its own host home and keeps the refresh token there", async () => {
+  grants.__resetGrantCaches();
+  const channelId = "C_CODEX_SUBSCRIPTION_ONLY";
+  const file = authFile(channelCodexHome(channelId));
+  const target = { ...activeTarget(channelId), meta: { channelId, codexAuthSource: "channel" } };
+  const original = relay.readDaemonCodexAccessToken(file);
+  const placed = await grants.containerCodexCredential({ target });
+  const parsed = JSON.parse(placed.authJson);
+  assert.equal(parsed.auth_mode, "chatgpt");
+  assert.equal(parsed.tokens.refresh_token, "");
+  assert.ok(!placed.authJson.includes(original.token));
+  const grant = await grants.resolveEgressGrant(corePlaceholder(parsed.tokens.access_token), { metaFor: async () => target.meta });
+  assert.equal(grant.value, original.token);
+  assert.equal(grant.secretName, CODEX_RELAY_SECRET_NAME);
 });
 
 test("installRelayedCodexLogin writes the file through the backend, refuses a still-mounted shared file, and names a missing login", async () => {

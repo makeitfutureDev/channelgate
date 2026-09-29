@@ -51,6 +51,7 @@ import {
   withChannelMembershipLock,
 } from "../../slack/members.js";
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
+import { CODEX_AUTH_SOURCES, channelCodexHome } from "../../gateway/channel-codex-auth.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
 import { listChannelEnv, normalizeEnvName, patchChannelEnv, swapRuleFieldsFrom } from "../../config/channel-env.js";
@@ -89,6 +90,7 @@ export function maskChannelMeta(meta = {}) {
     // `...meta` would otherwise spread the env bag — VALUES included — into every save response.
     env: undefined,
     envVars: listChannelEnv(meta),
+    codexAuthHome: channelCodexHome(meta.channelId),
     composioToken: undefined,
     hasComposioToken: tok.has,
     composioTokenLast4: tok.last4,
@@ -234,6 +236,7 @@ export function createChannelsRouter({
       if (typeof body.autoMode === "boolean") next_.autoMode = body.autoMode;
       if (typeof body.cleanMode === "boolean") next_.cleanMode = body.cleanMode;
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
+      if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
       if (typeof body.toolboxToken === "string" && body.toolboxToken) next_.toolboxToken = body.toolboxToken.trim();
@@ -379,6 +382,7 @@ export function createChannelsRouter({
             noDefaultTokens: typeof body.noDefaultTokens === "boolean" ? body.noDefaultTokens : current.noDefaultTokens,
             memory: typeof body.memory === "boolean" ? body.memory : current.memory,
             engine: typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine)) ? body.engine : current.engine,
+            codexAuthSource: CODEX_AUTH_SOURCES.includes(body.codexAuthSource) ? body.codexAuthSource : current.codexAuthSource || "gateway",
             approvedTools: Array.isArray(body.approvedTools) ? body.approvedTools.map(String) : current.approvedTools,
             workDir: workDirPatch !== undefined ? workDirPatch : current.workDir,
             // Google Drive sync folder link — a plain string (no filesystem validation like workDir);

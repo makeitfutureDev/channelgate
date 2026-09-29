@@ -105,6 +105,13 @@ export function readDaemonCodexAccessToken(login = resolveCodexLogin(), { readFi
   }
 }
 
+export function readDaemonCodexApiKey(login, { readFileImpl = readFileSync } = {}) {
+  try {
+    const parsed = JSON.parse(readFileImpl(login.file, "utf8"));
+    return typeof parsed?.OPENAI_API_KEY === "string" ? parsed.OPENAI_API_KEY.trim() : "";
+  } catch { return ""; }
+}
+
 // One cheap turn in the login's own CODEX_HOME. Its answer is irrelevant; the side effect — the CLI
 // refreshing and persisting a fresh pair in THAT auth.json — is the point. Ephemeral (no session
 // files), the operator's config.toml ignored (no MCP servers, no profiles), read-only sandbox.
@@ -156,8 +163,8 @@ export function __resetCodexRelayState() {
 /**
  * @returns {Promise<{token: string, source: "chatgpt"|"api-key"|"none", expiresAt: number,
  *   idToken?: string, accountId?: string, authMode?: string, planType?: string, error?: string, login: object}>}
- * An empty token means there is nothing to relay, and `error` says why. Source "api-key" is an
- * API-key login, which this relay does not carry (the container keeps the shared file for it).
+ * An empty token means there is nothing to relay, and `error` says why. API-key logins are
+ * relayed through a separate proxy grant restricted to api.openai.com.
  */
 export async function resolveContainerCodexToken({
   now = Date.now,
@@ -167,10 +174,14 @@ export async function resolveContainerCodexToken({
   refresh = refreshDaemonCodexToken,
   read = readDaemonCodexAccessToken,
   resolveLogin = resolveCodexLogin,
+  candidates = null,
   env = process.env,
 } = {}) {
-  const login = resolveLogin({ env });
-  if (login.kind === "api-key") return { token: "", source: "api-key", expiresAt: 0, error: `${login.file} holds an API key, not a ChatGPT sign-in`, login };
+  const login = resolveLogin({ env, ...(candidates ? { candidates } : {}) });
+  if (login.kind === "api-key") {
+    const token = readDaemonCodexApiKey(login);
+    return { token, source: "api-key", expiresAt: 0, error: token ? "" : `the Codex API key at ${login.file} could not be read`, login };
+  }
   if (login.kind !== "chatgpt") return { token: "", source: "none", expiresAt: 0, error: login.reason, login };
   let current = read(login);
   if (!current) return { token: "", source: "none", expiresAt: 0, error: `the gateway's Codex login at ${login.file} could not be read`, login };
@@ -215,4 +226,8 @@ export function renderContainerCodexAuth({ accessToken, idToken = "", accountId 
     },
     last_refresh: new Date(now()).toISOString(),
   }, null, 2)}\n`;
+}
+
+export function renderContainerCodexApiAuth({ apiKey } = {}) {
+  return `${JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: String(apiKey || ""), tokens: null }, null, 2)}\n`;
 }

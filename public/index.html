@@ -1274,6 +1274,15 @@
               </select>
             </label>
             <label class="field">
+              <span>Codex authentication</span>
+              <select class="ch-codex-auth-source">
+                <option value="gateway">Gateway login (shared)</option>
+                <option value="channel">This channel's login</option>
+              </select>
+              <em class="state">A channel login can use a ChatGPT subscription or an OpenAI API key. Configure it on the gateway host.</em>
+            </label>
+            <div class="field"><span>Channel Codex home on gateway host</span><code class="ch-codex-auth-home"></code></div>
+            <label class="field">
               <span>Model</span>
               <select class="ch-model"></select>
             </label>

@@ -2060,6 +2060,8 @@ function renderChannelDetail(ch) {
   }
   const engineSelect = card.querySelector(".ch-engine");
   engineSelect.value = meta.engine || "";
+  card.querySelector(".ch-codex-auth-source").value = meta.codexAuthSource || "gateway";
+  card.querySelector(".ch-codex-auth-home").textContent = meta.codexAuthHome || "Save this channel first";
   renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
   syncModelOptions({
     engineSelect,
@@ -2191,6 +2193,7 @@ function renderChannelDetail(ch) {
           memory: card.querySelector(".ch-memory").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
+          codexAuthSource: card.querySelector(".ch-codex-auth-source").value,
           workDir: card.querySelector(".ch-workdir").value,
           syncDriveFolder: card.querySelector(".ch-syncdrive").value,
           model: card.querySelector(".ch-model").value,
