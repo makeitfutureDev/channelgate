@@ -85,3 +85,21 @@ test("the sweeper removes stale scratch roots, keeps live ones, and never touche
   assert.equal(sweepScratchDirs({ root, keep: [liveRoot] }).removed, 0);
   assert.equal(existsSync(liveRoot), true);
 });
+
+test("the dedicated fixture folder only sweeps stale generator runs", () => {
+  const root = tempDir("cg-fixture-sweep-");
+  const old = Date.now() / 1000 - 6 * 60 * 60;
+  const stale = path.join(root, "folders-generator-old");
+  const recent = path.join(root, "folders-generator-live");
+  const other = path.join(root, "keep-this-project");
+  for (const dir of [stale, recent, other]) mkdirSync(dir);
+  utimesSync(stale, old, old);
+  utimesSync(other, old, old);
+
+  const swept = sweepScratchDirs({ root, prefixes: ["folders-generator-"] });
+  assert.equal(swept.removed, 1);
+  assert.equal(swept.recent, 1);
+  assert.equal(existsSync(stale), false);
+  assert.equal(existsSync(recent), true);
+  assert.equal(existsSync(other), true);
+});

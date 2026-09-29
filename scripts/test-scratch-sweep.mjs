@@ -23,19 +23,19 @@ import { pathToFileURL } from "node:url";
 
 // The prefixes the suite creates directly under os.tmpdir(): the per-process scratch root, its
 // TMPDIR sibling, and the workspace roots the container tests pin before ensureTestEnv() runs.
-// Everything else a test makes is created AFTER TMPDIR is repointed, so it lives inside a
-// `cg-tmp-*` and is removed with it.
+// Most other fixtures live inside `cg-tmp-*`; custom workdir fixtures are the one exception,
+// grouped under ~/ChannelGate Testing and swept separately below.
 export const SCRATCH_PREFIXES = Object.freeze(["cg-test-", "cg-tmp-", "cg-ws-"]);
 
 // Old enough that no live run can own it. Directory mtime moves whenever a direct child is added
 // or removed, so an active scratch root keeps refreshing itself well inside this window.
 export const MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
-export function isScratchName(name) {
-  return SCRATCH_PREFIXES.some((prefix) => name.startsWith(prefix));
+export function isScratchName(name, prefixes = SCRATCH_PREFIXES) {
+  return prefixes.some((prefix) => name.startsWith(prefix));
 }
 
-export function sweepScratchDirs({ root = os.tmpdir(), now = Date.now(), maxAgeMs = MAX_AGE_MS, keep = [] } = {}) {
+export function sweepScratchDirs({ root = os.tmpdir(), now = Date.now(), maxAgeMs = MAX_AGE_MS, keep = [], prefixes = SCRATCH_PREFIXES } = {}) {
   const result = { root, removed: 0, recent: 0, skipped: 0 };
   // Never touch a directory this very process was pointed at.
   const protectedDirs = new Set(keep.filter(Boolean).map((dir) => path.resolve(dir)));
@@ -47,7 +47,7 @@ export function sweepScratchDirs({ root = os.tmpdir(), now = Date.now(), maxAgeM
   }
   const cutoff = now - maxAgeMs;
   for (const entry of entries) {
-    if (!entry.isDirectory() || !isScratchName(entry.name)) continue;
+    if (!entry.isDirectory() || !isScratchName(entry.name, prefixes)) continue;
     const abs = path.join(root, entry.name);
     if (protectedDirs.has(path.resolve(abs))) continue;
     const stats = statSync(abs, { throwIfNoEntry: false });
@@ -68,10 +68,17 @@ export function sweepScratchDirs({ root = os.tmpdir(), now = Date.now(), maxAgeM
 
 function main() {
   const swept = sweepScratchDirs({ keep: [process.env.TMPDIR, process.env.CG_TEST_SCRATCH] });
+  const fixtures = sweepScratchDirs({
+    root: path.join(os.homedir(), "ChannelGate Testing"),
+    prefixes: ["folders-generator-"],
+  });
   const parts = [`removed ${swept.removed}`];
   if (swept.recent) parts.push(`kept ${swept.recent} recent`);
   if (swept.skipped) parts.push(`skipped ${swept.skipped} not removable`);
   console.log(`[test-scratch-sweep] ${parts.join(", ")} in ${swept.root}`);
+  if (fixtures.removed || fixtures.recent || fixtures.skipped) {
+    console.log(`[test-scratch-sweep] removed ${fixtures.removed}, kept ${fixtures.recent} recent, skipped ${fixtures.skipped} in ${fixtures.root}`);
+  }
 }
 
 const invoked = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
