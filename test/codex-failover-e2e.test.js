@@ -22,6 +22,7 @@ process.env.SESSION_KEEPALIVE = "0";
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { runMessage, resetEngineCooldowns } = await import("../src/gateway/run.js");
+const { getSessionEngine } = await import("../src/gateway/sessions.js");
 const { runCodex } = await import("../src/engines/codex.js");
 const { setThreadEngine, setThreadModel } = await import("../src/gateway/thread-engine.js");
 
@@ -38,7 +39,7 @@ test("a Codex usage limit reported as a JSON error event falls back to Claude", 
   resetEngineCooldowns();
   saveSettings({ engine: "codex", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
   await setUser("U_CODEX_LIMIT", { name: "Codex Limit", approved: true, isAdmin: false });
-  await codexChannel("D_CODEX_LIMIT", "codex-limit");
+  const entry = await codexChannel("D_CODEX_LIMIT", "codex-limit");
 
   const result = await runMessage({
     channelId: "D_CODEX_LIMIT",
@@ -56,6 +57,14 @@ test("a Codex usage limit reported as a JSON error event falls back to Claude", 
   assert.equal(result.fellBackToCodex, false, "the legacy flag names the TARGET, and Claude is not Codex");
   assert.match(result.content, /Codex hit its usage limit.*using Claude/i);
   assert.match(result.content, /Stub engine reply/);
+  assert.equal(await getSessionEngine(entry.slug, "1901.010"), "claude");
+  resetEngineCooldowns();
+  const next = await runMessage({
+    channelId: "D_CODEX_LIMIT", authorId: "U_CODEX_LIMIT", text: "continue",
+    threadKey: "1901.010", origin: "slack_foreground", preferCold: true,
+  });
+  assert.equal(next.engine, "claude");
+  assert.match(next.content, /resume=yes/);
 });
 
 test("the same limit printed on stderr with a nonzero exit also falls back", async () => {

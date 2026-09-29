@@ -14,7 +14,7 @@ import { memorySnapshotPrefix } from "./channel-memory.js";
 import { recordUsage } from "./usage.js";
 import { createSkillUsageRecorder } from "./skills/usage.js";
 import { withTemplateSkills } from "./skills/templates.js";
-import { resolveSession, resetSession, getSession, saveSession, sessionGeneration, dropMintedSession } from "./sessions.js";
+import { resolveSession, resetSession, getSession, getSessionEngine, saveSession, promoteFallbackSession, discardFallbackSessions, sessionGeneration, dropMintedSession } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
@@ -361,8 +361,8 @@ export function buildHealedPrompt(ctx, turnText) {
 // thread's context). Only an EXPLICIT ask for this thread/run — a "claude"/"codex" directive, the
 // /model wizard's thread scope, or a per-run API engine override — switches it; the caller then
 // starts the fresh session (and replays the thread transcript into it, like a session heal). The
-// usage-limit Codex fallback is separate and untouched: it runs under a suffixed session key and
-// never re-stamps the thread. New or unlabeled (pre-v4) sessions have nothing to stick to.
+// A successful automatic failover re-stamps the thread with the answering engine, so it too
+// continues on that engine. New or unlabeled (pre-v4) sessions have nothing to stick to.
 export function decideThreadEngine({ requested, sessionEngine, isNew, explicit }) {
   if (isNew || !sessionEngine || sessionEngine === requested) return { engine: requested, switch: false };
   return explicit ? { engine: requested, switch: true } : { engine: sessionEngine, switch: false };
@@ -879,6 +879,17 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // tombstone — this run's late unwind (a subprocess that finished at the kill, a resume-heal
   // re-mint, the Codex-fallback save) is silently dropped instead of resurrecting the session.
   const sessionGen = sessionGeneration(entry.slug, threadKey);
+  // Adopt successful fallback sessions written by older gateway versions. Those versions kept
+  // the answer under a suffixed key and retried the limited engine on the next message. A user's
+  // explicit thread/runtime choice still wins, including a thread-scoped model selection.
+  if (!presetSessionId && !engineExplicit) {
+    const previousEngine = await getSessionEngine(entry.slug, threadKey);
+    const legacyFallback = fallbackTargets(previousEngine).find(isEngineEnabled);
+    const pinnedModel = await getThreadModel(entry.slug, threadKey);
+    if (legacyFallback && (!pinnedModel || !modelBelongsToEngine(pinnedModel, previousEngine))) {
+      await promoteFallbackSession(entry.slug, threadKey, legacyFallback, "", sessionGen);
+    }
+  }
   if (presetSessionId) {
     await saveSession(entry.slug, threadKey, presetSessionId, engine, sessionGen, runtimeStamp);
     sessionId = presetSessionId;
@@ -1510,9 +1521,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
 
   // Cross-engine failover for when the engine driving this turn is rate-limited or can't
   // authenticate: it can't resume the failed engine's session, but its OWN thread is durable — the
-  // fallback thread id is kept under a suffixed session key, so consecutive fallback turns resume
-  // the same conversation instead of starting context-less each time (the primary key keeps
-  // mapping to the original engine's session for when the cooldown ends). Fallback engine
+  // fallback thread id is initially kept under a suffixed session key while this turn runs;
+  // after a successful answer it replaces the main thread session. Fallback engine
   // unavailable → caller handles the thrown error.
   // Direction-agnostic: `engine` is whatever actually drives this turn, and the target is the first
   // ENABLED engine in its failover route — an admin who turned a harness off must not have it
@@ -1684,7 +1694,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       }
     }
     assertCompletedTurn(cx, fallbackEngine, prior || "");
-    if (cx.sessionId) await saveSession(entry.slug, fbKey, cx.sessionId, fallbackEngine, sessionGen, runtimeStamp);
+    if (cx.sessionId) await promoteFallbackSession(entry.slug, threadKey, fallbackEngine, cx.sessionId, sessionGen, runtimeStamp);
     cx = transientRetryNote(fallbackEngine, cx);
     // `fellBack`/`fallbackFrom` are the engine-agnostic truth; `fellBackToCodex` is the original
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
@@ -2033,6 +2043,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // also labels a legacy Codex thread whose id round-tripped unchanged.
     if (sessionEngine === "" && !fresh && finalSessionId) {
       await saveSession(entry.slug, threadKey, finalSessionId, engine, sessionGen, runtimeStamp);
+    }
+    // A completed turn on the chosen engine supersedes any old fallback-only session. In
+    // particular, this prevents a legacy fallback from being adopted after a user clears a
+    // thread-scoped model choice that kept this turn on the original engine.
+    if (sessionGeneration(entry.slug, threadKey) === sessionGen) {
+      await discardFallbackSessions(entry.slug, threadKey);
     }
 
     const finalResult = {
