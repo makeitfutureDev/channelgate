@@ -2513,6 +2513,14 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 
 ## Complete background-agent report delivery
 
+- [x] `test/durable-delivery.test.js`: a completed nested-agent report saved with both delivery
+  attempts exhausted gets one repair delivery on recovery, retires its row after success, and never
+  calls the runner. A failed repair records its one-time marker and cannot reset the attempt budget
+  again on a later restart. Focused delivery suite: 65 passed.
+- [ ] Live Claude and Codex, separate private fixtures: stage a completed nested-agent report
+  with a synthetic key, saved output and two exhausted attempts; restart safely on the fixed beta
+  revision. Pass when the original report appears once in the root thread, the row retires, and no
+  engine work is rerun. Preserve the original failed delivery evidence and the exact retest links.
 - [x] `test/deliver.test.js`: a nested agent session key with two `::agent-` suffixes delivers
   its report and menu into the launching Slack thread; a synthetic scheduled key produces a
   channel-level post with no `thread_ts`. `test/durable-delivery.test.js` checks that a completed
