@@ -21,6 +21,7 @@ import { effectiveWorkDir } from "./folders.js";
 import { gatewayRoot } from "../config/paths.js";
 import { runMessage, effectiveMeta } from "./run.js";
 import { deliverResult } from "../slack/deliver.js";
+import { slackThreadFor } from "../slack/thread-keys.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { logEvent } from "../util/logger.js";
 import { recordUsage, createUsageBank } from "./usage.js";
@@ -958,6 +959,20 @@ export class BackgroundJobs {
       if (rec.runtime?.backend && rec.runtime.backend !== "host") await this._attachRecoveredRuntime(rec);
       rec.tail = await this._tailFromLog(rec.logFile, rec);
       if (rec.pendingDelivery) {
+        // Older delivery code passed the entire synthetic agent session key to Slack as
+        // thread_ts. Those failures can exhaust the two-attempt budget before the corrected
+        // delivery code boots. Grant exactly one repair attempt when the finished output is
+        // already saved, without re-running the agent or a completed continuation.
+        const rootThread = slackThreadFor(rec.threadKey);
+        if (rec.deliveryAttempts >= MAX_DELIVERY_ATTEMPTS && rootThread && rootThread !== rec.threadKey
+            && rec.pendingDelivery.outcome?.ok === true
+            && (rec.pendingDelivery.report || rec.pendingDelivery.continuationResult)
+            && !rec.pendingDelivery.syntheticThreadRetryGranted) {
+          rec.deliveryAttempts = MAX_DELIVERY_ATTEMPTS - 1;
+          rec.pendingDelivery.syntheticThreadRetryGranted = true;
+          this._persist({ required: true });
+          await logEvent("bg_recover_synthetic_thread", { id: rec.id, slug: rec.slug });
+        }
         // The job already ran to completion; only its notice/continuation is outstanding.
         await logEvent("bg_recover_redeliver", { id: rec.id, slug: rec.slug, attempts: rec.deliveryAttempts || 0 });
         await this._deliver(rec);

@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Completed nested background reports stranded by the earlier `invalid_thread_ts` error get one
+  bounded recovery attempt from their saved output after restart. Their work is not rerun.
 - Channel Runtime settings now ask for the Codex login source first, show the matching gateway
   or channel setup, and allow shared gateway Codex sign-in directly in the admin UI.
 - **Nested background agent reports reach their Slack thread.** Delivery now turns an agent's
