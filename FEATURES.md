@@ -2,6 +2,10 @@
 
 ## Channel-specific Codex authentication
 
+- Runtime settings ask which Codex login a channel uses before showing setup. The shared view
+  shows gateway Slack, Claude and Codex status, links to their settings, and direct shared Codex
+  ChatGPT/API-key sign-in. The channel view shows its dedicated Codex login and channel connection
+  locations. The selector changes only Codex authentication; Slack and Claude remain gateway-wide.
 - Admins can select the gateway Codex login or a dedicated host-side `CODEX_HOME` for a channel
   from Runtime → Codex authentication. The dedicated directory is keyed to the conversation ID
   and does not fall back to another account when no login exists.

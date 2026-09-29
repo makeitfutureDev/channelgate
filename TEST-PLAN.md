@@ -2,6 +2,16 @@
 
 ## Channel-specific Codex authentication (2026-09-29)
 
+- [x] Automated: the Codex login service and admin API tests cover both channel and shared
+  gateway sign-in, including API key delivery through stdin, safe status payloads, authenticated
+  routes and CSRF refusal.
+- [ ] Live admin UI acceptance: open Runtime in a disposable channel. The login source choice
+  appears before the engine/model controls. **Default gateway login** shows Slack, Claude and
+  Codex status and the shared Codex sign-in controls; **This channel's own login** shows only
+  the channel Codex sign-in and its host home. Switch between them without signing in and save:
+  a new Codex thread must use the selected source. Sign in to the shared gateway using a
+  disposable API key and confirm a different channel using gateway default sees that method;
+  the channel-specific login remains separate. Revoke the test key afterward.
 - [x] Automated: `node --test test/channel-codex-login.test.js`. Admin UI device sign-in exposes
   only an approved ChatGPT URL and one-time code, then selects the channel after a saved login;
   API key sign-in sends the key only through CLI standard input. Failed/cancelled flows do not

@@ -1264,23 +1264,45 @@
 
         <!-- ── RUNTIME ────────────────────────────────────────────────────── -->
         <div class="subpane" data-pane="runtime">
-          <div class="grid grid-2">
+          <div class="ch-auth-chooser">
             <label class="field">
-              <span>Engine (which CLI drives this channel)</span>
-              <select class="ch-engine">
-                <option value="">Default (global setting)</option>
-                <option value="claude">Claude</option>
-                <option value="codex">Codex</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Codex authentication</span>
+              <span>Which Codex login should this channel use?</span>
               <select class="ch-codex-auth-source">
-                <option value="gateway">Gateway login (shared)</option>
-                <option value="channel">This channel's login</option>
+                <option value="gateway">Default gateway login (shared)</option>
+                <option value="channel">This channel's own login</option>
               </select>
-              <em class="state">A channel login can use a ChatGPT subscription or an OpenAI API key.</em>
             </label>
+            <em class="state">Choose a login source first; its setup appears below. Slack and Claude currently use the gateway connection in either case.</em>
+          </div>
+          <div class="ch-auth-gateway-panel">
+            <h4>Default gateway setup</h4>
+            <p class="hint">These connections are shared with other channels.</p>
+            <div class="ch-auth-status-grid">
+              <div><strong>Slack</strong><span class="ch-gateway-slack-status state">Checking…</span><button type="button" class="ghost ch-gateway-slack-settings">Open Slack settings</button></div>
+              <div><strong>Claude</strong><span class="ch-gateway-claude-status state">Checking…</span><button type="button" class="ghost ch-gateway-claude-settings">Open Claude settings</button></div>
+              <div><strong>Codex</strong><span class="ch-gateway-codex-status state">Checking…</span></div>
+            </div>
+            <div class="ch-codex-login ch-gateway-codex-login">
+              <span>Sign in to the default gateway Codex login</span>
+              <div class="ch-codex-login-status state">Checking sign-in…</div>
+              <div class="row-actions">
+                <button type="button" class="btn ch-codex-device-start">Sign in with ChatGPT</button>
+                <button type="button" class="btn ch-codex-device-cancel" hidden>Cancel sign-in</button>
+              </div>
+              <div class="ch-codex-device-code" hidden>
+                <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
+                <span> and enter code </span><strong class="ch-codex-device-value"></strong>
+              </div>
+              <div class="row-actions">
+                <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Default gateway OpenAI API key">
+                <button type="button" class="btn ch-codex-key-save">Use API key</button>
+              </div>
+              <em class="state">This login is shared across channels using the default. OpenAI bills API key use separately from a ChatGPT subscription.</em>
+            </div>
+          </div>
+          <div class="ch-auth-channel-panel" hidden>
+            <h4>This channel's Codex setup</h4>
+            <p class="hint">This login is used only by this conversation. Other channels keep their own selection.</p>
             <div class="field"><span>Channel Codex home on gateway host</span><code class="ch-codex-auth-home"></code></div>
             <div class="field ch-codex-login">
               <span>Sign in to this channel</span>
@@ -1294,11 +1316,22 @@
                 <span> and enter code </span><strong class="ch-codex-device-value"></strong>
               </div>
               <div class="row-actions">
-                <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="OpenAI API key">
+                <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Channel OpenAI API key">
                 <button type="button" class="btn ch-codex-key-save">Use API key</button>
               </div>
               <em class="state">The key is sent once to the gateway over this admin session. API usage is billed by OpenAI separately from a ChatGPT subscription.</em>
             </div>
+            <p class="hint">Channel-specific connected apps and secrets are configured in MCP Connections and Environment tokens above.</p>
+          </div>
+          <div class="grid grid-2">
+            <label class="field">
+              <span>Engine (which CLI drives this channel)</span>
+              <select class="ch-engine">
+                <option value="">Default (global setting)</option>
+                <option value="claude">Claude</option>
+                <option value="codex">Codex</option>
+              </select>
+            </label>
             <label class="field">
               <span>Model</span>
               <select class="ch-model"></select>

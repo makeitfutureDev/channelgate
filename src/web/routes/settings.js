@@ -64,6 +64,7 @@ import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, clean
 import { engineUiManifest, refreshEngineModels } from "../../engines/registry.js";
 // The Anthropic-compatible provider table — one settings card, one credential pair, per entry.
 import { QWEN_PROVIDERS } from "../../engines/qwen.js";
+import { gatewayCodexLoginStatus, startGatewayCodexLogin, cancelGatewayCodexLogin } from "../../gateway/channel-codex-login.js";
 
 // The month the license ledger is keyed on — UTC, never the daemon's local zone (a deployment in
 // UTC+13 would otherwise roll its allowance a day early).
@@ -86,6 +87,21 @@ export function createSettingsRouter({
   restartCoordinator,
 } = {}) {
   const router = Router();
+
+  // The shared login is the gateway service account's own CODEX_HOME. The CLI receives a key
+  // only on stdin, and these admin-session routes return status or a device code, never auth.json.
+  router.get("/gateway/codex-login", async (_req, res, next) => {
+    try { res.json(await gatewayCodexLoginStatus()); } catch (error) { next(error); }
+  });
+  router.post("/gateway/codex-login", async (req, res, next) => {
+    try {
+      res.status(202).json(await startGatewayCodexLogin(req.body?.method, { key: req.body?.key }));
+    } catch (error) {
+      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+      next(error);
+    }
+  });
+  router.delete("/gateway/codex-login", (_req, res) => res.json({ cancelled: cancelGatewayCodexLogin() }));
 
   // The ONE settings representation. The admin UI repaints from whatever a request returns —
   // the initial GET, the response to a successful save, or the 409 that refuses a stale one — so

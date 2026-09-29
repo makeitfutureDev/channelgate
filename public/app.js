@@ -1833,6 +1833,66 @@ async function pollDriveSync(channelId, resultEl, stillOpen) {
   }
 }
 
+// Both the shared gateway and a channel login use the same private Codex sign-in controls.
+// The server returns only a method and the temporary device code; never render raw CLI output.
+function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {} } = {}) {
+  const statusEl = box.querySelector(".ch-codex-login-status");
+  const deviceBox = box.querySelector(".ch-codex-device-code");
+  const apiKeyInput = box.querySelector(".ch-codex-api-key");
+  const cancelButton = box.querySelector(".ch-codex-device-cancel");
+  let poll = null;
+  let observedPending = false;
+  let startedHere = false;
+  const paint = (state) => {
+    statusEl.textContent = state.phase === "pending" ? "Waiting for sign-in…"
+      : state.phase === "failed" ? state.error
+      : state.authenticated ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}`
+      : "No login yet";
+    deviceBox.hidden = !(state.phase === "pending" && state.code && state.url);
+    if (!deviceBox.hidden) {
+      box.querySelector(".ch-codex-device-link").href = state.url;
+      box.querySelector(".ch-codex-device-value").textContent = state.code;
+    }
+    cancelButton.hidden = state.phase !== "pending";
+    onState(state);
+    if (state.phase === "pending") observedPending = true;
+    if (state.phase === "complete" && (observedPending || startedHere)) {
+      onComplete();
+      observedPending = false;
+      startedHere = false;
+    }
+    if (state.phase === "pending" && !poll) {
+      poll = setInterval(() => {
+        if (!box.isConnected) { clearInterval(poll); poll = null; return; }
+        void api(url).then(paint).catch(() => { statusEl.textContent = "Could not check sign-in status"; });
+      }, 2000);
+    } else if (state.phase !== "pending" && poll) {
+      clearInterval(poll);
+      poll = null;
+    }
+  };
+  void api(url).then(paint).catch((error) => { statusEl.textContent = `Could not check sign-in: ${error.message}`; });
+  box.querySelector(".ch-codex-device-start").addEventListener("click", async () => {
+    startedHere = true;
+    statusEl.textContent = "Starting ChatGPT sign-in…";
+    try { paint(await api(url, { method: "POST", body: JSON.stringify({ method: "device" }) })); }
+    catch (error) { startedHere = false; statusEl.textContent = error.message; }
+  });
+  box.querySelector(".ch-codex-key-save").addEventListener("click", async () => {
+    const key = apiKeyInput.value;
+    apiKeyInput.value = "";
+    if (!key) { statusEl.textContent = "Enter an OpenAI API key"; return; }
+    startedHere = true;
+    statusEl.textContent = "Saving API key sign-in…";
+    try { paint(await api(url, { method: "POST", body: JSON.stringify({ method: "api-key", key }) })); }
+    catch (error) { startedHere = false; statusEl.textContent = error.message; }
+  });
+  cancelButton.addEventListener("click", async () => {
+    try { await api(url, { method: "DELETE" }); paint(await api(url)); }
+    catch (error) { statusEl.textContent = error.message; }
+  });
+}
+
 function renderChannelDetail(ch) {
   const detail = document.getElementById("channel-detail");
   detailDirty = false;
@@ -2060,59 +2120,42 @@ function renderChannelDetail(ch) {
   }
   const engineSelect = card.querySelector(".ch-engine");
   engineSelect.value = meta.engine || "";
-  card.querySelector(".ch-codex-auth-source").value = meta.codexAuthSource || "gateway";
-  card.querySelector(".ch-codex-auth-home").textContent = meta.codexAuthHome || "Save this channel first";
-  const loginBox = card.querySelector(".ch-codex-login");
-  const loginStatus = loginBox.querySelector(".ch-codex-login-status");
-  const deviceBox = loginBox.querySelector(".ch-codex-device-code");
-  const apiKeyInput = loginBox.querySelector(".ch-codex-api-key");
-  const cancelLogin = loginBox.querySelector(".ch-codex-device-cancel");
-  const loginUrl = `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`;
-  let loginPoll = null;
-  const paintLogin = (state) => {
-    loginStatus.textContent = state.phase === "pending"
-      ? "Waiting for sign-in…"
-      : state.phase === "failed" ? state.error
-      : state.authenticated ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}`
-      : "No channel login yet";
-    deviceBox.hidden = !(state.phase === "pending" && state.code && state.url);
-    if (!deviceBox.hidden) {
-      loginBox.querySelector(".ch-codex-device-link").href = state.url;
-      loginBox.querySelector(".ch-codex-device-value").textContent = state.code;
-    }
-    cancelLogin.hidden = state.phase !== "pending";
-    if (state.phase === "complete") {
-      card.querySelector(".ch-codex-auth-source").value = "channel";
-      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel" };
-    }
-    if (state.phase === "pending" && !loginPoll) {
-      loginPoll = setInterval(() => {
-        if (!card.isConnected) { clearInterval(loginPoll); loginPoll = null; return; }
-        void api(loginUrl).then(paintLogin).catch(() => { loginStatus.textContent = "Could not check sign-in status"; });
-      }, 2000);
-    } else if (state.phase !== "pending" && loginPoll) {
-      clearInterval(loginPoll);
-      loginPoll = null;
-    }
+  const authSource = card.querySelector(".ch-codex-auth-source");
+  const gatewayPanel = card.querySelector(".ch-auth-gateway-panel");
+  const channelPanel = card.querySelector(".ch-auth-channel-panel");
+  const paintAuthScope = () => {
+    gatewayPanel.hidden = authSource.value !== "gateway";
+    channelPanel.hidden = authSource.value !== "channel";
   };
-  void api(loginUrl).then(paintLogin).catch((e) => { loginStatus.textContent = `Could not check sign-in: ${e.message}`; });
-  loginBox.querySelector(".ch-codex-device-start").addEventListener("click", async () => {
-    loginStatus.textContent = "Starting ChatGPT sign-in…";
-    try { paintLogin(await api(loginUrl, { method: "POST", body: JSON.stringify({ method: "device" }) })); }
-    catch (e) { loginStatus.textContent = e.message; }
+  authSource.value = meta.codexAuthSource || "gateway";
+  authSource.addEventListener("change", paintAuthScope);
+  paintAuthScope();
+  card.querySelector(".ch-codex-auth-home").textContent = meta.codexAuthHome || "Save this channel first";
+  mountCodexLoginBox(channelPanel.querySelector(".ch-codex-login"), `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`, {
+    onComplete: () => {
+      authSource.value = "channel";
+      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel" };
+      paintAuthScope();
+    },
   });
-  loginBox.querySelector(".ch-codex-key-save").addEventListener("click", async () => {
-    const key = apiKeyInput.value;
-    apiKeyInput.value = "";
-    if (!key) { loginStatus.textContent = "Enter an OpenAI API key"; return; }
-    loginStatus.textContent = "Saving API key sign-in…";
-    try { paintLogin(await api(loginUrl, { method: "POST", body: JSON.stringify({ method: "api-key", key }) })); }
-    catch (e) { loginStatus.textContent = e.message; }
+  mountCodexLoginBox(gatewayPanel.querySelector(".ch-codex-login"), "/api/gateway/codex-login", {
+    onState: (state) => {
+      gatewayPanel.querySelector(".ch-gateway-codex-status").textContent = state.authenticated
+        ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}` : "No shared Codex login";
+    },
   });
-  cancelLogin.addEventListener("click", async () => {
-    try { await api(loginUrl, { method: "DELETE" }); paintLogin(await api(loginUrl)); }
-    catch (e) { loginStatus.textContent = e.message; }
+  void api("/api/health").then((health) => {
+    if (!card.isConnected) return;
+    gatewayPanel.querySelector(".ch-gateway-slack-status").textContent = health.slack?.connected ? "Connected" : "Disconnected";
+    const claude = health.engines?.claude?.auth;
+    gatewayPanel.querySelector(".ch-gateway-claude-status").textContent = claude?.authenticated
+      ? `Signed in (${claude.method || "gateway"})` : "No usable Claude login";
+  }).catch(() => {
+    gatewayPanel.querySelector(".ch-gateway-slack-status").textContent = "Status unavailable";
+    gatewayPanel.querySelector(".ch-gateway-claude-status").textContent = "Status unavailable";
   });
+  gatewayPanel.querySelector(".ch-gateway-slack-settings").addEventListener("click", () => { setView("settings"); selectSettingsSection("connection"); });
+  gatewayPanel.querySelector(".ch-gateway-claude-settings").addEventListener("click", () => { setView("settings"); revealSetting("set-container-claude-token"); });
   renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
   syncModelOptions({
     engineSelect,

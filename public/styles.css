@@ -231,6 +231,15 @@ code {
 
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 12px; }
 .grid-2 { grid-template-columns: repeat(2, 1fr); }
+.ch-auth-chooser { margin-bottom: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.ch-auth-chooser .field { margin-bottom: 6px; }
+.ch-auth-gateway-panel, .ch-auth-channel-panel { margin-bottom: 16px; padding: 16px; border: 1px solid var(--line-soft); border-radius: 10px; }
+.ch-auth-gateway-panel[hidden], .ch-auth-channel-panel[hidden] { display: none; }
+.ch-auth-gateway-panel h4, .ch-auth-channel-panel h4 { margin: 0 0 4px; }
+.ch-auth-status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.ch-auth-status-grid > div { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.ch-auth-channel-panel > .field { margin-bottom: 12px; }
+@media (max-width: 760px) { .ch-auth-status-grid { grid-template-columns: 1fr; } }
 .ch-codex-login { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
 .ch-codex-login .row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .ch-codex-login .ch-codex-api-key { flex: 1 1 220px; min-width: 0; width: auto; }

@@ -753,7 +753,14 @@ fingerprint), and `cg-init` deletes an old copied Codex login carrying a refresh
 volume. The legacy open-network mode keeps the shared read-write mount (and says so in `/status`).
 
 **A separate Codex login for one channel.** In the admin channel editor, Runtime → **Codex
-authentication** → **This channel's login**. Use **Sign in with ChatGPT** to start a device code
+login source** → **This channel's own login**. The choice comes before the engine and model
+settings. **Default gateway login** shows the shared Slack, Claude and Codex status, with links
+to the gateway Slack/Claude settings and direct ChatGPT or API-key sign-in for shared Codex.
+Slack and Claude currently use the gateway connection regardless of the Codex choice. Choose
+**This channel's own login** to show the dedicated Codex controls; channel connector overrides
+remain in MCP Connections and Environment tokens.
+
+Use **Sign in with ChatGPT** to start a device code
 flow in the admin page; open the displayed link, enter its code, and wait for the status to show
 the completed ChatGPT login. Device code sign-in may first need enabling in ChatGPT security
 settings or workspace permissions. Alternatively, enter a Platform key in the private password

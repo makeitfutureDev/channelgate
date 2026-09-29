@@ -1,10 +1,13 @@
-// Admin UI login for a channel's host-side Codex home. The CLI owns auth.json; this module
+// Admin UI login for a channel or the shared gateway Codex home. The CLI owns auth.json; this module
 // never returns its contents, the API key, or raw CLI output to a browser or log.
 import { spawn } from "node:child_process";
+import { lstatSync, realpathSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { buildChildEnv } from "../engines/child-env.js";
 import { readCodexAuthState } from "../engines/codex-auth.js";
+import { codexEngineHome } from "../config/paths.js";
 import { channelCodexHome } from "./channel-codex-auth.js";
 
 const DEVICE_TIMEOUT_MS = 10 * 60_000;
@@ -13,7 +16,7 @@ const jobs = new Map();
 
 function loginEnv(home) {
   const env = buildChildEnv({ CODEX_HOME: home, HOME: path.dirname(home) });
-  // A login is selected by this channel's Codex home alone, never a daemon-wide key or
+  // A login is selected by the target Codex home alone, never a daemon-wide key or
   // identity federation variable inherited from the service environment.
   for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"]) delete env[key];
   return env;
@@ -30,10 +33,19 @@ function deviceDetails(output) {
   return { code, url: safeUrl };
 }
 
-export async function channelCodexLoginStatus(channelId) {
-  const home = channelCodexHome(channelId);
+function gatewayCodexHome() {
+  const engineFile = path.join(codexEngineHome(), "auth.json");
+  try {
+    const entry = lstatSync(engineFile);
+    if (entry.isFile()) return codexEngineHome();
+    if (entry.isSymbolicLink()) return path.dirname(realpathSync(engineFile));
+  } catch { /* the shared login has not been created yet */ }
+  return path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
+}
+
+async function loginStatus(jobKey, home) {
   const auth = await readCodexAuthState({ codexHome: home, hostCodexHome: home, env: {} });
-  const job = jobs.get(channelId);
+  const job = jobs.get(jobKey);
   return {
     authenticated: auth.known && auth.authenticated,
     method: auth.known && auth.authenticated ? auth.method : "",
@@ -44,23 +56,29 @@ export async function channelCodexLoginStatus(channelId) {
   };
 }
 
-export async function startChannelCodexLogin(channelId, method, { key = "", spawnImpl = spawn, onAuthenticated = async () => {} } = {}) {
-  if (!channelId) throw Object.assign(new Error("unknown channel"), { statusCode: 404 });
+export const channelCodexLoginStatus = (channelId) => loginStatus(`channel:${channelId}`, channelCodexHome(channelId));
+export const gatewayCodexLoginStatus = async () => {
+  const status = await loginStatus("gateway", gatewayCodexHome());
+  // A service-level key is a valid shared fallback when no file login exists. Never return it.
+  if (!status.authenticated && process.env.OPENAI_API_KEY) return { ...status, authenticated: true, method: "api-key" };
+  return status;
+};
+
+async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, onAuthenticated = async () => {} } = {}) {
   if (!(["device", "api-key"].includes(method))) throw Object.assign(new Error("invalid sign-in method"), { statusCode: 400 });
   if (method === "api-key" && (typeof key !== "string" || !/^sk-[^\s]{10,}$/.test(key) || key.length > 8192))
     throw Object.assign(new Error("Enter an OpenAI API key"), { statusCode: 400 });
-  if (jobs.get(channelId)?.phase === "pending") throw Object.assign(new Error("sign-in already in progress"), { statusCode: 409 });
-  const home = channelCodexHome(channelId);
+  if (jobs.get(jobKey)?.phase === "pending") throw Object.assign(new Error("sign-in already in progress"), { statusCode: 409 });
   const job = { phase: "pending", code: "", url: "", error: "", child: null };
-  jobs.set(channelId, job);
+  jobs.set(jobKey, job);
   try {
     await mkdir(home, { recursive: true, mode: 0o700 });
     await chmod(home, 0o700);
   } catch {
-    if (jobs.get(channelId) === job) jobs.delete(channelId);
-    throw Object.assign(new Error("Could not prepare this channel's Codex login directory."), { statusCode: 500 });
+    if (jobs.get(jobKey) === job) jobs.delete(jobKey);
+    throw Object.assign(new Error("Could not prepare the Codex login directory."), { statusCode: 500 });
   }
-  if (jobs.get(channelId) !== job) return channelCodexLoginStatus(channelId);
+  if (jobs.get(jobKey) !== job) return loginStatus(jobKey, home);
   const args = ["login", "-c", 'cli_auth_credentials_store="file"', method === "device" ? "--device-auth" : "--with-api-key"];
   let child;
   try {
@@ -68,7 +86,7 @@ export async function startChannelCodexLogin(channelId, method, { key = "", spaw
   } catch {
     job.phase = "failed";
     job.error = "Codex CLI could not start on the gateway host.";
-    return channelCodexLoginStatus(channelId);
+    return loginStatus(jobKey, home);
   }
   job.child = child;
   let output = "";
@@ -110,18 +128,27 @@ export async function startChannelCodexLogin(channelId, method, { key = "", spaw
       job.phase = "complete";
     } catch {
       job.phase = "failed";
-      job.error = "Codex did not save a usable channel login.";
+      job.error = "Codex did not save a usable login.";
     }
   });
-  return channelCodexLoginStatus(channelId);
+  return loginStatus(jobKey, home);
 }
 
-export function cancelChannelCodexLogin(channelId) {
-  const job = jobs.get(channelId);
+export function startChannelCodexLogin(channelId, method, options) {
+  if (!channelId) throw Object.assign(new Error("unknown channel"), { statusCode: 404 });
+  return startLogin(`channel:${channelId}`, channelCodexHome(channelId), method, options);
+}
+export const startGatewayCodexLogin = (method, options) => startLogin("gateway", gatewayCodexHome(), method, options);
+
+function cancelLogin(jobKey) {
+  const job = jobs.get(jobKey);
   if (!job || job.phase !== "pending") return false;
   job.phase = "idle";
   job.code = "";
   job.child?.kill("SIGTERM");
-  jobs.delete(channelId);
+  jobs.delete(jobKey);
   return true;
 }
+
+export const cancelChannelCodexLogin = (channelId) => cancelLogin(`channel:${channelId}`);
+export const cancelGatewayCodexLogin = () => cancelLogin("gateway");

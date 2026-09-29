@@ -8,7 +8,7 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 const { channelCodexHome } = await import("../src/gateway/channel-codex-auth.js");
-const { startChannelCodexLogin, channelCodexLoginStatus, cancelChannelCodexLogin } = await import("../src/gateway/channel-codex-login.js");
+const { startChannelCodexLogin, channelCodexLoginStatus, cancelChannelCodexLogin, startGatewayCodexLogin, gatewayCodexLoginStatus } = await import("../src/gateway/channel-codex-login.js");
 
 function fakeChild() {
   const child = new EventEmitter();
@@ -92,4 +92,24 @@ test("failed and cancelled sign-in never selects the channel", async () => {
   await settle();
   assert.equal((await channelCodexLoginStatus(id)).phase, "failed");
   assert.equal(saved, 0);
+});
+
+test("shared gateway sign-in targets the service account's CODEX_HOME", async () => {
+  const child = fakeChild();
+  let command;
+  let stdin = "";
+  child.stdin.on("data", (chunk) => { stdin += chunk; });
+  const key = "sk-test-gateway-example-123456789";
+  const state = await startGatewayCodexLogin("api-key", { key, spawnImpl: (...args) => { command = args; return child; } });
+  assert.equal(state.phase, "pending");
+  assert.equal(command[2].env.CODEX_HOME, process.env.CODEX_HOME);
+  assert.equal(stdin, `${key}\n`);
+  assert.ok(!JSON.stringify(command[1]).includes(key));
+  await writeFile(path.join(process.env.CODEX_HOME, "auth.json"), JSON.stringify({ OPENAI_API_KEY: key }), { mode: 0o600 });
+  child.emit("close", 0);
+  await settle();
+  const done = await gatewayCodexLoginStatus();
+  assert.equal(done.phase, "complete");
+  assert.equal(done.method, "api-key");
+  assert.ok(!JSON.stringify(done).includes(key));
 });
