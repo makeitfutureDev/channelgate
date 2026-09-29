@@ -3832,13 +3832,13 @@ are retired, bullet by bullet; everything else stands.
   active users, active sessions, and total tokens), per-bucket charts for sessions/tokens/cost, a
   sessions-per-user bar list (descending), and a per-channel sessions+cost bar chart. Pure inline
   SVG + div bars — no chart library, no build step. → TEST-PLAN: Admin UI.
-- **Every Overview chart is stacked by the model that answered.** A cost, run or token line split
+- **Every Overview time chart is stacked by the model that answered.** A cost, run or token column split
   by model answers "did spend rise because we ran more, or because we moved onto a pricier model" —
   which one undifferentiated line cannot. Attribution is per component, not per run: a Codex turn
   whose subagent ran a different model contributes a slice to EACH, while the run itself is still
   counted once (`MODEL_ATTRIBUTION_CTE` in `src/gateway/usage.js`). The split reconciles with the
   headline by construction — a run whose components are only partly priced contributes no dollars
-  to any model, exactly as the canonical rollup drops it — so the bands always add up to the total
+  to any model, exactly as the canonical rollup drops it — so the columns always add up to the total
   beside them. Model ids are normalised for display (`modelDisplayLabel`): a dated snapshot
   (`claude-haiku-4-5-20251001`) reads as its family, a context variant keeps its `1M` marker, an
   OpenAI id becomes `GPT-5.6 Sol`, and an unrecognised id passes through verbatim rather than being
@@ -3858,13 +3858,18 @@ are retired, bullet by bullet; everything else stands.
 - **A dedicated Models chart**, answering "which models are used more" directly: every model in the
   window as a bar — token cost, its share of spend, runs (and how many of them came from outside
   the gateway) and tokens. The stacked charts above cap at the seven largest models plus a neutral
-  "Other" band, because a stacked area with a generated ninth hue stops being readable; this card
+  "Other" segment, because a generated ninth hue stops being readable; this card
   lists everything, so nothing is hidden by that cap. Colours come from a categorical palette
   validated for the admin surface (lightness band, chroma floor, adjacent colourblind separation,
   normal-vision separation and 3:1 contrast all pass) and are keyed on the MODEL, so changing range,
   harness or source never repaints the series that survived the filter. Each chart carries a legend
   and a crosshair tooltip breaking the hovered bucket down per model (pointer or keyboard).
   → TEST-PLAN: Admin UI.
+- **Overview chart order and details:** four compact cards show token cost, runs, tokens and usage
+  sources. Below them, full-width cards show Models, Channels, Users and Skills in that order.
+  Time buckets draw stacked columns. Hovering or keyboard-focusing a source, channel or user bar
+  shows the total and its per-model values for that bar's metric; the same model colours and labels
+  appear in the time-chart tooltips and legend. → TEST-PLAN: Per-model dashboard stacking.
 - **The bar lists stack by model too**, in the same colours and the same order as the charts, so one
   hue means one model across the whole page: Runs per user (stacked by runs), Channels (all three
   bars — runs, token cost, tokens — each stacked by its own metric), and Where usage came from

@@ -683,38 +683,34 @@ function stackValue(point, entry, metric) {
   return entry.rest.reduce((total, model) => total + (Number(models[model]?.[metric]) || 0), 0);
 }
 
-// Stacked area chart. Same stretched viewBox and non-scaling strokes as sparkArea, so it drops into
-// the existing chart cards unchanged. Bands are separated by a 2px stroke in the CARD's own colour
-// rather than a gap in the geometry: at one-pixel bucket widths a geometric gap would swallow thin
-// series whole.
-function stackedArea(series, keys, metric, opts = {}) {
+// One stacked column per time bucket. Keep the columns centered within their buckets so the hover
+// target and the visible bar always refer to the same day, hour or month.
+function stackedColumns(series, keys, metric, opts = {}) {
   const W = 300, H = opts.height || 110, pad = 4;
   const n = series.length;
   const cls = "spark" + (opts.tall ? " spark-tall" : "");
   if (!n || !keys.length) return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`;
   const totals = series.map((point) => keys.reduce((sum, entry) => sum + stackValue(point, entry, metric), 0));
   const max = Math.max(1e-9, ...totals);
-  const xs = (i) => (n <= 1 ? W / 2 : (i / (n - 1)) * W);
   const ys = (v) => H - pad - (v / max) * (H - pad * 2);
+  const step = W / n;
+  const width = Math.max(1, step - Math.min(2, step * 0.2));
   const grid = opts.grid
     ? [1, 2].map((k) => `<line x1="0" y1="${((H * k) / 3).toFixed(1)}" x2="${W}" y2="${((H * k) / 3).toFixed(1)}" stroke="var(--line-soft)" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join("")
     : "";
-  // Cumulative from the baseline up, so each band's lower edge is the previous band's upper edge.
   const running = new Array(n).fill(0);
-  const bands = [];
+  const columns = [];
   for (const entry of keys) {
-    const lower = running.map((v) => v);
-    for (let i = 0; i < n; i++) running[i] += stackValue(series[i], entry, metric);
-    const upper = running.map((v) => v);
-    if (upper.every((v, i) => v === lower[i])) continue; // a model with nothing in this window
-    const top = upper.map((v, i) => `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`);
-    const bottom = lower.map((v, i) => `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).reverse();
-    bands.push(
-      `<path d="M${top.join(" L")} L${bottom.join(" L")} Z" fill="${entry.color}" opacity="0.72"/>` +
-      `<path d="M${top.join(" L")}" fill="none" stroke="${entry.color}" stroke-width="2" vector-effect="non-scaling-stroke"/>`
-    );
+    for (let i = 0; i < n; i++) {
+      const value = stackValue(series[i], entry, metric);
+      if (value <= 0) continue;
+      const bottom = ys(running[i]);
+      running[i] += value;
+      const top = ys(running[i]);
+      columns.push(`<rect x="${(i * step + (step - width) / 2).toFixed(2)}" y="${top.toFixed(2)}" width="${width.toFixed(2)}" height="${(bottom - top).toFixed(2)}" fill="${entry.color}"/>`);
+    }
   }
-  return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${bands.join("")}</svg>`;
+  return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${columns.join("")}</svg>`;
 }
 
 // Legend for a stacked chart. Always rendered when there is more than one series — identity must
@@ -726,13 +722,12 @@ function modelLegend(keys) {
     .join("")}</span>`;
 }
 
-// A stacked chart card, with the hover layer the plain sparkline cards do not need: an area chart
-// that stacks eight series is unreadable without being able to ask "what is this band, here".
+// A stacked chart card with a hover layer for the model totals in each time bucket.
 function stackedChartCard(id, title, series, keys, metric, peak, axis, fmt, opts = {}) {
   return `<div class="chart-card">
     <div class="chart-title"><h3>${escapeHtml(title)}</h3><span class="chart-peak">${peak}</span></div>
     <div class="spark-hover" data-stack="${escapeHtml(id)}" data-metric="${escapeHtml(metric)}" data-fmt="${escapeHtml(fmt)}">
-      ${stackedArea(series, keys, metric, opts)}
+      ${stackedColumns(series, keys, metric, opts)}
       <span class="spark-cursor" hidden></span>
       <div class="spark-tip" role="status" hidden></div>
     </div>
@@ -754,7 +749,14 @@ function barTrack(pct, { color = "", stack = null } = {}) {
   const segments = parts
     .map((part) => `<i style="width:${((part.value / total) * 100).toFixed(2)}%;background:${part.entry.color}" title="${escapeHtml(part.entry.label)}"></i>`)
     .join("");
-  return `<span class="bar-track"><span class="bar-fill bar-stack" style="width:${pct}%">${segments}</span></span>`;
+  const format = stack.metric === "cost" ? fmtUSD : stack.metric === "tokens" ? fmtCompact : fmtNum;
+  const metricName = { cost: "Token cost", tokens: "Tokens", runs: "Runs" }[stack.metric] || stack.metric;
+  const details = parts.map((part) => `<span class="spark-tip-row"><span class="dot" style="background:${part.entry.color}"></span>${escapeHtml(part.entry.label)}<b>${format(part.value)}</b></span>`).join("");
+  const accessible = `${stack.row.name || "Usage"}, ${metricName}: ${format(total)}. ${parts.map((part) => `${part.entry.label}: ${format(part.value)}`).join(", ")}`;
+  return `<span class="bar-hover" role="img" tabindex="0" aria-label="${escapeHtml(accessible)}">
+    <span class="bar-track"><span class="bar-fill bar-stack" style="width:${pct}%">${segments}</span></span>
+    <span class="spark-tip bar-tip"><span class="spark-tip-head">${escapeHtml(metricName)} · <strong>${format(total)}</strong></span>${details}</span>
+  </span>`;
 }
 
 // Single-metric horizontal bar list, descending. Row: name · bar (width ∝ value) · value.
@@ -1100,13 +1102,12 @@ async function loadDashboard() {
   </div>`;
   }).join("");
 
-  // Token cost is the hero (2fr wide, gridlines, peak dated). Runs + tokens ride at 1fr but share the
-  // hero's chart height so all three axis labels line up along the same bottom edge.
+  // Four compact cards share one row: cost, runs, tokens and the usage-source breakdown.
   const costPeak = peakBucket((x) => x.cost);
   const costPeakLabel = costPeak && costPeak.cost > 0
     ? `peak ${fmtUSD(costPeak.cost)}${costPeak.key ? " · " + bucketLabel(costPeak.key, unit) : ""}`
     : "no value yet";
-  // Every hero chart is stacked by the model that actually answered, so a rising cost line can be
+  // Every time chart is stacked by the model that actually answered, so a rising cost column can be
   // read as "we moved onto a pricier model" rather than only "we ran more". One colour map and one
   // key list across all three, so a band means the same thing in each and the legend is shared.
   const allModels = d.models || [];
@@ -1164,21 +1165,20 @@ async function loadDashboard() {
     <div class="kpi-row">${kpiHtml}</div>
     <div id="dash-approvals"></div>
     <div class="dash-legend">${modelLegend(keys)}</div>
-    <div class="dash-grid">${charts}</div>
-    <div class="dash-two">
+    <div class="dash-grid">${charts}${originsCard}</div>
+    <div class="dash-stack">
       ${modelsCard}
-      ${originsCard}
-      <div class="chart-card">
-        <div class="chart-title"><h3>Runs per user</h3><span class="chart-peak">${users.length} of ${fmtNum(t.users)}</span></div>
-        ${barList(users, (u) => u.runs, (u) => `<span>${fmtNum(u.runs)} runs</span><span>${fmtCompact(u.tokens)} tokens</span><span>${fmtUSD(u.cost)} est.</span>`, "#91c9ce", "No user activity yet.", { keys, metric: "runs" })}
-        ${moreUsers > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreUsers} more</p>` : ""}
-      </div>
       <div class="chart-card">
         <div class="chart-title"><h3>Channels — runs, token cost &amp; tokens</h3>
           <span class="chart-peak">three bars per channel, split by model</span>
         </div>
         ${channelBars(channels, keys)}
         ${moreChannels > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreChannels} more</p>` : ""}
+      </div>
+      <div class="chart-card">
+        <div class="chart-title"><h3>Runs per user</h3><span class="chart-peak">${users.length} of ${fmtNum(t.users)}</span></div>
+        ${barList(users, (u) => u.runs, (u) => `<span>${fmtNum(u.runs)} runs</span><span>${fmtCompact(u.tokens)} tokens</span><span>${fmtUSD(u.cost)} est.</span>`, "#91c9ce", "No user activity yet.", { keys, metric: "runs" })}
+        ${moreUsers > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreUsers} more</p>` : ""}
       </div>
       <div class="chart-card">
         <div class="chart-title"><h3>Top skills — usage</h3><span class="chart-peak">last 30 days</span></div>
@@ -1209,8 +1209,8 @@ async function loadDashboard() {
   }
 }
 
-// Crosshair + tooltip for the stacked charts. A stacked area with up to eight bands cannot be read
-// without asking "which band is this, and how much"; the legend names the colours, this says the
+// Crosshair + tooltip for the stacked time charts. A column with up to eight segments cannot be read
+// without asking "which model is this, and how much"; the legend names the colours, this says the
 // numbers. Pointer-driven and keyboard-reachable (the chart is focusable and arrow keys step
 // buckets), so the reading is not mouse-only.
 const STACK_FMT = { usd: (v) => fmtUSD(v), num: (v) => fmtNum(v), compact: (v) => fmtCompact(v) };
@@ -1228,7 +1228,7 @@ function renderStackTip(host, index) {
   const total = rows.reduce((sum, row) => sum + row.value, 0);
   const tip = host.querySelector(".spark-tip");
   const cursor = host.querySelector(".spark-cursor");
-  const pct = data.series.length <= 1 ? 50 : (index / (data.series.length - 1)) * 100;
+  const pct = ((index + 0.5) / data.series.length) * 100;
   cursor.style.left = `${pct}%`;
   cursor.hidden = false;
   tip.hidden = false;
@@ -1262,7 +1262,7 @@ function wireStackHover(root) {
       if (!n) return;
       const rect = host.getBoundingClientRect();
       if (!rect.width) return;
-      show(Math.round(((event.clientX - rect.left) / rect.width) * (n - 1)));
+      show(Math.floor(((event.clientX - rect.left) / rect.width) * n));
     });
     host.addEventListener("pointerleave", hide);
     host.addEventListener("focus", () => show(current >= 0 ? current : count() - 1));
