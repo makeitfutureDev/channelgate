@@ -3386,6 +3386,15 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       hours, keeps a live run's directories and any explicitly protected path, and never touches a
       directory that is not the suite's. Manual: `ls /tmp | grep -c '^cg-'` before and after a full
       `npm test` must not grow.
+- [x] `test/folders-generator-paths.test.js`: the four custom workdir fixtures are created inside
+      `~/ChannelGate Testing/folders-generator-*`, never as `cg-*` siblings in the account home.
+      The process-exit cleanup removes the run folder; `pretest` removes only stale
+      `folders-generator-*` folders in that parent and leaves recent runs and unrelated folders.
+      The aggregate runner snapshots that parent before and after the suite and fails on a new
+      leftover run folder.
+      Run `node --test test/folders-generator-paths.test.js test/test-scratch-cleanup.test.js`;
+      pass when both files pass, no `cg-{custom,mirror,project,workdir}-*` directories appear
+      directly under the home, and no `folders-generator-*` directory remains after the run.
 - [x] `npm run check:static`: every tracked JavaScript source/test/script parses under the supported
       Node runtime and fails on tabs or trailing whitespace. This is the deliberately incremental,
       dependency-free static/format gate; repo-wide ESLint/typed-JS adoption remains a future

@@ -8,9 +8,12 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, trackTempDir } from "./helpers.js";
 
 ensureTestEnv();
+// This test checks custom paths under the account's allowed root, regardless of a developer's
+// CG_FS_ROOT override. Its disposable projects are grouped below that home instead of beside it.
+process.env.CG_FS_ROOT = os.homedir();
 
 const [
   { effectiveWorkDir, updateChannelInstructions, listAvailableSkills, skillSourceDirs, enableSkills, splitGatewayBlock, gatewayInstructionsBlock, channelSwitchesNote },
@@ -22,12 +25,18 @@ const [
   import("../src/web/security.js"),
 ]);
 
+// Custom workDirs must live under the allowed filesystem root. Keep this test's disposable
+// projects together instead of scattering cg-* directories across the operator's home.
+const fixtureParent = path.join(allowedFsRoot(), "ChannelGate Testing");
+mkdirSync(fixtureParent, { recursive: true, mode: 0o700 });
+const fixtureRoot = trackTempDir(mkdtempSync(path.join(fixtureParent, "folders-generator-")));
+
 test("effectiveWorkDir: clean mode, a contained custom workDir, and an escaping one", () => {
   const slug = "workdir-probe";
   assert.equal(effectiveWorkDir(slug, { cleanMode: true }), cleanWorkspaceFolder(slug, undefined));
 
   // A stored absolute workDir inside the allowed root that exists is honoured as-is.
-  const inside = mkdtempSync(path.join(allowedFsRoot(), "cg-workdir-"));
+  const inside = mkdtempSync(path.join(fixtureRoot, "cg-workdir-"));
   assert.equal(effectiveWorkDir(slug, { workDir: inside }), inside);
 
   // The same path once it has vanished falls back to the default folder.
@@ -68,7 +77,7 @@ test("updateChannelInstructions keeps the managed block on a default folder and 
   assert.match(content, /Only this rule\.\n$/);
 
   // Custom project folder: the file's own content is edited, no block is added.
-  const custom = mkdtempSync(path.join(allowedFsRoot(), "cg-custom-"));
+  const custom = mkdtempSync(path.join(fixtureRoot, "cg-custom-"));
   const customMeta = { ...meta, workDir: custom };
   await updateChannelInstructions(slug, customMeta, { text: "Project rule one." });
   await updateChannelInstructions(slug, customMeta, { text: "Project rule two." });
@@ -78,7 +87,7 @@ test("updateChannelInstructions keeps the managed block on a default folder and 
 
   // A project that keeps AGENTS.md as the real file with the gateway's mirror link on CLAUDE.md
   // is edited through the link's exact sibling shape only.
-  const mirrored = mkdtempSync(path.join(allowedFsRoot(), "cg-mirror-"));
+  const mirrored = mkdtempSync(path.join(fixtureRoot, "cg-mirror-"));
   writeFileSync(path.join(mirrored, "AGENTS.md"), "# Project\n");
   const { symlinkSync } = await import("node:fs");
   symlinkSync("AGENTS.md", path.join(mirrored, "CLAUDE.md"));
@@ -127,7 +136,7 @@ test("skill listing unions the catalog with the host folders, and a host-folder 
 test("a custom project folder gets a real CLAUDE.md with AGENTS.md mirrored, and a renamed managed skill folder is migrated", async () => {
   const { ensureChannelFolder } = await import("../src/gateway/folders.js");
   const { MANAGED_SKILL_MARKER } = await import("../src/gateway/skills/materialize.js");
-  const custom = mkdtempSync(path.join(allowedFsRoot(), "cg-project-"));
+  const custom = mkdtempSync(path.join(fixtureRoot, "cg-project-"));
   const slug = "custom-project-probe";
   await ensureChannelFolder(slug, { name: "Custom project", workDir: custom, allowedMcps: [], instructions: "Project instructions from the channel record." });
   const claude = path.join(custom, "CLAUDE.md");

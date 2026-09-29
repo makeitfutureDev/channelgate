@@ -96,3 +96,25 @@ test("aggregate test runner removes serving-runtime selectors while preserving o
   assert.ok(observed.flags.includes("--no-warnings"));
   assert.deepEqual(snapshot(external), before);
 });
+
+test("aggregate test runner detects a fixture left in ChannelGate Testing", () => {
+  const fixture = tempDir("cg-suite-fixture-leak-");
+  mkdirSync(path.join(fixture, "scripts"));
+  mkdirSync(path.join(fixture, "test"));
+  copyFileSync(path.join(repoRoot, "scripts", "run-tests.mjs"), path.join(fixture, "scripts", "run-tests.mjs"));
+  writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+  writeFileSync(path.join(fixture, "test", "leak.test.js"), `
+    import { mkdirSync } from 'node:fs';
+    import os from 'node:os';
+    import path from 'node:path';
+    mkdirSync(path.join(os.homedir(), 'ChannelGate Testing', 'folders-generator-leak'));
+  `);
+  const env = { ...process.env, HOME: fixture };
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, ["scripts/run-tests.mjs"], {
+    cwd: fixture, env, encoding: "utf8", timeout: 60_000,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Tests wrote into the real home directory/);
+  assert.match(result.stderr, /ChannelGate Testing\/folders-generator-leak/);
+});
