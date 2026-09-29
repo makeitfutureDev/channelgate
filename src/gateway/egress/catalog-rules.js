@@ -41,7 +41,9 @@ export const RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthropic.c
 // never swapped. Kept in step with ENGINE_HOSTS.codex (engine-hosts.js).
 export const CODEX_RELAY_SECRET_NAME = "CODEX_ACCESS_TOKEN";
 export const CODEX_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com", "chatgpt.com", "auth.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["jwt"]) });
-const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE });
+export const CODEX_API_RELAY_SECRET_NAME = "CODEX_API_RELAY_KEY";
+export const CODEX_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
+const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE });
 
 // The swap rule of a relay grant, by its secret name, or null for a name no relay uses.
 export function relayRuleFor(secretName) {

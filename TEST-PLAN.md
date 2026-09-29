@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Channel-specific Codex authentication (2026-09-29)
+
+- [x] Automated: `node --test test/codex-token-relay.test.js
+  test/container-credentials.test.js test/engine-runtime-isolated.test.js
+  test/codex-args.test.js test/channel-env.test.js`. A channel-selected login has no gateway
+  fallback. A synthetic subscription cache yields an access-only channel placeholder and leaves
+  the refresh token on the host. A synthetic API-key cache yields a separate placeholder swapped
+  only in the Authorization header at `api.openai.com`; the real key never enters container
+  `auth.json`. Proxy mode never mounts either host login file.
+- [x] CLI shape check: Codex CLI 0.156.1 `login status` accepts a temporary, synthetic API-key
+  `auth.json` with `auth_mode: "apikey"`; no real credential or provider request was used.
+- [ ] Live Codex acceptance: in a disposable channel, select **This channel's login**, sign in
+  as a different permitted ChatGPT account under the displayed host `CODEX_HOME`, and ask for a
+  harmless answer. Pass: Codex answers, the host file keeps the refresh token, the container file
+  has only the channel's placeholder and an empty refresh token, and the egress audit records a
+  relay on the Codex hosts. Then remove the channel file while the gateway login remains valid:
+  the channel must fail authentication rather than use the gateway account. Restore afterward.
+- [ ] Live Codex API-key acceptance: use a disposable OpenAI project key in a second channel's
+  displayed host `CODEX_HOME`, send the same harmless prompt, and require a response and an
+  `api.openai.com` relay audit entry. The container file contains only the placeholder; a copied
+  placeholder sent to `chatgpt.com` is not swapped. Revoke the test key afterward.
+- [ ] Live Claude isolation: with either Codex channel choice selected, run a Claude turn in the
+  same disposable channel and require the existing Claude login and normal reply.
+
 ## Live-case definitions corrected for the container-secrets contract (2026-09-27 QA campaign)
 
 The 2026-09-27 live campaign failed or blocked these registry cases only because their written

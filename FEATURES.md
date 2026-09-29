@@ -1,5 +1,17 @@
 # ChannelGate — Features
 
+## Channel-specific Codex authentication
+
+- Admins can select the gateway Codex login or a dedicated host-side `CODEX_HOME` for a channel
+  from Runtime → Codex authentication. The dedicated directory is keyed to the conversation ID
+  and does not fall back to another account when no login exists.
+- The operator can sign in to that directory with ChatGPT subscription access or an OpenAI
+  Platform API key. In proxy-mode containers, both methods use a channel-bound placeholder:
+  ChatGPT access tokens are relayed as JWT-shaped values, while API keys are relayed only to
+  `api.openai.com`. The host `auth.json` and any refresh token stay outside the container.
+- The selected login also applies to an admin's direct-host Codex turn. The authentication
+  source is recorded in channel policy audits; no credential value is included.
+
 ## Optional isolated VPN database service
 
 - The host operator can provision a per-channel OpenVPN 3 Linux service and an unprivileged MySQL

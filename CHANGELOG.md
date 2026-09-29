@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Channels can select a separate host-side Codex login for ChatGPT subscription access or an
+  OpenAI API key. Proxy-mode containers receive only channel-bound credential placeholders.
+
 - **Automatic engine switches now stay with the conversation.** When Claude reaches its limit and
   Codex answers, the next message resumes that Codex session instead of retrying Claude. The same
   holds when Codex switches to Claude. Existing threads with a successful fallback session adopt

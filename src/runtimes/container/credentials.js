@@ -13,18 +13,16 @@
 //
 // CODEX, behind the egress proxy (the default), is RELAYED like Claude (container-secrets P4,
 // src/gateway/codex-token-relay.js): no mount at all. Before each Codex run the runner writes an
-// ACCESS-ONLY auth.json into the channel's own HOME volume — the channel's relay placeholder in
-// JWT shape, the account id, an EMPTY refresh token — and the proxy swaps the placeholder for the
-// live access token on the OpenAI/ChatGPT hosts. The daemon renews the real login with a cheap turn
-// in its own CODEX_HOME. Mode "relay".
+// ACCESS-ONLY auth.json into the channel's own HOME volume — a JWT-shaped placeholder and EMPTY
+// refresh token for ChatGPT, or an API-key placeholder — and the proxy swaps only on the relevant
+// OpenAI hosts. The daemon renews a ChatGPT login in its own CODEX_HOME. Mode "relay".
 //
 // The shared FILE bind mount of the real auth.json (mode "shared-file") survives only where a
-// relay cannot work: the LEGACY bridge egress mode (no proxy to swap a placeholder) and an API-key
-// login (auth.json holding OPENAI_API_KEY, which the relay does not carry). Codex writes that file
+// relay cannot work: the LEGACY bridge egress mode (no proxy to swap a placeholder). Codex writes that file
 // IN PLACE through the engine-home symlink, so a copy would fork the refresh chain; the file mount
 // is the one deliberate exception to "mount directories, never single files" (plan §6). Sessions
 // and history still land in the per-channel HOME volume, which is what isolates channels; only the
-// sign-in is shared — the documented remaining exposure of those two configurations. `cg-init`
+// sign-in is exposed through a mount — the documented remaining exposure of bridge mode. `cg-init`
 // must create /home/agent/.codex and must never rename over a mounted path (a rename across a bind
 // mount fails with EBUSY / EXDEV, and would break the chain for every channel at once) — which is
 // also why the relay's writer only ever RENAMES into place and refuses a mounted destination.
@@ -40,6 +38,7 @@ import { gatewayClaudeCredentialsFile, hasClaudeApiKey, resolveClaudeLogin } fro
 import { CONTAINER_CLAUDE_CONFIG_DIR, CONTAINER_CODEX_AUTH_FILE, CONTAINER_CODEX_HOME, CONTAINER_HOME } from "./image-paths.js";
 import { egressEnv } from "./egress-env.js";
 import { egressErrorFor } from "./egress-hook.js";
+import { codexLoginCandidatesFor } from "../../gateway/channel-codex-auth.js";
 
 export const AGENT_HOME = CONTAINER_HOME;
 export const CLAUDE_CONTAINER_CONFIG_DIR = CONTAINER_CLAUDE_CONFIG_DIR;
@@ -67,6 +66,10 @@ export const CLAUDE_API_KEY_NOTE =
 export { hasClaudeApiKey };
 export const CODEX_MISSING_MESSAGE =
   "Codex is not signed in — run `codex login` on the gateway host. Container channels use the gateway's Codex sign-in (relayed through the egress proxy; the login file itself is never mounted there).";
+function codexMissingMessage(target) {
+  const home = codexLoginCandidatesFor(target?.meta)?.[0];
+  return home ? `Codex is not signed in for this channel — run \`codex login\` with CODEX_HOME=${path.dirname(home)} on the gateway host.` : CODEX_MISSING_MESSAGE;
+}
 export const CLAUDE_RELAY_NOTE =
   "relaying the host user's own Claude access token (refreshed on the host before each run; the login file is never copied)";
 export const CODEX_RELAY_NOTE =
@@ -154,10 +157,13 @@ export function intendedCredentialModes(settings = {}, { egressActive = false } 
 // I/O — called by ensureUp before the container is created, so the fingerprint and the mount list
 // reflect what is actually available. `codexAuthFile` is the file to MOUNT — "" in relay mode, so
 // the real login never becomes a mount; `codexLoginFile` is the resolved login either way.
-export function settleCredentialModes(settings = {}, env = process.env, { egressActive = false } = {}) {
+export function settleCredentialModes(settings = {}, env = process.env, { egressActive = false, meta = null } = {}) {
   const claudeSource = settings?.hasClaudeOauthToken ? "" : resolveClaudeCredentialSource(env);
-  const codexLoginFile = resolveCodexAuthFile(env);
-  const relay = Boolean(egressActive && codexLoginFile && codexLoginRelayable(codexLoginFile));
+  const candidates = codexLoginCandidatesFor(meta);
+  const codexLoginFile = candidates ? readable(candidates[0]) : resolveCodexAuthFile(env);
+  // Both ChatGPT and API-key files are relayed through the proxy. Neither credential file needs
+  // to be mounted into an agent container while the proxy is active.
+  const relay = Boolean(egressActive && codexLoginFile);
   return {
     modes: {
       claude: settings?.hasClaudeOauthToken ? "token" : claudeSource ? "relay" : hasClaudeApiKey(env) ? "api-key" : "missing",
@@ -198,13 +204,15 @@ export function credentialError(target, engineId, env = process.env) {
     return new Error(CLAUDE_MISSING_MESSAGE);
   }
   if (engineId === "codex") {
-    if (modes.codex === "missing") return new Error(CODEX_MISSING_MESSAGE);
-    // The relay needs a ChatGPT sign-in to stand for, read now (the runner resolves the live token
-    // right after this gate). A login that turned into an API key or vanished since the container
+    const candidates = codexLoginCandidatesFor(target?.meta);
+    const liveFile = candidates ? readable(candidates[0]) : resolveCodexAuthFile(env);
+    if (modes.codex === "missing") return new Error(codexMissingMessage(target));
+    // The relay needs a sign-in to stand for, read now (the runner resolves the live token
+    // right after this gate). A login that vanished since the container
     // was settled refuses here with the remedy instead of spawning a Codex that cannot sign in.
-    if (modes.codex === "relay") return codexLoginRelayable(resolveCodexAuthFile(env)) ? null : new Error(CODEX_MISSING_MESSAGE);
-    const file = target?.container?.codexAuthFile || resolveCodexAuthFile(env);
-    return file ? null : new Error(CODEX_MISSING_MESSAGE);
+    if (modes.codex === "relay") return liveFile ? null : new Error(codexMissingMessage(target));
+    const file = target?.container?.codexAuthFile || liveFile;
+    return file ? null : new Error(codexMissingMessage(target));
   }
   return null;
 }
@@ -217,7 +225,7 @@ export function credentialNotes(target) {
   if (modes.claude === "missing") notes.push(CLAUDE_MISSING_MESSAGE);
   if (modes.codex === "relay") notes.push(CODEX_RELAY_NOTE);
   if (modes.codex === "shared-file") notes.push(CODEX_SHARED_NOTE);
-  if (modes.codex === "missing") notes.push(CODEX_MISSING_MESSAGE);
+  if (modes.codex === "missing") notes.push(codexMissingMessage(target));
   return notes;
 }
 

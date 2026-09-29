@@ -18,6 +18,7 @@ const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { validateRuntimeBackend, newRunId } = await import("../src/runtimes/contract.js");
 const { codexEngineHome } = await import("../src/config/paths.js");
 const { currentInstallId } = await import("../src/runtimes/container/names.js");
+const { channelCodexHome } = await import("../src/gateway/channel-codex-auth.js");
 
 const BASE = {
   cli: "auto", image: "channelgate/runtime:latest",
@@ -472,7 +473,7 @@ function chatgptAuthJson({ exp = Math.floor(Date.now() / 1000) + 9 * 86400 } = {
   });
 }
 
-test("Codex behind the egress proxy: a ChatGPT sign-in is RELAYED — no mount; bridge mode and API-key logins keep the shared file", () => {
+test("Codex behind the egress proxy: ChatGPT and API-key logins are relayed; bridge mode keeps the shared file", () => {
   const engineAuth = path.join(codexEngineHome(), "auth.json");
   mkdirSync(codexEngineHome(), { recursive: true });
   try {
@@ -489,11 +490,39 @@ test("Codex behind the egress proxy: a ChatGPT sign-in is RELAYED — no mount; 
     assert.equal(bridged.modes.codex, "shared-file");
     assert.equal(bridged.codexAuthFile, engineAuth);
 
-    // An API-key login is not relayable: the shared file stays even behind the proxy.
+    // An API-key login is relayed too: the key never needs a bind mount behind the proxy.
     writeFileSync(engineAuth, JSON.stringify({ OPENAI_API_KEY: "sk-test-not-a-key" }), { mode: 0o600 });
-    assert.equal(credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true }).modes.codex, "shared-file");
+    assert.equal(credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true }).modes.codex, "relay");
+    assert.equal(credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true }).codexAuthFile, "");
     assert.equal(credentials.codexLoginRelayable(engineAuth), false);
   } finally {
+    rmSync(engineAuth, { force: true });
+  }
+});
+
+test("a channel-selected Codex home does not fall back to the gateway login", () => {
+  const engineAuth = path.join(codexEngineHome(), "auth.json");
+  const channelId = "C_CHANNEL_CODEX_AUTH";
+  const meta = { channelId, codexAuthSource: "channel" };
+  const channelHome = channelCodexHome(channelId);
+  const channelAuth = path.join(channelHome, "auth.json");
+  mkdirSync(path.dirname(engineAuth), { recursive: true });
+  mkdirSync(channelHome, { recursive: true });
+  writeFileSync(engineAuth, chatgptAuthJson(), { mode: 0o600 });
+  try {
+    rmSync(channelAuth, { force: true });
+    const missing = credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true, meta });
+    assert.equal(missing.modes.codex, "missing");
+    const t = target("channel-codex-auth", BASE, meta);
+    t.container.credentialMode = missing.modes;
+    assert.match(credentials.credentialError(t, "codex", NO_CODEX_ENV).message, /not signed in/);
+    writeFileSync(channelAuth, chatgptAuthJson(), { mode: 0o600 });
+    const selected = credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true, meta });
+    assert.equal(selected.modes.codex, "relay");
+    assert.equal(selected.codexLoginFile, channelAuth);
+    assert.equal(selected.codexAuthFile, "");
+  } finally {
+    rmSync(channelAuth, { force: true });
     rmSync(engineAuth, { force: true });
   }
 });

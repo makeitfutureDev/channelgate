@@ -444,7 +444,7 @@ export function createContainerLifecycle({
     if (!caps.cgroupLimits && (c.limits.memory || c.limits.cpus || c.limits.pidsLimit)) {
       log(`[container] cgroup limits are not delegated — ${c.name} runs without pids/memory/cpu caps`);
     }
-    const settled = settleCredentialModes(target.settings, env, { egressActive: c.egress?.active === true });
+    const settled = settleCredentialModes(target.settings, env, { egressActive: c.egress?.active === true, meta: target.meta });
     c.credentialMode = settled.modes;
     // "" in relay mode: the real Codex login is never a mount behind the egress proxy.
     c.codexAuthFile = settled.codexAuthFile;
