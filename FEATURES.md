@@ -1451,8 +1451,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (OpenAI Codex CLI — one-shot per message, MCP via `-c` overrides + an HTTP bridge). Selection
   precedence is **per-thread directive → per-channel → global default** — but an EXISTING thread
   sticks to the engine that minted its session: changing the channel/global harness only affects
-  new threads; live conversations keep resuming on their own engine (only the automatic usage-limit
-  failover runs a different engine, under a suffixed session key). The exception is a harness turned
+  new threads; live conversations keep resuming on their own engine. A successful automatic
+  cross-engine failover makes the answering engine the thread's live session, so its next turn
+  resumes there even after the failed engine's cooldown ends. Older fallback-only sessions are
+  adopted on their next unpinned turn. The exception is a harness turned
   OFF in Settings: those threads move to an enabled engine. A row minted for a brand-new thread
   whose turn then dies BEFORE its engine starts (a pre-spawn credential gate, a runtime that cannot
   come up) is dropped with that turn, so the next message is a first turn again on the channel's

@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- **Automatic engine switches now stay with the conversation.** When Claude reaches its limit and
+  Codex answers, the next message resumes that Codex session instead of retrying Claude. The same
+  holds when Codex switches to Claude. Existing threads with a successful fallback session adopt
+  it on their next message; a manual thread engine or model choice still takes precedence.
+
 - Overview now draws separate stacked columns for each time bucket, shows model totals when a
   source, channel or user bar is hovered or focused, and arranges usage sources beside the three
   time charts above Models, Channels, Users and Skills.

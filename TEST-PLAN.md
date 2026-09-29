@@ -4509,6 +4509,19 @@ placeholders and `--network none`).
       authentication failure answers via the OTHER harness with a reason note and observes its
       per-engine per-channel / gateway-wide ~15-min cooldown; with failover OFF, the engine's own
       error surfaces. A post-tool failure never replays.
+- [x] Automatic failover stays on the answering harness (`test/claude-fallback-e2e.test.js`,
+      `test/codex-failover-e2e.test.js`): in a Claude-default channel, trigger the fixture's
+      replay-safe Claude limit and let Codex answer; reset cooldown and send another message in
+      the same thread. Pass: the second turn runs on Codex with `resume=yes`, with no new failover
+      note. Repeat in a Codex-default channel with the Codex limit and Claude answer. For an older
+      session fixture with a Claude main row and a successful Codex fallback row, send an unpinned
+      continuation; pass: it resumes Codex and moves that session to the main thread key. A manual
+      thread engine/model choice keeps its existing precedence. Live acceptance on either engine:
+      use a test account whose primary harness is genuinely limited, observe the fallback answer,
+      then send a second message in the same thread after its cooldown; pass only if the second
+      reply footer names the fallback harness and continues its prior context. Private Airtable
+      live definitions `ENG-11` (Claude→Codex on Atlas) and `ENG-12` (Codex→Claude on Xavier)
+      are registered and remain unexecuted until their limited-account fixtures are available.
 - [x] Unit: the Codex runner classifies its plan-limit rejection ("purchase more credits…") as a
       replay-safe `usage_limit` — as a JSON error event AND on stderr with a nonzero exit — while
       model rejections keep routing to the same-engine model retry, server/connection errors
