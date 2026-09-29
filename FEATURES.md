@@ -1382,19 +1382,28 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   links, mentions, emoji, lists, and line boundaries. A table-only message counts as content (while
   the normal channel mention gate still applies). No extra Slack scope is needed. Any allowed user.
   → TEST-PLAN: Native Slack data tables.
-- Slack **file snippets** for sharing a file and for big/wide tables: `slack_upload_snippet` (gateway
+- Slack **file snippets** for big/wide tables and generated text: `slack_upload_snippet` (gateway
   control MCP) uploads `content` (CSV/TSV/markdown/code) as a FILE into the current channel + thread,
   so a CSV/TSV renders as a **scrollable spreadsheet grid** — the right shape for a large read-only
   table/export vs. a cramped message code block or a 100-row Slack List. Daemon-side via the
   workspace bot token (`files:write`) using Slack's external-upload flow
   (`files.getUploadURLExternal` → POST bytes → `files.completeUploadExternal`), so it needs no
   Bash/network in the channel; hard-scoped to the current channel. The filename extension drives
-  rendering (`.csv`/`.tsv` = grid; text/code = plain snippet). The tool description and the
-  `gateway-usage` skill also route a **direct request for a file** ("send it here", "share the
-  file", "attach it") to this tool for any UTF-8 text file — `.md`, `.txt`, `.json`, `.html`,
-  `.yaml`, code, logs — uploaded under its real name, while images keep the automatic
-  `![alt](path.png)` upload path and binaries (PDF, PPTX, XLSX, ZIP) stay inline-code paths served by
-  the 📄 file-explorer button. Any allowed user. → TEST-PLAN: Slack file snippets.
+  rendering (`.csv`/`.tsv` = grid; text/code = plain snippet). Any allowed user.
+  → TEST-PLAN: Slack file snippets.
+- **Agent file sharing into the thread**: `slack_share_file path:<relative> [comment]` (gateway
+  control MCP) posts an EXISTING file from the channel's working folder into the current thread as
+  a real Slack file, any type (PDF, DOCX, XLSX, PPTX, ZIP, images, HTML), up to 25 MB — the
+  agent-side twin of the file explorer's Share button. The daemon opens the file with
+  `openConfinedFile` (lexical + realpath confinement, `O_NOFOLLOW`, descriptor re-proved through
+  `/proc/self/fd`) and uploads from that proven descriptor, never a reopened path, so neither the
+  mounted operator home nor a symlink out of the folder can be shared. Posts as the bot with the
+  bot token, so no Composio account is chosen and no "which account?" question arises; a scheduled
+  run posts top-level. Audited as `channel_file_shared` with `via: "agent"`. Any allowed user, like
+  the explorer's Share button. The `gateway-usage` skill (rule 3, the capability map,
+  `writing-replies.md`, `sharing-files.md`) routes "send it", "attach the PDF", "trimite fișierul"
+  here, keeps Composio Slack uploads for OTHER channels/DMs, and `slack_upload_snippet` for text
+  the agent generates. → TEST-PLAN: Agent file sharing into the thread.
 - Native Slack **charts**: `slack_post_chart` (gateway control MCP) posts Block Kit
   `data_visualization` blocks into the current channel + thread using the workspace bot token and
   existing `chat:write` scope. Supports line/bar/area charts (1–12 series, 1–20 shared category

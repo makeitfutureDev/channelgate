@@ -4,7 +4,9 @@
 // the tool contracts are unchanged.
 import { z } from "zod";
 import { parseListId, createList, addItem, updateItem, listItems, describeSchema } from "../../slack/lists.js";
-import { uploadSnippet } from "../../slack/upload.js";
+import { uploadSnippet, uploadOpenedFile, MAX_FILE_UPLOAD_BYTES } from "../../slack/upload.js";
+import { openConfinedFile } from "../../gateway/confined-file.js";
+import { logEvent } from "../../util/logger.js";
 import { postTable } from "../../slack/tables.js";
 import { postChart } from "../../slack/charts.js";
 import { channelHistory, threadReplies } from "../../slack/read.js";
@@ -19,7 +21,9 @@ import { slackThreadFor } from "../../slack/thread-keys.js";
 // failed. Resolve it to the launching thread when there is one, or "" to post top-level.
 
 export function register(server, ctx) {
-  const { channelId, text, threadKey, slug, loadMeta } = ctx;
+  const { channelId, text, threadKey, slug, loadMeta, createdBy } = ctx;
+  // Injectable only so the tests can observe what reaches Slack; production uses the real upload.
+  const uploadFile = ctx.uploadOpenedFile || uploadOpenedFile;
   const currentThreadTs = () => slackThreadFor(threadKey) || "";
 
   // ── Slack Lists (any allowed user) ──────────────────────────────────────────────
@@ -155,17 +159,14 @@ export function register(server, ctx) {
     "slack_upload_snippet",
     {
       description:
-        "Post a FILE/snippet into THIS thread. Two uses: (1) SHARE A FILE the user asked for — when " +
-        "they say 'send it here', 'share the file', 'attach it', read the file and pass its text as " +
-        "`content` with its real name in `filename` (`.md`, `.txt`, `.json`, `.html`, `.yaml`, code, " +
-        "logs all work); (2) share a big or wide TABLE as CSV or TSV, which Slack renders as a " +
-        "scrollable spreadsheet grid (header row + a 'see it in full' expander) — far better than a " +
+        "Post TEXT YOU GENERATE as a file/snippet into THIS thread — above all a big or wide TABLE as " +
+        "CSV or TSV, which Slack renders as a scrollable spreadsheet grid (header row + a 'see it in full' " +
+        "expander) — far better than a " +
         "cramped message code block, and lighter than a 100-row Slack List (use a List only for a " +
         "tracker people edit; use THIS for a read-only table/export). The filename EXTENSION drives " +
         "rendering: `.csv`/`.tsv` → spreadsheet preview; `.md`/`.txt`/a code extension → a text " +
-        "snippet. `content` must be UTF-8 TEXT: binaries (PDF, PPTX, XLSX, ZIP, images) cannot ride " +
-        "this tool — name their path in inline code so the reply gets a 📄 file-explorer button " +
-        "instead. `title` names the file; `filename` overrides the name/extension (default derived " +
+        "snippet. To send a file that already EXISTS in the working folder (any type, PDF included), use " +
+        "`slack_share_file` instead — don't re-type it into `content`. `title` names the file; `filename` overrides the name/extension (default derived " +
         "from the title, `.csv`); `comment` is an optional message posted with it. It's uploaded to " +
         "the current channel/thread by the bot — no Bash or network needed. For a large export, " +
         "prefer TSV (tab-separated) so values containing commas stay clean.",
@@ -191,6 +192,68 @@ export function register(server, ctx) {
         return text(`✅ Posted the snippet to this thread${permalink ? ` (${permalink})` : ""}. It's a Slack file — don't also paste the table into a message.`);
       } catch (e) {
         return text(`Couldn't upload the snippet: ${e.message}`);
+      }
+    }
+  );
+
+  // ── Share a workspace file into THIS thread (any file type, bot token) ──────────
+  // The agent-side twin of the file explorer's Share button: the same confinement (the path must
+  // be a regular file inside this channel's working folder, never through a symlink), the same
+  // 25 MB cap, the same bot-token upload and the same audit event. Unlike slack_upload_snippet it
+  // carries the file's real BYTES, so a PDF, a spreadsheet or an archive arrives intact — and
+  // unlike a Composio upload it needs no personal account, so it never has to ask "which account?".
+  server.registerTool(
+    "slack_share_file",
+    {
+      description:
+        "Share a FILE from this channel's working folder into THIS thread as a real Slack file, posted by " +
+        "the bot. Use it whenever the user asks for a file here — 'send it', 'share the file', 'attach the " +
+        "PDF', 'trimite fișierul' — for ANY type: PDF, DOCX, XLSX, PPTX, ZIP, images, HTML, Markdown. The " +
+        "bytes are sent unchanged, so nothing passes through your context. `path` is relative to the working " +
+        "folder (the same path you would name in inline code); `comment` is an optional message posted with " +
+        `it. Limit ${Math.round(MAX_FILE_UPLOAD_BYTES / 1024 / 1024)} MB. Only files inside this channel's folder qualify: ` +
+        "not the operator home, not through a symlink. Prefer this over a Composio Slack upload for this " +
+        "thread — no account choice is needed. After it succeeds, reply with one line; do not paste the content.",
+      inputSchema: {
+        path: z.string().min(1).describe("File path relative to this channel's working folder."),
+        comment: z.string().max(3000).optional().describe("Optional message posted with the file."),
+      },
+    },
+    async ({ path: relative, comment = "" }) => {
+      if (!channelId) return text("No channel context — can't share a file here.");
+      let opened;
+      try {
+        const meta = await loadMeta();
+        opened = await openConfinedFile(effectiveWorkDir(slug, { ...(meta || {}), _slug: slug }), relative);
+      } catch (e) {
+        return text(`Sharing refused: ${String(e?.message || e)}`);
+      }
+      try {
+        const threadTs = currentThreadTs();
+        const { permalink, bytes } = await uploadFile({
+          handle: opened.handle,
+          filename: opened.name,
+          title: opened.name,
+          channelId,
+          threadTs,
+          comment,
+        });
+        await logEvent("channel_file_shared", {
+          channel: channelId,
+          author: createdBy || "",
+          slug,
+          file: opened.relative,
+          bytes,
+          via: "agent",
+        });
+        return text(
+          `✅ Shared \`${opened.name}\` ${threadTs ? "in this thread" : "in the channel"}${permalink ? ` (${permalink})` : ""}. ` +
+          "It's a Slack file — don't also paste its content or re-send it through Composio.",
+        );
+      } catch (e) {
+        return text(`Couldn't share the file: ${String(e?.message || e)}`);
+      } finally {
+        await opened.handle.close().catch(() => {});
       }
     }
   );

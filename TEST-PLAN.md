@@ -5949,18 +5949,31 @@ none` for its cases and live gates. Kept as history.
       (`thread_ts` = the current thread), not the channel root.
 - [ ] Empty `content` is refused with a one-line message; no channel context returns a friendly error.
 - [ ] Hard-scoped to the current channel — it never uploads to an arbitrary channel id.
-- [ ] Asking for a file directly ("send me `REPORT.md`", "share that file here", "attach the JSON")
-      makes the AI upload it with `slack_upload_snippet` under its real name/extension instead of
-      only naming the path, and the reply is a one-line summary rather than the pasted content.
-      Engine-independent guidance; verify on Claude and Codex.
-- [ ] The injected `gateway-usage` skill (`platforms/slack/writing-replies.md`, the capability map,
-      and rule 3 in `SKILL.md`) states: any UTF-8 text file may be uploaded; `.html` uploads and
-      downloads but previews as source, not a rendered page; images keep the `![alt](path.png)`
-      auto-upload route; binaries (PDF/PPTX/XLSX/ZIP) are refused and named as inline-code paths for
-      the 📄 file-explorer button; files above roughly 1 MB are offered rather than uploaded by
-      reflex.
-- [ ] The `slack_upload_snippet` tool description itself names the share-a-file use and the UTF-8
-      text restriction, so an engine that never loads the skill still picks the right route.
+
+### Agent file sharing into the thread (control MCP)
+Fixture: a Slack channel whose working folder holds `artifacts/Contract.pdf` (a real PDF, a few
+hundred KB) and `artifacts/link.txt`, a symlink to a file outside the folder. Run each prompt on
+Claude and on Codex.
+- [ ] Prompt "send me `artifacts/Contract.pdf` here" → the AI calls `slack_share_file` (not
+      `stage_file_for_composio`, not a Composio `SLACK_*` upload, no `ask_questions` account card);
+      the PDF appears in THIS thread as a native Slack PDF with a preview, byte-identical to the file
+      on disk; the reply is one line and does not paste content. Pass: all four hold on both engines.
+- [ ] The file is posted by the bot user, in the current thread (`thread_ts` = the thread), and an
+      `events` row `channel_file_shared` records channel, author, slug, relative file, bytes and
+      `via: "agent"`.
+- [ ] `slack_share_file` with `../…`, an absolute path, `artifacts/link.txt` (symlink out of the
+      folder) or a path under the mounted operator home answers `Sharing refused: …` and uploads
+      nothing.
+- [ ] A file over 25 MB is refused with the size limit named; an empty file is refused; a Slack API
+      error (e.g. missing `files:write`) answers `Couldn't share the file: …`, never "Shared".
+- [ ] From a scheduled run (`sched-…` thread key) the file posts top-level in the channel, not an
+      `invalid_thread_ts` error.
+- [ ] The tool is OPEN in the control-plane classification (no approval card), like the explorer's
+      Share button, and available to any allowed user.
+- [ ] `gateway-usage` (SKILL.md rule 3 and capability map, `writing-replies.md`,
+      `sharing-files.md`) and the `slack_upload_snippet` / `stage_file_for_composio` descriptions all
+      point "send the file into this thread" at `slack_share_file`; Composio Slack upload is named
+      only for other channels/DMs.
 
 ### Native Slack charts (control MCP)
 - [ ] `slack_post_chart chart_type:"line" ...` posts a Block Kit `data_visualization` into the
