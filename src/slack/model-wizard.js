@@ -106,6 +106,7 @@ const EFFORT_DESCRIPTIONS = {
 };
 const effortOption = (v) => ({ label: EFFORT_LABELS[v] || v, value: v, description: EFFORT_DESCRIPTIONS[v] });
 function runtimeEngine(meta = {}) {
+  if (meta.codexAuthSource === "channel") return "codex";
   const id = String(meta.engine || getEngine() || "").toLowerCase();
   return adapterFor(id) ? id : ENGINE_IDS[0];
 }
@@ -176,7 +177,7 @@ export function modelWizardScopeBlocks({ threadTs, meta }) {
       elements: [
         {
           type: "mrkdwn",
-          text: `Step 1 of 4 — scope, then harness (${ENGINE_LABELS()}), model, effort.` + (threadTs ? " *This channel* covers this thread too." : " To change a single thread, run `/model` inside that thread."),
+          text: (meta.codexAuthSource === "channel" ? "Step 1 of 3 — scope, then Codex model and effort." : `Step 1 of 4 — scope, then harness (${ENGINE_LABELS()}), model, effort.`) + (threadTs ? " *This channel* covers this thread too." : " To change a single thread, run `/model` inside that thread."),
         },
       ],
     },
@@ -221,20 +222,22 @@ function wizardChoiceBlocks({ scope, threadTs, actionId, options, current, heade
   ];
 }
 
-export function modelWizardModelBlocks({ scope, threadTs, engine, current, isDM }) {
+export function modelWizardModelBlocks({ scope, threadTs, engine, current, isDM, locked = false }) {
   return wizardChoiceBlocks({
     scope,
     threadTs,
     actionId: MODEL_PICKER_ACTION,
     options: modelOptionsForEngine(engine, current),
     current,
-    backActionId: MODEL_WIZARD_BACK_ENGINE_ACTION,
+    backActionId: locked ? MODEL_WIZARD_BACK_SCOPE_ACTION : MODEL_WIZARD_BACK_ENGINE_ACTION,
     header: `*Choose a ${requireAdapter(engine).label} model* — for ${wizardScopeLabel(scope, isDM)}\nCurrent: \`${current || "default"}\``,
-    step: "Step 3 of 4 — effort next. *Gateway default* clears the model override. *← Back* returns to the harness step.",
+    step: locked
+      ? "Step 2 of 3 — effort next. *Gateway default* clears the model override. *← Back* returns to scope."
+      : "Step 3 of 4 — effort next. *Gateway default* clears the model override. *← Back* returns to the harness step.",
   });
 }
 
-export function modelWizardEffortBlocks({ scope, threadTs, engine, model, current, isDM }) {
+export function modelWizardEffortBlocks({ scope, threadTs, engine, model, current, isDM, locked = false }) {
   return wizardChoiceBlocks({
     scope,
     threadTs,
@@ -243,7 +246,7 @@ export function modelWizardEffortBlocks({ scope, threadTs, engine, model, curren
     current,
     backActionId: MODEL_WIZARD_BACK_MODEL_ACTION,
     header: `*Choose reasoning effort* — for ${wizardScopeLabel(scope, isDM)}\nModel: \`${model || "default"}\` · Current effort: \`${current || "default"}\``,
-    step: "Step 4 of 4 — done after this. *Engine default* clears the override. *← Back* returns to the model step.",
+    step: `${locked ? "Step 3 of 3" : "Step 4 of 4"} — done after this. *Engine default* clears the override. *← Back* returns to the model step.`,
   });
 }
 
@@ -270,7 +273,7 @@ export async function postModelWizard(client, { channel, threadTs, meta }) {
   await client.chat.postMessage({
     channel,
     ...(threadTs ? { thread_ts: threadTs } : {}),
-    text: MODEL_WIZARD_TEXT,
+    text: meta.codexAuthSource === "channel" ? "Change the Codex model: pick scope, model, then effort." : MODEL_WIZARD_TEXT,
     blocks: modelWizardScopeBlocks({ threadTs, meta }),
   });
 }
@@ -324,6 +327,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
     }
 
     const isDM = Boolean(meta.isDM);
+    const codexLocked = meta.codexAuthSource === "channel";
     const userIsAdmin = await isAdmin(userId);
     const userIsApproved = await isApproved(userId);
     if (!isAuthorized(meta, userId, isDM, { isAdminUser: userIsAdmin, isApprovedUser: userIsApproved })) {
@@ -335,7 +339,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       return;
     }
 
-    const repaint = (blocks) => updateRuntimePickerMessage({ client, respond, channel, ts, text: MODEL_WIZARD_TEXT, blocks });
+    const repaint = (blocks) => updateRuntimePickerMessage({ client, respond, channel, ts, text: codexLocked ? "Change the Codex model: pick scope, model, then effort." : MODEL_WIZARD_TEXT, blocks });
     // Persist a channel-scope pick AND record who changed what. The replaced record is captured
     // inside the store transaction, so the diff is against what this click really overwrote.
     const patchChannelRuntime = async (patch) => {
@@ -390,6 +394,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       return;
     }
     if (actionId === MODEL_WIZARD_BACK_ENGINE_ACTION) {
+      if (codexLocked) { await repaint(modelWizardScopeBlocks({ threadTs, meta })); return; }
       const threadEngine = scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "";
       await repaint(modelWizardEngineBlocks({ scope, threadTs, meta: effectiveMeta(meta), threadEngine }));
       return;
@@ -397,13 +402,19 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
     if (actionId === MODEL_WIZARD_BACK_MODEL_ACTION) {
       const backEngine = (scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "") || runtimeEngine(effectiveMeta(meta));
       const backModel = (scope === "thread" ? await getThreadModel(entry.slug, threadTs) : meta.model) || "";
-      await repaint(modelWizardModelBlocks({ scope, threadTs, engine: backEngine, current: backModel, isDM }));
+      await repaint(modelWizardModelBlocks({ scope, threadTs, engine: codexLocked ? "codex" : backEngine, current: codexLocked && !modelBelongsToEngine(backModel, "codex") ? "" : backModel, isDM, locked: codexLocked }));
       return;
     }
 
     // Step 1 → 2: scope picked. (A thread pick with no resolvable thread was already refused above.)
     if (actionId === MODEL_WIZARD_SCOPE_CHANNEL_ACTION || actionId === MODEL_WIZARD_SCOPE_THREAD_ACTION) {
       const chosen = actionId === MODEL_WIZARD_SCOPE_THREAD_ACTION ? "thread" : "channel";
+      if (codexLocked) {
+        const current = chosen === "thread" ? await getThreadModel(entry.slug, threadTs) : meta.model || "";
+        await refreshEngineModels("codex");
+        await repaint(modelWizardModelBlocks({ scope: chosen, threadTs, engine: "codex", current: modelBelongsToEngine(current, "codex") ? current : "", isDM, locked: true }));
+        return;
+      }
       const threadEngine = chosen === "thread" ? await getThreadEngine(entry.slug, threadTs) : "";
       await repaint(modelWizardEngineBlocks({ scope: chosen, threadTs, meta: effectiveMeta(meta), threadEngine }));
       return;
@@ -414,7 +425,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       if (scope === "thread") {
         await clearThreadOverrides();
       } else {
-        await patchChannelRuntime({ engine: "", model: "", effort: "" });
+        await patchChannelRuntime({ engine: codexLocked ? "codex" : "", model: "", effort: "" });
         // A channel-wide reset asked for from inside a thread also drops that thread's own
         // overrides, so the reset visibly applies right where it was requested.
         if (threadTs) await clearThreadOverrides();
@@ -428,6 +439,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
     // from the other harness would break every turn).
     if (actionId.startsWith("cg_mw_engine_") && actionId !== MODEL_WIZARD_ENGINE_RESET_ACTION) {
       const engine = actionId.slice("cg_mw_engine_".length);
+      if (codexLocked && engine !== "codex") { await ephemeral("This channel uses its own Codex login, so its engine stays Codex."); return; }
       if (!adapterFor(engine)) throw new Error(`Unknown engine choice: ${engine}`);
       let current = "";
       if (scope === "thread") {
@@ -448,14 +460,14 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       // The authenticated CLI is the source of truth for selectable Codex models. Refresh only
       // when its bounded cache is stale; failure keeps the last known-good/static catalog.
       await refreshEngineModels(engine);
-      await repaint(modelWizardModelBlocks({ scope, threadTs, engine, current, isDM }));
+      await repaint(modelWizardModelBlocks({ scope, threadTs, engine, current, isDM, locked: codexLocked }));
       return;
     }
 
     // Steps 3 + 4 read the harness back from what step 2 persisted (also correct for the legacy
     // pre-wizard dropdowns, which were always channel-scope on the channel's engine).
     // effectiveMeta: a template-managed DM takes its engine from the org template, as run.js will.
-    const engine = (scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "") || runtimeEngine(effectiveMeta(meta));
+    const engine = codexLocked ? "codex" : (scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "") || runtimeEngine(effectiveMeta(meta));
     const val = decodePickerValue(state.value);
 
     // Step 3 → 4: model picked.
@@ -486,7 +498,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
         // reachable on its own (← Back, or a pre-wizard dropdown still sitting in Slack history).
         if (threadTs) await clearThreadModelEffort();
       }
-      await repaint(modelWizardEffortBlocks({ scope, threadTs, engine, model: val, current: effortCurrent, isDM }));
+      await repaint(modelWizardEffortBlocks({ scope, threadTs, engine, model: val, current: effortCurrent, isDM, locked: codexLocked }));
       return;
     }
 

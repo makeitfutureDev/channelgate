@@ -52,6 +52,7 @@ import {
 } from "../../slack/members.js";
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
 import { CODEX_AUTH_SOURCES, channelCodexHome } from "../../gateway/channel-codex-auth.js";
+import { modelBelongsToEngine, effortBelongsToEngine } from "../../engines/registry.js";
 import { channelCodexLoginStatus, startChannelCodexLogin, cancelChannelCodexLogin } from "../../gateway/channel-codex-login.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
@@ -133,7 +134,7 @@ export function createChannelsRouter({
         key: req.body?.key,
         onAuthenticated: async () => {
           const before = await getChannelMeta(entry.slug);
-          const after = await patchChannelMeta(entry.slug, (current) => ({ ...current, codexAuthSource: "channel" }));
+          const after = await patchChannelMeta(entry.slug, (current) => ({ ...current, codexAuthSource: "channel", engine: "codex", model: modelBelongsToEngine(current.model, "codex") ? current.model : "", effort: effortBelongsToEngine(current.effort, "codex") ? current.effort : "" }));
           await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before, after });
         },
       });
@@ -276,6 +277,11 @@ export function createChannelsRouter({
       if (typeof body.cleanMode === "boolean") next_.cleanMode = body.cleanMode;
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
       if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
+      if (next_.codexAuthSource === "channel") {
+        next_.engine = "codex";
+        if (!modelBelongsToEngine(next_.model, "codex")) next_.model = "";
+        if (!effortBelongsToEngine(next_.effort, "codex")) next_.effort = "";
+      }
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
       if (typeof body.toolboxToken === "string" && body.toolboxToken) next_.toolboxToken = body.toolboxToken.trim();
@@ -430,6 +436,11 @@ export function createChannelsRouter({
             model: typeof body.model === "string" ? body.model.trim() : current.model,
             effort: typeof body.effort === "string" ? body.effort.trim() : current.effort,
           };
+          if (out.codexAuthSource === "channel") {
+            out.engine = "codex";
+            if (!modelBelongsToEngine(out.model, "codex")) out.model = "";
+            if (!effortBelongsToEngine(out.effort, "codex")) out.effort = "";
+          }
           // Egress escapes (src/gateway/egress/): raw sockets on the open bridge beside the proxy,
           // and the hosts whose SSH/Postgres ports get a raw tunnel through it. Admin API only, and
           // written only when sent, so an unrelated save records no change to them.
@@ -601,7 +612,7 @@ export function createChannelsRouter({
       for (const ch of channels) {
         const patched = await patchChannelMeta(ch.slug, (current) => {
           const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
-          return { ...base, engine: "", model: "", effort: "" };
+          return { ...base, engine: base.codexAuthSource === "channel" ? "codex" : "", model: "", effort: "" };
         });
         if (patched) reset++;
       }

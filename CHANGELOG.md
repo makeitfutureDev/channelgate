@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- A channel using its own Codex login now stays on Codex across settings, `/model`, and existing
+  threads. The settings page hides the redundant engine picker, aligns the sign-in actions, and
+  explains login storage without showing the internal path.
 - **The agent can send any file into the thread.** New gateway tool `slack_share_file` posts a file
   from the channel's working folder — PDF, Word, Excel, PowerPoint, ZIP, images, HTML — into the
   current thread as the bot, up to 25 MB, exactly like the file explorer's Share button. "Trimite

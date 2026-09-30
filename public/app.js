@@ -2123,18 +2123,25 @@ function renderChannelDetail(ch) {
   const authSource = card.querySelector(".ch-codex-auth-source");
   const gatewayPanel = card.querySelector(".ch-auth-gateway-panel");
   const channelPanel = card.querySelector(".ch-auth-channel-panel");
+  const modelSelect = card.querySelector(".ch-model");
+  const effortSelect = card.querySelector(".ch-effort");
+  const effortLabel = card.querySelector(".ch-effort-label");
   const paintAuthScope = () => {
-    gatewayPanel.hidden = authSource.value !== "gateway";
-    channelPanel.hidden = authSource.value !== "channel";
+    const dedicated = authSource.value === "channel";
+    gatewayPanel.hidden = dedicated;
+    channelPanel.hidden = !dedicated;
+    card.querySelector(".ch-engine-field").hidden = dedicated;
+    if (dedicated) engineSelect.value = "codex";
+    syncModelOptions({ engineSelect, modelSelect, value: modelMatchesEngine(modelSelect.value, effectiveEngine(engineSelect.value)) ? modelSelect.value : "", blankLabel: "gateway default (Settings)" });
+    syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
   };
   authSource.value = meta.codexAuthSource || "gateway";
   authSource.addEventListener("change", paintAuthScope);
-  paintAuthScope();
-  card.querySelector(".ch-codex-auth-home").textContent = meta.codexAuthHome || "Save this channel first";
   mountCodexLoginBox(channelPanel.querySelector(".ch-codex-login"), `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`, {
     onComplete: () => {
       authSource.value = "channel";
-      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel" };
+      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex" };
       paintAuthScope();
     },
   });
@@ -2170,6 +2177,7 @@ function renderChannelDetail(ch) {
     label: card.querySelector(".ch-effort-label"),
     value: meta.effort || "",
   });
+  paintAuthScope();
   engineSelect.addEventListener("change", () => {
     syncModelOptions({
       engineSelect,

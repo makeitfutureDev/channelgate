@@ -708,14 +708,15 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // "claude"/"codex" directive or the /model wizard's thread scope) wins, then the channel's
   // engine, then the global default. For an EXISTING thread this is only the requested engine:
   // the session's own engine can still outrank a channel/global value (see decideThreadEngine).
-  const threadEngine = overrides?.engine && ENGINES.includes(overrides.engine) ? "" : await getThreadEngine(entry.slug, threadKey);
-  const channelEngine = ENGINES.includes(meta.engine) ? meta.engine : "";
-  let engine = threadEngine || channelEngine || getEngine();
+  const channelCodexLocked = meta.codexAuthSource === "channel";
+  const threadEngine = channelCodexLocked || (overrides?.engine && ENGINES.includes(overrides.engine)) ? "" : await getThreadEngine(entry.slug, threadKey);
+  const channelEngine = channelCodexLocked ? "codex" : ENGINES.includes(meta.engine) ? meta.engine : "";
+  let engine = channelCodexLocked ? "codex" : threadEngine || channelEngine || getEngine();
   // Explicit = the ask names an engine for THIS thread/run specifically (per-run API override or
   // per-thread directive/wizard). Channel/global values are defaults, not asks — an existing
   // thread outranks them and keeps running on the engine its session was born under (see
   // decideThreadEngine below).
-  let engineExplicit = Boolean(threadEngine || (overrides?.engine && ENGINES.includes(overrides.engine)));
+  let engineExplicit = channelCodexLocked || Boolean(threadEngine || (overrides?.engine && ENGINES.includes(overrides.engine)));
   // The same fact, captured BEFORE the disabled-harness substitution below can set the flag for
   // its own reasons: did a PERSON name this harness for this thread/run? It decides whether
   // automatic cross-engine failover is allowed to answer as the other harness (see below).
@@ -750,6 +751,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // Marked EXPLICIT so an existing thread doesn't stick to the disabled engine's session: it gets
   // a fresh session on the enabled harness with the thread transcript replayed into it.
   if (!isEngineEnabled(engine)) {
+    if (channelCodexLocked) {
+      return {
+        slug: entry.slug, cwd: "", model: "", engine: "codex",
+        content: "This channel uses its own Codex login, but Codex is disabled in gateway Settings. Enable Codex or select the default gateway login for this channel.",
+        sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0,
+      };
+    }
     const substitute = getEnabledEngines()[0] || "";
     if (substitute && substitute !== engine) {
       console.warn(`[gateway] ${entry.slug}/${threadKey}: harness ${engine} is disabled in settings — running on ${substitute}`);

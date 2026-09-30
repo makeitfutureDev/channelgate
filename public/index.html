@@ -1285,7 +1285,8 @@
             <div class="ch-codex-login ch-gateway-codex-login">
               <span>Sign in to the default gateway Codex login</span>
               <div class="ch-codex-login-status state">Checking sign-in…</div>
-              <div class="row-actions">
+              <div class="row-actions ch-codex-signin-row">
+                <span>ChatGPT sign-in</span>
                 <button type="button" class="btn ch-codex-device-start">Sign in with ChatGPT</button>
                 <button type="button" class="btn ch-codex-device-cancel" hidden>Cancel sign-in</button>
               </div>
@@ -1303,11 +1304,12 @@
           <div class="ch-auth-channel-panel" hidden>
             <h4>This channel's Codex setup</h4>
             <p class="hint">This login is used only by this conversation. Other channels keep their own selection.</p>
-            <div class="field"><span>Channel Codex home on gateway host</span><code class="ch-codex-auth-home"></code></div>
+            <p class="hint">The gateway keeps this channel's Codex sign-in in a separate private location. You do not need to copy a token or manage its storage path.</p>
             <div class="field ch-codex-login">
               <span>Sign in to this channel</span>
               <div class="ch-codex-login-status state">Checking sign-in…</div>
-              <div class="row-actions">
+              <div class="row-actions ch-codex-signin-row">
+                <span>ChatGPT sign-in</span>
                 <button type="button" class="btn ch-codex-device-start">Sign in with ChatGPT</button>
                 <button type="button" class="btn ch-codex-device-cancel" hidden>Cancel sign-in</button>
               </div>
@@ -1324,7 +1326,7 @@
             <p class="hint">Channel-specific connected apps and secrets are configured in MCP Connections and Environment tokens above.</p>
           </div>
           <div class="grid grid-2">
-            <label class="field">
+            <label class="field ch-engine-field">
               <span>Engine (which CLI drives this channel)</span>
               <select class="ch-engine">
                 <option value="">Default (global setting)</option>

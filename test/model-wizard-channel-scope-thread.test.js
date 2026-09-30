@@ -12,6 +12,7 @@ const { saveSettings } = await import("../src/config/settings.js");
 const { saveSession } = await import("../src/gateway/sessions.js");
 const { getThreadEngine, getThreadModel, getThreadEffort, setThreadModel, setThreadEffort, setThreadEngine } = await import("../src/gateway/thread-engine.js");
 const { decideThreadEngine } = await import("../src/gateway/run.js");
+const { resolveThreadEngine } = await import("../src/gateway/thread-engine.js");
 const {
   MODEL_WIZARD_SCOPE_CHANNEL_ACTION,
   MODEL_PICKER_ACTION,
@@ -87,6 +88,23 @@ test("a channel-scope model pick applies to the thread it was made in", async ()
   const done = client.updates.at(-1);
   assert.match(done.text, /Runtime updated/);
   assert.doesNotMatch(JSON.stringify(done.blocks), /fresh Claude session/, "nothing moved, so nothing to warn about");
+});
+
+test("a dedicated channel Codex login offers only Codex models and rejects an old Claude button", async () => {
+  saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true } });
+  await setUser(ADMIN, { name: "Admin", approved: true, isAdmin: true });
+  const entry = await channel("C_MW_LOCKED", "mw-codex-locked", { codexAuthSource: "channel", engine: "codex", model: "" });
+  await saveSession(entry.slug, THREAD, "old-claude-session", "claude");
+  await setThreadEngine(entry.slug, THREAD, "claude");
+  assert.equal(await resolveThreadEngine(entry.slug, THREAD, await getChannelMeta(entry.slug)), "codex");
+  const client = fakeClient();
+  await click(client, "C_MW_LOCKED", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue());
+  const card = JSON.stringify(client.updates.at(-1).blocks);
+  assert.match(card, /Choose a Codex model/);
+  assert.doesNotMatch(card, /cg_mw_engine_claude/);
+  await click(client, "C_MW_LOCKED", "cg_mw_engine_claude", wizardValue());
+  assert.equal((await getChannelMeta(entry.slug)).engine, "codex");
+  assert.match(client.ephemerals.at(-1).text, /engine stays Codex/);
 });
 
 test("Fable 5.1 saves its exact ID while an older Fable button remains usable", async () => {

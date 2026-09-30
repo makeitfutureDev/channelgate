@@ -19,6 +19,10 @@
   `api.openai.com`. The host `auth.json` and any refresh token stay outside the container.
 - The selected login also applies to an admin's direct-host Codex turn. The authentication
   source is recorded in channel policy audits; no credential value is included.
+- Selecting a channel's own Codex login fixes that channel and its threads to the Codex engine.
+  Runtime settings hide the redundant engine picker, and `/model` goes straight from scope to
+  Codex model and effort. Older Claude sessions switch to fresh Codex sessions on their next turn.
+  The admin UI describes the separate login storage without showing its internal host path.
 
 ## Optional isolated VPN database service
 
