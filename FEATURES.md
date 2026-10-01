@@ -2,20 +2,21 @@
 
 ## Channel-specific Codex authentication
 
-- Runtime settings ask which Codex login a channel uses before showing setup. The shared view
-  shows gateway Slack, Claude and Codex status, links to their settings, and direct shared Codex
-  ChatGPT/API-key sign-in. The channel view shows its dedicated Codex login and channel connection
-  locations. The selector changes only Codex authentication; Slack and Claude remain gateway-wide.
+- Runtime settings ask which Codex login a channel uses. The shared choice shows the channel's
+  engine, model and effort controls; gateway Codex sign-in lives under Settings → Agent defaults.
+  The channel choice shows its dedicated Codex login and fixes its engine to Codex. Slack and
+  Claude continue using the gateway connection.
 - Admins can select the gateway Codex login or a dedicated host-side `CODEX_HOME` for a channel
   from Runtime → Codex authentication. The dedicated directory is keyed to the conversation ID
   and does not fall back to another account when no login exists.
-- The channel editor can start ChatGPT device code sign-in or accept an OpenAI API key through a
-  private password field. It polls the sign-in state, lets an admin cancel a pending device flow,
+- A sign-in method dropdown starts ChatGPT device code sign-in as soon as it is selected, or
+  reveals the OpenAI API key field. The code copies when clicked. The editor polls sign-in state,
+  lets an admin cancel a pending device flow,
   and selects the channel login after success. The API returns only the method and device code;
   the key enters the Codex CLI through standard input and never appears in a response or argv.
 - Device code parsing handles the current Codex CLI's terminal coloring and full code length;
   the login process receives the public TLS CA bundle when the host uses a proxy. The browser
-  shows the sign-in link and code as soon as the CLI supplies them, with aligned login actions.
+  shows the sign-in link and code as soon as the CLI supplies them.
 - The operator can sign in to that directory with ChatGPT subscription access or an OpenAI
   Platform API key. In proxy-mode containers, both methods use a channel-bound placeholder:
   ChatGPT access tokens are relayed as JWT-shaped values, while API keys are relayed only to
@@ -26,6 +27,9 @@
   Runtime settings hide the redundant engine picker, and `/model` goes straight from scope to
   Codex model and effort. Older Claude sessions switch to fresh Codex sessions on their next turn.
   The admin UI describes the separate login storage without showing its internal host path.
+- Slack channel Settings shows the channel's own Codex login status, model and effort when the
+  dedicated login is selected. Its engine control disappears. Codex Cloud MCP discovery and
+  selected MCP launch policy use that channel's login; the gateway catalog remains separate.
 
 ## Optional isolated VPN database service
 

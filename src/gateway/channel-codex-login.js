@@ -5,21 +5,17 @@ import { lstatSync, realpathSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { buildChildEnv } from "../engines/child-env.js";
 import { readCodexAuthState } from "../engines/codex-auth.js";
 import { codexEngineHome } from "../config/paths.js";
-import { channelCodexHome } from "./channel-codex-auth.js";
+import { channelCodexHome, codexAuthProcessEnv } from "./channel-codex-auth.js";
+import { invalidateEngineMcps } from "./mcp-discovery.js";
 
 const DEVICE_TIMEOUT_MS = 10 * 60_000;
 const KEY_TIMEOUT_MS = 30_000;
 const jobs = new Map();
 
 function loginEnv(home) {
-  const env = buildChildEnv({ CODEX_HOME: home, HOME: path.dirname(home) });
-  // A login is selected by the target Codex home alone, never a daemon-wide key or
-  // identity federation variable inherited from the service environment.
-  for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"]) delete env[key];
-  return env;
+  return codexAuthProcessEnv(home);
 }
 
 function deviceDetails(output) {
@@ -128,6 +124,7 @@ async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, o
       const auth = await readCodexAuthState({ codexHome: home, hostCodexHome: home, env: {} });
       if (!auth.authenticated || auth.method !== (method === "device" ? "chatgpt" : "api-key")) throw new Error("credential not saved");
       await onAuthenticated();
+      invalidateEngineMcps("codex", { channelId: jobKey.startsWith("channel:") ? jobKey.slice(8) : "" });
       job.phase = "complete";
     } catch {
       job.phase = "failed";

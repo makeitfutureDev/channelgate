@@ -1544,6 +1544,7 @@ function initializeMcpBox(box, { claude = [], codex = [] } = {}) {
 
 function captureMcpSelection(box) {
   if (box.dataset.engine === "both") {
+    if (box.dataset.mcpLoading) return;
     const state = mcpBoxState(box);
     for (const engine of ["claude", "codex"]) {
       state[engine] = [...box.querySelectorAll(`input[type="checkbox"][data-mcp-engine="${engine}"]:checked`)]
@@ -1564,7 +1565,7 @@ function captureMcpSelection(box) {
 }
 
 function catalogWithSavedEntries(box, engine) {
-  const catalog = AVAILABLE_MCPS[engine] || [];
+  const catalog = AVAILABLE_MCPS[engine === "codex" ? (box.dataset.mcpCodexKey || "codex") : engine] || [];
   const state = mcpBoxState(box);
   const wanted = new Set(state[engine]);
   const merged = [...catalog];
@@ -1607,34 +1608,37 @@ function paintAllMcpBoxes(box) {
   }
 }
 
-async function loadMcpCatalog(engine) {
-  if (Array.isArray(AVAILABLE_MCPS[engine])) return AVAILABLE_MCPS[engine];
-  if (!MCP_CATALOG_LOADS[engine]) {
-    MCP_CATALOG_LOADS[engine] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}`)
+async function loadMcpCatalog(engine, channelId = "") {
+  const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
+  if (Array.isArray(AVAILABLE_MCPS[key])) return AVAILABLE_MCPS[key];
+  if (!MCP_CATALOG_LOADS[key]) {
+    MCP_CATALOG_LOADS[key] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}${channelId && engine === "codex" ? `&channelId=${encodeURIComponent(channelId)}` : ""}`)
       .then((result) => {
-        AVAILABLE_MCPS[engine] = Array.isArray(result.servers) ? result.servers : [];
-        return AVAILABLE_MCPS[engine];
+        AVAILABLE_MCPS[key] = Array.isArray(result.servers) ? result.servers : [];
+        return AVAILABLE_MCPS[key];
       })
       .finally(() => {
-        delete MCP_CATALOG_LOADS[engine];
+        delete MCP_CATALOG_LOADS[key];
       });
   }
-  return MCP_CATALOG_LOADS[engine];
+  return MCP_CATALOG_LOADS[key];
 }
 
-async function renderMcpBoxForEngine(box, engineValue, countEl) {
+async function renderMcpBoxForEngine(box, engineValue, countEl, channelId = "") {
   captureMcpSelection(box);
   box.dataset.engine = "both";
-  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine]));
+  const codexKey = channelId ? `codex:${channelId}` : "codex";
+  box.dataset.mcpCodexKey = codexKey;
+  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine === "codex" ? codexKey : engine]));
   if (missing.length) {
     box.dataset.mcpLoading = "both";
     box.classList.add("empty");
     box.textContent = "loading Claude and Codex MCP lists…";
     updateChecksCount(box, countEl);
     await Promise.all(missing.map(async (engine) => {
-      try { await loadMcpCatalog(engine); } catch { AVAILABLE_MCPS[engine] = []; }
+      try { await loadMcpCatalog(engine, engine === "codex" ? channelId : ""); } catch { AVAILABLE_MCPS[engine === "codex" ? codexKey : engine] = []; }
     }));
-    if (!box.isConnected) return;
+    if (!box.isConnected || box.dataset.mcpCodexKey !== codexKey) return;
   }
   delete box.dataset.mcpLoading;
   paintAllMcpBoxes(box);
@@ -1835,15 +1839,28 @@ async function pollDriveSync(channelId, resultEl, stillOpen) {
 
 // Both the shared gateway and a channel login use the same private Codex sign-in controls.
 // The server returns only a method and the temporary device code; never render raw CLI output.
-function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {} } = {}) {
+function mountCodexLoginBox(box, url, { onComplete = () => {} } = {}) {
   const statusEl = box.querySelector(".ch-codex-login-status");
   const deviceBox = box.querySelector(".ch-codex-device-code");
+  const deviceSection = box.querySelector(".ch-codex-device-section");
+  const apiSection = box.querySelector(".ch-codex-api-section");
+  const apiNote = box.querySelector(".ch-codex-api-note");
+  const methodSelect = box.querySelector(".ch-codex-login-method");
   const apiKeyInput = box.querySelector(".ch-codex-api-key");
   const cancelButton = box.querySelector(".ch-codex-device-cancel");
   let poll = null;
   let observedPending = false;
   let startedHere = false;
+  let latestState = null;
+  const paintMethod = () => {
+    deviceSection.hidden = methodSelect.value !== "device";
+    apiSection.hidden = methodSelect.value !== "api-key";
+    apiNote.hidden = methodSelect.value !== "api-key";
+  };
   const paint = (state) => {
+    latestState = state;
+    if (state.phase === "pending" && methodSelect.value !== "device") methodSelect.value = "device";
+    paintMethod();
     statusEl.textContent = state.phase === "pending" ? (state.code && state.url ? "Enter this code to finish signing in:" : "Requesting a ChatGPT sign-in code…")
       : state.phase === "failed" ? state.error
       : state.authenticated ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}`
@@ -1854,7 +1871,6 @@ function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {
       box.querySelector(".ch-codex-device-value").textContent = state.code;
     }
     cancelButton.hidden = state.phase !== "pending";
-    onState(state);
     if (state.phase === "pending") observedPending = true;
     if (state.phase === "complete" && (observedPending || startedHere)) {
       onComplete();
@@ -1872,11 +1888,24 @@ function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {
     }
   };
   void api(url).then(paint).catch((error) => { statusEl.textContent = `Could not check sign-in: ${error.message}`; });
-  box.querySelector(".ch-codex-device-start").addEventListener("click", async () => {
+  methodSelect.addEventListener("change", async () => {
+    paintMethod();
+    if (methodSelect.value === "api-key" && latestState?.phase === "pending") {
+      try { await api(url, { method: "DELETE" }); paint(await api(url)); }
+      catch (error) { statusEl.textContent = error.message; }
+    }
+    if (methodSelect.value !== "device" || latestState?.phase === "pending") return;
     startedHere = true;
     statusEl.textContent = "Starting ChatGPT sign-in…";
     try { paint(await api(url, { method: "POST", body: JSON.stringify({ method: "device" }) })); }
     catch (error) { startedHere = false; statusEl.textContent = error.message; }
+  });
+  box.querySelector(".ch-codex-device-value").addEventListener("click", async () => {
+    const code = box.querySelector(".ch-codex-device-value").textContent;
+    if (!code) return;
+    const result = box.querySelector(".ch-codex-copy-state");
+    try { await navigator.clipboard.writeText(code); result.textContent = "Copied"; }
+    catch { result.textContent = "Could not copy code"; }
   });
   box.querySelector(".ch-codex-key-save").addEventListener("click", async () => {
     const key = apiKeyInput.value;
@@ -1891,6 +1920,7 @@ function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {
     try { await api(url, { method: "DELETE" }); paint(await api(url)); }
     catch (error) { statusEl.textContent = error.message; }
   });
+  paintMethod();
 }
 
 function renderChannelDetail(ch) {
@@ -2121,20 +2151,18 @@ function renderChannelDetail(ch) {
   const engineSelect = card.querySelector(".ch-engine");
   engineSelect.value = meta.engine || "";
   const authSource = card.querySelector(".ch-codex-auth-source");
-  const gatewayPanel = card.querySelector(".ch-auth-gateway-panel");
   const channelPanel = card.querySelector(".ch-auth-channel-panel");
   const modelSelect = card.querySelector(".ch-model");
   const effortSelect = card.querySelector(".ch-effort");
   const effortLabel = card.querySelector(".ch-effort-label");
   const paintAuthScope = () => {
     const dedicated = authSource.value === "channel";
-    gatewayPanel.hidden = dedicated;
     channelPanel.hidden = !dedicated;
     card.querySelector(".ch-engine-field").hidden = dedicated;
     if (dedicated) engineSelect.value = "codex";
     syncModelOptions({ engineSelect, modelSelect, value: modelMatchesEngine(modelSelect.value, effectiveEngine(engineSelect.value)) ? modelSelect.value : "", blankLabel: "gateway default (Settings)" });
     syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, dedicated ? ch.channelId : "");
   };
   authSource.value = meta.codexAuthSource || "gateway";
   authSource.addEventListener("change", paintAuthScope);
@@ -2142,28 +2170,11 @@ function renderChannelDetail(ch) {
     onComplete: () => {
       authSource.value = "channel";
       ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex" };
+      delete AVAILABLE_MCPS[`codex:${ch.channelId}`];
       paintAuthScope();
     },
   });
-  mountCodexLoginBox(gatewayPanel.querySelector(".ch-codex-login"), "/api/gateway/codex-login", {
-    onState: (state) => {
-      gatewayPanel.querySelector(".ch-gateway-codex-status").textContent = state.authenticated
-        ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}` : "No shared Codex login";
-    },
-  });
-  void api("/api/health").then((health) => {
-    if (!card.isConnected) return;
-    gatewayPanel.querySelector(".ch-gateway-slack-status").textContent = health.slack?.connected ? "Connected" : "Disconnected";
-    const claude = health.engines?.claude?.auth;
-    gatewayPanel.querySelector(".ch-gateway-claude-status").textContent = claude?.authenticated
-      ? `Signed in (${claude.method || "gateway"})` : "No usable Claude login";
-  }).catch(() => {
-    gatewayPanel.querySelector(".ch-gateway-slack-status").textContent = "Status unavailable";
-    gatewayPanel.querySelector(".ch-gateway-claude-status").textContent = "Status unavailable";
-  });
-  gatewayPanel.querySelector(".ch-gateway-slack-settings").addEventListener("click", () => { setView("settings"); selectSettingsSection("connection"); });
-  gatewayPanel.querySelector(".ch-gateway-claude-settings").addEventListener("click", () => { setView("settings"); revealSetting("set-container-claude-token"); });
-  renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
+  renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
   syncModelOptions({
     engineSelect,
     modelSelect: card.querySelector(".ch-model"),
@@ -4855,6 +4866,13 @@ async function init() {
   startActiveRunsStream();
   loadUpdateStatus().catch(() => {}); // version chip + update button — off the critical path
   bindSettings();
+  mountCodexLoginBox(document.getElementById("gateway-codex-login"), "/api/gateway/codex-login", {
+    onComplete: () => {
+      delete AVAILABLE_MCPS.codex;
+      const box = document.querySelector("#channel-detail .ch-mcps");
+      if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
+    },
+  });
   const { skills } = await api("/api/skills");
   try {
     SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];

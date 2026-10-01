@@ -18,11 +18,15 @@ product overview.
 
 ## Unreleased
 
-- ChatGPT sign-in in channel settings now displays the device link and complete code from current
-  Codex CLI output. The sign-in and API key buttons align without wrapping; proxied hosts pass
-  the public TLS CA bundle to the login process.
+- Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
+  sign-in uses a method dropdown: choosing ChatGPT starts the device flow and clicking its code
+  copies it; the API key field appears only for that method. The shared sign-in moved to Settings.
+  Slack Settings names the dedicated login and its channel defaults. Codex Cloud MCP discovery
+  and launch now use that channel account when selected.
+- ChatGPT sign-in displays the device link and complete code from current Codex CLI output;
+  proxied hosts pass the public TLS CA bundle to the login process.
 - A channel using its own Codex login now stays on Codex across settings, `/model`, and existing
-  threads. The settings page hides the redundant engine picker, aligns the sign-in actions, and
+  threads. The settings page hides the redundant engine picker and
   explains login storage without showing the internal path.
 - **The agent can send any file into the thread.** New gateway tool `slack_share_file` posts a file
   from the channel's working folder — PDF, Word, Excel, PowerPoint, ZIP, images, HTML — into the
@@ -33,8 +37,8 @@ product overview.
 
 - Completed nested background reports stranded by the earlier `invalid_thread_ts` error get one
   bounded recovery attempt from their saved output after restart. Their work is not rerun.
-- Channel Runtime settings now ask for the Codex login source first, show the matching gateway
-  or channel setup, and allow shared gateway Codex sign-in directly in the admin UI.
+- Channel Runtime settings now ask for the Codex login source first. Shared gateway Codex sign-in
+  is available from the admin Settings page.
 - **Nested background agent reports reach their Slack thread.** Delivery now turns an agent's
   synthetic session key into the launching thread timestamp before posting the report and menu.
   Scheduled reports with synthetic keys post at channel level. This prevents `invalid_thread_ts`

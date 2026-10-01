@@ -560,6 +560,18 @@
                     <span>Default Codex model</span>
                     <select id="set-default-codex-model"></select>
                   </label>
+                  <div class="ch-codex-login" id="gateway-codex-login">
+                    <strong>Default gateway Codex login</strong>
+                    <p class="desc">Shared by channels that use the gateway login.</p>
+                    <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
+                    <div class="ch-codex-login-status state">Checking sign-in…</div>
+                    <div class="ch-codex-device-section" hidden>
+                      <div class="ch-codex-device-code" hidden><a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a><span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span></div>
+                      <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
+                    </div>
+                    <div class="row-actions ch-codex-api-section" hidden><input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Gateway OpenAI API key"><button type="button" class="btn ch-codex-key-save">Save API key</button></div>
+                    <em class="state ch-codex-api-note" hidden>OpenAI bills API key use separately from a ChatGPT subscription.</em>
+                  </div>
                   <div class="dz-row">
                     <span class="t">Reset all channels to these gateway defaults<small>Clears every channel's engine, model and effort overrides, and optionally the per-thread <code>/model</code> pins that would otherwise survive it. Access, tools, tokens and DM templates stay unchanged. Existing threads keep their current engine session; new threads inherit these defaults. Can't be undone.</small></span>
                     <button type="button" id="reset-channel-runtime" class="dz-btn">Reset all…</button>
@@ -1272,56 +1284,26 @@
                 <option value="channel">This channel's own login</option>
               </select>
             </label>
-            <em class="state">Choose a login source first; its setup appears below. Slack and Claude currently use the gateway connection in either case.</em>
-          </div>
-          <div class="ch-auth-gateway-panel">
-            <h4>Default gateway setup</h4>
-            <p class="hint">These connections are shared with other channels.</p>
-            <div class="ch-auth-status-grid">
-              <div><strong>Slack</strong><span class="ch-gateway-slack-status state">Checking…</span><button type="button" class="ghost ch-gateway-slack-settings">Open Slack settings</button></div>
-              <div><strong>Claude</strong><span class="ch-gateway-claude-status state">Checking…</span><button type="button" class="ghost ch-gateway-claude-settings">Open Claude settings</button></div>
-              <div><strong>Codex</strong><span class="ch-gateway-codex-status state">Checking…</span></div>
-            </div>
-            <div class="ch-codex-login ch-gateway-codex-login">
-              <span>Sign in to the default gateway Codex login</span>
-              <div class="ch-codex-login-status state">Checking sign-in…</div>
-              <div class="row-actions ch-codex-signin-row">
-                <span>ChatGPT sign-in</span>
-                <button type="button" class="btn ch-codex-device-start">Sign in with ChatGPT</button>
-                <button type="button" class="btn ch-codex-device-cancel" hidden>Cancel sign-in</button>
-              </div>
-              <div class="ch-codex-device-code" hidden>
-                <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
-                <span> and enter code </span><strong class="ch-codex-device-value"></strong>
-              </div>
-              <div class="row-actions">
-                <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Default gateway OpenAI API key">
-                <button type="button" class="btn ch-codex-key-save">Use API key</button>
-              </div>
-              <em class="state">This login is shared across channels using the default. OpenAI bills API key use separately from a ChatGPT subscription.</em>
-            </div>
+            <em class="state">A dedicated login uses Codex for this channel. The shared login follows the engine selected below.</em>
           </div>
           <div class="ch-auth-channel-panel" hidden>
             <h4>This channel's Codex setup</h4>
             <p class="hint">This login is used only by this conversation. Other channels keep their own selection.</p>
-            <p class="hint">The gateway keeps this channel's Codex sign-in in a separate private location. You do not need to copy a token or manage its storage path.</p>
             <div class="field ch-codex-login">
-              <span>Sign in to this channel</span>
+              <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
               <div class="ch-codex-login-status state">Checking sign-in…</div>
-              <div class="row-actions ch-codex-signin-row">
-                <span>ChatGPT sign-in</span>
-                <button type="button" class="btn ch-codex-device-start">Sign in with ChatGPT</button>
-                <button type="button" class="btn ch-codex-device-cancel" hidden>Cancel sign-in</button>
+              <div class="ch-codex-device-section" hidden>
+                <div class="ch-codex-device-code" hidden>
+                  <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
+                  <span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span>
+                </div>
+                <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
               </div>
-              <div class="ch-codex-device-code" hidden>
-                <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
-                <span> and enter code </span><strong class="ch-codex-device-value"></strong>
-              </div>
-              <div class="row-actions">
+              <div class="row-actions ch-codex-api-section" hidden>
                 <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Channel OpenAI API key">
-                <button type="button" class="btn ch-codex-key-save">Use API key</button>
+                <button type="button" class="btn ch-codex-key-save">Save API key</button>
               </div>
-              <em class="state">The key is sent once to the gateway over this admin session. API usage is billed by OpenAI separately from a ChatGPT subscription.</em>
+              <em class="state ch-codex-api-note" hidden>The key is sent once to the gateway over this admin session. API usage is billed by OpenAI separately from a ChatGPT subscription.</em>
             </div>
             <p class="hint">Channel-specific connected apps and secrets are configured in MCP Connections and Environment tokens above.</p>
           </div>

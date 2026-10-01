@@ -38,6 +38,7 @@ import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../g
 import { listSkills } from "../gateway/skills/catalog.js";
 import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
+import { channelCodexLoginStatus } from "../gateway/channel-codex-login.js";
 import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
 import { channelVpnConfigured, getChannelVpnStatus, setChannelVpnEnabled, unconfiguredChannelVpnStatus } from "../gateway/channel-vpn-control.js";
 import { logChannelPolicyChange } from "../config/channel-audit.js";
@@ -587,7 +588,8 @@ export async function channelSettingsContext(client, { channelId, userId, expect
 
 function channelSettingsSnapshot(meta = {}) {
   const effective = effectiveMeta(meta);
-  const effectiveEngine = effective.engine || getEngine();
+  const channelLogin = effective.codexAuthSource === "channel";
+  const effectiveEngine = channelLogin ? "codex" : effective.engine || getEngine();
   const gatewayEngine = getEngine();
   const organization = getOrgAccessGrants();
   const channelTier = { ...effective, skills: channelSkillGrants(effective) };
@@ -598,8 +600,9 @@ function channelSettingsSnapshot(meta = {}) {
     access: meta,
     mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
     runtime: {
-      configuredEngineId: effective.engine || "",
-      configuredEngine: effective.engine ? engineLabel(effective.engine) : "",
+      channelLogin,
+      configuredEngineId: channelLogin ? "codex" : effective.engine || "",
+      configuredEngine: channelLogin ? "Codex" : effective.engine ? engineLabel(effective.engine) : "",
       effectiveEngineId: effectiveEngine,
       effectiveEngine: engineLabel(effectiveEngine),
       gatewayEngineId: gatewayEngine,
@@ -658,7 +661,7 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
 // effectiveMeta with that one field blank, so the dropdown's "inherited" label and the validation
 // that accepts the next pick can never disagree about what an unset field means.
 function inheritedChannelRuntime(meta = {}) {
-  const engine = effectiveMeta({ ...meta, engine: "" }).engine || getEngine();
+  const engine = meta.codexAuthSource === "channel" ? "codex" : effectiveMeta({ ...meta, engine: "" }).engine || getEngine();
   return {
     engine,
     model: effectiveMeta({ ...meta, model: "" }).model || getDefaultModel(engine) || "",
@@ -703,8 +706,9 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
       model: parentModel ? `Inherited default (${parentModel})` : "Engine default",
       effort: parentEffort ? `Inherited default (${parentEffort})` : "Engine default",
     },
-    options: { engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
+    options: { engines: runtime.channelLogin ? [{ label: "Codex", value: "codex" }] : engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
   };
+  if (runtime.channelLogin) channel.inherited.engine = "This channel's Codex login";
   if (!slug || !threadKey) return { channel, thread: null };
   const [engine, model, effort, activeEngine] = await Promise.all([
     getThreadEngine(slug, threadKey),
@@ -719,7 +723,7 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   return {
     channel,
     thread: {
-      values: { engine, model, effort },
+      values: { engine: runtime.channelLogin ? "" : engine, model, effort },
       pinned: Boolean(engine || model || effort),
       // Named only when it is the reason this thread differs from the channel, so the tab explains
       // a surprising engine instead of repeating what the dropdown already says.
@@ -729,7 +733,7 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
         model: inheritedModel ? `Follow channel (${inheritedModel})` : "Follow channel (engine default)",
         effort: inheritedEffort ? `Follow channel (${inheritedEffort})` : "Follow channel (engine default)",
       },
-      options: { engines, models: modelsForEngine(activeEngine), efforts: effortChoices(activeEngine, model || inheritedModel) },
+      options: { engines: runtime.channelLogin ? [{ label: "Codex", value: "codex" }] : engines, models: modelsForEngine(activeEngine), efforts: effortChoices(activeEngine, model || inheritedModel) },
     },
   };
 }
@@ -855,7 +859,7 @@ async function cloudManagerItems(meta, engine) {
   const inherited = Array.isArray(getOrgAccessGrants()?.[field]) ? getOrgAccessGrants()[field] : [];
   const directKeys = new Set(direct.map((entry) => cloudSelectionKey(engine, entry)));
   const inheritedKeys = new Set(inherited.map((entry) => cloudSelectionKey(engine, entry)));
-  const available = await requireAdapter(engine).discoverMcps();
+  const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex" && meta?.codexAuthSource === "channel" ? meta.channelId : "" });
   const rows = new Map();
   for (const entry of [...available, ...direct, ...inherited]) {
     const key = cloudSelectionKey(engine, entry);
@@ -977,6 +981,12 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
     secretScopeLists(meta, state.ownerId).catch(() => ({ organization: [], personal: [], channel: [] })),
   ]);
   snapshot.runtime.scopes = scopes;
+  if (snapshot.runtime.channelLogin) {
+    const login = await channelCodexLoginStatus(meta.channelId);
+    snapshot.runtime.channelLoginStatus = login.authenticated
+      ? `Signed in with ${login.method === "chatgpt" ? "ChatGPT" : "an API key"}`
+      : login.phase === "pending" ? "ChatGPT sign-in in progress" : "No channel login yet";
+  }
   snapshot.resume = resume;
   snapshot.automations = listForChannel(state.channelId);
   snapshot.orgSecrets = secretScopes.organization;
@@ -1553,6 +1563,7 @@ async function connectAndWire(app) {
       const runtimeTarget = runtimeSelectTarget(actionId);
       if (runtimeTarget) {
         const { scope, field } = runtimeTarget;
+        if (field === "engine" && meta.codexAuthSource === "channel") throw new Error("This channel uses its own Codex login, so its engine is Codex.");
         const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
         let notice;
         if (scope === "channel") {
@@ -1645,7 +1656,7 @@ async function connectAndWire(app) {
         const activate = Boolean(command.a);
         let selection = null;
         if (activate) {
-          const available = await requireAdapter(engine).discoverMcps();
+          const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex" && meta?.codexAuthSource === "channel" ? meta.channelId : "" });
           selection = available.find((item) => cloudSelectionKey(engine, item) === key);
           selection = persistedSelectionForEngine(engine, selection);
           if (!selection) throw new Error("That MCP capability is no longer available. Refresh the catalog and try again.");

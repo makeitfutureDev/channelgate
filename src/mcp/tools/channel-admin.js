@@ -64,7 +64,8 @@ export function register(server, ctx) {
     "list_available_mcps",
     { description: "List the MCP servers available to allow in this channel (from the host's configured servers).", inputSchema: {} },
     async () => {
-      const servers = await requireAdapter(activeEngine).discoverMcps();
+      const meta = await loadMeta();
+      const servers = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && meta?.codexAuthSource === "channel" ? channelId : "" });
       if (!servers.length) return text("No MCP servers available on the host.");
       return text(servers.map((s) => `• ${s.name}${s.connected ? "" : " (offline)"}`).join("\n"));
     }
@@ -89,7 +90,8 @@ export function register(server, ctx) {
     },
     async ({ names }) => {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its MCP servers.");
-      const available = await requireAdapter(activeEngine).discoverMcps();
+      const sourceMeta = await loadMeta();
+      const available = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && sourceMeta?.codexAuthSource === "channel" ? channelId : "" });
       const field = selectionFieldForEngine(activeEngine);
       const added = [];
       const unknown = [];

@@ -661,6 +661,17 @@ test("the runtime tab's thread scope reports the pins in force and the catalogs 
   assert.deepEqual(pinned.channel.values, { engine: "claude", model: "claude-opus-4-8", effort: "high" });
 });
 
+test("dedicated Codex login shows channel status and only Codex model controls in Slack", async () => {
+  const meta = { channelId: "C_OWN_CODEX", codexAuthSource: "channel", engine: "codex", model: "gpt-5.6-sol", effort: "low" };
+  const data = { ...snapshot, runtime: { ...snapshot.runtime, channelLogin: true, channelLoginStatus: "Signed in with ChatGPT", configuredEngineId: "codex", configuredModel: meta.model, configuredEffort: meta.effort, effectiveEngineId: "codex" } };
+  const scopes = await runtimeScopes("own-codex-channel", meta, data, state.threadTs);
+  const view = buildChannelSettingsView({ ...data, runtime: { ...data.runtime, scopes } }, state, { tab: "general", canEditRuntime: true });
+  assert.match(rendered(view), /Channel Codex login.*Signed in with ChatGPT/);
+  assert.equal(selects(view).some((item) => item.accessory.action_id === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID || item.accessory.action_id === CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID), false);
+  assert.equal(scopes.channel.values.model, "gpt-5.6-sol");
+  assert.equal(scopes.channel.options.models.some((item) => item.value === "gpt-5.6-sol"), true);
+});
+
 test("a DM following an org template inherits that template's runtime, not the gateway's", async () => {
   const { saveSettings, getSettings, getEngine } = await import("../src/config/settings.js");
   const before = getSettings();

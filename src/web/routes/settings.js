@@ -12,7 +12,7 @@ import path from "node:path";
 import { allowedFsRoot, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
 import { listAvailableSkills } from "../../gateway/folders.js";
 import { workspaceAssignmentsAtPath } from "../../gateway/workspace-assignments.js";
-import { listChannels } from "../../config/store.js";
+import { listChannels, getChannelsIndex } from "../../config/store.js";
 import { requireAdapter, modelBelongsToEngine } from "../../engines/registry.js";
 import {
   getAdminPassword,
@@ -795,7 +795,14 @@ export function createSettingsRouter({
   router.get("/mcp/available", async (req, res, next) => {
     try {
       const engine = ENGINES.includes(req.query.engine) ? req.query.engine : getEngine();
-      res.json({ engine, servers: await requireAdapter(engine).discoverMcps() });
+      let channelId = "";
+      if (engine === "codex" && req.query.channelId) {
+        const id = String(req.query.channelId);
+        const entry = (await getChannelsIndex())[id];
+        if (!entry) return res.status(404).json({ error: "Channel not found" });
+        channelId = id;
+      }
+      res.json({ engine, servers: await requireAdapter(engine).discoverMcps({ channelId }) });
     } catch (e) {
       next(e);
     }

@@ -2,25 +2,32 @@
 
 ## Channel-specific Codex authentication (2026-09-29)
 
+- [x] Automated: Chromium confirms the shared-login channel view has no gateway status/sign-in
+  panel; choosing a channel login hides engine selection, choosing ChatGPT starts device sign-in,
+  clicking the code copies it, and choosing API key reveals its field. Slack modal tests confirm
+  a dedicated login's status, Codex-only runtime controls and channel model. Codex discovery
+  tests confirm channel `CODEX_HOME` and no inherited gateway API key.
+- [ ] Live: with a disposable channel account, confirm its Codex Cloud MCP catalog and selected
+  tools match that account, while a shared-login channel still uses the gateway catalog. Confirm
+  the shared Codex sign-in is available under Settings → Agent defaults.
 - [x] Automated: current colored Codex CLI device output yields the complete code and approved
-  URL. Chromium clicks the channel sign-in button, observes its POST and the displayed code, and
-  verifies the ChatGPT and API key buttons align without wrapping.
+  URL. Chromium selects ChatGPT from the method dropdown, observes its POST and the displayed code,
+  then clicks the code to copy it.
 - [x] Isolated CLI probe (2026-10-01): the real Codex CLI, with a scratch login home and proxy
   CA, reached the pending device step with a complete code and URL; the probe was cancelled.
 - [x] Automated: channel meta save forces Codex and clears a saved Claude model when the channel
   login is selected; the `/model` wizard skips the harness step and rejects a stale Claude button;
   thread engine resolution reports Codex even for an old Claude session or thread pin.
 - [ ] Live UI acceptance: select **This channel's own login**. The engine picker disappears,
-  ChatGPT and API key buttons align in one column, and the internal host path is replaced by an
-  explanation. In a thread with an old Claude session, `/model` offers only Codex models and the
+  the method dropdown starts ChatGPT sign-in or reveals the API key field, and clicking the code
+  copies it. In a thread with an old Claude session, `/model` offers only Codex models and the
   next message starts a Codex session. Switching back to the shared login restores engine choice.
 - [x] Automated: the Codex login service and admin API tests cover both channel and shared
   gateway sign-in, including API key delivery through stdin, safe status payloads, authenticated
   routes and CSRF refusal.
 - [ ] Live admin UI acceptance: open Runtime in a disposable channel. The login source choice
-  appears before the engine/model controls. **Default gateway login** shows Slack, Claude and
-  Codex status and the shared Codex sign-in controls; **This channel's own login** shows only
-  the channel Codex sign-in and its separate storage explanation. Switch between them without signing in and save:
+  appears before the engine/model controls. **Default gateway login** shows only engine/model/effort;
+  **This channel's own login** shows the channel Codex sign-in method and status. Switch between them without signing in and save:
   a new Codex thread must use the selected source. Sign in to the shared gateway using a
   disposable API key and confirm a different channel using gateway default sees that method;
   the channel-specific login remains separate. Revoke the test key afterward.

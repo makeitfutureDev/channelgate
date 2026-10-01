@@ -24,7 +24,7 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
   // Every engine's resolver answers { servers, rejected }: an optional selection it cannot admit
   // safely is dropped here rather than ending the turn, and `rejectedMcps` is what the caller
   // reports in the thread so the drop is visible to the admin who has to fix the selection.
-  const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps) || {};
+  const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps, { channelId: engine === "codex" && target?.meta?.codexAuthSource === "channel" ? target.meta.channelId : "" }) || {};
   const payload = await buildMcpRuntimePayload({ ...identity, engine, target });
   try {
     return finishEngineMcpRuntime({ payload, optional, engine, pluginRuntime, fingerprintNow, identity });
