@@ -74,6 +74,23 @@ For a service that starts at boot, follow the [systemd installation steps](./INS
 The service uses its own account and needs credentials configured for that account. For other
 chat surfaces, follow the [Microsoft Teams and Google Chat setup guide](./docs/PLATFORMS.md).
 
+### The website, gateway and development channels
+
+These are separate parts of a ChannelGate setup:
+
+| Part | Where it runs | What it does |
+| --- | --- | --- |
+| **Public website and customer portal** (`channelgate.dev`) | Vercel, with platform services | Product information, account signup and license management. It is deployed separately from this repository. |
+| **Gateway** | The operator's Linux host | Connects to chat, runs agent turns in conversation containers, and serves the built-in admin UI at `127.0.0.1:4747` by default. Operators may expose that UI through their own tunnel or reverse proxy. |
+| **Development channel** | A conversation in a connected chat workspace | Has its own workspace, container, permissions and agent sessions. It is a place to work on code or websites, not a deployment target by itself. |
+
+Vercel can host a website built *using* a ChannelGate development channel; it does not host the
+ChannelGate daemon or that channel's container. A website deployment and a gateway software update
+are separate operations. A Vercel preview is a preview of the website, while `channelgate.dev` is
+its production address; neither is a gateway development channel. See
+[privacy and data flow](./docs/PRIVACY-AND-DATA-FLOW.md) for the specific requests a gateway sends
+to the platform.
+
 ## Full feature list
 
 These are the shipped product capabilities, grouped by the work they enable. Availability depends

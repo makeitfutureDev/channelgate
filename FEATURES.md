@@ -750,8 +750,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   not a second code path. → TEST-PLAN: Qwen harnesses.
 
 ## Public website
-- The marketing / early-access site (and its lead-routing contract) lives in its own
-  repository — this repository ships product code only.
+- The public `channelgate.dev` website and customer portal are deployed separately on Vercel;
+  their source, lead routing and platform services are outside this repository. This repository
+  ships the self-hosted gateway daemon and its built-in local admin UI. A chat development channel is a
+  gateway conversation with its own workspace and container, not a Vercel deployment.
 - **Public entrypoint:** README leads with a descriptive product heading, team benefits and setup,
   followed by eight feature groups, practical use cases and explicit platform/engine support.
   Searchable product terms and descriptive documentation links cover self-hosted AI agents, Slack,
