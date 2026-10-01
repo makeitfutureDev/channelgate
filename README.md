@@ -67,6 +67,9 @@ prerequisite and run `npm run build:image` before sending the first prompt.
    explicit channel guest grants admit additional users. DMs require approval or admin status.
 5. DM the bot, or invite it to a channel and mention it: `@channelgate summarize the files in this folder`.
 
+For a shared deployment, follow the [first team workflow checklist](./INSTALL.md#set-up-a-first-team-workflow)
+to set access, workspace context, skills and connected accounts before automating a recurring task.
+
 For a service that starts at boot, follow the [systemd installation steps](./INSTALL.md#the-systemd-service-starts-at-boot-restarts-on-failure).
 The service uses its own account and needs credentials configured for that account. For other
 chat surfaces, follow the [Microsoft Teams and Google Chat setup guide](./docs/PLATFORMS.md).

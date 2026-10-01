@@ -202,6 +202,38 @@ In the admin UI:
   message must @mention the bot (a DM needs no mention).
 - Switch engine (Claude ↔ Codex) any time in **Settings**.
 
+### Set up a first team workflow
+
+For a shared workflow, start with one dedicated channel and one representative task:
+
+1. Invite the bot and the people who will use it. A private Slack channel limits who can see the
+   conversation in Slack; ChannelGate still checks each sender against its own user and channel
+   access settings. Approve users and choose the channel access policy in the admin UI.
+2. Set the channel's working folder, tool mode and network access for that task. Keep ordinary
+   work in the channel container. Reserve the admin-only `/sudo` thread for host maintenance;
+   [the runtime boundaries](./docs/OPERATIONS.md#container-runtime) explain the difference.
+3. Put the source documents the agent may use in the channel workspace, and add standing
+   instructions for durable rules. A thread resumes its own engine session; channel memory is
+   separate and can supply useful context to later threads in that conversation. Inspect and
+   correct saved memory as the workflow develops. Changes to channel instructions follow the
+   gateway's approval controls.
+4. Turn a repeated procedure into a skill with a clear trigger and steps. Grant it to the channel
+   or its template. Review a third-party skill's source and trial it with oversight before using it
+   in scheduled work. Keep a workflow specific to one channel in that channel's skill section;
+   see the [skills guide](./docs/SKILLS.md).
+5. Connect only the needed apps. Choose a requester's personal account for personal work and a
+   channel or organization account for shared work. Personal connections remain scoped to their
+   owner; the selected agent connection can serve the channel. Test the chosen account with a small,
+   representative request before relying on a larger automation.
+6. Run that task in the channel, inspect the answer and requested approvals, then adjust the
+   instructions, skills and access settings from what actually happened. Check usage and audit
+   history in the admin UI when reviewing the pilot.
+
+Slack Socket Mode needs no public inbound URL. If operators need the admin UI or approval links
+from outside the host, put a tunnel or reverse proxy in front of the loopback service and set
+**Settings → Connection → Public URL** to its HTTPS origin. See
+[reverse proxies and tunnels](./docs/OPERATIONS.md#reverse-proxies-and-tunnels).
+
 ## Backup & restore config (encrypted)
 
 Your config (`~/.channelgate/config` + each channel's `meta.json`) holds the Slack and
