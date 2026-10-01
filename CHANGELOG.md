@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+## 0.7.0 — 2026-10-01
+
 - Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
   sign-in uses a method dropdown: choosing ChatGPT starts the device flow and clicking its code
   copies it; the API key field appears only for that method. The shared sign-in moved to Settings.
