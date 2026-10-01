@@ -291,11 +291,11 @@ const codex = validateEngineAdapter({
   pluginCapabilities: { sourceManifest: "codex", manifest: "", components: ["skills", "mcpServers"] },
   // Same contract as Claude's resolver: { servers, rejected }. A selected server the runtime can
   // only launch with host credentials is dropped with a reason, never fatal — see claude-mcp.js.
-  async resolveOptionalMcpConfig(allowed) {
+  async resolveOptionalMcpConfig(allowed, { channelId = "" } = {}) {
     const servers = {};
     const rejected = [];
     if (!Array.isArray(allowed) || !allowed.length) return { servers, rejected };
-    const policy = codexMcpPolicyFor(await listEngineMcps("codex"), allowed);
+    const policy = codexMcpPolicyFor(await listEngineMcps("codex", { channelId }), allowed);
     for (const server of policy.servers) {
       if (!server.enabled) continue;
       if (!server.definition) {
@@ -335,7 +335,7 @@ const codex = validateEngineAdapter({
     const r = ctx.runtime;
     requirePluginRuntime(r.pluginRuntime, this.id);
     const target = runtimeTargetOr(ctx.target, ctx.cwd);
-    const catalog = await listEngineMcps("codex").catch(() => []);
+    const catalog = await listEngineMcps("codex", { channelId: target?.meta?.codexAuthSource === "channel" ? target.meta.channelId : "" }).catch(() => []);
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
     codexMcpPolicy.servers.push(...(r.pluginMcpServers || []));
     // Mirrors the drop resolveOptionalMcpConfig already recorded for the payload: a selected server
@@ -347,7 +347,7 @@ const codex = validateEngineAdapter({
     return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, toolboxToken: r.toolboxToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexStateDir: r.codexStateDir, personalSkills: r.personalSkillCatalog, pluginSkills: requirePluginRuntime(r.pluginRuntime, this.id).skills, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent, onSessionResolved: r.onSessionResolved });
   },
   interrupt: () => false,
-  discoverMcps: () => listEngineMcps("codex"),
+  discoverMcps: ({ channelId = "" } = {}) => listEngineMcps("codex", { channelId }),
   // Run against the daemon's own Codex environment: container channels share that operator login,
   // and `CODEX_HOME` (when explicitly configured) remains authoritative.
   discoverModels: () => discoverCodexModels(),

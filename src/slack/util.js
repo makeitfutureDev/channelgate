@@ -25,6 +25,7 @@ const MAX_REPLY_CHUNKS = 6;
 // in the same message and keeps the separate trailer below it.
 const MAX_SECTION_CHARS = 3000;
 export async function postChunkedReply(client, channel, threadTs, md, footer = "", buttonOrButtons = null, { footerBlocks = null, answerBlocks = null } = {}) {
+  const thread = threadTs ? { thread_ts: threadTs } : {};
   const buttons = (Array.isArray(buttonOrButtons) ? buttonOrButtons : [buttonOrButtons]).filter(Boolean);
   let previews = (Array.isArray(answerBlocks) ? answerBlocks : []).filter(Boolean);
   let chunks = chunkMrkdwn(md || "", MAX_SLACK_CHARS).filter((c) => c.trim());
@@ -47,7 +48,7 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
       try {
         await client.chat.postMessage({
           channel,
-          thread_ts: threadTs,
+          ...thread,
           text: chunks[i],
           blocks: [
             { type: "section", text: { type: "mrkdwn", text: chunks[i] } },
@@ -68,7 +69,7 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
     }
     await client.chat.postMessage({
       channel,
-      thread_ts: threadTs,
+      ...thread,
       text: last && footer && !buttons.length ? `${chunks[i]}\n\n${footer}` : chunks[i],
     });
   }
@@ -78,7 +79,7 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
     try {
       await client.chat.postMessage({
         channel,
-        thread_ts: threadTs,
+        ...thread,
         text: previews.length === 1 ? "Image preview" : "Image previews",
         blocks: previews,
       });
@@ -99,7 +100,7 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
     try {
       await client.chat.postMessage({
         channel,
-        thread_ts: threadTs,
+        ...thread,
         text: footer || "Menu: Files, Variables, Settings",
         blocks,
       });
@@ -107,7 +108,7 @@ export async function postChunkedReply(client, channel, threadTs, md, footer = "
       if (!isSlackInvalidBlocksError(error)) throw error;
       // Controls are cosmetic. If Slack rejects their Block Kit, keep the completed answer a
       // success and preserve its stats in a plain-text trailer instead of surfacing run_error.
-      if (footer) await client.chat.postMessage({ channel, thread_ts: threadTs, text: footer });
+      if (footer) await client.chat.postMessage({ channel, ...thread, text: footer });
     }
   }
 }

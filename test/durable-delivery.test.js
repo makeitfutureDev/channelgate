@@ -286,6 +286,62 @@ test("a completed background agent delivers its report without a second model tu
   assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM bg_jobs").get().n, 0);
 });
 
+test("recovery gives an exhausted nested agent report one saved-output delivery attempt", async () => {
+  getDb().exec("DELETE FROM bg_jobs");
+  const original = new BackgroundJobs({});
+  const rec = {
+    ...jobRecord("bg-nested-repair", "1700000000.000300::agent-parent::agent-child"),
+    kind: "agent",
+    deliveryAttempts: 2,
+    pendingDelivery: {
+      outcome: { ok: true, summary: "completed successfully" },
+      report: "Saved nested report",
+    },
+  };
+  original.jobs.set(rec.id, rec);
+  original._persist({ required: true });
+
+  const { slack } = fakeSlack();
+  const delivered = [];
+  const recovered = new BackgroundJobs({
+    slack,
+    runner: async () => { throw new Error("completed work must not run again"); },
+    deliver: async (_client, payload) => delivered.push(payload),
+  });
+  await recovered.recover();
+  assert.deepEqual(delivered.map((payload) => payload.result.content), ["Saved nested report"]);
+  assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM bg_jobs").get().n, 0);
+});
+
+test("the synthetic-thread repair attempt cannot reset its budget twice", async () => {
+  getDb().exec("DELETE FROM bg_jobs");
+  const original = new BackgroundJobs({});
+  const rec = {
+    ...jobRecord("bg-nested-repair-fails", "1700000000.000300::agent-parent"),
+    kind: "agent",
+    deliveryAttempts: 2,
+    pendingDelivery: {
+      outcome: { ok: true, summary: "completed successfully" },
+      report: "Saved report",
+    },
+  };
+  original.jobs.set(rec.id, rec);
+  original._persist({ required: true });
+
+  const { slack } = fakeSlack();
+  const first = new BackgroundJobs({ slack, deliver: async () => { throw new Error("still unavailable"); } });
+  await first.recover();
+  const saved = fromJson(getDb().prepare("SELECT data FROM bg_jobs WHERE id = ?").get(rec.id).data, null);
+  assert.equal(saved.deliveryAttempts, 2);
+  assert.equal(saved.pendingDelivery.syntheticThreadRetryGranted, true);
+
+  let retried = false;
+  const second = new BackgroundJobs({ slack, deliver: async () => { retried = true; } });
+  await second.recover();
+  assert.equal(retried, false, "the one-time repair cannot create an unbounded replay loop");
+  assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM bg_jobs").get().n, 0);
+});
+
 for (const engine of ["claude", "codex"]) {
   test(`a large ${engine} background report survives recovery complete and redacted`, async () => {
     getDb().exec("DELETE FROM bg_jobs");

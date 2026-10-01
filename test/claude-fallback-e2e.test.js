@@ -16,6 +16,7 @@ const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/co
 const { saveSettings } = await import("../src/config/settings.js");
 const { runMessage, resetEngineCooldowns } = await import("../src/gateway/run.js");
 const { setThreadModel } = await import("../src/gateway/thread-engine.js");
+const { getSession, getSessionEngine, saveSession } = await import("../src/gateway/sessions.js");
 
 const claudeDM = async (id, name) => {
   const entry = await upsertChannelEntry(id, { name, type: "im", isDM: true });
@@ -55,6 +56,54 @@ test("a replay-safe thrown Claude usage-limit failure transparently falls back t
   assert.equal(result.fellBackToCodex, true);
   assert.match(result.content, /usage limit.*using Codex/i);
   assert.match(result.content, /Codex stub reply/);
+  assert.equal(await getSessionEngine(entry.slug, "1900.050"), "codex");
+  resetEngineCooldowns();
+  const next = await runMessage({
+    channelId: "D_SAFE_LIMIT", authorId: "U_SAFE_LIMIT", text: "continue",
+    threadKey: "1900.050", origin: "slack_foreground", preferCold: true,
+  });
+  assert.equal(next.engine, "codex", "the successful fallback remains the thread's engine after cooldown");
+  assert.match(next.content, /resume=yes/);
+  assert.doesNotMatch(next.content, /using Codex/i, "a normal continuation is not another fallback");
+});
+
+test("a successful fallback written by an older gateway is adopted before retrying Claude", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "claude", codexFallback: true, composioMode: "personal" });
+  await setUser("U_LEGACY_FALLBACK", { name: "Legacy Fallback", approved: true, isAdmin: false });
+  const entry = await claudeDM("D_LEGACY_FALLBACK", "legacy-fallback");
+  await saveSession(entry.slug, "1900.055", "old-claude-session", "claude");
+  await saveSession(entry.slug, "1900.055::codex-fallback", "codex-stub-thread", "codex");
+  const result = await runMessage({
+    channelId: "D_LEGACY_FALLBACK", authorId: "U_LEGACY_FALLBACK", text: "continue",
+    threadKey: "1900.055", origin: "slack_foreground", preferCold: true,
+  });
+  assert.equal(result.engine, "codex");
+  assert.match(result.content, /resume=yes/);
+  assert.equal(await getSessionEngine(entry.slug, "1900.055"), "codex");
+  assert.equal(await getSession(entry.slug, "1900.055::codex-fallback"), null);
+});
+
+test("a manual model choice keeps the original engine and retires an old fallback row", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "claude", codexFallback: true, composioMode: "personal" });
+  await setUser("U_LEGACY_PIN", { name: "Legacy Pin", approved: true, isAdmin: false });
+  const entry = await claudeDM("D_LEGACY_PIN", "legacy-pin");
+  await saveSession(entry.slug, "1900.056", "stub-session", "claude");
+  await saveSession(entry.slug, "1900.056::codex-fallback", "codex-stub-thread", "codex");
+  await setThreadModel(entry.slug, "1900.056", "opus");
+  const result = await runMessage({
+    channelId: "D_LEGACY_PIN", authorId: "U_LEGACY_PIN", text: "continue",
+    threadKey: "1900.056", origin: "slack_foreground", preferCold: true,
+  });
+  assert.equal(result.engine, "claude");
+  assert.equal(await getSession(entry.slug, "1900.056::codex-fallback"), null);
+  await setThreadModel(entry.slug, "1900.056", "");
+  const next = await runMessage({
+    channelId: "D_LEGACY_PIN", authorId: "U_LEGACY_PIN", text: "continue again",
+    threadKey: "1900.056", origin: "slack_foreground", preferCold: true,
+  });
+  assert.equal(next.engine, "claude");
 });
 
 test("a Codex cross-engine fallback also replaces a rejected channel model with its gateway default", async () => {

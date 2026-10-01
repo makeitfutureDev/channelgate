@@ -102,7 +102,8 @@ machine settings — merge-only, and never over a value you set yourself.
 Inside, you are user `agent` in the channel's work folder (an interactive login starts there;
 image spec 1.5.1), with the same environment an engine turn gets and the channel's persistent
 `/home/agent` (installed tools, `gh`/`vercel`/`supabase` logins, Claude and Codex history).
-Codex uses the shared sign-in mount, and `codex` in a session gets what a chat turn's Codex gets:
+Codex uses the channel's selected login (a proxy placeholder in proxy mode, a host file mount in
+legacy bridge mode), and `codex` in a session gets what a chat turn's Codex gets:
 the gateway tools, your own Composio accounts as `composio-user`, the channel's as
 `composio-agent`, the channel's selected MCP servers and your channel secrets. Started from your
 home, `/` or a parent of the channel folder it moves into the channel folder so its `AGENTS.md`
@@ -146,7 +147,7 @@ session gets:
   expiry and rate tier beside it are the real login's — they are facts, not secrets), so the file
   is useless outside the container. `claude -r <session id>` resumes a thread's own session.
 
-Codex over SSH is unchanged (its login is the shared sign-in mount). "show SSH access" in the
+Codex over SSH uses the same selected login as a channel turn. "show SSH access" in the
 channel prints what a session gets. If a part could not be prepared — no Claude login on the
 host, a channel whose Composio session is unavailable — the attach still succeeds and the daemon
 log names the part.

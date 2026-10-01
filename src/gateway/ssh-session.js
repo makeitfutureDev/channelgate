@@ -253,7 +253,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
     toolset: SSH_TOOLSET, ttlMs: SSH_CAPABILITY_TTL_MS,
   });
-  const policy = codexMcpPolicyFor(await listMcps(), allowed);
+  const policy = codexMcpPolicyFor(await listMcps(meta.codexAuthSource === "channel" ? entry.channelId : ""), allowed);
   for (const server of policy.servers) if (server.enabled && !server.definition) server.enabled = false;
   const gatewayCapability = runtime.gatewayCapability || "";
   const bundle = codexSecretBundle({
@@ -301,7 +301,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   buildLockdown = buildSettings,
   readAccount = readDaemonClaudeAccount,
   now = Date.now,
-  listCodexMcps = () => listEngineMcps("codex").catch(() => []),
+  listCodexMcps = (channelId = "") => listEngineMcps("codex", { channelId }).catch(() => []),
   installCodexWrapper = installSshCodexWrapper,
   installCodexLogin = installRelayedCodexLogin,
 } = {}) {

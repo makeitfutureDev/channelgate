@@ -51,6 +51,9 @@ import {
   withChannelMembershipLock,
 } from "../../slack/members.js";
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
+import { CODEX_AUTH_SOURCES, channelCodexHome } from "../../gateway/channel-codex-auth.js";
+import { modelBelongsToEngine, effortBelongsToEngine } from "../../engines/registry.js";
+import { channelCodexLoginStatus, startChannelCodexLogin, cancelChannelCodexLogin } from "../../gateway/channel-codex-login.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
 import { listChannelEnv, normalizeEnvName, patchChannelEnv, swapRuleFieldsFrom } from "../../config/channel-env.js";
@@ -89,6 +92,7 @@ export function maskChannelMeta(meta = {}) {
     // `...meta` would otherwise spread the env bag — VALUES included — into every save response.
     env: undefined,
     envVars: listChannelEnv(meta),
+    codexAuthHome: channelCodexHome(meta.channelId),
     composioToken: undefined,
     hasComposioToken: tok.has,
     composioTokenLast4: tok.last4,
@@ -108,6 +112,44 @@ export function createChannelsRouter({
   setVpnEnabled = setChannelVpnEnabled,
 } = {}) {
   const router = Router();
+
+  const registeredChannel = async (req, res) => {
+    const entry = (await getChannelsIndex())[req.params.channelId];
+    if (!entry) res.status(404).json({ error: "unknown channel" });
+    return entry;
+  };
+
+  router.get("/channels/:channelId/codex-login", async (req, res, next) => {
+    try {
+      if (!(await registeredChannel(req, res))) return;
+      res.json(await channelCodexLoginStatus(req.params.channelId));
+    } catch (error) { next(error); }
+  });
+  router.post("/channels/:channelId/codex-login", async (req, res, next) => {
+    try {
+      const entry = await registeredChannel(req, res);
+      if (!entry) return;
+      const method = req.body?.method;
+      const status = await startChannelCodexLogin(req.params.channelId, method, {
+        key: req.body?.key,
+        onAuthenticated: async () => {
+          const before = await getChannelMeta(entry.slug);
+          const after = await patchChannelMeta(entry.slug, (current) => ({ ...current, codexAuthSource: "channel", engine: "codex", model: modelBelongsToEngine(current.model, "codex") ? current.model : "", effort: effortBelongsToEngine(current.effort, "codex") ? current.effort : "" }));
+          await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before, after });
+        },
+      });
+      res.status(202).json(status);
+    } catch (error) {
+      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+      next(error);
+    }
+  });
+  router.delete("/channels/:channelId/codex-login", async (req, res, next) => {
+    try {
+      if (!(await registeredChannel(req, res))) return;
+      res.json({ cancelled: cancelChannelCodexLogin(req.params.channelId) });
+    } catch (error) { next(error); }
+  });
 
   // The enclosing admin stack authenticates these routes. No profile, command, path or
   // service metadata is accepted from the browser: only this registered conversation's switch.
@@ -234,6 +276,12 @@ export function createChannelsRouter({
       if (typeof body.autoMode === "boolean") next_.autoMode = body.autoMode;
       if (typeof body.cleanMode === "boolean") next_.cleanMode = body.cleanMode;
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
+      if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
+      if (next_.codexAuthSource === "channel") {
+        next_.engine = "codex";
+        if (!modelBelongsToEngine(next_.model, "codex")) next_.model = "";
+        if (!effortBelongsToEngine(next_.effort, "codex")) next_.effort = "";
+      }
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
       if (typeof body.toolboxToken === "string" && body.toolboxToken) next_.toolboxToken = body.toolboxToken.trim();
@@ -379,6 +427,7 @@ export function createChannelsRouter({
             noDefaultTokens: typeof body.noDefaultTokens === "boolean" ? body.noDefaultTokens : current.noDefaultTokens,
             memory: typeof body.memory === "boolean" ? body.memory : current.memory,
             engine: typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine)) ? body.engine : current.engine,
+            codexAuthSource: CODEX_AUTH_SOURCES.includes(body.codexAuthSource) ? body.codexAuthSource : current.codexAuthSource || "gateway",
             approvedTools: Array.isArray(body.approvedTools) ? body.approvedTools.map(String) : current.approvedTools,
             workDir: workDirPatch !== undefined ? workDirPatch : current.workDir,
             // Google Drive sync folder link — a plain string (no filesystem validation like workDir);
@@ -387,6 +436,11 @@ export function createChannelsRouter({
             model: typeof body.model === "string" ? body.model.trim() : current.model,
             effort: typeof body.effort === "string" ? body.effort.trim() : current.effort,
           };
+          if (out.codexAuthSource === "channel") {
+            out.engine = "codex";
+            if (!modelBelongsToEngine(out.model, "codex")) out.model = "";
+            if (!effortBelongsToEngine(out.effort, "codex")) out.effort = "";
+          }
           // Egress escapes (src/gateway/egress/): raw sockets on the open bridge beside the proxy,
           // and the hosts whose SSH/Postgres ports get a raw tunnel through it. Admin API only, and
           // written only when sent, so an unrelated save records no change to them.
@@ -558,7 +612,7 @@ export function createChannelsRouter({
       for (const ch of channels) {
         const patched = await patchChannelMeta(ch.slug, (current) => {
           const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
-          return { ...base, engine: "", model: "", effort: "" };
+          return { ...base, engine: base.codexAuthSource === "channel" ? "codex" : "", model: "", effort: "" };
         });
         if (patched) reset++;
       }

@@ -153,6 +153,7 @@ export const GATEWAY_TOOL_NAMES = [
   "slack_list_items",
   "slack_list_info",
   "slack_upload_snippet",
+  "slack_share_file",
   "slack_post_table",
   "slack_post_chart",
   "slack_channel_history",

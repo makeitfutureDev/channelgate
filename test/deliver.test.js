@@ -22,6 +22,25 @@ test("deliverResult posts the converted reply into the thread", async () => {
   assert.match(client.posts[0].text, /\*bold\* answer/);
 });
 
+test("a nested background report uses its launching Slack thread, not its session key", async () => {
+  const client = fakeClient();
+  const thread = "1790685235.252159";
+  const nestedKey = `${thread}::agent-first::agent-second`;
+  await deliverResult(client, { channel: "C1", threadKey: nestedKey, result: { content: "Completed report" }, dir: null });
+  assert.equal(client.posts.length, 1);
+  assert.equal(client.posts[0].thread_ts, thread);
+  for (const button of client.posts[0].blocks.at(-1).elements) {
+    assert.equal(JSON.parse(button.value).t, thread);
+  }
+});
+
+test("a synthetic scheduled session posts its result at channel level", async () => {
+  const client = fakeClient();
+  await deliverResult(client, { channel: "C1", threadKey: "sched-job-123", result: { content: "Scheduled report" }, dir: null });
+  assert.equal(client.posts.length, 1);
+  assert.equal(Object.hasOwn(client.posts[0], "thread_ts"), false);
+});
+
 test("deliverResult escapes model-authored Slack control sequences (injection guard)", async () => {
   const client = fakeClient();
   await deliverResult(client, { channel: "C1", threadKey: "1.2", result: { content: "ping <!channel> now" }, dir: null });

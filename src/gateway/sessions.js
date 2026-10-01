@@ -50,6 +50,15 @@ function getRow(slug, threadKey) {
   return getDb().prepare("SELECT session_id, engine, runtime FROM sessions WHERE slug = ? AND thread_key = ?").get(slug, threadKey) || null;
 }
 
+function deleteFallbackRows(slug, threadKey) {
+  const prefix = String(threadKey).replace(/[\\%_]/g, (c) => `\\${c}`);
+  getDb().prepare("DELETE FROM sessions WHERE slug = ? AND thread_key LIKE ? ESCAPE '\\'").run(slug, `${prefix}::%-fallback`);
+}
+
+export async function discardFallbackSessions(slug, threadKey) {
+  deleteFallbackRows(slug, threadKey);
+}
+
 // `engine` records which harness minted `session_id` (a session id is engine-specific — Claude
 // mints a UUID, Codex mints its own thread_id, and neither can resume the other's). Stamped on
 // every session write so a later engine switch is detectable (see run.js's harness-switch reset).
@@ -118,6 +127,29 @@ export async function saveSession(slug, threadKey, sessionId, engine = "", gener
   put(slug, threadKey, sessionId, engine, runtime);
 }
 
+// A successful cross-engine answer becomes the thread's live session. Older gateway versions
+// kept that answer only under a fallback key; with no sessionId this also adopts those existing
+// rows on the next turn. Keep the clear-generation check and both writes in one synchronous DB
+// transaction so /clear cannot leave the main key pointing at a discarded fallback.
+export async function promoteFallbackSession(slug, threadKey, engine, sessionId = "", generation = null, runtime = "") {
+  if (generationStale(slug, threadKey, generation)) return false;
+  const fallbackKey = `${threadKey}::${engine}-fallback`;
+  const db = getDb();
+  const fallback = getRow(slug, fallbackKey);
+  const id = sessionId || (fallback?.engine === engine ? fallback.session_id : "");
+  if (!id) return false;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    put(slug, threadKey, id, engine, sessionId ? runtime : fallback.runtime);
+    deleteFallbackRows(slug, threadKey);
+    db.exec("COMMIT");
+    return true;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export async function getSessionMap(slug) {
   const rows = getDb().prepare("SELECT thread_key, session_id FROM sessions WHERE slug = ?").all(slug);
   const map = {};
@@ -158,10 +190,7 @@ export async function clearSession(slug, threadKey) {
     .run(slug, threadKey);
   // LIKE with an explicit ESCAPE so a thread key containing % or _ can't widen the delete into
   // other threads' rows. The trailing "-fallback" keeps it to fallback keys only.
-  const prefix = String(threadKey).replace(/[\\%_]/g, (c) => `\\${c}`);
-  getDb()
-    .prepare("DELETE FROM sessions WHERE slug = ? AND thread_key LIKE ? ESCAPE '\\'")
-    .run(slug, `${prefix}::%-fallback`);
+  deleteFallbackRows(slug, threadKey);
   return info.changes > 0;
 }
 

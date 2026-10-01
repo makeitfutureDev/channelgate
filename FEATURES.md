@@ -1,5 +1,36 @@
 # ChannelGate — Features
 
+## Channel-specific Codex authentication
+
+- Runtime settings ask which Codex login a channel uses. The shared choice shows the channel's
+  engine, model and effort controls; gateway Codex sign-in lives under Settings → Agent defaults.
+  The channel choice shows its dedicated Codex login and fixes its engine to Codex. Slack and
+  Claude continue using the gateway connection.
+- Admins can select the gateway Codex login or a dedicated host-side `CODEX_HOME` for a channel
+  from Runtime → Codex authentication. The dedicated directory is keyed to the conversation ID
+  and does not fall back to another account when no login exists.
+- A sign-in method dropdown starts ChatGPT device code sign-in as soon as it is selected, or
+  reveals the OpenAI API key field. The code copies when clicked. The editor polls sign-in state,
+  lets an admin cancel a pending device flow,
+  and selects the channel login after success. The API returns only the method and device code;
+  the key enters the Codex CLI through standard input and never appears in a response or argv.
+- Device code parsing handles the current Codex CLI's terminal coloring and full code length;
+  the login process receives the public TLS CA bundle when the host uses a proxy. The browser
+  shows the sign-in link and code as soon as the CLI supplies them.
+- The operator can sign in to that directory with ChatGPT subscription access or an OpenAI
+  Platform API key. In proxy-mode containers, both methods use a channel-bound placeholder:
+  ChatGPT access tokens are relayed as JWT-shaped values, while API keys are relayed only to
+  `api.openai.com`. The host `auth.json` and any refresh token stay outside the container.
+- The selected login also applies to an admin's direct-host Codex turn. The authentication
+  source is recorded in channel policy audits; no credential value is included.
+- Selecting a channel's own Codex login fixes that channel and its threads to the Codex engine.
+  Runtime settings hide the redundant engine picker, and `/model` goes straight from scope to
+  Codex model and effort. Older Claude sessions switch to fresh Codex sessions on their next turn.
+  The admin UI describes the separate login storage without showing its internal host path.
+- Slack channel Settings shows the channel's own Codex login status, model and effort when the
+  dedicated login is selected. Its engine control disappears. Codex Cloud MCP discovery and
+  selected MCP launch policy use that channel's login; the gateway catalog remains separate.
+
 ## Optional isolated VPN database service
 
 - The host operator can provision a per-channel OpenVPN 3 Linux service and an unprivileged MySQL
@@ -310,7 +341,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Its script refuses non-hosted or occupied hosts. A separate KVM guest workflow exercises an
   actual OS reboot, service autostart and persistent database/container-volume fixtures.
   Authenticated engine update smoke and conversation/session acceptance remain separate live
-  gates. → TEST-PLAN: Disposable Linux lifecycle workflow.
+  gates. → TEST-PLAN: Disposable Linux lifecycle workflow. The update's engine smoke (a
+  throwaway container, one fixed prompt per configured engine, before the update and after the
+  restart) counts a provider **usage limit** (weekly/session plan cap, spent credits, rate limit)
+  as REACHABLE, noted "reachable but usage-limited": the CLI started in the new container,
+  authenticated and reached its provider, which is what the smoke proves (2026-09-28, an update on
+  Atlas was refused over a Claude weekly limit). A bad login, a missing CLI or a wrong answer still
+  refuses the update or rolls it back.
 - **Service-account image provisioning** uses the same explicit environment as the systemd
   daemon so operator XDG/container storage settings cannot redirect a fresh build into another
   user's private Podman store, and runs from the service-owned checkout so an operator-private
@@ -757,6 +794,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (capped 12k chars) directly through the sanitized/chunked unattended-delivery path. A completed
   report never depends on a second model turn (and therefore cannot be stranded by that model's
   usage limit); shell jobs and failed/incomplete agents still use an interpreted continuation.
+  Nested agents keep their synthetic session keys for engine isolation, while Slack report delivery
+  resolves the original thread timestamp. Synthetic scheduled keys post at channel level. Recovery
+  gives an already completed nested report whose old delivery attempts were exhausted one bounded
+  retry from its saved output; it never reruns the agent or a completed continuation.
   Allowed in every channel mode
   (the run enforces the channel's own permissions; approval prompts still surface in-thread).
   Both job kinds post a "started" note in-thread with a *Check status* button (ephemeral live
@@ -1352,19 +1393,28 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   links, mentions, emoji, lists, and line boundaries. A table-only message counts as content (while
   the normal channel mention gate still applies). No extra Slack scope is needed. Any allowed user.
   → TEST-PLAN: Native Slack data tables.
-- Slack **file snippets** for sharing a file and for big/wide tables: `slack_upload_snippet` (gateway
+- Slack **file snippets** for big/wide tables and generated text: `slack_upload_snippet` (gateway
   control MCP) uploads `content` (CSV/TSV/markdown/code) as a FILE into the current channel + thread,
   so a CSV/TSV renders as a **scrollable spreadsheet grid** — the right shape for a large read-only
   table/export vs. a cramped message code block or a 100-row Slack List. Daemon-side via the
   workspace bot token (`files:write`) using Slack's external-upload flow
   (`files.getUploadURLExternal` → POST bytes → `files.completeUploadExternal`), so it needs no
   Bash/network in the channel; hard-scoped to the current channel. The filename extension drives
-  rendering (`.csv`/`.tsv` = grid; text/code = plain snippet). The tool description and the
-  `gateway-usage` skill also route a **direct request for a file** ("send it here", "share the
-  file", "attach it") to this tool for any UTF-8 text file — `.md`, `.txt`, `.json`, `.html`,
-  `.yaml`, code, logs — uploaded under its real name, while images keep the automatic
-  `![alt](path.png)` upload path and binaries (PDF, PPTX, XLSX, ZIP) stay inline-code paths served by
-  the 📄 file-explorer button. Any allowed user. → TEST-PLAN: Slack file snippets.
+  rendering (`.csv`/`.tsv` = grid; text/code = plain snippet). Any allowed user.
+  → TEST-PLAN: Slack file snippets.
+- **Agent file sharing into the thread**: `slack_share_file path:<relative> [comment]` (gateway
+  control MCP) posts an EXISTING file from the channel's working folder into the current thread as
+  a real Slack file, any type (PDF, DOCX, XLSX, PPTX, ZIP, images, HTML), up to 25 MB — the
+  agent-side twin of the file explorer's Share button. The daemon opens the file with
+  `openConfinedFile` (lexical + realpath confinement, `O_NOFOLLOW`, descriptor re-proved through
+  `/proc/self/fd`) and uploads from that proven descriptor, never a reopened path, so neither the
+  mounted operator home nor a symlink out of the folder can be shared. Posts as the bot with the
+  bot token, so no Composio account is chosen and no "which account?" question arises; a scheduled
+  run posts top-level. Audited as `channel_file_shared` with `via: "agent"`. Any allowed user, like
+  the explorer's Share button. The `gateway-usage` skill (rule 3, the capability map,
+  `writing-replies.md`, `sharing-files.md`) routes "send it", "attach the PDF", "trimite fișierul"
+  here, keeps Composio Slack uploads for OTHER channels/DMs, and `slack_upload_snippet` for text
+  the agent generates. → TEST-PLAN: Agent file sharing into the thread.
 - Native Slack **charts**: `slack_post_chart` (gateway control MCP) posts Block Kit
   `data_visualization` blocks into the current channel + thread using the workspace bot token and
   existing `chat:write` scope. Supports line/bar/area charts (1–12 series, 1–20 shared category
@@ -1445,8 +1495,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (OpenAI Codex CLI — one-shot per message, MCP via `-c` overrides + an HTTP bridge). Selection
   precedence is **per-thread directive → per-channel → global default** — but an EXISTING thread
   sticks to the engine that minted its session: changing the channel/global harness only affects
-  new threads; live conversations keep resuming on their own engine (only the automatic usage-limit
-  failover runs a different engine, under a suffixed session key). The exception is a harness turned
+  new threads; live conversations keep resuming on their own engine. A successful automatic
+  cross-engine failover makes the answering engine the thread's live session, so its next turn
+  resumes there even after the failed engine's cooldown ends. Older fallback-only sessions are
+  adopted on their next unpinned turn. The exception is a harness turned
   OFF in Settings: those threads move to an enabled engine. A row minted for a brand-new thread
   whose turn then dies BEFORE its engine starts (a pre-spawn credential gate, a runtime that cannot
   come up) is dropped with that turn, so the next message is a first turn again on the channel's
@@ -3826,13 +3878,13 @@ are retired, bullet by bullet; everything else stands.
   active users, active sessions, and total tokens), per-bucket charts for sessions/tokens/cost, a
   sessions-per-user bar list (descending), and a per-channel sessions+cost bar chart. Pure inline
   SVG + div bars — no chart library, no build step. → TEST-PLAN: Admin UI.
-- **Every Overview chart is stacked by the model that answered.** A cost, run or token line split
+- **Every Overview time chart is stacked by the model that answered.** A cost, run or token column split
   by model answers "did spend rise because we ran more, or because we moved onto a pricier model" —
   which one undifferentiated line cannot. Attribution is per component, not per run: a Codex turn
   whose subagent ran a different model contributes a slice to EACH, while the run itself is still
   counted once (`MODEL_ATTRIBUTION_CTE` in `src/gateway/usage.js`). The split reconciles with the
   headline by construction — a run whose components are only partly priced contributes no dollars
-  to any model, exactly as the canonical rollup drops it — so the bands always add up to the total
+  to any model, exactly as the canonical rollup drops it — so the columns always add up to the total
   beside them. Model ids are normalised for display (`modelDisplayLabel`): a dated snapshot
   (`claude-haiku-4-5-20251001`) reads as its family, a context variant keeps its `1M` marker, an
   OpenAI id becomes `GPT-5.6 Sol`, and an unrecognised id passes through verbatim rather than being
@@ -3852,13 +3904,18 @@ are retired, bullet by bullet; everything else stands.
 - **A dedicated Models chart**, answering "which models are used more" directly: every model in the
   window as a bar — token cost, its share of spend, runs (and how many of them came from outside
   the gateway) and tokens. The stacked charts above cap at the seven largest models plus a neutral
-  "Other" band, because a stacked area with a generated ninth hue stops being readable; this card
+  "Other" segment, because a generated ninth hue stops being readable; this card
   lists everything, so nothing is hidden by that cap. Colours come from a categorical palette
   validated for the admin surface (lightness band, chroma floor, adjacent colourblind separation,
   normal-vision separation and 3:1 contrast all pass) and are keyed on the MODEL, so changing range,
   harness or source never repaints the series that survived the filter. Each chart carries a legend
   and a crosshair tooltip breaking the hovered bucket down per model (pointer or keyboard).
   → TEST-PLAN: Admin UI.
+- **Overview chart order and details:** four compact cards show token cost, runs, tokens and usage
+  sources. Below them, full-width cards show Models, Channels, Users and Skills in that order.
+  Time buckets draw stacked columns. Hovering or keyboard-focusing a source, channel or user bar
+  shows the total and its per-model values for that bar's metric; the same model colours and labels
+  appear in the time-chart tooltips and legend. → TEST-PLAN: Per-model dashboard stacking.
 - **The bar lists stack by model too**, in the same colours and the same order as the charts, so one
   hue means one model across the whole page: Runs per user (stacked by runs), Channels (all three
   bars — runs, token cost, tokens — each stacked by its own metric), and Where usage came from

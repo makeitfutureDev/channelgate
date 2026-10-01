@@ -89,6 +89,7 @@ export function register(server, ctx) {
         "GMAIL_SEND_EMAIL attachments, SLACK_UPLOAD_FILE, …). Those tools accept NO path and NO base64 — this is " +
         "how a file you generated here reaches them. Pass the returned object straight through as the tool's file " +
         "argument. Nothing is made publicly reachable and the Composio key never leaves the gateway. " +
+        "To post a file into THIS Slack thread, use `slack_share_file` instead — it needs no Composio account. " +
         `Path is workspace-relative; the limit is ${formatBytes(COMPOSIO_WORKBENCH_STAGE_MAX_BYTES)} on a Composio ` +
         `consumer (MCP) key and ${formatBytes(COMPOSIO_STAGE_MAX_BYTES)} on a project API key.`,
       inputSchema: {

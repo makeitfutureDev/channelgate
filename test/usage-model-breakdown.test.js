@@ -158,7 +158,7 @@ test("the Overview ships a stacked-by-model chart, a legend and a dedicated mode
   // The validated categorical palette (scripts/validate_palette.js from the dataviz skill). If a
   // hue changes here, that validator has to be re-run — this assertion is the reminder.
   assert.match(app, /const MODEL_PALETTE = \["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#48a02b", "#9085e9", "#e66767"\];/);
-  assert.match(app, /function stackedArea\(/);
+  assert.match(app, /function stackedColumns\(/);
   assert.match(app, /function modelLegend\(/, "identity is never carried by colour alone");
   assert.match(app, /function modelBars\(/);
   // The bar lists stack by the same model keys and colours the charts use, so one hue means one
