@@ -242,8 +242,8 @@ code {
 .ch-auth-channel-panel > .field { margin-bottom: 12px; }
 @media (max-width: 760px) { .ch-auth-status-grid { grid-template-columns: 1fr; } }
 .ch-codex-login { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
-.ch-codex-login .row-actions { display: grid; grid-template-columns: minmax(0, 1fr) 170px; align-items: center; gap: 10px; }
-.ch-codex-login .row-actions > .btn { width: 100%; }
+.ch-codex-login .row-actions { display: grid; grid-template-columns: minmax(0, 1fr) 200px; align-items: center; gap: 10px; }
+.ch-codex-login .row-actions > .btn { box-sizing: border-box; width: 100%; white-space: nowrap; }
 .ch-codex-login .ch-codex-api-key { min-width: 0; width: 100%; }
 .ch-codex-login .ch-codex-signin-row > span { color: var(--muted); font-size: 13px; }
 .ch-codex-login .ch-codex-device-cancel:not([hidden]) { grid-column: 2; }

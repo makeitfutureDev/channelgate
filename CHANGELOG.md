@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- ChatGPT sign-in in channel settings now displays the device link and complete code from current
+  Codex CLI output. The sign-in and API key buttons align without wrapping; proxied hosts pass
+  the public TLS CA bundle to the login process.
 - A channel using its own Codex login now stays on Codex across settings, `/model`, and existing
   threads. The settings page hides the redundant engine picker, aligns the sign-in actions, and
   explains login storage without showing the internal path.

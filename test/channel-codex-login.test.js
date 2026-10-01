@@ -48,6 +48,18 @@ test("device code login exposes only the approved URL/code and selects the chann
   assert.equal(saved, 1);
 });
 
+test("device code parser accepts current colored Codex output and the full five-character suffix", async () => {
+  const id = `C_COLOR_DEVICE_${Date.now()}`;
+  const child = fakeChild();
+  await startChannelCodexLogin(id, "device", { spawnImpl: () => child });
+  child.stdout.write("Open \u001b[94mhttps://auth.openai.com/codex/device\u001b[0m and enter \u001b[94mABCD-EFGH5\u001b[0m");
+  const state = await channelCodexLoginStatus(id);
+  assert.equal(state.phase, "pending");
+  assert.equal(state.url, "https://auth.openai.com/codex/device");
+  assert.equal(state.code, "ABCD-EFGH5");
+  cancelChannelCodexLogin(id);
+});
+
 test("API key enters Codex through stdin and never appears in status or argv", async () => {
   const id = `C_KEY_${Date.now()}`;
   const key = "sk-test-private-example-123456789";

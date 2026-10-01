@@ -23,8 +23,11 @@ function loginEnv(home) {
 }
 
 function deviceDetails(output) {
-  const code = output.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/)?.[0] || "";
-  const url = output.match(/https:\/\/[^\s<>"']+/)?.[0] || "";
+  // Codex colors the URL and code when launched without a terminal, and newer CLIs issue
+  // five-character second halves. Strip terminal controls before parsing the complete code.
+  const plain = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  const code = plain.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4,6}\b/)?.[0] || "";
+  const url = plain.match(/https:\/\/[^\s<>"']+/)?.[0] || "";
   let safeUrl = "";
   try {
     const parsed = new URL(url);

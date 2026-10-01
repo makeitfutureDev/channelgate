@@ -2,6 +2,11 @@
 
 ## Channel-specific Codex authentication (2026-09-29)
 
+- [x] Automated: current colored Codex CLI device output yields the complete code and approved
+  URL. Chromium clicks the channel sign-in button, observes its POST and the displayed code, and
+  verifies the ChatGPT and API key buttons align without wrapping.
+- [x] Isolated CLI probe (2026-10-01): the real Codex CLI, with a scratch login home and proxy
+  CA, reached the pending device step with a complete code and URL; the probe was cancelled.
 - [x] Automated: channel meta save forces Codex and clears a saved Claude model when the channel
   login is selected; the `/model` wizard skips the harness step and rejects a stale Claude button;
   thread engine resolution reports Codex even for an old Claude session or thread pin.

@@ -1844,7 +1844,7 @@ function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {
   let observedPending = false;
   let startedHere = false;
   const paint = (state) => {
-    statusEl.textContent = state.phase === "pending" ? "Waiting for sign-in…"
+    statusEl.textContent = state.phase === "pending" ? (state.code && state.url ? "Enter this code to finish signing in:" : "Requesting a ChatGPT sign-in code…")
       : state.phase === "failed" ? state.error
       : state.authenticated ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}`
       : "No login yet";

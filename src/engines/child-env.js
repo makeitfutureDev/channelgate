@@ -38,6 +38,7 @@ export const PASSTHROUGH_ENV_NAMES = new Set([
   "MCP_TOOL_TIMEOUT",
   "SSH_AUTH_SOCK", // ssh-agent socket PATH (not a secret) — ssh-remote git in bash channels
   "NODE_EXTRA_CA_CERTS", // path to a PUBLIC CA bundle — corporate-TLS setups
+  "SSL_CERT_FILE", // Rust CLIs (including Codex login) use this public CA bundle behind a TLS proxy
   // Locale / freedesktop locations. Keep these exact: prefix pass-through would let a future
   // credential-shaped variable cross the engine boundary merely because of its vendor prefix.
   "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_COLLATE", "LC_NUMERIC", "LC_TIME", "LC_MONETARY",

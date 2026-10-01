@@ -13,6 +13,9 @@
   private password field. It polls the sign-in state, lets an admin cancel a pending device flow,
   and selects the channel login after success. The API returns only the method and device code;
   the key enters the Codex CLI through standard input and never appears in a response or argv.
+- Device code parsing handles the current Codex CLI's terminal coloring and full code length;
+  the login process receives the public TLS CA bundle when the host uses a proxy. The browser
+  shows the sign-in link and code as soon as the CLI supplies them, with aligned login actions.
 - The operator can sign in to that directory with ChatGPT subscription access or an OpenAI
   Platform API key. In proxy-mode containers, both methods use a channel-bound placeholder:
   ChatGPT access tokens are relayed as JWT-shaped values, while API keys are relayed only to
