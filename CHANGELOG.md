@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- **Custom MCP servers.** An admin can add a remote MCP server by URL and Bearer token to a
+  conversation (Connections → *Custom MCP servers*, reached as `custom-<name>`) or to one person
+  (*Personal MCP servers*, reached as `my-<name>` in that person's runs only). Claude and Codex
+  both receive them. The gateway connects on the agent's behalf, so the token never enters the
+  container. URLs must be HTTPS and public, checked at save and on every connection. Tokens are
+  write-only. Servers that need OAuth still go through Composio.
 - ChatGPT sign-in in channel settings now displays the device link and complete code from current
   Codex CLI output. The sign-in and API key buttons align without wrapping; proxied hosts pass
   the public TLS CA bundle to the login process.

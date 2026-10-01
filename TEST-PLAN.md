@@ -1,5 +1,77 @@
 # ChannelGate — Test Plan
 
+## Custom MCP connections (2026-10-01)
+
+### Regression
+- [x] Automated: `node --test test/custom-mcps.test.js`.
+  - Name, URL and token rules. The save-time address check refuses loopback, `localhost`,
+    metadata, private and mixed public/private resolutions.
+  - Upsert keeps the token on a URL-only update; the five-entry cap; remove. The masked listing
+    never contains the token.
+  - Run resolution: `custom-`/`my-` prefixes; no personal servers for an untrusted principal;
+    none in Lean.
+  - Container payload: a relay entry, the claim names the servers, and the registry holds the
+    Bearer header with `publicOnly`; no token in the config JSON; a relay digest per server.
+  - Host payload: plain http entries.
+  - Claude lockdown admission by name + URL with `mcp__<server>` pre-approved.
+  - Codex: relay in a container, no custom token in the container bundle; headers helper on the
+    sudo host; none when clean.
+  - Pinned fetch: vetted records only, a dedicated agent, the auth header passed, a redirect
+    returned rather than followed, refusal propagated.
+  - The relay requests the public-only dial only for `publicOnly` registrations.
+    `revokeRemoteMcpServer` removes one server from matching grants only.
+  - Admin routes: channel and user PUT/GET/DELETE; tokens absent from `/channels`, `/users` and
+    the per-scope listings; 400 for loopback and plain-http URLs; URL-only update keeps the token;
+    404 for an unknown channel.
+- [x] Regression neighbours: `test/mcp-config.test.js`, `test/codex-args.test.js`,
+  `test/remote-mcp-registry.test.js`, `test/mcp-remote-relay.test.js`,
+  `test/mcp-socket-server.test.js`, `test/ssh-session.test.js`, `test/folders-settings.test.js`,
+  `test/make-toolbox*.test.js`, `test/admin-ui-controls.test.js`, `test/channel-env.test.js`.
+- [x] Smoke (engine-independent transport, 2026-10-01): a local TLS MCP server built with the SDK's
+  `StreamableHTTPServerTransport`, dialled by `connectRemoteClient` through
+  `createPublicPinnedFetch` with resolve pinned to 127.0.0.1. Result: `tools/list` returned
+  `echo`, `tools/call` returned `echo:hi`, and the server saw `Authorization: Bearer smoke-token`.
+  The first attempt exposed that the global agent tunnels through `HTTPS_PROXY`; the fetch now
+  uses its own agent.
+
+- [x] Automated: `test/mcp-control-plane-approval.test.js` — `list_channel_mcps` names
+  `custom-linear` and contains neither the URL (with a query-string key) nor the token;
+  `test/progress-report-availability.test.js` source-shape check of the run.js/adapters plumbing.
+- [x] Browser (engine-independent UI, 2026-10-01, headless Chromium against a scratch
+  `createWebApp` harness): Conversations → MCP Connections → *Custom MCP servers*.
+  - A seeded row renders as `custom-linear` with the URL and `••••ABCD`.
+  - Adding `https://127.0.0.1:4791/api` shows "URL refused: refuses to reach a loopback address".
+  - Adding `Notes` at a public literal IP saves as `custom-notes` ("2 set") and clears the token
+    box.
+  - Edit → a URL-only change keeps the stored token (checked in the store).
+  - Remove → confirm leaves "1 set".
+  - The user drawer's *Personal MCP servers* saves `my-mine`.
+  - Two layout bugs found and fixed: a long URL clipped the action buttons, and the drawer's
+    `.state { display:block }` broke table cells.
+
+### Live gates (Claude AND Codex) — UNEXECUTED
+Fixture: a disposable conversation in Worker mode, network on. A public MCP server that accepts a
+static Bearer token and exposes a harmless read tool, e.g. a disposable deployment of the SDK's
+example server behind HTTPS on a public host. Record the token's last four characters.
+- [ ] Channel scope: admin UI → the conversation → Connections → *Custom MCP servers*, add name
+  `qa`, the URL and the token. Pass: the row shows `custom-qa`, the URL and `Bearer ••••<last4>`;
+  `GET /api/channels` contains no token. Ask: "List the tools of your custom-qa server and call
+  the read tool." Pass, for Claude and again for Codex (`codex …` directive): the reply names
+  `mcp__custom-qa__…` tools and the tool result. No approval card in Worker mode. No token in the
+  reply, the thread or `docker/podman inspect` of the channel container; `grep -r <token>` over
+  the channel's artifact dir finds nothing.
+- [ ] Personal scope: Users → the QA author → *Personal MCP servers*, add `qa2`. Pass: the author's
+  turn sees `my-qa2`. A different approved user's turn in the same conversation does not. A
+  `POST /api/runs` turn in that conversation does not.
+- [ ] Refusal: adding `https://127.0.0.1:4747/`, `https://169.254.169.254/` or a hostname
+  resolving to a private address is refused with "URL refused…"; `http://` is refused.
+- [ ] Rotation and removal: during a long turn, replace the token, then remove the server. Pass:
+  the next relayed request fails with `remote MCP is not authorized for this run`, Composio in the
+  same turn keeps working, and the next turn has the new token or no server.
+- [ ] Lean: enable Lean. Pass: neither `custom-qa` nor `my-qa2` appears in either engine.
+- [ ] SSH (engine-independent wiring, both CLIs): open an SSH session as the QA author; `claude`
+  and `codex` inside list `custom-qa` and `my-qa2`.
+
 ## Channel-specific Codex authentication (2026-09-29)
 
 - [x] Automated: current colored Codex CLI device output yields the complete code and approved

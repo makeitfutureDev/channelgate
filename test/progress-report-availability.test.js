@@ -100,11 +100,18 @@ test("runMessage threads one per-channel Make toolbox through Claude, Codex, and
   // an interactive SSH session share — and threaded into run.js's MCP input from there.
   assert.match(integrations, /makeToolboxUrl:\s*meta\.makeToolboxUrl/);
   assert.match(integrations, /makeToolboxKey:\s*meta\.makeToolboxKey/);
-  assert.match(run, /makeToolboxUrl, makeToolboxKey, composioIdentityPrefix,\s*\} = await resolveRunIntegrations\(/);
+  assert.match(run, /makeToolboxUrl, makeToolboxKey, customMcps, composioIdentityPrefix,\s*\} = await resolveRunIntegrations\(/);
   assert.match(run, /const mcpRuntimeInput = \{[\s\S]*?makeToolboxUrl, makeToolboxKey/);
   // `target` rides alongside `engine`: mcp.js needs both to pick the gateway server entry (the
   // checkout's stdio server on the host, the in-container bridge for an isolated runtime).
   assert.match(engineMcp, /buildMcpRuntimePayload\(\{ \.\.\.identity, engine, target \}\)/);
   assert.ok((run.match(/makeToolboxUrl, makeToolboxKey/g) || []).length >= 2);
   assert.match(adapters, /makeToolboxUrl: r\.makeToolboxUrl, makeToolboxKey: r\.makeToolboxKey/);
+  // Custom MCP connections (gateway/custom-mcps.js) ride the same three paths: the MCP input, the
+  // primary runtime bag and the fallback's, plus Codex's adapter call and the Claude allowlist.
+  assert.match(integrations, /resolveCustomMcpsForRun\(/);
+  assert.match(run, /const mcpRuntimeInput = \{[\s\S]*?makeToolboxKey, customMcps,/);
+  assert.ok((run.match(/makeToolboxKey, customMcps/g) || []).length >= 3);
+  assert.match(run, /customMcpServers: Object\.entries\(customMcps\)\.map\(\(\[name, \{ url \}\]\) => \(\{ name, \.\.\.\(target\?\.backend === "host"/);
+  assert.match(adapters, /customMcps: r\.customMcps/);
 });

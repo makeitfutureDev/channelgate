@@ -257,6 +257,7 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
           relay = await runRemoteRelay({
             url: remoteTarget.url,
             headers: remoteTarget.headers,
+            publicOnly: remoteTarget.publicOnly === true,
             transport,
             authorize: () => authorizeRemoteMcp(verify(), remoteName),
             ...(connectRemote ? { connect: connectRemote } : {}),

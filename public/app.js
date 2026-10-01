@@ -21,6 +21,7 @@ import { loadSkills } from "./admin-skills.js";
 import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
 import { mountSecretEditor, secretEditorMarkup } from "./admin-secrets.js";
+import { customMcpEditorMarkup, mountCustomMcpEditor } from "./admin-custom-mcps.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 
 // ── Inline SVG icon ─────────────────────────────────────────────────────────────
@@ -2222,6 +2223,19 @@ function renderChannelDetail(ch) {
     savedText: (name) => `Saved ${name}. It reaches the next run in this channel.`,
   });
 
+  // Custom MCP servers (gateway/custom-mcps.js): saved immediately like the env secrets above,
+  // never round-tripped by the card's Save button, token write-only.
+  const customMcpCard = card.querySelector(".custom-mcp-card");
+  customMcpCard.querySelector(".ch-custom-mcps").appendChild(customMcpEditorMarkup());
+  mountCustomMcpEditor({
+    root: customMcpCard,
+    servers: Array.isArray(meta.customMcps) ? meta.customMcps : [],
+    userName: (id) => USERS[id]?.name || "",
+    endpoint: (name) => `/api/channels/${encodeURIComponent(ch.channelId)}/custom-mcps/${encodeURIComponent(name)}`,
+    emptyText: "No custom MCP servers — runs here get the built-in connections and any Cloud MCP selected below.",
+    removeBody: "Runs in this conversation stop receiving this server, including any run in progress. The token can't be recovered.",
+  });
+
   const makeToolboxUrlInput = card.querySelector(".ch-make-toolbox-url");
   const makeToolboxKeyInput = card.querySelector(".ch-make-toolbox-key");
   const makeToolboxState = card.querySelector(".ch-make-toolbox-state");
@@ -3086,6 +3100,19 @@ function openUserDrawer(id) {
   // This person's OWN environment secrets (config/scoped-env.js). Mounted on the row rather than
   // folded into the Save button: a secret write is one blind overwrite that must not ride along
   // with an unrelated profile save, and the endpoints are per-variable for the same reason.
+  // This person's OWN custom MCP servers (gateway/custom-mcps.js) — same immediate, write-only
+  // contract as their secrets below.
+  const customMcpRow = drawer.querySelector(".ud-custom-mcps-row");
+  customMcpRow.querySelector(".ud-custom-mcps").appendChild(customMcpEditorMarkup());
+  mountCustomMcpEditor({
+    root: customMcpRow,
+    servers: u.customMcps || [],
+    userName: (uid) => USERS[uid]?.name || "",
+    endpoint: (name) => `/api/users/${encodeURIComponent(id)}/custom-mcps/${encodeURIComponent(name)}`,
+    emptyText: "No personal MCP servers.",
+    removeBody: "This person's runs stop receiving this server everywhere, including any run in progress. The token can't be recovered.",
+  });
+
   const secretsRow = drawer.querySelector(".ud-secrets-row");
   secretsRow.querySelector(".ud-secrets").appendChild(secretEditorMarkup());
   mountSecretEditor({

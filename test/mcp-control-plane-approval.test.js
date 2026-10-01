@@ -639,3 +639,17 @@ test("the approved-result wrapper preserves mixed content, structured data, meta
     await server.close();
   }
 });
+
+test("list_channel_mcps names the conversation's custom MCP servers, never their URL or token", async () => {
+  const original = await getChannelMeta(SLUG);
+  try {
+    await saveChannelMeta(SLUG, { ...original, customMcps: [{ name: "linear", url: "https://mcp.example.com/mcp?key=url-secret", token: "list-token-secret" }] });
+    await withGateway({}, async (client) => {
+      const listed = resultText(await client.callTool({ name: "list_channel_mcps", arguments: {} }));
+      assert.match(listed, /Custom MCP servers here .*custom-linear/);
+      assert.doesNotMatch(listed, /url-secret|list-token-secret|mcp\.example\.com/);
+    });
+  } finally {
+    await saveChannelMeta(SLUG, original);
+  }
+});

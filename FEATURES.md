@@ -1,5 +1,45 @@
 # ChannelGate — Features
 
+## Custom MCP connections (Bearer token)
+
+- An admin can add a remote MCP server by **name, HTTPS URL and Bearer token** to a conversation
+  (admin UI → conversation → Connections → *Custom MCP servers*) or to one person (Users → the
+  person → *Personal MCP servers*). Each scope holds at most five. OAuth-only servers are out of
+  scope and go through Composio.
+- Runs receive a conversation's servers as `custom-<name>` and the AUTHOR's own as `my-<name>`, in
+  Claude and Codex turns (fresh, resumed, cross-engine fallback) and in SSH sessions. The prefixes
+  keep them apart from each other, the built-in servers and Cloud MCP selections. Lean injects
+  none. The HTTP run API, whose author is not authenticated, gets the conversation's servers but
+  never a personal one. Claude's per-run lockdown admits each server by name and URL and
+  pre-approves its tools, as for the other gateway-injected remotes. A container run's settings list
+  the name only. The URL is listed only for a host turn, because a URL may carry a query-string key.
+  Like the Make toolbox, the daemon relays the server whatever the conversation's network switch
+  says.
+- **The token never enters the container.** As with the Make toolbox, the daemon registers URL +
+  `Authorization: Bearer …` in the in-memory relay registry, and the container gets only the
+  socket bridge and signed capability. Codex's container bundle holds only the capability. A
+  direct-host `/sudo` turn dials the server itself (Claude: header in the 0600 MCP config; Codex:
+  a headers helper reading the 0600 bundle).
+- **Public addresses only, checked twice.** A save refuses non-HTTPS URLs, embedded credentials,
+  fragments, and any host that resolves to loopback, private, link-local or metadata addresses.
+  The daemon relay sits outside the egress proxy, so each dial repeats the check and pins the
+  connection to the vetted records (`src/mcp/public-fetch.js`). It uses its own agent, never an
+  env proxy, and never follows a redirect.
+- **Write-only.** Listings (`GET /api/channels`, `/api/users`, the per-scope `custom-mcps`
+  routes) return name, server name, URL, last4 and who/when. There is no reveal path; replace a
+  token by entering a new one. Saving an existing name without a token keeps the stored token.
+- Replacing or removing a server drops that one server from every live relay grant in its scope
+  (`revokeRemoteMcpServer`). The old token stops working at the next relayed request; the turn's
+  other servers keep running. Tokens are redacted from replies, the live stream and job output,
+  and a rotation retires a warm Claude process through the relay digest. Audit events
+  `channel_custom_mcp_set/_removed` and `user_custom_mcp_set/_removed` carry the name and URL host,
+  never the token.
+- The gateway tool `list_channel_mcps` also lists the conversation's custom server NAMES, never a
+  URL or token. The `gateway-usage` guide tells the agent these are added by people in the admin UI, never by
+  writing MCP config files, which the engines ignore (`--setting-sources ""`,
+  `--strict-mcp-config`, Codex `--ignore-user-config`).
+  → TEST-PLAN: Custom MCP connections.
+
 ## Channel-specific Codex authentication
 
 - Runtime settings ask which Codex login a channel uses before showing setup. The shared view

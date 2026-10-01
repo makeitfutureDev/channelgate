@@ -49,6 +49,7 @@ import { isIsolatedTarget } from "../engines/runtime-target.js";
 import { listEngineMcps, codexMcpPolicyFor } from "./mcp-discovery.js";
 import { readDaemonClaudeAccount } from "./claude-token-relay.js";
 import { buildSettings } from "./folders.js";
+import { admitCustomMcpsInSettings } from "./custom-mcps.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { SSH_TOOLSET } from "../mcp/gateway-server.js";
@@ -247,7 +248,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     clean, engine: "codex", target, allowedMcps: allowed, pluginRuntime: null, fingerprintNow: now(),
     composioUserEndpoint: integrations.composioUserEndpoint, composioEndpoint: integrations.composioEndpoint,
     composioUserToken: integrations.composioUserToken, composioToken: integrations.composioToken,
-    toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey,
+    toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
     channelId: entry.channelId, slug: entry.slug, authorId: user.id, threadKey, origin: SSH_SESSION_ORIGIN,
     progressReport: false, principalTrusted: true,
     gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
@@ -263,6 +264,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     composioToken: integrations.composioToken || "",
     toolboxToken: integrations.toolboxToken || "",
     makeToolboxKey: integrations.makeToolboxKey || "",
+    customMcps: integrations.customMcps || {},
   });
   const secretBundlePath = !clean && Object.values(bundle).some(Boolean) ? path.join(userDir, "codex-secrets.json") : "";
   if (secretBundlePath) writePrivate(secretBundlePath, JSON.stringify(bundle));
@@ -272,7 +274,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     prompt: "", sessionId: "", isNewSession: true, cwd: target.workDir || "/", dangerouslySkip: false, writable: true, clean,
     composioUserEndpoint: integrations.composioUserEndpoint, composioEndpoint: integrations.composioEndpoint,
     composioUserToken: integrations.composioUserToken, composioToken: integrations.composioToken,
-    toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey,
+    toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
     secretBundlePath, codexMcpPolicy: policy, gatewayCapability, gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
     target, outFile: "/dev/null", headerHelpers,
   });
@@ -378,13 +380,20 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
       clean, engine: "claude", target, allowedMcps: meta[adapter.mcpMetaKey] || [], pluginRuntime: null, fingerprintNow: now(),
       composioUserEndpoint: integrations.composioUserEndpoint, composioEndpoint: integrations.composioEndpoint,
       composioUserToken: integrations.composioUserToken, composioToken: integrations.composioToken,
-      toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey,
+      toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
       channelId: entry.channelId, slug, authorId: user.id, threadKey, origin: SSH_SESSION_ORIGIN,
       progressReport: false, principalTrusted: true,
       gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
       toolset: SSH_TOOLSET, ttlMs: SSH_CAPABILITY_TTL_MS,
     });
     if (runtime.relayJti) relayJtis.push(runtime.relayJti);
+    // The lockdown above could not know this developer's custom MCP servers yet; without them on
+    // its allowlist Claude Code would drop them (src/gateway/custom-mcps.js).
+    if (Object.keys(integrations.customMcps || {}).length) {
+      // Names only: an SSH session is always the container, whose entry is the relay bridge.
+      const lockdown = admitCustomMcpsInSettings(await buildLockdown({ ...meta, _slug: slug }, { target }), Object.keys(integrations.customMcps).map((name) => ({ name })));
+      writePrivate(path.join(userDir, "settings.json"), `${JSON.stringify(lockdown, null, 2)}\n`);
+    }
     writePrivate(path.join(userDir, "mcp.json"), runtime.mcpConfigJson);
     result.mcpServers = Object.keys(JSON.parse(runtime.mcpConfigJson).mcpServers || {});
     result.rejectedMcps = runtime.rejectedMcps || [];

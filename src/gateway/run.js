@@ -37,6 +37,7 @@ import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
 import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
+import { customMcpTokens } from "./custom-mcps.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -1109,10 +1110,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // are never mutated when SDK mode is active. Clean mode injects none.
   const {
     userIdentity, composio, toolbox, composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken,
-    makeToolboxUrl, makeToolboxKey, composioIdentityPrefix,
+    makeToolboxUrl, makeToolboxKey, customMcps, composioIdentityPrefix,
   } = await resolveRunIntegrations({ meta, channelId, authorId, threadKey, workspaceId, clean, untrustedPrincipal });
   const authorIsAdmin = userIdentity.isAdmin || apiKeyPrincipal;
-  outputSecrets.push(composioUserToken, composioToken, toolboxToken, makeToolboxKey);
+  outputSecrets.push(composioUserToken, composioToken, toolboxToken, makeToolboxKey, ...customMcpTokens(customMcps));
   // Engine homes are deliberately isolated. Resolve these once in the daemon and carry them into
   // the gateway MCP instead of letting its subprocess derive paths from the disposable HOME.
   const gatewayFsRoot = allowedFsRoot();
@@ -1122,7 +1123,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const mcpRuntimeInput = {
     clean,
     composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
-    toolboxToken, makeToolboxUrl, makeToolboxKey,
+    toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
     channelId, slug: entry.slug, authorId, threadKey, origin,
     progressReport: progressReportEnabled,
     principalTrusted: !untrustedPrincipal,
@@ -1292,6 +1293,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     composio: composio.shared.source,
     toolbox: toolbox.source,
     makeToolbox: Boolean(makeToolboxUrl && makeToolboxKey),
+    customMcps: Object.keys(customMcps),
   });
 
   // Tokens must never ride on argv — `ps` can read a process's args for its whole life (minutes,
@@ -1348,6 +1350,12 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // the plugin is the only delivery path that keeps them working (see materializePlugin).
     workspaceAgentsDir: path.join(cwd, ".claude", "agents"),
     needsClaudeSettings,
+    // This run's custom MCP connections must be on the Claude lockdown's server allowlist, or the
+    // CLI drops them before connecting (src/gateway/custom-mcps.js). Per run: the personal ones
+    // belong to this author only. The URL is listed only for a host turn, which dials it itself;
+    // a container's entry is the relay bridge, matched by name, and a URL may carry a query-string
+    // key that has no business in a file the container can read.
+    customMcpServers: Object.entries(customMcps).map(([name, { url }]) => ({ name, ...(target?.backend === "host" ? { url } : {}) })),
     allowBypass: dangerouslySkip,
     homeGuard: homeGuarded,
     // Decides both WHERE the artifacts land and WHICH of them exist: an isolated runtime gets no
@@ -1399,7 +1407,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
         writable: codexWritable, autoApprove: codexAutoApprove, clean,
         composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken,
-        makeToolboxUrl, makeToolboxKey, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled,
+        makeToolboxUrl, makeToolboxKey, customMcps, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled,
         allowedMcps: clean ? [] : (meta[adapter.mcpMetaKey] || []),
         claudePluginDirs: grantArtifacts.claudePluginDirs,
         claudePluginEphemeral: grantArtifacts.claudePluginEphemeral,
@@ -1634,7 +1642,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           mcpConfigFingerprint: fallbackMcpRuntime.mcpConfigFingerprint, strictMcp,
           settingsFile: runSettingsFile, permissionPromptTool,
           writable: codexWritable, autoApprove: codexAutoApprove, clean, composioUserEndpoint, composioEndpoint,
-          composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey,
+          composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
           gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort: "",
           attachments, signal, timeoutMs, maxSilenceMs, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
           onSessionResolved: sessionResolved(fbKey, fallbackEngine),
