@@ -14,6 +14,7 @@ export async function startGoogleChat({
   capabilities,
   onMessage,
   onBotUserId = null,
+  onFatal = null,
   log = console,
   deps = {},
 } = {}) {
@@ -62,8 +63,12 @@ export async function startGoogleChat({
     return inbox.accept({ id, conversationId, payload: { event, botId: selfId } });
   }
 
-  const puller = deps.puller || createPubSubPuller({ auth, subscription, onEvent, log,
-    onFatal: (err) => log.error?.(`[googlechat] transport stopped: ${err?.message || err}`) });
+  const puller = deps.puller || createPubSubPuller({ auth, subscription, onEvent, log, fetchImpl: deps.fetchImpl,
+    onFatal: (err) => {
+      inbox.stop();
+      log.error?.(`[googlechat] transport stopped: ${err?.message || err}`);
+      onFatal?.(err);
+    } });
   inbox.start();
   try { puller.start(); } catch (error) { inbox.stop(); throw error; }
 

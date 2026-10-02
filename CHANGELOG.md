@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- Fix a history-transfer deadlock when `/sudo` crosses a container whose mounts need recreation.
+  Transfer preparation now excludes its own lease, reports waits, handles Stop, and times out
+  into transcript recovery instead of hanging indefinitely.
+- Google Chat now reports a fatal Pub/Sub receiver error as a failed connection, stops intake,
+  and gives an actionable Subscriber-role hint for permission errors. Reconnect restores status
+  without allowing an old connection's late error to overwrite it.
+
 - Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
   sign-in uses a method dropdown: choosing ChatGPT starts the device flow and clicking its code
   copies it; the API key field appears only for that method. The shared sign-in moved to Settings.

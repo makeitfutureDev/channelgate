@@ -979,7 +979,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     let carried = null;
     try {
       carried = await carrySession({
-        engine, sessionId, cwd, storedRuntime: sessionRuntime, target, slug: entry.slug, threadKey,
+        engine, sessionId, cwd, storedRuntime: sessionRuntime, target, slug: entry.slug, threadKey, signal,
+        announce: (text) => {
+          try { onEvent?.({ kind: "notice", scope: "gateway", text }); } catch { /* best-effort progress */ }
+        },
       });
     } finally {
       clearTimeout(carryTimer);

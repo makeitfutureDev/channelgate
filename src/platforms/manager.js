@@ -57,13 +57,22 @@ export function createTransportManager({ platform, start, log = console } = {}) 
       error = null;
       await stopTransport(previous);
       try {
-        const started = await start(config);
+        // Fatal errors can arrive during start() or after it resolves. Bind them to
+        // this generation so a late failure from an old connection cannot poison its replacement.
+        let failed = false;
+        const onFatal = (err) => {
+          if (gen !== generation) return;
+          failed = true;
+          status = "error";
+          error = err?.message || String(err);
+        };
+        const started = await start(config, { onFatal });
         if (gen !== generation) {
           await stopTransport(started);
           return snapshot();
         }
         current = started;
-        status = "connected";
+        if (!failed) status = "connected";
       } catch (err) {
         log.error?.(`[${platform}] connect failed: ${err?.message || err}`);
         if (gen === generation) {
@@ -90,7 +99,7 @@ export function createTransportManager({ platform, start, log = console } = {}) 
     connect,
     disconnect,
     snapshot,
-    getConnector: () => current?.connector ?? null,
+    getConnector: () => status === "connected" ? current?.connector ?? null : null,
     // The live transport, for the few things that need more than a connector (the Teams webhook
     // handler the Express route mounts, the Chat puller's health).
     getTransport: () => current,

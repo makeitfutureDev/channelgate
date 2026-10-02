@@ -13,6 +13,7 @@ import { createPubSubPuller, createDedupe, isSubscriptionName } from "../src/pla
 import { parseChatEvent, normalizeMessage, mentionsBot, resolveThreadKey, createSeenThreads } from "../src/platforms/googlechat/events.js";
 import { createGoogleChatConnector, toSpaceName } from "../src/platforms/googlechat/connector.js";
 import { googleChatAdapter } from "../src/platforms/googlechat.js";
+import { createTransportManager } from "../src/platforms/manager.js";
 import { startGoogleChat } from "../src/platforms/googlechat/transport.js";
 
 ensureTestEnv();
@@ -444,4 +445,29 @@ test("stopping a puller never waits for a blocked handler or dispatches the rest
   release();
   await loop;
   assert.deepEqual(seen, [1]);
+});
+
+
+test("a live Google pull permission failure reaches manager health and stops inbox dispatch", async () => {
+  let failPull;
+  const response = new Promise((resolve) => { failPull = resolve; });
+  let inboxStopped = false;
+  const manager = createTransportManager({ platform: "googlechat", log: { error() {} },
+    start: (_config, { onFatal }) => startGoogleChat({
+      subscription: "projects/cg-test/subscriptions/chat", onMessage() {}, onFatal,
+      capabilities: googleChatAdapter.capabilities, log: { info() {}, error() {} },
+      deps: { auth: fakeAuth(), api: fakeChatApi(), connector: {},
+        inbox: { start() {}, stop() { inboxStopped = true; } },
+        fetchImpl: async () => response },
+    }),
+  });
+  assert.equal((await manager.connect({})).connected, true);
+  failPull(fail(403, JSON.stringify({ error: { message: "User not authorized" } })));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(manager.snapshot().status, "error");
+  assert.equal(manager.getConnector(), null);
+  assert.match(manager.snapshot().error, /Pub\/Sub Subscriber.*reconnect Google Chat/);
+  assert.equal(inboxStopped, true);
+  assert.equal(manager.getTransport().puller.running, false);
+  await manager.disconnect();
 });

@@ -137,12 +137,29 @@ export function createContainerCarry({ exec, lifecycle, log = () => {} } = {}) {
   // A carry may run against a container the idle reaper has stopped — that is rather the point:
   // the history lives in a volume that outlives the container. Bringing it up is the backend's own
   // job (the caller holds a lease around the whole carry so the reaper cannot stop it again
-  // mid-copy). `retry` keeps the out-of-band-removal self-heal every other exec has.
-  async function runScript(target, script) {
-    await lifecycle.ensureUp(target, {});
-    return exec.runExec(target, [target.container.name, "/bin/sh", "-c", script], {
+  // mid-copy). Forward that lease so a mount rebuild never waits on its own caller.
+  async function runScript(target, script, { lease = null, signal = null, announce = null } = {}) {
+    signal?.throwIfAborted();
+    // A busy old container must not strand history transfer indefinitely. Timeout is a
+    // recoverable carry failure; an explicit Stop remains cancellation of the whole turn.
+    const timeout = AbortSignal.timeout(CARRY_TIMEOUT_MS);
+    try {
+      await lifecycle.ensureUp(target, { lease, announce, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    } catch (error) {
+      signal?.throwIfAborted();
+      // Lifecycle labels all cancelled waits AbortError; preserve a timeout as a carry failure.
+      if (timeout.aborted) throw timeout.reason;
+      throw error;
+    }
+    signal?.throwIfAborted();
+    const result = await exec.runExec(target, [target.container.name, "/bin/sh", "-c", script], {
       timeoutMs: CARRY_TIMEOUT_MS,
+      // The generic exec retry prepares without the carry lease. A vanished container is
+      // instead a recoverable carry failure. CLI exec itself is bounded, not abortable.
+      retry: false,
     });
+    signal?.throwIfAborted();
+    return result;
   }
 
   function cleanup(dir) {
@@ -153,7 +170,7 @@ export function createContainerCarry({ exec, lifecycle, log = () => {} } = {}) {
     }
   }
 
-  async function copyIn(target, entries = []) {
+  async function copyIn(target, entries = [], opts = {}) {
     if (!target?.artifactDir) throw new Error("this target has no artifact dir — a carry has nowhere to stage");
     const stagingDir = carryStagingDir(target, newCarryId());
     try {
@@ -171,7 +188,7 @@ export function createContainerCarry({ exec, lifecycle, log = () => {} } = {}) {
         }
       }
       if (!pairs.length) return { copied: 0 };
-      const result = await runScript(target, buildCopyInScript(pairs));
+      const result = await runScript(target, buildCopyInScript(pairs), opts);
       if (result.code !== 0) {
         throw new Error(`copying session state into ${target.container.name} failed: ${String(result.stderr || "").trim() || `exit ${result.code}`}`);
       }
@@ -181,12 +198,12 @@ export function createContainerCarry({ exec, lifecycle, log = () => {} } = {}) {
     }
   }
 
-  async function copyOut(target, entries = []) {
+  async function copyOut(target, entries = [], opts = {}) {
     if (!target?.artifactDir) throw new Error("this target has no artifact dir — a carry has nowhere to stage");
     const stagingDir = carryStagingDir(target, newCarryId());
     try {
       mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
-      const result = await runScript(target, buildCopyOutScript(entries, stagingDir));
+      const result = await runScript(target, buildCopyOutScript(entries, stagingDir), opts);
       if (result.code !== 0) {
         throw new Error(`copying session state out of ${target.container.name} failed: ${String(result.stderr || "").trim() || `exit ${result.code}`}`);
       }
