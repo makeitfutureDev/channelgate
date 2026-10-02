@@ -1,5 +1,16 @@
 # ChannelGate — Features
 
+## Runtime history transfer and Google Chat failure recovery
+
+- Switching a thread between its container and `/sudo` host carries native history without
+  treating the transfer's own lease as an active occupant that blocks container recreation.
+  Preparation reports waits, responds to Stop, and falls back to transcript recovery after a
+  bounded preparation timeout. An explicit Stop never starts a replacement engine turn.
+- Fatal Google Chat receiver errors stop intake and mark the connection as failed; health and
+  connector availability no longer report a stopped receiver as connected. Pub/Sub permission
+  failures name the Subscriber role and reconnect action. Reconnecting clears the failure, and
+  callbacks from older connections cannot overwrite the replacement connection's state.
+
 ## Channel-specific Codex authentication
 
 - Runtime settings ask which Codex login a channel uses. The shared choice shows the channel's

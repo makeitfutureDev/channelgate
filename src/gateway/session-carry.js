@@ -59,6 +59,8 @@ export function buildCarryEntries({ engine, cwd, sessionId, fromDir, toDir }) {
  * @param {string} [options.threadKey]   for the log line
  * @param {Function} [options.resolveFor] resolveRuntime, injectable for tests
  * @param {Function} [options.log]       console.log, injectable for tests
+ * @param {AbortSignal} [options.signal] cancellation of the turn, including container preparation
+ * @param {Function} [options.announce]  progress while the source or destination container is prepared
  * @returns {Promise<{direction: string, files: number}|null>} null when nothing was carried
  */
 export async function carrySession({
@@ -71,6 +73,8 @@ export async function carrySession({
   threadKey = "",
   resolveFor = resolveRuntime,
   log = console.log,
+  signal = null,
+  announce = null,
 } = {}) {
   const where = `${slug}/${threadKey}`;
   const to = String(target?.backend || "host");
@@ -79,6 +83,7 @@ export async function carrySession({
   if (!sessionId || !target || from === to) return null;
 
   try {
+    signal?.throwIfAborted();
     if (!engineSessionState(engine)) {
       log(`[gateway] ${where}: ${engine} does not declare where it keeps a session, so its history stays on ${from} — the resume falls back to the existing heal`);
       return null;
@@ -106,16 +111,20 @@ export async function carrySession({
     let result;
     try {
       result = to === "host"
-        ? await mover.runtime.copyOut(mover, entries)
-        : await mover.runtime.copyIn(mover, entries);
+        ? await mover.runtime.copyOut(mover, entries, { lease, signal, announce })
+        : await mover.runtime.copyIn(mover, entries, { lease, signal, announce });
     } finally {
       lease.release();
     }
+    signal?.throwIfAborted();
     const files = Number(result?.copied) || 0;
     if (!files) return null;
     log(`[gateway] ${where}: carried ${engine} session ${sessionId} ${direction} (${files} file${files === 1 ? "" : "s"})`);
     return { direction, files };
   } catch (error) {
+    // A user Stop must end the turn, never fall through to a fresh engine attempt.
+    signal?.throwIfAborted();
+    if (error?.name === "AbortError") throw error;
     log(`[gateway] ${where}: session carry-over failed (${error?.message || error}) — the resume falls back to the existing heal`);
     return null;
   }

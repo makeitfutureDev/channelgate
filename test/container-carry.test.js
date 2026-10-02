@@ -224,3 +224,91 @@ test("boot: the idle reaper runs even with the gateway switch off, so a carry ca
     __resetContainerRuntime();
   }
 });
+
+test("sudo history carry rebuilds stale mounts without waiting on its own lease", async () => {
+  const { createFakeCli, inspectLine } = await import("./container-fake-cli.js");
+  const { createContainerCli } = await import("../src/runtimes/container/cli.js");
+  const { createContainerImage } = await import("../src/runtimes/container/image.js");
+  const { createContainerLifecycle } = await import("../src/runtimes/container/lifecycle.js");
+  const { createContainerReaper } = await import("../src/runtimes/container/reaper.js");
+  const { currentInstallId } = await import("../src/runtimes/container/names.js");
+  const { carrySession } = await import("../src/gateway/session-carry.js");
+  const h = harness("carry-rebuild");
+  const fake = createFakeCli({ routes: [
+    { match: (a) => a[1] === "image" && a[2] === "inspect", result: { code: 0, stdout: "sha256:img|1.0.0" } },
+    { match: (a) => a[1] === "inspect", result: { code: 0, stdout: inspectLine({
+      name: h.target.container.name, install: currentInstallId(), fingerprint: "old", mountFingerprint: "old-mounts",
+    }) } },
+  ] });
+  const cli = createContainerCli({ exec: fake.exec });
+  const reaper = createContainerReaper();
+  const lifecycle = createContainerLifecycle({ cli, image: createContainerImage({ cli }), reaper,
+    sleep: async () => { throw new Error("carry must not wait for its own lease"); },
+  });
+  const carry = createContainerCarry({ lifecycle, exec: { async runExec() { return { code: 0 }; } } });
+  const container = { ...h.target, runtime: { acquireLease: reaper.acquireLease, ...carry } };
+  const result = await carrySession({
+    engine: "claude", sessionId: SESSION, cwd: h.target.cwd, storedRuntime: { backend: "container" },
+    target: { ...h.target, backend: "host", container: null }, resolveFor: () => container, log() {},
+  });
+  // Empty fake history is fine; the real lifecycle must still have recreated the old container.
+  assert.equal(result, null);
+  assert.equal(fake.find("rm").length, 1);
+  assert.ok(fake.find("run").some((args) => args.includes("--name") && args.includes(h.target.container.name)));
+  assert.equal(reaper.leaseCount(h.target.container.name), 0);
+});
+
+test("carry cancellation during preparation cleans staging and never executes the copy", async () => {
+  const h = harness("carry-cancel");
+  const controller = new AbortController();
+  const lease = { id: "carry:one" };
+  const notices = [];
+  const carry = createContainerCarry({
+    lifecycle: { async ensureUp(_target, opts) {
+      assert.equal(opts.lease, lease);
+      opts.announce("Waiting for another run");
+      controller.abort();
+      opts.signal.throwIfAborted();
+    } },
+    exec: { async runExec() { assert.fail("cancelled preparation must not copy"); } },
+  });
+  await assert.rejects(carry.copyOut(h.target, [], { lease, signal: controller.signal, announce: (s) => notices.push(s) }), { name: "AbortError" });
+  assert.deepEqual(notices, ["Waiting for another run"]);
+  assert.deepEqual(walkFiles(path.join(h.target.artifactDir, "carry")), []);
+});
+
+test("carry preparation timeout remains a recoverable failure instead of a user Stop", async (t) => {
+  const timeout = new AbortController();
+  timeout.abort(new DOMException("Carry preparation timed out", "TimeoutError"));
+  t.mock.method(AbortSignal, "timeout", () => timeout.signal);
+  const h = harness("carry-timeout");
+  const carry = createContainerCarry({
+    lifecycle: { async ensureUp() {
+      // The lifecycle deliberately uses AbortError for every cancelled container wait.
+      throw new DOMException("Run aborted while waiting", "AbortError");
+    } },
+    exec: { async runExec() { assert.fail("timed out preparation must not copy"); } },
+  });
+  await assert.rejects(carry.copyOut(h.target, []), { name: "TimeoutError" });
+  assert.deepEqual(walkFiles(path.join(h.target.artifactDir, "carry")), []);
+});
+
+test("Stop during bounded copy prevents copied history being applied on the host", async () => {
+  const h = harness("carry-stop-copy");
+  const controller = new AbortController();
+  const destination = path.join(tempDir("carry-stopped-host-"), "session.jsonl");
+  const carry = createContainerCarry({
+    lifecycle: { async ensureUp() {} },
+    exec: { async runExec(_target, _args, opts) {
+      assert.equal(opts.retry, false);
+      assert.equal(opts.timeoutMs, CARRY_TIMEOUT_MS);
+      controller.abort();
+      return { code: 0 };
+    } },
+  });
+  await assert.rejects(carry.copyOut(h.target, [{ rel: "session.jsonl", kind: "file", from: "/inside/session.jsonl", to: destination }], {
+    signal: controller.signal,
+  }), { name: "AbortError" });
+  assert.equal(existsSync(destination), false);
+  assert.deepEqual(walkFiles(path.join(h.target.artifactDir, "carry")), []);
+});

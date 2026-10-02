@@ -1,5 +1,40 @@
 # ChannelGate — Test Plan
 
+## Runtime history transfer and Google Chat failure recovery (2026-10-02)
+
+- [x] Automated: `test/session-carry.test.js`, `test/container-carry.test.js`,
+  `test/container-lifecycle.test.js`, and `test/runtime-integration-run.test.js` cover caller-lease
+  forwarding through container→host transfer, stale mount recreation, lease release, Stop during
+  preparation, timeout fallback, and cancellation without starting a healed turn.
+- [x] Automated: `test/platform-googlechat.test.js` and `test/platform-transport-manager.test.js`
+  cover a real puller receiving a simulated 403 after startup, stopped inbox dispatch, failed
+  connection status and absent live connector, reconnect recovery, early failure during startup,
+  and stale failure callbacks after reconnect/disconnect. This transport behavior is engine-independent.
+- [x] Live container fixture proof: `CG_LIVE_CONTAINER=1 node --test
+  test/session-carry.live.test.js` passed with real Podman and the runtime image. Disposable
+  Claude and Codex native-layout fixture files roundtripped host→container→host; changing the
+  clean-workspace bind source recreated the container while its carry lease was held. Bytes
+  survived both rebuilds, leases returned to zero, and the disposable container/volume were
+  removed. This verifies file movement and lifecycle, not real-engine conversation acceptance.
+- [ ] Live Claude and Codex acceptance (separate runs): use a disposable private admin test
+  channel with the authorized admin test actor, pin the engine, and send “Remember carry-check-42
+  for the next message.” After its reply, change a fixture workspace mount without destroying its
+  persistent HOME; enable `/sudo` in the same thread and ask “What marker did I give you?”. Pass:
+  container recreation and native history transfer finish, the answer contains the marker, and
+  no indefinite “waiting for active runs” occurs. Repeat host→container after `/sudo off`.
+  With another fixture occupant holding a lease, repeat and press Stop during the preparation
+  wait. Pass: cancellation releases the transfer lease, starts no engine, and the next turn runs.
+  Copy commands remain bounded by their existing 120-second CLI timeout; cancellation during an
+  already executing copy is checked on completion, whereas readiness waits cancel immediately.
+- [ ] Live Google Chat acceptance (engine-independent): use a dedicated test subscription and
+  service account without Subscriber, connect, then poll settings/health. Pass: status becomes
+  error with a Subscriber/reconnect remedy and no live connector remains. Grant Subscriber on
+  that subscription, reconnect, and send one test message; pass: exactly one reply. A separate
+  healthy Slack fixture must continue answering throughout.
+- [ ] Private QA catalog: mirror the preceding two engine cases and the engine-independent
+  Google case to the requesting maintainer's selected personal Airtable connection. Pending
+  explicit connection-use authorization; automated results are not a claim of live acceptance.
+
 ## Channel-specific Codex authentication (2026-09-29)
 
 - [x] Automated: Chromium confirms the shared-login channel view has no gateway status/sign-in

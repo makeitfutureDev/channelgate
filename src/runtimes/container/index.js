@@ -257,12 +257,12 @@ export const containerBackend = Object.freeze({
   // The carry pair (contract.js OPTIONAL_METHODS): a thread's engine-native history follows it
   // when its channel changes runtime backend. Both halves go through the bind-mounted artifact
   // dir — the daemon cannot touch the HOME volume itself. See ./carry.js.
-  async copyIn(target, entries) {
-    return runtime().carry.copyIn(target, entries);
+  async copyIn(target, entries, opts = {}) {
+    return runtime().carry.copyIn(target, entries, opts);
   },
 
-  async copyOut(target, entries) {
-    return runtime().carry.copyOut(target, entries);
+  async copyOut(target, entries, opts = {}) {
+    return runtime().carry.copyOut(target, entries, opts);
   },
 
   // The relayed Codex login file (contract.js OPTIONAL_METHODS): staged through the artifact dir
