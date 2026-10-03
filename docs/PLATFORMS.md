@@ -1,8 +1,8 @@
 # Chat platforms
 
 ChannelGate speaks to three chat surfaces. Slack is GA; Google Chat and Microsoft Teams are in
-**Beta** — their transports are implemented and tested, but have not yet run against a live
-tenant, and their in-chat feature set is deliberately smaller (see *What works where* below).
+**Beta** — their in-chat feature set is deliberately smaller (see *What works where* below).
+Google Chat has been exercised against a live tenant; Teams still needs live tenant acceptance.
 
 Every surface goes through the same seam: a capability descriptor in `src/platforms/<id>.js`, a
 `ChatConnector` that owns the wire format, and one platform-neutral ingest path
@@ -20,20 +20,48 @@ rule — the same posture as Slack's Socket Mode.
 
 ### Setup
 
-1. **Google Cloud project** — enable the *Google Chat API* and the *Cloud Pub/Sub API*.
-2. **Topic + subscription** — create a topic (e.g. `chat-events`) and a **pull** subscription on it
-   (e.g. `chat-events-sub`).
-3. **Service account** — create one, download a JSON key, then:
-   - grant it `roles/pubsub.subscriber` **on the subscription**;
-   - grant Chat's publisher service account `chat-api-push@system.gserviceaccount.com` the role
-     `roles/pubsub.publisher` **on the topic** (this is what lets Google publish to it).
-4. **Chat app configuration** (Google Chat API → Configuration):
-   - app name, avatar, description;
-   - enable *Receive 1:1 messages* and *Join spaces and group conversations*;
-   - **Connection settings → Cloud Pub/Sub**, with the topic from step 2;
-   - subscribe to the message and membership events.
-5. **ChannelGate** — Settings → Connection → *Google Chat*: paste the service-account JSON, enter the
-   subscription as `projects/<project>/subscriptions/<name>`, Save, then **Connect**.
+1. **Google Cloud project:** enable the *Google Chat API* and *Cloud Pub/Sub API* in the same
+   project. Keep its project ID for the resource names below.
+2. **Pub/Sub topic and subscription:** create a topic such as `chat-events`, then attach a
+   **Pull** subscription such as `chat-events-sub`. The resource names have different forms:
+   `projects/<project>/topics/<topic>` and `projects/<project>/subscriptions/<subscription>`.
+3. **ChannelGate service account:** create a service account in the project and download its JSON
+   key. On the **subscription's Permissions** panel, grant that account **Pub/Sub Subscriber**
+   (`roles/pubsub.subscriber`). This is the identity ChannelGate uses to pull events and call the
+   Chat API; keep its JSON key private.
+4. **Chat app** (Google Chat API → Configuration): set its name, avatar, description, and
+   **App status → Live - available to users**. Enable interactive features, including direct
+   messages and, for spaces, *Join spaces and group conversations*. Set **Connection settings →
+   Cloud Pub/Sub** to the full topic name `projects/<project>/topics/<topic>`. Set visibility so
+   the intended testers can find the app, enable error logging, and **Save**.
+5. **Google Chat publisher:** on the **topic's Permissions** panel, grant **Pub/Sub Publisher**
+   (`roles/pubsub.publisher`) to the identity for the Chat app's configuration mode:
+   - **Google Workspace add-on:** copy **Service account email** from the Chat API Configuration
+     page's Cloud Pub/Sub connection settings (it may look like
+     `service-<project-number>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`). Grant that **exact**
+     address the publisher role on the topic. This is separate from the JSON-key account in step 3.
+     If the add-on checkbox is already selected and disabled, leave it selected; this mode works
+     with ChannelGate.
+   - **Standalone Chat app:** grant `chat-api-push@system.gserviceaccount.com` the publisher role
+     on the topic. Google instructs you to clear *Build this Chat app as a Google Workspace
+     add-on* when configuring a new standalone app. This publisher is **not** the one to use for
+     an add-on.
+6. **ChannelGate:** in Settings → Connection → *Google Chat*, paste the JSON key from step 3,
+   enter `projects/<project>/subscriptions/<subscription>`, **Save**, then **Connect**. A
+   *Connected — pulling …* status confirms the subscription can be polled; it does not establish
+   that Google Chat can publish to the topic.
+7. **Test:** add the Chat app to a space or open a direct message, then send a **new** message
+   mentioning it in a space. Check for an actual ChannelGate reply. The sender must also be an
+   approved user in ChannelGate's **Users** settings; otherwise the app responds that the user
+   is not approved.
+
+If the pull fails with `403`, recheck the step 3 **subscription** grant and reconnect. If it is
+connected but receives no messages, recheck the step 5 **topic** grant for the app's actual mode,
+then verify the Chat app is Live, interactive features are enabled, and its configured topic name
+matches step 2. Google's [Workspace add-on Pub/Sub guide](https://developers.google.com/workspace/add-ons/chat/quickstart-pubsub),
+[standalone Chat app Pub/Sub guide](https://developers.google.com/workspace/chat/quickstart/pub-sub),
+and [Chat troubleshooting guide](https://developers.google.com/workspace/chat/troubleshoot-chat-apps)
+cover these distinct configurations.
 
 The app's own `users/…` id is learned automatically the first time it is added to a space; the
 optional field exists only to short-circuit that.
