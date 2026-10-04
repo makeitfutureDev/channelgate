@@ -4,9 +4,9 @@
 
 - [x] Automated: `test/model-shortcuts.test.js` checks parsing, saving, repointing, clearing and refusing invalid mappings.
 - [ ] Live: In gateway Settings, add `astra` → Codex / a currently offered model and `opus` → Claude / a currently offered model. Save and reload; verify both mappings remain. Repoint `astra` to another offered Codex model, save and reload.
-- [ ] Live: In a Slack channel with runtime changes allowed for the author, send `@agent:astra summarize this thread` as a new root message. Verify the reply uses the selected Codex model and the thread settings show the pin. Reply `@agent:opus` in the same thread; verify the switch acknowledgement and the next ordinary request uses the selected Claude model with earlier thread context available.
-- [ ] Live: In a channel restricted to admin runtime changes, verify a non-admin's `@agent:astra task` is refused and leaves the thread runtime unchanged. Verify an unknown name is refused. In a channel with its own Codex login, verify a Claude shortcut is refused.
-- [ ] Live: Run the reverse engine path with `@agent:opus task` as a new root message and `@agent:astra` within that thread, confirming the Codex answer retains earlier context. Check both engines' recorded model and effort (the shortcut clears a previous effort pin).
+- [ ] Live: In a Slack channel with runtime changes allowed for the author, select the bot from Slack's mention picker and send `@agent :astra summarize this thread` as a new root message, retaining Slack's inserted space. Verify the reply uses the selected Codex model and the thread settings show the pin. Reply `@agent :opus` in the same thread; verify the switch acknowledgement and the next ordinary request uses the selected Claude model with earlier thread context available.
+- [ ] Live: In a channel restricted to admin runtime changes, verify a non-admin's `@agent :astra task` is refused and leaves the thread runtime unchanged. Verify an unknown name is refused. In a channel with its own Codex login, verify a Claude shortcut is refused.
+- [ ] Live: Run the reverse engine path with `@agent :opus task` as a new root message and `@agent :astra` within that thread, confirming the Codex answer retains earlier context. Check both engines' recorded model and effort (the shortcut clears a previous effort pin).
 
 ## Runtime history transfer and Google Chat failure recovery (2026-10-02)
 

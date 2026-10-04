@@ -2,7 +2,7 @@
 
 ## Gateway model shortcuts
 
-Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent:astra task` pins that engine and model to the current thread and runs the task; `@agent:astra` switches the thread without starting an agent turn. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
+Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
 
 ## Runtime history transfer and Google Chat failure recovery
 
