@@ -128,6 +128,7 @@ export function buildClaudeArgs({
   prompt,
   sessionId,
   isNewSession,
+  forkSourceSessionId = "",
   mcpConfig, // value for --mcp-config: a PATH to a 0600 file (tokens must never ride on argv)
   strictMcp,
   dangerouslySkip,
@@ -145,7 +146,8 @@ export function buildClaudeArgs({
   // from ~/.claude; they sit outside the org/channel/user access tiers and would defeat clean mode.
   args.push("--setting-sources", "");
 
-  if (isNewSession) args.push("--session-id", sessionId);
+  if (forkSourceSessionId) args.push("-r", forkSourceSessionId, "--fork-session");
+  else if (isNewSession) args.push("--session-id", sessionId);
   else args.push("-r", sessionId);
 
   // Load the gateway lockdown explicitly so a custom (real-project) work dir is never modified.
@@ -220,6 +222,7 @@ export async function runClaude({
   prompt,
   sessionId,
   isNewSession,
+  forkSourceSessionId = "",
   mcpConfig = null,
   strictMcp = true,
   dangerouslySkip = false,
@@ -253,8 +256,9 @@ export async function runClaude({
   signal = null,
   onDelta = null,
   onEvent = null,
+  onSessionResolved = null,
 }) {
-  const args = buildClaudeArgs({ prompt, sessionId, isNewSession, mcpConfig, strictMcp, dangerouslySkip, settingsFile, model, effort, permissionPromptTool, pluginDirs, instructionFile, disallowedTools });
+  const args = buildClaudeArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, mcpConfig, strictMcp, dangerouslySkip, settingsFile, model, effort, permissionPromptTool, pluginDirs, instructionFile, disallowedTools });
   const runtime = runtimeTargetOr(target, cwd);
   // What a provider failure calls itself in the thread. "Claude" is the CLI; the harness may be
   // another provider driving it (src/engines/qwen.js), and the person reading the error has to
@@ -338,6 +342,7 @@ export async function runClaude({
       // failure that actually ended the turn.
       providerError = claudeProviderError(p, harnessLabel) || providerError;
       stream.consume(p);
+      if (forkSourceSessionId && p.type === "system" && p.subtype === "init" && p.session_id) onSessionResolved?.(p.session_id);
       if (p.type === "result") result = p;
     };
 

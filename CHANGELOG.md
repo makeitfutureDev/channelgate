@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Add `@agent /fork <new message>` for Claude and Codex sessions in Slack. It starts a separate
+  engine branch in a linked new thread and runs the supplied message there.
 - Fix a history-transfer deadlock when `/sudo` crosses a container whose mounts need recreation.
   Transfer preparation now excludes its own lease, reports waits, handles Stop, and times out
   into transcript recovery instead of hanging indefinitely.

@@ -19,6 +19,7 @@ export const HELP_TEXT =
   "• `/menu` — show only the Files, Variables, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
   "• `/help` — show this guide\n" +
   "• `/clear` — start a fresh session in this thread\n" +
+  "• `/fork <new message>` — branch this Claude or Codex session into a linked new Slack thread and run the new message there (after the current turn finishes)\n" +
   "• `/delete` — delete this thread's messages (admin; irreversible—everyone's if an admin user token is set in Settings, otherwise mine only)\n" +
   "• `/secrets` — see which environment variables this channel has (name + last 4 only) and add or replace one. Values are never shown again, to anyone: this is how a channel gets its OWN CLI login (its own Supabase or Vercel account) instead of sharing the host's\n" +
   "• `/context` — token usage of the last turn\n" +
