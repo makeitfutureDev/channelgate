@@ -12,7 +12,7 @@ import { runMessage, isEmptyResult } from "../gateway/run.js";
 import { modeLabel, MODES, modeSettingsPatch, canManage, isAuthorized, authorizationDenialReason } from "../gateway/modes.js";
 
 import { postModelWizard } from "./model-wizard.js";
-import { getSessionMap, clearSession, hasThreadSession, getSessionEngine, saveSession } from "../gateway/sessions.js";
+import { getSession, getSessionMap, clearSession, hasThreadSession, getSessionEngine, getSessionRuntime, saveSession } from "../gateway/sessions.js";
 import { planSessionAdoption } from "../gateway/session-adopt.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { setThreadEngine, getThreadEngine, resolveThreadEngine, setThreadClean, getThreadClean, setThreadSudo, getThreadSudo, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
@@ -73,6 +73,16 @@ import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText }
 // queued ones, and a finishing run only ever clears its own entry.
 // Last turn's context usage per thread, for /context.
 const lastCtx = new Map();
+const pendingForkThreads = new Set();
+const pendingForkSources = new Set();
+
+async function slackPermalink(client, channel, ts) {
+  try {
+    const result = await client.chat.getPermalink({ channel, message_ts: ts });
+    if (result?.permalink) return result.permalink;
+  } catch { /* Slack's canonical permalink is optional; its archive URL still works. */ }
+  return `https://slack.com/archives/${channel}/p${String(ts).replace(".", "")}`;
+}
 
 // Terminalize every matching in-flight run synchronously — no Slack calls, no awaits. The shared
 // core of the `stop` command (stopRunsInChannel below, which adds the user-facing messaging) and
@@ -591,7 +601,7 @@ async function ensureUserKnown(client, userId) {
 // harness-switch card (src/slack/engine-switch-choice.js) re-entering with the original event —
 // run it on `engineChoice`, pin the thread there when `engineChoiceSwitch`, and hand the pending
 // row over exactly like a busy-thread choice.
-export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null } = {}) {
+export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null, syntheticFork = null } = {}) {
   try {
     if (isIgnorable(event, botUserId, getTrustedBotApps())) return;
     // A message without a human author (e.g. a trusted-bot post carrying no `user`) can't be
@@ -627,6 +637,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       return;
     }
     const threadKey = event.thread_ts ?? event.ts;
+    if (!syntheticFork && pendingForkThreads.has(`${entry.slug}::${threadKey}`)) {
+      await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This fork is still starting. Please send your next message after its first reply." });
+      return;
+    }
+    if (pendingForkSources.has(`${entry.slug}::${threadKey}`)) {
+      await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "A fork of this thread is starting. Please send your next message after the new thread appears." });
+      return;
+    }
     // Sudo is a THREAD trust boundary, stronger than the channel's ordinary admission policy.
     // Reject before hydration, attachment reads, queueing, or any process spawn. The stored flag
     // is never authority by itself: the sender's current organization-admin status is rechecked.
@@ -646,7 +664,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // A question continuation is an internal event containing the answers authenticated by its
     // Slack interaction handler. It is not a message Slack can hydrate: using the card timestamp
     // would replace the answers with the card's text and could carry unrelated attachments.
-    if (!questionSubmissionId) event = await hydrateSlackMessage(event, client, {
+    if (!questionSubmissionId && !syntheticFork) event = await hydrateSlackMessage(event, client, {
       includeThreadFiles: async (message) => {
         const text = stripMentions(message.text, botUserId);
         const command = parseSlashCommand(text);
@@ -701,7 +719,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     }
 
     // In-thread control commands (/clear, /model, /effort, /context, /pending, /help, /compact).
-    const sc = files.length === 0 ? parseSlashCommand(prompt) : null;
+    const sc = !syntheticFork && files.length === 0 ? parseSlashCommand(prompt) : null;
     // /compact is a real command only on engines that declare supports.compact — judged against
     // the THREAD's effective engine (override → session-born → channel → gateway default), never
     // the gateway default alone: a Codex thread under a Claude-default gateway must not receive
@@ -715,6 +733,43 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       const reply = (t) => client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: t });
       if (sc.cmd === "help") {
         await reply(HELP_TEXT);
+      } else if (sc.cmd === "fork") {
+        const task = sc.arg.trim();
+        if (!task) { await reply("Use `/fork <new message>` inside a thread with a Claude or Codex session."); return; }
+        if (runQueue.isActive(runKey)) { await reply("Wait for this thread's current run to finish before forking it."); return; }
+        pendingForkSources.add(runKey);
+        try {
+          if (await getThreadSudo(entry.slug, threadKey)) { await reply("A sudo thread cannot be forked into an ordinary channel thread."); return; }
+          const sourceId = await getSession(entry.slug, threadKey);
+          const sourceEngine = await getSessionEngine(entry.slug, threadKey);
+          const sourceRuntime = await getSessionRuntime(entry.slug, threadKey);
+          if (!sourceId || !["claude", "codex"].includes(sourceEngine)) { await reply("This thread needs a completed Claude or Codex turn before it can be forked."); return; }
+          if (sourceRuntime?.backend !== "container") { await reply("This session's history is outside the channel container. Run another turn here to carry it into the container before forking."); return; }
+          abortPooled(runKey); // close an idle Claude process so its transcript is settled before cloning
+          const sourceUrl = await slackPermalink(client, event.channel, threadKey);
+          const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ Fork of <${sourceUrl}|this thread>` });
+          if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
+          const forkKey = String(root.ts);
+          const pendingKey = `${entry.slug}::${forkKey}`;
+          pendingForkThreads.add(pendingKey);
+          try {
+            await setThreadEngine(entry.slug, forkKey, sourceEngine);
+            await setThreadModel(entry.slug, forkKey, await getThreadModel(entry.slug, threadKey));
+            await setThreadEffort(entry.slug, forkKey, await getThreadEffort(entry.slug, threadKey));
+            await setThreadClean(entry.slug, forkKey, await getThreadClean(entry.slug, threadKey));
+            const request = await client.chat.postMessage({ channel: event.channel, thread_ts: forkKey, text: `*New request from <@${event.user}>:* ${task}` });
+            if (!request?.ts) throw new Error("Slack did not return a message timestamp for the fork request.");
+            const forkUrl = await slackPermalink(client, event.channel, forkKey);
+            await reply(`↪️ Fork started in <${forkUrl}|a new thread>.`);
+            await processMessageEvent({ ...event, ts: request.ts, thread_ts: forkKey, text: task, files: [] }, client, {
+              botUserId, teamId, bypassMention: true, syntheticFork: { sourceSessionId: sourceId, sourceRunKey: runKey },
+            });
+          } finally {
+            pendingForkThreads.delete(pendingKey);
+          }
+        } finally {
+          pendingForkSources.delete(runKey);
+        }
       } else if (sc.cmd === "menu") {
         await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, ...buildMenuCard(event.channel, threadKey, event.user) });
       } else if (sc.cmd === "clear") {
@@ -1046,7 +1101,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // switch phrase ("try again with codex", "switch to codex", "use claude") — a switch verb
     // immediately before the engine name, so an incidental mention ("the codex CLI") won't flip it.
     // It sticks until changed; the rest of the message is the task.
-    if (files.length === 0) {
+    if (!syntheticFork && files.length === 0) {
       const trimmed = prompt.trim();
       const anchored = new RegExp(`^(${engineIdAlternation()})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
       // Only a switch INTENT near the START counts (index ≤ 12, allowing a short lead like
@@ -1091,7 +1146,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // thread replay: just Claude Code's own baseline + the message. Sticky for the thread (the
     // session is built on the bare context, so resumed turns must stay bare); "/clean off"
     // reverts — the NEXT message then starts a re-provisioned turn in the same thread.
-    {
+    if (!syntheticFork) {
       const cm = /^\/clean\b[\s:,.;–—-]*([\s\S]*)$/i.exec(prompt.trim());
       if (cm) {
         const rest = cm[1].trim();
@@ -1422,7 +1477,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       let threadContext = "";
       // Replay the earlier thread when the bot is first pulled into an existing thread OR when the
       // engine was just switched (the new engine starts a fresh, blind session — give it context).
-      if (!threadClean && event.thread_ts && (!(await hasThreadSession(entry.slug, threadKey)) || engineSwitched)) {
+      if (!syntheticFork && !threadClean && event.thread_ts && (!(await hasThreadSession(entry.slug, threadKey)) || engineSwitched)) {
         threadContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: contextCurrentTs, botUserId });
       }
       // The requester may lose access while this accepted answer waits behind another turn.
@@ -1468,6 +1523,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         isDM: Boolean(meta.isDM),
         ...(questionSubmissionId ? { questionSubmissionId } : {}),
         text: textForRun,
+        ...(syntheticFork ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
         attachments: attachmentPaths,
         startedAt: Date.now(),
       };
@@ -1488,6 +1544,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
 
         text: textForRun,
         threadKey,
+        ...(syntheticFork ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+        onForkSessionResolved: syntheticFork ? () => {
+          recordActiveRun(runId, { ...promotedRun, forkSourceSessionId: "" });
+          pendingForkThreads.delete(`${entry.slug}::${threadKey}`);
+          pendingForkSources.delete(syntheticFork.sourceRunKey);
+        } : undefined,
         attachments: attachmentPaths,
         signal: handle.controller.signal,
         progressReport: true,

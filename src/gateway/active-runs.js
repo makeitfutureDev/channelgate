@@ -487,6 +487,7 @@ export async function recoverRuns(stale, {
         workspaceId: rec.workspaceId || process.env.CG_SLACK_TEAM_ID || "",
         text: rec.text,
         threadKey: rec.threadKey,
+        forkSourceSessionId: rec.forkSourceSessionId || "",
         attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
         origin: "recovery", // replayed after a restart with nobody watching — never escalates
         signal: handle.controller.signal,

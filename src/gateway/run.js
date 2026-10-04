@@ -630,7 +630,7 @@ function assertRuntimeCanStart() {
   }
 }
 
-export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, sessionId: presetSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "" }) {
+export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -904,6 +904,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     isNew = true;
   } else {
     ({ sessionId, isNew, engine: sessionEngine, runtime: sessionRuntime } = await resolveSession(entry.slug, threadKey, engine, runtimeStamp));
+    // A recovering fork may have a provisional row from before the engine announced its child id.
+    // Its first attempt must fork the source, never resume that uncreated provisional id.
+    if (forkSourceSessionId) isNew = true;
     // The stored session was minted by a DIFFERENT engine than the one this turn resolved to.
     // A session id is engine-specific — Claude can't resume a Codex thread_id and vice-versa — so a
     // cross-engine resume is never attempted. Which side wins is decideThreadEngine's call: an
@@ -1374,15 +1377,15 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // session before completing a turn. saveSession writes synchronously before its promise
   // returns and retains the same /clear-generation guard as the successful-result path.
   const sessionResolved = (key, owner) => (id) => {
-    void saveSession(entry.slug, key, id, owner, sessionGen, runtimeStamp).catch((error) => {
-      console.warn(`[gateway] could not persist announced session: ${error.message}`);
-    });
+    void saveSession(entry.slug, key, id, owner, sessionGen, runtimeStamp)
+      .then(() => { if (forkSourceSessionId) onForkSessionResolved?.(id); })
+      .catch((error) => console.warn(`[gateway] could not persist announced session: ${error.message}`));
   };
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     assertRuntimeCanStart();
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
-    const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
+    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork) })
       + (promptOverride ?? turnText);
@@ -1395,10 +1398,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       target, claudeOauthToken, artifactDir: target.artifactDir,
       runtime: {
         target, claudeOauthToken, claudeTokenFingerprint: claudeTokenFp, artifactDir: target.artifactDir,
-        preferCold, keepAliveMs: keepAliveMs(), poolKey: `${entry.slug}::${threadKey}`,
+        preferCold: preferCold || Boolean(forkSourceSessionId), keepAliveMs: keepAliveMs(), poolKey: `${entry.slug}::${threadKey}`,
         mcpConfigFile, mcpConfigJson, mcpConfigFingerprint, strictMcp, dangerouslySkip, settingsFile: runSettingsFile,
         model: modelOverride, effort, permissionPromptTool, timeoutMs, maxSilenceMs, signal, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
         onSessionResolved: sessionResolved(threadKey, engine),
+        forkSourceSessionId: fresh ? forkSourceSessionId : "",
         channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
         writable: codexWritable, autoApprove: codexAutoApprove, clean,
         composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken,
@@ -1954,6 +1958,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     }
 
     assertCompletedTurn(result, engine, sid);
+    if (forkSourceSessionId && (!result.sessionId || result.sessionId === forkSourceSessionId)) {
+      throw new Error(`${engineLabel(engine)} did not return a distinct fork session id`);
+    }
 
     // A RESUME that returns an empty result (0 tokens, no output) is a broken session state — most
     // often a turn SIGKILLed mid-write by a stop/restart, leaving a dangling tool_use in the
@@ -1983,8 +1990,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // persist it over the locally-minted UUID so the next turn's resume actually finds the
     // thread. Stamp the row with THIS run's engine: a literal here silently migrates any other
     // self-minting engine's thread onto that engine on its second turn.
-    if (mintsOwnSessionId(engine) && result.sessionId && result.sessionId !== sid) {
+    if ((mintsOwnSessionId(engine) || forkSourceSessionId) && result.sessionId && result.sessionId !== sid) {
       await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStamp);
+      if (forkSourceSessionId) onForkSessionResolved?.(result.sessionId);
     }
 
     // The engine exited 0 but its "answer" is a usage-limit notice that did no work → switch to the
@@ -2046,7 +2054,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // without this notice in front.
     result = transientRetryNote(engine, result);
 
-    const finalSessionId = mintsOwnSessionId(engine) ? result.sessionId ?? sid : sid;
+    const finalSessionId = mintsOwnSessionId(engine) || forkSourceSessionId ? result.sessionId ?? sid : sid;
     // Back-fill the owning engine on a pre-v4/legacy session row (engine ''), so the NEXT harness
     // switch is caught by the clean reset-before-spawn path above instead of a failed cross-engine
     // resume. Only when the row was unlabeled AND we resumed it as-is this turn (a fresh mint/reset

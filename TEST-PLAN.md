@@ -5227,6 +5227,15 @@ none` for its cases and live gates. Kept as history.
       come back (`test/help-text.test.js`).
 - [ ] `/clear` drops the session (next message is a cold start); `/help` shows the practical guide
       and lists all commands (including `/status`, `/stop`, and `/pending`).
+- [x] Unit/fixture (`test/slack-fork.test.js`): `/fork <new message>` is parsed as a command;
+      Claude uses `--resume <source> --fork-session`, Codex uses `exec fork <source>`, and both
+      keep confinement flags. A fake Slack DM receives a linked top-level root, a separate new
+      request in that thread and the engine reply there; source and child IDs remain distinct.
+- [ ] Live Slack acceptance (Claude and Codex separately): finish a source turn, send
+      `@agent /fork Compare an alternative approach` in its thread, and verify the source link,
+      child root, separate request and answer. Follow up in both threads; each must remember its
+      own continuation while retaining the shared pre-fork history. Try during a running turn,
+      without a prior session, and from `/sudo`: each must refuse without creating a new root.
 - [ ] `/delete` (org-admin only) inside a thread removes the BOT's messages there (replies before the
       parent) and posts an ephemeral summary; without an Admin User Token, human messages stay and
       the summary explains how to enable full deletion (Settings → Slack credentials).
