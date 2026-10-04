@@ -202,7 +202,7 @@ function addModelShortcutRow(name = "", target = {}) {
   const fillModels = (value = "") => {
     const engine = engineSelect.value;
     const manifestModels = ENGINE_MANIFESTS.find((m) => m.id === engine)?.models || [];
-    const options = manifestModels.length ? manifestModels.map((m) => [m.value, m.label || m.value]) : (MODEL_OPTIONS[engine] || []);
+    const options = manifestModels.length ? manifestModels.map((m) => [m.value, m.label || m.value]) : [...(MODEL_OPTIONS[engine] || [])];
     if (value && !options.some(([id]) => id === value)) options.push([value, value]);
     modelSelect.innerHTML = options.map(([id, label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`).join("");
     modelSelect.value = value && options.some(([id]) => id === value) ? value : (options[0]?.[0] || "");
