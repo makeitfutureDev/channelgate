@@ -14,6 +14,7 @@ import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
+import { modelShortcutsFromSettings } from "./model-shortcuts.js";
 
 // settings.json key → environment variable it feeds.
 const ENV_MAP = {
@@ -306,6 +307,10 @@ export function getDefaultModel(engine) {
   // ternary that would silently hand a third engine Claude's default.
   const v = s[adapterOr(engine).defaultModelKey];
   return typeof v === "string" ? v.trim() : "";
+}
+
+export function getModelShortcuts() {
+  return modelShortcutsFromSettings(getSettings());
 }
 
 // Who may use Slack's /model wizard in a CHANNEL (both channel-wide and thread-scoped picks).
@@ -1032,6 +1037,7 @@ export function settingsForApi() {
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),
     modelChangeAccess: getModelChangeAccess(),
+    modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),
     engineFallback: getEngineFallback(),
     engineFallbackMode: getEngineFallbackMode(),

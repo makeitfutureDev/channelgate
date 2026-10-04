@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Gateway Settings now lets admins map short names to an engine and model. In Slack, mention the bot as `@agent:astra` to pin that model to a thread, with an optional task after the name. Mappings can be updated as models change.
+
 - Add `@agent /fork <new message>` for Claude and Codex sessions in Slack. It starts a separate
   engine branch in a linked new thread and runs the supplied message there.
 - Fix a history-transfer deadlock when `/sudo` crosses a container whose mounts need recreation.
