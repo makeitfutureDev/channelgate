@@ -2786,6 +2786,7 @@ function parseScheduleCron(cron) {
 
 function friendlySchedule(schedule) {
   if (schedule.once) return `Once · ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
+  if (schedule.intervalDays) return `Every ${schedule.intervalDays} days · next ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
   const parsed = parseScheduleCron(schedule.cron);
   const at = parsed.time ? ` at ${parsed.time}` : "";
   if (parsed.frequency === "daily") return `Daily${at}`;
@@ -2806,8 +2807,9 @@ function localDateTimeValue(value) {
 
 function syncScheduleTimingFields() {
   const once = Boolean(scheduleEditor?.schedule.once);
+  const interval = Boolean(scheduleEditor?.schedule.intervalDays);
   const frequency = document.getElementById("schedule-frequency").value;
-  document.getElementById("schedule-recurring-fields").hidden = once;
+  document.getElementById("schedule-recurring-fields").hidden = once || interval;
   document.getElementById("schedule-once-wrap").hidden = !once;
   document.getElementById("schedule-day-wrap").hidden = once || frequency !== "weekly";
   document.getElementById("schedule-month-day-wrap").hidden = once || frequency !== "monthly";
@@ -2840,6 +2842,7 @@ function openScheduleEditor(schedule) {
     scheduleDetail("Channel", schedule.channelName || schedule.slug || schedule.channelId),
     scheduleDetail("Type", schedule.kind === "reminder" ? "Reminder" : "Task"),
     scheduleDetail("Status", status),
+    ...(schedule.intervalDays ? [scheduleDetail("Timing", friendlySchedule(schedule))] : []),
   ].join("");
   document.getElementById("schedule-modal-description").value = schedule.description || "";
   document.getElementById("schedule-modal-enabled").checked = Boolean(schedule.enabled);
@@ -2859,6 +2862,7 @@ function openScheduleEditor(schedule) {
   const delivery = document.getElementById("schedule-modal-delivery");
   delivery.value = schedule.delivery || "standard";
   delivery.querySelector('option[value="daily-thread"]').disabled = Boolean(schedule.once);
+  delivery.querySelector('option[value="dm-on-match"]').disabled = !schedule.matchPrefix;
   prompt.value = schedule.prompt || "";
   syncScheduleTimingFields();
   error.textContent = "";
@@ -2901,7 +2905,7 @@ async function saveScheduleEditor() {
     // datetime-local is in the browser's timezone. Send an explicit instant so a daemon in
     // another timezone cannot shift it (or turn a future task into an immediately due one).
     if (schedule.once) body.runAt = new Date(document.getElementById("schedule-modal-run-at").value).toISOString();
-    else body.cron = cronFromScheduleEditor();
+    else if (!schedule.intervalDays) body.cron = cronFromScheduleEditor();
     if (schedule.kind !== "reminder") body.delivery = document.getElementById("schedule-modal-delivery").value;
     const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
       method: "PUT",
@@ -2951,7 +2955,7 @@ function renderSchedules() {
       row.className = "sched-row";
       // Last-run: a status dot (ok/warn) + relative-ish text; "never run" when it hasn't fired yet.
       const runHtml = s.lastRun
-        ? `<span class="sched-run"><span class="dot ${s.lastStatus && s.lastStatus !== "ok" ? "warn" : "ok"}"></span>last ${escapeHtml(new Date(s.lastRun).toLocaleString())}</span>`
+        ? `<span class="sched-run"><span class="dot ${s.lastStatus && !["ok", "found"].includes(s.lastStatus) ? "warn" : "ok"}"></span>last ${escapeHtml(new Date(s.lastRun).toLocaleString())}</span>`
         : `<span class="sched-run"><span class="dot off"></span>never run</span>`;
       row.innerHTML = `
         <label class="toggle inline"><input type="checkbox" class="sched-enabled" ${s.enabled ? "checked" : ""}/></label>

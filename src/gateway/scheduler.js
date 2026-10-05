@@ -25,7 +25,31 @@ const firedThisMinute = new Map(); // id -> minute key, to avoid double-fire wit
 
 // One-time ("run at") schedules delete themselves once they've run; recurring ones never do.
 function isOneTime(sched) {
-  return Boolean(sched.once || sched.runAt);
+  return Boolean(sched.once || (sched.runAt && !sched.intervalDays));
+}
+
+function isQuietMatch(sched, result) {
+  return sched.delivery === "dm-on-match" && typeof result?.content === "string" &&
+    result.content.trimStart().startsWith(sched.matchPrefix || "FOUND:");
+}
+
+async function deliverScheduledResult(client, sched, result, threadTs, deliver) {
+  if (sched.delivery === "dm-on-match") {
+    if (isQuietMatch(sched, result)) {
+      const sent = await postDirectMessage(client, { userId: sched.createdBy, text: result.content.trim() });
+      if (!sent) throw new Error("conditional schedule could not open or deliver the creator DM");
+    }
+    return;
+  }
+  await deliver(client, { channel: sched.channelId, threadKey: threadTs || undefined,
+    result, trustedPrefix: sched.delivery === "channel" ? notifyPrefix(sched) : "" });
+}
+
+export function nextIntervalRun(sched, now = Date.now()) {
+  const intervalMs = sched.intervalDays * 24 * 60 * 60_000;
+  const planned = Date.parse(sched.runAt);
+  if (!Number.isFinite(planned) || !intervalMs) return "";
+  return new Date(planned + (Math.floor(Math.max(0, now - planned) / intervalMs) + 1) * intervalMs).toISOString();
 }
 
 // Retire a one-time schedule at its DELIVERY boundary. It used to be deleted up front, before
@@ -70,7 +94,7 @@ export function scheduleDayKey(now = new Date()) {
 export async function taskDeliveryThread(client, sched, title, now = new Date()) {
   // Channel delivery intentionally skips the "Running" anchor. The result is posted top-level
   // after the run, giving admins a true channel-vs-thread choice rather than a cosmetic label.
-  if (sched.delivery === "channel") return null;
+  if (["channel", "dm-on-match"].includes(sched.delivery)) return null;
   if (sched.delivery === "daily-thread") {
     const date = scheduleDayKey(now);
     if (sched.dailyThreadDate === date && sched.dailyThreadTs) return sched.dailyThreadTs;
@@ -137,14 +161,13 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     // A completed output can be retried without re-running its tools. A previous execution
     // without that checkpoint has unknown external effects and requires a human reconciliation.
     if (sched.pendingDelivery) {
-      await deliver(client, { channel: sched.channelId, threadKey: threadTs || undefined,
-        result: sched.pendingDelivery, trustedPrefix: sched.delivery === "channel" ? notifyPrefix(sched) : "" });
+      await deliverScheduledResult(client, sched, sched.pendingDelivery, threadTs, deliver);
       await finishScheduleDelivery(client, sched, sched.pendingDelivery, threadTs);
       return;
     }
     if (sched.executionState === "running" || (isOneTime(sched) && sched.runAttempts > 0 && !sched.executionState && sched.kind !== "reminder")) {
       updateSchedule(sched.id, { enabled: false, executionState: "interrupted", lastStatus: "interrupted: external actions unknown; inspect before retrying" });
-      await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "",
+      if (sched.delivery !== "dm-on-match") await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "",
         text: "⏰ A scheduled task was interrupted before its result was saved. It was paused without running again because external actions may already have happened. Inspect the task before explicitly retrying." });
       return;
     }
@@ -274,12 +297,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     // as every unattended reply (deliverResult). The tokens are already spent, so the ledger is
     // written before delivery: a Slack failure must not erase the spend.
     await bankUsage({ channelId: sched.channelId, slug: sched.slug, authorId: sched.createdBy, engine: result.engine, taskKind: "scheduled", result });
-    await deliver(client, {
-      channel: sched.channelId,
-      threadKey: threadTs || undefined,
-      result,
-      trustedPrefix: sched.delivery === "channel" ? notifyPrefix(sched) : "",
-    });
+    await deliverScheduledResult(client, sched, result, threadTs, deliver);
     await finishScheduleDelivery(client, sched, result, threadTs);
 
   } catch (err) {
@@ -287,7 +305,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       ...(sched.executionState === "running" ? { enabled: false, executionState: "interrupted" } : {}) });
     await logEvent("schedule_error", { id: sched.id, error: err.message });
     try {
-      if (client) await postNoticeWithMenu(client, { channel: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${plainFailureText(err.message) || "the run failed"}` });
+      if (client && sched.delivery !== "dm-on-match") await postNoticeWithMenu(client, { channel: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${plainFailureText(err.message) || "the run failed"}` });
     } catch {
       /* ignore */
     }
@@ -309,7 +327,10 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
 
 async function finishScheduleDelivery(client, sched, result, threadTs) {
   const loopTick = isLoopRow(sched) && Boolean(sched.resumeThread);
-  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: "ok", executionState: "delivered", pendingDelivery: null, executionThread: null });
+  const matched = isQuietMatch(sched, result);
+  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: matched ? "found" : "ok", executionState: "delivered", pendingDelivery: null, executionThread: null,
+    ...(matched ? { enabled: false } : {}),
+    ...(sched.intervalDays ? { runAt: nextIntervalRun(sched) } : {}) });
   // A loop spends one tick of its budget per delivered fire, then re-arms from whatever pacing
   // decision the model made during THIS tick. `armLoop` replaces the thread's pending row, so a
   // dynamic loop hands off cleanly; a loop that decided to stop (or ran out of budget) leaves

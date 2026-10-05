@@ -5901,6 +5901,17 @@ none` for its cases and live gates. Kept as history.
       two surfaces.
 
 ### Scheduling & reminders — time zone, label, acknowledgment + escalation (Slice 8.9)
+- [x] Unit: `interval_days:14` creates an exact fixed interval, the scheduler runs once when due,
+      advances from the planned due time, and does not replay missed periods. `dm-on-match` makes
+      no start or routine post, while a `FOUND:` result goes only to the creator's DM
+      (`test/schedule-conditional.test.js`).
+- [ ] Live (Claude and Codex): in a disposable channel, create a two-week conditional check with
+      `delivery:"dm-on-match"`, `match_prefix:"FOUND:"`, and a prompt whose first run returns
+      `NO_UPDATE`. Move its due time forward using the test database, fire it, and require no
+      channel or DM post. Then return `FOUND: <unique test URL>` from the next run and require
+      exactly one creator DM, no channel post, and a disabled schedule to avoid repeat alerts. Inspect status
+      after a controlled failure; require an error recorded without a Slack post.
+      Private QA cases: AUT-QUIET-01-C and AUT-QUIET-01-X.
 - [x] Unit: the daemon's zone is resolved from `TZ` (POSIX `:Zone` spelling included) or the
       platform, `zonedStamp` renders "2026-09-08 09:15 Europe/Bucharest (06:15 UTC)" (full UTC date
       when the two calendars disagree, no parenthetical on a UTC daemon, no throw on an unusable
