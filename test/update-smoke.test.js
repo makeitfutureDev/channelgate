@@ -10,6 +10,7 @@ import {
   usageLimitedSmoke,
   validSmokeResponse,
 } from "../src/gateway/update-smoke.js";
+import { isChannelLive } from "../src/gateway/egress/liveness.js";
 
 function tempRoot() {
   return tempDir("cg-update-smoke-");
@@ -62,9 +63,11 @@ function fixture(root, overrides = {}) {
 
 test("both engines run inside the resolved container with strict arguments and cleanup", async () => {
   const root = tempRoot(); const f = fixture(root);
+  f.target.meta = { channelId: "smoke-fixture" };
   try {
     const engines = ["claude", "codex"].map((id) => ({ id, updateSmoke: async (args) => {
       assert.equal(args.target, f.target);
+      assert.equal(isChannelLive("smoke-fixture"), true);
       assert.equal(args.dangerouslySkip, false);
       assert.equal(args.strictMcp, true);
       assert.equal(existsSync(args.settingsFile), true);
@@ -75,6 +78,7 @@ test("both engines run inside the resolved container with strict arguments and c
     assert.equal(result.ok, true);
     assert.equal(result.engines.length, 2);
     assert.deepEqual(f.calls, ["lease", "ensure", "claude", "codex", "destroy", "release"]);
+    assert.equal(isChannelLive("smoke-fixture"), false);
     assert.equal(existsSync(f.target.cwd), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

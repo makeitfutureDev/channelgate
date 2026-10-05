@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Update smoke now binds and marks its disposable channel live for the duration of the probe,
+  allowing the Codex login relay through the egress proxy and releasing it on cleanup.
 - Scheduled checks can run every fixed number of days and DM their creator only when the result
   begins with a configured match prefix. Routine checks make no Slack posts.
 
