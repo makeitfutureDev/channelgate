@@ -1329,6 +1329,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   sessions remain fresh per run — the session key is minted per fire and never derived from the
   reused anchor, so grouping the day's results never joins them into one conversation. Existing
   schedules retain standard per-run announcements. → TEST-PLAN: Scheduling & reminders.
+- Scheduled tasks can use `interval_days` for a fixed 24-hour-day cadence (including exactly
+  14 days), and `delivery:"dm-on-match"` with a required `match_prefix` for quiet monitoring.
+  The scheduler posts no start or routine result; only a result beginning with the prefix is
+  sent as a DM to the creator, then the schedule stops. Failed runs remain in schedule status and events. The next interval
+  advances from the planned due time, skipping missed periods rather than replaying checks.
+  → TEST-PLAN: Scheduling & reminders.
 - Native `/loop` in a thread: Claude Code's own loop skill paces itself with `ScheduleWakeup` /
   `CronCreate`, both of which are session-local (the harness documents its cron store as "gone when
   Claude exits") and therefore inert in a headless turn. The daemon reads the pacing call out of the

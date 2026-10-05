@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Scheduled checks can run every fixed number of days and DM their creator only when the result
+  begins with a configured match prefix. Routine checks make no Slack posts.
+
 - Add `@agent /fork <new message>` for Claude and Codex sessions in Slack. It starts a separate
   engine branch in a linked new thread and runs the supplied message there.
 - Fix a history-transfer deadlock when `/sudo` crosses a container whose mounts need recreation.

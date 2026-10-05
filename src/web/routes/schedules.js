@@ -63,12 +63,15 @@ export function createSchedulesRouter() {
       const nextNotify = patch.notify ?? current.notify;
       const nextNotifyUserId = patch.notifyUserId ?? current.notifyUserId;
       if (nextNotify === "user" && !nextNotifyUserId) return res.status(400).json({ error: "choose a person to notify" });
-      if (Object.hasOwn(req.body || {}, "delivery") && !["standard", "daily-thread", "channel"].includes(req.body.delivery)) {
+      if (Object.hasOwn(req.body || {}, "delivery") && !["standard", "daily-thread", "channel", "dm-on-match"].includes(req.body.delivery)) {
         return res.status(400).json({ error: "invalid delivery setting" });
       }
-      if (["standard", "daily-thread", "channel"].includes(req.body?.delivery)) {
+      if (["standard", "daily-thread", "channel", "dm-on-match"].includes(req.body?.delivery)) {
         if (req.body.delivery === "daily-thread" && (current.kind === "reminder" || current.once)) {
           return res.status(400).json({ error: "daily-thread delivery requires a recurring task schedule" });
+        }
+        if (req.body.delivery === "dm-on-match" && (current.kind === "reminder" || !current.createdBy || !current.matchPrefix)) {
+          return res.status(400).json({ error: "DM on match requires a task with a creator and a match prefix" });
         }
         patch.delivery = req.body.delivery;
         patch.dailyThreadDate = "";
