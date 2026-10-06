@@ -1,18 +1,17 @@
 // Teams' conversation settings console. The opaque card state owns conversation/session authority;
-// submitted fields are values only and are never saved in the navigation state.
+// submitted fields are values only; pending edits live in bounded, expiring daemon memory.
 import { randomUUID } from 'node:crypto';
 import { getChannelMeta, patchChannelMeta, isAdmin, isApproved } from '../../config/store.js';
 import { isAuthorized } from '../../gateway/modes.js';
 import { logChannelPolicyChange } from '../../config/channel-audit.js';
-import { listForChannel, countEnabledForChannel, updateSchedule, deleteSchedule } from '../../config/schedules.js';
-import { getScheduleMaxPerChannel } from '../../config/settings.js';
-import { logEvent } from '../../util/logger.js';
-import { nextCronRun } from '../../util/cron.js';
-import { zonedStamp, daemonTimeZone } from '../../util/timezone.js';
+import { listForChannel } from '../../config/schedules.js';
 import { resolveResumeSession } from '../../slack/resume-session.js';
 import { effectiveMeta } from '../../gateway/run.js';
-import { renderGeneral, handleGeneral } from './settings-general.js';
-import { renderCatalogPage, handleCatalogAction } from './settings-catalog.js';
+import { renderGeneral, handleGeneral, captureGeneralDraft } from './settings-general.js';
+import { handleCatalogAction } from './settings-catalog.js';
+import { captureCatalogDraft, renderDraftCatalogPage, handleDraftCatalogAction } from './settings-drafts.js';
+import { renderAutomations, handleAutomations } from './settings-automations.js';
+import { settingsPanels } from './settings-layout.js';
 
 export const TEAMS_SETTINGS_PAGES = Object.freeze([
   ['general', 'General'], ['secrets', 'Variables'], ['mcp', 'MCPs'],
@@ -30,7 +29,7 @@ export function teamsSettingsUi(stateId) {
   return {
     text, execute,
     heading: value => ({ ...text(value), weight: 'Bolder', separator: true }),
-    buttons: actions => ({ type: 'ActionSet', actions }),
+    buttons: actions => ({ type: 'ActionSet', spacing: 'Small', actions }),
     choice: (id, label, value, choices) => ({ type: 'Input.ChoiceSet', id, label, style: 'compact',
       value: String(value ?? ''), choices: choices.map(item => ({ title: String(item.title || item.label || item.value).slice(0, 100), value: String(item.value) })) }),
     input: (id, label, value = '') => ({ type: 'Input.Text', id, label, value: String(value), maxLength: 8000,
@@ -75,28 +74,6 @@ export function createTeamsSettingsContext(state, { connector, authorize }) {
   return context;
 }
 
-function automations(ctx, ui) {
-  const rows = listForChannel(ctx.channelId);
-  const pages = Math.max(1, Math.ceil(rows.length / 12));
-  const page = Math.min(Math.max(0, Number.isSafeInteger(ctx.state.automationPage) ? ctx.state.automationPage : 0), pages - 1);
-  const body = [ui.heading('Automations'), ui.text(`${rows.length} automations — page ${page + 1}/${pages}. Times are shown in ${daemonTimeZone()}. Ask the agent to create a task or reminder.`)];
-  for (const row of rows.slice(page * 12, (page + 1) * 12)) {
-    const next = row.runAt || (row.enabled && row.cron ? nextCronRun(row.cron) : null);
-    body.push(ui.heading(String(row.description || row.loopReason || row.prompt || row.id).slice(0, 120)),
-      ui.text(`${row.loop ? 'Loop' : row.kind === 'reminder' ? 'Reminder' : 'Task'} · ${row.enabled ? 'On' : 'Paused'}${row.cron ? ` · ${row.cron}` : ''}${next ? ` · Next: ${zonedStamp(next)}` : ''}${row.loop ? ` · Ticks remaining: ${row.ticksRemaining ?? '—'}` : ''}`),
-      ui.text(`Creator: ${String(row.createdBy || 'Unknown').slice(0, 100)} · Last status: ${String(row.lastStatus || 'Not run yet').slice(0, 120)}`));
-    const actions = [];
-    if (!row.loop && !row.once && !row.runAt) actions.push(ui.execute(row.enabled ? 'Pause' : 'Resume', 'settings.automation.toggle', { id: row.id, enabled: !row.enabled }, 'none'));
-    actions.push(ui.execute(row.loop ? 'Stop loop' : row.once || row.runAt ? 'Cancel' : 'Delete', 'settings.automation.delete', { id: row.id }, 'none'));
-    body.push(ui.buttons(actions));
-  }
-  if (!rows.length) body.push(ui.text('No automations for this conversation.'));
-  const actions = [];
-  if (page) actions.push(ui.execute('Previous', 'settings.automation.page', { page: page - 1 }, 'none'));
-  if (page + 1 < pages) actions.push(ui.execute('Next', 'settings.automation.page', { page: page + 1 }, 'none'));
-  return { body, actions };
-}
-
 async function resume(ctx, ui) {
   const current = await resolveResumeSession({ entry: ctx.entry, meta: effectiveMeta(ctx.meta), isAdminAuthor: ctx.userIsAdmin && !ctx.isShared }, ctx.sessionKey);
   const body = [ui.heading('Resume Session')];
@@ -113,20 +90,24 @@ export async function buildTeamsSettings(ctx, stateId) {
   const page = validPage(ctx.state.tab) ? ctx.state.tab : '';
   ctx.state.tab = page;
   const content = page === 'general' ? await renderGeneral(ctx, ui)
-    : page === 'automations' ? automations(ctx, ui)
+    : page === 'automations' ? renderAutomations(ctx, ui)
       : page === 'resume' ? await resume(ctx, ui)
-        : page ? await renderCatalogPage(page, ctx, ui) : { body: [], actions: [] };
-  // Three tabs per row keeps every page visible without exceeding Teams' action-row limit.
-  const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'none'));
+        : page ? await renderDraftCatalogPage(page, ctx, ui) : { body: [], actions: [] };
+  // Two tabs per row keep long labels readable in narrow Teams/mobile surfaces.
+  const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `✓ ${title}` : title, 'settings.page', { page: id }, 'auto'));
+  const sectionTitle = TEAMS_SETTINGS_PAGES.find(([id]) => id === page)?.[1];
   return { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
-    body: [ui.heading('Channel settings'), ui.text(`Settings for ${ctx.entry.name || 'this conversation'}. Changes apply to the next turn.`),
-      ...(ctx.isShared ? [ui.text('These controls belong to the person who opened them. Other members can open their own /settings.')] : []),
-      ui.buttons(tabs.slice(0, 3)), ui.buttons(tabs.slice(3)),
-      ...(ctx.state.notice ? [ui.text(ctx.state.notice)] : []), ...content.body], actions: content.actions || [] };
+    msteams: { width: 'Full' },
+    body: [{ ...ui.text('Channel settings'), size: 'Large', weight: 'Bolder', spacing: 'None' },
+      { ...ui.text(ctx.entry.name || 'This conversation'), size: 'Small', isSubtle: true, spacing: 'Small' },
+      ...(ctx.isShared ? [{ ...ui.text('Your controls · Other members can open /settings'), size: 'Small', isSubtle: true, spacing: 'Small' }] : []),
+      ui.buttons(tabs.slice(0, 2)), ui.buttons(tabs.slice(2, 4)), ui.buttons(tabs.slice(4)),
+      ...(ctx.state.notice ? [{ type: 'Container', style: 'emphasis', spacing: 'Medium', items: [{ ...ui.text(ctx.state.notice), size: 'Small' }] }] : []),
+      ...(page ? settingsPanels(content, sectionTitle) : [{ ...ui.text('Choose a section to edit its settings.'), size: 'Small', isSubtle: true, spacing: 'Medium' }])], actions: [] };
 }
 
-const destructive = (action, data) => action.endsWith('.remove') || action.endsWith('.delete') || action === 'settings.thread.reset'
-  || (['settings.cloud.toggle', 'settings.skills.toggle'].includes(action) && data.activate === false);
+const destructive = (action, data) => !action.startsWith('settings.draft.') && (action.endsWith('.remove') || action.endsWith('.delete') || action === 'settings.thread.reset'
+  || (['settings.cloud.toggle', 'settings.skills.toggle'].includes(action) && data.activate === false));
 const confirmationFields = new Set(['scope', 'variableScope', 'name', 'id', 'key', 'engine', 'activate', 'connection', 'field']);
 function confirmationDetails(action, data, ctx) {
   const name = String(data.name || data.key || '').slice(0, 100);
@@ -144,6 +125,8 @@ function confirmationDetails(action, data, ctx) {
 export async function handleTeamsSettings(action, data, ctx, stateId) {
   const ui = teamsSettingsUi(stateId);
   await ctx.authorize();
+  if (action === 'settings.page' && ctx.state.tab === 'general') captureGeneralDraft(data, ctx);
+  if ((action.startsWith('settings.draft.') && action !== 'settings.draft.discard') || ['settings.page', 'settings.catalog.page'].includes(action)) captureCatalogDraft(data, ctx);
   if (ctx.isShared && action.startsWith('settings.variable.') && data.variableScope !== 'channel') {
     throw new Error('Personal and organization variables require authenticated settings.');
   }
@@ -169,26 +152,8 @@ export async function handleTeamsSettings(action, data, ctx, stateId) {
       ui.text(details)], actions: [
       ui.execute('Confirm', 'settings.confirm', { token }, 'none'), ui.execute('Cancel', 'settings.confirm.cancel', {}, 'none')] };
   }
-  if (action.startsWith('settings.automation.')) {
-    if (action === 'settings.automation.page') {
-      if (!Number.isSafeInteger(data.page) || data.page < 0) throw new Error('Unknown automations page.');
-      ctx.state.automationPage = data.page; ctx.state.tab = 'automations';
-      return buildTeamsSettings(ctx, stateId);
-    }
-    const row = listForChannel(ctx.channelId).find(item => item.id === data.id);
-    if (!row) throw new Error('This automation is no longer in this conversation.');
-    if (action === 'settings.automation.delete') {
-      deleteSchedule(row.id, ctx.channelId);
-      await logEvent('schedule_deleted', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, author: ctx.ownerId, via: 'teams_settings' });
-      ctx.state.notice = 'Automation removed.';
-    } else if (action === 'settings.automation.toggle') {
-      if (typeof data.enabled !== 'boolean' || row.loop || row.once || row.runAt) throw new Error('Only recurring automations can be paused or resumed.');
-      if (data.enabled && !row.enabled && countEnabledForChannel(ctx.channelId) >= getScheduleMaxPerChannel()) throw new Error('This conversation has reached its enabled automation limit.');
-      updateSchedule(row.id, { enabled: data.enabled });
-      await logEvent('schedule_updated', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, enabled: data.enabled, author: ctx.ownerId, via: 'teams_settings' });
-      ctx.state.notice = data.enabled ? 'Automation resumed.' : 'Automation paused.';
-    } else throw new Error('Unknown automation action.');
-    ctx.state.tab = 'automations';
+  if (await handleDraftCatalogAction(action, data, ctx) || await handleAutomations(action, data, ctx, ui)) {
+    // Drafts and their two scope Apply actions own all newly rendered editable catalog controls.
   } else if (!await handleGeneral(action, data, ctx, ui) && !await handleCatalogAction(action, data, ctx, ui)) {
     throw new Error('Unsupported settings action.');
   }

@@ -175,6 +175,7 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     slug,
     createdBy,
     threadKey,
+    settingsSourceThreadKey: claims.settingsSourceThreadKey || threadKey,
     origin,
     activeEngine,
     principalTrusted,

@@ -47,6 +47,7 @@ import { createSemaphore } from "../util/semaphore.js";
 import { logEvent } from "../util/logger.js";
 import { resolveRunAccessGrants, userOnlySkillGrants } from "./access-grants.js";
 import { getSkill } from "./skills/catalog.js";
+import { getThreadSettings, resolveThreadSettingsMeta, resolveThreadSkillGrants } from "./thread-settings.js";
 import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntimeReadPaths } from "./run-grant-artifacts.js";
 import { isForceStopping } from "./shutdown.js";
 import { allowedFsRoot } from "../web/security.js";
@@ -657,7 +658,7 @@ function assertRuntimeCanStart() {
   }
 }
 
-export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "" }) {
+export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", settingsSourceThreadKey = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -686,19 +687,14 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     (await getChannelMeta(entry.slug)) ??
       defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM })
   ));
-
-  // Resolve the durable org+channel baseline separately from this run's trusted user tier. The
-  // HTTP run API authenticates only its API key; its caller-supplied Slack author id must never
-  // read a stored user record or inherit that person's grants.
-  const runGrants = await resolveRunAccessGrants({
-    organization: getOrgAccessGrants(),
-    channel: channelMeta,
-    authorId,
-    untrustedPrincipal,
-    loadUser: getUser,
-    lookupSkill: getSkill,
-  });
-  let meta = { ...channelMeta, ...runGrants.effective };
+  // Background agents keep a separate engine session but inherit the launch thread's settings.
+  // An explicit internal source key avoids guessing from a synthetic session id's spelling.
+  const settingsKey = settingsSourceThreadKey || threadKey;
+  const threadSettings = Object.fromEntries(['mcp', 'skills', 'secrets'].map(section => [section,
+    getThreadSettings(entry.slug, settingsKey, section),
+  ]));
+  const threadMeta = resolveThreadSettingsMeta(channelMeta, threadSettings, { slug: entry.slug, threadKey: settingsKey });
+  let meta = threadMeta;
 
   // Per-run overrides (the HTTP run API can pass engine/model/effort/mode per request). Applied
   // after effectiveMeta so they win over the channel/DM-template config, and before folder
@@ -729,6 +725,21 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const sudoKey = sudoSourceThreadKey || threadKey;
   const sudoThread = Boolean(sudoKey && await getThreadSudo(entry.slug, sudoKey));
   if (sudoThread && trustedAdminAuthor) meta = sudoModeMeta(meta);
+
+  // Resolve optional thread skills only after the final author/run/thread/sudo posture. A clean
+  // turn loads none, so a removed skill or vanished template must not prevent that turn starting.
+  // The durable org+channel baseline remains separate and cannot change container mount posture.
+  // HTTP API attribution still never inherits a person's private grants.
+  const runGrants = await resolveRunAccessGrants({
+    organization: getOrgAccessGrants(),
+    channel: channelMeta,
+    thread: { ...threadSettings.mcp, skills: meta.cleanMode ? [] : resolveThreadSkillGrants(threadSettings.skills, { channelId }) },
+    authorId,
+    untrustedPrincipal,
+    loadUser: getUser,
+    lookupSkill: getSkill,
+  });
+  meta = { ...meta, ...runGrants.effective };
 
   // Engine: an explicit per-run API override is the most specific ask and beats everything
   // (matching the model/effort override precedence below); otherwise the per-thread override (a
@@ -1172,6 +1183,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
     toolboxToken, makeToolboxUrl, makeToolboxKey,
     channelId, slug: entry.slug, authorId, threadKey, origin,
+    settingsSourceThreadKey: settingsKey,
     progressReport: progressReportEnabled,
     principalTrusted: !untrustedPrincipal,
     gatewayFsRoot, gatewayWorkspaceRoot,
@@ -1387,6 +1399,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     slug: entry.slug,
     meta,
     userSkills,
+    threadSkills: clean ? [] : runGrants.thread.skills,
     sharedSkills: clean ? [] : runGrants.shared.skills,
     // Gateway-generated operating skills remain part of every Slack turn, including clean mode;
     // clean only removes org/channel/user/library grants and MCPs. The artifact copier imports
@@ -1841,7 +1854,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
     // The turn is live work in this channel from here to the finally: the egress proxy swaps this
     // channel's (and, for this author, their personal) placeholders only while it is.
-    releaseEgressLive = markLive({ channelId, ownerId: untrustedPrincipal ? "" : authorId, kind: "turn", id: threadKey });
+    releaseEgressLive = markLive({ channelId, ownerId: untrustedPrincipal ? "" : authorId, kind: "turn", id: threadKey, threadKey: settingsKey });
     await bringRuntimeUp();
     // Every gateway note below is part of `content` for surfaces with no stream — and ANNOUNCED, so a
     // surface that writes its answer from the live stream delivers it too (see announceAnswerNote).

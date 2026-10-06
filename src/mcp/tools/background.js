@@ -6,7 +6,7 @@ import { z } from "zod";
 import { progressReportInputSchema } from "../../engines/progress-report.js";
 
 export function register(server, ctx) {
-  const { channelId, slug, createdBy, threadKey, text, daemon } = ctx;
+  const { channelId, slug, createdBy, threadKey, settingsSourceThreadKey, text, daemon } = ctx;
 
   // ── Background jobs (auto/admin channels) ───────────────────────────────────────
   // Hand a long-running shell command to the DAEMON instead of backgrounding it yourself with
@@ -38,7 +38,7 @@ export function register(server, ctx) {
       if (!channelId) return text("No channel context — can't run a background job here.");
       if (!daemon.available("background")) return text("Background jobs are unavailable right now.");
       try {
-        const data = await daemon.call("background", { channelId, slug, authorId: createdBy, threadKey, command, label: label || "" }, { timeoutMs: 15_000 });
+        const data = await daemon.call("background", { channelId, slug, authorId: createdBy, threadKey, settingsSourceThreadKey, command, label: label || "" }, { timeoutMs: 15_000 });
         if (!data.ok) return text(`Couldn't start the background job: ${data.error || "unknown error"}`);
         if (data.pendingApproval) {
           return text(
@@ -84,7 +84,7 @@ export function register(server, ctx) {
       if (!channelId) return text("No channel context — can't run a background agent here.");
       if (!daemon.available("background")) return text("Background agents are unavailable right now.");
       try {
-        const data = await daemon.call("background", { kind: "agent", channelId, slug, authorId: createdBy, threadKey, task, label: label || "" }, { timeoutMs: 15_000 });
+        const data = await daemon.call("background", { kind: "agent", channelId, slug, authorId: createdBy, threadKey, settingsSourceThreadKey, task, label: label || "" }, { timeoutMs: 15_000 });
         if (!data.ok) return text(`Couldn't start the background agent: ${data.error || "unknown error"}`);
         return text(
           `✅ Started background agent *${data.label}* (id ${data.id}). It's running on the daemon now. ` +

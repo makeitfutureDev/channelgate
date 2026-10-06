@@ -699,24 +699,41 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
   with just the section menu in the original channel/thread or chat; selecting a section reveals
   its settings below the menu in the same card, keeping its conversation and session. `/secrets`
-  starts on Variables. General shows both channel defaults and session pins, filters compatible
+  starts on Variables. Full-width native cards use compact two-column navigation, a clear header,
+  grouped settings panels and a separate Save footer. All inputs remain in the same card for
+  Execute/Submit compatibility. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
-  channel default. Teams runtime lists have one **Apply to channel** and one **Apply to thread**
-  button. Engine-labelled model choices allow a complete engine/model/effort selection before
+  channel default. Every editable section has one **Apply to channel** and one **Apply to thread**
+  button. Apply saves only the open section; drafts in other sections stay pending.
+  Engine-labelled model choices allow a complete engine/model/effort selection before
   saving; the compatible triple is saved atomically for that scope. Stale forms refuse to
-  overwrite newer runtime settings. Other settings keep their explicit controls.
+  overwrite newer settings. General batches changed channel access fields with channel runtime;
+  thread Apply refuses changed channel-only policy. Variables, MCPs and Skills stage edits in
+  expiring requester-bound daemon memory, retain them across section/pagination navigation,
+  and save one validated scope batch. Thread credentials and MCP selections live in separate
+  SQLite override rows; thread skill additions/templates use per-run artifacts and leave durable
+  channel grants unchanged. Channel/organization skills remain inherited; personal skill grants
+  and foreign-channel dependencies cannot enter the thread tier. Discard abandons pending edits;
+  Follow channel stages clearing that section's thread overrides. Applying takes effect on the
+  next turn without restarting the daemon. Background agents/jobs inherit their launch scope.
+  Protected thread variables resolve and rotate live from their own store, revoke separately,
+  and pause while another thread or an SSH/editor session is active. Readable values share the
+  channel container's trust boundary. Removing a variable for a thread suppresses its channel
+  value while retaining personal/organization fallback. Automations batch pause/removal, validate
+  all affected schedules atomically and permit thread Apply only for exact execution-bound
+  schedules; Resume is read-only.
   Runtime edits in this console admit every authorized member, independently of the `/model`
   text-command policy. Access policy and native member selection require managers/admins; Cloud
   MCP and organization variable changes require admins. Complete roster selectors fall back to
   the authenticated website above 25 members or the native card budget; stored selections are
   never silently dropped. VPN uses the existing service, reporting unavailable where that
   service does not support the Teams identifier.
-  Variable scopes, connection tokens, skill grants/templates and schedules share Slack's stores;
+  Channel variables, connection tokens, skill grants/templates and schedules share Slack's stores;
   catalogs/templates/automations paginate. Inputs never prefill saved secrets, new secret entries
-  are masked, and destructive controls use consumed server-held confirmation tokens. Native
+  are masked, and legacy destructive controls use consumed server-held confirmation tokens. Native
   secret entry follows the existing 8,000-character/16-KiB submission bounds. Resume reads the
   current project session and its engine/container terminal command at display time. Shared
-  cards list channel variables only, omit personal/organization credential metadata and private
+  cards list channel or thread variables only, omit personal/organization credential metadata and private
   ungranted MCP catalogs, and never publish administrator session commands. Private scopes remain
   available in authenticated settings or an explicitly opened personal conversation. Accepted
   tab and Apply actions update the same server-held card message, for Execute and Submit clients.

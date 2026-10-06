@@ -10,6 +10,8 @@ const { saveSession } = await import('../src/gateway/sessions.js');
 const { adaptiveCardAttachment } = await import('../src/platforms/msteams/cards.js');
 const { modelsForEngine } = await import('../src/engines/registry.js');
 const { getDb } = await import('../src/db/index.js');
+const { getThreadSettings, setThreadSettings } = await import('../src/gateway/thread-settings.js');
+const { putSkillRevision } = await import('../src/gateway/skills/catalog.js');
 let sequence = 0;
 async function fixture({ admin = true, privateChat = true, personal = false } = {}) {
   const suffix = ++sequence, channelId = personal ? `teams:a:settings-${suffix}` : `teams:19:settings-${suffix}@thread.v2`, owner = `29:settings-${suffix}`;
@@ -34,7 +36,165 @@ async function fixture({ admin = true, privateChat = true, personal = false } = 
   return { controls, connector, sent, replies, args, invoke, entry, owner, channelId, stateId };
 }
 const value = result => result.body.value;
-const input = (card, id) => card.body.find(item => item.id === id);
+const elements = card => card.body.flatMap(function visit(row) { return [row, ...(row.items || []).flatMap(visit)]; });
+const input = (card, id) => elements(card).find(item => item.id === id);
+const allActions = card => [...elements(card).filter(row => row.type === 'ActionSet').flatMap(row => row.actions), ...(card.actions || [])];
+const open = async (f, page) => value(await f.invoke({ stateId: f.stateId, page }, 'settings.page'));
+const draftAction = async (f, verb, data = {}) => value(await f.invoke({ stateId: f.stateId, ...data }, verb));
+
+test('every editable section ends with the scoped Apply pair; Resume remains read-only', async () => {
+  const f = await fixture();
+  for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
+    const card = await open(f, page), actions = allActions(card);
+    const applies = actions.filter(action => action.title.startsWith('Apply'));
+    assert.deepEqual(applies.map(action => action.title), page === 'resume' ? [] : ['Apply to channel', 'Apply to thread']);
+    assert.ok(!actions.some(action => ['Save variable', 'Save connections', 'Apply template'].includes(action.title)));
+    const fields = elements(card).filter(item => item.type?.startsWith('Input.'));
+    assert.equal(new Set(fields.map(item => item.id)).size, fields.length, 'grouping preserves unique input IDs');
+    for (const action of actions) {
+      assert.deepEqual(action.fallback.data, action.data, 'Submit retains the same state and scope');
+      assert.equal(action.fallback.associatedInputs, action.associatedInputs);
+    }
+    adaptiveCardAttachment(card);
+  }
+});
+test('complete grouped General card stays within the delivery budget with a maximum-size roster', async () => {
+  const f = await fixture();
+  f.connector.api.listMembers = async () => [{ id: f.owner, name: 'Settings owner' }, ...Array.from({ length: 24 }, (_, i) => ({ id: `29:${i}-` + 'u'.repeat(245), name: 'Member ' + 'n'.repeat(95) }))];
+  const card = await open(f, 'general');
+  adaptiveCardAttachment(card);
+  assert.equal(card.msteams.width, 'Full');
+  assert.equal(allActions(card).filter(action => action.verb === 'settings.runtime.apply').length, 2);
+  assert.ok(input(card, 'channel_model'));
+  assert.ok(input(card, 'thread_model'));
+});
+test('variables stage multiple edits, preserve them across navigation and save only the chosen scope', async () => {
+  const f = await fixture(); await open(f, 'secrets');
+  for (const name of ['FIRST_TOKEN', 'SECOND_TOKEN']) {
+    const card = await draftAction(f, 'settings.draft.variable', { variableName: name, variableValue: `private-${name}-fixture-value`, variableHostsMode: 'replace', variableHosts: 'api.example.com' });
+    assert.doesNotMatch(JSON.stringify(card), /private-FIRST|private-SECOND/);
+    assert.equal(input(card, 'variableValue').value, '');
+  }
+  assert.equal((await getChannelMeta(f.entry.slug)).env, undefined);
+  await open(f, 'skills'); await open(f, 'secrets');
+  await draftAction(f, 'settings.draft.source', { page: 'secrets', source: 'channel' }); // Same view never discards.
+  await draftAction(f, 'settings.draft.apply', { page: 'secrets', scope: 'thread' });
+  const stored = getThreadSettings(f.entry.slug, 'original-session', 'secrets');
+  assert.deepEqual(Object.keys(stored.env), ['FIRST_TOKEN', 'SECOND_TOKEN']);
+  assert.equal((await getChannelMeta(f.entry.slug)).env, undefined);
+  assert.deepEqual(getThreadSettings(f.entry.slug, 'other-session', 'secrets'), {});
+  await draftAction(f, 'settings.draft.variable', { variableName: 'THIRD_TOKEN', variableValue: 'third-secret-fixture-value' });
+  await draftAction(f, 'settings.draft.apply', { page: 'secrets', scope: 'channel' });
+  assert.deepEqual(Object.keys((await getChannelMeta(f.entry.slug)).env), ['THIRD_TOKEN']);
+  assert.deepEqual(Object.keys(getThreadSettings(f.entry.slug, 'original-session', 'secrets').env), ['FIRST_TOKEN', 'SECOND_TOKEN']);
+});
+test('Apply saves only the open section and retains other section drafts for either scope', async () => {
+  for (const scope of ['channel', 'thread']) {
+    const f = await fixture(); await open(f, 'mcp');
+    const token = 'other-section-pending-token-fixture';
+    await draftAction(f, 'settings.page', { page: 'secrets', composioToken: token });
+    await draftAction(f, 'settings.draft.variable', { variableName: 'SECTION_TOKEN', variableValue: 'section-variable-fixture' });
+    await draftAction(f, 'settings.draft.apply', { page: 'secrets', scope });
+    const read = async page => scope === 'channel' ? await getChannelMeta(f.entry.slug) : getThreadSettings(f.entry.slug, 'original-session', page);
+    assert.equal((await read('secrets')).env.SECTION_TOKEN.value, 'section-variable-fixture');
+    assert.equal((await read('mcp')).composioToken, undefined, 'Variables Apply never saves the MCP draft');
+    await open(f, 'mcp');
+    await draftAction(f, 'settings.draft.apply', { page: 'mcp', scope });
+    assert.equal((await read('mcp')).composioToken, token, 'MCP draft survived the other section Apply');
+    assert.equal((await read('secrets')).env.SECTION_TOKEN.value, 'section-variable-fixture');
+  }
+});
+test('a stale Variables draft rejects all edits without overwriting a concurrent change', async () => {
+  const f = await fixture(); await open(f, 'secrets');
+  await draftAction(f, 'settings.draft.variable', { variableName: 'PENDING_TOKEN', variableValue: 'pending-secret-fixture-value' });
+  const { patchChannelEnv } = await import('../src/config/channel-env.js');
+  await patchChannelMeta(f.entry.slug, { env: patchChannelEnv({}, { set: { name: 'CONCURRENT_TOKEN', value: 'concurrent-secret-fixture-value' } }) });
+  const rejected = await draftAction(f, 'settings.draft.apply', { page: 'secrets', scope: 'channel' });
+  assert.equal(rejected.body[0].text, 'Action could not be completed');
+  assert.deepEqual(Object.keys((await getChannelMeta(f.entry.slug)).env), ['CONCURRENT_TOKEN']);
+});
+test('MCP form captures connection edits through navigation, masks values and applies atomically to thread', async () => {
+  const f = await fixture(); await open(f, 'mcp');
+  const token = 'pending-composio-secret-fixture';
+  await draftAction(f, 'settings.page', { page: 'skills', composioToken: token, toolboxToken: 'pending-toolbox-secret-fixture', draftFallback: 'off' });
+  const card = await open(f, 'mcp');
+  assert.doesNotMatch(JSON.stringify(card), /pending-composio|pending-toolbox/);
+  assert.equal(input(card, 'composioToken').value, '');
+  assert.equal((await getChannelMeta(f.entry.slug)).composioToken, undefined);
+  await draftAction(f, 'settings.draft.apply', { page: 'mcp', scope: 'thread' });
+  const scoped = getThreadSettings(f.entry.slug, 'original-session', 'mcp');
+  assert.equal(scoped.composioToken, token); assert.equal(scoped.noDefaultTokens, true);
+  assert.equal((await getChannelMeta(f.entry.slug)).composioToken, undefined);
+  assert.deepEqual(getThreadSettings(f.entry.slug, 'sibling', 'mcp'), {});
+});
+test('invalid MCP combination saves none of the token edits', async () => {
+  const f = await fixture(); await open(f, 'mcp');
+  const result = await draftAction(f, 'settings.draft.apply', { page: 'mcp', scope: 'channel', composioToken: 'valid-staged-token-fixture', makeToolboxUrl: 'https://untrusted.example/mcp/server/id', makeToolboxKey: 'valid-make-token-fixture' });
+  assert.equal(result.body[0].text, 'Action could not be completed');
+  assert.equal((await getChannelMeta(f.entry.slug)).composioToken, undefined);
+  assert.equal((await getChannelMeta(f.entry.slug)).makeToolboxKey, undefined);
+});
+test('staged Make disconnect clears both channel or thread connection fields on Apply only', async () => {
+  for (const scope of ['channel', 'thread']) {
+    const f = await fixture();
+    await patchChannelMeta(f.entry.slug, { makeToolboxUrl: 'https://eu1.make.com/mcp/server/fixture', makeToolboxKey: 'stored-make-key-fixture' });
+    await open(f, 'mcp');
+    await draftAction(f, 'settings.draft.disconnect', { connection: 'make' });
+    assert.equal((await getChannelMeta(f.entry.slug)).makeToolboxKey, 'stored-make-key-fixture');
+    const saved = await draftAction(f, 'settings.draft.apply', { page: 'mcp', scope });
+    assert.equal(saved.body[0].text, 'Channel settings');
+    const target = scope === 'channel' ? await getChannelMeta(f.entry.slug) : getThreadSettings(f.entry.slug, 'original-session', 'mcp');
+    assert.equal(target.makeToolboxUrl, ''); assert.equal(target.makeToolboxKey, '');
+    if (scope === 'thread') assert.equal((await getChannelMeta(f.entry.slug)).makeToolboxKey, 'stored-make-key-fixture');
+  }
+});
+test('thread variable rotation keeps the declared host rule from the channel values being edited', async () => {
+  const f = await fixture();
+  const { patchChannelEnv } = await import('../src/config/channel-env.js');
+  await patchChannelMeta(f.entry.slug, { env: patchChannelEnv({}, { set: { name: 'RULE_TOKEN', value: 'old-rule-secret-fixture', hosts: ['api.example.com'] } }) });
+  await open(f, 'secrets');
+  await draftAction(f, 'settings.draft.variable', { variableName: 'RULE_TOKEN', variableValue: 'new-thread-rule-secret-fixture', variableHostsMode: 'preserve' });
+  await draftAction(f, 'settings.draft.apply', { page: 'secrets', scope: 'thread' });
+  assert.deepEqual(getThreadSettings(f.entry.slug, 'original-session', 'secrets').env.RULE_TOKEN.hosts, ['api.example.com']);
+  assert.equal((await getChannelMeta(f.entry.slug)).env.RULE_TOKEN.value, 'old-rule-secret-fixture');
+});
+test('Follow channel stages a section reset and clears only its thread overrides on Apply', async () => {
+  const f = await fixture();
+  setThreadSettings(f.entry.slug, 'original-session', 'mcp', { toolboxToken: 'thread-toolbox-fixture' });
+  setThreadSettings(f.entry.slug, 'original-session', 'skills', { skills: [] });
+  await open(f, 'mcp');
+  await draftAction(f, 'settings.draft.source', { page: 'mcp', source: 'thread' });
+  await draftAction(f, 'settings.draft.follow', { page: 'mcp' });
+  assert.equal(getThreadSettings(f.entry.slug, 'original-session', 'mcp').toolboxToken, 'thread-toolbox-fixture');
+  const refused = await draftAction(f, 'settings.draft.apply', { page: 'mcp', scope: 'channel' });
+  assert.equal(refused.body[0].text, 'Action could not be completed');
+  await draftAction(f, 'settings.draft.apply', { page: 'mcp', scope: 'thread' });
+  assert.deepEqual(getThreadSettings(f.entry.slug, 'original-session', 'mcp'), {});
+  assert.deepEqual(getThreadSettings(f.entry.slug, 'original-session', 'skills'), { skills: [] });
+});
+test('skill activation is staged and thread Apply adds only isolated thread grants', async () => {
+  const f = await fixture();
+  const slug = `thread-card-skill-${sequence}`;
+  putSkillRevision({ slug, files: [{ path: 'SKILL.md', content: `---\nname: ${slug}\ndescription: Scoped card test\n---\nTest settings.\n` }] });
+  await open(f, 'skills');
+  await draftAction(f, 'settings.draft.skill', { key: slug, activate: true });
+  assert.equal((await getChannelMeta(f.entry.slug)).skills, undefined);
+  await draftAction(f, 'settings.draft.apply', { page: 'skills', scope: 'thread' });
+  assert.deepEqual(getThreadSettings(f.entry.slug, 'original-session', 'skills').skills, [slug]);
+  assert.equal((await getChannelMeta(f.entry.slug)).skills, undefined);
+});
+test('forged cross-section controls and stale thread drafts cannot change stores', async () => {
+  const f = await fixture(); await open(f, 'skills');
+  const forged = await draftAction(f, 'settings.draft.disconnect', { connection: 'composio' });
+  assert.equal(forged.body[0].text, 'Action could not be completed');
+  await open(f, 'mcp');
+  await draftAction(f, 'settings.page', { page: 'skills', composioToken: 'pending-thread-secret-fixture' });
+  setThreadSettings(f.entry.slug, 'original-session', 'mcp', { toolboxToken: 'new-concurrent-toolbox-secret' });
+  await open(f, 'mcp');
+  const stale = await draftAction(f, 'settings.draft.apply', { page: 'mcp', scope: 'thread' });
+  assert.equal(stale.body[0].text, 'Action could not be completed');
+  assert.deepEqual(getThreadSettings(f.entry.slug, 'original-session', 'mcp'), { toolboxToken: 'new-concurrent-toolbox-secret' });
+});
 test('six settings pages stay in the source conversation and update the same card', async () => {
   const f = await fixture();
   assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
@@ -46,18 +206,18 @@ test('six settings pages stay in the source conversation and update the same car
   assert.deepEqual(menu.actions, []);
   const tabs = menu.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions);
   assert.deepEqual(tabs.map(action => action.title), ['General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
-  assert.equal(menu.body.at(-1).type, 'ActionSet');
+  assert.ok(menu.body.at(-1).text.includes('Choose a section'));
   for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
     const action = tabs.find(item => item.data.page === page);
     const card = value(await f.invoke(action.data, action.verb));
     assert.equal(card.body[0].text, 'Channel settings');
     adaptiveCardAttachment(card);
-    assert.equal(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).length, 6);
+    assert.equal(allActions(card).filter(action => action.verb === 'settings.page').length, 6);
     assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
     assert.equal(f.sent.at(-1).messageId, 'card1');
     assert.deepEqual(f.sent.at(-1).card, card);
-    assert.ok(card.body.length > menu.body.length);
-    assert.ok(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === `• ${action.title}`));
+    assert.ok(elements(card).length > elements(menu).length);
+    assert.ok(allActions(card).some(item => item.verb === 'settings.page' && item.title === `✓ ${action.title}`));
     if (page !== 'general') assert.equal(input(card, 'channel_engine'), undefined);
   }
   const secrets = value(await f.invoke({ stateId: f.stateId, page: 'secrets' }, 'settings.page'));
@@ -71,19 +231,19 @@ test('/secrets opens Variables directly while /settings starts with the menu', a
   await f.controls.onCommand(f.args('/secrets'));
   const secrets = f.sent.at(-1).card;
   assert.ok(input(secrets, 'variableValue'));
-  assert.ok(secrets.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === '• Variables'));
+  assert.ok(allActions(secrets).some(item => item.verb === 'settings.page' && item.title === '✓ Variables'));
 });
 test('combined runtime Apply actions save the chosen scope through Execute and Submit', async () => {
   const f = await fixture({ admin: false });
   const general = value(await f.invoke({ stateId: f.stateId, page: 'general' }, 'settings.page'));
-  const applies = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).filter(item => item.verb === 'settings.runtime.apply');
+  const applies = elements(general).filter(item => item.type === 'ActionSet').flatMap(item => item.actions).filter(item => item.verb === 'settings.runtime.apply');
   assert.deepEqual(applies.map(item => item.title), ['Apply to channel', 'Apply to thread']);
   const channel = applies[0];
   const saved = value(await f.invoke({ ...channel.data, channel_engine: 'codex', channel_model: modelsForEngine('codex')[0].value,
     channel_effort: 'high', thread_engine: 'claude' }, channel.verb));
   assert.equal((await getChannelMeta(f.entry.slug)).engine, 'codex');
   assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), '');
-  const thread = saved.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data?.scope === 'thread' && item.verb === 'settings.runtime.apply');
+  const thread = elements(saved).filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data?.scope === 'thread' && item.verb === 'settings.runtime.apply');
   const before = f.sent.length;
   const result = await f.controls.onInvoke({ type: 'message', from: { id: f.owner }, recipient: { id: '28:bot' },
     conversation: { id: f.channelId.slice(6) }, replyToId: 'forged-target', serviceUrl: 'https://smba.trafficmanager.net/teams/',
@@ -126,7 +286,7 @@ test('settings do not require personal-chat delivery', async () => {
 test('Submit navigation updates the stored channel card once, ignoring a forged reply target', async () => {
   const f = await fixture();
   const skills = f.sent[0].card.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(action => action.data.page === 'skills');
-  assert.equal(skills.fallback.associatedInputs, 'none');
+  assert.equal(skills.fallback.associatedInputs, 'auto');
   const before = f.sent.length;
   const result = await f.controls.onInvoke({ type: 'message', from: { id: f.owner },
     conversation: { id: `${f.channelId.slice(6)};messageid=1760000000000` }, recipient: { id: '28:bot' },
@@ -135,7 +295,7 @@ test('Submit navigation updates the stored channel card once, ignoring a forged 
   assert.equal(f.sent.length, before + 1);
   assert.equal(f.sent.at(-1).messageId, 'card1');
   assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
-  assert.ok(f.sent.at(-1).card.body.some(item => item.text === 'Skills'));
+  assert.ok(elements(f.sent.at(-1).card).some(item => item.text === 'Skills'));
 });
 test('shared Resume never publishes an administrator session command', async () => {
   const f = await fixture();
@@ -176,6 +336,8 @@ test('confirmations are one-use and cannot delete an automation from another con
   assert.equal(listForChannel(f.channelId).length, 1);
   const token = prompt.actions[0].data.token;
   await f.invoke({ stateId: f.stateId, token, id: foreign.id }, 'settings.confirm');
+  assert.equal(listForChannel(f.channelId).length, 1); // Confirmation stages only.
+  await f.invoke({ stateId: f.stateId, scope: 'channel' }, 'settings.automation.apply');
   assert.equal(listForChannel(f.channelId).length, 0);
   assert.equal(listForChannel('teams:19:foreign@thread.v2').length, 1);
   const replay = value(await f.invoke({ stateId: f.stateId, token }, 'settings.confirm'));
@@ -235,10 +397,10 @@ test('automation pages keep later schedules reachable and native cards within bo
     prompt: `Schedule ${index}`, description: `Schedule ${index}`, cron: '0 * * * *', createdBy: f.owner });
   const first = value(await f.invoke({ stateId: f.stateId, page: 'automations' }, 'settings.page'));
   adaptiveCardAttachment(first);
-  assert.ok(first.actions.some(action => action.title === 'Next'));
-  const last = value(await f.invoke(first.actions.find(action => action.title === 'Next').data, 'settings.automation.page'));
+  assert.ok(allActions(first).some(action => action.title === 'Next'));
+  const last = value(await f.invoke(allActions(first).find(action => action.title === 'Next').data, 'settings.automation.page'));
   adaptiveCardAttachment(last);
-  assert.ok(last.body.some(item => item.text === 'Schedule 14'));
+  assert.ok(elements(last).some(item => item.text === 'Schedule 14'));
 });
 test('named member grants reject bots and targets removed during write authorization', async () => {
   const f = await fixture();

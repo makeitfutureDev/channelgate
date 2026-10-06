@@ -12,6 +12,7 @@
 // never the run's own author (requiredTier "admin").
 import { isAdminPrincipal } from "../config/store.js";
 import { getSecretEntry, patchSecretEntry } from "../config/scoped-env.js";
+import { patchEnvEntry, normalizeChannelEnv } from "../config/channel-env.js";
 import { listPendingApprovalRequests } from "./approval-requests.js";
 import { engineHostsFor } from "./egress/engine-hosts.js";
 import { hostMatches, normalizeHost } from "./egress/rules.js";
@@ -19,7 +20,7 @@ import { isValidRuleHost } from "./egress/catalog-rules.js";
 import { liveTurnIn } from "./egress/liveness.js";
 
 export const SECRET_HOST_ACTION = "secret_host";
-const SCOPES = new Set(["organization", "channel", "personal"]);
+const SCOPES = new Set(["organization", "channel", "thread", "personal"]);
 // One card per secret and server at a time is the approval table's job (a pending row with the same
 // action key is reused). This window also keeps a DENIED request, or an agent looping over new
 // hosts, from posting again at once; and a channel never holds more than a few pending cards.
@@ -69,11 +70,13 @@ export function buildSecretHostAction({ channelId, slug, authorId = "", threadKe
 function describe(action) {
   const where = action.scope === "organization" ? "the organization-wide variable"
     : action.scope === "personal" ? `<@${action.ownerId}>'s personal variable`
-      : "this conversation's variable";
+      : action.scope === "thread" ? "this thread's variable" : "this conversation's variable";
   const reach = action.scope === "organization" ? " It is shared by every conversation, so approving applies in all of them." : "";
+  const use = action.scope === "thread"
+    ? "A program running for this thread just tried to use it there. Approving remembers the server only for this thread variable; its placeholder still pauses while another thread, SSH session or editor is active in the shared container. "
+    : `A program in this channel's container (a turn in this thread, a background job or an SSH session) just tried to use it there. Approving remembers ${action.host} for this variable: every later run, schedule and SSH session may use it on that server (and only the servers approved so far). `;
   return `Allow ${where} \`${action.secretName}\` to be sent to \`${action.host}\`?${reach}\n\n`
-    + `A program in this channel's container (a turn in this thread, a background job or an SSH session) just tried to use it there. Approving remembers ${action.host} for this variable: `
-    + "every later run, schedule and SSH session may use it on that server (and only the servers approved so far). "
+    + use
     + "Deny if you do not recognise the server — the request was refused and nothing was sent.";
 }
 
@@ -91,18 +94,20 @@ export async function requestSecretHostApprovals(refusals, { channelId, slug, ho
   const out = [];
   for (const refusal of refusals) {
     if (!refusal?.secretName || !SCOPES.has(refusal.scope)) continue;
-    const key = `${refusal.scope}\0${refusal.scope === "organization" ? "" : refusal.scope === "personal" ? refusal.owner || "" : channelId}\0${refusal.secretName}\0${host}`;
+    const sourceTurn = refusal.scope === "thread" ? liveTurnIn(channelId, refusal.owner || "") : turn;
+    if (!sourceTurn?.threadKey) continue;
+    const key = `${refusal.scope}\0${refusal.scope === "organization" ? "" : ["personal", "thread"].includes(refusal.scope) ? `${channelId}:${refusal.owner || ""}` : channelId}\0${refusal.secretName}\0${host}`;
     if (now - (recent.get(key) || 0) < RECENT_MS) continue;
     if (pendingCardsIn(channelId) >= MAX_PENDING_PER_CHANNEL) break;
     recent.set(key, now);
-    const entry = await getSecretEntry({ scope: refusal.scope, slug, userId: refusal.owner || "", name: refusal.secretName }).catch(() => null);
+    const entry = await secretEntry({ scope: refusal.scope, slug, ownerId: refusal.owner || "", name: refusal.secretName }).catch(() => null);
     if (!entry) continue;
     const action = buildSecretHostAction({
-      channelId, slug, authorId: turn.ownerId, threadKey: turn.threadKey,
+      channelId, slug, authorId: sourceTurn.ownerId, threadKey: sourceTurn.threadKey,
       secretName: refusal.secretName, scope: refusal.scope, ownerId: refusal.owner || "", host, entrySetAt: entry.setAt,
     });
     out.push(await requester({
-      channelId, slug, authorId: turn.ownerId, threadKey: turn.threadKey,
+      channelId, slug, authorId: sourceTurn.ownerId, threadKey: sourceTurn.threadKey,
       toolName: `Use variable ${action.secretName} on ${host}`,
       toolInput: { details: describe(action) },
       approvalType: "agent",
@@ -115,12 +120,20 @@ export async function requestSecretHostApprovals(refusals, { channelId, slug, ho
   return out;
 }
 
+async function secretEntry({ scope, slug, ownerId, name }) {
+  if (scope !== "thread") return getSecretEntry({ scope, slug, userId: ownerId, name });
+  if (!ownerId) return null;
+  const settings = (await import("./thread-settings.js")).getThreadSettings(slug, ownerId, "secrets");
+  return normalizeChannelEnv(settings?.env)[name] || null;
+}
+
 // The durable executor (server.js setDurableApprovalExecutor) for a SECRET_HOST_ACTION row.
 export async function executeSecretHostApproval(record) {
   const action = record?.action;
   try {
     if (record?.status !== "executing" || action?.kind !== SECRET_HOST_ACTION || action.channelId !== record.channelId || action.slug !== record.slug
-        || !action.secretName || !SCOPES.has(action.scope) || (action.scope === "personal" && !action.ownerId)) {
+        || !action.secretName || !SCOPES.has(action.scope) || (["personal", "thread"].includes(action.scope) && !action.ownerId)
+        || (action.scope === "thread" && action.ownerId !== action.threadKey)) {
       throw new Error("Invalid saved secret approval.");
     }
     const host = normalizeHost(action.host);
@@ -131,10 +144,18 @@ export async function executeSecretHostApproval(record) {
     if (record.decidedBy !== "admin UI" && record.decidedBy !== "link" && !(await isAdminPrincipal(record.decidedBy))) {
       throw new Error("Only an admin can approve where a secret may be sent.");
     }
-    const entry = await getSecretEntry({ scope: action.scope, slug: action.slug, userId: action.ownerId, name: action.secretName });
+    const entry = await secretEntry({ scope: action.scope, slug: action.slug, ownerId: action.ownerId, name: action.secretName });
     if (!entry) throw new Error(`${action.secretName} no longer exists.`);
     if ((Number(entry.setAt) || 0) !== action.entrySetAt) throw new Error(`${action.secretName} was changed after this approval was requested. Retry the request to get a fresh card.`);
-    await patchSecretEntry({ scope: action.scope, slug: action.slug, userId: action.ownerId, name: action.secretName, addApprovedHost: host });
+    if (action.scope === "thread") {
+      const { getThreadSettings, setThreadSettings } = await import("./thread-settings.js");
+      const current = getThreadSettings(action.slug, action.ownerId, "secrets");
+      const stored = normalizeChannelEnv(current?.env)[action.secretName];
+      if (!stored || (Number(stored.setAt) || 0) !== action.entrySetAt) throw new Error(`${action.secretName} was changed after this approval was requested.`);
+      setThreadSettings(action.slug, action.ownerId, "secrets", {
+        ...current, env: patchEnvEntry(current.env, action.secretName, { addApprovedHost: host, scopeWhere: "this thread" }),
+      }, { expected: current });
+    } else await patchSecretEntry({ scope: action.scope, slug: action.slug, userId: action.ownerId, name: action.secretName, addApprovedHost: host });
     return { ok: true, completed: true, label: "secret server approval", message: `${action.secretName} may now be used on ${host}. Retry the request.` };
   } catch (error) {
     return { ok: false, error: error.message };

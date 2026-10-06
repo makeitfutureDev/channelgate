@@ -11,6 +11,7 @@ import { parseFrontmatter, skillMetadata } from "./skills/frontmatter.js";
 import { grantedPluginPackages, compilePluginPackage, relocatePluginServers, pluginSkillCatalog } from "./plugin-runtime.js";
 import { ENGINE_IDS, requireAdapter } from "../engines/registry.js";
 import { materializeSkill } from "./skills/materialize.js";
+import { withDependencies } from "./skills/resolve.js";
 import { hashSkillFiles, normalizeSkillFiles } from "./skills/files.js";
 import { openWorkspaceDirectory } from "./skills/workspace-backup.js";
 import { hostClaudeStateDir, hostCodexStateDir } from "../engines/host-state.js";
@@ -185,6 +186,7 @@ export async function createRunGrantArtifacts({
   slug,
   meta = {},
   userSkills = [],
+  threadSkills = [],
   sharedSkills = [],
   workspaceSkillsDir = "",
   workspaceAgentsDir = "",
@@ -218,6 +220,7 @@ export async function createRunGrantArtifacts({
     // they are usable instructions, not native slash-command registrations.
     const codexSkillsDir = "";
     const personalSkillCatalog = [];
+    const threadNames = new Set(threadSkills.length ? withDependencies(threadSkills).names.map(name => name.toLowerCase()) : []);
     const claudePluginDirs = [];
     const pluginRuntime = {};
     const sharedPackages = grantedPluginPackages(sharedSkills);
@@ -321,7 +324,9 @@ export async function createRunGrantArtifacts({
           if (!entry.isDirectory()) continue;
           const file = path.join(personalDir, entry.name, "SKILL.md");
           const metadata = skillMetadata(parseFrontmatter(await readFile(file, "utf8")).data);
-          personalSkillCatalog.push({ name: metadata.name || entry.name, description: metadata.description || `Personal skill ${entry.name}`, path: file });
+          personalSkillCatalog.push({ name: metadata.name || entry.name, description: metadata.description || `Run-scoped skill ${entry.name}`, path: file,
+            ...(threadNames.has(entry.name.toLowerCase()) ? { scope: 'thread' } : {}),
+          });
         }
       }
     }

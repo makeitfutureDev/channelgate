@@ -74,6 +74,7 @@ function finishEngineMcpRuntime({ payload, optional, engine, pluginRuntime, fing
     slug: identity.slug || "",
     authorId: identity.authorId || "",
     threadKey: identity.threadKey || "",
+    settingsSourceThreadKey: identity.settingsSourceThreadKey || identity.threadKey || "",
     origin: identity.origin || "",
     engine: parsed.mcpServers.gateway.env.CG_ENGINE || engine,
     principalTrusted: identity.principalTrusted !== false,

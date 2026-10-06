@@ -633,9 +633,10 @@ export function progressFromCodexEvent(p, state = null) {
 // CODEX_HOME. Empty catalogs explicitly supersede a previous author's grants on resumed threads.
 export function codexPersonalSkillPrefix(skills) {
   if (!Array.isArray(skills)) return "";
-  return "[Current personal skill grants — this run only]\n"
-    + "These instruction files supplement your native repository and system skills. When the user names a listed skill, or its description matches the task, read its SKILL.md before applying it. Resolve references and scripts relative to that file's directory. They are prompt-delivered skills, not native slash commands. Only the following personal catalog applies now; earlier personal catalogs and paths have expired. Do not copy these grants into shared project skill folders.\n"
-    + JSON.stringify(skills) + "\n[End current personal skill grants]\n\n";
+  const label = skills.some(skill => skill?.scope === 'thread') ? 'personal and thread' : 'personal';
+  return `[Current ${label} skill grants — this run only]\n`
+    + "These instruction files supplement your native repository and system skills. When the user names a listed skill, or its description matches the task, read its SKILL.md before applying it. Resolve references and scripts relative to that file's directory. They are prompt-delivered skills, not native slash commands. Only the following catalog applies now; earlier personal catalogs and paths have expired, and earlier thread skill overlays are also superseded. Entries with scope thread belong to this conversation thread; other entries belong to the authenticated author. Do not copy these grants into shared project skill folders.\n"
+    + JSON.stringify(skills) + `\n[End current ${label} skill grants]\n\n`;
 }
 
 // Plugin package skills are scoped independently from personal grants. An empty catalog revokes

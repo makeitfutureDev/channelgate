@@ -8716,6 +8716,8 @@ Automated:
 ```sh
 node --test test/teams-controls.test.js test/teams-settings.test.js \
   test/teams-settings-general.test.js test/teams-settings-catalog.test.js \
+  test/teams-settings-automations.test.js test/thread-settings.test.js \
+  test/thread-settings-run.test.js test/thread-egress.test.js \
   test/channel-settings-modal.test.js test/model-wizard-channel-scope-thread.test.js \
   test/teams-native-cards.test.js test/platform-teams.test.js
 ```
@@ -8732,6 +8734,21 @@ shared-card private metadata isolation and forged private-scope rejection. Nativ
 cover Teams error envelopes, retry deduplication, malformed inputs and rejected private Submit
 attempts without card writes. Existing Slack
 modal/wizard cases exercise the shared runtime validators.
+
+Scoped batch regressions exercise all five editable footer Apply pairs and read-only Resume;
+no writes before Apply; several staged variables; drafts surviving navigation/same-view clicks;
+open-section Apply for both scopes while another section remains pending;
+grouped-card nested input IDs, retained Execute/Submit payloads, and the full-card byte limit with
+a maximum-size roster;
+cross-page forged verbs; invalid Make combinations and staged Make disconnection; channel/thread
+CAS conflicts; per-section Follow channel reset; one-shot General access/runtime writes; aggregate
+automation limits and exact execution bindings. Claude and Codex fake-engine fresh/resumed turns
+verify real thread MCP/skill/env selection, sibling isolation, launch-thread background inheritance,
+secret redaction and untouched shared provisioning. Clean/Lean turns omit unavailable optional
+thread skills/templates, while normal turns still refuse them. Egress tests exercise distinct channel/thread
+placeholder identities, live rotation/removal, hidden-host approval ownership, concurrent-thread,
+SSH/editor pause gates and synthetic background approval delivery. These fixtures do not replace
+the live client/dual-engine gates below.
 
 Live acceptance — **unexecuted; must run once with Claude and once with Codex**. Private QA
 registry records are also **pending**: this task's available connector is the shared identity,
@@ -8750,14 +8767,17 @@ case. Also run a group with an external member to check tenant/channel delivery 
    original channel/thread or chat, unchanged workspace/session identity and no proactive DM.
    Initially require the six-option menu with no section inputs. Selecting a tab reveals only
    that section below the persistent menu; `/secrets` still opens Variables directly.
+   Check the full-width layout on desktop and a narrow mobile surface: every navigation label
+   stays readable, grouped panels retain their inputs, and the section Apply pair appears last.
    Block proactive DM delivery: settings still opens in the channel. Use each tab's actual
    Execute and Submit action and require the same posted message ID to update. Another member
    cannot operate the owner's card; they can open an independent card. Confirm installed manifest
    bot ID, configured App ID and Azure messaging endpoint match the target beta bot; a different
    recipient must be refused. Record sender identity and callback delivery privately.
 2. General: select engine, model and effort before saving; require exactly one Apply to channel
-   and one Apply to thread at the end of their runtime lists. Apply one scope and require its
-   complete compatible triple to change, with the other scope and access settings unchanged.
+   and one Apply to thread at the end of General. Channel Apply batches changed channel access
+   selections; thread Apply refuses dirty channel-only policy. Apply one scope and require its
+   complete compatible triple to change, with the other runtime scope unchanged.
    Invalid/missing values refuse all writes. Change the stored triple from another authorized
    card before submitting the first: require stale-form refusal, preserving the newer triple.
    Clear model to default and validate effort against the actual inherited model. Engine-labelled
@@ -8772,19 +8792,31 @@ case. Also run a group with an external member to check tenant/channel delivery 
    while the roster/discovery request is held: require denial and no mutation. Large/over-budget
    rosters explicitly defer complete-list edits without dropping grants; former-member selections
    show a replacement warning before Apply.
-4. Variables/MCPs: in the channel rotate synthetic channel values; in an explicitly opened
-   personal conversation also rotate personal and admin organization values. The shared card
+4. Variables/MCPs: stage at least two synthetic variables and several connection changes; navigate
+   away and back, verify nothing saved, then choose one scope Apply. Repeat for channel and thread;
+   require separate stores, sibling-thread isolation, blank secret defaults and retained host rules.
+   Stage changes in both sections, Apply Variables and require MCP edits to remain pending;
+   then Apply MCPs and require the prior variable change to remain intact.
+   Rotate a protected thread variable during a live turn, remove/re-add it and verify old grants
+   die without revoking channel/sibling grants. Open concurrent other-thread work/SSH/editor and
+   require thread-placeholder refusal. Follow channel must clear only that section's thread
+   overrides after Apply. Invalid URL/secret/selection and stale forms must write nothing. The shared card
    must omit personal/org names, token suffixes/account labels and ungranted private MCP catalogs;
    forged private-scope actions on it fail before confirmation or mutation. Require blank/masked inputs after refresh, masked listing only, preserved
    Used-on-hosts unless explicitly replaced/cleared, and no values in card JSON or event logs.
-   Remove each scope through a confirmation and replay the token: exactly one effect. A member
+   Stage variable removal and require it to take effect only after the selected scope Apply.
+   Legacy destructive controls must consume their confirmation exactly once. A member
    cannot forge an organization write or Cloud MCP change. Blank connection tokens keep existing
    values; invalid Make URL writes nothing; disconnect affects only the selected connection.
 5. Skills: assign/clear a template, activate/deactivate a direct skill, page a catalog and template
-   list, then verify the next turn's grants. Organization grants remain inherited and immutable
+   list, verify no pre-Apply writes, apply channel/thread and verify the next turn's grants for both
+   engines. Thread additions must not rewrite shared channel files or appear in sibling sessions.
+   Thread Apply cannot deactivate channel grants; organization grants remain inherited and immutable
    here; personal/private catalog skills cannot be assigned to other authors by forged payloads.
 6. Automations: page past twelve rows, pause/resume a recurring task, cancel a one-time reminder,
-   stop a loop and replay the confirmation. Only this conversation's rows may change; one-time
+   stop a loop and replay the confirmation. Edits stay staged until Apply; thread Apply requires
+   an existing exact execution binding and refuses the entire batch containing channel schedules.
+   A stale/invalid row must refuse the complete batch. Only this conversation's rows may change; one-time
    and loop pause attempts fail; enabled-schedule limits still apply when resuming.
 7. Resume: after a project turn, require the current session ID, its minting engine and correct
    container terminal command. Administrator sessions never expose commands in a shared card;

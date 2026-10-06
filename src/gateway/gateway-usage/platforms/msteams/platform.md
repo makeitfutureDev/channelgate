@@ -45,8 +45,11 @@ say so plainly rather than guessing at its contents.
 channel/thread or chat. `/secrets` opens Variables. Settings never proactively opens a personal chat.
 Buttons update the same requester-bound card; other members can open their own `/settings`.
 The initial card shows only the section menu; selecting an option displays its settings below.
-Engine/model/effort save together with Apply to channel or Apply to thread. Other settings keep
-their explicit controls; changing tabs discards unsaved drafts. Runtime, channel credentials,
+General, Variables, MCPs, Skills and Automations collect edits until Apply to channel or Apply to
+thread. Drafts survive navigation until Apply, Discard or expiry. Thread credentials/MCPs and skill
+additions have their own scope; inherited channel/organization skills stay active. Access policy
+is channel-only. Automation thread Apply requires an existing exact execution binding. Resume
+is read-only. Changes apply on the next turn without restarting the daemon. Runtime, channel credentials,
 skills and automation controls are available to authorized users. Access policy requires current
 managers/admins, Cloud MCP and organization variable writes require admins. Stored credential
 values are never shown or prefilled. Shared cards list only channel variables and omit private

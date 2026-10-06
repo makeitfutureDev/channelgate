@@ -18,6 +18,11 @@ export function approvalActionKey(action = {}) {
     workDir: String(action.workDir || ""),
     maxMs: Number(action.maxMs) || 0,
   };
+  if (action.kind === 'background_shell' && action.settingsSourceThreadKey && action.settingsSourceThreadKey !== action.threadKey) {
+    // Changing the credential/settings source changes the action an admin authorizes, even
+    // when its delivery thread and command are the same. Older jobs use their own thread.
+    exact.settingsSourceThreadKey = String(action.settingsSourceThreadKey);
+  }
   if (action.kind === "secret_host") {
     exact.secretName = String(action.secretName || "");
     exact.scope = String(action.scope || "");

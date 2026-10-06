@@ -249,11 +249,19 @@ Task-module dialogs and broadcast mentions remain unavailable.
   members open their own requester-bound `/settings` card.
   Initially only the section menu is shown; selecting a section reveals its controls below the
   menu. Switching sections replaces the controls while keeping the menu visible.
+  The full-width native layout uses two-column navigation, grouped panels and a separate Save
+  footer. All form inputs stay in one Adaptive Card so Execute and Submit collect the same values.
   General edits channel defaults and current-session engine/model/effort independently, with
   engine-labelled model choices, inherited labels and Follow channel default. One Apply to channel
   or Apply to thread button saves that scope's engine/model/effort together after compatibility
-  checks. No intermediate runtime writes are needed; stale forms must be reopened. Other settings
-  keep their explicit controls. Page navigation discards unsaved drafts. Authorized users can edit runtime,
+  checks. General's channel Apply also batches changed access fields; its thread Apply refuses
+  channel policy changes. Variables, MCPs and Skills stage edits and use the same two footer Apply
+  buttons with real thread overrides. Apply saves only the open section, leaving other drafts
+  pending. Drafts survive navigation until Apply, Discard or card expiry;
+  stored credentials never prefill inputs. Follow channel clears only the selected section's thread
+  overrides. Inherited channel/organization skills stay active. Automations stage pause/removal and
+  thread Apply accepts only schedules whose execution is bound to that exact thread. Resume is
+  read-only. Settings apply on the next turn without a daemon restart. Authorized users can edit runtime,
   variables, connections, channel skills and automations, matching Slack Settings. Access controls
   require a current manager/admin, organization variable changes and Cloud MCP require admins.
   Native member selectors defer to the authenticated website when the complete roster exceeds

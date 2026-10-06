@@ -30,8 +30,15 @@ product overview.
   Buttons update the same requester-bound card. Shared cards omit personal/organization
   credential metadata, ungranted private connection catalogs and administrator session commands.
   `/settings` initially shows only the section menu; selecting an option opens its settings below.
-  General runtime settings now use one Apply to channel or Apply to thread button to save engine,
-  model and effort together. Stale and incompatible forms cannot partially change the runtime.
+  Full-width cards now use a compact header, two-column navigation, grouped settings panels and
+  a dedicated Save area with both scope buttons.
+  General, Variables, MCPs, Skills and Automations now collect pending edits and offer one
+  Apply to channel and one Apply to thread button per section. Each saves only the open section,
+  leaving drafts in other sections pending. General batches runtime and
+  channel access edits; Variables, connections and skill additions have real thread overrides.
+  Thread Apply never changes channel access or inherited skills. Automation thread Apply accepts
+  only schedules already bound to that thread; Resume remains read-only. Stale or invalid batches
+  save nothing. Credentials remain hidden, and no daemon restart is needed to apply settings.
 
 - Users already allowed in a channel, including named guests, can enable their own SSH access
   without manager or admin approval. Registering/removing personal keys and revoking one’s

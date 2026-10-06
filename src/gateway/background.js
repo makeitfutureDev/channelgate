@@ -37,6 +37,7 @@ import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 import { containerJobScript } from "./background-shell-log.js";
 import { getThreadSudo } from "./thread-engine.js";
+import { getThreadSettings, resolveThreadSettingsMeta } from "./thread-settings.js";
 import { sudoModeMeta } from "./modes.js";
 export { containerJobScript } from "./background-shell-log.js";
 
@@ -245,7 +246,7 @@ export class BackgroundJobs {
           // behaving exactly as before (pid + kernel start time are its identity); a job in an
           // isolated runtime is found again by its runId, because its pid belongs to a client
           // process that is already gone.
-          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0 }));
+          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, settingsSourceThreadKey: j.settingsSourceThreadKey || j.threadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0 }));
         }
         db.exec("COMMIT");
       } catch (e) {
@@ -291,7 +292,7 @@ export class BackgroundJobs {
     });
   }
 
-  async _start({ channelId, slug, authorId, threadKey, command, label, maxMs = 0, kind = "shell", task }, approval = {}) {
+  async _start({ channelId, slug, authorId, threadKey, settingsSourceThreadKey = "", command, label, maxMs = 0, kind = "shell", task }, approval = {}) {
     // Never persist a new job while boot recovery still has un-re-tracked rows in bg_jobs.
     if (this._recoveryGate) await this._recoveryGate;
     const isAgent = kind === "agent";
@@ -301,6 +302,7 @@ export class BackgroundJobs {
     let approvedBy = String(approval.approvedBy || "").replace(/[<@>]/g, ""); // audit trail for unsandboxed exec
     if (isAgent ? !taskText : !cmd) return { ok: false, error: isAgent ? "No task provided." : "No command provided." };
     if (!channelId || !threadKey) return { ok: false, error: "Missing channel/thread context." };
+    const settingsKey = settingsSourceThreadKey || threadKey;
     if (this.count() >= MAX_GLOBAL) return { ok: false, error: "Too many background jobs are already running on the gateway. Try again shortly." };
     if (this._threadCount(threadKey) >= MAX_PER_THREAD) return { ok: false, error: `This thread already has ${MAX_PER_THREAD} background jobs running.` };
 
@@ -310,6 +312,9 @@ export class BackgroundJobs {
       (await getChannelMeta(entry.slug)) ??
         defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM })
     );
+    meta = resolveThreadSettingsMeta(meta, Object.fromEntries(['mcp', 'secrets'].map(section => [section,
+      getThreadSettings(entry.slug, settingsKey, section),
+    ])), { slug: entry.slug, threadKey: settingsKey });
     const sudoThread = await getThreadSudo(entry.slug, threadKey);
     if (sudoThread) {
       if (!(await isAdminPrincipal(authorId))) {
@@ -387,6 +392,7 @@ export class BackgroundJobs {
               slug: entry.slug,
               authorId,
               threadKey,
+              settingsSourceThreadKey: settingsKey,
               command: cmd,
               workDir,
               label: (label || cmd).slice(0, 80),
@@ -458,7 +464,7 @@ export class BackgroundJobs {
       /* logging is best-effort */
     }
 
-    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target };
+    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, settingsSourceThreadKey: settingsKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target };
     const writeChunk = (chunk) => {
       try {
         logStream?.write(chunk);
@@ -517,7 +523,7 @@ export class BackgroundJobs {
       rec.lease = target.runtime.acquireLease(target, { kind: "job", id: runId });
       // A running job is live work in its channel: the egress proxy swaps the channel's (and the
       // launching author's personal) placeholders only while something like it is running.
-      rec.releaseLive = markLive({ channelId, ownerId: authorId, kind: "job", id: runId });
+      rec.releaseLive = markLive({ channelId, ownerId: authorId, kind: "job", id: runId, threadKey: settingsKey });
       try {
         // Minimal allowlisted env plus THIS channel's own secrets — this IS agent-authored shell,
         // so the daemon's secrets must not be visible, and another channel's never are. The browser
@@ -627,6 +633,7 @@ export class BackgroundJobs {
       text: prompt,
       threadKey: `${rec.threadKey}::agent-${rec.id}`,
       sudoSourceThreadKey: rec.threadKey,
+      settingsSourceThreadKey: rec.settingsSourceThreadKey || rec.threadKey,
       origin: "background_agent", // daemon-triggered: structurally never escalates
       preferCold: true, // one-shot: don't leave a warm process idling after the agent finishes
       signal: controller.signal,
@@ -855,6 +862,7 @@ export class BackgroundJobs {
               authorId: rec.authorId,
               text,
               threadKey: rec.threadKey,
+              settingsSourceThreadKey: rec.settingsSourceThreadKey || rec.threadKey,
               origin: "continuation",
               signal: handle.controller.signal,
             });
@@ -991,7 +999,7 @@ export class BackgroundJobs {
       } else if (await this._jobAlive(rec)) {
         await logEvent("bg_recover_watch", { id: rec.id, slug: rec.slug, pid: rec.pid, runtime: rec.runtime?.backend || "host" });
         // Still running after a restart: live work again, for the egress proxy's swap gate.
-        rec.releaseLive = markLive({ channelId: rec.channelId, ownerId: rec.authorId, kind: "job", id: rec.runtime?.runId || rec.id });
+        rec.releaseLive = markLive({ channelId: rec.channelId, ownerId: rec.authorId, kind: "job", id: rec.runtime?.runId || rec.id, threadKey: rec.settingsSourceThreadKey || rec.threadKey });
         this._watchByProbe(rec, { recovered: true });
       } else {
         // Already tracked above, so _finish's guard passes → force the continuation.
