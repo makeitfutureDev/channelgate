@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Codex now continues a partially completed turn in the same session after a model-capacity
+  refusal. It avoids rerunning completed tool actions and tries another model unless the thread's
+  model was explicitly pinned.
 - Update smoke now binds and marks its disposable channel live for the duration of the probe,
   allowing the Codex login relay through the egress proxy and releasing it on cleanup.
 - Scheduled checks can run every fixed number of days and DM their creator only when the result

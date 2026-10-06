@@ -1601,6 +1601,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   never the catch-all `provider` kind or the bare "API Error:" prefix a rejected request also
   carries). The knobs are read per turn, so `.env` / settings values count without a restart.
   → TEST-PLAN: Engines.
+- **Codex capacity after partial work continues in its existing session.** A plain provider
+  "Selected model is at capacity" verdict after a tool or streamed output starts one new Codex
+  turn against the same session id, with a prompt to inspect completed work and finish the
+  remaining request. It never resends the original prompt, so prior tool actions are not replayed
+  by the gateway. An unpinned model switches to another model in Codex's catalog; a model chosen
+  specifically for the thread stays pinned. The status and final answer identify the continuation,
+  an audit event records the model switch, and a second failure stops rather than looping.
+  Replay-safe capacity failures before any work still use the transient retry/failover path above.
+  → TEST-PLAN: Engines.
 - **Bidirectional harness failover** when the engine driving a turn hits its usage/session/plan
   limit or its authentication is unavailable — Claude→Codex and Codex→Claude are the same mechanism,
   so a channel whose primary engine is Codex is not stranded until its ChatGPT quota resets (and

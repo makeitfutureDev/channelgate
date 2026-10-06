@@ -4662,6 +4662,19 @@ placeholders and `--network none`).
       "Reconnecting… (unexpected status 429 …)" progress line is transient (never a limit), and
       from stderr (`source: "stderr"`) only the explicit limit/auth phrasings count; the knobs are
       read per turn (clamped, duration syntax, unparseable → default).
+- [x] Codex capacity continuation (`test/transient-retry.test.js`): the fixture emits a session id,
+      starts a tool once, and returns the plain-text capacity verdict. Require a single new turn
+      that resumes that id, answers on another catalog model when the model is not pinned, leaves
+      the tool counter at one, writes one `run_capacity_continuation` event, and writes no
+      `run_transient_retry` event. Pin `gpt-6-sol` on the thread and require continuation on that
+      model. Make the resumed turn fail too and require one bounded continuation with the second
+      provider error surfaced. A generic 503 after tool use still never replays the prompt.
+- [ ] Live Codex capacity acceptance (`ENG-13` in the private QA registry): in a disposable channel with an available alternate Codex
+      model, cause a capacity refusal after a harmless completed tool action in a real Codex
+      session. Require the same session id on the continuation, no duplicate tool action, a
+      visible continuation notice and a final answer on the alternate model. Repeat with a pinned
+      model and require no model switch. If the provider does not offer a reproducible capacity
+      fixture, record this gate as unexecuted; a stub result is not a live pass.
 - [x] Integration: a channel whose PRIMARY harness is Codex hits its usage limit and the turn is
       answered by Claude (reason note, thread transcript replayed into the fresh session,
       `fellBack`/`fallbackFrom` set); the same limit on stderr behaves identically; a limit that
