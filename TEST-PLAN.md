@@ -8722,7 +8722,8 @@ node --test test/teams-controls.test.js test/teams-settings.test.js \
 
 Scratch SQLite, verified-envelope fixtures and real Teams normalization cover all six pages,
 channel/session isolation, approved non-admin runtime choices, incompatible/disabled runtime
-rejection, Codex channel-login locks, per-field writes ignoring stale neighbours, current manager
+rejection, Codex channel-login locks, combined channel/thread runtime saves, stale-form rejection,
+transaction rollback and legacy per-field writes ignoring stale neighbours, current manager
 and roster checks, demotion during roster/discovery, all three variable scopes through confirmation,
 write-only/masked credentials, host-rule rotation, MCP discovery/grants, skills/template inheritance,
 automation paging and foreign IDs, one-use confirmation replay, bounded cards, source-channel
@@ -8754,8 +8755,13 @@ case. Also run a group with an external member to check tenant/channel delivery 
    cannot operate the owner's card; they can open an independent card. Confirm installed manifest
    bot ID, configured App ID and Azure messaging endpoint match the target beta bot; a different
    recipient must be refused. Record sender identity and callback delivery privately.
-2. General: switch a channel field, then a session field; require only the dispatched scope/field
-   and invalid dependents to change. Models/efforts follow their own engine; inherited labels name
+2. General: select engine, model and effort before saving; require exactly one Apply to channel
+   and one Apply to thread at the end of their runtime lists. Apply one scope and require its
+   complete compatible triple to change, with the other scope and access settings unchanged.
+   Invalid/missing values refuse all writes. Change the stored triple from another authorized
+   card before submitting the first: require stale-form refusal, preserving the newer triple.
+   Clear model to default and validate effort against the actual inherited model. Engine-labelled
+   models from enabled engines allow switching engine/model in one submission; inherited labels name
    their actual fallback. Open a dedicated-Codex-login fixture and require its engine to remain
    locked. Follow channel default requires confirmation and clears only the original session pins.
    Run a follow-up and verify the selected engine/model; a pre-existing session's engine remains

@@ -1,10 +1,10 @@
-// Teams General Settings use the same runtime stores and channel policy as Slack. Every Apply
-// action reads one input only; stale neighbouring inputs can never overwrite newer settings.
+// Teams General Settings share Slack's stores/policy. Runtime forms save one complete scope;
+// legacy per-field actions remain valid for previously posted cards.
 import { getEngine, getEnabledEngines, getDefaultModel } from '../../config/settings.js';
 import { engineLabel, modelBelongsToEngine, effortBelongsToModel, modelsForEngine, effortsForModel } from '../../engines/registry.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { channelMode, modeSettingsPatch, canManage, isAuthorized, networkLabel } from '../../gateway/modes.js';
-import { getThreadEngine, getThreadModel, getThreadEffort, resolveThreadEngine, setThreadEngine, setThreadModel, setThreadEffort } from '../../gateway/thread-engine.js';
+import { getThreadEngine, getThreadModel, getThreadEffort, resolveThreadEngine, setThreadEngine, setThreadModel, setThreadEffort, setThreadRuntimeOverrides } from '../../gateway/thread-engine.js';
 import { getSessionEngine } from '../../gateway/sessions.js';
 import { RUNTIME_DEFAULT_VALUE, RUNTIME_FIELDS, nextRuntimeTriple, runtimeSettingsPatch } from '../../gateway/runtime-settings.js';
 import { channelCodexLoginStatus } from '../../gateway/channel-codex-login.js';
@@ -70,22 +70,31 @@ async function roster(ctx) {
 
 function runtimeRows(scope, snapshot, locked, ui) {
   const body = [];
+  const engines = snapshot.engines.map(item => item.value);
+  const models = engines.flatMap(engine => modelsForEngine(engine).map(item => ({ ...item, label: `${engineLabel(engine)}: ${item.label || item.value}` })));
+  const efforts = [...new Set(engines.flatMap(engine => [
+    ...effortsForModel(engine), ...modelsForEngine(engine).flatMap(item => effortsForModel(engine, item.value)),
+  ]))];
   for (const field of RUNTIME_FIELDS) {
     if (field === 'engine' && locked) { body.push(ui.text('Engine: Codex — locked to this channel’s Codex login.')); continue; }
-    let choices = field === 'engine' ? snapshot.engines : field === 'model' ? modelsForEngine(snapshot.engine) : effortsForModel(snapshot.engine, snapshot.model).map(value => ({ label: value, value }));
+    let choices = field === 'engine' ? snapshot.engines : field === 'model' ? models : efforts.map(value => ({ label: value, value }));
     // Keep a saved compatible full model ID visible even if live discovery no longer lists it.
     const selected = snapshot.values[field];
     if (field === 'model' && selected && modelBelongsToEngine(selected, snapshot.engine) && !choices.some(item => item.value === selected)) choices = [...choices, { label: `Current: ${selected}`, value: selected }];
-    body.push(ui.choice(`${scope}_${field}`, field[0].toUpperCase() + field.slice(1), selected || RUNTIME_DEFAULT_VALUE, [defaultChoice(snapshot.inherited[field]), ...choices]));
-    body.push(ui.buttons([ui.execute(`Apply ${scope} ${field}`, 'settings.runtime', { scope, field })]));
+    const inherited = field === 'engine' ? snapshot.inherited.engine : field === 'model'
+      ? scope === 'thread' ? 'Follow compatible channel model / selected engine default' : 'Default model for selected engine'
+      : scope === 'thread' ? 'Follow compatible channel effort / engine default' : 'Engine default';
+    body.push(ui.choice(`${scope}_${field}`, field[0].toUpperCase() + field.slice(1), selected || RUNTIME_DEFAULT_VALUE, [defaultChoice(inherited), ...choices]));
   }
+  body.push(ui.buttons([ui.execute(scope === 'channel' ? 'Apply to channel' : 'Apply to thread', 'settings.runtime.apply', { scope })]));
   return body;
 }
 
 export async function renderGeneral(ctx, ui) {
   const { channel, thread, locked } = await generalRuntimeScopes(ctx);
+  ctx.state.runtimeBaseline = { channel: { ...channel.values, locked }, ...(thread ? { thread: { ...thread.values, locked } } : {}) };
   const meta = effectiveMeta(ctx.meta), manager = managed(ctx.meta, ctx);
-  const body = [ui.text('Apply each field separately. Channel defaults affect new sessions; current session overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', channel, locked, ui)];
+  const body = [ui.text('Choose engine, model and effort, then Apply once for that scope. Model names include their engine; the combination must be compatible. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', channel, locked, ui)];
   if (locked) {
     const login = await channelCodexLoginStatus(ctx.channelId);
     body.push(ui.text(`Channel Codex login: ${login.authenticated ? 'Signed in' : login.phase === 'pending' ? 'Sign-in in progress' : 'No channel login yet'}.`));
@@ -158,7 +167,65 @@ function validatedSelection(current, field, value, inheritedEngine) {
   return runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine }).patch;
 }
 
+function assertRuntimeBaseline(ctx, scope, own, locked) {
+  const baseline = ctx.state.runtimeBaseline?.[scope];
+  if (!baseline || baseline.locked !== locked || RUNTIME_FIELDS.some(field => baseline[field] !== own[field])) {
+    throw new Error('These settings changed. Reopen General before applying your changes.');
+  }
+}
+function combinedRuntimeSelection(data, scope, meta, inheritedEngine) {
+  const locked = meta.codexAuthSource === 'channel';
+  if (locked && data[`${scope}_engine`] !== undefined && data[`${scope}_engine`] !== 'codex') {
+    throw new Error('This channel uses its own Codex login, so its engine is Codex.');
+  }
+  const form = Object.fromEntries(RUNTIME_FIELDS.map(field => [field,
+    field === 'engine' && locked ? 'codex' : readRuntimeInput(data, scope, field)]));
+  // Resolve defaults against the newly selected engine, including template/channel inheritance.
+  const { patch, actualEngine } = runtimeSettingsPatch({ ...form, effort: '' }, { gatewayEngine: inheritedEngine });
+  const inherited = scope === 'channel' ? effectiveMeta({ ...meta, engine: actualEngine, model: '', effort: '' }) : effectiveMeta(meta);
+  const actualModel = compatible([patch.model, inherited.model, getDefaultModel(actualEngine)], actualEngine);
+  if (form.effort && !effortBelongsToModel(form.effort, actualEngine, actualModel)) {
+    throw new Error('That effort is not supported by the selected model.');
+  }
+  return { ...patch, effort: form.effort };
+}
+
 export async function handleGeneral(action, data, ctx, _ui) {
+  if (action === 'settings.runtime.apply') {
+    const { scope } = data;
+    if (!['channel', 'thread'].includes(scope)) throw new Error('Unknown runtime control.');
+    if (scope === 'channel') {
+      ctx.meta = await ctx.patch((current, fresh) => {
+        assertCurrentAuthorized(fresh, current);
+        const locked = current.codexAuthSource === 'channel';
+        const own = { engine: locked ? 'codex' : current.engine || '', model: current.model || '', effort: current.effort || '' };
+        assertRuntimeBaseline(ctx, scope, own, locked);
+        return combinedRuntimeSelection(data, scope, current, parentEngine(current));
+      });
+    } else {
+      const session = requireSession(ctx), release = await acquireKeyedLock('teams-settings-runtime', `${ctx.entry.slug}:${session}`);
+      try {
+        const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
+        const [engine, model, effort] = await Promise.all([
+          getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session),
+        ]);
+        const latest = await ctx.authorize(); assertCurrentAuthorized(latest);
+        const locked = latest.meta.codexAuthSource === 'channel';
+        assertRuntimeBaseline(ctx, scope, { engine: locked ? 'codex' : engine, model, effort }, locked);
+        // The roster check above can outlive a turn that creates/replaces this live session.
+        const mintedEngine = await getSessionEngine(ctx.entry.slug, session);
+        const inheritedEngine = locked ? 'codex' : mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
+        const next = combinedRuntimeSelection(data, scope, latest.meta, inheritedEngine);
+        setThreadRuntimeOverrides(ctx.entry.slug, session, { ...next, engine: locked ? '' : next.engine }, { expected: { engine, model, effort } });
+      } finally { release(); }
+    }
+    ctx.state.tab = 'general';
+    ctx.state.notice = `${scope === 'channel' ? 'Channel defaults' : 'Thread overrides'} updated. Applies to the next turn.`;
+    await logEvent(scope === 'channel' ? 'channel_runtime_updated' : 'thread_runtime_updated', {
+      channel: ctx.channelId, slug: ctx.entry.slug, author: ctx.ownerId, fields: [...RUNTIME_FIELDS],
+    });
+    return true;
+  }
   if (action === 'settings.runtime') {
     const { scope, field } = data;
     if (!['channel', 'thread'].includes(scope) || !RUNTIME_FIELDS.includes(field)) throw new Error('Unknown runtime control.');

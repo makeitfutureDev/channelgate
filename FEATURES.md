@@ -701,7 +701,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   its settings below the menu in the same card, keeping its conversation and session. `/secrets`
   starts on Variables. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
-  channel default. Teams uses explicit per-field Apply buttons, rather than Slack's save-on-pick.
+  channel default. Teams runtime lists have one **Apply to channel** and one **Apply to thread**
+  button. Engine-labelled model choices allow a complete engine/model/effort selection before
+  saving; the compatible triple is saved atomically for that scope. Stale forms refuse to
+  overwrite newer runtime settings. Other settings keep their explicit controls.
   Runtime edits in this console admit every authorized member, independently of the `/model`
   text-command policy. Access policy and native member selection require managers/admins; Cloud
   MCP and organization variable changes require admins. Complete roster selectors fall back to

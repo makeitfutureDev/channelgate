@@ -5,7 +5,8 @@ ensureTestEnv();
 const { renderGeneral, handleGeneral, generalRuntimeScopes } = await import('../src/platforms/msteams/settings-general.js');
 const { nextRuntimeTriple, runtimeSettingsPatch } = await import('../src/gateway/runtime-settings.js');
 const { saveSettings } = await import('../src/config/settings.js');
-const { getThreadEngine, getThreadModel, getThreadEffort, setThreadEngine, setThreadModel, setThreadEffort } = await import('../src/gateway/thread-engine.js');
+const { getThreadEngine, getThreadModel, getThreadEffort, setThreadEngine, setThreadModel, setThreadEffort, setThreadRuntimeOverrides, setThreadClean, getThreadClean, setThreadSudo, getThreadSudo } = await import('../src/gateway/thread-engine.js');
+const { getDb } = await import('../src/db/index.js');
 const { saveSession } = await import('../src/gateway/sessions.js');
 const { teamsSettingsUi } = await import('../src/platforms/msteams/settings.js');
 const { adaptiveCardAttachment } = await import('../src/platforms/msteams/cards.js');
@@ -28,7 +29,7 @@ function context(meta = {}, options = {}) {
   return ctx;
 }
 
-test('runtime render separates channel and session catalogs and labels retained session engine', async () => {
+test('runtime forms allow cross-engine choices with one Apply at the end of each scope', async () => {
   saveSettings({ engine: 'claude', defaultCodexModel: 'gpt-6-sol', defaultClaudeModel: 'opus', engineEnabled: {} });
   const ctx = context({ engine: 'claude', model: 'opus' });
   await saveSession(ctx.entry.slug, ctx.sessionKey, 'codex-session', 'codex');
@@ -40,9 +41,112 @@ test('runtime render separates channel and session catalogs and labels retained 
   const channelModels = body.find(row => row.id === 'channel_model').choices;
   const sessionModels = body.find(row => row.id === 'thread_model').choices;
   assert.ok(channelModels.some(item => item.value.startsWith('claude-')));
-  assert.ok(!sessionModels.some(item => item.value.startsWith('claude-')));
+  assert.ok(sessionModels.some(item => item.value.startsWith('claude-')));
   assert.ok(sessionModels.some(item => item.value.startsWith('gpt-')));
-  assert.equal(body.filter(row => row.type === 'ActionSet').flatMap(row => row.actions).filter(action => action.verb === 'settings.runtime').length, 6);
+  assert.ok(channelModels.some(item => item.title.startsWith('Codex:')));
+  const applies = body.filter(row => row.type === 'ActionSet').flatMap(row => row.actions).filter(action => action.verb === 'settings.runtime.apply');
+  assert.deepEqual(applies.map(item => item.title), ['Apply to channel', 'Apply to thread']);
+  assert.equal(body.filter(row => row.type === 'ActionSet').flatMap(row => row.actions).filter(action => action.verb === 'settings.runtime').length, 0);
+  for (const scope of ['channel', 'thread']) {
+    const lastInput = body.findIndex(row => row.id === `${scope}_effort`);
+    assert.equal(body[lastInput + 1].actions[0].data.scope, scope);
+  }
+});
+
+test('one channel Apply saves the full valid triple and ignores other-scope inputs', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus', cleanMode: true });
+  await setThreadEngine(ctx.entry.slug, ctx.sessionKey, 'claude');
+  await renderGeneral(ctx, ui);
+  await handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high', thread_engine: 'codex', access_cleanMode: 'off' }, ctx, ui);
+  assert.equal(ctx.meta.engine, 'codex'); assert.equal(ctx.meta.model, 'gpt-6-sol'); assert.equal(ctx.meta.effort, 'high');
+  assert.equal(ctx.meta.cleanMode, true); assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), 'claude');
+});
+
+test('one thread Apply saves its triple while channel and thread posture remain unchanged', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' });
+  await setThreadClean(ctx.entry.slug, ctx.sessionKey, true); await setThreadSudo(ctx.entry.slug, ctx.sessionKey, true);
+  await renderGeneral(ctx, ui);
+  await handleGeneral('settings.runtime.apply', { scope: 'thread', thread_engine: 'codex', thread_model: 'gpt-6-sol', thread_effort: 'high', channel_engine: 'codex' }, ctx, ui);
+  assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), 'codex');
+  assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), 'gpt-6-sol');
+  assert.equal(await getThreadEffort(ctx.entry.slug, ctx.sessionKey), 'high');
+  assert.equal(ctx.meta.engine, 'claude'); assert.equal(await getThreadClean(ctx.entry.slug, ctx.sessionKey), true); assert.equal(await getThreadSudo(ctx.entry.slug, ctx.sessionKey), true);
+});
+
+test('combined Apply rejects incomplete/incompatible/disabled selections before writing', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus', effort: 'high' });
+  await renderGeneral(ctx, ui);
+  const before = { ...ctx.meta };
+  for (const form of [
+    { channel_engine: 'codex', channel_model: 'opus', channel_effort: 'high' },
+    { channel_engine: 'claude', channel_model: 'opus', channel_effort: 'ultra' },
+    { channel_engine: 'codex', channel_model: 'gpt-6-sol' },
+  ]) {
+    await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'channel', ...form }, ctx, ui));
+    assert.deepEqual(ctx.meta, before);
+  }
+  saveSettings({ engineEnabled: { codex: false } });
+  await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high' }, ctx, ui), /no longer enabled/);
+  assert.deepEqual(ctx.meta, before); saveSettings({ engineEnabled: {} });
+});
+
+test('combined Apply refuses stale channel/thread forms without overwriting newer values', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' });
+  await renderGeneral(ctx, ui);
+  ctx.meta.model = 'sonnet';
+  await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high' }, ctx, ui), /settings changed/);
+  assert.equal(ctx.meta.model, 'sonnet'); assert.equal(ctx.meta.engine, 'claude');
+  await setThreadModel(ctx.entry.slug, ctx.sessionKey, 'sonnet');
+  await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'thread', thread_engine: 'codex', thread_model: 'gpt-6-sol', thread_effort: 'high' }, ctx, ui), /settings changed/);
+  assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), 'sonnet'); assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), '');
+});
+test('combined Apply rechecks revoked authority before any scope write', async () => {
+  for (const scope of ['channel', 'thread']) {
+    const ctx = context({ engine: 'claude', model: 'opus' });
+    await renderGeneral(ctx, ui);
+    ctx.authorize = async () => ({ ...ctx, userIsAdmin: false, userIsApproved: false });
+    await assert.rejects(handleGeneral('settings.runtime.apply', { scope, [`${scope}_engine`]: 'codex', [`${scope}_model`]: 'gpt-6-sol', [`${scope}_effort`]: 'high' }, ctx, ui), /no longer authorized/);
+    assert.equal(ctx.meta.engine, 'claude'); assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), '');
+  }
+});
+
+test('combined defaults use retained session engine and dedicated channel login locks', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' });
+  await saveSession(ctx.entry.slug, ctx.sessionKey, 'retained-codex', 'codex');
+  await renderGeneral(ctx, ui);
+  await handleGeneral('settings.runtime.apply', { scope: 'thread', thread_engine: '__default__', thread_model: 'gpt-6-sol', thread_effort: 'high' }, ctx, ui);
+  assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), '');
+  assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), 'gpt-6-sol');
+  const locked = context({ codexAuthSource: 'channel', engine: 'codex' });
+  await renderGeneral(locked, ui);
+  await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'claude', channel_model: 'opus', channel_effort: 'high' }, locked, ui), /own Codex login/);
+  await handleGeneral('settings.runtime.apply', { scope: 'channel', channel_model: 'gpt-6-sol', channel_effort: 'high' }, locked, ui);
+  assert.equal(locked.meta.engine, 'codex'); assert.equal(locked.meta.model, 'gpt-6-sol');
+});
+test('default-engine Apply re-resolves a session minted during the final membership check', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' });
+  await saveSession(ctx.entry.slug, ctx.sessionKey, 'before-check', 'claude');
+  await renderGeneral(ctx, ui);
+  let checks = 0;
+  ctx.authorize = async () => {
+    if (++checks === 2) await saveSession(ctx.entry.slug, ctx.sessionKey, 'during-check', 'codex');
+    return ctx;
+  };
+  await handleGeneral('settings.runtime.apply', { scope: 'thread', thread_engine: '__default__', thread_model: 'gpt-6-sol', thread_effort: 'high' }, ctx, ui);
+  assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), '');
+  assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), 'gpt-6-sol');
+});
+
+test('thread triple storage rolls back all fields on failure and checks its expected snapshot', async () => {
+  const ctx = context(); const db = getDb();
+  setThreadRuntimeOverrides(ctx.entry.slug, ctx.sessionKey, { engine: 'claude', model: 'opus', effort: 'high' });
+  db.exec("CREATE TEMP TRIGGER reject_runtime_effort BEFORE INSERT ON thread_overrides WHEN NEW.kind = 'effort' BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+  try {
+    assert.throws(() => setThreadRuntimeOverrides(ctx.entry.slug, ctx.sessionKey, { engine: 'codex', model: 'gpt-6-sol', effort: 'low' }), /test failure/);
+  } finally { db.exec('DROP TRIGGER reject_runtime_effort'); }
+  assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), 'claude'); assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), 'opus'); assert.equal(await getThreadEffort(ctx.entry.slug, ctx.sessionKey), 'high');
+  assert.throws(() => setThreadRuntimeOverrides(ctx.entry.slug, ctx.sessionKey, { engine: 'codex' }, { expected: { engine: '', model: '', effort: '' } }), /Thread settings changed/);
+  assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), 'opus');
 });
 
 test('authorized user can edit Settings runtime independently of text model command policy', async () => {
